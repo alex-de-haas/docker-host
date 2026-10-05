@@ -1,11 +1,14 @@
 import "server-only";
-import { randomBytes, timingSafeEqual } from "node:crypto";
-import { exchangeAppCode, getCoreOrigin as getCoreTransport, getServiceToken } from "@hosty-sdk/app/server";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { exchangeAppCode, getAppAuthProtocol, isValidCodeVerifier, getCoreOrigin as getCoreTransport, getServiceToken } from "@hosty-sdk/app/server";
 import { getCoreOrigin, getShellAppId } from "./server-env";
 
 export const appCookie = "hosty_shell_identity";
 const stateCookie = "hosty_shell_auth_state";
 const returnCookie = "hosty_shell_auth_return";
+const verifierCookie = "hosty_shell_auth_verifier";
+const attemptCookies = [stateCookie, returnCookie, verifierCookie];
+const statePattern = /^[a-f0-9]{64}$/;
 const csrfCookie = "hosty_shell_csrf";
 const privateHeaders = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" };
 
@@ -44,6 +47,27 @@ export function safeReturnPath(value: string | null): string {
   return parsed.pathname + parsed.search;
 }
 
+function attemptCookieName(prefix: string, state: string): string { return `${prefix}_${state}`; }
+
+function clearAttempt(response: Response, origin: string, state: string): void {
+  for (const prefix of attemptCookies)
+    response.headers.append("Set-Cookie", serializeCookie(attemptCookieName(prefix, state), "", origin, 0, "/auth"));
+}
+
+function html(value: string): string {
+  return value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]!));
+}
+
+function signInForm(target: URL, fields: Record<string, string>): Response {
+  const nonce = randomBytes(16).toString("base64");
+  const inputs = Object.entries(fields).map(([name, value]) =>
+    `<input type="hidden" name="${html(name)}" value="${html(value)}">`).join("");
+  return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="origin"><title>Sign in to Hosty</title></head><body><p>Opening Hosty sign-in…</p><form id="hosty-sign-in" method="post" action="${html(target.href)}">${inputs}<noscript><button type="submit">Continue to sign in</button></noscript></form><script nonce="${nonce}">document.getElementById("hosty-sign-in").requestSubmit();</script></body></html>`, {
+    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "origin",
+      "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; form-action ${target.origin} 'self'; base-uri 'none'; frame-ancestors 'none'` },
+  });
+}
+
 export async function startAppLogin(request: Request): Promise<Response> {
   const origin = ownOrigin(request);
   const returnTo = safeReturnPath(new URL(request.url).searchParams.get("returnTo"));
@@ -51,14 +75,28 @@ export async function startAppLogin(request: Request): Promise<Response> {
     return new Response(null, { status: 302, headers: { ...privateHeaders,
       Location: `${origin}/auth/start?returnTo=${encodeURIComponent(returnTo)}` } });
   }
+  const liveStates = (request.headers.get("cookie") ?? "").split(";").filter(item =>
+    new RegExp(`^${stateCookie}_[a-f0-9]{64}=`).test(item.trim()));
+  if (liveStates.length >= 16) return error(429, "app_sign_in_limit", "Finish or cancel an existing sign-in before starting another.");
+  const protocol = await getAppAuthProtocol();
+  if (protocol === null) return error(503, "app_auth_protocol_unavailable", "Core sign-in capabilities are unavailable. Try again shortly.");
+  // Always generate here. A public start URL cannot supply a proof for another browser.
   const state = randomBytes(32).toString("hex");
+  const verifier = randomBytes(32).toString("base64url");
+  const challenge = createHash("sha256").update(verifier, "ascii").digest("base64url");
   const callback = new URL("/auth/callback", origin);
   callback.searchParams.set("state", state);
-  const target = new URL(`/api/apps/${encodeURIComponent(getShellAppId())}/open`, getCoreOrigin());
-  target.searchParams.set("redirectUri", callback.toString());
-  const response = new Response(null, { status: 302, headers: { ...privateHeaders, Location: target.toString() } });
-  response.headers.append("Set-Cookie", serializeCookie(stateCookie, state, origin, 300, "/auth"));
-  response.headers.append("Set-Cookie", serializeCookie(returnCookie, returnTo, origin, 300, "/auth"));
+  const fields = { redirectUri: callback.toString(), state, codeChallenge: challenge, codeChallengeMethod: "S256" };
+  const target = new URL(`/api/apps/${encodeURIComponent(getShellAppId())}/${protocol === 2 ? "sign-in-intent" : "open"}`, getCoreOrigin());
+  let response: Response;
+  if (protocol === 2) response = signInForm(target, fields);
+  else {
+    for (const [name, value] of Object.entries(fields)) target.searchParams.set(name, value);
+    response = new Response(null, { status: 302, headers: { ...privateHeaders, Location: target.href } });
+  }
+  response.headers.append("Set-Cookie", serializeCookie(attemptCookieName(stateCookie, state), state, origin, 300, "/auth"));
+  response.headers.append("Set-Cookie", serializeCookie(attemptCookieName(returnCookie, state), returnTo, origin, 300, "/auth"));
+  response.headers.append("Set-Cookie", serializeCookie(attemptCookieName(verifierCookie, state), verifier, origin, 300, "/auth"));
   return response;
 }
 
@@ -66,26 +104,25 @@ export async function finishAppLogin(request: Request): Promise<Response> {
   const origin = ownOrigin(request);
   if (!hasOwnHost(request, origin)) return error(403, "callback_origin_invalid", "Open Shell on its configured address.");
   const params = new URL(request.url).searchParams;
-  const expected = cookie(request, stateCookie);
   const supplied = params.get("state");
-  const code = params.get("code");
-  if (!expected || !supplied || !/^[a-f0-9]{64}$/.test(expected) || !/^[a-f0-9]{64}$/.test(supplied) ||
-      !timingSafeEqual(Buffer.from(expected), Buffer.from(supplied)) || !code)
+  if (!supplied || !statePattern.test(supplied) || params.getAll("state").length !== 1 || params.getAll("code").length !== 1)
     return error(403, "callback_state_invalid", "This sign-in did not start in this browser. Open Shell and sign in again.");
-  const exchange = await exchangeAppCode(code);
+  const expected = cookie(request, attemptCookieName(stateCookie, supplied));
+  const verifier = cookie(request, attemptCookieName(verifierCookie, supplied));
+  const code = params.get("code");
+  if (!expected || !statePattern.test(expected) || !timingSafeEqual(Buffer.from(expected), Buffer.from(supplied)) || !code || !isValidCodeVerifier(verifier))
+    return error(403, "callback_state_invalid", "This sign-in did not start in this browser. Open Shell and sign in again.");
+  const exchange = await exchangeAppCode(code, verifier);
   if (!exchange.ok) return error(exchange.status, exchange.code, exchange.message);
-  // Exchanging a code alone does not prove its audience. Revalidate for this service before
-  // creating the browser cookie, and never return the token to page script.
   const validated = await callCore("/api/auth/apps/revalidate", {
     method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${getServiceToken() ?? ""}` },
     body: JSON.stringify({ accessToken: exchange.accessToken }),
   });
   if (!validated.ok) return error(validated.status, "app_login_denied", "Core did not authorize this Shell session.");
   const response = new Response(null, { status: 302, headers: { ...privateHeaders,
-    Location: new URL(safeReturnPath(cookie(request, returnCookie)), origin).toString() } });
+    Location: new URL(safeReturnPath(cookie(request, attemptCookieName(returnCookie, supplied))), origin).toString() } });
   response.headers.append("Set-Cookie", serializeCookie(appCookie, exchange.accessToken, origin, exchange.expiresInSeconds ?? 3600));
-  response.headers.append("Set-Cookie", serializeCookie(stateCookie, "", origin, 0, "/auth"));
-  response.headers.append("Set-Cookie", serializeCookie(returnCookie, "", origin, 0, "/auth"));
+  clearAttempt(response, origin, supplied);
   return response;
 }
 
@@ -97,7 +134,14 @@ export function logoutApp(request: Request): Response {
   } });
   const origin = ownOrigin(request);
   for (const name of [appCookie, csrfCookie]) response.headers.append("Set-Cookie", serializeCookie(name, "", origin, 0));
-  for (const name of [stateCookie, returnCookie]) response.headers.append("Set-Cookie", serializeCookie(name, "", origin, 0, "/auth"));
+  for (const prefix of attemptCookies) {
+    response.headers.append("Set-Cookie", serializeCookie(prefix, "", origin, 0, "/auth"));
+    for (const item of request.headers.get("cookie")?.split(";") ?? []) {
+      const name = item.trim().split("=")[0];
+      if (name.startsWith(`${prefix}_`) && statePattern.test(name.slice(prefix.length + 1)))
+        response.headers.append("Set-Cookie", serializeCookie(name, "", origin, 0, "/auth"));
+    }
+  }
   return response;
 }
 
@@ -173,9 +217,10 @@ export async function renewAppLogin(request: Request): Promise<Response> {
   const origin = ownOrigin(request);
   if (request.headers.get("origin") !== origin || !request.headers.get("content-type")?.startsWith("application/json"))
     return error(403, "origin_denied", "Renew access from this Shell page.");
-  const body = await request.json().catch(() => null) as { code?: unknown } | null;
+  const body = await request.json().catch(() => null) as { code?: unknown; codeVerifier?: unknown } | null;
   if (typeof body?.code !== "string" || !body.code) return error(400, "code_required", "A Core authorization code is required.");
-  const exchange = await exchangeAppCode(body.code);
+  if (!isValidCodeVerifier(body.codeVerifier)) return error(400, "code_verifier_required", "A valid sign-in proof is required.");
+  const exchange = await exchangeAppCode(body.code, body.codeVerifier);
   if (!exchange.ok) return error(exchange.status, exchange.code, exchange.message);
   const validation = await callCore("/api/auth/apps/revalidate", { method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${getServiceToken() ?? ""}` },

@@ -70,10 +70,10 @@ internal sealed record AppSessionGrantRecord(
   on session expiry. Admin-side revocation works through the policy re-check on every revalidation.
 - Expired and revoked grants are pruned opportunistically on write; revoked records linger 7 days so
   revocation is observable in diagnostics.
-- The wire contracts are unchanged from the JWT era — `/api/auth/apps/token`, `/api/auth/apps/revalidate`,
-  the app cookie mechanics, and the `X-Docker-Host-Identity` header all kept their shapes; only the
-  token value's format differs. `expiresInSeconds` is the grant's absolute lifetime, and apps set their
-  cookie `Max-Age` from it.
+- App grant response bodies, revalidation and app-cookie mechanics retain their shapes.
+  [Code exchange](../app-code-exchange/feature.md) requires the target app's service-token bearer
+  credential plus the original attempt's private verifier, and atomically checks both before consumption. `expiresInSeconds` is
+  the grant's absolute lifetime, and apps set cookie `Max-Age` from it.
 - `hosty apps identity <app> --user <email>` issues a `cli-diagnostic` grant through the same path.
   These are probe credentials, not sessions, and get a single short fixed lifetime.
 
@@ -160,36 +160,42 @@ get their own, longer idle window because a credential in a keychain is not a br
 
 ## Recovery — Standalone
 
-A top-level app navigates to `{HOSTY_CORE_PUBLIC_ORIGIN}/api/apps/{appId}/open?redirectUri=<current URL>`,
-at most once per browser tab; the SDK's loop guard turns every further attempt into an explicit link
-rather than another redirect.
+A top-level app creates a fresh verifier and independent state, persists its five-minute attempt on
+its own origin and verifies storage before replacing its document with the Core intent form. The
+form sends only redirect/state/public S256 challenge. Core validates exact Origin and navigation,
+stores an immutable intent and sets a unique isolated HttpOnly nonce cookie. A 303 continues in the
+same browser to `/api/apps/{appId}/open?requestId=...`.
+
+The continuation checks its nonce before login. Normal login retains this exact request ID; access
+checks precede an atomic one-time claim and code issuance. A copied request ID in another browser
+cannot mint a code. Bare validated `/open?redirectUri=...` links only bootstrap the app without a
+code, and direct proof-bearing GETs are refused. HTTPS uses `__Host-` nonce cookies; HTTP requires
+an isolated literal-IP Core host different from every installed app origin.
 
 ```mermaid
 sequenceDiagram
-  participant B as Browser (standalone app)
-  participant A as App origin
+  participant B as App browser
+  participant A as App server
   participant C as Core
-  B->>A: GET / (expired app cookie)
-  A->>C: POST /api/auth/apps/revalidate
-  C-->>A: 401 token_expired
-  A-->>B: recover (once per tab)
-  B->>C: GET /api/apps/{id}/open?redirectUri=<app URL>
-  alt Core session valid
-    C-->>B: 302 → app URL?code=…
-  else Core session expired
-    C-->>B: 302 → /login?returnTo=/api/apps/{id}/open?…
-    B->>C: POST /login (credentials)
-    C-->>B: 302 → /api/apps/{id}/open?… → 302 → app URL?code=…
+  B->>B: Persist private verifier and independent state
+  B->>C: App-origin POST intent (public S256 challenge)
+  C-->>B: HttpOnly nonce cookie + 303 /open?requestId
+  B->>C: GET immutable continuation with nonce
+  opt Core session missing
+    C-->>B: Normal Core password login
+    B->>C: Resume same continuation with nonce
   end
-  B->>A: POST /api/auth/app-code {code}
-  A->>C: POST /api/auth/apps/token
-  C-->>A: opaque grant token + expiresInSeconds
-  A-->>B: Set-Cookie (HttpOnly, Max-Age = absolute) + reload
+  C-->>B: One bound code + state
+  B->>A: POST app-code (code + private verifier)
+  A->>C: POST token (code + verifier + service bearer)
+  C-->>A: Opaque app grant
+  A-->>B: App cookie + own-app browser grant
 ```
 
-`/api/apps/{appId}/open` resolves the navigation session first: a missing or expired session redirects
-to `/login?returnTo=<this request>` instead of returning JSON a browser cannot act on, while a
-valid-but-denied account keeps its 403 rather than bouncing to a login that would reject it anyway.
+Storage refusal skips automatic full-document navigation and offers the app-owned popup action.
+Automatic recovery remains guarded once per tab; terminal denial and transient failures keep their
+existing classification. Callback correlation takes only locally generated proof and removes code
+and state from the URL before exchange. The private verifier never enters a URL or popup message.
 
 Both redirect targets are validated server-side. `redirectUri` is checked against the app's registered
 endpoint origins (`RequireAllowedRedirectUriAsync`), so a code minted for one app can only be delivered
@@ -208,20 +214,16 @@ exists and that first probe answers `not-present` or `expired`, the bridge attem
 Core sign-in in its own frame, guarded once per tab per app. The frame does not navigate its parent
 or ask Shell for a user token.
 
-`/api/apps/{appId}/open?prompt=none&state=...` accepts only iframe navigation with a random 256-bit
-hex state. It validates the app redirect origin and returns a code with that state for a live Core
-session, `error=login_required` for no live session, or `error=access_denied` for denied access.
-It never sends the frame to `/login`. The SDK exchanges a silent code only with the matching stored
-state, shows the inline popup button on `login_required`, and shows denial on `access_denied`.
-Silent codes establish identity without privileged activity and keep Core-session provenance for
-explicit-logout revocation. [Embedded app sign-in](../embedded-app-sign-in/feature.md) describes the
-deployment that lets the browser send Core's `SameSite=Lax` cookie in this frame.
+Silent initiation submits the app-owned intent form with `prompt=none`, a public S256 challenge
+and random 256-bit state from an iframe. After validating its nonce, Core returns a state-bound
+code for a live session, `login_required` for missing identity or `access_denied` for denied access.
+The frame never receives the password form. Silent codes establish identity without activity and
+retain explicit-logout provenance.
 
-Core `/api/apps/{appId}/open?responseMode=web_message&state=...` requires a browser navigation and
-its own origin-bound session cookie. It validates the app assignment and registered callback origin,
-then posts a single-use code to that exact app origin. The SDK accepts the message only from the
-opened popup, at the configured Core origin, with the matching random 256-bit state. Missing Core
-sessions go through Core's password form. Invalid targets, mismatched state and code replay fail.
+Popup initiation submits the same form with `responseMode=web_message` from the synchronously opened
+app-owned popup. Core validates Origin/navigation and its nonce before login or code issuance, then
+posts only code/state to the exact app origin. The SDK checks popup source, Core origin and state,
+then pairs the returned code with its opener-held verifier. Wrong app/proof cannot consume the code.
 
 The app's own server exchanges the code and validates the result with its service credential before
 returning its app grant and setting its host-only HttpOnly cookie. Where iframe cookie access is
@@ -261,7 +263,7 @@ browser acceptance are tracked in [local browser origins](../local-browser-origi
 - On 503 an app keeps its session cookie and does not trigger recovery navigation.
 - Apps render no login UI of their own: Core `/login` is the only authentication surface, and an app's
   job is to attempt initial silent sign-in or open Core from a sign-in action when embedded, or
-  navigate to `/open` when standalone.
+  submit the app-owned intent form when standalone.
 
 
 ## Privileged App Activity
@@ -296,8 +298,8 @@ SDK popup renewal preserves the existing document and drafts.
   window reports the cap.
 - A request carrying no credential answers `session_missing` and names both accepted forms, so the
   sentence cannot regress to the cookie alone.
-- `/api/apps/{appId}/open` redirects an unauthenticated browser navigation to `/login?returnTo=…`
-  rather than returning JSON, and returns 403 unchanged for a denied account.
+- A valid nonce-bound `/open?requestId` continuation preserves normal login; missing nonce refuses
+  before login. Ordinary bootstrap and direct proof GETs cannot issue a code.
 - `returnTo` hardening in both directions: the two accepted relative shapes work, and
   protocol-relative, backslash, control-character, and absolute values fall back to the Shell origin.
 - Pruning drops expired and long-revoked records while keeping live ones, for both stores.

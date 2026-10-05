@@ -1,37 +1,84 @@
 // @vitest-environment node
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
-const exchange = vi.hoisted(() => vi.fn());
+const { exchange, protocol } = vi.hoisted(() => ({ exchange: vi.fn(), protocol: vi.fn() }));
 vi.mock("@hosty-sdk/app/server", () => ({ exchangeAppCode: exchange,
+  getAppAuthProtocol: protocol, isValidCodeVerifier: (value: unknown) => typeof value === "string" && /^[A-Za-z0-9._~-]{43,128}$/.test(value),
   getCoreOrigin: () => "http://core.transport:7070", getServiceToken: () => "service-secret" }));
-import { appCookie, finishAppLogin, proxyCore, safeReturnPath, startAppLogin } from "../src/app/shell/app-auth-server";
+import { appCookie, finishAppLogin, proxyCore, safeReturnPath, startAppLogin, renewAppLogin, logoutApp } from "../src/app/shell/app-auth-server";
 const origin = "http://console.hosty.localhost:7171";
 const state = "a".repeat(64);
+const verifier = "v".repeat(43);
 let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   vi.stubEnv("HOSTY_PUBLIC_ORIGIN_WEB", origin);
   vi.stubEnv("HOSTY_CORE_PUBLIC_ORIGIN", "http://core.hosty.localhost:7070");
   vi.stubEnv("HOSTY_APP_ID", "example.console");
-  fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock); exchange.mockReset();
+  fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock); exchange.mockReset(); protocol.mockReset(); protocol.mockResolvedValue(2);
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 function callback(supplied = state) {
   return new Request(`${origin}/auth/callback?code=one-time-code&state=${supplied}`, {
-    headers: { cookie: `hosty_shell_auth_state=${state}; hosty_shell_auth_return=%2Fapps` },
+    headers: { cookie: `hosty_shell_auth_state_${state}=${state}; hosty_shell_auth_return_${state}=%2Fapps; hosty_shell_auth_verifier_${state}=${verifier}` },
   });
 }
-it("starts at Core with a callback for this app and private state cookies", async () => {
+it("starts a browser-bound Core intent with public form fields and a private verifier cookie", async () => {
   const response = await startAppLogin(new Request(`${origin}/auth/start?returnTo=%2Fapps`));
-  const target = new URL(response.headers.get("location")!);
-  expect(target.origin).toBe("http://core.hosty.localhost:7070");
-  expect(target.pathname).toBe("/api/apps/example.console/open");
-  const callback = new URL(target.searchParams.get("redirectUri")!);
-  expect(callback.origin).toBe(origin);
-  expect(callback.searchParams.get("state")).toMatch(/^[a-f0-9]{64}$/);
-  expect(response.headers.getSetCookie()).toHaveLength(2);
-  expect(response.headers.getSetCookie().every(c => c.includes("HttpOnly") && c.includes("SameSite=Lax"))).toBe(true);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("referrer-policy")).toBe("origin");
+  const page = await response.text();
+  expect(page).toContain('method="post" action="http://core.hosty.localhost:7070/api/apps/example.console/sign-in-intent"');
+  expect(page).toContain('name="codeChallengeMethod" value="S256"');
+  expect(page).toContain('name="codeChallenge"');
+  expect(page).toContain('name="state"');
+  const cookies = response.headers.getSetCookie();
+  expect(cookies).toHaveLength(3);
+  expect(cookies.every(c => c.includes("HttpOnly") && c.includes("SameSite=Lax") && c.includes("Path=/auth"))).toBe(true);
+  const storedVerifier = cookies.find(c => c.startsWith("hosty_shell_auth_verifier_"))!.split("=")[1].split(";")[0];
+  expect(storedVerifier).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  expect(page).not.toContain(storedVerifier);
+  expect(response.headers.get("content-security-policy")).toContain("form-action http://core.hosty.localhost:7070");
   expect(fetchMock).not.toHaveBeenCalled();
 });
+it("uses additive proof fields only for a verified older Core", async () => {
+  protocol.mockResolvedValue(1);
+  const response = await startAppLogin(new Request(`${origin}/auth/start?returnTo=%2Fapps`));
+  const target = new URL(response.headers.get("location")!);
+  expect(response.status).toBe(302);
+  expect(target.pathname).toBe("/api/apps/example.console/open");
+  expect(target.searchParams.get("codeChallengeMethod")).toBe("S256");
+  expect(target.searchParams.get("codeChallenge")).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  expect(new URL(target.searchParams.get("redirectUri")!).searchParams.get("state")).toBe(target.searchParams.get("state"));
+  expect(target.searchParams.has("codeVerifier")).toBe(false);
+});
+it("fails closed when protocol discovery is unavailable", async () => {
+  protocol.mockResolvedValue(null);
+  const response = await startAppLogin(new Request(`${origin}/auth/start`));
+  expect(response.status).toBe(503);
+  expect(response.headers.get("location")).toBeNull();
+  expect(response.headers.get("set-cookie")).toBeNull();
+});
+it("generates fresh proof rather than laundering public start parameters", async () => {
+  const response = await startAppLogin(new Request(`${origin}/auth/start?state=${state}&codeChallenge=attacker&codeVerifier=known`));
+  const page = await response.text();
+  expect(page).not.toContain(state);
+  expect(page).not.toContain("attacker");
+  expect(page).not.toContain("known");
+});
+it("keeps concurrent sign-in attempt cookies independent", async () => {
+  const first = await startAppLogin(new Request(`${origin}/auth/start?returnTo=%2Fapps`));
+  const second = await startAppLogin(new Request(`${origin}/auth/start?returnTo=%2Fdashboard`));
+  const firstNames = first.headers.getSetCookie().map(c => c.split("=")[0]);
+  expect(second.headers.getSetCookie().every(c => !firstNames.includes(c.split("=")[0]))).toBe(true);
+});
+it("requires the callback's private verifier before contacting Core", async () => {
+  const request = new Request(`${origin}/auth/callback?code=one-time-code&state=${state}`, {
+    headers: { cookie: `hosty_shell_auth_state_${state}=${state}` },
+  });
+  expect((await finishAppLogin(request)).status).toBe(403);
+  expect(exchange).not.toHaveBeenCalled();
+});
+
 it("rejects callback substitution before code exchange", async () => {
   expect((await finishAppLogin(callback("b".repeat(64)))).status).toBe(403);
   expect(exchange).not.toHaveBeenCalled();
@@ -41,6 +88,7 @@ it("validates the audience, sets only the app cookie and returns no bearer to sc
   fetchMock.mockResolvedValue(new Response('{"active":true}'));
   const response = await finishAppLogin(callback());
   expect(response.status).toBe(302);
+  expect(exchange).toHaveBeenCalledWith("one-time-code", verifier);
   expect(response.headers.get("location")).toBe(`${origin}/apps`);
   expect(await response.text()).toBe("");
   expect(response.headers.getSetCookie()).toContainEqual(expect.stringContaining(`${appCookie}=own-grant; Path=/; HttpOnly; SameSite=Lax; Max-Age=600`));
@@ -94,8 +142,9 @@ it("uses the browser Host when Next constructs Request.url from the server liste
   const response = await startAppLogin(new Request("http://127.0.0.1:7171/auth/start?returnTo=%2Fdashboard", {
     headers: { host: new URL(origin).host },
   }));
-  expect(new URL(response.headers.get("location")!).origin).toBe("http://core.hosty.localhost:7070");
-  expect(response.headers.getSetCookie()).toHaveLength(2);
+  expect(response.status).toBe(200);
+  expect(await response.text()).toContain("http://core.hosty.localhost:7070/api/apps/example.console/sign-in-intent");
+  expect(response.headers.getSetCookie()).toHaveLength(3);
 });
 
 function startRequest(signal?: AbortSignal) {
@@ -161,4 +210,26 @@ it("bounds stalled mutations with the operation deadline and never replays them"
   expect(response.status).toBe(504);
   expect((await response.json()).code).toBe("core_request_timeout");
   expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it.each([undefined, "", "short", "x".repeat(129)])("refuses public renewal without a valid proof (%s)", async codeVerifier => {
+  const response = await renewAppLogin(new Request(`${origin}/api/auth/renew`, { method: "POST",
+    headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ code: "leaked-code", codeVerifier }) }));
+  expect(response.status).toBe(400);
+  expect(exchange).not.toHaveBeenCalled();
+});
+it("forwards renewal proof, installs only a cookie and never returns a grant", async () => {
+  exchange.mockResolvedValue({ ok: true, accessToken: "renewed-grant", expiresInSeconds: 600, activeUntil: "2030-01-01T00:00:00Z" });
+  fetchMock.mockResolvedValue(Response.json({ active: true }));
+  const response = await renewAppLogin(new Request(`${origin}/api/auth/renew`, { method: "POST",
+    headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ code: "code", codeVerifier: verifier }) }));
+  expect(exchange).toHaveBeenCalledWith("code", verifier);
+  expect(await response.json()).toEqual({ activeUntil: "2030-01-01T00:00:00Z" });
+  expect(response.headers.get("set-cookie")).toContain("renewed-grant");
+});
+it("clears every pending attempt at logout without publishing its verifier", () => {
+  const response = logoutApp(new Request(`${origin}/auth/logout`, { headers: {
+    cookie: `hosty_shell_auth_state_${state}=${state}; hosty_shell_auth_verifier_${state}=${verifier}` } }));
+  expect(response.headers.getSetCookie()).toContainEqual(expect.stringContaining(`hosty_shell_auth_verifier_${state}=;`));
+  expect(response.headers.get("set-cookie")).not.toContain(verifier);
 });

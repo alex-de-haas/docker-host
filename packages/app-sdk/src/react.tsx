@@ -8,6 +8,8 @@ import { AppActivityBridge } from "./activity-react";
 import { AuthNotice, AuthNoticeButton, authNoticeActionStyle } from "./auth-notice";
 import { useEffect, useRef, useState } from "react";
 import { appFetch, appSessionActive, appGrantRevision, rememberAppGrant, restoreAppGrant, forgetRejectedAppGrant, openAppSignIn, APP_SESSION_ENDED } from "./browser-auth";
+import { acceptAppAuthProtocol, createAppAuthAttempt, persistAppAuthAttempt, takeAppAuthAttempt, submitAppAuthIntent, appAuthNavigationUrl, APP_AUTH_ATTEMPT_PREFIX } from "./browser-auth";
+import type { AppAuthProtocol } from "./app-code";
 import type { ReactNode } from "react";
 import {
   buildCoreOpenUrl,
@@ -38,7 +40,6 @@ import {
 // Once-per-tab guard so a standalone app that returns from Core still unauthorized does
 // not bounce through /open forever. Cleared on a successful code exchange.
 const RECOVERY_GUARD_KEY = "hosty.auth.recovery-attempted";
-const SILENT_STATE_KEY = "hosty.auth.silent-state";
 const SILENT_GUARD_PREFIX = "hosty.auth.silent-attempted:";
 // Cap the status probe so a stalled request cannot leave the bridge stuck hidden — on
 // timeout it classifies as unavailable and the user gets a Retry affordance.
@@ -98,31 +99,25 @@ function writeGuard(value: boolean): void {
 }
 
 /** Both state and the per-app guard must survive navigation, or the popup is the fallback. */
-function beginSilentSignIn(openUrl: string, appId: string): string | null {
+function beginNavigationSignIn(openUrl: string, appId: string, protocol: AppAuthProtocol, mode: "silent" | "standalone" | "native", force = false): boolean {
+  let state: string | null = null;
   try {
-    const guardKey = `${SILENT_GUARD_PREFIX}${appId}`;
-    if (window.sessionStorage.getItem(guardKey) === "1") return null;
-    const state = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, "0")).join("");
-    window.sessionStorage.setItem(SILENT_STATE_KEY, state);
+    const guardKey = mode === "silent" ? `${SILENT_GUARD_PREFIX}${appId}` : RECOVERY_GUARD_KEY;
+    if (!force && window.sessionStorage.getItem(guardKey) === "1") return false;
+    const attempt = createAppAuthAttempt(openUrl, mode, protocol);
+    state = attempt.state;
+    if (!persistAppAuthAttempt(attempt)) return false;
     window.sessionStorage.setItem(guardKey, "1");
-    if (window.sessionStorage.getItem(SILENT_STATE_KEY) !== state || window.sessionStorage.getItem(guardKey) !== "1") return null;
-    const url = new URL(openUrl);
-    url.searchParams.set("prompt", "none");
-    url.searchParams.set("state", state);
-    return url.href;
-  } catch {
-    return null;
-  }
-}
-
-function consumeSilentState(state: string | null): boolean {
-  if (!state) return false;
-  try {
-    const expected = window.sessionStorage.getItem(SILENT_STATE_KEY);
-    if (!expected || expected !== state || !/^[a-f0-9]{64}$/.test(state)) return false;
-    window.sessionStorage.removeItem(SILENT_STATE_KEY);
+    if (window.sessionStorage.getItem(guardKey) !== "1") throw new Error("Sign-in storage is unavailable.");
+    if (mode === "native") window.location.assign(appAuthNavigationUrl(attempt));
+    else if (protocol === 1) {
+      if (mode === "silent") window.location.replace(appAuthNavigationUrl(attempt));
+      else window.location.assign(appAuthNavigationUrl(attempt));
+    }
+    else submitAppAuthIntent(attempt);
     return true;
   } catch {
+    if (state) { try { window.sessionStorage.removeItem(`${APP_AUTH_ATTEMPT_PREFIX}${state}`); } catch { /* Popup fallback. */ } }
     return false;
   }
 }
@@ -137,7 +132,7 @@ function readStoredLaunchMode(): string | null {
 
 /** The mode already applied to the document, or a fresh resolution when nothing applied one. */
 function currentLaunchMode(): AppLaunchMode {
-  const applied = normalizeLaunchMode(document.documentElement.getAttribute(LAUNCH_MODE_ATTRIBUTE));
+  const applied = typeof document === "undefined" ? null : normalizeLaunchMode(document.documentElement.getAttribute(LAUNCH_MODE_ATTRIBUTE));
   if (applied) {
     return applied;
   }
@@ -250,8 +245,10 @@ export function AppIdentityBridge({
   const firstProbe = useRef(true);
   const initialGrantPresent = useRef<boolean | null>(null);
   const silentError = useRef<"login_required" | "access_denied" | null>(null);
-  const [activity, setActivity] = useState<{ openUrl: string; activeUntil?: string | null; activityRequired?: boolean } | null>(null);
-  const exchangeRef = useRef<{ path: string; response: Promise<Response> } | null>(null);
+  const returnedLegacyAttempt = useRef(false);
+  const upgradedAttempt = useRef(false);
+  const [activity, setActivity] = useState<{ openUrl: string; appAuthProtocol: AppAuthProtocol; activeUntil?: string | null; activityRequired?: boolean } | null>(null);
+  const exchangeRef = useRef<{ path: string; revision: number; response: Promise<Response> } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -270,6 +267,8 @@ export function AppIdentityBridge({
       let status: AppSessionStatus | null = null;
       let openUrl: string | null = null;
       let appId: string | null = null;
+      let protocol: AppAuthProtocol | null = null;
+      let activityMetadata: { activeUntil?: string | null; activityRequired?: boolean } | null = null;
       let rejectionCode: unknown;
       const revision = appGrantRevision();
       try {
@@ -285,8 +284,8 @@ export function AppIdentityBridge({
         const recovery = readRecoveryParams(body);
         appId = recovery.appId;
         openUrl = appId ? buildCoreOpenUrl(recovery.corePublicOrigin, appId, window.location) : null;
-        const metadata = body as { activeUntil?: string | null; activityRequired?: boolean };
-        if (!cancelled && openUrl) setActivity({ openUrl, activeUntil: metadata?.activeUntil, activityRequired: metadata?.activityRequired });
+        protocol = openUrl ? acceptAppAuthProtocol(new URL(openUrl).origin, recovery.appAuthProtocol) : recovery.appAuthProtocol;
+        activityMetadata = body as { activeUntil?: string | null; activityRequired?: boolean };
       } catch {
         // A failed or timed-out probe (Core unreachable) classifies as unavailable below.
         status = null;
@@ -303,6 +302,8 @@ export function AppIdentityBridge({
         return;
       }
       forgetRejectedAppGrant(rejectionCode, revision);
+      if (openUrl && protocol) setActivity({ openUrl, appAuthProtocol: protocol,
+        activeUntil: activityMetadata?.activeUntil, activityRequired: activityMetadata?.activityRequired });
 
       const initialLoad = firstProbe.current;
       firstProbe.current = false;
@@ -310,24 +311,23 @@ export function AppIdentityBridge({
         setUi({ kind: "denied" });
         return;
       }
-      if (initialLoad && !wasActive.current && !initialGrantPresent.current && !silentError.current &&
+      const mode = currentLaunchMode();
+      const shouldUpgrade = returnedLegacyAttempt.current && protocol === 2 && !upgradedAttempt.current;
+      if (shouldUpgrade) { upgradedAttempt.current = true; returnedLegacyAttempt.current = false; }
+      if (!wasActive.current && protocol && ((initialLoad && !initialGrantPresent.current && !silentError.current) || shouldUpgrade) &&
           detectLaunchMode(window) === "embedded" && (status === "not-present" || status === "expired") && appId && openUrl) {
-        const silentUrl = beginSilentSignIn(openUrl, appId);
-        if (silentUrl) {
-          window.location.replace(silentUrl);
-          return;
-        }
+        if (beginNavigationSignIn(openUrl, appId, protocol, "silent", shouldUpgrade)) return;
       }
 
       const action: RecoveryAction =
-        !status || !appId
+        !status || !appId || ((status === "not-present" || status === "expired") && !protocol)
           ? { kind: "card", card: "unavailable" }
           : decideRecoveryAction({
               status: silentError.current === "login_required" ? "not-present" : status,
-              mode: detectLaunchMode(window),
+              mode,
               appId,
               openUrl,
-              redirectAlreadyAttempted: readGuard(),
+              redirectAlreadyAttempted: !shouldUpgrade && readGuard(),
             });
 
       switch (action.kind) {
@@ -337,40 +337,41 @@ export function AppIdentityBridge({
           setUi({ kind: "active" });
           return;
         case "post-auth-required": {
-          const showSignIn = (error?: string) => setUi({ kind: "signin", openUrl, embedded: true, error,
-            signIn: openUrl ? () => {
+          showSignIn();
+          return;
+        }
+        case "redirect":
+          if (appId && protocol && beginNavigationSignIn(action.openUrl, appId, protocol, mode === "native" ? "native" : "standalone", shouldUpgrade)) return;
+          showSignIn("Allow app storage, or sign in with a popup.");
+          return;
+        case "card":
+          if (action.card === "signin") showSignIn(); else setUi({ kind: action.card });
+          return;
+      }
+
+      function showSignIn(error?: string) {
+        setUi({ kind: "signin", openUrl, embedded: mode === "embedded", error,
+            signIn: openUrl && protocol ? () => {
               // Open synchronously in the click handler; an awaited request loses the user gesture.
-              const result = openAppSignIn(openUrl, controller.signal);
+              const revision = appGrantRevision();
+              const result = openAppSignIn(openUrl, controller.signal, protocol, mode === "native");
               setUi({ kind: "recovering" });
-              void result.then(async code => {
+              void result.then(async proof => {
                 const response = await appFetch(appCodePath, {
                   method: "POST", headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ code }),
-                });
+                  body: JSON.stringify(proof),
+                }, false);
                 const body = await response.json();
                 if (!response.ok || typeof body.accessToken !== "string" || !body.accessToken)
                   throw new Error("Hosty could not establish this app session.");
                 if (cancelled) return;
+                if (revision !== appGrantRevision()) { await probeAndRecover(); return; }
                 rememberAppGrant(body.accessToken);
                 silentError.current = null;
                 writeGuard(false);
                 await probeAndRecover();
               }).catch(error => { if (!cancelled) showSignIn(error instanceof Error ? error.message : "Sign-in failed."); });
             } : undefined });
-          showSignIn();
-          return;
-        }
-        case "redirect":
-          writeGuard(true);
-          window.location.assign(action.openUrl);
-          return;
-        case "card":
-          setUi(
-            action.card === "signin"
-              ? { kind: "signin", openUrl, embedded: false }
-              : { kind: action.card },
-          );
-          return;
       }
     }
 
@@ -379,25 +380,25 @@ export function AppIdentityBridge({
     const url = new URL(window.location.href);
     const code = url.searchParams.get("code")?.trim();
     const error = url.searchParams.get("error");
-    const embedded = detectLaunchMode(window) === "embedded";
     const isSilentError = error === "login_required" || error === "access_denied";
-    const accepted = embedded && (code || isSilentError) ? consumeSilentState(url.searchParams.get("state")) : !embedded;
-    if (embedded && accepted && isSilentError) silentError.current = error;
-    if (code || (embedded && isSilentError)) {
+    const attempt = takeAppAuthAttempt(url);
+    if (attempt?.mode === "silent" && isSilentError) silentError.current = error;
+    if (attempt?.protocol === 1 && !code && !error) returnedLegacyAttempt.current = true;
+    if (code || isSilentError || attempt) {
       url.searchParams.delete("code");
-      if (embedded) {
-        url.searchParams.delete("state");
-        if (isSilentError) url.searchParams.delete("error");
-      }
+      url.searchParams.delete("state");
+      if (isSilentError) url.searchParams.delete("error");
       window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
     }
-    if (code && accepted) {
+    if (code && attempt && !exchangeRef.current) {
       exchangeRef.current = {
         path: appCodePath,
+        revision: appGrantRevision(),
         response: fetch(appCodePath, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code }),
+          body: JSON.stringify({ code, codeVerifier: attempt.codeVerifier }),
+          credentials: "same-origin", redirect: "error",
         }),
       };
     }
@@ -411,6 +412,8 @@ export function AppIdentityBridge({
           if (response.ok) {
             writeGuard(false);
             const body = await response.json().catch(() => null);
+            if (cancelled) return;
+            if (exchange.revision !== appGrantRevision()) { exchangeRef.current = null; await probeAndRecover(); return; }
             if (typeof body?.accessToken === "string") rememberAppGrant(body.accessToken);
             exchangeRef.current = null;
             await probeAndRecover();

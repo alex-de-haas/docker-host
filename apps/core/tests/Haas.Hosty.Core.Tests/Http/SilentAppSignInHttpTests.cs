@@ -19,8 +19,9 @@ public sealed class SilentAppSignInHttpTests
         await using var host = await CoreHttpHarness.StartAsync();
         await SeedAsync(host);
         using var browser = host.CreateClient();
+        browser.BaseAddress = new Uri("http://127.0.0.1:7070");
         using var request = OpenRequest();
-        using var response = await browser.SendAsync(request);
+        using var response = await SendOpenAsync(browser, request);
 
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
         Assert.Equal("no-store", response.Headers.CacheControl!.ToString());
@@ -38,7 +39,7 @@ public sealed class SilentAppSignInHttpTests
 
         using var app = host.CreateClient();
         app.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(AppId));
-        using var exchanged = await app.PostAsJsonAsync("/api/auth/apps/token", new { code });
+        using var exchanged = await app.PostAsJsonAsync("/api/auth/apps/token", new { code, codeVerifier = AuthCodeProof.Verifier });
         exchanged.EnsureSuccessStatusCode();
         var token = (await exchanged.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("accessToken").GetString()!;
         var identity = host.Services.GetRequiredService<AppIdentityService>();
@@ -62,8 +63,9 @@ public sealed class SilentAppSignInHttpTests
         await using var host = await CoreHttpHarness.StartAsync();
         await SeedAsync(host);
         using var browser = host.CreateClient();
+        browser.BaseAddress = new Uri("http://127.0.0.1:7070");
         using var request = OpenRequest();
-        using var response = await browser.SendAsync(request);
+        using var response = await SendOpenAsync(browser, request);
         var code = QueryHelpers.ParseQuery(response.Headers.Location!.Query)["code"].ToString();
         if (revocation == "logout")
         {
@@ -79,7 +81,7 @@ public sealed class SilentAppSignInHttpTests
         }
         using var app = host.CreateClient();
         app.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(AppId));
-        using var exchanged = await app.PostAsJsonAsync("/api/auth/apps/token", new { code });
+        using var exchanged = await app.PostAsJsonAsync("/api/auth/apps/token", new { code, codeVerifier = AuthCodeProof.Verifier });
 
         Assert.Equal(HttpStatusCode.Unauthorized, exchanged.StatusCode);
         Assert.Equal("token_revoked", (await exchanged.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
@@ -92,8 +94,9 @@ public sealed class SilentAppSignInHttpTests
         await using var host = await CoreHttpHarness.StartAsync();
         await SeedAsync(host);
         using var browser = host.CreateClient();
+        browser.BaseAddress = new Uri("http://127.0.0.1:7070");
         using var request = OpenRequest();
-        using var response = await browser.SendAsync(request);
+        using var response = await SendOpenAsync(browser, request);
         var code = QueryHelpers.ParseQuery(response.Headers.Location!.Query)["code"].ToString();
         var now = host.Services.GetRequiredService<IClock>().UtcNow;
         await host.Services.GetRequiredService<UserDirectoryStore>().UpdateAsync(state => state with
@@ -102,7 +105,7 @@ public sealed class SilentAppSignInHttpTests
         });
         using var app = host.CreateClient();
         app.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(AppId));
-        using var exchanged = await app.PostAsJsonAsync("/api/auth/apps/token", new { code });
+        using var exchanged = await app.PostAsJsonAsync("/api/auth/apps/token", new { code, codeVerifier = AuthCodeProof.Verifier });
         exchanged.EnsureSuccessStatusCode();
         var token = (await exchanged.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("accessToken").GetString()!;
         var identity = await host.Services.GetRequiredService<AppIdentityService>().RevalidateAsync(token, AppId);
@@ -117,16 +120,17 @@ public sealed class SilentAppSignInHttpTests
         await using var host = await CoreHttpHarness.StartAsync();
         await SeedAsync(host);
         using var browser = host.CreateClient();
+        browser.BaseAddress = new Uri("http://127.0.0.1:7070");
         using var firstRequest = OpenRequest();
-        using var firstResponse = await browser.SendAsync(firstRequest);
+        using var firstResponse = await SendOpenAsync(browser, firstRequest);
         var firstCode = QueryHelpers.ParseQuery(firstResponse.Headers.Location!.Query)["code"].ToString();
         using var app = host.CreateClient();
         app.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(AppId));
-        using var firstExchange = await app.PostAsJsonAsync("/api/auth/apps/token", new { code = firstCode });
+        using var firstExchange = await app.PostAsJsonAsync("/api/auth/apps/token", new { code = firstCode, codeVerifier = AuthCodeProof.Verifier });
         firstExchange.EnsureSuccessStatusCode();
         var olderToken = (await firstExchange.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("accessToken").GetString()!;
         using var delayedRequest = OpenRequest();
-        using var delayedResponse = await browser.SendAsync(delayedRequest);
+        using var delayedResponse = await SendOpenAsync(browser, delayedRequest);
         var delayedCode = QueryHelpers.ParseQuery(delayedResponse.Headers.Location!.Query)["code"].ToString();
 
         const string password = "correct-horse-battery-staple";
@@ -146,7 +150,7 @@ public sealed class SilentAppSignInHttpTests
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
         Assert.DoesNotContain((await users.ReadAsync()).Sessions, session => session.Id == SessionId);
 
-        using var delayedExchange = await app.PostAsJsonAsync("/api/auth/apps/token", new { code = delayedCode });
+        using var delayedExchange = await app.PostAsJsonAsync("/api/auth/apps/token", new { code = delayedCode, codeVerifier = AuthCodeProof.Verifier });
         Assert.Equal(HttpStatusCode.Unauthorized, delayedExchange.StatusCode);
         var identity = await host.Services.GetRequiredService<AppIdentityService>().RevalidateAsync(olderToken, AppId);
         Assert.True(identity.Active);
@@ -179,10 +183,81 @@ public sealed class SilentAppSignInHttpTests
             }).ToArray(),
         });
         using var browser = host.CreateClient();
+        browser.BaseAddress = new Uri("http://127.0.0.1:7070");
         using var request = OpenRequest(sessionId: sessionState switch { "missing" => null, "unknown" => "unknown", _ => SessionId });
-        using var response = await browser.SendAsync(request);
+        using var response = await SendOpenAsync(browser, request);
 
         AssertAppErrorRedirect(response, "login_required");
+        Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+    }
+
+    [Theory]
+    [InlineData("login_required")]
+    [InlineData("access_denied")]
+    public async Task SilentOpen_CallbackStateIsNotDuplicatedOnErrors(string error)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        await SeedAsync(host);
+        if (error == "access_denied")
+            await host.Services.GetRequiredService<UserDirectoryStore>().UpdateAsync(current => current with { Assignments = [] });
+        using var browser = host.CreateClient();
+        browser.BaseAddress = new Uri("http://127.0.0.1:7070");
+        using var request = OpenRequest(redirectUri: RedirectUri + "&state=" + State, sessionId: error == "login_required" ? null : SessionId);
+        using var response = await SendOpenAsync(browser, request);
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        var query = QueryHelpers.ParseQuery(response.Headers.Location!.Query);
+        Assert.Equal(error, query["error"].ToString());
+        Assert.Equal(1, query["state"].Count);
+        Assert.Equal(State, query["state"].ToString());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SilentOpen_CookieRefusalReturnsOnlyTheStoredErrorCallback_WithoutBurningTheIntent(bool wrongNonce)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        await SeedAsync(host);
+        using var browser = host.CreateClient();
+        browser.BaseAddress = new Uri("http://127.0.0.1:7070");
+        using var request = OpenRequest(redirectUri: RedirectUri + "&state=" + State);
+        using var started = await browser.SendAsync(request);
+        Assert.Equal(HttpStatusCode.SeeOther, started.StatusCode);
+        var nonceCookie = started.Headers.GetValues("Set-Cookie").Single().Split(';')[0];
+        using var rejectedRequest = new HttpRequestMessage(HttpMethod.Get, started.Headers.Location);
+        rejectedRequest.Headers.Add("Sec-Fetch-Mode", "navigate");
+        rejectedRequest.Headers.Add("Sec-Fetch-Dest", "iframe");
+        rejectedRequest.Headers.Add("Cookie", "hosty_session=" + SessionId + (wrongNonce ? "; " + nonceCookie.Split('=')[0] + "=" + new string('b', 64) : ""));
+        using var rejected = await browser.SendAsync(rejectedRequest);
+        AssertAppErrorRedirect(rejected, "login_required");
+        Assert.Equal(1, QueryHelpers.ParseQuery(rejected.Headers.Location!.Query)["state"].Count);
+        Assert.False(rejected.Headers.Contains("Set-Cookie"));
+        Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        using var rightfulRequest = new HttpRequestMessage(HttpMethod.Get, started.Headers.Location);
+        rightfulRequest.Headers.Add("Sec-Fetch-Mode", "navigate");
+        rightfulRequest.Headers.Add("Sec-Fetch-Dest", "iframe");
+        rightfulRequest.Headers.Add("Cookie", nonceCookie + "; hosty_session=" + SessionId);
+        using var rightful = await browser.SendAsync(rightfulRequest);
+        Assert.NotEmpty(QueryHelpers.ParseQuery(rightful.Headers.Location!.Query)["code"].ToString());
+    }
+
+    [Theory]
+    [InlineData("document", AppId)]
+    [InlineData("iframe", "wrong.app")]
+    public async Task SilentOpen_UnboundErrorCallbackDoesNotAcceptOtherAppsOrTopLevelNavigation(string destination, string appId)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        await SeedAsync(host);
+        using var browser = host.CreateClient();
+        browser.BaseAddress = new Uri("http://127.0.0.1:7070");
+        using var intent = OpenRequest();
+        using var started = await browser.SendAsync(intent);
+        using var wrong = new HttpRequestMessage(HttpMethod.Get, started.Headers.Location!.OriginalString.Replace(AppId, appId));
+        wrong.Headers.Add("Sec-Fetch-Mode", "navigate"); wrong.Headers.Add("Sec-Fetch-Dest", destination);
+        using var denied = await browser.SendAsync(wrong);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        Assert.Null(denied.Headers.Location);
+        Assert.False(denied.Headers.Contains("Set-Cookie"));
         Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
     }
 
@@ -201,8 +276,9 @@ public sealed class SilentAppSignInHttpTests
             Sessions = state.Sessions.Select(session => deniedReason == "scoped" ? session with { Audience = AppId } : session).ToArray(),
         });
         using var browser = host.CreateClient();
+        browser.BaseAddress = new Uri("http://127.0.0.1:7070");
         using var request = OpenRequest();
-        using var response = await browser.SendAsync(request);
+        using var response = await SendOpenAsync(browser, request);
 
         AssertAppErrorRedirect(response, "access_denied");
         Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
@@ -218,8 +294,9 @@ public sealed class SilentAppSignInHttpTests
         await using var host = await CoreHttpHarness.StartAsync();
         await SeedAsync(host);
         using var browser = host.CreateClient();
+        browser.BaseAddress = new Uri("http://127.0.0.1:7070");
         using var request = OpenRequest(destination: destination);
-        using var response = await browser.SendAsync(request);
+        using var response = await SendOpenAsync(browser, request);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Null(response.Headers.Location);
@@ -237,8 +314,9 @@ public sealed class SilentAppSignInHttpTests
         await using var host = await CoreHttpHarness.StartAsync();
         await SeedAsync(host);
         using var browser = host.CreateClient();
+        browser.BaseAddress = new Uri("http://127.0.0.1:7070");
         using var request = OpenRequest(state: state);
-        using var response = await browser.SendAsync(request);
+        using var response = await SendOpenAsync(browser, request);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("prompt_invalid", (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
@@ -253,8 +331,9 @@ public sealed class SilentAppSignInHttpTests
         await using var host = await CoreHttpHarness.StartAsync();
         await SeedAsync(host);
         using var browser = host.CreateClient();
+        browser.BaseAddress = new Uri("http://127.0.0.1:7070");
         using var request = OpenRequest(redirectUri: "http://foreign.example.test/callback", sessionId: sessionId);
-        using var response = await browser.SendAsync(request);
+        using var response = await SendOpenAsync(browser, request);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Equal("redirect_uri_denied", (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
@@ -269,8 +348,9 @@ public sealed class SilentAppSignInHttpTests
         await using var host = await CoreHttpHarness.StartAsync();
         await SeedAsync(host);
         using var browser = host.CreateClient();
+        browser.BaseAddress = new Uri("http://127.0.0.1:7070");
         using var request = OpenRequest(redirectUri: redirectUri);
-        using var response = await browser.SendAsync(request);
+        using var response = await SendOpenAsync(browser, request);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("redirect_uri_invalid", (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
@@ -285,10 +365,15 @@ public sealed class SilentAppSignInHttpTests
         await using var host = await CoreHttpHarness.StartAsync();
         await SeedAsync(host);
         using var browser = host.CreateClient();
+        browser.BaseAddress = new Uri("http://127.0.0.1:7070");
         using var request = OpenRequest();
-        request.RequestUri = new Uri(request.RequestUri!.OriginalString.Replace("prompt=none", "prompt=" + prompt)
-            + (responseMode is null ? "" : "&responseMode=" + responseMode), UriKind.Relative);
-        using var response = await browser.SendAsync(request);
+        request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["redirectUri"] = RedirectUri, ["state"] = State, ["prompt"] = prompt,
+            ["responseMode"] = responseMode ?? "", ["codeChallenge"] = AuthCodeProof.Challenge,
+            ["codeChallengeMethod"] = "S256",
+        });
+        using var response = await SendOpenAsync(browser, request);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Null(response.Headers.Location);
@@ -310,12 +395,34 @@ public sealed class SilentAppSignInHttpTests
     private static HttpRequestMessage OpenRequest(string? state = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         string? destination = "iframe", string redirectUri = RedirectUri, string? sessionId = SessionId)
     {
-        var path = $"/api/apps/{AppId}/open?prompt=none&redirectUri={Uri.EscapeDataString(redirectUri)}"
-            + (state is null ? "" : "&state=" + Uri.EscapeDataString(state));
-        var request = new HttpRequestMessage(HttpMethod.Get, path);
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/apps/{AppId}/sign-in-intent");
+        var fields = new Dictionary<string, string>
+        {
+            ["redirectUri"] = redirectUri, ["prompt"] = "none",
+            ["codeChallenge"] = AuthCodeProof.Challenge, ["codeChallengeMethod"] = "S256",
+        };
+        if (state is not null) fields["state"] = state;
+        request.Content = new FormUrlEncodedContent(fields);
+        request.Headers.Add("Origin", "http://app.example.test");
+        request.Headers.Add("Sec-Fetch-Mode", "navigate");
         if (destination is not null) request.Headers.Add("Sec-Fetch-Dest", destination);
         if (sessionId is not null) request.Headers.Add("Cookie", $"hosty_session={sessionId}");
         return request;
+    }
+
+    private static async Task<HttpResponseMessage> SendOpenAsync(HttpClient browser, HttpRequestMessage request)
+    {
+        var started = await browser.SendAsync(request);
+        if (started.StatusCode != HttpStatusCode.SeeOther) return started;
+        using (started)
+        using (var continuation = new HttpRequestMessage(HttpMethod.Get, started.Headers.Location))
+        {
+            foreach (var header in request.Headers.Where(header => header.Key != "Cookie"))
+                continuation.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            var session = request.Headers.TryGetValues("Cookie", out var cookies) ? string.Join("; ", cookies) + "; " : "";
+            continuation.Headers.Add("Cookie", session + started.Headers.GetValues("Set-Cookie").Single().Split(';')[0]);
+            return await browser.SendAsync(continuation);
+        }
     }
 
     private static async Task SeedAsync(CoreHttpHarness host)

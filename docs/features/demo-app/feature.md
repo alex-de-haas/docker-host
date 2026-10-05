@@ -1,7 +1,7 @@
 # Demo App
 
 Created: 2026-06-03
-Updated: 2026-10-01
+Updated: 2026-10-05
 
 Demo App is the repository-local Hosty runtime app under `apps/demo-app`. It is the primary first-party app used to validate runtime app lifecycle work, source overrides, local command runtime profiles, runtime switching, Hosty identity, scoped app directory access, storage probes, and app-owned roles.
 
@@ -34,7 +34,7 @@ hosty core start
 hosty apps install apps/demo-app --runtime dev
 hosty apps start com.haas.demo-app
 hosty apps health com.haas.demo-app
-hosty apps open com.haas.demo-app --user user@docker-host.local --mode shell
+hosty apps open com.haas.demo-app --mode shell
 ```
 
 The `dev` runtime profile starts two Core-managed local command services from `apps/demo-app`. Core assigns available local ports and injects each service's selected port as `HOSTY_PORT_HTTP` and `PORT`.

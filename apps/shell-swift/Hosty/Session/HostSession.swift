@@ -136,6 +136,18 @@ final class HostSession {
         state = .signedOut
     }
 
+    /// Host replacement clears documents immediately and revokes only primary confirmations it owns.
+    @MainActor func releaseWorkspaces() {
+        let confirmations = workspaces.reset()
+        Task {
+            await withTaskGroup(of: Void.self) { group in
+                for client in confirmations {
+                    group.addTask { try? await client.logout() }
+                }
+            }
+        }
+    }
+
     /// Everything that must go when this session stops being usable, however it stopped.
     ///
     /// The web views go with the credential rather than only when the operator taps Sign out. An
@@ -144,6 +156,6 @@ final class HostSession {
     /// next reach the previous user's app identity.
     private func endSession() async {
         keychain.removeSessionID(for: connection.origin)
-        await MainActor.run { workspaces.reset() }
+        await MainActor.run { releaseWorkspaces() }
     }
 }

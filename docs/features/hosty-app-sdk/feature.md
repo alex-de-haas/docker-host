@@ -4,7 +4,7 @@ Created: 2026-07-15
 Updated: 2026-10-05
 
 Shared Host integration for runtime apps, in two published packages: **`@hosty-sdk/app`** on npmjs
-(TypeScript, 0.20.0) and **`HostySdk.App`** on NuGet (.NET, 0.6.0). They own the app half of the
+(TypeScript) and **`HostySdk.App`** on NuGet (.NET, 0.6.0). They own the app half of the
 [auth session lifecycle](../auth-session-lifecycle/feature.md) contract — session classification,
 recovery, Core revalidation, launch-mode awareness — plus the app secrets client, delegated-token
 validation, and (TypeScript only) the theme protocol between a shell and the pages it embeds.
@@ -30,7 +30,8 @@ contract; none depends on the default Shell or its embedding messages.
 @hosty-sdk/app/delegated       # local ECDSA validation of Core-issued delegated tokens
 @hosty-sdk/app/react           # 'use client': AppIdentityBridge, HostLaunchBridge, HostThemeBridge, useLaunchMode
 @hosty-sdk/app/embedder        # theme sender and legacy message parsers
-@hosty-sdk/app/browser-auth    # app-local grant persistence, same-origin appFetch and Core popup sign-in
+@hosty-sdk/app/browser-auth    # app-local proof attempts, grant persistence, appFetch and popup sign-in
+@hosty-sdk/app/app-code        # pure: strict Core protocol discovery and code-verifier validation
 @hosty-sdk/app/install         # pure: typed client and InstallationFlow
 @hosty-sdk/app/install/react   # client: useInstallation and InstallDialog
 @hosty-sdk/app/install/server  # server-only: app-local installation route adapter
@@ -95,14 +96,14 @@ same state, which is what stops the three-contradicting-errors failure.
 | --- | --- | --- | --- |
 | `resolving` | probe in flight | quiet skeleton, never an error | same |
 | `active` | token valid | app content | app content |
-| `recoverable` | Core **401** | try silent Core sign-in once during initial load without a stored grant; otherwise offer the Core popup button | redirect to Core `/open` once per tab; Core bounces through `/login?returnTo` and returns a fresh code. Only the loop-guard terminal state shows a message with an explicit link |
+| `recoverable` | Core **401** | try one app-origin silent intent during initial load; otherwise offer the app-owned popup button | persist a private attempt and submit the Core intent form once per tab; normal login returns a bound code. Storage refusal or the loop guard offers the app-owned popup action |
 | `denied` | Core **403** | "signed in, no access", no login button — a redirect would loop | same |
 | `unavailable` | **503** / Core unreachable | "can't reach Hosty, retrying" + Retry; the cookie is kept | same |
 | `misconfigured` | no service token or no Core origin | "misconfigured on the host, contact the administrator", no login button | same |
 
 Core owns the password form. Embedded apps first try a frame-local silent Core redirect during
-initial identity resolution, then offer a sign-in action that opens Core when necessary. Standalone
-apps navigate through Core with a once-per-tab loop guard. Shell follows the same standalone rule.
+initial identity resolution, then offer the app-owned popup action when necessary. Standalone
+apps persist proof and submit the Core intent form with a once-per-tab loop guard. Shell follows the same standalone rule.
 Denied, unavailable and misconfigured states remain distinct from recoverable authentication.
 
 The one piece of complexity that survives the simplicity pressure is the standalone once-per-tab
@@ -119,6 +120,35 @@ cleanup and replay. The replay waits for that exchange before probing or recover
 only the active effect applies its result and resumes the identity probe. Cleanup still cancels
 probes and recovery timers, while an already submitted code exchange runs to completion so its
 single-use code is not lost.
+
+## Authenticated code exchange
+
+`exchangeAppCode(code, codeVerifier)` and `createAppCodeRouteHandler` validate the private verifier
+before contacting Core and send `{ code, codeVerifier }` with
+`Authorization: Bearer <HOSTY_APP_SERVICE_TOKEN>`. Code-only public requests receive a local 400;
+missing service configuration returns `app_service_token_missing`. Proof POSTs refuse redirects.
+Core checks the calling app and constant-time S256 proof before consuming the code, so a disclosed
+code or unrelated verifier cannot redeem or burn the original attempt.
+
+The browser creates an independent 256-bit state and verifier with the platform CSPRNG, and computes
+S256 using the bundled SHA-256 implementation. Full-document/silent attempts use bounded five-minute,
+state-specific app-origin sessionStorage records and verify storage before navigating. Popup attempts
+keep proof in the initiating app's memory. Callback correlation includes state, app, Core origin and
+redirect URI; no public query fields create an accepted attempt. Callback exchange is shared across
+Strict Mode effects, takes proof once and removes code/state from the URL early. Storage refusal
+skips automatic navigation and offers the explicit popup action.
+
+Protocol 2 submits an app-owned form to Core `sign-in-intent`; immutable nonce-bound continuation
+handles normal login and one-time issuance. `openAppSignIn` returns `{ code, codeVerifier }` only to
+its app-owned exchange callback; Core popup messages still contain only code/state. Activity renewal
+uses the same flow and keeps the loaded page and drafts. Native navigation carries only a public
+challenge, intercepted by the trusted native coordinator before Core dispatch.
+
+`getRecoveryParams` is asynchronous and includes `appAuthProtocol: 1 | 2 | null` discovered on the
+fixed internal Core origin. Strict no-store metadata allows protocol 1 only after a definite metadata
+404 and validated old-Core status below 0.120.0. Unknown/transient failures do not downgrade, and
+observing protocol 2 establishes a sticky minimum for that Core connection/tab. An upgrade discards
+an old attempt and restarts once with fresh proof. See [App Code Exchange](../app-code-exchange/feature.md).
 
 ## Classification And Caching
 
@@ -213,11 +243,11 @@ limited to initial resolution; later identity expiry preserves the mounted docum
 See [embedded app sign-in](../embedded-app-sign-in/feature.md) for the deployment and Core contract.
 The frame does not navigate its parent or ask Shell for a user token.
 
-Core `/api/apps/{appId}/open?responseMode=web_message&state=...` requires a browser navigation and
-its own origin-bound session cookie. It validates the app assignment and registered callback origin,
-then posts a single-use code to that exact app origin. The SDK accepts the message only from the
-opened popup, at the configured Core origin, with the matching random 256-bit state. Missing Core
-sessions go through Core's password form. Invalid targets, mismatched state and code replay fail.
+The app creates a private proof before opening its popup and submits the public challenge with
+`responseMode=web_message` through an app-owned form. Core validates Origin/navigation and binds
+its continuation to a separate browser nonce cookie before login. The SDK accepts only the
+original popup's message at the configured Core origin with matching state. The proof remains
+in the opener app, and the native coordinator receives only public challenge fields.
 
 The app's own server exchanges the code and validates the result with its service credential before
 returning its app grant and setting its host-only HttpOnly cookie. Where iframe cookie access is
@@ -341,7 +371,7 @@ See [permission management](../app-permission-management/feature.md) for first-p
 - The revalidation cache is asserted in both directions: a positive result is reused inside the window
   and clamped to the grant's expiry, a failure is never cached, and the map stays bounded.
 - Recovery decisions are covered for both channels — embedded opens a bound Core popup, standalone builds the
-  `/open` URL — plus the two guards: once per tab, and no redirect when the Core origin is loopback and
+  app-owned intent form — plus the two guards: once per tab, and no redirect when the Core origin is loopback and
   the page host is not.
 - Legacy embedder parser compatibility tests reject a foreign `event.source`, a mismatched origin, and a mismatched
   `appId`, and its rate limiter holds under repeated intents.
@@ -377,3 +407,8 @@ See [permission management](../app-permission-management/feature.md) for first-p
   same transport without persisting server-side credentials.
 - Initial silent sign-in tests cover its preconditions, once-per-tab guard, state verification,
   `login_required`/`access_denied` fallbacks and no navigation after a mounted session expires.
+
+- S256 covers the RFC vector, independent CSPRNG values, canonical challenge syntax and malformed proof.
+- Browser intent tests inspect form Origin policy and ensure verifier never enters action/inputs/messages.
+- Callback tests reject imported public attempts, mismatched state/app/Core/redirect, expiry and replay.
+- Discovery tests cover only proven old-Core compatibility, malformed/transient refusal and sticky protocol 2.

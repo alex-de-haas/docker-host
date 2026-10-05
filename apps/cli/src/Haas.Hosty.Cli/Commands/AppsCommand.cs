@@ -437,7 +437,7 @@ internal sealed partial class AppsCommand(CommandContext context)
         using var core = await OpenCoreAsync();
         var response = await core.PostAsync<AppOpenLinkResponse>(
             $"apps/{Uri.EscapeDataString(options.AppId)}/open-link",
-            new AppOpenLinkRequest(options.User, options.Mode, options.RedirectUri));
+            new AppOpenLinkRequest(options.Mode, options.RedirectUri));
         if (response is null)
         {
             context.Error.MarkupLine("[red]Hosty Core returned an empty open-link response.[/]");
@@ -1397,7 +1397,6 @@ internal sealed partial class AppsCommand(CommandContext context)
         }
 
         var appId = args[0];
-        string? user = null;
         var mode = "standalone";
         string? redirectUri = null;
         var format = "url";
@@ -1406,8 +1405,7 @@ internal sealed partial class AppsCommand(CommandContext context)
             switch (args[index])
             {
                 case "--user":
-                    user = RequireOptionValue(args, ref index, "--user");
-                    break;
+                    throw new CommandUsageException("apps open no longer accepts --user. Remove it and sign in with the browser's account. Use apps identity --user only for diagnostic endpoint probes.", Usage);
                 case "--mode":
                     mode = RequireOptionValue(args, ref index, "--mode");
                     break;
@@ -1422,17 +1420,12 @@ internal sealed partial class AppsCommand(CommandContext context)
             }
         }
 
-        if (string.IsNullOrWhiteSpace(user))
-        {
-            throw new CommandUsageException("apps open requires --user <email-or-id>.", Usage);
-        }
-
         if (format is not "url" and not "json")
         {
             throw new CommandUsageException("apps open --format must be url or json.", Usage);
         }
 
-        return new OpenOptions(appId, user, mode, redirectUri, format);
+        return new OpenOptions(appId, mode, redirectUri, format);
     }
 
     private static string RequireSingleAppId(string[] args, string command)
@@ -1499,7 +1492,7 @@ internal sealed partial class AppsCommand(CommandContext context)
 
     internal sealed record IdentityOptions(string AppId, string User, string Format);
 
-    internal sealed record OpenOptions(string AppId, string User, string Mode, string? RedirectUri, string Format);
+    internal sealed record OpenOptions(string AppId, string Mode, string? RedirectUri, string Format);
 
     internal sealed record AppsResponse(IReadOnlyList<AppSummary> Apps);
 
@@ -1694,9 +1687,9 @@ internal sealed partial class AppsCommand(CommandContext context)
 
     internal sealed record AppIdentityTokenResult(string AccessToken, string TokenType, DateTimeOffset ExpiresAt, int ExpiresInSeconds);
 
-    internal sealed record AppOpenLinkRequest(string User, string? Mode, string? RedirectUri);
+    internal sealed record AppOpenLinkRequest(string? Mode, string? RedirectUri);
 
-    internal sealed record AppOpenLinkResponse(string AppId, string UserId, string Mode, string Url, DateTimeOffset? ExpiresAt);
+    internal sealed record AppOpenLinkResponse(string AppId, string Mode, string Url);
 
     private const string Usage = """
         hosty apps
@@ -1732,7 +1725,7 @@ internal sealed partial class AppsCommand(CommandContext context)
           source-override <app-id> --path <worktree> [--commit <sha>] [--format table|json]
           source-clear-override <app-id> [--format table|json]
           identity <app-id> --user <email-or-id> [--format token|header|env|json]
-          open <app-id> --user <email-or-id> [--mode shell|standalone] [--redirect-uri <uri>] [--format url|json]
+          open <app-id> [--mode shell|standalone] [--redirect-uri <uri>] [--format url|json]
 
         Description:
           Calls Hosty Core lifecycle APIs for runtime app management.

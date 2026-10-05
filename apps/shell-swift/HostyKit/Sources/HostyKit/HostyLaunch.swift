@@ -1,16 +1,9 @@
 import Foundation
 
-/// The launch mode a shell declares to the app it opens, carried as one query parameter on the URL the
-/// app is loaded with — the same contract the browser Shell's theme parameters travel on.
-///
-/// This client's mode is `native`. Inside a `WKWebView` the app is the **top** frame, so the SDK's
-/// structural heuristic reads it as a plain browser tab; without the declaration the app has no way to
-/// tell this workspace from a standalone open, and draws its own name and page navigation underneath
-/// the ones the navigation bar and the pages menu already render.
-///
-/// `native` is deliberately not `embedded`: identity recovery for `embedded` posts to a parent frame,
-/// and there is none here. `native` keeps the standalone redirect to Core's `/open`, which is the
-/// navigation `WorkspaceStore.RecoveryCoordinator` intercepts to re-mint a launch code.
+/// Native declares its mode on the app URL, hiding app chrome duplicated by the native shell.
+/// The app is the top frame of a WKWebView. Its SDK creates the private proof locally and
+/// builds a public Core broker navigation which the native coordinator cancels before dispatch.
+/// Native forwards only the challenge using its Core session; no verifier enters native Shell.
 public enum HostyLaunch {
     /// Frozen — `@hosty-sdk/app` reads this exact name, and an app built against an older SDK ignores
     /// the parameter rather than breaking on it.

@@ -32,12 +32,18 @@ stored grant while still classifying recovery and denial by Core's HTTP status.
 ## Silent initial sign-in
 
 While resolving its first identity, an embedded bridge with no restored grant attempts silent
-sign-in after a `not-present` or `expired` probe. It stores a random 256-bit hex `state`, applies a
-once-per-tab, per-app guard, and replaces its own frame location with Core's `/open` URL using
-`prompt=none`. The redirect URI is the current app URL without a fragment.
+sign-in after a `not-present` or `expired` probe. It generates independent random state and a
+private S256 verifier, persists the attempt in app-origin sessionStorage, applies a once-per-tab,
+per-app guard, and submits an app-owned form to Core's `sign-in-intent` route using `prompt=none`.
+A failed storage round trip leaves the app mounted and offers the explicit popup. The redirect URI
+is the current app URL without a fragment.
 
-Core accepts this mode only for `Sec-Fetch-Dest: iframe` and a valid state. It validates the redirect
-URI against the app's browser origins before responding:
+Core accepts this mode only for an actual iframe navigation with the exact app Origin, valid state
+and S256 challenge. It validates the callback against the installed app, stores a five-minute
+immutable intent and sets a unique HttpOnly browser nonce. The 303 continuation requires that
+nonce before it can claim the intent once and issue a code.
+[App code exchange](../app-code-exchange/feature.md) defines the complete initiation and proof contract.
+The resulting continuation has these outcomes:
 
 | Core result | Redirect back to the app | App result |
 | --- | --- | --- |
@@ -45,7 +51,9 @@ URI against the app's browser origins before responding:
 | No live session | `error=login_required` and `state` | Inline **Sign in via Hosty** button |
 | Disabled, unassigned or otherwise denied user | `error=access_denied` and `state` | Access-denied card |
 
-The bridge ignores missing or mismatched state and does not exchange that code. Core never sends a
+The bridge ignores missing or mismatched state and does not exchange that code. Matching state
+selects only its locally created attempt; the app exchanges the code with that private verifier,
+and its server authenticates to Core with its own service token. A code alone cannot redeem a grant. Core never sends a
 silent frame to `/login`, whose framing policy remains restrictive. Ordinary top-level `/open`
 navigation and the app-owned `web_message` popup retain their existing behavior.
 
@@ -62,7 +70,7 @@ the frame URL or broker app credentials.
 ## Deployment
 
 Core's session cookie remains host-only and `SameSite=Lax`. The silent path succeeds when the
-browser sends that cookie to Core from the frame. Hosty uses one flow and no browser detection.
+browser sends both its session and the matching intent nonce to Core from the frame. Hosty uses one flow and no browser detection.
 Where the cookie is unavailable, Core returns `login_required` and the existing popup remains the
 sign-in path; the successful grant is then kept for the tab.
 
@@ -72,7 +80,9 @@ suffix, including a shared dynamic-DNS zone, does not satisfy this rule. Configu
 through [Public Origins](../public-origins/feature.md) and, where used,
 [Cloudflare ingress](../cloudflare-ingress/feature.md).
 
-The generated `*.hosty.localhost` origins remain usable through the same popup fallback. A cookie
+Generated HTTP DNS Core origins now require an isolated literal-IP Core origin or HTTPS before
+creating an intent. Source development uses a `[::1]` public Core origin with app hosts elsewhere;
+its cross-site arrangement uses the popup fallback. A cookie
 probe on 2026-10-05 showed Chromium sending Core's Lax cookie from Shell's frame and Safari treating
 the same origins as cross-site without sending it. This is evidence of deployment behavior, not a
 browser-specific policy in the product.
@@ -148,7 +158,9 @@ npm run demo-app:build
 - Harness protected settings use the restored own-app grant and retain the server-side boundary
   against writing credentials to durable session records. Its real HTTP 200 identity probe forwards
   revoked and wrong-app error codes, and the bridge clears storage with sign-in and denial UI.
-- Core requires an iframe and valid state, preserves redirect-origin validation, returns code,
+- Core requires exact app Origin, iframe navigation, a locally created S256 attempt and its nonce;
+  a known silent nonce refusal returns only a state-bound login-required callback.
+- Core preserves redirect-origin validation and atomic one-time intent claim, returns code,
   login-required and access-denied outcomes, never frames login, establishes no silent activity and
   revokes silent grants on explicit logout.
 - The bridge's preconditions and once-per-tab guard prevent redirect loops. Missing/mismatched

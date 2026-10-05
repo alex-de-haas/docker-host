@@ -110,12 +110,27 @@ internal static class AuthEndpoints
                 clock,
                 async user => await HandleIdentityError(async () =>
                     CoreJson.Json(await identity.CreateAuthorizationCodeAsync(
-                        input.AppId, user.Id, input.RedirectUri, CoreSessionAuthorization.ReadSessionId(request), cancellationToken))),
+                        input.AppId, user.Id, input.RedirectUri, input.CodeChallenge, input.CodeChallengeMethod, CoreSessionAuthorization.ReadSessionId(request), cancellationToken))),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
-        app.MapPost("/api/auth/apps/token", async (AppTokenExchangeRequest input, AppIdentityService identity, CancellationToken cancellationToken) =>
-            await HandleIdentityError(async () => CoreJson.Json(await identity.ExchangeCodeAsync(input.Code, cancellationToken))));
+        app.MapPost("/api/auth/apps/token", async (
+            HttpRequest request,
+            AppTokenExchangeRequest input,
+            AppServiceTokenService serviceTokens,
+            AppIdentityService identity,
+            CancellationToken cancellationToken) =>
+        {
+            var serviceToken = CoreSessionAuthorization.ReadBearerToken(request);
+            var callingAppId = serviceToken is null ? null : serviceTokens.ResolveAppId(serviceToken);
+            if (callingAppId is null)
+            {
+                await identity.AuditRejectedCodeExchangeAsync(input.Code, "app_service_token_invalid", cancellationToken);
+                return CoreJson.Json(new ErrorResponse("app_service_token_invalid", "App service token is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            return await HandleIdentityError(async () => CoreJson.Json(await identity.ExchangeCodeAsync(input.Code, callingAppId, input.CodeVerifier, cancellationToken)));
+        });
 
         app.MapPost("/api/auth/apps/revalidate", async (
             HttpRequest request,
@@ -147,8 +162,22 @@ internal static class AuthEndpoints
                 users,
                 clock,
                 async user => await HandleIdentityError(async () =>
-                    CoreJson.Json(await identity.CreateAuthorizationCodeAsync(
-                        appId, user.Id, input.RedirectUri, CoreSessionAuthorization.ReadSessionId(request), cancellationToken))),
+                {
+                    if (input.InteractiveRenewal)
+                    {
+                        var credential = CoreSessionAuthorization.ReadSessionCredential(request);
+                        var parent = (await users.ReadAsync(cancellationToken)).Sessions.FirstOrDefault(session => session.Id == credential.Value);
+                        // Only a native client holding the primary session can assert its validated
+                        // interactive renewal. Ambient cookies and app/access credentials cannot.
+                        if (credential.Source != SessionCredentialSource.Bearer || parent is not
+                            { Kind: null, Audience: null, GrantId: null, BrowserOrigin: not null } || (parent.Scopes?.Count ?? 0) != 0)
+                            return CoreJson.Json(new ErrorResponse("native_session_required", "Interactive native renewal requires a primary Core session bearer."), statusCode: 403);
+                        await identity.RequireLiveAuthorizingSessionAsync(parent.Id, user.Id, cancellationToken);
+                    }
+                    return CoreJson.Json(await identity.CreateAuthorizationCodeAsync(
+                        appId, user.Id, input.RedirectUri, input.CodeChallenge, input.CodeChallengeMethod, CoreSessionAuthorization.ReadSessionId(request), cancellationToken,
+                        activityAuthorized: input.InteractiveRenewal));
+                }),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -195,98 +224,8 @@ internal static class AuthEndpoints
                 cancellationToken: cancellationToken);
         });
 
-        app.MapGet("/api/apps/{appId}/open", async (
-            string appId,
-            string? redirectUri,
-            string? responseMode,
-            string? state,
-            string? prompt,
-            HttpRequest request,
-            AppRegistryStore apps,
-            UserDirectoryStore users,
-            IClock clock,
-            AppIdentityService identity,
-            CancellationToken cancellationToken) =>
-        {
-            if (string.IsNullOrWhiteSpace(redirectUri))
-            {
-                return CoreJson.Json(new ErrorResponse("redirect_uri_missing", "Redirect URI is required."), statusCode: StatusCodes.Status400BadRequest);
-            }
-
-            if (prompt is not null)
-            {
-                if (!string.Equals(prompt, "none", StringComparison.Ordinal) || responseMode is not null
-                    || state is null || state.Length != 64 || !state.All(Uri.IsHexDigit))
-                    return CoreJson.Json(new ErrorResponse("prompt_invalid", "Silent sign-in requires a 256-bit initiation state and no response mode."), statusCode: StatusCodes.Status400BadRequest);
-                if (!string.Equals(request.Headers["Sec-Fetch-Dest"], "iframe", StringComparison.OrdinalIgnoreCase))
-                    return Results.StatusCode(StatusCodes.Status403Forbidden);
-
-                return await HandleIdentityError(async () =>
-                {
-                    // Check the app-owned destination before returning either credentials or errors.
-                    // Silent recovery stays in its frame: the Core login page cannot be framed.
-                    await identity.RequireAllowedRedirectUriAsync(appId, redirectUri, cancellationToken);
-                    request.HttpContext.Response.Headers.CacheControl = "no-store";
-                    var silentSession = await CoreSessionAuthorization.ResolveNavigationSessionAsync(request, users, clock, cancellationToken);
-                    if (silentSession.User is null)
-                        return SilentAppRedirect(redirectUri, state, silentSession.Denied is null ? "login_required" : "access_denied");
-
-                    try
-                    {
-                        var authorization = await identity.CreateAuthorizationCodeAsync(
-                            appId, silentSession.User.Id, redirectUri, CoreSessionAuthorization.ReadSessionId(request), cancellationToken,
-                            activityAuthorized: false);
-                        return Results.Redirect(Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(authorization.RedirectUri, "state", state));
-                    }
-                    catch (AppIdentityException exception) when (exception.Code is "user_not_found" or "user_disabled" or "app_access_denied" or "system_app_admin_required")
-                    {
-                        return SilentAppRedirect(redirectUri, state, "access_denied");
-                    }
-                });
-            }
-
-            var popup = string.Equals(responseMode, "web_message", StringComparison.Ordinal);
-            if (responseMode is not null && (!popup || state is null || state.Length != 64 || !state.All(Uri.IsHexDigit)))
-                return CoreJson.Json(new ErrorResponse("response_mode_invalid", "Popup recovery requires a 256-bit initiation state."), statusCode: 400);
-            if (popup)
-            {
-                if (!InstallationApprovalEndpoints.IsPageNavigation(request)) return Results.StatusCode(403);
-                if (!await InstallationApprovalEndpoints.HasIsolatedCookieHostAsync(request, apps, cancellationToken))
-                    return Results.Text("Open sign-in on Core's isolated browser origin.", statusCode: 409);
-            }
-
-            // This is a top-level browser navigation (the standalone app recovery target). A missing or
-            // expired Core session must send the user through /login and resume this exact request
-            // afterward, not return a JSON 401 the browser cannot act on. A valid-but-disabled account is
-            // terminal: return its 403 as-is rather than bouncing to a login that would reject it anyway.
-            var navigation = await CoreSessionAuthorization.ResolveNavigationSessionAsync(request, users, clock, cancellationToken);
-            if (navigation.Denied is not null)
-            {
-                return navigation.Denied;
-            }
-
-            if (navigation.User is null || (popup && await InstallationApprovalEndpoints.BrowserActorAsync(request, users, clock, cancellationToken) is null))
-            {
-                var continuation = request.Path + request.QueryString;
-                return Results.Redirect($"/login?returnTo={Uri.EscapeDataString(continuation)}");
-            }
-
-            return await HandleIdentityError(async () =>
-            {
-                var authorization = await identity.CreateAuthorizationCodeAsync(
-                    appId, navigation.User.Id, redirectUri, CoreSessionAuthorization.ReadSessionId(request), cancellationToken,
-                    activityAuthorized: InstallationApprovalEndpoints.IsPageNavigation(request)
-                        && await InstallationApprovalEndpoints.HasIsolatedCookieHostAsync(request, apps, cancellationToken)
-                        && await InstallationApprovalEndpoints.BrowserActorAsync(request, users, clock, cancellationToken) is not null);
-                if (popup) return AppPopupResponse.Render(request.HttpContext.Response, redirectUri, state!, authorization.Code);
-                return Results.Redirect(authorization.RedirectUri);
-            });
-        });
+        AppSignInIntentEndpoints.Map(app);
     }
-
-    private static IResult SilentAppRedirect(string redirectUri, string state, string error)
-        => Results.Redirect(Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(
-            redirectUri, new Dictionary<string, string?> { ["error"] = error, ["state"] = state }));
 
     // The exchange (docs/features/delegated-token-exchange/plan.md). Bounds, in the order a reader
     // should think about them:
@@ -418,7 +357,7 @@ internal static class AuthEndpoints
         "invalid_code" or "code_expired" or "code_consumed"
             or "token_invalid" or "token_expired" or "token_revoked" or "reauth_required"
             => StatusCodes.Status401Unauthorized,
-        "redirect_uri_invalid" => StatusCodes.Status400BadRequest,
+        "redirect_uri_invalid" or "redirect_uri_missing" or "code_challenge_invalid" or "prompt_invalid" or "response_mode_invalid" or "state_invalid" => StatusCodes.Status400BadRequest,
         "signing_key_unavailable" => StatusCodes.Status500InternalServerError,
         _ => StatusCodes.Status403Forbidden,
     };
@@ -608,10 +547,10 @@ internal sealed record AuthSessionCreateResult(bool Succeeded, HostUserRecord? U
 
 internal sealed record LogoutResponse(string Status);
 
-internal sealed record AppAuthorizeRequest(string AppId, string RedirectUri);
+internal sealed record AppAuthorizeRequest(string AppId, string RedirectUri, string? CodeChallenge, string? CodeChallengeMethod);
 
-internal sealed record AppTokenExchangeRequest(string Code);
+internal sealed record AppTokenExchangeRequest(string? Code, string? CodeVerifier);
 
 internal sealed record AppRevalidateRequest(string AccessToken);
 
-internal sealed record AppLaunchCodeRequest(string RedirectUri);
+internal sealed record AppLaunchCodeRequest(string RedirectUri, string? CodeChallenge, string? CodeChallengeMethod, bool InteractiveRenewal = false);

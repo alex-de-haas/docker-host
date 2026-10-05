@@ -1,4 +1,4 @@
-import { readAppIdentityToken, resolveAppSession } from "@hosty-sdk/app/server";
+import { getAppAuthProtocol, readAppIdentityToken, resolveAppSession } from "@hosty-sdk/app/server";
 import { readOwnPermissionNotice } from "@hosty-sdk/app/permissions/server";
 import { appCookie } from "@/app/shell/app-auth-server";
 const config = { appIdFallback: "hosty.shell", identityCookieName: appCookie };
@@ -8,6 +8,7 @@ export async function GET(request: Request) {
   const role = session.status === "active" ? session.identity.hostRole : null;
   try {
     return Response.json({ ...await readOwnPermissionNotice(role, { appId: process.env.HOSTY_APP_ID ?? config.appIdFallback }, request.signal),
+      appAuthProtocol: await getAppAuthProtocol(),
       activeUntil: session.status === "active" ? session.identity.activeUntil : null,
       activityRequired: session.status === "active" ? session.identity.activityRequired : false },
       { headers: { "Cache-Control": "no-store" } });

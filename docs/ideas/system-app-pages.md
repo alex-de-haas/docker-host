@@ -2,7 +2,7 @@
 
 Status: Idea
 Created: 2026-07-10
-Updated: 2026-07-10
+Updated: 2026-10-05
 
 ## Motivation
 
@@ -214,7 +214,7 @@ Close the Core authorization gap before exposing the first system app page. Mark
 - [Marketplace As A System App](marketplace-system-app.md) - first concrete UI-capable system app.
 - [Core App Shell](../features/core-app-shell/feature.md) - current runtime app navigation and iframe behavior.
 - [Shell Access And System Apps](../features/shell-access-and-system-apps/feature.md) - current administrator/system visibility policy.
-- [Direct Origin Runtime App UI](../features/direct-origin-runtime-app-ui.md) - app-origin SSO and session flow.
+- [Direct Origin Runtime App UI](../features/direct-origin-runtime-app-ui/feature.md) - app-origin SSO and session flow.
 
 ## Notes
 

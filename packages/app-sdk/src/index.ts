@@ -160,16 +160,18 @@ export function classifyRevalidationHttpStatus(status: number): AppSessionFailur
 export interface SessionRecoveryParams {
   appId: string | null;
   corePublicOrigin: string | null;
+  appAuthProtocol: 1 | 2 | null;
 }
 
 export function readRecoveryParams(body: unknown): SessionRecoveryParams {
   const recovery =
     body && typeof body === "object" ? (body as { recovery?: unknown }).recovery : null;
   if (!recovery || typeof recovery !== "object") {
-    return { appId: null, corePublicOrigin: null };
+    return { appId: null, corePublicOrigin: null, appAuthProtocol: null };
   }
-  const { appId, corePublicOrigin } = recovery as { appId?: unknown; corePublicOrigin?: unknown };
+  const { appId, corePublicOrigin, appAuthProtocol } = recovery as { appId?: unknown; corePublicOrigin?: unknown; appAuthProtocol?: unknown };
   return {
+    appAuthProtocol: appAuthProtocol === 1 || appAuthProtocol === 2 ? appAuthProtocol : null,
     appId: typeof appId === "string" && appId.length > 0 ? appId : null,
     corePublicOrigin:
       typeof corePublicOrigin === "string" && corePublicOrigin.length > 0

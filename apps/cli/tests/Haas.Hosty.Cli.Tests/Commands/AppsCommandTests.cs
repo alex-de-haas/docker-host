@@ -20,6 +20,81 @@ public sealed class AppsCommandTests : IDisposable
         Environment.SetEnvironmentVariable(RootVariable, rootDirectory);
     }
 
+    [Theory]
+    [InlineData("standalone", "url")]
+    [InlineData("shell", "json")]
+    public async Task OpenAsync_ReturnsAPlainLinkWithoutSelectingAUser(string mode, string format)
+    {
+        using var server = new FakeCoreServer($$"""
+            {"appId":"com.haas.demo-app","mode":"{{mode}}","url":"https://demo.example.test/people"}
+            """);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+        console.Profile.Width = 300;
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps", "open", "com.haas.demo-app", "--mode", mode,
+            "--redirect-uri", "https://demo.example.test/people", "--format", format,
+        ], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("POST", server.Method);
+        Assert.Equal("/control/v1/apps/com.haas.demo-app/open-link", server.PathAndQuery);
+        Assert.Equal("test-secret", server.Headers["X-Hosty-Test-Control"]);
+        using var body = JsonDocument.Parse(server.Body);
+        Assert.Equal(mode, body.RootElement.GetProperty("mode").GetString());
+        Assert.Equal("https://demo.example.test/people", body.RootElement.GetProperty("redirectUri").GetString());
+        Assert.False(body.RootElement.TryGetProperty("user", out _));
+        if (format == "json")
+        {
+            using var result = JsonDocument.Parse(output.ToString());
+            Assert.Equal("https://demo.example.test/people", result.RootElement.GetProperty("url").GetString());
+        }
+        else
+        {
+            Assert.Contains("https://demo.example.test/people", output.ToString());
+        }
+        Assert.DoesNotContain("userId", output.ToString());
+        Assert.DoesNotContain("expiresAt", output.ToString());
+    }
+
+    [Fact]
+    public async Task OpenAsync_DefaultsToStandaloneWithoutAUserFlag()
+    {
+        using var server = new FakeCoreServer("""
+            {"appId":"com.haas.demo-app","mode":"standalone","url":"https://demo.example.test/"}
+            """);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["apps", "open", "com.haas.demo-app"], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("https://demo.example.test/" + Environment.NewLine, output.ToString());
+        using var body = JsonDocument.Parse(server.Body);
+        Assert.Equal("standalone", body.RootElement.GetProperty("mode").GetString());
+        Assert.False(body.RootElement.TryGetProperty("user", out _));
+    }
+
+    [Theory]
+    [InlineData("someone@example.test")]
+    [InlineData(null)]
+    public async Task OpenAsync_LegacyUserFlagFailsBeforeContactingCore(string? user)
+    {
+        var (console, output) = CreateConsole();
+
+        string[] legacy = user is null ? ["--user"] : ["--user", user];
+        var exitCode = await CommandLine.RunAsync(["apps", "open", "com.haas.demo-app", .. legacy], console);
+
+        Assert.NotEqual(0, exitCode);
+        Assert.Contains("no longer accepts --user", output.ToString());
+        Assert.Contains("browser", output.ToString());
+        Assert.Contains("apps identity --user", output.ToString());
+        Assert.DoesNotContain("Hosty Core is not running", output.ToString());
+    }
+
     [Fact]
     public async Task SourceResolveAsync_SendsExpectedControlRequest()
     {

@@ -823,8 +823,8 @@ describe("gateway", () => {
 
   it("exchanges a launch code for a session, and refuses a request without one", async () => {
     // Establishing the session is what this route is for, so it is the one /api route that answers
-    // without a credential — the code itself is the credential, and Core refuses a stale or foreign
-    // one. A request carrying no code must still be refused rather than treated as anonymous.
+    // without an existing app grant. The code and its private proof are required together;
+    // neither a missing code nor a logged code alone can establish a session.
     const empty = await fetch(`${origin}/api/app-code`, {
       method: "POST",
       headers: { "content-type": "application/json", origin },
@@ -832,6 +832,13 @@ describe("gateway", () => {
     });
     expect(empty.status).toBe(422);
     expect(((await empty.json()) as { code?: string }).code).toBe("app_auth_code_required");
+    const codeOnly = await fetch(`${origin}/api/app-code`, {
+      method: "POST", headers: { "content-type": "application/json", origin, "sec-fetch-site": "same-origin" },
+      body: JSON.stringify({ code: "logged-code" }),
+    });
+    expect(codeOnly.status).toBe(400);
+    expect(((await codeOnly.json()) as { code?: string }).code).toBe("app_auth_proof_required");
+    expect(codeOnly.headers.has("set-cookie")).toBe(false);
 
     // Unauthenticated is not the same as unprotected. The page calls this with a relative URL, so
     // a real exchange always carries its own origin; a cross-site post of a code the caller owns

@@ -33,6 +33,8 @@ public actor CoreClient {
     public let origin: HostOrigin
 
     private let session: URLSession
+    private let appAuthSession: URLSession
+    private var observedAppAuthProtocol2 = false
     private let decoder = JSONDecoder.core
     private var sessionID: String?
 
@@ -44,6 +46,7 @@ public actor CoreClient {
         self.origin = origin
         self.sessionID = sessionID
         self.session = URLSession(configuration: configuration)
+        self.appAuthSession = URLSession(configuration: configuration, delegate: AppAuthNoRedirects(), delegateQueue: nil)
     }
 
     public var isAuthenticated: Bool { sessionID != nil }
@@ -250,20 +253,60 @@ public actor CoreClient {
 
     // MARK: - Opening an app
 
-    /// Mints a one-time code for `redirectUri` and returns the URL carrying it.
-    ///
-    /// Core requires CSRF on this endpoint for a cookie session; a bearer-presented session is exempt,
-    /// and this client only ever presents a bearer, so no CSRF pair is involved.
-    ///
-    /// The redirect URI must be same-origin with one of the app's declared endpoints or Core answers
-    /// `redirect_uri_denied` — which is why callers pass a URL that came from Core (`embeddedUrl` or a
-    /// navigation page) rather than one they assembled.
-    public func createLaunchCode(appID: String, redirectURI: String) async throws -> AppLaunchCode {
+    /// Reads only the configured Core origin. Once version 2 is observed this connection never downgrades.
+    public func appAuthProtocol() async throws -> Int {
+        var request = makeRequest(.get, "/api/auth/apps/protocol")
+        request.setValue(nil, forHTTPHeaderField: "Authorization")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        do {
+            let data = try await send(request, transport: appAuthSession)
+            let metadata = try decode(data) as AppAuthProtocolMetadata
+            guard metadata.version == 2 else {
+                throw CoreError.invalidResponse("The host uses an unsupported app sign-in protocol.")
+            }
+            observedAppAuthProtocol2 = true
+            return 2
+        } catch CoreError.http(let status, _) where status == 404 && !observedAppAuthProtocol2 {
+            var statusRequest = makeRequest(.get, "/api/core/status")
+            statusRequest.setValue(nil, forHTTPHeaderField: "Authorization")
+            statusRequest.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+            statusRequest.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+            let status = try decode(await send(statusRequest, transport: appAuthSession)) as CoreStatus
+            let semver = status.version.split(separator: ".", omittingEmptySubsequences: false)
+            guard !observedAppAuthProtocol2, status.isHostyCore, status.status == "running", semver.count == 3,
+                  semver.allSatisfy({ !$0.isEmpty && ($0 == "0" || $0.first != "0") && $0.utf8.allSatisfy { (48...57).contains($0) } }),
+                  let version = PlatformVersion(status.version), version < PlatformVersion(0, 120, 0)
+            else { throw CoreError.invalidResponse("The host could not confirm a supported app sign-in protocol.") }
+            return 1
+        }
+    }
+
+    /// Uses the native Core session for an attempt already created by the approved app document.
+    public func createLaunchCode(
+        appID: String, redirectURI: String, codeChallenge: String, codeChallengeMethod: String,
+        interactiveRenewal: Bool = false
+    ) async throws -> AppLaunchCode {
+        guard codeChallengeMethod == "S256", NativeAppSignIn.isCanonicalChallenge(codeChallenge) else {
+            throw CoreError.invalidResponse("The app supplied an invalid sign-in challenge.")
+        }
+        _ = try await appAuthProtocol()
         var request = makeRequest(.post, "/api/apps/\(escape(appID))/launch-code")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(["redirectUri": redirectURI])
-        return try decode(await send(request))
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        struct LaunchCodeRequest: Encodable {
+            let redirectUri: String
+            let codeChallenge: String
+            let codeChallengeMethod: String
+            let interactiveRenewal: Bool?
+        }
+        request.httpBody = try JSONEncoder().encode(LaunchCodeRequest(
+            redirectUri: redirectURI, codeChallenge: codeChallenge,
+            codeChallengeMethod: codeChallengeMethod, interactiveRenewal: interactiveRenewal ? true : nil))
+        return try decode(await send(request, transport: appAuthSession))
     }
+
+    private struct AppAuthProtocolMetadata: Decodable { let version: Int }
 
     // MARK: - Events
 
@@ -337,11 +380,11 @@ public actor CoreClient {
         return try decode(await send(request))
     }
 
-    private func send(_ request: URLRequest) async throws -> Data {
+    private func send(_ request: URLRequest, transport: URLSession? = nil) async throws -> Data {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await (transport ?? session).data(for: request)
         } catch let error as URLError {
             throw CoreError.transport(error)
         }
@@ -399,4 +442,14 @@ public actor CoreClient {
 /// The inbox as Core returns it.
 struct NotificationPage: Decodable, Sendable {
     let notifications: [HostNotification]
+}
+
+/// Proof and protocol discovery never follow a redirect away from the configured Core endpoint.
+private final class AppAuthNoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
+    }
 }

@@ -1,7 +1,7 @@
 # Marketplace System App
 
 Created: 2026-06-25
-Updated: 2026-09-18
+Updated: 2026-10-05
 
 ## Description
 
@@ -121,7 +121,7 @@ Marketplace supports a Docker runtime and a Core-managed `dev` local-command run
 
 - [Runtime App Repository Feeds](../catalog-hosted-app-feeds.md)
 - [Runtime App Manifest](../runtime-app-manifest/feature.md)
-- [Direct-Origin Runtime App UI](../direct-origin-runtime-app-ui.md)
+- [Direct-Origin Runtime App UI](../direct-origin-runtime-app-ui/feature.md)
 - [Shell Access And System Apps](../shell-access-and-system-apps.md)
 - [Marketplace As A System App idea](../../ideas/marketplace-system-app.md)
 

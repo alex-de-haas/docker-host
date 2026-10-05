@@ -8,6 +8,9 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const dataRoot = path.resolve(process.env.HOSTY_DEV_DATA_ROOT || path.join(repoRoot, ".hosty-dev"));
 const coreUrl = process.env.HOSTY_CORE_URL || `http://localhost:${resolvePort("HOSTY_CORE_PORT", 3001)}`;
 const shellOrigin = process.env.HOSTY_SHELL_PUBLIC_ORIGIN || `http://localhost:${resolvePort("HOSTY_SHELL_PORT", 3000)}`;
+const defaultCorePublicUrl = new URL(coreUrl);
+if (defaultCorePublicUrl.hostname === "localhost") defaultCorePublicUrl.hostname = "[::1]";
+const corePublicOrigin = process.env.HOSTY_CORE_PUBLIC_ORIGIN || defaultCorePublicUrl.origin;
 let coreEndpoint;
 let shellEndpoint;
 
@@ -29,7 +32,7 @@ const commonEnv = {
   HOSTY_CORE_PORT: String(coreEndpoint.port),
   HOSTY_SHELL_PORT: String(shellEndpoint.port),
   HOSTY_DATA_ROOT: dataRoot,
-  HOSTY_CORE_PUBLIC_ORIGIN: coreUrl,
+  HOSTY_CORE_PUBLIC_ORIGIN: corePublicOrigin,
   HOSTY_SHELL_PUBLIC_ORIGIN: shellOrigin,
 };
 
@@ -47,7 +50,7 @@ start("Core", "dotnet", ["run", "--no-launch-profile", "--project", "apps/core/s
 
 console.log("");
 console.log("Hosty local development is starting.");
-console.log(`Core:  ${coreUrl}`);
+console.log(`Core:  ${corePublicOrigin}`);
 console.log(`Shell: ${shellOrigin}`);
 console.log(`Data:  ${dataRoot}`);
 console.log("");
@@ -120,7 +123,7 @@ function resolvePort(name, fallback) {
 function parseEndpoint(origin) {
   const url = new URL(origin);
   return {
-    hostname: url.hostname,
+    hostname: url.hostname.replace(/^\[|\]$/g, ""),
     port: Number(url.port || (url.protocol === "https:" ? 443 : 80)),
   };
 }

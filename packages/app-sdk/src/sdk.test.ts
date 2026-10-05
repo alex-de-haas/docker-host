@@ -29,6 +29,9 @@ import {
   clearAppSecretsCache,
   clearRevalidationCache,
   createAppCodeRouteHandler,
+  exchangeAppCode,
+  getAppAuthProtocol,
+  getRecoveryParams,
   deleteAppSecret,
   getAppSecret,
   HostySecretsError,
@@ -207,11 +210,77 @@ describe("identityCookieAttributes", () => {
   });
 });
 
+const codeVerifier = "v".repeat(43);
+
+describe("exchangeAppCode", () => {
+  it("does not exchange against a reverted Core after observing protocol 2", async () => {
+    process.env.HOSTY_CORE_ORIGIN = "http://sdk-protocol-minimum.test";
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ version: 2 })).mockResolvedValueOnce(new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", fetcher);
+    expect(await getAppAuthProtocol()).toBe(2);
+    expect(await exchangeAppCode("public-code", codeVerifier)).toMatchObject({ ok: false, status: 503, code: "app_auth_protocol_unavailable" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.every(call => String(call[0]).endsWith("/api/auth/apps/protocol"))).toBe(true);
+  });
+  it.each([undefined, "", "short", "=".repeat(43)])("refuses malformed proof %s before fetch", async proof => {
+    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    expect(await exchangeAppCode("public-code", proof as string)).toMatchObject({ ok: false, status: 400, code: "app_auth_proof_required" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("authenticates the code and proof exchange body with this app's service token", async () => {
+    process.env.HOSTY_APP_SERVICE_TOKEN = "  own-app-service  ";
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse(200, { accessToken: "hostyg_own", expiresInSeconds: 120 }));
+    vi.stubGlobal("fetch", fetcher);
+    expect(await exchangeAppCode("one-use-code", codeVerifier)).toEqual({ ok: true, accessToken: "hostyg_own", expiresInSeconds: 120, activeUntil: null });
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledWith("http://core.test/api/auth/apps/token", expect.objectContaining({
+      method: "POST", headers: { "content-type": "application/json", authorization: "Bearer own-app-service" },
+      body: JSON.stringify({ code: "one-use-code", codeVerifier }), cache: "no-store", redirect: "error", signal: expect.any(AbortSignal),
+    }));
+  });
+
+  it.each([undefined, "", "   "])("rejects missing service token (%s) before contacting Core", async token => {
+    if (token === undefined) delete process.env.HOSTY_APP_SERVICE_TOKEN;
+    else process.env.HOSTY_APP_SERVICE_TOKEN = token;
+    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    expect(await exchangeAppCode("unconsumed-code", codeVerifier)).toEqual({ ok: false, status: 503,
+      code: "app_service_token_missing", message: "HOSTY_APP_SERVICE_TOKEN is not configured." });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("retains the rejected-code response after an authenticated refusal", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse(401, { code: "invalid_code" })); vi.stubGlobal("fetch", fetcher);
+    expect(await exchangeAppCode("wrong-app-code", codeVerifier)).toEqual({ ok: false, status: 401, code: "app_auth_code_rejected",
+      message: "Core rejected the authorization code (HTTP 401)." });
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher.mock.calls[0][1].headers.authorization).toBe("Bearer hosty_app_service.1.x.y");
+  });
+});
+
 describe("createAppCodeRouteHandler", () => {
+  it("refuses a code-only request even with forged same-origin headers", async () => {
+    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    const response = await createAppCodeRouteHandler(config)(new Request("http://app.local/api/auth/app-code", {
+      method: "POST", headers: { origin: "http://app.local", "sec-fetch-site": "same-origin" }, body: JSON.stringify({ code: "stolen" }),
+    }));
+    expect(response.status).toBe(400); expect(await response.json()).toMatchObject({ code: "app_auth_proof_required" });
+    expect(fetcher).not.toHaveBeenCalled(); expect(response.headers.has("set-cookie")).toBe(false);
+  });
+  it("returns missing app-service configuration without consuming a code or setting a cookie", async () => {
+    delete process.env.HOSTY_APP_SERVICE_TOKEN;
+    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    const response = await createAppCodeRouteHandler(config)(new Request("http://app.local/api/auth/app-code", {
+      method: "POST", headers: { "sec-fetch-site": "same-origin" }, body: JSON.stringify({ code: "unconsumed-code", codeVerifier }),
+    }));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ code: "app_service_token_missing", message: "HOSTY_APP_SERVICE_TOKEN is not configured." });
+    expect(response.headers.has("set-cookie")).toBe(false);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
   it("rejects cross-origin exchange before contacting Core", async () => {
     const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
     const response = await createAppCodeRouteHandler(config)(new Request("http://app.local/api/auth/app-code", {
-      method: "POST", headers: { origin: "http://evil.local" }, body: JSON.stringify({ code: "attacker-code" }),
+      method: "POST", headers: { origin: "http://evil.local" }, body: JSON.stringify({ code: "attacker-code", codeVerifier }),
     }));
     expect(response.status).toBe(403); expect(fetcher).not.toHaveBeenCalled();
   });
@@ -219,7 +288,7 @@ describe("createAppCodeRouteHandler", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse(200, { accessToken: "foreign-grant" }))
       .mockResolvedValueOnce(jsonResponse(403, { code: "token_app_mismatch" })));
     const response = await createAppCodeRouteHandler(config)(new Request("http://app.local/api/auth/app-code", {
-      method: "POST", headers: { origin: "http://app.local" }, body: JSON.stringify({ code: "foreign-code" }),
+      method: "POST", headers: { origin: "http://app.local" }, body: JSON.stringify({ code: "foreign-code", codeVerifier }),
     }));
     expect(response.status).toBe(403); expect(response.headers.has("set-cookie")).toBe(false);
     expect(await response.text()).not.toContain("foreign-grant");
@@ -242,7 +311,7 @@ describe("createAppCodeRouteHandler", () => {
     const response = await handler(
       new Request("http://app.local/api/auth/app-code", {
         method: "POST", headers: { "sec-fetch-site": "same-origin" },
-        body: JSON.stringify({ code: "one-time" }),
+        body: JSON.stringify({ code: "one-time", codeVerifier }),
       }),
     );
     expect(response.status).toBe(200);
@@ -264,7 +333,7 @@ describe("createAppCodeRouteHandler", () => {
       new Request("http://app.local/api/auth/app-code", {
         method: "POST",
         headers: { "sec-fetch-site": "same-origin", "x-forwarded-proto": "https" },
-        body: JSON.stringify({ code: "one-time" }),
+        body: JSON.stringify({ code: "one-time", codeVerifier }),
       }),
     );
     const cookie = response.headers.get("set-cookie") ?? "";
@@ -274,6 +343,12 @@ describe("createAppCodeRouteHandler", () => {
 });
 
 describe("core helpers", () => {
+  it("discovers recovery protocol at request time even if its browser origin is missing", async () => {
+    process.env.HOSTY_CORE_ORIGIN = "http://sdk-recovery.test";
+    delete process.env.HOSTY_CORE_PUBLIC_ORIGIN;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ version: 2 })));
+    expect(await getRecoveryParams(config)).toMatchObject({ appId: "com.example.app", corePublicOrigin: null, appAuthProtocol: 2 });
+  });
   const page = { origin: "http://127.0.0.1:61679", pathname: "/x", search: "", hostname: "127.0.0.1" };
 
   it("builds the /open URL and refuses known-impossible redirects", () => {
@@ -294,10 +369,10 @@ describe("core helpers", () => {
   it("reads recovery params tolerantly", () => {
     expect(readRecoveryParams({ recovery: { appId: "a", corePublicOrigin: "http://c" } })).toEqual({
       appId: "a",
-      corePublicOrigin: "http://c",
+      corePublicOrigin: "http://c", appAuthProtocol: null,
     });
-    expect(readRecoveryParams({})).toEqual({ appId: null, corePublicOrigin: null });
-    expect(readRecoveryParams(null)).toEqual({ appId: null, corePublicOrigin: null });
+    expect(readRecoveryParams({})).toEqual({ appId: null, corePublicOrigin: null, appAuthProtocol: null });
+    expect(readRecoveryParams(null)).toEqual({ appId: null, corePublicOrigin: null, appAuthProtocol: null });
   });
 
   it("detects launch mode and treats a throwing top access as embedded", () => {
