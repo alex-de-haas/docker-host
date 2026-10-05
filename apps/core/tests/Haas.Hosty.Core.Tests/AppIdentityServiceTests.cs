@@ -187,6 +187,10 @@ public sealed class AppIdentityServiceTests
     {
         var fixture = await IdentityFixture.CreateAsync();
         await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
+        await fixture.Users.UpdateAsync(state => state with
+        {
+            Sessions = [new("session_1", "user_1", fixture.Clock.UtcNow, fixture.Clock.UtcNow.AddHours(8), null)],
+        });
         // Issue via a code stamped with an authorizing session, then cascade-revoke that session's grants.
         var authorization = await fixture.Service.CreateAuthorizationCodeAsync(
             "com.example.notes", "user_1", "https://notes.example/callback", authorizingSessionId: "session_1");

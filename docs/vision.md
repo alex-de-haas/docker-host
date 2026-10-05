@@ -281,8 +281,8 @@ Decisions 1–5: 2026-08-19.
     write must ask, but does not silently change current grants or authorize an agent to choose its
     own autonomy mode. The [session autonomy feature](features/assistant-session-autonomy/feature.md)
     implements the approved native approval control. The
-    [embedded sign-in plan](features/auth-session-lifecycle/plan.md) remains Draft: Core must exchange
-    target credentials directly with the target app, without giving them to Shell. Additional native
+    [embedded app sign-in feature](features/embedded-app-sign-in/feature.md) implements direct Core
+    sign-in to the target app's frame without giving its credentials to Shell. Additional native
     isolation and prefix rules remain in the [approval rules plan](features/assistant-approval-rules/plan.md).
 
 ## Expectations And Later Directions

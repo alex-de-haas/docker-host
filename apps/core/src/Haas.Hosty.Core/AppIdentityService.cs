@@ -176,6 +176,20 @@ internal sealed class AppIdentityService(
             AuthRevision: user.AuthRevision,
             ActiveUntil: activeUntil);
         await grants.AppendAsync(record, now, cancellationToken);
+        if (authorizingSessionId is not null)
+        {
+            // Check after the write so logout cannot finish its cascade before a racing exchange
+            // appends the grant. Expiry alone does not revoke identity; explicit logout does.
+            var parent = (await users.ReadAsync(cancellationToken)).Sessions.FirstOrDefault(session =>
+                string.Equals(session.Id, authorizingSessionId, StringComparison.Ordinal) && session.UserId == user.Id);
+            if (parent is null || parent.RevokedAt is not null)
+            {
+                // An expired parent can be pruned by a later login. Refuse this in-flight sign-in
+                // without treating that normal cleanup as a logout of its established app grants.
+                await grants.RevokeByIdAsync(record.Id, clock.UtcNow, cancellationToken);
+                throw new AppIdentityException("token_revoked", "The Core session authorizing this app sign-in has been revoked.");
+            }
+        }
         return new AppIdentityTokenResult(token, "Bearer", absoluteExpiresAt, (int)absolute.TotalSeconds, activeUntil);
     }
 
@@ -265,7 +279,7 @@ internal sealed class AppIdentityService(
         => await apps.GetAppAsync(appId, cancellationToken) ??
             throw new AppIdentityException("app_not_found", "Runtime app was not found.");
 
-    private async Task RequireAllowedRedirectUriAsync(
+    internal async Task RequireAllowedRedirectUriAsync(
         string appId,
         string redirectUri,
         CancellationToken cancellationToken)

@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-09-30
-Updated: 2026-10-03
+Updated: 2026-10-05
 
 ## Goal
 
@@ -838,6 +838,13 @@ These are working-tree changes, not a released or accepted feature.
   live Claude/Codex execution or cross-app tools. No web or Core code changed in this batch.
 - The consent choice above remains open. Source-provider UI, source operations and ordinary chat
   do not establish authority to call other applications' MCP endpoints.
+
+The browser persistence rule in the preceding historical batches is superseded by
+[embedded app sign-in](../embedded-app-sign-in/feature.md): embedded documents store only their
+own grant in app-origin `sessionStorage` for the tab, restore it after frame recreation, clear it
+on identity rejection and keep it on `reauth_required`. Harness now has protected-settings browser
+transport regressions for that boundary. Its existing no-credential-in-durable-session-records
+regression remains: server-side transcript storage still contains no app grant or MCP seed.
 - Temporary browser tab and Core-managed QA processes were stopped; ports 27071–27175 had no
   listeners. Version consistency, documentation index and whitespace checks passed. The operator
   installation was not restarted; no commit, release or deployment was performed.

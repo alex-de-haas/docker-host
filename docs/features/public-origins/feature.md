@@ -34,6 +34,17 @@ its fallback behind an external origin. Generated `a…z` labels are reserved. M
 the same app may share a hostname. A changed runtime environment uses the existing restart-required
 behavior; cookies do not move between renamed hosts.
 
+## Domains for embedded sign-in
+
+The recommended deployment places Core, Shell and embedded apps on subdomains of one registrable
+domain, for example `core.example.com`, `shell.example.com` and `media.example.com`. The parent
+must not be a public suffix such as a shared dynamic-DNS zone. Core's `SameSite=Lax` session cookie
+reaches the app's silent sign-in frame only when the browser treats Shell and Core as the same site.
+Sharing a DNS suffix alone does not establish that, including the generated `*.hosty.localhost`
+addresses. When the cookie is unavailable, the app returns to its inline **Sign in via Hosty**
+button; every other domain setup continues to work through that popup and keeps the app grant for
+the tab. See [embedded app sign-in](../embedded-app-sign-in/feature.md).
+
 ## One control
 
 A globe on the endpoint row opens the public-origin dialog

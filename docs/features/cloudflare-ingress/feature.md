@@ -1,7 +1,7 @@
 # Feature: Cloudflare Ingress
 
 Created: 2026-06-17
-Updated: 2026-09-22
+Updated: 2026-10-05
 
 Runtime app services listen only on loopback. Ingress is the layer that accepts public traffic,
 terminates HTTPS, and routes by hostname to the right loopback port. Core never runs a reverse proxy
@@ -322,6 +322,15 @@ persists no setting.
 
 Shell is publishable, but only because it is an ordinary app whose `web` endpoint is `public: true` — there
 is no special handling for publishing the Shell you are currently using.
+
+For silent embedded sign-in, publish Core, Shell and apps beneath one registrable parent domain,
+such as `core.example.com`, `shell.example.com` and `media.example.com`. A shared dynamic-DNS zone
+that is a public suffix does not satisfy this deployment rule. Core keeps its `SameSite=Lax`
+cookie: the browser decides whether it reaches Core from the app's frame. If it does not, sign-in
+returns to the app's button and proceeds through the existing Core popup. Ingress does not grant
+Shell or another embedder authority to read an app's code or credential. See
+[embedded app sign-in](../embedded-app-sign-in/feature.md) and
+[Public Origins](../public-origins/feature.md#domains-for-embedded-sign-in).
 
 The `hosty` CLI has no ingress or Cloudflare commands.
 

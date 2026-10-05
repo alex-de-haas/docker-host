@@ -1,7 +1,7 @@
 # App Activity Window
 
 Created: 2026-10-02
-Updated: 2026-10-03
+Updated: 2026-10-05
 
 App identity and authority to perform privileged Core operations have separate lifetimes.
 An app grant remains usable for identity after its privileged activity expires. Current app
@@ -10,10 +10,16 @@ permissions, user role and assignments still constrain every call; activity neve
 ## Browser-established activity
 
 Core stores nullable `ActiveUntil` with each app grant. Exchanging a code issued by a real browser
-navigation to `/api/apps/{id}/open` establishes the deadline, including `responseMode=web_message`.
+top-level navigation to `/api/apps/{id}/open` establishes the deadline, including
+`responseMode=web_message`.
 The navigation uses an isolated Core cookie host and a live Core browser session. Generic code
 issuance, diagnostic CLI grants, app service calls and revalidation establish no activity. Old grants
 without a deadline need browser renewal for privileged actions.
+
+The frame-only `prompt=none` mode issues identity-only codes, so silently opening an embedded app
+establishes no activity. Its resulting grant is still bound to the authorizing Core session for
+explicit-logout revocation. [Embedded app sign-in](../embedded-app-sign-in/feature.md) owns that
+initial sign-in and the embedded grant's per-tab persistence.
 
 The default is one hour. `HOSTY_AUTH_APP_ACTIVITY_HOURS`, exposed in Core authentication settings,
 sets the duration for newly exchanged grants. Calls and revalidation never extend the deadline.
@@ -26,6 +32,9 @@ issuance enforce the boundary. Identity-only profile/session routes and installa
 their separate existing authorization and Core confirmation. Delegated tokens without browser
 provenance cannot substitute for this authority. Provider child-token introspection checks current
 activity again; assistant MCP tokens carry a session lease revision and recheck it on use.
+The SDK therefore retains the embedded grant in `sessionStorage` on `reauth_required`; successful
+popup renewal replaces it. Identity rejection clears it. Expiry while mounted never starts a silent
+redirect or discards the app's draft.
 
 ## Recovery without losing work
 

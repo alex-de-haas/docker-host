@@ -152,16 +152,14 @@ async function route(
     const session = await resolveAppSession(readAppCredential(request));
     sendJson(response, 200, { status: session.status === "active" && session.identity.hostRole !== "host.admin" ? "forbidden" : session.status,
       ...(session.status === "active" ? { activeUntil: session.identity.activeUntil, activityRequired: session.identity.activityRequired } : {}),
+      ...(session.status !== "active" && session.error ? { error: session.error } : {}),
       recovery: { appId: process.env.HOSTY_APP_ID ?? "hosty.harness", corePublicOrigin: process.env.HOSTY_CORE_PUBLIC_ORIGIN ?? null } });
     return;
   }
 
-  // The settings page itself is a static shell — it holds no data and fetches everything through
-  // the admin-gated /api routes below with a delegated token, exactly as the chat panel does. Serving
-  // the shell without a token is what lets Shell embed it as an ordinary app UI.
-  // The launch code Shell puts on the URL becomes this app's session cookie. Unauthenticated by
-  // necessity — establishing the session is what it does — and safe because the code itself is the
-  // credential: Core minted it for one user and one app, and refuses a stale or foreign one.
+  // The static page fetches its protected data through the admin-gated app API. Core delivers the
+  // one-time code to this app's navigation or its own popup; Shell does not carry the code. This
+  // endpoint exchanges it and revalidates the grant for Harness before setting the app cookie.
   if (method === "POST" && url.pathname === "/api/app-code") {
     if (!isSameOriginRequest(request)) {
       // The page calls this with a relative URL, so a legitimate exchange is always same-origin.
