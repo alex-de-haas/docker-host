@@ -22,6 +22,7 @@ export type AssistantQuestion = {
 };
 
 export type AssistantSession = {
+  autonomy?: "normal" | "autonomous";
   handoffDraft?: { text: string; attachments: StoredAttachment[] };
   handoffDispatch?: { id: string; state: string; error?: string };
   id: string;
@@ -303,4 +304,8 @@ export interface Publication {
     reviewDecision?: string; unresolvedThreads: number; complete: boolean; checks?: { name: string; state: string }[]; error?: string };
   history: { number: number; url: string }[];
   operations: { id: string; kind: string; state: string; error?: string }[];
+}
+
+export async function setSessionAutonomy(id: string, autonomy: "normal" | "autonomous"): Promise<AssistantSession> {
+  return (await call(`/sessions/${encodeURIComponent(id)}/autonomy`, { method: "PUT", body: JSON.stringify({ autonomy }) })).json();
 }

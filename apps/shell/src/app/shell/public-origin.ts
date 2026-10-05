@@ -6,7 +6,7 @@
 // The publication-state import is `import type` and must stay that way: the test runner erases it, where a
 // value import of `./types` would have to be resolved at runtime.
 
-import type { CloudflarePublicationState } from "./types";
+import type { CloudflarePublicationState, CoreEndpoint } from "./types";
 
 export const PUBLIC_ORIGIN_SETTING_PREFIX = "HOSTY_PUBLIC_ORIGIN_";
 
@@ -72,4 +72,20 @@ export function resolvePublishedLabelAction(
   }
 
   return { action: "rename", enabled: !unchanged && next.length > 0 } as const;
+}
+
+/** The suffix and port come from Core; only the label is operator-editable. */
+export function localBrowserPreview(endpoint: CoreEndpoint, label: string): string | null {
+  if (!label.trim()) return endpoint.localDefaultOrigin ?? endpoint.localOrigin ?? null;
+  if (!endpoint.localOrigin || !endpoint.localSuffix) return null;
+  try {
+    const url = new URL(endpoint.localOrigin);
+    url.hostname = `${label.trim().toLowerCase()}.${endpoint.localSuffix}`;
+    return url.origin;
+  } catch { return null; }
+}
+
+export function localBrowserSettings(endpointKey: string, label: string) {
+  return { [`HOSTY_LOCAL_NAME_${normalizePublicOriginEndpointKey(endpointKey)}`]: label.trim().toLowerCase() || null,
+    [buildPublicOriginSettingKey(endpointKey)]: null };
 }

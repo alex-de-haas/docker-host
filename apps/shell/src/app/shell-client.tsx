@@ -6,6 +6,8 @@ import { MissingPermissionsNotice } from "@hosty-sdk/app/react";
 import { fetchCore } from "./shell/core-transport.js";
 
 
+import { waitForShellUpdateToSettle } from "./shell/self-update";
+import { isAppUp } from "./shell/runtime-states";
 import { isRoutineUpdate } from "./shell/update-feedback";
 
 import type { ReactNode } from "react";
@@ -22,7 +24,7 @@ import { CoreRequestError, isAuthRequiredRedirectError, readCoreError, readCoreE
 import { appendThemeLaunchParams, createReissueRateLimiter } from "@hosty-sdk/app/embedder";
 import { CoreEventNames, subscribeToCoreEvents } from "./shell/events/core-event-stream";
 import { resolveLaunchGate } from "./shell/surfaces/app-surface-tabs";
-import { requestAppUpdate, reviewUpdatesInOrder } from "./shell/app-updates";
+import { enqueueRoutineUpdate, requestAppUpdate, reviewUpdatesInOrder } from "./shell/app-updates";
 import { requestAppRemoval, requestCoreApproval } from "./shell/app-removal";
 import { readCoreStatus, reconcileCoreUpdate } from "./shell/core-status";
 import { reconcileAppList } from "./shell/app-list-snapshot";
@@ -1349,7 +1351,7 @@ export function ShellClient({
     [coreOrigin, sendCsrfJson],
   );
 
-  // Every app-originated update is reviewed on Core, including routine and self-updates.
+  // Significant manifest changes and new permissions still use Core confirmation.
   const enqueueUpdate = useCallback(
     async (app: CoreApp, planDigest: string, popup = openInstallationConfirmation()) => {
       const actionKey = `${app.id}:update`;
@@ -1399,14 +1401,53 @@ export function ShellClient({
     [refresh, shellAppId, installationClient],
   );
 
+  const enqueueRoutine = useCallback(async (app: CoreApp, planDigest: string) => {
+    const actionKey = `${app.id}:update`;
+    setBusyAction(actionKey);
+    try {
+      await enqueueRoutineUpdate(sendCsrfJson, coreOrigin, app.id, planDigest);
+      setActivePanel(current => current?.appId === app.id ? null : current);
+      toast.info("Update started", { description: app.displayName });
+      void refresh();
+      if (app.id === shellAppId) {
+        const outcome = await waitForShellUpdateToSettle({
+          coreOrigin, shellAppId, expectRestart: isAppUp(app.runtimeState),
+          subscribe: onSync => {
+            const unsubscribe = subscribeToCoreEvents(coreOrigin, {
+              names: [CoreEventNames.appChanged, CoreEventNames.appRemoved], onSync,
+            });
+            // Shell's proxy may restart too; a missed hint must not strand this wait.
+            const timer = setInterval(() => void onSync(), 5000);
+            void onSync();
+            return () => { clearInterval(timer); unsubscribe(); };
+          },
+        });
+        if (outcome.kind === "failed") throw new Error(outcome.message);
+        if (outcome.kind === "settled" && await waitForOwnOrigin()) window.location.reload();
+        else toast.warning("Shell update is still settling", { description: "Check its status before reloading this page." });
+      }
+      return true;
+    } catch (error) {
+      if (!isAuthRequiredRedirectError(error)) {
+        toast.error("Update not completed", { appId: app.id,
+          description: error instanceof Error ? error.message : "Check the update status in Core." });
+        void refresh();
+      }
+      return false;
+    } finally {
+      setBusyAction(current => current === actionKey ? null : current);
+    }
+  }, [coreOrigin, refresh, sendCsrfJson, shellAppId]);
+
   const applyUpdate = useCallback(
     async (app: CoreApp, plan: CoreUpdatePlan) => {
-      await enqueueUpdate(app, plan.planDigest);
+      if (plan.requiresReview) await enqueueUpdate(app, plan.planDigest);
+      else await enqueueRoutine(app, plan.planDigest);
     },
-    [enqueueUpdate],
+    [enqueueUpdate, enqueueRoutine],
   );
 
-  // Routine verdicts reuse the cached plan digest but still require Core confirmation.
+  // Routine verdicts apply the cached plan without opening a confirmation window.
   const applyUpdateFromRow = useCallback(
     async (app: CoreApp) => {
       const planDigest = app.updateCheck?.planDigest;
@@ -1414,9 +1455,9 @@ export function ShellClient({
         return;
       }
 
-      await enqueueUpdate(app, planDigest);
+      await enqueueRoutine(app, planDigest);
     },
-    [enqueueUpdate],
+    [enqueueRoutine],
   );
 
   // Starts (or joins) the Core fleet update check; progress is server state on the apps list, so the
@@ -1436,17 +1477,15 @@ export function ShellClient({
     }
   }, [coreOrigin, refresh, sendCsrfJson]);
 
-  // Reuse one user-opened popup for sequential Core reviews. Shell goes last because
-  // its approved update restarts the server and reloads this page.
+  // Submit routine updates without popups, with Shell last because it reloads this page.
   const updateAllApps = useCallback(async () => {
     const routine = state.apps.filter(isRoutineUpdate);
     if (routine.length === 0) {
-      toast.info("No routine updates to review");
+      toast.info("No routine updates available");
       return;
     }
-    const popup = openInstallationConfirmation();
-    await reviewUpdatesInOrder(routine, shellAppId, app => enqueueUpdate(app, app.updateCheck!.planDigest!, popup));
-  }, [enqueueUpdate, shellAppId, state.apps]);
+    await reviewUpdatesInOrder(routine, shellAppId, app => enqueueRoutine(app, app.updateCheck!.planDigest!));
+  }, [enqueueRoutine, shellAppId, state.apps]);
 
   // Advisory preview for the remove panel: what else declares a dependency on this app and who
   // consumes the platform capabilities it provides. A failure here degrades to "no impact shown"

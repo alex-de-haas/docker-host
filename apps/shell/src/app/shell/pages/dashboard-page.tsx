@@ -630,7 +630,7 @@ function CoreSection({
                 <EndpointUrlBlock
                   url={status?.corePublicOrigin}
                   missingText="not configured"
-                  copyTitle="Copy public origin"
+                  copyTitle="Copy browser address"
                   onCopy={copyUrl}
                 />
               </div>
@@ -828,23 +828,29 @@ function AppServiceDetailsPanel({
                           <EndpointAvailabilityMarker availability={endpoint.availability} />
                         </div>
                         <div className={cn("grid gap-2", endpoint.public && "dashboard-service-endpoints")}>
+                          <div className="min-w-0 space-y-1">
+                          <div className="text-[10px] text-muted-foreground">Service address</div>
                           <EndpointUrlBlock
-                            url={endpoint.browserOrigin ?? endpoint.url}
+                            url={endpoint.url}
                             missingText="not assigned"
-                            copyTitle="Copy endpoint URL"
-                            openTitle="Open endpoint URL"
+                            copyTitle="Copy service address"
+                            openTitle="Open service address"
                             onCopy={copyEndpointUrl}
                             actions={<PortReassignControl app={app} endpoint={endpoint} />}
                           />
+                          </div>
                           {endpoint.public && (
+                            <div className="min-w-0 space-y-1">
+                            <div className="text-[10px] text-muted-foreground">Browser address · {endpoint.localOrigin && !publicOrigin ? "Local · this computer only" : "Configured origin"}</div>
                             <EndpointUrlBlock
-                              url={publicOrigin}
+                              url={endpoint.browserOrigin ?? publicOrigin}
                               missingText="not configured"
-                              copyTitle="Copy public origin"
-                              openTitle="Open public origin"
+                              copyTitle="Copy browser address"
+                              openTitle="Open browser address"
                               onCopy={copyEndpointUrl}
                               actions={<PublicOriginControl app={app} endpoint={endpoint} />}
                             />
+                            </div>
                           )}
                         </div>
                       </div>

@@ -87,6 +87,10 @@ export type CoreEndpoint = {
   port?: string | null;
   publicOrigin?: string | null;
   browserOrigin?: string | null;
+  localOrigin?: string | null;
+  localName?: string | null;
+  localSuffix?: string | null;
+  localDefaultOrigin?: string | null;
   // Install-time port reservations: "assigned" (a durable port target exists but the service is stopped),
   // "running" (the service is up), or "unavailable" (the reserved port failed preflight/binding). Absent on
   // older Core builds, so treat undefined as "no availability information".

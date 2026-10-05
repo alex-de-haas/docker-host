@@ -8,7 +8,7 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, Dia
 import { Input } from "@/components/ui/input";
 import { coreErrorCode, isAuthRequiredRedirectError } from "../core-api";
 import { derivesPublicOrigins, publishesThroughCloudflareApi } from "../ingress";
-import { buildPublicOriginSettingKey, resolvePublishedLabelAction, sanitizeSubdomainLabel } from "../public-origin";
+import { buildPublicOriginSettingKey, resolvePublishedLabelAction, sanitizeSubdomainLabel, localBrowserPreview, localBrowserSettings } from "../public-origin";
 import { useShellActions, useShellState } from "../shell-context";
 import type { CloudflareAppPublications, CloudflareConnectionStatus, CloudflarePublicationResult, CloudflarePublicationState, CloudflarePublicationSummary, CoreApp, CoreEndpoint } from "../types";
 import { IconButton, InlineError } from "../ui";
@@ -35,10 +35,9 @@ const SUBDOMAIN_SETTING_KEY = "HOSTY_INGRESS_SUBDOMAIN";
 // find the field. Here the question is always "what is this endpoint's public address" and the provider
 // only decides what the answer is made of, and what applying it does.
 //
-// The three shapes are genuinely different in reversibility, and the dialog keeps that visible rather
-// than flattening it: `none` is a local string, `cloudflared` is a local string Core renders into a
-// config file, and `cloudflare-remote` mutates DNS and a remotely managed tunnel — where clearing the
-// field deletes a DNS record and adopting a pre-existing one is never implied.
+// Local stores a managed label or an advanced manual origin. `cloudflared` stores a subdomain
+// Core renders into a config file. `cloudflare-remote` mutates DNS and a remotely managed tunnel;
+// clearing that publication deletes a DNS record, and adoption is always explicit.
 export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint: CoreEndpoint }) {
   const { canManageApps, state } = useShellState();
   const { coreOrigin, sendCsrfJson, refresh, runAppAction } = useShellActions();
@@ -49,6 +48,8 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
   const [connection, setConnection] = useState<CloudflareConnectionStatus | null>(null);
   const [publication, setPublication] = useState<CloudflarePublicationSummary | null>(null);
   const [value, setValue] = useState("");
+  const [manual, setManual] = useState(false);
+  const [expectedOrigin, setExpectedOrigin] = useState<string | null>(null);
   // Set when Core refuses because a DNS record for this hostname already exists. Adoption is offered,
   // never implied: an unasked-for takeover would let a typo point someone else's hostname at a local app.
   const [conflict, setConflict] = useState(false);
@@ -75,7 +76,9 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
     setConflict(false);
     setConnection(null);
     setPublication(null);
-    setValue(publishes ? "" : derives ? currentSubdomain : currentOrigin);
+    setManual(Boolean(currentOrigin) || !endpoint.localOrigin);
+    setExpectedOrigin(endpoint.browserOrigin ?? endpoint.publicOrigin ?? endpoint.url ?? null);
+    setValue(publishes ? "" : derives ? currentSubdomain : currentOrigin || endpoint.localName || "");
     if (!publishes) {
       return;
     }
@@ -102,17 +105,21 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
     }
   };
 
-  // The local half: `none` writes the origin itself, `cloudflared` writes the subdomain Core derives it
-  // from. Both are plain settings writes, instantly reversible, so neither asks for confirmation.
+  // Local stores a label independently of the assigned port, or an advanced full origin.
+  // The config-file provider stores the subdomain used to derive its origin.
   const saveSetting = async () => {
     setBusy(true);
     setError(null);
     try {
       const key = derives ? SUBDOMAIN_SETTING_KEY : originSettingKey;
-      await sendCsrfJson(`${appBase}/configure`, { settings: { [key]: value.trim() || null } });
+      const local = !derives && !manual && Boolean(endpoint.localOrigin);
+      await sendCsrfJson(`${appBase}/configure`, {
+        settings: local ? localBrowserSettings(endpoint.key, value) : { [key]: value.trim() || null },
+        ...(local ? { expectedBrowserOrigins: { [endpoint.key]: expectedOrigin } } : {}),
+      });
       setOpen(false);
       await refresh();
-      toast.success(derives ? "Subdomain saved" : value.trim() ? "Public origin saved" : "Public origin cleared");
+      toast.success(derives ? "Subdomain saved" : !manual ? "Local browser address saved" : value.trim() ? "Browser address saved" : "Default browser address restored");
     } catch (saveError) {
       if (!isAuthRequiredRedirectError(saveError)) {
         setError(saveError instanceof Error ? saveError.message : "Saving the public origin failed.");
@@ -191,19 +198,19 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
 
   return (
     <>
-      <IconButton title="Configure public origin" onClick={() => void openDialog()}>
+      <IconButton title="Configure browser address" onClick={() => void openDialog()}>
         <Globe className="h-4 w-4" />
       </IconButton>
       <Dialog open={open} onOpenChange={(next) => { if (!busy && !loading) setOpen(next); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Public origin — {endpoint.key}</DialogTitle>
+            <DialogTitle>Browser address — {endpoint.key}</DialogTitle>
             <DialogDescription>
               {publishes
                 ? "Publish this endpoint at an HTTPS origin on your Cloudflare tunnel."
                 : derives
                   ? "Core derives this endpoint's address from the ingress base domain and the app's subdomain."
-                  : "The external address this endpoint is reachable at. You own it: point your own proxy or tunnel at the local URL."}
+                  : "Choose a local browser name or an advanced address served by your own proxy."}
             </DialogDescription>
           </DialogHeader>
           <DialogBody>
@@ -287,8 +294,24 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
                 )}
               </div>
             ) : (
-              <div className="space-y-1">
-                <label className="text-xs font-medium" htmlFor="public-origin-url">Public origin</label>
+              <div className="space-y-3">
+                {endpoint.localOrigin && <label className="flex flex-col gap-1 text-xs font-medium">
+                  Address provider
+                  <select aria-label="Address provider" className="h-8 rounded-md border bg-background px-2" value={manual ? "manual" : "local"}
+                    onChange={event => { const next = event.target.value === "manual"; setManual(next); setValue(next ? currentOrigin : endpoint.localName ?? ""); }}>
+                    <option value="local">Local · this computer only</option>
+                    <option value="manual">Custom proxy address (advanced)</option>
+                  </select>
+                </label>}
+                {!manual && endpoint.localOrigin ? <div className="space-y-2">
+                  <label className="text-xs font-medium" htmlFor="local-browser-name">Local name</label>
+                  <Input id="local-browser-name" value={value} onChange={event => setValue(sanitizeSubdomainLabel(event.target.value))}
+                    placeholder="Default app name" maxLength={63} className="h-8 text-xs" />
+                  <p className="break-all font-mono text-xs" aria-label="Browser address preview">{localBrowserPreview(endpoint, value)}</p>
+                  <p className="text-xs text-muted-foreground">Hosty supplies the suffix and current port. Changing the name may require an app restart and a fresh sign-in.</p>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setValue("")}>Use default name</Button>
+                </div> : <div className="space-y-1">
+                <label className="text-xs font-medium" htmlFor="public-origin-url">Custom proxy address</label>
                 <Input
                   id="public-origin-url"
                   value={value}
@@ -297,8 +320,9 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
                   className="h-8 text-xs"
                 />
                 <p className="text-[11px] text-muted-foreground">
-                  Nothing on this host serves it — Core only hands it to the app so its own links are right.
+                  Use the full URL served by your proxy. Hosty preserves its port exactly; configure the proxy separately.
                 </p>
+                </div>}
               </div>
             )}
             {/* Action errors while usable are shown inline; a load error is handled above. */}

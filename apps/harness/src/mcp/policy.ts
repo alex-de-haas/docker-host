@@ -26,7 +26,8 @@ export class McpToolPolicy {
   constructor(private readonly settings: SettingsStore | null,
     private readonly notify: (session: string, event: { type: "approval_request"; approvalId: string; toolName: string; input: unknown }) => Promise<void>,
     private readonly settled: (session: string, id: string, tool: string, allowed: boolean, automatic: boolean) => Promise<void>,
-    private readonly timeout = 90_000) {}
+    private readonly timeout = 90_000,
+    private readonly autonomous: (session: string) => boolean = () => false) {}
   snapshot(): ToolCatalog[] { return [...this.catalogs.values()]; }
   async catalog(provider: string, identity: string, tools: UpstreamTool[]): Promise<UpstreamTool[]> {
     if (tools.length > 1000 || new Set(tools.map(t => t.name)).size !== tools.length ||
@@ -98,13 +99,13 @@ export class McpToolPolicy {
     const observedTool = this.catalogs.get(provider)?.tools.find(t => t.name === tool);
     const observedDefinition = observedTool && definition(observedTool);
     if (!observedDefinition || this.catalogs.get(provider)?.identity !== identity) throw new Error("Unknown or changed tool; discover tools again.");
-    const automatic = mode === "run";
+    const automatic = mode === "run" || this.autonomous(session);
     const dispatchGuard = async () => {
       const currentMode = await this.mode(provider, identity, tool);
       const current = this.catalogs.get(provider);
       const currentTool = current?.tools.find(t => t.name === tool);
       if (signal.aborted || this.generations.get(session) !== generation || current?.identity !== identity || !currentTool || definition(currentTool) !== observedDefinition ||
-          currentMode === "disabled" || automatic && currentMode !== "run")
+          currentMode === "disabled" || automatic && currentMode !== "run" && !this.autonomous(session))
         throw new Error("Tool policy changed or the request was canceled before dispatch. Retry with a new MCP request.");
     };
     const name = `${provider}: ${tool}`;

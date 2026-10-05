@@ -1,5 +1,5 @@
 // Core owns offers and skill approvals; this client caches only credential-free discovery.
-import { readAppSkill, type AppSkill } from "../mcp/skills.js";
+import { readAppSkill, skillDigest, type AppSkill } from "../mcp/skills.js";
 
 export const MCP_INTERFACE = "mcp";
 export const CORE_PROVIDER_ID = "hosty:core";
@@ -57,6 +57,16 @@ export class ProviderDirectory {
     return Object.fromEntries((this.snapshot?.agents.targets ?? []).flatMap(target =>
       target.skills.filter(skill => skill.key === "agent" && skill.digest && skill.digest === skill.approvedDigest)
         .map(skill => [target.id, skill.approvedDigest!])));
+  }
+
+  async instructions() {
+    return Promise.all((this.snapshot?.agents.targets ?? []).filter(target => target.skills.some(skill => skill.key === "agent"))
+      .map(async target => {
+        const status = target.skills.find(skill => skill.key === "agent")!;
+        const skill = await this.readSkill(target.id);
+        return { appId: target.id, markdown: skill?.markdown ?? null,
+          approved: Boolean(skill && status.digest && skillDigest(skill.markdown) === status.digest && status.digest === status.approvedDigest) };
+      }));
   }
 
   async readSkill(targetAppId: string): Promise<AppSkill | null> {

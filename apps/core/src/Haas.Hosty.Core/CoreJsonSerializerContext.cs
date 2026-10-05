@@ -252,6 +252,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(AssistantMcpTokenRequest))]
 [JsonSerializable(typeof(AgentPolicyDocument))]
 [JsonSerializable(typeof(AgentDirectoryResponse))]
+[JsonSerializable(typeof(AssistantMcpCatalog))]
 [JsonSerializable(typeof(AgentPolicyUpdate))]
 [JsonSerializable(typeof(AppDirectoryResponse))]
 [JsonSerializable(typeof(AgentSkillResponse))]

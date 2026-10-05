@@ -303,6 +303,8 @@ class CodexRun implements HarnessRun {
     if (this.options.resumeHarnessSessionId) {
       const resumed = (await this.request(CODEX_METHODS.threadResume, {
         threadId: this.options.resumeHarnessSessionId,
+        sandbox: this.options.autonomy === "autonomous" ? "danger-full-access" : "read-only",
+        approvalPolicy: this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
       }).catch((error) => { if (this.auth.isolated || this.strictResume) throw new Error("The native session could not be resumed. Start a new chat; existing history is preserved."); return null; })) as { thread?: { id?: string } } | null;
       if (this.strictResume && resumed?.thread?.id !== this.options.resumeHarnessSessionId)
         throw new Error("Codex did not resume the requested thread.");
@@ -314,14 +316,9 @@ class CodexRun implements HarnessRun {
     if (!this.threadId) {
       const started = (await this.request(CODEX_METHODS.threadStart, {
         cwd: this.options.cwd,
-        // MUST stay a restricted sandbox. Codex only raises an approval request when an action
-        // needs to escalate *out of* its sandbox — with danger-full-access there is nothing to
-        // escalate past, so writes execute silently and the approval gate is bypassed entirely
-        // (observed live on 2026-08-09: three approvals were denied and the file was still
-        // created). Read-only means every write escalates, which is exactly the gate we want; an
-        // approved action then runs with escalated privileges, outside the sandbox.
-        sandbox: "read-only",
-        approvalPolicy: APPROVAL_POLICY,
+        // Apply explicit chat policy on both initial start and every turn, including resumed threads.
+        sandbox: this.options.autonomy === "autonomous" ? "danger-full-access" : "read-only",
+        approvalPolicy: this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
       })) as { threadId?: string; thread?: { id?: string } };
       this.threadId = started.threadId ?? started.thread?.id ?? null;
     }
@@ -350,10 +347,8 @@ class CodexRun implements HarnessRun {
       await this.request(CODEX_METHODS.turnStart, {
         threadId: this.threadId,
         input: [{ type: "text", text }],
-        approvalPolicy: APPROVAL_POLICY,
-        // Same reason as thread/start's sandbox: a permissive policy here silently bypasses the
-        // approval gate. Note the asymmetric vocabulary — string there, tagged object here.
-        sandboxPolicy: { type: "readOnly" },
+        approvalPolicy: this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
+        sandboxPolicy: { type: this.options.autonomy === "autonomous" ? "dangerFullAccess" : "readOnly" },
       });
     } catch (error) {
       this.turnActive = false;

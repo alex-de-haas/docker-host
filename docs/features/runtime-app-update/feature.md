@@ -1,11 +1,17 @@
 # Runtime App Update
 
 Created: 2026-06-04
-Updated: 2026-09-24
+Updated: 2026-10-05
 
 Update plans also display `corePermissions` additions/removals. New permissions require
 [Core-owned confirmation](../app-installation-sdk/feature.md); the queued HTTP/MCP apply path
 refuses additions with `approval_required`. Confirmed application records the reviewed grant set.
+App callers with `apps.install` and an active administrator grant can apply routine cached plans
+through `POST /api/apps/{appId}/update` without Core confirmation. Non-routine plans still require
+Core review; the browser cannot override the server's classification. The queued path rechecks
+permission and role additions under the app lock and preserves only already granted permissions
+still declared by the target. It never restores a revoked required permission. Explicit operator
+and Core-confirmed updates retain their reviewed grant-selection behavior.
 Existing approved grants are preserved during live-source projection and runtime switches.
 
 ## Description
@@ -234,6 +240,11 @@ hosty apps update <app-id> --plan-digest <digest> --manifest apps/demo-app
 Failed updates leave enough state for diagnosis and retry. Runtime state and app data are not deleted automatically. Restore uses normal app backup restore behavior.
 
 ## Testing Expectations
+
+- App-authenticated routine updates succeed without a Core confirmation request; callers without
+  `apps.install` remain denied. New required/optional permissions and non-routine runtime changes
+  return `approval_required`, and queued updates do not restore revoked required grants.
+
 
 - An otherwise up-to-date running source app with an unmaterialized installed pin reports an error
   with both revisions and checkout-wide restart blockers; checking preserves files and processes,

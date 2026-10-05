@@ -1,7 +1,7 @@
 # Assistant MCP Delegation
 
 Created: 2026-08-15
-Updated: 2026-10-01
+Updated: 2026-10-05
 
 Core grants individual installed assistants access to selected MCP targets. The relationship is
 stored in the Core agent policy and requires administrative configuration. A host-wide offer, the
@@ -12,8 +12,9 @@ The [agent directory](../agent-mcp-directory/feature.md) exposes and edits these
 
 `POST /api/internal/apps/{appId}/mcp/token` authenticates the assistant with its service bearer and
 the acting user with `X-Hosty-User-Token`, an app grant issued to that same assistant. The body names
-`targetAppId`. Core checks the current app grant, confirmed assistant role/interface, explicit target
-relationship, both installation identities, global offer and user access to the target. Core MCP
+`targetAppId` and a Core-authorized `sessionId`. Core checks the current assistant session lease,
+app grant, confirmed assistant role/interface, explicit target relationship, both installation
+identities, global offer and user access to the target. Core MCP
 also requires the current user to be an administrator.
 
 The five-minute `hosty_mcp.1` credential is signed and distinct from app sessions and legacy delegated
@@ -53,6 +54,24 @@ Native agent processes receive a session-local proxy key, never the Core cookie 
 Source/workspace operations retain their own app-credential path. Session transcripts persist no
 credentials. Harness's Ask / Run unprompted / Disabled rules are an additional execution policy.
 
+## Settings Catalog Discovery
+
+`POST /api/internal/apps/{appId}/mcp/catalog/{targetId}` accepts only a target identifier. It requires
+the assistant's service bearer, an active app grant belonging to a current administrator, and the same
+confirmed assistant, target relationship, installation and user-access checks as normal issuance.
+It does not require an assistant conversation lease and does not create one.
+
+Core resolves the registered target endpoint and performs a bounded MCP initialize/tools-list
+exchange. It pins the initialize handshake to protocol `2025-06-18`, disables HTTP redirects and
+limits the exchange to 20 seconds, 20 pages and 1,000 tools. Only the tool catalog returns to Harness.
+No caller-supplied upstream URL, RPC method, tool name or arguments are forwarded.
+
+The internal discovery credential expires after 30 seconds, binds the parent grant and relationship,
+and revalidates current administrator activity on introspection. It has only `mcp:read`; introspection
+with any tool name is inactive, and Core MCP rejects tool calls and other arbitrary RPC methods.
+The ordinary `/mcp/token` request cannot select discovery mode. Normal execution still requires an
+approved conversation and the assistant's granted Core permissions for Core tools.
+
 ## Legacy Compatibility
 
 Direct Core-session issuance of legacy app tokens and their same-audience renewal remain available
@@ -68,6 +87,8 @@ do not enlarge those credentials.
 - Verify current user role/assignment, both reinstallations, parent logout, global disable and
   revoke/regrant; existing global offers must not become assistant grants.
 - Verify Core MCP tool permissions independently of the target relationship and legacy branch refusal.
+- Verify catalog discovery never exposes its credential, permits tool invocation or creates a chat
+  lease; stale grants, missing relationships and non-administrators are refused.
 - Verify both SDKs' explicit MCP-purpose request and assistant identity, and Harness service/user
   credential separation, target selection and refusal without fallback.
 - Verify Core-managed embedded/standalone Harness discovery and calls, including revocation while a

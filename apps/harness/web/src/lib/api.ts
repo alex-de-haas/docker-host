@@ -28,7 +28,8 @@ export type PendingSkill = {
 
 export type SettingsResponse = {
   toolCatalogs?: ToolCatalog[];
-  agentsSettingsUrl?: string | null;
+  mcpReviewBaseUrl?: string | null;
+  instructions?: { appId: string; markdown: string | null; approved: boolean }[];
   settings: Settings;
   agentConnections?: boolean;
   providers: Provider[];

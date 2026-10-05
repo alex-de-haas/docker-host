@@ -395,7 +395,20 @@ internal static class LifecycleEndpoints
                 request,
                 users,
                 clock,
-                async () => await HandleLifecycleError(() => lifecycle.EnqueueUpdateAsync(appId, input, cancellationToken)),
+                async () =>
+                {
+                    try
+                    {
+                        var plan = await lifecycle.GetReviewedUpdatePlanAsync(appId, input.PlanDigest);
+                        if (AppManagementAuthorization.RequirePrivateSourceAccess(request, plan.PrivateSources) is { } denied) return denied;
+                    }
+                    catch (AppLifecycleException ex)
+                    {
+                        return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code == "app_not_found" ? 404 : 400);
+                    }
+                    return await HandleLifecycleError(() => lifecycle.EnqueueUpdateAsync(appId, input, cancellationToken,
+                        requireRoutine: AppManagementAuthorization.Caller(request) is not null));
+                },
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 

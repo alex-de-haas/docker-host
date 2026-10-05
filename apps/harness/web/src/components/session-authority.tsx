@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { appFetch, APP_ACTIVITY_RENEWED } from "@hosty-sdk/app/browser-auth";
 
-type Authority = { active: boolean; activeUntil: string | null; reviewUrl: string };
+type Authority = { active: boolean; activeUntil: string | null; reviewUrl: string; duration?: "hour" | "session" };
 /** Core, not this component, decides and persists the session's authority. */
 export function SessionAuthority({ sessionId }: { sessionId: string }) {
   const reviewedUntil = useRef<string | null>(null);
@@ -39,8 +39,8 @@ export function SessionAuthority({ sessionId }: { sessionId: string }) {
     setPending(true);
   };
   return <aside data-hosty-activity-control role="status" className="mx-4 my-2 rounded border p-3 text-sm">
-    {error || (state?.active ? `Tool access until ${new Date(state.activeUntil!).toLocaleTimeString()}.` : "This conversation needs your approval in Core to use Hosty tools. Messages and drafts stay available.")}{" "}
-    {state && <button type="button" className="underline" onClick={review}>{state.active ? "Renew or revoke in Core" : "Allow tools in Core"}</button>}
+    {error || (state?.active ? state.duration === "session" ? "Tool access until your Core sign-in session ends or access is revoked." : `Tool access until ${new Date(state.activeUntil!).toLocaleTimeString()}.` : "This conversation needs your approval in Core to use Hosty tools. Messages and drafts stay available.")}{" "}
+    {state && <button type="button" className="underline" onClick={review}>{state.active ? state.duration === "session" ? "Manage tool access in Core" : "Renew or revoke in Core" : "Allow tools in Core"}</button>}
     {pending && <p>Review in Core, then return here. <button type="button" className="underline" onClick={() => setPending(false)}>Done</button></p>}
   </aside>;
 }

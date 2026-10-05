@@ -337,16 +337,14 @@ async function route(
   // words nobody read — which is the failure this whole mechanism exists to prevent, arriving through
   // its own approval path.
   if (url.pathname === "/api/settings/skills/approve" && settings && method === "POST") {
-    sendJson(response, 409, { code: "agent_policy_moved", message: "Approve application instructions in Hosty Shell Settings → Agents." });
+    sendJson(response, 409, { code: "agent_policy_moved", message: "Review application instructions through Core from MCP access settings." });
     return;
   }
 
   if (url.pathname === "/api/settings/tools" && settings && method === "GET") {
     const credential = await delegationCredential(request);
     if (!credential) throw new AppContextError(401, "credentials_required", "Refresh your Hosty session.");
-    const sessionId = url.searchParams.get("sessionId");
-    if (!sessionId) throw new AppContextError(400, "session_required", "Select a session with Core-approved tool authority to refresh tools.");
-    const unavailable = await manager.discoverMcpTools(credential, sessionId, actor.userId);
+    const unavailable = await manager.discoverMcpTools(credential);
     sendJson(response, 200, { unavailable, catalogs: manager.mcpPolicy.snapshot(), settings: await settings.read() }); return;
   }
 
@@ -368,7 +366,7 @@ async function route(
         return;
       }
       if (body.mcpProviders !== undefined || body.mcpSkillDigests !== undefined) {
-        sendJson(response, 409, { code: "agent_policy_moved", message: "Manage offered tools and skills in Hosty Shell Settings → Agents." });
+        sendJson(response, 409, { code: "agent_policy_moved", message: "Manage MCP access through Core review in Harness settings." });
         return;
       }
       if (body.mcpAutoAllow !== undefined && !isBooleanRecord(body.mcpAutoAllow)) {
@@ -413,14 +411,16 @@ async function route(
     const core = providers?.core() ?? null;
 
     const current = await settings.read();
-    // Legacy response field stays empty; review now belongs to Shell Settings → Agents.
+    // Legacy field remains empty; instructions and review are exposed together below.
     const pendingSkills: PendingSkill[] = [];
     // Capabilities ride along so the page can say what a change actually does on this harness
     // instead of one wording that is false on one of them.
     sendJson(response, 200, {
       settings: { ...current, mcpProviders: Object.fromEntries([...(core ? [core] : []), ...(discovered?.providers ?? [])].map(provider => [provider.appId, provider.offered === true])), mcpSkillDigests: providers?.approvedSkills() ?? {} },
       toolCatalogs: manager.mcpPolicy.snapshot(),
-      agentsSettingsUrl: providers?.settingsUrl() ?? null,
+      mcpReviewBaseUrl: process.env.HOSTY_CORE_PUBLIC_ORIGIN
+        ? `${process.env.HOSTY_CORE_PUBLIC_ORIGIN.replace(/\/$/, "")}/install/agents/${encodeURIComponent(process.env.HOSTY_APP_ID ?? "hosty.harness")}` : null,
+      instructions: await providers?.instructions() ?? [],
       pendingSkills,
       providers: [...(core ? [core] : []), ...(discovered?.providers ?? [])],
       discovery: discovered ? "ok" : "unavailable",
@@ -493,6 +493,10 @@ async function route(
   }
 
   const rest = sessionMatch[2] ?? "";
+  if (rest === "/autonomy" && method === "PUT") {
+    const body = await readJson(request);
+    sendJson(response, 200, await manager.setAutonomy(sessionId, body.autonomy, actor.userId)); return;
+  }
   if (rest === "/authority" && (method === "GET" || method === "POST")) {
     const record = await manager.getSession(sessionId);
     if (!record || record.createdBy !== actor.userId) throw new AppContextError(403, "session_forbidden", "This session belongs to another user.");

@@ -2,11 +2,36 @@
 
 Status: Draft
 Created: 2026-09-02
-Updated: 2026-09-29
+Updated: 2026-10-05
 
 Remaining work extends the [shipped per-tool MCP policy](feature.md) with session grants, shell
 prefix rules and explicit native development boundaries. Current MCP Ask / Run unprompted / Disabled
 controls already apply to Claude and Codex, including writes. The broader native policy remains Draft.
+
+## Composer Placement (Owner Approval, 2026-10-05)
+
+The owner approved the autonomous-session direction. Put the autonomy selector beneath the message
+composer, visible before sending, in the style of agent editors. It is a conversation-level setting,
+not a global switch hidden in settings. The shipped lifecycle and provider behavior are documented in [session autonomy](../assistant-session-autonomy/feature.md).
+The remaining enforced-isolation proposals below are separate Draft work.
+
+## Owner Direction: Autonomous Sessions (2026-10-05)
+
+The owner reports that allowing all MCP tools still leaves repeated native Bash/command/file
+approval requests, preventing unattended investigation. Codex currently uses read-only sandbox and
+untrusted approval policy; Claude's default mode separately asks for native Bash and writes. A
+session mode must explicitly cover these actions, rather than merely repeat the MCP toggle.
+
+The owner wants one deliberate decision to allow autonomous work for a session, with usability
+first and operator responsibility for broadly granted access. This supersedes "every native write
+asks" as the required product behavior. It does not silently turn existing sessions autonomous or
+allow app-originated messages to select the mode. Broad native access must be described honestly;
+it cannot be presented as an enforced per-repository sandbox or as preventing direct database/file
+access merely because a corresponding Core API permission is absent.
+
+The implementation is documented in [session autonomy](../assistant-session-autonomy/feature.md).
+It is independent of embedded login continuity. This older plan remains Draft for enforced isolation
+and command-prefix controls; those controls are not prerequisites for the approved process-access mode.
 
 ## Shared Session Development Dependency (2026-09-24)
 

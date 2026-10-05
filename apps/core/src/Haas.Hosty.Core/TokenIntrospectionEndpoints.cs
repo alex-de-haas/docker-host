@@ -65,9 +65,10 @@ internal static class TokenIntrospectionEndpoints
             if (input.Token.StartsWith(AssistantMcpAccess.Prefix, StringComparison.Ordinal))
             {
                 var actor = input.Purpose == "mcp" ? await assistantMcp.ValidateAsync(input.Token, appId, cancellationToken) : null;
+                if (actor?.DiscoveryOnly == true && tool is not null) actor = null;
                 await WriteAuditAsync(audit, clock, actor is null ? "refused" : "succeeded", appId, tool, actor?.UserId, cancellationToken);
                 return actor is null ? Inactive() : CoreJson.Json(new TokenIntrospectionResponse(true, actor.UserId, actor.Role,
-                    ["mcp:read", "mcp:invoke"], actor.Caller.Id));
+                    actor.DiscoveryOnly ? ["mcp:read"] : ["mcp:read", "mcp:invoke"], actor.Caller.Id));
             }
             var state = await users.ReadAsync(cancellationToken);
             var match = ScopedCredentials.Resolve(state, input.Token, clock.UtcNow, lifetimes, appId);

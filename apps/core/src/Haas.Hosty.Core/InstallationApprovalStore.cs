@@ -53,7 +53,7 @@ internal static class CoreAppPermissions
         SpeechProviders => "List and use all current and future speech-to-text providers",
         AssistantProviders => "Create draft assistant conversations on your behalf",
         ReadSkills => "Read agent skills published by installed apps",
-        Install => "Request installation, update and removal of applications (Core confirmation required)",
+        Install => "Install, update and remove applications; routine updates need no confirmation, other changes require Core review",
         _ => permission,
     };
 }
@@ -115,7 +115,7 @@ internal sealed class InstallationApprovalStore(IClock clock)
         }
     }
 
-    public void Decide(InstallationApproval entry, string nonce, string sessionId, bool approve, IReadOnlyList<string>? optionalPermissions = null)
+    public void Decide(InstallationApproval entry, string nonce, string sessionId, bool approve, IReadOnlyList<string>? optionalPermissions = null, bool agentEnabled = false, IReadOnlyList<string>? agentSkills = null)
     {
         lock (gate)
         {
@@ -126,6 +126,14 @@ internal sealed class InstallationApprovalStore(IClock clock)
                 throw new AppLifecycleException("approval_invalid", "The confirmation is invalid or has already been used.");
             if (approve)
             {
+                if (entry.AssistantAccessPlan is { } agent)
+                {
+                    var selectedSkills = agentSkills ?? [];
+                    if (selectedSkills.Any(key => !agent.Target.Skills.Any(skill => skill.Key == key && skill.Digest is not null)))
+                        throw new AppLifecycleException("agent_skill_changed", "Select only instructions shown in this review.");
+                    entry.AgentEnabled = agentEnabled;
+                    entry.AgentSkills = selectedSkills.Distinct(StringComparer.Ordinal).ToArray();
+                }
                 var declared = entry.PermissionPlan?.Optional ?? entry.InstallPlan?.OptionalCorePermissions ?? entry.UpdatePlan?.TargetOptionalCorePermissions ?? [];
                 var selected = optionalPermissions ?? [];
                 _ = CoreAppPermissions.ResolveGrants([], declared, selected);
@@ -168,6 +176,9 @@ internal sealed class InstallationApproval
     public AppInstallPlan? InstallPlan { get; init; }
     public AppUpdatePlan? UpdatePlan { get; init; }
     public AppPermissionPlan? PermissionPlan { get; init; }
+    public AssistantAccessPlan? AssistantAccessPlan { get; init; }
+    public bool AgentEnabled { get; set; }
+    public IReadOnlyList<string> AgentSkills { get; set; } = [];
     public AppRemovalPlan? RemovalPlan { get; init; }
     public HostPathApprovalPlan? HostPathPlan { get; init; }
     public IReadOnlyList<string>? SelectedOptionalPermissions { get; set; }
@@ -180,7 +191,7 @@ internal sealed class InstallationApproval
     internal string? DecisionNonce { get; set; }
     internal string? DecisionSession { get; set; }
     public bool RequiresSources { get; init; }
-    public string? Permission => PermissionPlan is not null ? null : HostPathPlan?.Change.Permission ?? CoreAppPermissions.Install;
+    public string? Permission => PermissionPlan is not null || AssistantAccessPlan is not null ? null : HostPathPlan?.Change.Permission ?? CoreAppPermissions.Install;
 }
 
 internal sealed record InstallationPrepare(string? ManifestPath = null, string? FeedsUrl = null,

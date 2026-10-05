@@ -45,9 +45,8 @@ export function SettingsIngressSection({
       <div>
         <h3 className="text-sm font-medium">Ingress</h3>
         <p className="text-xs text-muted-foreground">
-          How app endpoints reach the internet. App ports listen on loopback; ingress is the layer that accepts
-          public traffic, terminates HTTPS, and routes it back to the right port. Hosty never creates a tunnel
-          and never runs a connector — you do.
+          Choose how you open applications: Local on this computer, or Cloudflare through your domain.
+          Local addresses work without configuring a tunnel or DNS.
         </p>
       </div>
 
@@ -108,10 +107,9 @@ function ProviderExplanation({ provider }: { provider: string }) {
 
   return (
     <p className="text-xs text-muted-foreground">
-      Ingress is off: Hosty publishes nothing new, and app ports stay on loopback. Reaching an app from outside is
-      yours to arrange — your own reverse proxy, a port forward, or a LAN address — and you set each app&apos;s
-      public origin by hand in its settings. Anything already published on Cloudflare stays published; the checks
-      below list it.
+      Local gives each public app endpoint a named localhost address on this computer. Use its globe
+      button to change the name; Hosty supplies the suffix and assigned port. A manual address for your
+      own proxy is available as an advanced option. Existing Cloudflare publications stay published.
     </p>
   );
 }

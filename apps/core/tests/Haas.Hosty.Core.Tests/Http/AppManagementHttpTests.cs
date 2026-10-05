@@ -100,6 +100,7 @@ public sealed class AppManagementHttpTests
     [InlineData("GET", "/api/apps/missing/remove-impact", "apps.install")]
     [InlineData("GET", "/api/apps/missing/feeds", "apps.install")]
     [InlineData("GET", "/api/apps/missing/update/plan", "apps.install")]
+    [InlineData("POST", "/api/apps/missing/update", "apps.install")]
     [InlineData("GET", "/api/apps/missing/logs", "apps.logs")]
     [InlineData("GET", "/api/apps/missing/permissions", "apps.read")]
     [InlineData("GET", "/api/apps/missing/source", "apps.lifecycle")]
@@ -129,7 +130,6 @@ public sealed class AppManagementHttpTests
 
     [Theory]
     [InlineData("POST", "/api/apps/install")]
-    [InlineData("POST", "/api/apps/example.console/update")]
     [InlineData("POST", "/api/apps/example.console/remove")]
     [InlineData("POST", "/api/auth/credentials")]
     [InlineData("POST", "/api/auth/device/requests/approve")]

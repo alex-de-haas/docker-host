@@ -24,7 +24,10 @@ export type SessionStatus =
   | "abandoned"
   | "failed";
 
+export type SessionAutonomy = "normal" | "autonomous";
+
 export interface SessionRecord {
+  autonomy?: SessionAutonomy;
   developmentWorkspaces?: import("./development.js").DevelopmentWorkspace[];
   developmentLease?: string;
   handoffPending?: boolean;

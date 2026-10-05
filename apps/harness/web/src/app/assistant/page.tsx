@@ -1,4 +1,5 @@
 "use client";
+import { SessionAutonomy } from "@/components/session-autonomy";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SpeechInput } from "@/components/speech-input";
@@ -165,7 +166,7 @@ export default function AssistantPage() {
       record.id,
       (event) => {
         if (abort.signal.aborted) return;
-        if (event.type === "session_provider_changed") {
+        if (event.type === "session_provider_changed" || event.type === "session_autonomy_changed") {
           void getSession(record.id).then(value => { if (activeSessionId.current === record.id) setSession(value); }).catch(() => {});
           void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
           return;
@@ -826,7 +827,11 @@ export default function AssistantPage() {
                         </DropdownMenuGroup>
                       </DropdownMenuContent>
                     </DropdownMenu>
-                    {session && session.providerLocked !== undefined && <SessionProvider key={`${session.id}:${session.connectionId}:${session.connectionRevision}`} session={session} busy={sending || mentionSaving || contextSaving} onSavingChange={onProviderSaving} onChange={record => {
+                    {session && <SessionAutonomy key={session.id} session={{ ...session, status }} busy={sending || stopping || mentionSaving || contextSaving || providerSaving}
+                      onSavingChange={onProviderSaving} onChange={record => {
+                        setSession(current => current?.id === record.id ? record : current);
+                      }} />}
+                    {session && session.providerLocked !== undefined && <SessionProvider key={`${session.id}:${session.connectionId}:${session.connectionRevision}`} session={session} busy={sending || mentionSaving || contextSaving || providerSaving} onSavingChange={onProviderSaving} onChange={record => {
                       setSession(current => current?.id === record.id ? record : current);
                       void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
                     }} />}

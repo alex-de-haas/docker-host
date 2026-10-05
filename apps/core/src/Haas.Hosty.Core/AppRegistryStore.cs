@@ -60,6 +60,9 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
         return apps;
     }
 
+    // Serializes operator browser-name changes across apps and Core.
+    internal SemaphoreSlim BrowserOriginGate { get; } = new(1, 1);
+
     public async Task<AppStateDocument> UpsertAppAsync(AppRecord app, CancellationToken cancellationToken = default)
     {
         var mutex = GetAppLock(app.Id);
@@ -635,7 +638,8 @@ internal sealed record AppEndpointContract(
     // Availability projected on summaries only (assigned/running/unavailable); left null in the persisted
     // record and attached in AppSummary.From, exactly like PublicOrigin. See EndpointAvailability.
     string? Availability = null,
-    string? BrowserOrigin = null);
+    string? BrowserOrigin = null,
+    string? LocalOrigin = null, string? LocalName = null, string? LocalSuffix = null, string? LocalDefaultOrigin = null);
 
 internal sealed record AppRuntimeProfileSummary(string Key, string Type, bool Default, bool Development = false);
 
@@ -1062,7 +1066,7 @@ internal sealed record AppSummary(
         string? liveSourcePath = null)
     {
         var ui = app.Ui;
-        var endpoints = AttachAvailability(AttachPublicOrigins(app.Endpoints, app.Settings).Select(e => e with { BrowserOrigin = LocalBrowserOrigins.App(app, e) }).ToArray(), app);
+        var endpoints = AttachAvailability(AttachPublicOrigins(app.Endpoints, app.Settings).Select(e => e with { BrowserOrigin = LocalBrowserOrigins.App(app, e), LocalOrigin = LocalBrowserOrigins.Local(app, e), LocalName = LocalBrowserOrigins.Name(app, e), LocalSuffix = LocalBrowserOrigins.Site(app.BrowserOriginScope), LocalDefaultOrigin = LocalBrowserOrigins.DefaultLocal(app, e) }).ToArray(), app);
         var profiles = runtimeProfiles ?? app.RuntimeProfiles ?? [];
         // The UI entry URL is only meaningful when the app declares a `ui` section. A headless
         // app (e.g. a backend service that exposes only a control endpoint for other apps to

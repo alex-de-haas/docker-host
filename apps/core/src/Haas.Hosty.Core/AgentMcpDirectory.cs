@@ -148,6 +148,40 @@ internal sealed class AgentMcpDirectory(
         finally { updateGate.Release(); }
     }
 
+    internal async Task<AssistantAccessPlan> ReviewAssistantAsync(string assistantId, string targetId, CancellationToken ct)
+    {
+        var assistant = await apps.GetAppAsync(assistantId, ct);
+        if (assistant is null || !IsAssistant(assistant))
+            throw new AppLifecycleException("mcp_assistant_required", "Select an installed, confirmed assistant.");
+        var snapshot = await ReadAsync(true, ct);
+        var target = snapshot.Targets.FirstOrDefault(t => t.Id == targetId)
+            ?? throw new AppLifecycleException("agent_target_not_found", "The MCP target is not installed.");
+        return new(assistantId, assistant.DisplayName, assistant.InstalledAt, snapshot.Revision, target);
+    }
+
+    internal async Task ApplyAssistantReviewAsync(AssistantAccessPlan plan, bool enabled, IReadOnlyList<string> skills, string actor, CancellationToken ct)
+    {
+        var mutex = apps.OperationLock(plan.AssistantId);
+        await mutex.WaitAsync(ct);
+        try
+        {
+            var assistant = await apps.GetAppAsync(plan.AssistantId, ct);
+            if (assistant is null || !IsAssistant(assistant) || assistant.InstalledAt != plan.InstalledAt)
+                throw new AppLifecycleException("agent_policy_changed", "The assistant changed. Review its access again.");
+            var assistants = (plan.Target.AssistantIds ?? []).Where(id => id != plan.AssistantId).ToList();
+            if (enabled) assistants.Add(plan.AssistantId);
+            var approved = plan.Target.Skills.Where(s => skills.Contains(s.Key, StringComparer.Ordinal) && s.Digest is not null)
+                .ToDictionary(s => s.Key, s => s.Digest!, StringComparer.Ordinal);
+            // Access changes affect this assistant only. A target must also be offered globally to
+            // enable the relationship; the Core page explicitly describes that shared effect.
+            var result = await UpdateAsync(plan.Target.Id, new(plan.Revision, enabled || plan.Target.Offered,
+                approved, assistants), actor, ct);
+            if (result is IStatusCodeHttpResult { StatusCode: >= 400 })
+                throw new AppLifecycleException("agent_policy_changed", "The directory or instructions changed. Open a fresh review.");
+        }
+        finally { mutex.Release(); }
+    }
+
     internal static bool IsAssistant(AppRecord app) => app.ConfirmedRoles?.Contains("assistant", StringComparer.Ordinal) == true
         && app.Interfaces?.ContainsKey("assistant") == true;
 
@@ -173,6 +207,7 @@ internal static class AgentMcpEndpoints
 {
     public static void Map(WebApplication app)
     {
+        AssistantMcpDiscovery.Map(app);
         app.MapGet("/api/core/agents", async (HttpRequest request, UserDirectoryStore users, IClock clock,
             AgentMcpDirectory directory, CancellationToken cancellationToken) =>
             await CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,
@@ -189,3 +224,6 @@ internal static class AgentMcpEndpoints
                 async () => CoreJson.Json(await directory.ReadAsync(false, cancellationToken))));
     }
 }
+
+internal sealed record AssistantAccessPlan(string AssistantId, string DisplayName, DateTimeOffset InstalledAt,
+    string Revision, AgentMcpTarget Target);

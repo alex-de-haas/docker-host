@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createInstallationClient, InstallationError, type InstallationClient, type InstallationRequest } from "@hosty-sdk/app/install";
-import { requestAppUpdate, reviewUpdatesInOrder } from "../src/app/shell/app-updates";
+import { enqueueRoutineUpdate, requestAppUpdate, reviewUpdatesInOrder } from "../src/app/shell/app-updates";
 
 const draft: InstallationRequest = { id: "update-request", status: "draft", plan: null,
   approvalUrl: "http://core.localhost/install/confirm/update-request", expiresAt: "2099-01-01T00:00:00Z" };
@@ -11,7 +11,7 @@ function client(): InstallationClient {
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
-it.each(["routine.app", "hosty.shell"])("routes %s through confirmation and waits for completed execution", async appId => {
+it.each(["permissions.app", "hosty.shell"])("routes %s through confirmation and waits for completed execution", async appId => {
   const request = vi.fn(async (url: string) => Response.json({ ...draft,
     status: url.endsWith("/submit") ? "pending" : url.endsWith(draft.id) ? "succeeded" : "draft" }));
   const api = createInstallationClient({ baseUrl: "/api/installations", request });
@@ -60,11 +60,22 @@ it("reports failed execution without starting another update", async () => {
   expect(api.submit).toHaveBeenCalledTimes(1);
 });
 
-it("reviews bulk updates sequentially, including after denial, with Shell last", async () => {
+it("submits bulk updates sequentially, including after failure, with Shell last", async () => {
   let release!: (approved: boolean) => void;
   const review = vi.fn().mockImplementationOnce(() => new Promise<boolean>(resolve => { release = resolve; })).mockResolvedValue(true);
   const result = reviewUpdatesInOrder([{ id: "hosty.shell" }, { id: "first" }, { id: "second" }], "hosty.shell", review);
   expect(review.mock.calls).toEqual([[{ id: "first" }]]);
   release(false); await result;
   expect(review.mock.calls).toEqual([[{ id: "first" }], [{ id: "second" }], [{ id: "hosty.shell" }]]);
+});
+
+it("queues routine updates once without preparing a Core confirmation", async () => {
+  const request = vi.fn(async () => Response.json({ status: "updating" }));
+  await enqueueRoutineUpdate(request, "", "routine.app", "reviewed-digest");
+  expect(request).toHaveBeenCalledExactlyOnceWith("/api/apps/routine.app/update", { planDigest: "reviewed-digest" });
+});
+it("does not replay an uncertain routine update or open a confirmation", async () => {
+  const request = vi.fn().mockRejectedValue(new Error("Network unavailable"));
+  await expect(enqueueRoutineUpdate(request, "", "hosty.shell", "digest")).rejects.toThrow("Network unavailable");
+  expect(request).toHaveBeenCalledTimes(1);
 });

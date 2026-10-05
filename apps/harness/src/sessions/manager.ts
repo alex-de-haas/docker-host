@@ -136,8 +136,8 @@ export class SessionManager {
         session.record.mcpPendingApprovals = session.record.mcpPendingApprovals?.filter(p => p.id !== approvalId);
         if (!automatic) await this.append(id, { type: "approval_decision", approvalId, toolName, decision: allowed ? "allow" : "deny" });
         if (session.record.status === "awaiting_approval" && session.pendingApprovals.size === 0) await this.setStatus(id, "running");
-        if (allowed) this.audit.report(automatic ? "ai_action_auto_allowed" : "ai_action_approved", { sessionId: id, toolName, mode: automatic ? "run" : "ask" });
-      }));
+        if (allowed) this.audit.report(automatic ? "ai_action_auto_allowed" : "ai_action_approved", { sessionId: id, toolName, mode: automatic ? session.record.autonomy === "autonomous" ? "autonomous" : "run" : "ask" });
+      }), 90_000, id => this.live.get(id)?.record.autonomy === "autonomous");
     this.developmentMcp.policy = this.mcpPolicy;
     if (proxy) {
       proxy.policy = this.mcpPolicy;
@@ -175,9 +175,7 @@ export class SessionManager {
     });
   }
 
-  async discoverMcpTools(credential: string, sessionId: string, userId: string): Promise<string[]> {
-    const session = await this.requireLive(sessionId);
-    if (session.record.createdBy !== userId) throw new AppContextError(403, "session_forbidden", "This session belongs to another user.");
+  async discoverMcpTools(credential: string): Promise<string[]> {
     const unavailable: string[] = [];
     if (this.development?.available) await this.mcpPolicy.catalog(DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, developmentTools());
     const snapshot = await this.providers?.read();
@@ -185,9 +183,9 @@ export class SessionManager {
     for (const p of [this.providers?.core(), ...snapshot.providers]) {
       if (!p?.offered || !p.url || !p.policyIdentity) continue;
       try {
-        const token = await this.exchange?.exchange(credential, p.appId, sessionId);
-        if (!token) throw new Error("Provider identity unavailable");
-        await this.mcpPolicy.discover(p.appId, p.policyIdentity, p.url, token.token);
+        const tools = await this.exchange?.catalog(credential, p.appId);
+        if (!tools) throw new Error("Provider catalog unavailable");
+        await this.mcpPolicy.catalog(p.appId, p.policyIdentity, tools);
       } catch { unavailable.push(p.appId); }
     }
     return unavailable;
@@ -502,6 +500,30 @@ export class SessionManager {
       : Array.isArray(opening.attachments) ? opening.attachments.map(String).join(", ") : null;
   }
 
+  async setAutonomy(id: string, value: unknown, userId: string): Promise<SessionRecord> {
+    if (value !== "normal" && value !== "autonomous")
+      throw new AppContextError(400, "autonomy_invalid", "Choose Normal or Autonomous.");
+    return this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (session.record.createdBy !== userId) throw new AppContextError(403, "session_forbidden", "This session belongs to another user.");
+      if (session.record.handoffPending || session.record.handoffDispatch?.state === "queued" ||
+          ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
+      if ((session.record.autonomy ?? "normal") === value) return session.record;
+      // Recreate the native client so a resumed thread cannot retain its previous permission mode.
+      if (session.run) { await session.run.stop(); session.run = null; }
+      this.clearRefresh(session);
+      this.proxy?.unregister(id);
+      this.developmentMcp.unregister(id);
+      this.mcpPolicy.cancel(id);
+      session.record.autonomy = value;
+      session.record.updatedAt = new Date().toISOString();
+      await this.store.saveRecord(session.record);
+      await this.append(id, { type: "session_autonomy_changed", autonomy: value });
+      this.audit.report("ai_session_autonomy_changed", { sessionId: id, autonomy: value });
+      return session.record;
+    });
+  }
+
   /**
    * Renames a session. An empty title clears the name and returns it to `auto`, so the next message
    * derives one again — an emptied box is a decision, not a session pinned to the empty string.
@@ -664,6 +686,7 @@ export class SessionManager {
           this.mcpPolicy.cancel(id); // A new native client starts a fresh JSON-RPC request namespace.
           session.run = selectedAdapter.start({
             sessionId: id,
+            autonomy: session.record.autonomy ?? "normal",
             cwd: workspace ?? this.workDir,
             systemPrompt,
             ...(mcpServers ? { mcpServers } : {}),

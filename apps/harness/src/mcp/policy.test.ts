@@ -102,3 +102,23 @@ it("scopes RPC replay checks to the native client lifetime and invalidates old d
   await current();
   await expect(call("1")).rejects.toThrow("already received");
 });
+
+it("autonomy skips Ask only for the selected session and still rechecks Disabled and revocation", async () => {
+  let autonomous = true;
+  policy.close();
+  policy = new McpToolPolicy(settings, notify, settled, 200, id => autonomous && id === "session");
+  await policy.catalog("app", "install-1", [write]);
+  const guard = await call();
+  expect(notify).not.toHaveBeenCalled();
+  autonomous = false;
+  await expect(guard()).rejects.toThrow("policy changed");
+  autonomous = true;
+  await policy.update({ [ruleKey("app", "merge")]: { identity: "install-1", mode: "disabled" } });
+  await expect(call("2")).rejects.toThrow("disabled");
+  await expect(guard()).rejects.toThrow("policy changed");
+  await policy.update({ [ruleKey("app", "merge")]: { identity: "install-1", mode: "ask" } });
+  const other = policy.authorize("other", "app", "install-1", "3", "merge", {}, new AbortController().signal);
+  await vi.waitFor(() => expect(notify).toHaveBeenCalled());
+  policy.cancel("other");
+  await expect(other).rejects.toThrow("denied");
+});

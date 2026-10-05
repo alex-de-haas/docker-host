@@ -62,6 +62,19 @@ describe("gateway", () => {
   let origin: string;
   let restoreEnv: () => void;
 
+  it("allows only the chat owner to change autonomy and refuses provider credentials", async () => {
+    const record = await manager.createSession({ createdBy: "user_admin" });
+    const set = (token: string) => fetch(`${origin}/api/sessions/${record.id}/autonomy`, {
+      method: "PUT", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ autonomy: "autonomous" }),
+    });
+    expect((await set("hosty_provider.synthetic")).status).toBe(401);
+    expect((await set(mintToken("host.admin", "hosty.harness", "other"))).status).toBe(403);
+    expect((await set(mintToken("host.user"))).status).toBe(401);
+    const result = await set(mintToken("host.admin"));
+    expect(result.status).toBe(200);
+    expect(await result.json()).toMatchObject({ autonomy: "autonomous" });
+  });
+
   beforeEach(async () => {
     // The last two are borrowed rather than set: individual tests point them at a stub Core they
     // then close, and restoring is what keeps a session from resolving against a dead port.

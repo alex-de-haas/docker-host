@@ -80,6 +80,12 @@ function fail(reason) {
 }
 
 function handle(msg) {
+  if (process.env.HOSTY_TEST_AUTONOMY && ["thread/start", "thread/resume", "turn/start"].includes(msg.method)) {
+    const autonomous = process.env.HOSTY_TEST_AUTONOMY === "autonomous";
+    const expected = msg.method === "turn/start" ? (autonomous ? "dangerFullAccess" : "readOnly") : (autonomous ? "danger-full-access" : "read-only");
+    if ((msg.method === "turn/start" ? msg.params?.sandboxPolicy?.type : msg.params?.sandbox) !== expected ||
+        msg.params?.approvalPolicy !== (autonomous ? "never" : "untrusted")) fail("incorrect explicit autonomy policy");
+  }
   if (msg.method === "account/read") {
     send({ jsonrpc: "2.0", id: msg.id, result: { account: null } });
     return;

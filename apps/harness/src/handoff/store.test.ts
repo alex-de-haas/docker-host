@@ -25,9 +25,11 @@ describe("durable assistant handoffs", () => {
   const input = () => ({ requestId: createAssistantRequestId(now), prompt: "Please inspect this", appIds: [] });
   it.each(["consumer:installation", undefined])("restricts immediate handoffs to operator clients (%s)", async consumer => {
     await settings.update({ immediateHandoffs: true });
-    const { value } = await handoffs.prepare("alice", input(), consumer);
+    const forgedRequest = { ...input(), autonomy: "autonomous" };
+    const { value } = await handoffs.prepare("alice", forgedRequest, consumer);
     const result = await handoffs.finalize("alice", value.handoffId, [], undefined, consumer);
     expect(result.result?.disposition).toBe(consumer ? "draft" : "accepted");
+    expect((await store.readRecord(value.conversationId))?.autonomy).not.toBe("autonomous");
     if (consumer) {
       expect(result.result?.dispatchId).toBeUndefined();
       expect((await store.readRecord(value.conversationId))?.handoffDispatch).toBeUndefined();

@@ -2,7 +2,7 @@
 // both Cloudflare values drive the same kind of tunnel and differ only in who writes the routes, so
 // exactly one of them owns an app's public origins at a time.
 //
-//   none              — the operator owns exposure and types each app's public origin.
+//   none              — managed local browser names; an advanced manual proxy origin is optional.
 //   cloudflare-remote — a remotely managed tunnel driven over Cloudflare's API; origins come from
 //                       publishing an endpoint under a label.
 //   cloudflared       — a locally managed tunnel whose config Core renders; origins are derived from
@@ -60,7 +60,7 @@ export function ingressProviderLabel(provider: string | null | undefined) {
     case null:
     case undefined:
     case "":
-      return "None";
+      return "Local";
     default:
       return provider;
   }
