@@ -1,7 +1,11 @@
-# Auth Session Lifecycle And Recovery
+---
+created: 2026-07-13
+updated: 2026-10-05
+summary: The identity error contract, opaque app session grants, sliding lifetimes and session recovery through Core login.
+components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet]
+---
 
-Created: 2026-07-13
-Updated: 2026-10-05
+# Auth Session Lifecycle And Recovery
 
 How a Hosty app session begins, how long it lives, and how a browser that lost one gets back in.
 Two credentials are in scope: the **Core browser session** (`hosty_session`, the signed-in Host user)

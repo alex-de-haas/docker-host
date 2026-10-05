@@ -1,8 +1,12 @@
-# Embedded Session Continuity
+---
+status: Draft
+created: 2026-10-05
+updated: 2026-10-05
+summary: Use apps, assistant panels and embedded settings inside Shell without repeated sign-in clicks.
+components: [apps/core, apps/shell, packages/app-sdk]
+---
 
-Status: Draft
-Created: 2026-10-05
-Updated: 2026-10-05
+# Embedded Session Continuity
 
 ## Owner Direction And Observed Code
 
@@ -54,18 +58,18 @@ apps, settings surfaces and assistant panels, on both local and external registe
 
 ## Deliverables
 
-- [ ] Reproduce first open, second open, navigation away/back and simultaneous surfaces on the live
+- [ ] D1. Reproduce first open, second open, navigation away/back and simultaneous surfaces on the live
   origin topology; distinguish missing cookies, document-local token loss and activity expiry.
-- [ ] Prototype the Core-owned broker and app storage lifetime under supported browser policies;
+- [ ] D2. Prototype the Core-owned broker and app storage lifetime under supported browser policies;
   prove that a forged Shell request cannot obtain target credentials. Obtain owner approval of the
   concrete exchange and fallback contract before production implementation.
-- [ ] Implement the approved Core/SDK exchange, revalidation and automatic recovery;
+- [ ] D3. Implement the approved Core/SDK exchange, revalidation and automatic recovery;
   preserve target assignment, app grants, installation and logout/revocation boundaries.
-- [ ] Cover races, replay, forged frame/target/user, wrong proof/origin, iframe remount, simultaneous
+- [ ] D4. Cover races, replay, forged frame/target/user, wrong proof/origin, iframe remount, simultaneous
   surfaces, blocked third-party cookies, active-session renewal and unavailable Core.
-- [ ] Verify normal Core password sign-in followed by repeated embedded workspace/settings/assistant
+- [ ] D5. Verify normal Core password sign-in followed by repeated embedded workspace/settings/assistant
   navigation without extra sign-in clicks; verify standalone recovery and explicit logout separately.
-- [ ] Build changed artifacts, run affected tests, bump versions, update auth/session and activity
+- [ ] D6. Build changed artifacts, run affected tests, bump versions, update auth/session and activity
   reality docs and SDK integration instructions; remove this plan and regenerate the docs index.
 
 ## Interaction With Existing Features

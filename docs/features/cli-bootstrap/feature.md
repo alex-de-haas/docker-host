@@ -1,7 +1,11 @@
-# CLI Bootstrap
+---
+created: 2026-05-13
+updated: 2026-09-18
+summary: The hosty CLI installs itself and Core, discovers the Core control API and manages runtime apps.
+components: [apps/cli]
+---
 
-Created: 2026-05-13
-Updated: 2026-09-18
+# CLI Bootstrap
 
 ## Description
 

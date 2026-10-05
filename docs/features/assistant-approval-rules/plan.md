@@ -1,8 +1,12 @@
-# Assistant Approval Rules
+---
+status: Draft
+created: 2026-09-02
+updated: 2026-10-05
+summary: Session grants, shell prefix rules and explicit native development boundaries on top of the MCP tool policy.
+components: [apps/harness]
+---
 
-Status: Draft
-Created: 2026-09-02
-Updated: 2026-10-05
+# Assistant Approval Rules
 
 Remaining work extends the [shipped per-tool MCP policy](feature.md) with session grants, shell
 prefix rules and explicit native development boundaries. Current MCP Ask / Run unprompted / Disabled
@@ -313,41 +317,41 @@ parity. A disposable spike establishes the contract; this Draft does not authori
 
 ## Deliverables
 
-- [ ] **Deferred — original-source isolation:** revisit technical protection of original checkouts and
+- [ ] D1. **Deferred — original-source isolation:** revisit technical protection of original checkouts and
       shared Git metadata only if practical agent behavior warrants it and the owner approves that scope.
       The instruction-based workspace feature does not wait for these enforcement experiments or changes.
-- [ ] Run and record H's current-policy baseline and candidate-boundary experiment on both adapters;
+- [ ] D2. Run and record H's current-policy baseline and candidate-boundary experiment on both adapters;
       resolve enforcement, audit and lifecycle-authority design before implementation approval.
-- [ ] **Deferred — immediate process revocation:** own and terminate model-tool commands or verify all
+- [ ] D3. **Deferred — immediate process revocation:** own and terminate model-tool commands or verify all
       old executions have quiesced before claiming their access was revoked. Preserve the failing
       interrupt/unsubscribe regression; further experiments are postponed and do not block the first slice.
-- [ ] Implement the first-slice protected-root policy: check canonical app Source and Hosty data paths,
+- [ ] D4. Implement the first-slice protected-root policy: check canonical app Source and Hosty data paths,
       identify unsupported placements under broadly accessible temporary directories, and disclose
       shared scratch space without promising isolation between temporary folders.
-- [ ] Implement session development-grant persistence/revisions, Core-resolved source bindings and
+- [ ] D5. Implement session development-grant persistence/revisions, Core-resolved source bindings and
       explicit primary cwd, with multiple granted apps, no-Git sources and stale-root invalidation.
-- [ ] Add per-app Edit source / Run project commands controls to the shared context UI, effective
+- [ ] D6. Add per-app Edit source / Run project commands controls to the shared context UI, effective
       scope summaries, next-dispatch grant removal and unavailable states; prototype creation consumes the same API.
-- [ ] Implement and verify filesystem, command, network and credential boundaries in both adapters;
+- [ ] D7. Implement and verify filesystem, command, network and credential boundaries in both adapters;
       handle unsupported hosts and native-thread reconfiguration without silent permission widening.
-- [ ] Add app-scoped lifecycle authorization/execution with server-enforced app/action checks,
+- [ ] D8. Add app-scoped lifecycle authorization/execution with server-enforced app/action checks,
       separate Git destination authority and audit of grants, revocations and autonomous actions.
-- [ ] **Neutralize the confirmed H2 bypass** before shipping the rule UI: the Claude experiment
+- [ ] D9. **Neutralize the confirmed H2 bypass** before shipping the rule UI: the Claude experiment
       reproduced user `permissions.allow` pre-empting `canUseTool` for Bash and file writes. Add
       reproducible coverage against the declared SDK, make settings-source policy authoritative,
       and cover source-local settings widening the shell sandbox. No hidden native settings may
       contradict the grants shown in Hosty. Review the Task/subagent auto-allow (H1) in the same pass.
-- [ ] Enforce sensitive reads across native file/search tools and shell; verify independent edit
+- [ ] D10. Enforce sensitive reads across native file/search tools and shell; verify independent edit
       and command switches, instruction loading without permission-setting inheritance, declared
       scratch-space policy, and WebFetch/subagent/MCP paths against the same effective grant.
-- [ ] Extend the shipped MCP rule model with shell prefix rules and one effective native-tool policy
+- [ ] D11. Extend the shipped MCP rule model with shell prefix rules and one effective native-tool policy
       over tool name, input and session development grants, including native sandbox configuration.
-- [ ] Add the Shell prefix-rules section and native effective-policy feedback; keep existing MCP
+- [ ] D12. Add the Shell prefix-rules section and native effective-policy feedback; keep existing MCP
       controls bound to complete discovery and the Core provider offer policy.
-- [ ] Card: **Allow for this session**, with the grant it would make shown on the button.
-- [ ] Compound-command refusal, unit-tested against every separator listed in C.
-- [ ] Extend automatic-decision auditing to native shell-prefix and session development rules.
-- [ ] Docs: extend the current MCP `feature.md` with shipped native boundaries; keep the posture in
+- [ ] D13. Card: **Allow for this session**, with the grant it would make shown on the button.
+- [ ] D14. Compound-command refusal, unit-tested against every separator listed in C.
+- [ ] D15. Extend automatic-decision auditing to native shell-prefix and session development rules.
+- [ ] D16. Docs: extend the current MCP `feature.md` with shipped native boundaries; keep the posture in
   [ai-agent-bridge](../ai-agent-bridge/feature.md) revised from "no exceptions, no session-scoped
   approvals" to the rules above; the index regenerated.
 

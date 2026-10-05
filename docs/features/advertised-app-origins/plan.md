@@ -1,8 +1,12 @@
-# Advertised App Origins — Advertise A Host-Published Endpoint At A Usable Address
+---
+status: Draft
+created: 2026-07-30
+updated: 2026-07-30
+summary: Advertise endpoints already published beyond loopback at one host-wide address that other devices can use.
+components: [apps/core, apps/shell]
+---
 
-Status: Draft
-Created: 2026-07-30
-Updated: 2026-07-30
+# Advertised App Origins — Advertise A Host-Published Endpoint At A Usable Address
 
 ## Goal
 
@@ -132,32 +136,32 @@ Shell and native client keeps serving the old URLs until something else forces a
 
 ### Phase 1 — Core projection
 
-- [ ] `HOSTY_ADVERTISED_HOST` setting with validation and normalization.
-- [ ] Shared resolver; summary projection; bind scope on the endpoint contract.
-- [ ] Redirect allowlist and `ShellPublicOriginResolver` consuming the same resolver.
-- [ ] Refresh hint on change.
+- `HOSTY_ADVERTISED_HOST` setting with validation and normalization.
+- Shared resolver; summary projection; bind scope on the endpoint contract.
+- Redirect allowlist and `ShellPublicOriginResolver` consuming the same resolver.
+- Refresh hint on change.
 
 ### Phase 2 — Clients
 
-- [ ] Shell: the field in the Settings Core tab; loopback-only marked where an endpoint URL is offered.
-- [ ] Native client: exact diagnosis from bind scope, replacing the heuristic
+- Shell: the field in the Settings Core tab; loopback-only marked where an endpoint URL is offered.
+- Native client: exact diagnosis from bind scope, replacing the heuristic
       [swift-shell](../swift-shell/feature.md) ships.
 
 ### Phase 3 — Decision from open question 1
 
-- [ ] Whatever that answer requires, or an explicit record that nothing changes.
+- Whatever that answer requires, or an explicit record that nothing changes.
 
 ## Deliverables
 
-- [ ] Answer open question 1; the goal is not final until it is answered.
-- [ ] Core setting, validation, normalization, `/api/core/settings` exposure, and reset semantics.
-- [ ] One resolver consumed by the summary projection, `AppIdentityService`, and
+- [ ] D1. Answer open question 1; the goal is not final until it is answered.
+- [ ] D2. Core setting, validation, normalization, `/api/core/settings` exposure, and reset semantics.
+- [ ] D3. One resolver consumed by the summary projection, `AppIdentityService`, and
       `ShellPublicOriginResolver`; no second copy of the precedence rules.
-- [ ] Bind scope projected onto endpoint summaries; persisted record unchanged.
-- [ ] Refresh hint published on a live change.
-- [ ] Shell settings field and loopback-only marker.
-- [ ] Platform minor bump; `apps/shell` minor bump for the settings field.
-- [ ] `feature.md` for this folder; `automatic-runtime-app-ports/feature.md` endpoint URL section
+- [ ] D4. Bind scope projected onto endpoint summaries; persisted record unchanged.
+- [ ] D5. Refresh hint published on a live change.
+- [ ] D6. Shell settings field and loopback-only marker.
+- [ ] D7. Platform minor bump; `apps/shell` minor bump for the settings field.
+- [ ] D8. `feature.md` for this folder; `automatic-runtime-app-ports/feature.md` endpoint URL section
       updated; `cli-bootstrap.md` migrated into a feature folder as part of touching it, stating that
       `HOSTY_RUNTIME_PUBLIC_HOST` is not the knob for client reachability and why.
 

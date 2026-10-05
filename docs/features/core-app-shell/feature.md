@@ -1,7 +1,11 @@
-# Core App Shell
+---
+created: 2026-05-19
+updated: 2026-10-05
+summary: Shell is the Core-managed browser UI app that authenticates users and embeds app pages.
+components: [apps/shell]
+---
 
-Created: 2026-05-19
-Updated: 2026-10-05
+# Core App Shell
 
 Hosty Shell is the Core-managed browser UI runtime app. It renders a single authenticated Shell surface backed by Hosty Core APIs; it does not own Core lifecycle logic and it does not reintroduce the retired combined Next.js Host package.
 
@@ -211,12 +215,12 @@ While an embedded workspace route is launching before the iframe exists, Shell s
 
 The removed Legacy Host included `/ingress` and gateway exposure UI. That route tree no longer exists in the repository.
 
-Gateway and external ingress readiness remain target architecture topics for service/API exposure publishing. Future work is tracked in [Gateway And App Wrapping Ideas](../ideas/gateway-and-app-wrapping.md). Until then, Shell documentation and UI should not present `/ingress`, `/api/gateway/*`, or `/api/ingress/*` as current implemented surfaces.
+Gateway and external ingress readiness remain target architecture topics for service/API exposure publishing. Future work is tracked in [Gateway And App Wrapping Ideas](../../ideas/gateway-and-app-wrapping.md). Until then, Shell documentation and UI should not present `/ingress`, `/api/gateway/*`, or `/api/ingress/*` as current implemented surfaces.
 
 ## Links
 
-- [System App Pages](../ideas/system-app-pages.md) - originating design for administrator-only pages.
-- [Marketplace System App](runtime-app-marketplace/feature.md) - the first storefront using the generic system-app and install-intent paths.
+- [System App Pages](../../ideas/system-app-pages.md) - originating design for administrator-only pages.
+- [Marketplace System App](../runtime-app-marketplace/feature.md) - the first storefront using the generic system-app and install-intent paths.
 
 ## App Icons
 

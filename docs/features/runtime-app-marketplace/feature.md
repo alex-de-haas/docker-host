@@ -1,7 +1,11 @@
-# Marketplace System App
+---
+created: 2026-06-25
+updated: 2026-09-18
+summary: The optional Marketplace app that owns catalog discovery and requests Core-confirmed installations.
+components: [apps/marketplace]
+---
 
-Created: 2026-06-25
-Updated: 2026-09-18
+# Marketplace System App
 
 ## Description
 
@@ -122,7 +126,7 @@ Marketplace supports a Docker runtime and a Core-managed `dev` local-command run
 - [Runtime App Repository Feeds](../catalog-hosted-app-feeds.md)
 - [Runtime App Manifest](../runtime-app-manifest/feature.md)
 - [Direct-Origin Runtime App UI](../direct-origin-runtime-app-ui.md)
-- [Shell Access And System Apps](../shell-access-and-system-apps.md)
+- [Shell Access And System Apps](../shell-access-and-system-apps/feature.md)
 - [Marketplace As A System App idea](../../ideas/marketplace-system-app.md)
 
 Marketplace uses the SDK identity bridge in both Docker and DEV runtimes. Its launch-code exchange

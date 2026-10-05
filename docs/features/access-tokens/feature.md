@@ -1,7 +1,11 @@
-# Access Tokens — Credentials For Clients Without A Browser
+---
+created: 2026-07-31
+updated: 2026-10-01
+summary: Device-flow access tokens that let clients without a browser engine sign in to Core, plus the page that lists and revokes them.
+components: [apps/core, apps/shell, apps/shell-swift]
+---
 
-Created: 2026-07-31
-Updated: 2026-10-01
+# Access Tokens — Credentials For Clients Without A Browser
 
 Core accepts a session as `Authorization: Bearer <session id>`, but a session could once only be created
 by posting Core's HTML login form — which is why the Swift Shell used to sign in through a `WKWebView`

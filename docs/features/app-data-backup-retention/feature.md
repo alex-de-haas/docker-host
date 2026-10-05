@@ -1,7 +1,11 @@
-# Feature: App Data Backup Retention
+---
+created: 2026-06-03
+updated: 2026-08-26
+summary: Retention and cleanup of app data backups, which cover only each app's primary data directory.
+components: [apps/core, apps/shell]
+---
 
-Created: 2026-06-03
-Updated: 2026-08-26
+# Feature: App Data Backup Retention
 
 ## Description
 

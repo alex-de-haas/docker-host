@@ -1,7 +1,11 @@
-# Feature: App Cache Storage
+---
+created: 2026-08-11
+updated: 2026-08-11
+summary: A Core-managed per-app cache directory that persists across restarts and updates but is never backed up.
+components: [apps/core]
+---
 
-Created: 2026-08-11
-Updated: 2026-08-11
+# Feature: App Cache Storage
 
 Runtime apps can declare a Core-managed **cache** directory beside `data`: persistent
 across restarts, updates, and runtime switches, but never part of a backup or a

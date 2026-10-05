@@ -1,7 +1,11 @@
-# MCP OAuth — Automated Issuance For Scoped Tokens
+---
+created: 2026-08-25
+updated: 2026-10-01
+summary: Core acts as an OAuth 2.1 authorization server so MCP clients obtain and rotate scoped tokens themselves.
+components: [apps/core]
+---
 
-Created: 2026-08-25
-Updated: 2026-10-01
+# MCP OAuth — Automated Issuance For Scoped Tokens
 
 Core is an OAuth 2.1 authorization server, per the MCP authorization specification, so a capable
 client (Claude Code, an editor) obtains and rotates [scoped access

@@ -1,7 +1,11 @@
-# Auth And Gateway Model
+---
+created: 2026-05-13
+updated: 2026-10-01
+summary: Core owns user authentication, app assignments, identity issuance and scoped directory access, while apps own their sessions.
+components: [apps/core, packages/app-sdk]
+---
 
-Created: 2026-05-13
-Updated: 2026-10-01
+# Auth And Gateway Model
 
 ## Description
 

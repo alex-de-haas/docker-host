@@ -1,8 +1,12 @@
-# Assistant Runtime Containment
+---
+status: On Hold
+created: 2026-09-26
+updated: 2026-09-27
+summary: Run the assistant's agent harness in a container by default so approved commands reach only what it is given.
+components: [apps/harness, apps/core]
+---
 
-Status: On Hold
-Created: 2026-09-26
-Updated: 2026-09-27
+# Assistant Runtime Containment
 
 Run the assistant's agent harness inside a container by default, so a session's approved commands
 act on what the container can reach rather than on the whole host. Extracted on 2026-09-26 from the
@@ -68,7 +72,7 @@ containment; each changes what it has to cover.
   whichever manifest is current when it ships. If it ships with or after the rename, the default
   profile changes on a clean install, so no data move between a host directory and a container
   volume is needed.
-- **[Assistant provider permissions](../assistant-provider-permissions/plan.md)** (Ready) and the
+- **[Assistant provider permissions](../assistant-provider-permissions/feature.md)** (Ready) and the
   [core extension model](../core-extension-model/plan.md) give the assistant confirmed Core
   permissions, and state that for a `localCommand` app those grants are an honest label rather than
   an enforced boundary. Under the docker profile they become the boundary, because Core's API is the
@@ -93,21 +97,21 @@ containment; each changes what it has to cover.
 
 ## Deliverables
 
-- [ ] Container image for the assistant (gateway plus pinned Claude and Codex CLIs), built and
+- [ ] D1. Container image for the assistant (gateway plus pinned Claude and Codex CLIs), built and
       published with the app's release, and a `docker` runtime profile in its manifest.
-- [ ] The `docker` profile is the default; `localCommand` remains an explicit opt-in, and the
+- [ ] D2. The `docker` profile is the default; `localCommand` remains an explicit opt-in, and the
       settings surface shows the active profile and states the trade-off.
-- [ ] Core enforces the never-mount rules for the assistant's container (Docker socket, Core
+- [ ] D3. Core enforces the never-mount rules for the assistant's container (Docker socket, Core
       control/run directory, whole data root), refusing the start rather than warning, with negative
       tests for each path and for an override that requests one.
-- [ ] Scoped source-workspace access for contained sessions, aligned with session workspaces: edit,
+- [ ] D4. Scoped source-workspace access for contained sessions, aligned with session workspaces: edit,
       build and diff work on the authorized workspace and nothing else.
-- [ ] Provider connections work contained: managed native homes in the container's data/cache, and
+- [ ] D5. Provider connections work contained: managed native homes in the container's data/cache, and
       the chosen behavior for the "existing host login" mode.
-- [ ] Lifecycle actions without the host CLI: the host preamble and approval flow route them through
+- [ ] D6. Lifecycle actions without the host CLI: the host preamble and approval flow route them through
       Core's API/MCP under the app's and session's grants, and the settings surface says what a
       contained session cannot do.
-- [ ] [ai-gateway/feature.md](../ai-gateway/feature.md) and the umbrella's accepted-risk section in
+- [ ] D7. [ai-gateway/feature.md](../ai-gateway/feature.md) and the umbrella's accepted-risk section in
       [ai-agent-bridge/feature.md](../ai-agent-bridge/feature.md#accepted-risk) updated to the
       shipped state, this plan deleted and the index regenerated.
 

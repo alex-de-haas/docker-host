@@ -1,7 +1,11 @@
-# Runtime App Update
+---
+created: 2026-06-04
+updated: 2026-10-05
+summary: Reviewed update plans and their apply behavior, including permission changes and routine updates.
+components: [apps/core, apps/shell]
+---
 
-Created: 2026-06-04
-Updated: 2026-10-05
+# Runtime App Update
 
 Update plans also display `corePermissions` additions/removals. New permissions require
 [Core-owned confirmation](../app-installation-sdk/feature.md); the queued HTTP/MCP apply path

@@ -1,8 +1,12 @@
-# Observability — Remaining Work
+---
+status: In Progress
+created: 2026-07-03
+updated: 2026-09-25
+summary: Remaining observability work, adding telemetry ingest and query auth, live tails and fleet-wide views.
+components: [apps/telemetry-backend, apps/telemetry-ui]
+---
 
-Status: In Progress
-Created: 2026-07-03
-Updated: 2026-09-25
+# Observability — Remaining Work
 
 ## Goal
 
@@ -93,7 +97,7 @@ kernel.
 
 ## Deliverables
 
-- [ ] **Ingest + query auth** — **shipped 2026-08-17 by [telemetry-mcp](../telemetry-mcp/feature.md)** for the query
+- [ ] D1. **Ingest + query auth** — **shipped 2026-08-17 by [telemetry-mcp](../telemetry-mcp/feature.md)** for the query
       side; ingest confinement moved on to [cross-app-dependencies](../cross-app-dependencies/plan.md), which cannot ship its tools over an unauthenticated data path and so absorbed
       this rather than duplicating it. The credential shape is settled there — per-app tokens, the
       form the platform rule in [ai-agent-bridge/feature.md](../ai-agent-bridge/feature.md#token-mechanics)
@@ -103,16 +107,16 @@ kernel.
       ingest requires it per app so `hosty.app.id` can no longer be spoofed. Remove the
       "known-open" `SECURITY` note in `apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/Program.cs`
       and the corresponding paragraph in `feature.md` when this lands.
-- [ ] **Backend stream endpoint.** An SSE (or equivalent) endpoint over new log records and spans,
+- [ ] D2. **Backend stream endpoint.** An SSE (or equivalent) endpoint over new log records and spans,
       filterable by the same `apps` / `severity` / `q` parameters as the query reads.
-- [ ] **UI live tail.** Structured logs and Traces consume the stream through the UI's server routes;
+- [ ] D3. **UI live tail.** Structured logs and Traces consume the stream through the UI's server routes;
       reconnect and backfill on drop; Metrics stay on the existing poll (charts do not benefit).
-- [ ] **trace→log correlation links** in the telemetry UI, both directions.
-- [x] **Fleet resource views.** Implemented in [Unified runtime resource usage](../runtime-resource-usage/feature.md).
+- [ ] D4. **trace→log correlation links** in the telemetry UI, both directions.
+- [x] D5. **Fleet resource views.** Implemented in [Unified runtime resource usage](../runtime-resource-usage/feature.md).
       The owner decision on 2026-09-25 replaces the earlier snapshot-only heat-map: Dashboard uses
       the same Docker/localCommand sampler as telemetry, with a short bounded history in Core RAM.
       Telemetry continues to persist its slower scrape independently.
-- [x] **Core log buffers + `GET /api/core/logs`.** Two fixed-capacity rings fed by one
+- [x] D6. **Core log buffers + `GET /api/core/logs`.** Two fixed-capacity rings fed by one
       `ILoggerProvider` registered in `HostyCoreApplication.ConfigureServices`; every record carries
       timestamp, level, category, message, exception, and a monotonic sequence number, and the process
       mints a run id at start. **Two rings rather than one**, because the measured ratio of framework
@@ -131,7 +135,7 @@ kernel.
       file is absent under a foreground or `npm run dev` start, is truncated by the next background
       start, and is never rotated. The rings cost nothing when the telemetry app is absent and need no
       gate: the logging pipeline fills them either way, and nothing reads them until someone looks.
-- [x] **Logging pipeline defaults.** Core sets no filters at all today, which is why everything in the
+- [x] D7. **Logging pipeline defaults.** Core sets no filters at all today, which is why everything in the
       measurement below arrives at Information. Put `Microsoft` and `System` at Warning for the console
       provider — the console *is* `core.log` — and restore Information for the buffer's provider with a
       provider-scoped rule (`AddFilter<T>`), so the file becomes legible while the dialog keeps the
@@ -141,7 +145,7 @@ kernel.
       overrides work today (and reach Core, since the CLI's start path passes its environment through),
       and they must keep winning over our defaults for the same category. No new `hosty config` key —
       the launch config deliberately holds only what has nowhere else to live, and this has somewhere.
-- [x] **Shell Core logs dialog.** Opened from the Dashboard's `CoreSection` — where Core's read-only
+- [x] D8. **Shell Core logs dialog.** Opened from the Dashboard's `CoreSection` — where Core's read-only
       facts already live, by the convention stated in `settings-core-section.tsx` — and modelled on
       the per-app Console logs dialog. **The filter that matters is category, not severity.** Measured
       on a live host over 26.6 h of one run (77,918 records): ~96 % are the ASP.NET request pipeline
@@ -152,7 +156,7 @@ kernel.
       Hosty-versus-framework split is the whole difference between signal and noise. So the dialog
       opens on the `hosty` ring, offers the request trail as an explicit toggle, and keeps severity as
       a secondary control that only earns its keep once something is actually wrong.
-- [x] **`core.log` survives a restart.** The CLI's background start truncates the file
+- [x] D9. **`core.log` survives a restart.** The CLI's background start truncates the file
       (`> core.log`, `CoreCommand.StartBackground` and its Windows twin), so the run that just
       crashed is erased by the restart that follows it — including a restart triggered from the same
       Dashboard the dialog lives on. Rotate to `core.log.1` (keep a small N) instead. Triage of L-L3
@@ -166,7 +170,7 @@ kernel.
       `hosty core logs` can say when anything happened — `TimestampFormat` with `UseUtcTimestamp`
       closes it. In-run growth stays unbounded and stays out of scope: bounding it means Core owning
       the file instead of the shell redirect that creates it.
-- [x] **Core logs in the store, pulled.** `GET /api/internal/telemetry/logs?after=<sequence>&limit=`,
+- [x] D10. **Core logs in the store, pulled.** `GET /api/internal/telemetry/logs?after=<sequence>&limit=`,
       app-service-token gated exactly like the metrics exposition — any installed app's token, since
       the data is host-wide with no per-app scoping — answering with records, the run id, and the
       next cursor. The backend adds a third ingest loop that persists its cursor in the existing
@@ -175,7 +179,7 @@ kernel.
       **not** the raw firehose: ASP.NET's per-request categories are excluded and a per-tick record
       cap applies, so Core cannot evict the fleet's logs from a 3-day, ~1 GiB-ceilinged store — the
       failure this store has already demonstrated once.
-- [x] **`hosty.core` as a reserved id.** The store, all six query routes, the three MCP tool schemas,
+- [x] D11. **`hosty.core` as a reserved id.** The store, all six query routes, the three MCP tool schemas,
       and the app-directory endpoint each treat an app id as an opaque key with no roster validation,
       so the reserved id needs no schema change — only five localized special cases: a display name in
       the telemetry UI's `enrich.ts`; a synthetic entry in the logs and traces filter dropdowns **plus**

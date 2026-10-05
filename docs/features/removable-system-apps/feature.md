@@ -1,7 +1,11 @@
-# Removable System Apps — Distribution Catalog and One Lifecycle
+---
+created: 2026-07-12
+updated: 2026-10-01
+summary: First-party apps are ordinary runtime apps, seeded once from a distribution catalog and removable like any other.
+components: [apps/core, apps/cli, apps/shell]
+---
 
-Created: 2026-07-12
-Updated: 2026-10-01
+# Removable System Apps — Distribution Catalog and One Lifecycle
 
 Hosty ships first-party apps (Shell, Marketplace, Telemetry) as ordinary runtime apps. They are
 installed and uninstalled through the same lifecycle as any other app, from any surface: the Shell's

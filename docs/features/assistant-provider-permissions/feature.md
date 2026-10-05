@@ -1,7 +1,11 @@
-# Assistant Provider Permissions
+---
+created: 2026-09-26
+updated: 2026-09-27
+summary: Apps request the assistant role with provides, and Core records administrator-confirmed roles.
+components: [apps/core, apps/harness]
+---
 
-Created: 2026-09-26
-Updated: 2026-09-27
+# Assistant Provider Permissions
 
 ## Confirmed Roles And Permissions
 

@@ -1,7 +1,11 @@
-# App-Owned MCP
+---
+created: 2026-08-11
+updated: 2026-10-01
+summary: Runtime apps expose domain actions through an MCP endpoint they own, and Core tells agent clients which apps have one.
+components: [apps/core, apps/demo-app]
+---
 
-Created: 2026-08-11
-Updated: 2026-10-01
+# App-Owned MCP
 
 Runtime apps expose their domain actions to agents through an MCP endpoint they own, and Core tells
 agent clients which apps have one. This is step 4 of the [AI Agent Bridge](../ai-agent-bridge/plan.md)

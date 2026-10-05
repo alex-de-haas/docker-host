@@ -1,7 +1,10 @@
-# Feature: Domain Model
+---
+created: 2026-05-13
+updated: 2026-08-11
+summary: The shared vocabulary for Core, Shell, the CLI and runtime apps.
+---
 
-Created: 2026-05-13
-Updated: 2026-08-11
+# Feature: Domain Model
 
 ## Description
 

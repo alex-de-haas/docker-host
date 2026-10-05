@@ -1,8 +1,12 @@
-# Assistant Timeline And Tool Analysis
+---
+status: Draft
+created: 2026-09-26
+updated: 2026-09-26
+summary: A session timeline for analysing how agents work and which MCP tools would help them.
+components: [apps/harness]
+---
 
-Status: Draft
-Created: 2026-09-26
-Updated: 2026-09-26
+# Assistant Timeline And Tool Analysis
 
 Part of [shared assistant development sessions](../assistant-development-sessions/plan.md).
 The umbrella's common invariants apply; this feature has independent scope and requires its own Ready approval.
@@ -51,9 +55,9 @@ second execution log. Timing coverage, aggregation scope, retention and UI remai
 
 ## Deliverables
 
-- [ ] Implement observed timeline spans, overlapping execution, filters and explicit timing/coverage gaps.
-- [ ] Implement authorized session aggregation with instruction/tool catalogue and permission revisions.
-- [ ] Implement evidence-linked MCP-equivalence and composite-tool suggestions with comparable-task evaluation.
+- [ ] D1. Implement observed timeline spans, overlapping execution, filters and explicit timing/coverage gaps.
+- [ ] D2. Implement authorized session aggregation with instruction/tool catalogue and permission revisions.
+- [ ] D3. Implement evidence-linked MCP-equivalence and composite-tool suggestions with comparable-task evaluation.
 
 ## Open Questions
 

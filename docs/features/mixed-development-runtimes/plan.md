@@ -1,8 +1,12 @@
-# Mixed Development Runtimes
+---
+status: In Progress
+created: 2026-09-17
+updated: 2026-09-17
+summary: Remaining work for development profiles that mix editable services with image-based dependencies.
+components: [apps/core]
+---
 
-Status: In Progress
-Created: 2026-09-17
-Updated: 2026-09-17
+# Mixed Development Runtimes
 
 ## Goal
 
@@ -96,28 +100,28 @@ container entrypoint configures OpenVPN and a default-deny firewall before start
 
 ## Deliverables
 
-- [x] Finalize the additive manifest contract, examples, validation of all declared profiles and
+- [x] D1. Finalize the additive manifest contract, examples, validation of all declared profiles and
       schema compatibility behavior; update the repository-owned Hosty app skill references.
-- [x] Implement per-service dispatch and dependency orchestration, including health/log aggregation,
+- [x] D2. Implement per-service dispatch and dependency orchestration, including health/log aggregation,
       startup cleanup, shutdown, runtime switching and persisted-state reconciliation.
-- [x] Implement reviewed Docker development environment preparation, scoped source mounts,
+- [x] D3. Implement reviewed Docker development environment preparation, scoped source mounts,
       container-side setup/watch commands and isolated caches/build outputs.
-- [x] Implement consumer-aware peer addresses and service-specific data mappings; cover required
+- [x] D4. Implement consumer-aware peer addresses and service-specific data mappings; cover required
       reservation changes jointly with [port allocation work](../automatic-runtime-app-ports/plan.md).
-- [x] Make mixed source/image locking and update behavior explicit, including live manifest adoption
+- [x] D5. Make mixed source/image locking and update behavior explicit, including live manifest adoption
       and reviewed changes to dependency images, environment recipes and privileges.
-- [x] Add Telemetry's mixed dev profile and monorepo source scope; verify metrics/logs/traces ingestion,
+- [x] D6. Add Telemetry's mixed dev profile and monorepo source scope; verify metrics/logs/traces ingestion,
       signed backend reads, backend/UI source reload, and data retention across profile switches through Core.
-- [ ] Verify the mixed Telemetry UI embedded in Shell on macOS and Windows, including identity,
+- [ ] D7. Verify the mixed Telemetry UI embedded in Shell on macOS and Windows, including identity,
       Windows source/data paths, local process lifecycle and collector routing. The isolated macOS
       test verifies API and reload behavior, not browser embedding.
-- [ ] Verify native Linux routing when a Linux host is available; no such host is currently available.
-- [x] Add Shell/CLI service execution/artifact details and keep ordinary app profile selection intact.
-- [x] Add the container-source fixture and implement the external Torrent Engine companion changes;
+- [ ] D8. Verify native Linux routing when a Linux host is available; no such host is currently available.
+- [x] D9. Add Shell/CLI service execution/artifact details and keep ordinary app profile selection intact.
+- [x] D10. Add the container-source fixture and implement the external Torrent Engine companion changes;
       validate the manifest, SDK build, source reload and closed-firewall direct-egress refusal through Core.
-- [x] Verify a controlled Torrent transfer through a working VPN, tunnel-drop isolation and automatic recovery.
-- [x] Prepare platform and companion changes for review with verification evidence and remaining acceptance explicit.
-- [ ] Complete regression/security/platform verification, update affected feature documents, remove
+- [x] D11. Verify a controlled Torrent transfer through a working VPN, tunnel-drop isolation and automatic recovery.
+- [x] D12. Prepare platform and companion changes for review with verification evidence and remaining acceptance explicit.
+- [ ] D13. Complete regression/security/platform verification, update affected feature documents, remove
       this plan and regenerate the docs index when all deliverables are complete.
 
 ## Delivery And Decisions

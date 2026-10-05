@@ -1,7 +1,11 @@
-# Hosty Harness Integration
+---
+created: 2026-09-27
+updated: 2026-09-27
+summary: Hosty Harness replaces the former AI Gateway as the administrator assistant and MCP facade app.
+components: [apps/harness, apps/core, apps/shell]
+---
 
-Created: 2026-09-27
-Updated: 2026-09-27
+# Hosty Harness Integration
 
 Hosty Harness (`hosty.harness`, `apps/harness`) is the optional administrator assistant and MCP facade.
 It continues the former Gateway release line at 0.35.1. Core/CLI 0.110.0, Shell 0.85.0 and

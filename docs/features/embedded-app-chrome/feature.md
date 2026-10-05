@@ -1,7 +1,11 @@
-# Embedded App Chrome
+---
+created: 2026-08-04
+updated: 2026-09-27
+summary: Embedded apps drop the name and navigation their shell already renders, and keep them when opened standalone.
+components: [packages/app-sdk, apps/shell, apps/shell-swift]
+---
 
-Created: 2026-08-04
-Updated: 2026-09-27
+# Embedded App Chrome
 
 An app opened inside a shell drops the chrome that shell already renders — its own name, and the
 navigation between its manifest pages. Opened standalone on its own origin it keeps both, because

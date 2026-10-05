@@ -1,8 +1,12 @@
-# Private Distribution Access
+---
+status: Draft
+created: 2026-09-28
+updated: 2026-09-28
+summary: Authenticate private feeds, release assets and container registries independently of source access.
+components: [apps/core]
+---
 
-Status: Draft
-Created: 2026-09-28
-Updated: 2026-09-28
+# Private Distribution Access
 
 ## Goal
 
@@ -11,10 +15,10 @@ manifests and Git sources belong to [private app sources](../private-app-sources
 
 ## Deliverables
 
-- [ ] Design authenticated feed and release-asset grants, provider adapters and redirect handling.
-- [ ] Design private container registry credential ownership, pull adapters and revocation.
-- [ ] Add explicit resource selection and review without inheriting Git credentials.
-- [ ] Verify installation/update recovery, multi-account isolation and no credential disclosure.
+- [ ] D1. Design authenticated feed and release-asset grants, provider adapters and redirect handling.
+- [ ] D2. Design private container registry credential ownership, pull adapters and revocation.
+- [ ] D3. Add explicit resource selection and review without inheriting Git credentials.
+- [ ] D4. Verify installation/update recovery, multi-account isolation and no credential disclosure.
 
 ## Open Questions
 

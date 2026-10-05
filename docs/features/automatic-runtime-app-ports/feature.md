@@ -1,7 +1,11 @@
-# Feature: Automatic Runtime App Ports
+---
+created: 2026-06-05
+updated: 2026-09-30
+summary: Core reserves host ports at install, injects them into the environment and lets operators reassign or pin them.
+components: [apps/core, apps/shell]
+---
 
-Created: 2026-06-05
-Updated: 2026-09-30
+# Feature: Automatic Runtime App Ports
 
 Runtime apps do not hard-code host ports. Core reserves an available host port for every declared
 service port at install and reconciles reservations on reviewed updates and runtime switches.

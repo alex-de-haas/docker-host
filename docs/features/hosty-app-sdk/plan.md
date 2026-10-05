@@ -1,8 +1,12 @@
-# Hosty App SDK — Second Wave
+---
+status: In Progress
+created: 2026-07-15
+updated: 2026-09-18
+summary: The SDK's second wave, extracting the remaining platform glue every app still hand-writes.
+components: [packages/app-sdk, packages/app-sdk-dotnet]
+---
 
-Status: In Progress
-Created: 2026-07-15
-Updated: 2026-09-18
+# Hosty App SDK — Second Wave
 
 Auth was phase 1 and shipped ([feature.md](feature.md)). What remains is the rest of the platform glue
 every app still hand-writes, plus the last adoption debts of the auth slice itself.
@@ -14,7 +18,7 @@ examples are already real. Ordering is by payoff.
 
 ## Deliverables
 
-- [ ] **1. Finish the auth slice — adoption plus the missing factories, not new extraction.**
+- [ ] D1. **Finish the auth slice — adoption plus the missing factories, not new extraction.**
   - Route-handler factories for `/api/auth/identity`, `/api/auth/session`, and optional `/logout`.
     Every app hand-writes them today, and media-server maps status↔HTTP twice (once in its session
     route, back again in `app-shell.tsx`). Only `createAppCodeRouteHandler` ships so far.
@@ -29,42 +33,42 @@ examples are already real. Ordering is by payoff.
     project-manager's pre-SDK wrapper layer (`module-runtime.ts`, `host-app-code.ts`,
     `host-app-cookie.ts`, and its own token reading in `host-identity.ts`/`proxy.ts`); and the
     `^0.1.2` pins in media-server and project-manager, which a 0.x caret can never lift on its own.
-- [ ] **2. `/otel` — OpenTelemetry wiring.** `instrumentation.ts` plus `otel-logs.ts` (the console→OTLP
+- [ ] D2. **`/otel` — OpenTelemetry wiring.** `instrumentation.ts` plus `otel-logs.ts` (the console→OTLP
       bridge with trace correlation and SIGTERM flush) are copied in media-server and project-manager,
       but secret redaction and the 200-records/10s rate limit exist **only** in the project-manager
       copy. ~200 lines of platform glue whose only app-specific value is the service-name default. The
       .NET counterpart is media-server's `HostyTelemetry.cs` → `HostySdk.App`. The three in-tree Next
       apps wire no OTel today and would gain tracing for free.
-- [x] **3. `/theme` — theme bridging.** Decided 2026-09-07: the extraction carries the current
+- [x] D3. **`/theme` — theme bridging.** Decided 2026-09-07: the extraction carries the current
       protocol and any theming redesign happens inside the SDK. The trigger was a real defect, not
       duplication for its own sake — the Shell's `hosty:shell-theme` post at frame `load` lands before
       the app's listener exists, and the marketplace/telemetry-ui copy, which read nothing else, then
       painted whatever its tab had stored. Telemetry-ui is where it was found and first fixed
       privately; that fix is replaced here rather than shipped, so its 0.9.1 lands with this work.
-  - [x] The slice: `@hosty-sdk/app/theme` (protocol constants, `resolveTheme`, `applyTheme`,
+  - The slice: `@hosty-sdk/app/theme` (protocol constants, `resolveTheme`, `applyTheme`,
         `parseShellThemeMessage`, `createShellThemeMessage`, `themeBootstrapScript`),
         `HostThemeBridge` in `react`, `appendThemeLaunchParams` in `embedder` — SDK 0.12.0, with the
         suite in `theme.test.ts`.
-  - [x] In-tree adoption in the same PR: marketplace, telemetry-ui, and demo-app mount the SDK bridge
+  - In-tree adoption in the same PR: marketplace, telemetry-ui, and demo-app mount the SDK bridge
         and bootstrap and delete their copies; Shell sends through the SDK.
-  - [x] media-server web and project-manager take 0.12.0 and delete their copies — media-server
+  - media-server web and project-manager take 0.12.0 and delete their copies — media-server
         #253 (0.72.2) and project-manager #77 (0.10.2), both merged 2026-09-07.
-  - [x] ai-gateway web's `startThemeSync` — a sixth listener the 2026-07 sweep predates. Its web
+  - ai-gateway web's `startThemeSync` — a sixth listener the 2026-07 sweep predates. Its web
         workspace now declares `@hosty-sdk/app` of its own and mounts the bridge and bootstrap; the
         two pages no longer start a sync each. Six copies of the protocol are down to none.
-- [ ] **4. `/env` — the non-auth environment contract.** The SDK reads only the auth variables; every
+- [ ] D4. **`/env` — the non-auth environment contract.** The SDK reads only the auth variables; every
       app hand-parses the rest: `HOSTY_PORT_{KEY}` (media-server `HostyKestrel`),
       `HOSTY_SERVICE_{KEY}_URL` (telemetry-ui `backend.ts`), `HOSTY_DEPENDENCY_{KEY}_URL`,
       `HOSTY_PUBLIC_ORIGIN_{ENDPOINT}`, `HOSTY_APP_DATA_DIR` (project-manager `storage.ts`), and the
       `HOSTY_MOUNT_{KEY}` `label=path,…` parser — duplicated across languages (demo-app
       `demo-config.ts`, media-server `MediaServerSettings.cs`). Cheap to type once; it is platform
       contract, not app logic.
-- [ ] **5. Core capability client (`server` + .NET).** media-server's `HostyCoreClient` is the fleet's
+- [ ] D5. **Core capability client (`server` + .NET).** media-server's `HostyCoreClient` is the fleet's
       only implementation of the backup trigger and operator notifications; any stateful app wants
       both, and the directory client from item 1 is the same surface. Adjacent: the data-dir ownership
       pattern (project-manager's `docker-entrypoint.sh` mkdir/chown/drop-privileges dance) for stateful
       Docker apps.
-- [ ] **6. Small standardizers.** A `healthz` route factory — marketplace and telemetry-ui are
+- [ ] D6. **Small standardizers.** A `healthz` route factory — marketplace and telemetry-ui are
       identical, while demo-app, project-manager, and media-server use three different paths and
       response shapes for the same manifest `healthcheck` contract. The BFF proxy route factory
       (media-server `api/proxy/[...path]`: hop-by-hop stripping, identity bearer injection, body
@@ -72,7 +76,7 @@ examples are already real. Ordering is by payoff.
       fetch-based SSE client in `sse.ts` — the cross-site-cookie workaround every app with its own
       backend service re-derives). `host-auth-debug` from project-manager. The manifest render script
       (project-manager `render-app-manifest.mjs`) as shared release tooling.
-- [ ] Docs: fold each shipped slice into [feature.md](feature.md), keep the adoption table current, and
+- [ ] D7. Docs: fold each shipped slice into [feature.md](feature.md), keep the adoption table current, and
       regenerate the index.
 
 Version outcome: `@hosty-sdk/app` minor per slice, `HostySdk.App` minor for the .NET counterparts. No

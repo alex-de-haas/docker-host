@@ -1,8 +1,12 @@
-# Speech Provider Hardware Acceptance
+---
+status: Blocked
+created: 2026-09-29
+updated: 2026-09-29
+summary: Hardware acceptance of the CPU speech provider on the owner's Windows host.
+components: [apps/whisper]
+---
 
-Status: Blocked
-Created: 2026-09-29
-Updated: 2026-09-29
+# Speech Provider Hardware Acceptance
 
 ## Goal
 
@@ -17,12 +21,12 @@ macOS run or generic Windows CI establishes performance on the owner's hardware.
 
 ## Deliverables
 
-- [ ] Run the Core-managed Whisper app on the target Windows/AMD machine; verify CPU native loading,
+- [ ] D1. Run the Core-managed Whisper app on the target Windows/AMD machine; verify CPU native loading,
       Russian and mixed-language recordings, silence, cancellation, repeated requests and restart.
       Record OS/CPU capabilities, selected model, latency, peak memory and recognition quality.
-- [ ] Confirm browser microphone capture into Harness through the deployed Shell origin and check
+- [ ] D2. Confirm browser microphone capture into Harness through the deployed Shell origin and check
       that recognized text remains editable, permissions can be revoked, and audio is not persisted.
-- [ ] Update the verified platform evidence in `feature.md`, remove this plan and regenerate the index
+- [ ] D3. Update the verified platform evidence in `feature.md`, remove this plan and regenerate the index
       after these checks pass.
 
 ## Blocker

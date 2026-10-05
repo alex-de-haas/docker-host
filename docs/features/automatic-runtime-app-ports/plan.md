@@ -1,8 +1,12 @@
-# Automatic Runtime App Ports — Remaining Reservation Work
+---
+status: Draft
+created: 2026-07-14
+updated: 2026-09-09
+summary: Remaining port reservation work, covering lifecycle paths, honest endpoint state, UDP and bind-scope collisions.
+components: [apps/core, apps/shell]
+---
 
-Status: Draft
-Created: 2026-07-14
-Updated: 2026-09-09
+# Automatic Runtime App Ports — Remaining Reservation Work
 
 The install-time reservation model shipped across PRs #187–#191 (persistent model and boot migration,
 coordinated allocation and adapter consumption, reassignment plan/apply with dependency impact,
@@ -50,45 +54,45 @@ Written as a diff against [feature.md](feature.md).
 
 ## Deliverables
 
-- [ ] Reserve and release under the allocator in update apply, runtime switch apply, and live-source
+- [ ] D1. Reserve and release under the allocator in update apply, runtime switch apply, and live-source
       contract adoption.
-- [ ] Produce `EndpointAvailability.Unavailable` from a reservation that fails its bind probe.
-- [ ] Reject an ambiguous app-scoped `HOSTY_PORT_{KEY}` override with a structured validation error.
-- [ ] Validate (or refuse) `HOSTY_PORT_*` on the configure path and keep the reservation in step.
-- [ ] Retain the automatic port as a reuse preference across uninstall-with-data and reinstall.
-- [ ] Extend the assignment model and probes to UDP and to bind-scope-aware collisions.
-- [ ] Disable Open for an endpoint whose owning service is stopped.
-- [ ] Cover the reassign dialog's extractable logic (manual-port bounds, request payload) with
+- [ ] D2. Produce `EndpointAvailability.Unavailable` from a reservation that fails its bind probe.
+- [ ] D3. Reject an ambiguous app-scoped `HOSTY_PORT_{KEY}` override with a structured validation error.
+- [ ] D4. Validate (or refuse) `HOSTY_PORT_*` on the configure path and keep the reservation in step.
+- [ ] D5. Retain the automatic port as a reuse preference across uninstall-with-data and reinstall.
+- [ ] D6. Extend the assignment model and probes to UDP and to bind-scope-aware collisions.
+- [ ] D7. Disable Open for an endpoint whose owning service is stopped.
+- [ ] D8. Cover the reassign dialog's extractable logic (manual-port bounds, request payload) with
       `node --test`, alongside the existing `app-problems` coverage.
-- [ ] Document the reassign endpoints in [core-api/feature.md](../core-api/feature.md) and install-time reservation
+- [ ] D9. Document the reassign endpoints in [core-api/feature.md](../core-api/feature.md) and install-time reservation
       plus `HOSTY_PORT_{SERVICE}_{KEY}` in [local-development.md](../local-development/feature.md).
-- [ ] Validate a never-started app end to end against a live Core: install with start disabled,
+- [ ] D10. Validate a never-started app end to end against a live Core: install with start disabled,
       configure a public origin, first start, Core restart.
 
 ## Phases
 
 ### Phase 1 — Lifecycle coverage
 
-- [ ] Update/switch/live-source reservation and release.
-- [ ] Configure-path validation.
-- [ ] Regression tests for a port key added and removed by each path.
+- Update/switch/live-source reservation and release.
+- Configure-path validation.
+- Regression tests for a port key added and removed by each path.
 
 ### Phase 2 — Honest state
 
-- [ ] `unavailable` producer.
-- [ ] Ambiguous-override rejection.
-- [ ] Stopped-endpoint Open disable.
-- [ ] Retained-port preference.
+- `unavailable` producer.
+- Ambiguous-override rejection.
+- Stopped-endpoint Open disable.
+- Retained-port preference.
 
 ### Phase 3 — Transport and scope
 
-- [ ] UDP reservations and probe.
-- [ ] Bind-scope-aware collision domain.
+- UDP reservations and probe.
+- Bind-scope-aware collision domain.
 
 ### Phase 4 — Documentation and verification
 
-- [ ] `core-api/feature.md` and `local-development.md`.
-- [ ] Live end-to-end validation.
+- `core-api/feature.md` and `local-development.md`.
+- Live end-to-end validation.
 
 ## Deliberately not doing
 
@@ -138,6 +142,6 @@ Written as a diff against [feature.md](feature.md).
   a reassignment invalidates.
 - [Raw L4 Ports](../raw-ports.md) — the UDP and `expose: host` declarations phase 3 must cover.
 - [Host Networking](../host-networking.md) — fixed host-namespace ports.
-- [App Readiness](../app-readiness/plan.md) — the neighboring honest-state work: an endpoint whose
+- [App Readiness](../app-readiness/feature.md) — the neighboring honest-state work: an endpoint whose
   app is up but not yet answering, as opposed to one whose port another process holds.
 - [Cloudflare Ingress](../cloudflare-ingress/feature.md) — consumer of install-time endpoint URLs.

@@ -1,7 +1,11 @@
-# Feature: Observability (telemetry collection, storage, and UI)
+---
+created: 2026-06-28
+updated: 2026-10-01
+summary: OpenTelemetry from apps flows to a collector, an SQLite-backed telemetry backend and the telemetry UI app.
+components: [apps/telemetry, apps/telemetry-backend, apps/telemetry-ui, apps/core]
+---
 
-Created: 2026-06-28
-Updated: 2026-10-01
+# Feature: Observability (telemetry collection, storage, and UI)
 
 Runtime apps export OpenTelemetry to a collector; a Hosty-native **telemetry backend** stores the
 three signals in embedded SQLite and serves a query API; a **telemetry UI** system app renders

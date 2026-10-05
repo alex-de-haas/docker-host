@@ -1,7 +1,11 @@
-# Manifest Projection Backfill
+---
+created: 2026-08-09
+updated: 2026-09-27
+summary: A Core upgrade re-projects installed app records from their manifests without operator action.
+components: [apps/core]
+---
 
-Created: 2026-08-09
-Updated: 2026-09-27
+# Manifest Projection Backfill
 
 A Core upgrade heals installed app records without operator action. Records only re-run
 manifest→record normalization at install, update, runtime switch, or a live-source start, so an app

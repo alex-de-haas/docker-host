@@ -1,8 +1,12 @@
-# User-Controlled Panel Visibility
+---
+status: Draft
+created: 2026-09-27
+updated: 2026-09-27
+summary: Let users hide app-provided panel entries in Shell and restore them later.
+components: [apps/shell]
+---
 
-Status: Draft
-Created: 2026-09-27
-Updated: 2026-09-27
+# User-Controlled Panel Visibility
 
 ## Goal
 
@@ -19,13 +23,13 @@ stop a backend, delete sessions or change which assistant handles Shell requests
 
 ## Deliverables
 
-- [ ] Define and implement persisted per-user, per-host visibility preferences with stable panel
+- [ ] D1. Define and implement persisted per-user, per-host visibility preferences with stable panel
   identity across app updates and a way to hide individual entries.
-- [ ] Add an accessible hidden-panels list and restore controls, including recovery when all entries
+- [ ] D2. Add an accessible hidden-panels list and restore controls, including recovery when all entries
   are hidden.
-- [ ] Define and implement explicit-open behavior for assistant handoffs, shortcuts, deep links and
+- [ ] D3. Define and implement explicit-open behavior for assistant handoffs, shortcuts, deep links and
   attention indicators when the target panel is hidden, without silently rerouting work.
-- [ ] Verify preferences, multiple panels per app, updates/removal/reinstall and keyboard behavior;
+- [ ] D4. Verify preferences, multiple panels per app, updates/removal/reinstall and keyboard behavior;
   update feature.md, remove this plan and regenerate the index when complete.
 
 ## Open Questions

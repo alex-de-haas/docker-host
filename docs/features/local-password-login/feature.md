@@ -1,7 +1,11 @@
-# Local Password Login
+---
+created: 2026-07-06
+updated: 2026-10-01
+summary: Core-owned email and password setup, recovery, invitations and login.
+components: [apps/core]
+---
 
-Created: 2026-07-06
-Updated: 2026-10-01
+# Local Password Login
 
 Core owns sign-in for an installed host: an operator signs in at Core `/login` with an email and a
 password, and gets the ordinary browser session every other surface already understands

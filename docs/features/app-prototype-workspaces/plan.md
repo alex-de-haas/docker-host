@@ -1,8 +1,12 @@
-# App Prototype Workspaces — Create, View, Change
+---
+status: Draft
+created: 2026-09-16
+updated: 2026-09-29
+summary: Durable no-Git app creation from a prompt, with bootstrap, development guide and assisted initial Git setup.
+components: [apps/core, apps/harness, apps/shell]
+---
 
-Status: Draft
-Created: 2026-09-16
-Updated: 2026-09-29
+# App Prototype Workspaces — Create, View, Change
 
 ## Development Session Boundary (2026-09-24)
 
@@ -443,59 +447,59 @@ a reviewed recipe. Ordinary Restart remains available even when no recipe is con
 | Source binding moves or disappears | Pause bound editing with repair reason; never substitute an empty folder |
 | Validation fails or source changes during checks | Failed/stale result; editing remains available |
 
-## Implementation Phases And Deliverables
+## Deliverables
 
-- [ ] Add an explicit upstream fetch/status flow with observation time, without automatic pull; decide
+- [ ] D1. Add an explicit upstream fetch/status flow with observation time, without automatic pull; decide
       fast-forward updates and branch switching in a later approved extension.
 
 All phases belong to one complete feature PR after the shared app-context feature.
 
 ### Phase 1 — Core Source And Bootstrap
 
-- [ ] Extend existing Core source/install handling only as needed for an internal no-Git folder; update
+- [ ] D2. Extend existing Core source/install handling only as needed for an internal no-Git folder; update
       install, live manifest, start/restart and update-source recognition without exposing app state
       as editable source or breaking existing managed repositories/external overrides.
-- [ ] Compose existing install/source locking with idempotent creation handoff, canonical paths,
+- [ ] D3. Compose existing install/source locking with idempotent creation handoff, canonical paths,
       partial-operation reconciliation and existing keep/delete-source uninstall semantics.
-- [ ] Package the three-file placeholder and verified bootstrap executable binding; prove immediate
+- [ ] D4. Package the three-file placeholder and verified bootstrap executable binding; prove immediate
       install/start/open with autostart off and no prospective application toolchain requirement.
-- [ ] Add source-loss warnings to the relevant existing lifecycle paths, including stale/unknown
+- [ ] D5. Add source-loss warnings to the relevant existing lifecycle paths, including stale/unknown
       observations, no-Git deletion and dirty pinned starts; preserve explicit operator choice.
-- [ ] Package the Core development guide and bounded MCP/control/CLI readers, with SDK map/direct
+- [ ] D6. Package the Core development guide and bounded MCP/control/CLI readers, with SDK map/direct
       protocol examples and app-origin-independent localCommand failure/restart guidance.
 
 ### Phase 2 — Creation And Session Orchestration
 
-- [ ] Implement authenticated gateway creation/status/retry and fixed-argument CLI bridge, with
+- [ ] D7. Implement authenticated gateway creation/status/retry and fixed-argument CLI bridge, with
       durable correlations, actor/outcome records and explicit ambiguous-submission handling.
-- [ ] Reuse shared app associations, Core-resolved development bindings and verified session grants;
+- [ ] D8. Reuse shared app associations, Core-resolved development bindings and verified session grants;
       retain attachments and coordinate writers across all granted roots with cancellation/recovery.
-- [ ] Add on-demand guide retrieval and host-authored instructions, correct the stale cwd preamble,
+- [ ] D9. Add on-demand guide retrieval and host-authored instructions, correct the stale cwd preamble,
       preserve provider opt-ins and shared development/Git grants, and hand optional Git destination to the
       agent without Core clone/commit/push or source-history behavior.
-- [ ] Add the assisted Save to Git/Push flow, covering explicit repository connection, review,
+- [ ] D10. Add the assisted Save to Git/Push flow, covering explicit repository connection, review,
       selected commits, target branch/remote, real push outcomes and source-status refresh.
 
 ### Phase 3 — UI And Iteration
 
-- [ ] Add create form, optional icon/Git destination, autostart-off switch, durable progress/errors
+- [ ] D11. Add create form, optional icon/Git destination, autostart-off switch, durable progress/errors
       and opening the preview beside the new session through existing panel navigation.
-- [ ] Add Continue building/New building session and source/Git observations; reuse the general
+- [ ] D12. Add Continue building/New building session and source/Git observations; reuse the general
       multi-app picker while keeping primary source target explicit.
-- [ ] Adopt generated multi-service topology through Core, cleanup obsolete preview services and
+- [ ] D13. Adopt generated multi-service topology through Core, cleanup obsolete preview services and
       preserve manual/agent-triggered restart. No per-turn automatic restart.
-- [ ] Keep Check preview optional, with reviewed stack-specific recipes, real command results,
+- [ ] D14. Keep Check preview optional, with reviewed stack-specific recipes, real command results,
       unknown/stale status and honest build/restart effects; support repair of an app that cannot start.
 
 ### Phase 4 — Verify And Document
 
-- [ ] Test source recognition, duplicate/crash boundaries, access/path guards, retention,
+- [ ] D15. Test source recognition, duplicate/crash boundaries, access/path guards, retention,
       uninstall source choices, writer recovery, non-mutating Git observations, loss warnings,
       assisted Git success/failure and ordinary runtime failures.
-- [ ] Run the live script below on both real harnesses; fake tests supplement but do not replace it.
-- [ ] Build/test changed Core/CLI, gateway and Shell; apply platform/gateway/Shell minor version bumps
+- [ ] D16. Run the live script below on both real harnesses; fake tests supplement but do not replace it.
+- [ ] D17. Build/test changed Core/CLI, gateway and Shell; apply platform/gateway/Shell minor version bumps
       with their required source-of-truth consistency. SDK bumps only if SDK implementation changes.
-- [ ] Write current feature documentation, update source/assistant/guide docs and epic links, remove
+- [ ] D18. Write current feature documentation, update source/assistant/guide docs and epic links, remove
       the completed plan and regenerate the index. No schemaVersion bump for ordinary additive work.
 
 ## Acceptance Script

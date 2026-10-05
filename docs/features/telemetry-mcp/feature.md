@@ -1,7 +1,11 @@
-# Telemetry Over MCP
+---
+created: 2026-08-17
+updated: 2026-09-10
+summary: Stored logs, traces and resource metrics exposed as an MCP interface behind a scoped credential.
+components: [apps/telemetry-backend, apps/core]
+---
 
-Created: 2026-08-17
-Updated: 2026-09-10
+# Telemetry Over MCP
 
 The fleet's **stored** telemetry — searchable logs, traces, and resource metrics — is an MCP
 interface an agent can call, behind a credential the query API did not have before this shipped.

@@ -1,8 +1,12 @@
-# Assistant Entry Points
+---
+status: In Progress
+created: 2026-08-18
+updated: 2026-09-27
+summary: Remaining assistant entry points, letting apps hand context to the assistant without driving it.
+components: [apps/shell, apps/harness, packages/app-sdk]
+---
 
-Status: In Progress
-Created: 2026-08-18
-Updated: 2026-09-27
+# Assistant Entry Points
 
 Make the assistant reachable from anywhere in Shell, and let an app hand it context — without letting
 an app *drive* it.
@@ -66,7 +70,7 @@ Two asks from the owner (2026-08-18), one mechanism short of possible today:
 
 ## Deliverables
 
-- [x] Gateway: the panel page — the sessions list and chat, with everything the Shell-native panel
+- [x] D1. Gateway: the panel page — the sessions list and chat, with everything the Shell-native panel
       does today (approvals, questions, context seeding) moved over. Depends on app-ui-surfaces'
       panel surface; the largest deliverable here and the price of Shell not holding provider UI.
       **The panel still presents the operator's delegated token**, which this plan did not foresee:
@@ -76,17 +80,17 @@ Two asks from the owner (2026-08-18), one mechanism short of possible today:
       have no app tools. The credential stays the operator's, obtained through the existing
       `hosty:request-delegated-token` handshake — the alternative, a gateway minting user-scoped
       tokens for itself, is the "token, not proxy" rule the bridge is built on.
-- [x] Shell: the keyboard shortcut (`Ctrl`/`Cmd`+`Shift`+`A`), which toggles rather than only opens.
-- [x] Shell: the assistant tab's badge. Unblocked and shipped 2026-08-24 by
+- [x] D2. Shell: the keyboard shortcut (`Ctrl`/`Cmd`+`Shift`+`A`), which toggles rather than only opens.
+- [x] D3. Shell: the assistant tab's badge. Unblocked and shipped 2026-08-24 by
       [agent-background-sessions](../agent-background-sessions/feature.md), which published the attention
       state it had to read. It is that state, not a second poll: the page holding the sessions posts
       the count and Shell renders it, sender-verified like every other embedder message.
-- [ ] Tests (Shell wiring): that a verified ask actually reaches the panel, rate-limited. Not covered
+- [ ] D4. Tests (Shell wiring): that a verified ask actually reaches the panel, rate-limited. Not covered
       — the forwarding lives in a React component and Shell's suite is pure-logic `.mjs` with no
       component harness. The pieces either side are tested (the SDK parser, the SDK limiter, the
       draft rule); what is untested is that they are connected, and no test here would have caught
       that. Needs either a component harness for Shell or live verification.
-- [x] Docs: `feature.md`, embedder-contract reference in hosty-app-skill, index.
+- [x] D5. Docs: `feature.md`, embedder-contract reference in hosty-app-skill, index.
 
 Version outcome: `apps/shell` minor, `apps/harness` minor, `packages/app-sdk` minor,
 `apps/telemetry` minor. No platform change.
@@ -97,7 +101,7 @@ the largest one here.)
 
 ### Open, and needing a platform change
 
-- [ ] The panel page verifying its embedder's origin on the inbound ask. Confirmed while shipping the
+- [ ] D6. The panel page verifying its embedder's origin on the inbound ask. Confirmed while shipping the
       routing: `HOSTY_SHELL_ORIGIN` does not exist and Core injects no embedder origin into apps, so
       the page's only candidate is the referrer — which can be absent under a stricter policy, making
       a gate on it fail *silently*, dropping asks with no trace. An unverifiable check that quietly

@@ -1,7 +1,11 @@
-# Runtime Source Workflows
+---
+created: 2026-06-03
+updated: 2026-10-02
+summary: Source checkouts, local overrides and runtime switching for installed apps, with Git inspection.
+components: [apps/core, apps/shell]
+---
 
-Created: 2026-06-03
-Updated: 2026-10-02
+# Runtime Source Workflows
 
 Runtime source workflows let administrators and local operators inspect and update the source state stored for an installed Hosty runtime app. Manifests declare source metadata, Core stores managed checkout and local override state, local command runtimes run from those folders, and Core exposes Git inspection and reviewed file discard to authorized source tools.
 

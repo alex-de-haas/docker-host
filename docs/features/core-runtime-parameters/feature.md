@@ -1,7 +1,11 @@
-# Core Runtime Parameters — Two Launch Flags, Everything Else Lives Inside
+---
+created: 2026-09-01
+updated: 2026-09-02
+summary: Core launches with only a data root and a port, and everything else lives in the instance's settings store.
+components: [apps/core, apps/cli]
+---
 
-Created: 2026-09-01
-Updated: 2026-09-02
+# Core Runtime Parameters — Two Launch Flags, Everything Else Lives Inside
 
 Core's launch surface is two process parameters — the data root and the port — with hardcoded
 defaults. Everything else an operator tunes lives in the instance's own settings store. There is no

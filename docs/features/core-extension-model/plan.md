@@ -1,8 +1,12 @@
-# Core Extension Model
+---
+status: Draft
+created: 2026-07-10
+updated: 2026-09-29
+summary: Exploratory model for delivering platform capabilities as swappable apps through named contribution points.
+components: [apps/core]
+---
 
-Status: Draft
-Created: 2026-07-10
-Updated: 2026-09-29
+# Core Extension Model
 
 Exploratory. This plan authorizes no implementation and changes no current system-app behavior; it
 formalizes a pattern the platform already uses ad hoc so the next capability does not invent a second
@@ -356,18 +360,18 @@ release that adds a contract. Three things soften this:
 Sequenced so each step is independently useful; nothing here is approved for implementation while this
 plan is Draft.
 
-- [ ] 1. Surface ownership and roles in the UI: one Installed Apps list, badges from Core-confirmed
+- [ ] D1. Surface ownership and roles in the UI: one Installed Apps list, badges from Core-confirmed
       facts, uniform lifecycle actions with registry-derived warnings, immediate navigation updates on
       app state changes.
-- [ ] 2. Formalize the telemetry push as the first sink contract (`hosty.telemetry.sink@1`) with scoped
+- [ ] D2. Formalize the telemetry push as the first sink contract (`hosty.telemetry.sink@1`) with scoped
       data-plane tokens — no behavior change, mechanism proven, and the deferred ingest-auth item
       closed.
-- [ ] 3. Introduce the durable domain event log and pull subscriptions; ship a notification-channel
+- [ ] D3. Introduce the durable domain event log and pull subscriptions; ship a notification-channel
       plugin (e.g. Telegram delivery) as the first external consumer.
-- [ ] 4. Design `hosty.auth.method@1` (link-first login methods) after the mechanism has survived steps
+- [ ] D4. Design `hosty.auth.method@1` (link-first login methods) after the mechanism has survived steps
       2–3; keep the identity token broker explicitly deferred. The authenticating-proxy pattern remains
       available meanwhile for perimeter SSO.
-- [ ] 5. Replace every `role: system` privilege check with the permission model above: a delegation
+- [ ] D5. Replace every `role: system` privilege check with the permission model above: a delegation
       permission for the exchange and on-behalf-of tokens, grant-and-user intersection for access, a
       lifetime setting, and Core-side ownership state; align permission names with access-token scopes.
 Optional consumer permissions and the speech/assistant category contracts are owned by
@@ -376,7 +380,7 @@ Optional consumer permissions and the speech/assistant category contracts are ow
 The agreed name for an agent consumer permission is `providers.agent`; its contract and agent
 extraction remain unimplemented and outside that feature.
 
-- [ ] 7. Docs: a `feature.md` here once a contract ships, plus the manifest and Shell documents the
+- [ ] D7. Docs: a `feature.md` here once a contract ships, plus the manifest and Shell documents the
       `provides`/`corePermissions` sections touch.
 
 ## Conflicts With Existing Features

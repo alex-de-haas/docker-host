@@ -1,7 +1,11 @@
-# Core's Own Public Origin
+---
+created: 2026-09-01
+updated: 2026-09-30
+summary: Core's public origin is a live setting, editable in Shell and publishable through the Cloudflare provider.
+components: [apps/core, apps/shell]
+---
 
-Created: 2026-09-01
-Updated: 2026-09-30
+# Core's Own Public Origin
 
 The address Core tells the world it lives at is a live Core setting, editable where every other host
 setting is edited and publishable through the Cloudflare API provider the way an app endpoint is.

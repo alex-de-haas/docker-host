@@ -1,7 +1,11 @@
-# Audit Log — A Bounded, Append-Ordered Trail
+---
+created: 2026-08-26
+updated: 2026-08-26
+summary: Core's bounded, append-ordered audit trail of security-relevant events, read backwards from the end.
+components: [apps/core]
+---
 
-Created: 2026-08-26
-Updated: 2026-08-26
+# Audit Log — A Bounded, Append-Ordered Trail
 
 Core records security-relevant events to one newline-delimited JSON file,
 `<core-root>/audit/audit.ndjson`, owner-only because every line names an actor. Writers append, readers

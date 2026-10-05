@@ -1,7 +1,11 @@
-# Mixed Development Runtimes
+---
+created: 2026-09-17
+updated: 2026-09-17
+summary: Development profiles can combine Docker and local-command services and run editable source inside Docker.
+components: [apps/core]
+---
 
-Created: 2026-09-17
-Updated: 2026-09-17
+# Mixed Development Runtimes
 
 ## Contract
 

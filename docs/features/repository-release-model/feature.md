@@ -1,7 +1,10 @@
-# Repository And Release Model
+---
+created: 2026-05-12
+updated: 2026-09-27
+summary: The repository layout, release artifacts and versioning rules for every component.
+---
 
-Created: 2026-05-12
-Updated: 2026-09-27
+# Repository And Release Model
 
 This document records the current repository layout and release artifact boundaries after the Core/Shell split and retirement of the legacy combined Host package.
 

@@ -1,7 +1,11 @@
-# Feature: Public Origins
+---
+created: 2026-08-10
+updated: 2026-10-05
+summary: An endpoint's public origin is a durable property of the endpoint that exists before the app first starts.
+components: [apps/core]
+---
 
-Created: 2026-08-10
-Updated: 2026-10-05
+# Feature: Public Origins
 
 A public origin is an explicit HTTP or HTTPS address one app endpoint answers on. It is a durable property of
 the endpoint, not of the process behind it: Core reserves the endpoint's local port at install, so the

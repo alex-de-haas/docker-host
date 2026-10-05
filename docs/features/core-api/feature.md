@@ -1,7 +1,11 @@
-# Core API
+---
+created: 2026-05-13
+updated: 2026-10-01
+summary: Core's browser and control APIs and the serialization rules every endpoint must follow.
+components: [apps/core]
+---
 
-Created: 2026-05-13
-Updated: 2026-10-01
+# Core API
 
 ## Description
 

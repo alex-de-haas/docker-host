@@ -1,7 +1,11 @@
-# Assistant MCP Approval Rules
+---
+created: 2026-09-29
+updated: 2026-10-05
+summary: A shared per-tool MCP policy for Claude and Codex with Ask, Run unprompted and Disabled controls.
+components: [apps/harness, apps/core]
+---
 
-Created: 2026-09-29
-Updated: 2026-10-05
+# Assistant MCP Approval Rules
 
 Harness owns a shared per-tool MCP policy for Claude and Codex. Its MCP access settings display the
 provider's complete tool catalog with **Ask**, **Run unprompted** and **Disabled** controls. The policy

@@ -1,7 +1,11 @@
-# Global (Shared) Host-Path Mounts
+---
+created: 2026-06-30
+updated: 2026-10-02
+summary: A host-level library of shared host folders that apps attach by reference.
+components: [apps/core, apps/cli, apps/shell]
+---
 
-Created: 2026-06-30
-Updated: 2026-10-02
+# Global (Shared) Host-Path Mounts
 
 ## Goal
 

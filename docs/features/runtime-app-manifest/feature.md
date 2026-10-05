@@ -1,7 +1,11 @@
-# Runtime App Manifest
+---
+created: 2026-06-04
+updated: 2026-10-02
+summary: The app.0.1 manifest contract for installing and running runtime apps.
+components: [apps/core]
+---
 
-Created: 2026-06-04
-Updated: 2026-10-02
+# Runtime App Manifest
 
 ## Description
 

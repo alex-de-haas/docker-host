@@ -1,7 +1,11 @@
-# App Lifecycle States — Intermediate `starting` And `stopping`
+---
+created: 2026-07-28
+updated: 2026-09-09
+summary: Intermediate starting and stopping runtime states, so every client sees a lifecycle action while it is in flight.
+components: [apps/core, apps/shell]
+---
 
-Created: 2026-07-28
-Updated: 2026-09-09
+# App Lifecycle States — Intermediate `starting` And `stopping`
 
 An installed app's `runtimeState` reports whether a lifecycle verb is in flight, not only where it
 ended up. A start that pulls an image, resolves a source checkout, or waits out a lingering host port
@@ -11,7 +15,7 @@ reads `starting` for its whole duration, and every client sees it — not just t
 
 | State | Meaning |
 | --- | --- |
-| `running` | The runtime is up — the process or container exists. Whether it answers is health's question, not this one's (see [App Readiness](../app-readiness/plan.md)). |
+| `running` | The runtime is up — the process or container exists. Whether it answers is health's question, not this one's (see [App Readiness](../app-readiness/feature.md)). |
 | `starting` | A start is in flight. Nothing is listening yet. |
 | `stopping` | A stop is in flight. The runtime may still hold its ports. |
 | `stopped` | Down, with nothing operating on it. |

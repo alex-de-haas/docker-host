@@ -1,5 +1,9 @@
-Created: 2026-09-25
-Updated: 2026-09-25
+---
+created: 2026-09-25
+updated: 2026-09-25
+summary: One Core resource sampler for containers, local process trees and Core itself, shared by Dashboard and Telemetry.
+components: [apps/core, apps/shell, apps/telemetry-ui]
+---
 
 # Unified runtime resource usage
 

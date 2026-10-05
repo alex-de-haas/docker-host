@@ -1,8 +1,12 @@
-# Dependency-Ordered Autostart — Start Providers First, And Say So With `waiting`
+---
+status: Draft
+created: 2026-07-28
+updated: 2026-09-21
+summary: Start providers before their consumers and report a held-back app as waiting rather than stopped.
+components: [apps/core, apps/shell]
+---
 
-Status: Draft
-Created: 2026-07-28
-Updated: 2026-09-21
+# Dependency-Ordered Autostart — Start Providers First, And Say So With `waiting`
 
 ## Goal
 
@@ -65,16 +69,16 @@ carry a non-terminal value without every `!= "running"` gate misreading it
 
 ## Deliverables
 
-- [ ] Answer questions 1–6; 1, 4 and 5 change the shape of the implementation, not just its details.
-- [ ] Dependency-ready scheduling within each capability-priority tier of `StartAutostartAppsAsync`,
+- [ ] D1. Answer questions 1–6; 1, 4 and 5 change the shape of the implementation, not just its details.
+- [ ] D2. Dependency-ready scheduling within each capability-priority tier of `StartAutostartAppsAsync`,
       preserving capability barriers, system preference among eligible apps, and immediate slot refill,
       with cycle detection that reports rather than hangs.
-- [ ] `waiting` added to the runtime-state vocabulary, its predicate classification, the boot recovery
+- [ ] D3. `waiting` added to the runtime-state vocabulary, its predicate classification, the boot recovery
       sweep, and the supervisor's observation filter.
-- [ ] Wake path so a `waiting` app starts when its dependency does, including providers in later
+- [ ] D4. Wake path so a `waiting` app starts when its dependency does, including providers in later
       tiers without blocking progress to those tiers.
-- [ ] Shell rendering for `waiting`, distinct from `stopped` and from the transitional states.
-- [ ] `waiting` added to `ConsoleUi.State` ([ConsoleUi.cs:65](../../../apps/cli/src/Haas.Hosty.Cli/Commands/ConsoleUi.cs)),
+- [ ] D5. Shell rendering for `waiting`, distinct from `stopped` and from the transitional states.
+- [ ] D6. `waiting` added to `ConsoleUi.State` ([ConsoleUi.cs:65](../../../apps/cli/src/Haas.Hosty.Cli/Commands/ConsoleUi.cs)),
       which already colours the other intermediate values.
 
 ## Verification

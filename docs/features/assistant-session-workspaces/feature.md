@@ -1,7 +1,11 @@
-# Assistant Session Workspaces
+---
+created: 2026-09-27
+updated: 2026-10-02
+summary: Core-owned Git worktrees per assistant session, with managed Git operations, observation and cleanup.
+components: [apps/core, apps/harness, apps/shell]
+---
 
-Created: 2026-09-27
-Updated: 2026-10-02
+# Assistant Session Workspaces
 
 ## Ownership And Allocation
 

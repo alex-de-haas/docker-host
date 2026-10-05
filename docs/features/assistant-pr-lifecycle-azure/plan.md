@@ -1,8 +1,12 @@
-# Azure DevOps Pull Request Lifecycle
+---
+status: Draft
+created: 2026-09-29
+updated: 2026-09-29
+summary: Extend the assistant pull request lifecycle to Azure DevOps Services.
+components: [apps/core, apps/harness]
+---
 
-Status: Draft
-Created: 2026-09-29
-Updated: 2026-09-29
+# Azure DevOps Pull Request Lifecycle
 
 ## Goal
 
@@ -19,13 +23,13 @@ map provider-specific PR, review, build-policy and completion facts without assu
 
 ## Deliverables
 
-- [ ] Define supported Azure DevOps Services contribution paths and verify existing Entra/PAT
+- [ ] D1. Define supported Azure DevOps Services contribution paths and verify existing Entra/PAT
   connections against repository writes, PR operations and observation permissions.
-- [ ] Implement publication/update, review/build-policy observation and merge through the shared
+- [ ] D2. Implement publication/update, review/build-policy observation and merge through the shared
   Core services, with durable retry/reconciliation and no exported credentials.
-- [ ] Map repository completion requirements and external-review/abandoned outcomes; preserve
+- [ ] D3. Map repository completion requirements and external-review/abandoned outcomes; preserve
   provider/repository identity and independent per-PR results in multi-provider sessions.
-- [ ] Verify provider-specific authorization, revocation, policy failures and restart recovery;
+- [ ] D4. Verify provider-specific authorization, revocation, policy failures and restart recovery;
   document shipped behavior and remove this plan when all deliverables are complete.
 
 ## Open Questions

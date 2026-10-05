@@ -1,8 +1,12 @@
-# App Publication
+---
+status: Draft
+created: 2026-09-16
+updated: 2026-09-29
+summary: Repository provisioning, installable releases and feeds, and catalog promotion for apps built in Hosty.
+components: [apps/core, apps/harness]
+---
 
-Status: Draft
-Created: 2026-09-16
-Updated: 2026-09-29
+# App Publication
 
 ## Code PR Publication Boundary (2026-09-24)
 
@@ -66,19 +70,19 @@ and do not inherit permission from a discovery call.
 
 ## Deliverables
 
-- [ ] Choose first repository provider and catalog; specify authentication and instruction delivery.
-- [ ] Implement provider-specific hosted repository provisioning when requested and compose it with
+- [ ] D1. Choose first repository provider and catalog; specify authentication and instruction delivery.
+- [ ] D2. Implement provider-specific hosted repository provisioning when requested and compose it with
       the existing assisted Git save/push flow, preserving source paths and idempotent retry behavior.
       Generic Git initialization/commit/push is owned by the prototype feature, not duplicated here.
-- [ ] Produce a reviewed release bundle: source/version, manifest, artifact/setup, feed, description
+- [ ] D3. Produce a reviewed release bundle: source/version, manifest, artifact/setup, feed, description
       and optional screenshots/icon; exclude secrets, local absolute paths, caches and runtime data.
-- [ ] Validate clean installation and a subsequent version update through Core from the published
+- [ ] D4. Validate clean installation and a subsequent version update through Core from the published
       feed, with required version changes and artifact references kept consistent.
-- [ ] Implement catalog-owned submission guidance and optional typed tools with explicit provider
+- [ ] D5. Implement catalog-owned submission guidance and optional typed tools with explicit provider
       enablement/authority; create the catalog diff/PR and report its actual state without auto-merge.
-- [ ] Record publication references and partial failures independently (commit, pushed revision,
+- [ ] D6. Record publication references and partial failures independently (commit, pushed revision,
       release/feed, PR, observed listing); retry without duplicate repositories, releases or PRs.
-- [ ] Document the shipped workflow, remove this plan, regenerate the index and bump affected
+- [ ] D7. Document the shipped workflow, remove this plan, regenerate the index and bump affected
       components. Reuse the workspace/session model instead of moving source during publication.
 
 ## Phases And Open Questions

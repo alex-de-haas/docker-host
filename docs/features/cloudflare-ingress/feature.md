@@ -1,7 +1,11 @@
-# Feature: Cloudflare Ingress
+---
+created: 2026-06-17
+updated: 2026-09-22
+summary: An opt-in Cloudflare Tunnel provider that publishes app endpoints and derives their public origins.
+components: [apps/core, apps/shell]
+---
 
-Created: 2026-06-17
-Updated: 2026-09-22
+# Feature: Cloudflare Ingress
 
 Runtime app services listen only on loopback. Ingress is the layer that accepts public traffic,
 terminates HTTPS, and routes by hostname to the right loopback port. Core never runs a reverse proxy

@@ -1,7 +1,11 @@
-# Hosty Harness Provider Connections
+---
+created: 2026-09-17
+updated: 2026-09-29
+summary: Named Claude and Codex agent connections that administrators manage in the Harness Providers settings.
+components: [apps/harness]
+---
 
-Created: 2026-09-17
-Updated: 2026-09-29
+# Hosty Harness Provider Connections
 
 ## Behavior
 

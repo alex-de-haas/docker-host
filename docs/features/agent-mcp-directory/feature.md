@@ -1,7 +1,11 @@
-# Agent MCP Directory
+---
+created: 2026-09-26
+updated: 2026-10-05
+summary: Core-owned policy for which MCP targets Hosty assistants may reach, configured in Harness and administered in Shell.
+components: [apps/core, apps/harness, apps/shell]
+---
 
-Created: 2026-09-26
-Updated: 2026-10-05
+# Agent MCP Directory
 
 Core owns the host policy for MCP targets offered through Hosty assistants, the Gateway facade and
 `hosty mcp`. Administrators configure Harness in its **Settings → MCP access** screen: target

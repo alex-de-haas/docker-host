@@ -1,7 +1,11 @@
-# Runtime Artifact Model
+---
+created: 2026-07-02
+updated: 2026-10-02
+summary: Runtime profiles pair a command recipe with an execution type and deliver immutable prebuilt folders.
+components: [apps/core]
+---
 
-Created: 2026-07-02
-Updated: 2026-10-02
+# Runtime Artifact Model
 
 ## Execution And Artifacts
 
