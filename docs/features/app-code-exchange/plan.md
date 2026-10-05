@@ -1,6 +1,6 @@
 # App Code Exchange — Bind Redemption To The App And Its Sign-In Attempt
 
-Status: In Progress
+Status: Blocked
 Created: 2026-10-05
 Updated: 2026-10-05
 
@@ -28,6 +28,14 @@ own credential. On 2026-10-05 the owner chose to expand this same plan and revie
 before implementation. The owner approved the complete expanded protocol on 2026-10-05, including
 CLI/Swift behavior and HTTP constraints. Implementation proceeds in the isolated
 `feat/app-code-exchange` worktree; existing service-token changes are part of this feature.
+
+## Completion Blockers
+
+The owner's IPv6 CSP amendment decision is required before completing the SDK package and its
+publication, actual external registry locks and client rollout. Native live acceptance requires
+a launchable isolated macOS QA build: the prepared unique clone is refused by launchd (RBS 5 /
+POSIX 163). The automated, DNS HTTPS browser, CLI-account and real old-Core upgrade checks below
+are complete; the remaining deliverables stay unchecked.
 
 ## Current Behavior And The Two Bypasses
 
@@ -291,7 +299,7 @@ This exception changes the agreed CSP defense, so implementation awaits explicit
 
 ## Deliverables
 
-Already implemented under the original approval, in the same uncommitted change:
+Implemented under the original approval and included in PR #547:
 
 - [x] SDK and Harness send their service token and return `app_service_token_missing` before fetch
   when missing/blank; all in-repo exchange callers identified.
@@ -386,8 +394,7 @@ exact build, including long URL/JSON output at a narrow console width. Swift Hos
 Shell's correlated upgrade callback adds five regressions: 283 tests pass. Documentation-index,
 version consistency and whitespace checks pass. The final Shell, Demo, Marketplace and Telemetry UI webpack builds pass; Marketplace 109,
 Telemetry UI 10 and Demo 4 tests pass. Final external published-dist candidates pass Project
-Manager 132 and Media Server 168 tests, lint and fresh webpack builds. Live upgrade verification
-remains in progress.
+Manager 132 and Media Server 168 tests, lint and fresh webpack builds. Real old-Core-to-new-Core upgrade acceptance passes for all four pending attempt modes.
 
 Fresh isolated Core-managed HTTPS browser evidence verifies Demo standalone and Shell server
 login, initial Shell-embedded silent sign-in, real third-party nonce refusal followed by a
@@ -413,14 +420,24 @@ behavior is covered by the new Core regressions and is being checked against act
 
 - [x] Complete final production bundle/cache refresh and local external candidate browser acceptance.
 - [x] Complete CLI logged-out/different-account browser acceptance.
-- [ ] Complete actual old-Core-to-new-Core pending navigation/popup upgrade checks.
+- [x] Complete actual old-Core-to-new-Core pending navigation/popup upgrade checks: source Core
+  0.119.0 metadata 404 selects protocol 1 and exchanges successfully, with its old unauthenticated
+  weakness verified explicitly. A normal `--keep-apps` upgrade changes Core PID 21154 to 22503,
+  reports protocol 2/version 0.120.0 and preserves both Demo runners and public origins. Held
+  issued-code, standalone, actual silent iframe and same-popup attempts each create exactly one
+  new intent with fresh proof and finish active after exchange 200. The obsolete issued code
+  receives 401; legacy GETs return only the correlated credential-free refusal. All independent
+  upgrade fixture processes are stopped and private evidence is retained.
 - [x] Complete parent-session logout cascade/per-tab grant recovery against the final production
   bundles. Concurrent legitimate Demo attempts use distinct code/proof and both exchange 200.
   Shell frame recreation reuses its per-tab grant without a new intent/exchange; own-session
   logout produces `token_revoked`/401, clears the grant and leaves explicit app-owned sign-in
   available without framing Core login.
 - [ ] Complete native live first-open, switch/LRU, draft-preserving renewal and browser handoff.
-  The macOS UI automation acquisition stalled for 3917 seconds without returning app state and
-  was aborted. No native GUI step passed; automated tests/builds do not establish this acceptance.
+  The initial macOS UI acquisition stalled for 3917 seconds and was aborted. Resetting the
+  tool restored native inventory; registering only the isolated unique QA bundle did not make it
+  selectable, and direct launch failed with `Launchd job spawn failed` (RBS 5 / POSIX 163). No
+  QA process or native GUI step ran. The operator app was never launched; automated tests/builds
+  do not establish this acceptance.
 - [ ] Complete SDK registry publication, real external dependency locks and client-first deployment
   after the pending IPv6 CSP amendment decision. Keep PR #547 draft until its tracked work is done.
