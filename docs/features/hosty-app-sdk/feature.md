@@ -1,6 +1,6 @@
 ---
 created: 2026-07-15
-updated: 2026-10-03
+updated: 2026-10-05
 summary: The shared app-side Host integration published as an npm package and a NuGet package.
 components: [packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -8,7 +8,7 @@ components: [packages/app-sdk, packages/app-sdk-dotnet]
 # Hosty App SDK
 
 Shared Host integration for runtime apps, in two published packages: **`@hosty-sdk/app`** on npmjs
-(TypeScript, 0.19.0) and **`HostySdk.App`** on NuGet (.NET, 0.6.0). They own the app half of the
+(TypeScript, 0.20.0) and **`HostySdk.App`** on NuGet (.NET, 0.6.0). They own the app half of the
 [auth session lifecycle](../auth-session-lifecycle/feature.md) contract — session classification,
 recovery, Core revalidation, launch-mode awareness — plus the app secrets client, delegated-token
 validation, and (TypeScript only) the theme protocol between a shell and the pages it embeds.
@@ -34,7 +34,7 @@ contract; none depends on the default Shell or its embedding messages.
 @hosty-sdk/app/delegated       # local ECDSA validation of Core-issued delegated tokens
 @hosty-sdk/app/react           # 'use client': AppIdentityBridge, HostLaunchBridge, HostThemeBridge, useLaunchMode
 @hosty-sdk/app/embedder        # theme sender and legacy message parsers
-@hosty-sdk/app/browser-auth    # same-origin appFetch and Core popup sign-in
+@hosty-sdk/app/browser-auth    # app-local grant persistence, same-origin appFetch and Core popup sign-in
 @hosty-sdk/app/install         # pure: typed client and InstallationFlow
 @hosty-sdk/app/install/react   # client: useInstallation and InstallDialog
 @hosty-sdk/app/install/server  # server-only: app-local installation route adapter
@@ -99,12 +99,13 @@ same state, which is what stops the three-contradicting-errors failure.
 | --- | --- | --- | --- |
 | `resolving` | probe in flight | quiet skeleton, never an error | same |
 | `active` | token valid | app content | app content |
-| `recoverable` | Core **401** | offer a button opening Core sign-in; exchange a bound one-time code in the app | redirect to Core `/open` once per tab; Core bounces through `/login?returnTo` and returns a fresh code. Only the loop-guard terminal state shows a message with an explicit link |
+| `recoverable` | Core **401** | try silent Core sign-in once during initial load without a stored grant; otherwise offer the Core popup button | redirect to Core `/open` once per tab; Core bounces through `/login?returnTo` and returns a fresh code. Only the loop-guard terminal state shows a message with an explicit link |
 | `denied` | Core **403** | "signed in, no access", no login button — a redirect would loop | same |
 | `unavailable` | **503** / Core unreachable | "can't reach Hosty, retrying" + Retry; the cookie is kept | same |
 | `misconfigured` | no service token or no Core origin | "misconfigured on the host, contact the administrator", no login button | same |
 
-Core owns the password form. Embedded apps offer a sign-in action that opens Core; standalone
+Core owns the password form. Embedded apps first try a frame-local silent Core redirect during
+initial identity resolution, then offer a sign-in action that opens Core when necessary. Standalone
 apps navigate through Core with a once-per-tab loop guard. Shell follows the same standalone rule.
 Denied, unavailable and misconfigured states remain distinct from recoverable authentication.
 
@@ -119,16 +120,17 @@ configuring public origins.
 
 The React identity bridge keeps a pending one-time launch-code exchange across development effect
 cleanup and replay. The replay waits for that exchange before probing or recovering the session;
-only the active effect reloads after success. Cleanup still cancels probes and recovery timers,
-while an already submitted code exchange runs to completion so its single-use code is not lost.
+only the active effect applies its result and resumes the identity probe. Cleanup still cancels
+probes and recovery timers, while an already submitted code exchange runs to completion so its
+single-use code is not lost.
 
 ## Classification And Caching
 
-- **Classification is by HTTP status, never by error-code string.** 401 → `recoverable`, 403 →
-  `denied`, 503 or unreachable → `unavailable`, missing configuration → `misconfigured`. Code strings
-  (`token_expired`, `app_access_denied`, …) pass through untouched for logging but never drive
-  branching, so a new Core code cannot break an app. The consequence for Core is that
-  `MapIdentityErrorStatus` is normative: moving a code between 401 and 403 is a breaking change.
+- **Recovery and denial classification is by HTTP status.** 401 → `recoverable`, 403 → `denied`,
+  503 or unreachable → `unavailable`, missing configuration → `misconfigured`. Machine-readable
+  codes pass through unchanged and identify explicit identity rejections for stored-grant cleanup;
+  `reauth_required` keeps the grant. This cleanup is separate from recovery classification.
+  `MapIdentityErrorStatus` remains normative: moving a code between 401 and 403 is a breaking change.
 - **Positive revalidations are cached 30 seconds, clamped to the grant's expiry; failures are never
   cached.** Both packages use the same numbers (`CachingIdentityValidator` on .NET, a bounded
   process-global map in the `server` slice), so a stuck-unauthenticated state is impossible and the
@@ -205,9 +207,15 @@ system, which is what a native app's chrome follows anyway.
 
 ## Embedded App Sign-In
 
-Shell opens the app URL without minting credentials. An app with a valid own-origin session opens
-immediately; otherwise `AppIdentityBridge` offers a user-initiated Core sign-in popup. The frame does
-not navigate its parent or ask Shell for a user token.
+Shell opens the app URL without minting credentials. The bridge restores an embedded document's
+grant from its app-origin `sessionStorage` before its first probe. When no stored grant is available
+and that probe finds no valid identity, it attempts one silent sign-in through Core in its own frame.
+Core redirects to the validated app URL with a code and the matching random state, or an error:
+`login_required` offers the popup button and `access_denied` renders the denied state. Missing or
+mismatched state cannot authorize an exchange. The attempt is guarded once per tab per app and is
+limited to initial resolution; later identity expiry preserves the mounted document and its work.
+See [embedded app sign-in](../embedded-app-sign-in/feature.md) for the deployment and Core contract.
+The frame does not navigate its parent or ask Shell for a user token.
 
 Core `/api/apps/{appId}/open?responseMode=web_message&state=...` requires a browser navigation and
 its own origin-bound session cookie. It validates the app assignment and registered callback origin,
@@ -217,10 +225,13 @@ sessions go through Core's password form. Invalid targets, mismatched state and 
 
 The app's own server exchanges the code and validates the result with its service credential before
 returning its app grant and setting its host-only HttpOnly cookie. Where iframe cookie access is
-blocked, the bridge keeps the app grant only in document memory; `appFetch` attaches it exclusively
-to same-origin requests and refuses redirects. The token is never stored in browser storage or sent
-to Shell. A reload discards that memory and probes the cookie again. A 401 triggers recovery, a 403
-is terminal denial, and a 503 preserves credentials.
+blocked, embedded documents keep their app grant in document memory and app-origin `sessionStorage`.
+Frame recreation, app page switches and Shell reloads can restore it in the same tab. Standalone
+documents never persist the grant, `localStorage` is never used, and blocked storage falls back to
+document memory. `appFetch` attaches the grant exclusively to same-origin requests and refuses
+redirects. Identity rejection (`token_invalid`, `token_revoked`, `token_expired`, or
+`token_app_mismatch`) and `forgetAppGrant` clear it; `reauth_required` and transient outages keep it.
+Popup renewal replaces the stored grant. The credential is never sent to Shell.
 
 Use `appFetch` from `@hosty-sdk/app/browser-auth` for protected client API calls and streams. Gate
 protected content with the bridge's children or `renderState`; a custom sign-in view must invoke
@@ -358,10 +369,15 @@ See [permission management](../app-permission-management/feature.md) for first-p
 - CI runs both suites (`npm run sdk:test`, the `HostySdk.App.Tests` project) on any change under the
   package paths; the publish workflows re-run the tests before releasing.
 - Identity-bridge regression tests replay development effect setup/cleanup, checking one exchange,
-  no premature probe, one successful reload, recovery after failed exchanges, and no navigation
+  no premature probe, successful identity resolution, recovery after failed exchanges, and no navigation
   after an actual unmount.
 - Bridge render-state tests keep content gated until an active probe and cover denied, unavailable
   and misconfigured responses without replacing the default recovery contract.
 
 - Popup tests reject wrong window, origin and state; code exchange rejects foreign app audiences and replay.
 - Browser transport tests reject cross-origin requests and redirects, preserve credentials on 503, and initiate recovery on 401.
+- Embedded persistence tests cover frame recreation, standalone exclusion, blocked storage,
+  identity-rejection cleanup and retention on `reauth_required`; Harness settings exercise this
+  same transport without persisting server-side credentials.
+- Initial silent sign-in tests cover its preconditions, once-per-tab guard, state verification,
+  `login_required`/`access_denied` fallbacks and no navigation after a mounted session expires.

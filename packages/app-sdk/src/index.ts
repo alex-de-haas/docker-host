@@ -5,7 +5,7 @@
 // docker-host docs/features/hosty-app-sdk/feature.md and docs/features/auth-session-lifecycle/feature.md.
 
 /**
- * The postMessage type an embedded app sends its parent to request a fresh launch code.
+ * The postMessage type for an embedded app's authentication-required intent.
  * A frozen protocol constant: it deliberately does not track product branding (precedent:
  * the `x-docker-host-identity` header survived the docker-host→hosty rename untouched).
  * The payload carries no secret — the embedder verifies the sender before acting.
@@ -24,8 +24,8 @@ export function createAuthRequiredIntent(appId: string): AuthRequiredIntent {
 /**
  * The postMessage types of the delegated-token handshake: an embedded app page asks its embedder
  * for a short-TTL token scoped to itself, and the embedder answers with one it minted from Core.
- * Same shape of contract as the launch-code recovery above — the app cannot self-serve, because
- * minting needs the user's Core session in a first-party context, which only the embedder has.
+ * Minting a delegated token uses the embedder's first-party Core session. The app's own identity
+ * sign-in is separate: it navigates directly to Core or opens its own popup.
  *
  * The request carries no secret, so it is safe to broadcast; the answer does, so an embedder must
  * post it to the frame's own origin and never to `*`. Answering is a decision, not a reflex: the
@@ -228,8 +228,9 @@ export function buildCoreOpenUrl(
 /**
  * How a shell is presenting this app.
  *
- * - `embedded` — framed by the browser Shell. The shell renders navigation for this app, and a
- *   parent frame exists, so identity recovery is a `hosty:auth-required` post to it.
+ * - `embedded` — framed by the browser Shell. The shell renders navigation for this app. The
+ *   app restores its per-tab grant, tries a silent Core redirect on first load, then uses its
+ *   own Core popup when interaction is required. No credential passes through the parent.
  * - `native` — the top frame inside a native shell's web view (`apps/shell-swift`). The shell
  *   renders navigation, but there is no parent to post to, so recovery takes the standalone
  *   redirect — which is exactly the navigation that client intercepts to re-mint a launch code.
@@ -237,10 +238,9 @@ export function buildCoreOpenUrl(
  *   for this app, so it keeps its own.
  *
  * Two independent decisions read this one value and they do not split it the same way: chrome
- * is hidden whenever the mode is not `standalone` (`hidesAppChrome`), while the parent post
- * belongs to `embedded` alone (`decideRecoveryAction`). That asymmetry is the whole reason
- * `native` exists as its own value — calling a native web view `embedded` to get its chrome
- * hidden would send recovery to a parent that is not there.
+ * is hidden whenever the mode is not `standalone` (`hidesAppChrome`), while frame-local silent
+ * sign-in and popup recovery belong to `embedded` alone (`AppIdentityBridge`). A native web
+ * view keeps standalone recovery even though its app chrome is hidden.
  */
 export type AppLaunchMode = "embedded" | "native" | "standalone";
 
@@ -267,9 +267,8 @@ export function normalizeLaunchMode(value: unknown): AppLaunchMode | null {
  * `standalone` — a native shell's web view makes the app the top frame, so it reads as
  * `standalone`, which is why the declared `hosty_launch` parameter exists at all.
  *
- * This stays the input to the *recovery* decision, because whether a parent exists is a
- * structural fact that a declared value cannot override: a stale `embedded` would otherwise
- * post into a window with no shell listening.
+ * This stays the input to the *recovery* decision, because framing is a structural fact a
+ * declared value cannot override: a stale `embedded` must not select frame-only silent sign-in.
  */
 export function detectLaunchMode(
   win: Pick<Window, "self" | "top">,
@@ -391,7 +390,8 @@ export function decideRecoveryAction(input: {
 
   // expired / not-present — the recoverable pair.
   //
-  // `embedded` is the only mode with a parent to ask. `native` deliberately falls through to the
+  // `embedded` selects app-owned interactive recovery after the bridge's silent first-load path.
+  // `native` deliberately falls through to the
   // redirect beside `standalone`: a native shell's web view has no parent, and the redirect to
   // Core's `/open` is the navigation that client watches for to re-mint a launch code. Adding a
   // mode must never quietly add a case here — a mode that cannot reach a shell has to redirect.

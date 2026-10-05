@@ -83,6 +83,15 @@ service credential. Core's cookie is not part of this transport. Next's internal
 contain its listen address, so Shell validates the browser Host against the configured callback
 origin instead of comparing the internal URL's origin.
 
+Initial embedded sign-in also supports a silent Core redirect owned by the app's frame. Its success
+depends on the browser treating Shell and Core as the same site: a shared local DNS suffix is not
+proof of that. A 2026-10-05 cookie probe under the default `*.hosty.localhost` names classified the
+Core frame as same-site in Chromium and cross-site in Safari, which sent no Core cookie. Where the
+cookie is unavailable, Core immediately returns `login_required` and the app offers its popup
+button. After sign-in, the app-origin `sessionStorage` grant survives frame recreation in that tab.
+There is no browser detection. [Embedded app sign-in](../embedded-app-sign-in/feature.md) describes
+the shared registrable-domain deployment and the same popup fallback for other arrangements.
+
 The JavaScript SDK also supports app-owned popup authorization for embedded content. A Core-managed
 Marketplace fixture passed embedded sign-in in Chromium and Safari 27. Chromium additionally passed
 sign-in without `apps.install`, using the ordinary sandbox, and rejected a revoked parent session on
