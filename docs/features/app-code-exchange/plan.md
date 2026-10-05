@@ -33,11 +33,12 @@ CLI/Swift behavior and HTTP constraints. Implementation proceeds in the isolated
 
 The owner's IPv6 CSP amendment decision is required before completing the SDK package and its
 publication, actual external registry locks and client rollout. Native live acceptance also needs
-the Mac unlocked manually: the final bounded native inventory reports that the Mac is locked and
-automatic unlock failed. The isolated QA clone launches with the unchanged production text section,
-but no GUI sign-in/app scenario has passed, and its temporary ad-hoc signature does not establish
-Keychain credential-persistence coverage. Automated, DNS HTTPS browser, CLI-account and real
-old-Core upgrade checks are complete; the remaining deliverables stay unchecked.
+working UI automation: after the owner unlocked the Mac, inventory returned the running isolated
+QA clone, but acquiring it by bundle ID or exact path still returned no accessibility state and
+was aborted. No GUI sign-in/app scenario has passed. The clone uses the unchanged production text
+section; its temporary ad-hoc signature does not establish Keychain persistence. Automated, DNS
+HTTPS browser, CLI-account and real old-Core upgrade checks are complete; remaining deliverables
+stay unchecked.
 
 ## Current Behavior And The Two Bypasses
 
@@ -440,15 +441,14 @@ upgrade checks in a separate normally authenticated runtime.
   logout produces `token_revoked`/401, clears the grant and leaves explicit app-owned sign-in
   available without framing Core login.
 - [ ] Complete native live first-open, switch/LRU, draft-preserving renewal and browser handoff.
-  The first macOS UI acquisition stalled for 3917 seconds and was aborted. Initial direct launch
-  failed with RBS 5 / POSIX 163; filtered amfid diagnostics identified restricted entitlements on
-  the QA ad-hoc signature (-424). Removing only those temporary QA rights permits launch while
-  preserving sandbox, network access, unique preferences and the exact production text section.
-  The following CUA acquisition still stalled for 1028.8 seconds despite a requested ten-second
-  timeout and was aborted. A single reset/inventory attempt then reported the Mac locked and
-  automatic unlock failed. The QA app has launched, but no onboarding, password login or app UI
-  scenario passed. Manual unlock is required to continue; Keychain persistence is outside this
-  temporary signature's evidence. The operator app was never launched.
+  The QA clone launches with sandbox/network access, unique preferences and the exact production
+  text section after removing restricted rights from its temporary ad-hoc signature. The owner
+  unlocked the Mac; native inventory sees the running clone, but both bundle-ID and exact-path
+  acquisition still return no accessibility state despite requested ten-second timeouts. The
+  calls were aborted without an onboarding, password-login or app scenario passing. Keychain
+  persistence is outside the temporary signature's evidence. The operator app was never launched.
+  Only the isolated Core/runtime graph and exact QA clone were stopped; private fixtures/evidence
+  are retained for resuming acceptance when native UI control works.
 - [ ] Complete SDK registry publication, real external dependency locks and client-first deployment
   after the pending IPv6 CSP amendment decision. Keep PR #547 draft until its tracked work is done.
 
@@ -456,3 +456,8 @@ External source integration is available for review in draft [Project Manager #1
 and [Media Server #318](https://github.com/alex-de-haas/media-server/pull/318). Their source matches
 the verified SDK-dist candidates; actual SDK dependencies, registry locks and deployment remain
 unchecked until publication and registry-based verification. Neither draft is ready to merge.
+
+External GitHub CI confirms Project Manager Verify passes. Media API, web e2e, manifest and docs
+pass; Media web reports 158 passed / 10 failed against its still-locked SDK 0.19.1, which lacks
+proof enforcement and protocol recovery metadata. The complete 0.21.0 candidate passes all 168.
+Registry lock refresh and green registry-based CI remain part of the unchecked rollout deliverable.
