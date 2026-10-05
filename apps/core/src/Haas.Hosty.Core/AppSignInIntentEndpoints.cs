@@ -77,7 +77,7 @@ internal static class AppSignInIntentEndpoints
             if (!request.Query.ContainsKey("requestId"))
             {
                 if (request.Query.Keys.Any(key => key != "redirectUri"))
-                    return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
+                    return await RefuseLegacyAttemptAsync(appId, context, identity, auditAppId, audit, clock);
                 var redirect = request.Query["redirectUri"].ToString();
                 if (string.IsNullOrWhiteSpace(redirect))
                     throw new AppIdentityException("redirect_uri_missing", "Redirect URI is required.");
@@ -191,6 +191,38 @@ internal static class AppSignInIntentEndpoints
         return AppSignInMode.Standalone;
     }
 
+    // A client can discover protocol 1 immediately before Core is upgraded. Return only
+    // its validated public error callback; caller-supplied proof never authorizes issuance.
+    private static async Task<IResult> RefuseLegacyAttemptAsync(string appId, HttpContext context,
+        AppIdentityService identity, string? auditAppId, AuditStore audit, IClock clock)
+    {
+        var request = context.Request;
+        try
+        {
+            if (request.Query.Any(field => field.Value.Count != 1 || field.Key is not
+                ("redirectUri" or "state" or "codeChallenge" or "codeChallengeMethod" or "prompt" or "responseMode")))
+                return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
+            var redirect = request.Query["redirectUri"].ToString();
+            await identity.RequireAllowedRedirectUriAsync(appId, redirect, context.RequestAborted);
+            AppCodeProof.RequireChallenge(request.Query["codeChallenge"].ToString(), request.Query["codeChallengeMethod"].ToString());
+            var state = request.Query["state"].ToString();
+            var mode = ReadMode(request.Query["prompt"].ToString(), request.Query["responseMode"].ToString(), state);
+            var callbackQuery = QueryHelpers.ParseQuery(new Uri(redirect).Query);
+            if (request.Query.Count != (mode == AppSignInMode.Standalone ? 4 : 5) || !IsNavigation(request, mode) ||
+                (request.Headers.ContainsKey("Origin") && !MatchesOrigin(request, redirect)) ||
+                (callbackQuery.TryGetValue("state", out var callbackState) && (callbackState.Count != 1 || callbackState.ToString() != state)))
+                return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
+            await RecordRefusalAsync(auditAppId, "protocol_required", audit, clock, context.RequestAborted);
+            return mode == AppSignInMode.Popup
+                ? AppPopupResponse.RenderProtocolRequired(context.Response, redirect, state)
+                : AppErrorRedirect(redirect, state, "protocol_required");
+        }
+        catch (AppIdentityException)
+        {
+            return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
+        }
+    }
+
     private static bool IsNavigation(HttpRequest request, AppSignInMode mode)
         => request.Headers["Sec-Fetch-Mode"] == "navigate" &&
            request.Headers["Sec-Fetch-Dest"] == (mode == AppSignInMode.Silent ? "iframe" : "document");
@@ -208,10 +240,12 @@ internal static class AppSignInIntentEndpoints
     }
 
     private static IResult AppErrorRedirect(AppSignInIntent intent, string error)
-        => Results.Redirect(QueryHelpers.AddQueryString(intent.RedirectUri,
-            QueryHelpers.ParseQuery(new Uri(intent.RedirectUri).Query).ContainsKey("state")
+        => AppErrorRedirect(intent.RedirectUri, intent.State, error);
+    private static IResult AppErrorRedirect(string redirectUri, string state, string error)
+        => Results.Redirect(QueryHelpers.AddQueryString(redirectUri,
+            QueryHelpers.ParseQuery(new Uri(redirectUri).Query).ContainsKey("state")
                 ? new Dictionary<string, string?> { ["error"] = error }
-                : new Dictionary<string, string?> { ["error"] = error, ["state"] = intent.State }));
+                : new Dictionary<string, string?> { ["error"] = error, ["state"] = state }));
 
     private static string CookieName(HttpRequest request, string id) => (request.IsHttps ? SecurePrefix : LocalPrefix) + id;
     private static CookieOptions CookieOptions(HttpRequest request, bool expires) => new()

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appCodeChallenge, createAppAuthAttempt, persistAppAuthAttempt, takeAppAuthAttempt, submitAppAuthIntent,
-  appAuthNavigationUrl, acceptAppAuthProtocol, APP_AUTH_ATTEMPT_PREFIX, openAppSignIn, forgetAppGrant,
+  appAuthNavigationUrl, acceptAppAuthProtocol, APP_AUTH_ATTEMPT_PREFIX, openAppSignIn, refreshAppAuthProtocol, forgetAppGrant,
   rememberAppGrant, configureAppActivity, renewAppActivity, appFetch } from "./browser-auth";
 
 let serial = 0;
@@ -150,5 +150,98 @@ describe("protocol-2 app-owned popup", () => {
     expect(submitted).toHaveLength(1);
     forgetAppGrant();
     await expect(operation).rejects.toThrow("cancelled"); expect(popup.close).toHaveBeenCalledOnce();
+  });
+});
+
+describe("guarded popup protocol upgrade", () => {
+  function popupWindow() {
+    const location = { href: core + "/legacy" };
+    const doc = document.implementation.createHTMLDocument();
+    return { location, closed: false, close: vi.fn(), get document() {
+      if (location.href !== "about:blank") throw new DOMException("Cross-origin", "SecurityError");
+      return doc;
+    } };
+  }
+  function metadata(appAuthProtocol: unknown = 2, fields = {}, status = 401) {
+    return Response.json({ recovery: { appId: "sample", corePublicOrigin: core, appAuthProtocol, ...fields } }, { status });
+  }
+  function message(popup: unknown, state: string, data = { error: "protocol_required" } as Record<string, string>) {
+    window.dispatchEvent(new MessageEvent("message", { origin: core, source: popup as Window,
+      data: { type: "hosty:app-auth-code", state, ...data } }));
+  }
+  it("refreshes the fixed app/Core metadata and reuses one popup with fresh memory proof", async () => {
+    const popup = popupWindow();
+    const open = vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+    const fetcher = vi.fn().mockResolvedValue(metadata()); vi.stubGlobal("fetch", fetcher);
+    const operation = openAppSignIn(openUrl(), undefined, 1, false, "/api/auth/session");
+    const old = new URL(String(open.mock.calls[0][0])); const oldState = old.searchParams.get("state")!;
+    window.dispatchEvent(new MessageEvent("message", { origin: "https://foreign.test", source: popup as unknown as Window,
+      data: { type: "hosty:app-auth-code", state: oldState, error: "protocol_required" } }));
+    message({}, oldState); message(popup, "f".repeat(64));
+    expect(fetcher).not.toHaveBeenCalled();
+    message(popup, oldState);
+    await vi.waitFor(() => expect(submitted).toHaveLength(1));
+    expect(open).toHaveBeenCalledOnce(); expect(popup.location.href).toBe("about:blank");
+    expect(fetcher).toHaveBeenCalledOnce(); expect(fetcher.mock.calls[0][0]).toBe("/api/auth/session");
+    expect(fetcher.mock.calls[0][1]).toMatchObject({ cache: "no-store", redirect: "error" });
+    const nextState = submitted[0].querySelector<HTMLInputElement>('input[name="state"]')!.value;
+    const nextChallenge = submitted[0].querySelector<HTMLInputElement>('input[name="codeChallenge"]')!.value;
+    expect(nextState).not.toBe(oldState); expect(nextChallenge).not.toBe(old.searchParams.get("codeChallenge"));
+    expect([...Object.keys(window.sessionStorage)].some(key => key.startsWith(APP_AUTH_ATTEMPT_PREFIX))).toBe(false);
+    let settled = false; void operation.then(() => { settled = true; }, () => { settled = true; });
+    message(popup, oldState, { code: "stale-code" }); await Promise.resolve(); expect(settled).toBe(false);
+    message(popup, nextState, { code: "fresh-code" });
+    const proof = await operation;
+    expect(proof.code).toBe("fresh-code"); expect(appCodeChallenge(proof.codeVerifier)).toBe(nextChallenge);
+    expect(popup.document.documentElement.outerHTML).not.toContain(proof.codeVerifier);
+    expect(popup.close).toHaveBeenCalledOnce();
+  });
+  it.each(["older", "missing", "unavailable", "other-core", "other-app"])("fails closed on %s refreshed metadata", async kind => {
+    const popup = popupWindow(); const open = vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+    const response = kind === "older" ? metadata(1) : kind === "missing" ? metadata(null) : kind === "unavailable" ? metadata(2, {}, 503)
+      : kind === "other-core" ? metadata(2, { corePublicOrigin: "https://other-core.test" }) : metadata(2, { appId: "other" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+    const operation = openAppSignIn(openUrl(), undefined, 1);
+    const refused = expect(operation).rejects.toThrow("protocol could not be verified");
+    message(popup, new URL(String(open.mock.calls[0][0])).searchParams.get("state")!);
+    await refused; expect(submitted).toHaveLength(0); expect(open).toHaveBeenCalledOnce(); expect(popup.close).toHaveBeenCalledOnce();
+  });
+  it("does not restart a protocol-2 refusal or a mixed code/error response", async () => {
+    const popup = popupWindow(); const open = vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+    const fetcher = vi.fn().mockResolvedValue(metadata()); vi.stubGlobal("fetch", fetcher);
+    const operation = openAppSignIn(openUrl(), undefined, 1);
+    const refused = expect(operation).rejects.toThrow("could not authorize");
+    message(popup, new URL(String(open.mock.calls[0][0])).searchParams.get("state")!, { error: "protocol_required", code: "mixed" });
+    await refused; expect(fetcher).not.toHaveBeenCalled(); expect(submitted).toHaveLength(0);
+    const secondPopup = { document: document.implementation.createHTMLDocument(), closed: false, close: vi.fn() };
+    open.mockReturnValue(secondPopup as unknown as Window);
+    const second = openAppSignIn(openUrl(), undefined, 2);
+    const secondRefused = expect(second).rejects.toThrow("could not authorize");
+    message(secondPopup, submitted[0].querySelector<HTMLInputElement>('input[name="state"]')!.value);
+    await secondRefused; expect(fetcher).not.toHaveBeenCalled(); expect(submitted).toHaveLength(1);
+  });
+  it("does not loop when a fresh protocol-2 popup attempt is refused", async () => {
+    const popup = popupWindow(); const open = vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+    const fetcher = vi.fn().mockResolvedValue(metadata()); vi.stubGlobal("fetch", fetcher);
+    const operation = openAppSignIn(openUrl(), undefined, 1); const refused = expect(operation).rejects.toThrow("could not authorize");
+    message(popup, new URL(String(open.mock.calls[0][0])).searchParams.get("state")!);
+    await vi.waitFor(() => expect(submitted).toHaveLength(1));
+    message(popup, submitted[0].querySelector<HTMLInputElement>('input[name="state"]')!.value);
+    await refused; expect(fetcher).toHaveBeenCalledOnce(); expect(open).toHaveBeenCalledOnce(); expect(submitted).toHaveLength(1);
+  });
+  it("cancels a metadata refresh before it can install a fresh proof", async () => {
+    const popup = popupWindow(); const open = vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+    let complete!: (response: Response) => void;
+    const fetcher = vi.fn(() => new Promise<Response>(resolve => { complete = resolve; })); vi.stubGlobal("fetch", fetcher);
+    const operation = openAppSignIn(openUrl(), undefined, 1); const refused = expect(operation).rejects.toThrow("cancelled");
+    message(popup, new URL(String(open.mock.calls[0][0])).searchParams.get("state")!);
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+    forgetAppGrant(); await refused; complete(metadata()); await Promise.resolve(); await Promise.resolve();
+    expect(submitted).toHaveLength(0); expect(open).toHaveBeenCalledOnce(); expect(popup.close).toHaveBeenCalledOnce();
+  });
+  it("never discovers Core through a cross-origin app probe URL", async () => {
+    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    expect(await refreshAppAuthProtocol(openUrl(), "https://foreign.test/api/auth/identity")).toBeNull();
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });

@@ -248,7 +248,12 @@ for a Core origin, the client does not downgrade that connection/session to prot
 never sends proof or authority to a caller-selected origin. Invalidate stale metadata on protocol
 mismatch so deployment does not create redirect loops. An upgrade during a pending protocol-1
 attempt discards that attempt and restarts once with fresh protocol-2 proof; it never reuses proof
-or repeatedly bootstraps without a code.
+or repeatedly bootstraps without a code. Enforcing Core recognizes only the validated old
+navigation shape to return a credential-free correlated `protocol_required` callback/message;
+it does not resolve a session, issue a code or alter another intent/code. The client verifies
+app-local metadata for the exact frozen app/Core pair before a one-shot restart. Popup recovery
+reuses the gesture-opened window. Shell verifies its own state/verifier/protocol cookies and
+returns through its own fresh start route; unknown metadata and v2 refusals never restart as v1.
 
 Ship the complete SDK, native and custom client changes first. Refresh real registry locks and
 verify/deploy Project Manager and Media Server before Core enforcement. Protocol-1 Core retains
@@ -371,9 +376,51 @@ Live acceptance uses a fresh isolated Core-managed data root, normal setup and p
 6. Old-Core compatibility is checked separately before upgrading; enforcing Core never creates
    or redeems an unbound code. External clients are deployed before enforcement is released.
 
-Header-only verification on 2026-10-05: Core 2496 passed / 4 opt-in skipped; SDK 215, Harness 510,
-Shell 267, Marketplace 104, Telemetry UI 10 and demo 4 passed (3606 passed total). Exact Core and
-all affected SDK/web production builds passed. Project Manager 126 and the local Media candidate
-163 tests/builds/lint passed. These results do not verify the unimplemented expanded protocol or
-client publication/deployment/live acceptance. Telemetry UI's Turbopack build could not resolve
-shared-workspace dependency symlinks; its webpack production build passed.
+## Verification Evidence — 2026-10-05
+
+The current Core upgrade-refusal batch passes an exact isolated-output build (zero errors, four
+existing warnings), 119 affected HTTP tests and the full Core suite: 2632 passed, four opt-in
+skips, zero failures. The final SDK upgrade batch passes 310 tests and its production build;
+Harness passes 515 tests and its fresh webpack production export. CLI passes 230 tests and its
+exact build, including long URL/JSON output at a narrow console width. Swift HostyKit passes 181 tests, with macOS and generic iOS Simulator Release builds.
+Shell's correlated upgrade callback adds five regressions: 283 tests pass. Documentation-index,
+version consistency and whitespace checks pass. The final Shell, Demo, Marketplace and Telemetry UI webpack builds pass; Marketplace 109,
+Telemetry UI 10 and Demo 4 tests pass. Final external published-dist candidates pass Project
+Manager 132 and Media Server 168 tests, lint and fresh webpack builds. Live upgrade verification
+remains in progress.
+
+Fresh isolated Core-managed HTTPS browser evidence verifies Demo standalone and Shell server
+login, initial Shell-embedded silent sign-in, real third-party nonce refusal followed by a
+successful gesture popup, and controlled app-origin sessionStorage failure followed by a
+memory-proof popup. Shell activity renewal preserves the mounted search draft and URL. Harness
+protected settings authenticate and return 200. Marketplace and the full Telemetry runtime graph
+sign in and return protected content. Final Project Manager and Media Server candidate bundles authenticate through their full
+Core-managed runtime graphs and return protected content after clean-cache rebuilds. These
+local package-candidate runs do not establish registry publication or production client rollout.
+These fixtures use normal setup/password sessions, unique data roots and local certificates; they
+do not change the operator instance or system certificate trust. The final CLI emits parseable
+JSON and a credential-free app link. Opening it in an initially logged-out browser preserves the
+normal intent/login continuation; an invited user logs in by password and receives its own app
+identity, different from the administrator, with no code left in the URL.
+
+Independent real-browser security evidence confirms local code-only refusal even with forged
+allowed Origin/Fetch headers, unrelated-proof rejection without consuming the code, subsequent
+original-proof success, replay rejection and direct Core refusal without an app service token.
+An attacker-owned intent copied into a separate logged-in browser cannot issue without its nonce;
+HTTPS parent-Domain prefix shadowing and foreign-origin forms also fail. Final upgrade-refusal
+behavior is covered by the new Core regressions and is being checked against actual old-Core
+0.119.0 compatibility in a separate normally authenticated runtime.
+
+- [x] Complete final production bundle/cache refresh and local external candidate browser acceptance.
+- [x] Complete CLI logged-out/different-account browser acceptance.
+- [ ] Complete actual old-Core-to-new-Core pending navigation/popup upgrade checks.
+- [x] Complete parent-session logout cascade/per-tab grant recovery against the final production
+  bundles. Concurrent legitimate Demo attempts use distinct code/proof and both exchange 200.
+  Shell frame recreation reuses its per-tab grant without a new intent/exchange; own-session
+  logout produces `token_revoked`/401, clears the grant and leaves explicit app-owned sign-in
+  available without framing Core login.
+- [ ] Complete native live first-open, switch/LRU, draft-preserving renewal and browser handoff.
+  The macOS UI automation acquisition stalled for 3917 seconds without returning app state and
+  was aborted. No native GUI step passed; automated tests/builds do not establish this acceptance.
+- [ ] Complete SDK registry publication, real external dependency locks and client-first deployment
+  after the pending IPv6 CSP amendment decision. Keep PR #547 draft until its tracked work is done.

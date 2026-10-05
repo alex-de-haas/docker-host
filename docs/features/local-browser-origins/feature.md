@@ -25,8 +25,17 @@ upgrades preserve existing generated names and manual full origins.
 
 A valid explicit app `HOSTY_PUBLIC_ORIGIN_<ENDPOINT>` takes precedence. Clearing it restores the
 local default. Core resolves the persisted setting, environment baseline, then listen address,
-and canonicalizes plain HTTP `localhost`, `127.0.0.1` and `::1` to its separate browser hostname.
+and preserves an explicit setting or environment origin exactly, including a literal IP. Only an
+implicit plain-HTTP loopback listen address projects to the separate managed Core browser hostname.
 HTTPS, LAN and external origins retain their configured hostnames.
+
+App code initiation additionally requires an isolated nonce cookie host. HTTP DNS Core names do
+not meet that contract: use HTTPS or a literal-IP Core browser host different from every configured
+app endpoint cookie host, including private/raw WebSocket endpoints. Cookie hosts are canonicalized
+without DNS resolution. Source development listens on `localhost` (IPv4 and IPv6) and explicitly
+advertises `http://[::1]:3001`, with app endpoints on other hosts; its cross-site silent path uses
+popup fallback. IPv6 form-action browser compatibility remains tracked in
+[app code exchange](../app-code-exchange/plan.md). A refused topology never enables unbound issuance.
 
 Endpoint summaries expose `browserOrigin` separately from transport `url` and explicit
 `publicOrigin`. Navigation, app identity redirect validation and runtime
@@ -79,11 +88,12 @@ service credential. Core's cookie is not part of this transport. Next's internal
 contain its listen address, so Shell validates the browser Host against the configured callback
 origin instead of comparing the internal URL's origin.
 
-Initial embedded sign-in also supports a silent Core redirect owned by the app's frame. Its success
+Initial embedded sign-in submits an app-owned Origin-checked intent form and follows its
+nonce-bound continuation in the app's frame. Its success
 depends on the browser treating Shell and Core as the same site: a shared local DNS suffix is not
 proof of that. A 2026-10-05 cookie probe under the default `*.hosty.localhost` names classified the
 Core frame as same-site in Chromium and cross-site in Safari, which sent no Core cookie. Where the
-cookie is unavailable, Core immediately returns `login_required` and the app offers its popup
+cookie is unavailable, a known silent continuation returns only state-bound `login_required` and the app offers its popup
 button. After sign-in, the app-origin `sessionStorage` grant survives frame recreation in that tab.
 There is no browser detection. [Embedded app sign-in](../embedded-app-sign-in/feature.md) describes
 the shared registrable-domain deployment and the same popup fallback for other arrangements.
@@ -164,7 +174,9 @@ for the launch authority audit and notice behavior.
 ## Testing Expectations
 
 - Keep generated names injective, label lengths bounded and instance identity stable.
-- Preserve explicit origins, internal transport and publication ownership; clearing settings restores defaults.
+- Preserve explicit origins exactly, internal transport and publication ownership; clearing settings
+  restores defaults. Test literal-IP HTTP and HTTPS nonce topology against every endpoint cookie
+  host, including private/non-HTTP schemes, while unsafe HTTP DNS configurations fail closed.
 - Exercise real login and approval/denial, host-only session cookies, origin binding and shared-host rejection.
 - Verify legacy GET navigation without forwarding credentials, callback codes or POST bodies.
 - Verify runtime environment and restart-required migration for both localCommand and Docker.

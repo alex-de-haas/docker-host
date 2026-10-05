@@ -18,7 +18,10 @@ navigation metadata. It freezes a five-minute intent and sets a unique HttpOnly 
 only the nonce hash is stored. A 303 continues to `/open?requestId=...` in the same context.
 
 The continuation verifies the matching nonce before login or issuance. Caller-supplied overrides
-and direct proof-bearing GET issuance are refused. Normal top-level password login preserves the
+and direct proof-bearing GET issuance are refused. A narrowly validated protocol-1 navigation
+shape returns only correlated `protocol_required` to the installed app callback, or its existing
+popup, without resolving a session or issuing a code. Unknown or malformed shapes retain the
+JSON refusal; the request cannot create, claim or consume an intent. Normal top-level password login preserves the
 request ID. An authorized continuation atomically claims the intent once and issues one bound code.
 A claim remains consumed if subsequent issuance fails. Wrong nonce, app or proof does not consume
 another valid attempt. Unknown, expired and replayed attempts fail closed.
@@ -94,7 +97,8 @@ for ordinary logout cleanup; cancellation, eviction, logout and host replacement
 work and preserve revocation semantics.
 
 Swift Open in Browser and CLI/control open links are credential-free. The browser signs in using
-its own Core account. `apps open --user` is refused with migration guidance; the separate diagnostic
+its own Core account. `apps open` emits its plain URL or JSON without terminal line wrapping, so redirects and
+script-parsed URLs remain intact. `apps open --user` is refused with migration guidance; the separate diagnostic
 `apps identity --user` remains available. Cardputer and the .NET identity SDK do not exchange app codes.
 
 ## Protocol discovery
@@ -105,7 +109,12 @@ Only an actual metadata 404 plus strict public Core status identifying a running
 0.120.0 permits old-Core protocol 1 with additive challenge/proof/service fields. Timeout, 5xx,
 malformed data, unknown version and protocol-2 refusal never downgrade. Once protocol 2 is observed,
 it remains the minimum for that tab/connection. A pending old-Core attempt is discarded and restarted
-once with fresh proof after an upgrade. Old-Core compatibility does not claim the new protection.
+once with fresh proof only after app-local recovery metadata verifies the same app, configured Core
+origin and protocol 2. The restart reuses the existing gesture-opened popup, or replaces the
+navigation attempt, without importing caller-supplied proof. Shell correlates its own state cookie
+and stored protocol before clearing the old attempt and returning to its own fresh start route.
+Unknown metadata and protocol-2 refusals remain terminal. Old-Core compatibility does not claim
+the new protection.
 
 SDK publication, actual external dependency locks, deployment before Core enforcement and live
 acceptance remain tracked in [the plan](plan.md); local package candidates are not release evidence.

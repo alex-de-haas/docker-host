@@ -245,7 +245,7 @@ export function AppIdentityBridge({
   const firstProbe = useRef(true);
   const initialGrantPresent = useRef<boolean | null>(null);
   const silentError = useRef<"login_required" | "access_denied" | null>(null);
-  const returnedLegacyAttempt = useRef(false);
+  const returnedLegacyAttempt = useRef<{ appId: string; coreOrigin: string; protocolRequired: boolean } | null>(null);
   const upgradedAttempt = useRef(false);
   const [activity, setActivity] = useState<{ openUrl: string; appAuthProtocol: AppAuthProtocol; activeUntil?: string | null; activityRequired?: boolean } | null>(null);
   const exchangeRef = useRef<{ path: string; revision: number; response: Promise<Response> } | null>(null);
@@ -312,8 +312,14 @@ export function AppIdentityBridge({
         return;
       }
       const mode = currentLaunchMode();
-      const shouldUpgrade = returnedLegacyAttempt.current && protocol === 2 && !upgradedAttempt.current;
-      if (shouldUpgrade) { upgradedAttempt.current = true; returnedLegacyAttempt.current = false; }
+      const legacy = returnedLegacyAttempt.current;
+      const sameLegacyCore = !!legacy && appId === legacy.appId && !!openUrl && new URL(openUrl).origin === legacy.coreOrigin;
+      if (legacy?.protocolRequired && (status === "not-present" || status === "expired") && (!sameLegacyCore || protocol !== 2)) {
+        setUi({ kind: "unavailable" });
+        return;
+      }
+      const shouldUpgrade = sameLegacyCore && protocol === 2 && !upgradedAttempt.current;
+      if (shouldUpgrade) { upgradedAttempt.current = true; returnedLegacyAttempt.current = null; }
       if (!wasActive.current && protocol && ((initialLoad && !initialGrantPresent.current && !silentError.current) || shouldUpgrade) &&
           detectLaunchMode(window) === "embedded" && (status === "not-present" || status === "expired") && appId && openUrl) {
         if (beginNavigationSignIn(openUrl, appId, protocol, "silent", shouldUpgrade)) return;
@@ -354,7 +360,7 @@ export function AppIdentityBridge({
             signIn: openUrl && protocol ? () => {
               // Open synchronously in the click handler; an awaited request loses the user gesture.
               const revision = appGrantRevision();
-              const result = openAppSignIn(openUrl, controller.signal, protocol, mode === "native");
+              const result = openAppSignIn(openUrl, controller.signal, protocol, mode === "native", probePath);
               setUi({ kind: "recovering" });
               void result.then(async proof => {
                 const response = await appFetch(appCodePath, {
@@ -381,16 +387,19 @@ export function AppIdentityBridge({
     const code = url.searchParams.get("code")?.trim();
     const error = url.searchParams.get("error");
     const isSilentError = error === "login_required" || error === "access_denied";
-    const attempt = takeAppAuthAttempt(url);
+    const attempt = takeAppAuthAttempt(url, true);
+    const upgradedLegacy = attempt?.protocol === 1 && acceptAppAuthProtocol(attempt.coreOrigin, 1) === null;
     if (attempt?.mode === "silent" && isSilentError) silentError.current = error;
-    if (attempt?.protocol === 1 && !code && !error) returnedLegacyAttempt.current = true;
+    const protocolRequired = attempt?.protocol === 1 && !code && error === "protocol_required" && url.searchParams.getAll("error").length === 1;
+    if (attempt?.protocol === 1 && (!error || protocolRequired || upgradedLegacy))
+      returnedLegacyAttempt.current = { appId: attempt.appId, coreOrigin: attempt.coreOrigin, protocolRequired: protocolRequired || upgradedLegacy };
     if (code || isSilentError || attempt) {
       url.searchParams.delete("code");
       url.searchParams.delete("state");
-      if (isSilentError) url.searchParams.delete("error");
+      if (isSilentError || protocolRequired) url.searchParams.delete("error");
       window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
     }
-    if (code && attempt && !exchangeRef.current) {
+    if (code && !error && !upgradedLegacy && attempt && !exchangeRef.current) {
       exchangeRef.current = {
         path: appCodePath,
         revision: appGrantRevision(),
@@ -440,7 +449,7 @@ export function AppIdentityBridge({
   }, [probePath, appCodePath]);
 
   if (wasActive.current) return <>
-    {activity && <AppActivityBridge {...activity} appCodePath={appCodePath} />}
+    {activity && <AppActivityBridge {...activity} appCodePath={appCodePath} probePath={probePath} />}
     {renderState ? renderState({ kind: "active" }) : children}
   </>;
 

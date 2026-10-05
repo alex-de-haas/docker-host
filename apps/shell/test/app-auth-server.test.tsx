@@ -19,7 +19,7 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 function callback(supplied = state) {
   return new Request(`${origin}/auth/callback?code=one-time-code&state=${supplied}`, {
-    headers: { cookie: `hosty_shell_auth_state_${state}=${state}; hosty_shell_auth_return_${state}=%2Fapps; hosty_shell_auth_verifier_${state}=${verifier}` },
+    headers: { cookie: `hosty_shell_auth_state_${state}=${state}:2; hosty_shell_auth_return_${state}=%2Fapps; hosty_shell_auth_verifier_${state}=${verifier}` },
   });
 }
 it("starts a browser-bound Core intent with public form fields and a private verifier cookie", async () => {
@@ -232,4 +232,46 @@ it("clears every pending attempt at logout without publishing its verifier", () 
     cookie: `hosty_shell_auth_state_${state}=${state}; hosty_shell_auth_verifier_${state}=${verifier}` } }));
   expect(response.headers.getSetCookie()).toContainEqual(expect.stringContaining(`hosty_shell_auth_verifier_${state}=;`));
   expect(response.headers.get("set-cookie")).not.toContain(verifier);
+});
+
+it.each(["code=old-code", "error=protocol_required"])("restarts a correlated old-Core callback once after verified upgrade: %s", async result => {
+  protocol.mockResolvedValue(2);
+  const request = new Request(`${origin}/auth/callback?${result}&state=${state}`, { headers: {
+    cookie: `hosty_shell_auth_state_${state}=${state}:1; hosty_shell_auth_verifier_${state}=${verifier}; hosty_shell_auth_return_${state}=%2Fapps`,
+  } });
+  const response = await finishAppLogin(request);
+  expect(response.status).toBe(302);
+  expect(response.headers.get("location")).toBe(`${origin}/auth/start?returnTo=%2Fapps`);
+  expect(response.headers.getSetCookie()).toHaveLength(3);
+  expect(response.headers.getSetCookie().every(value => value.includes("Max-Age=0"))).toBe(true);
+  expect(exchange).not.toHaveBeenCalled();
+  const restart = await startAppLogin(new Request(response.headers.get("location")!));
+  expect(restart.status).toBe(200);
+  expect(await restart.text()).toContain("sign-in-intent");
+  expect(restart.headers.getSetCookie().some(value => value.includes(`${state}%3A`))).toBe(false);
+  expect(restart.headers.getSetCookie()[0]).toContain("%3A2;");
+});
+it("does not loop a protocol-2 refusal or import an old proof from a public callback", async () => {
+  const headers = { cookie: `hosty_shell_auth_state_${state}=${state}:2; hosty_shell_auth_verifier_${state}=${verifier}` };
+  const response = await finishAppLogin(new Request(`${origin}/auth/callback?error=protocol_required&state=${state}`, { headers }));
+  expect(response.status).toBe(403);
+  expect(response.headers.get("location")).toBeNull();
+  expect(response.headers.getSetCookie()).toHaveLength(3);
+  expect(protocol).not.toHaveBeenCalled();
+  expect(exchange).not.toHaveBeenCalled();
+});
+it("refuses old-Core recovery when metadata is uncertain", async () => {
+  protocol.mockResolvedValue(null);
+  const response = await finishAppLogin(new Request(`${origin}/auth/callback?error=protocol_required&state=${state}`, { headers: {
+    cookie: `hosty_shell_auth_state_${state}=${state}:1; hosty_shell_auth_verifier_${state}=${verifier}` } }));
+  expect(response.status).toBe(503);
+  expect(response.headers.get("location")).toBeNull();
+  expect(exchange).not.toHaveBeenCalled();
+});
+it("does not inspect protocol or clear a valid attempt for substituted recovery state", async () => {
+  const response = await finishAppLogin(new Request(`${origin}/auth/callback?error=protocol_required&state=${"b".repeat(64)}`, { headers: {
+    cookie: `hosty_shell_auth_state_${state}=${state}:1; hosty_shell_auth_verifier_${state}=${verifier}` } }));
+  expect(response.status).toBe(403);
+  expect(response.headers.get("set-cookie")).toBeNull();
+  expect(protocol).not.toHaveBeenCalled();
 });

@@ -94,7 +94,7 @@ export async function startAppLogin(request: Request): Promise<Response> {
     for (const [name, value] of Object.entries(fields)) target.searchParams.set(name, value);
     response = new Response(null, { status: 302, headers: { ...privateHeaders, Location: target.href } });
   }
-  response.headers.append("Set-Cookie", serializeCookie(attemptCookieName(stateCookie, state), state, origin, 300, "/auth"));
+  response.headers.append("Set-Cookie", serializeCookie(attemptCookieName(stateCookie, state), `${state}:${protocol}`, origin, 300, "/auth"));
   response.headers.append("Set-Cookie", serializeCookie(attemptCookieName(returnCookie, state), returnTo, origin, 300, "/auth"));
   response.headers.append("Set-Cookie", serializeCookie(attemptCookieName(verifierCookie, state), verifier, origin, 300, "/auth"));
   return response;
@@ -105,13 +105,33 @@ export async function finishAppLogin(request: Request): Promise<Response> {
   if (!hasOwnHost(request, origin)) return error(403, "callback_origin_invalid", "Open Shell on its configured address.");
   const params = new URL(request.url).searchParams;
   const supplied = params.get("state");
-  if (!supplied || !statePattern.test(supplied) || params.getAll("state").length !== 1 || params.getAll("code").length !== 1)
+  if (!supplied || !statePattern.test(supplied) || params.getAll("state").length !== 1)
     return error(403, "callback_state_invalid", "This sign-in did not start in this browser. Open Shell and sign in again.");
-  const expected = cookie(request, attemptCookieName(stateCookie, supplied));
+  const saved = /^([a-f0-9]{64}):([12])$/.exec(cookie(request, attemptCookieName(stateCookie, supplied)) ?? "");
   const verifier = cookie(request, attemptCookieName(verifierCookie, supplied));
-  const code = params.get("code");
-  if (!expected || !statePattern.test(expected) || !timingSafeEqual(Buffer.from(expected), Buffer.from(supplied)) || !code || !isValidCodeVerifier(verifier))
+  if (!saved || !timingSafeEqual(Buffer.from(saved[1]), Buffer.from(supplied)) || !isValidCodeVerifier(verifier))
     return error(403, "callback_state_invalid", "This sign-in did not start in this browser. Open Shell and sign in again.");
+  const code = params.get("code");
+  const protocolRefusal = params.getAll("code").length === 0 && params.getAll("error").length === 1 && params.get("error") === "protocol_required";
+  if (!(code && params.getAll("code").length === 1 && params.getAll("error").length === 0) && !protocolRefusal)
+    return error(403, "callback_state_invalid", "This sign-in response is invalid. Open Shell and sign in again.");
+  if (saved[2] === "1") {
+    const current = await getAppAuthProtocol();
+    if (current === null) return error(503, "app_auth_protocol_unavailable", "Core sign-in capabilities are unavailable. Try again shortly.");
+    if (current === 2) {
+      // The new attempt discovers protocol 2 and generates fresh proof; it cannot repeat this transition.
+      const returnTo = safeReturnPath(cookie(request, attemptCookieName(returnCookie, supplied)));
+      const response = new Response(null, { status: 302, headers: { ...privateHeaders,
+        Location: `${origin}/auth/start?returnTo=${encodeURIComponent(returnTo)}` } });
+      clearAttempt(response, origin, supplied);
+      return response;
+    }
+  }
+  if (protocolRefusal || !code) {
+    const response = error(403, "app_auth_protocol_mismatch", "This sign-in no longer matches Core. Open Shell and sign in again.");
+    clearAttempt(response, origin, supplied);
+    return response;
+  }
   const exchange = await exchangeAppCode(code, verifier);
   if (!exchange.ok) return error(exchange.status, exchange.code, exchange.message);
   const validated = await callCore("/api/auth/apps/revalidate", {

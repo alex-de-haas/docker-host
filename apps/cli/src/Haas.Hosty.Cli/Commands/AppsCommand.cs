@@ -444,14 +444,9 @@ internal sealed partial class AppsCommand(CommandContext context)
             return 1;
         }
 
-        if (options.Format == "json")
-        {
-            context.Console.WriteLine(CliJson.Serialize(response));
-        }
-        else
-        {
-            context.Console.WriteLine(response.Url);
-        }
+        // Links and JSON are machine-readable output; terminal layout must not wrap them.
+        context.Console.Profile.Out.Writer.WriteLine(
+            options.Format == "json" ? CliJson.Serialize(response) : response.Url);
 
         return 0;
     }

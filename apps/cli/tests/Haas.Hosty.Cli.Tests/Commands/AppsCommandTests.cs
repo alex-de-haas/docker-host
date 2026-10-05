@@ -30,7 +30,6 @@ public sealed class AppsCommandTests : IDisposable
             """);
         WriteCoreDiscovery(server);
         var (console, output) = CreateConsole();
-        console.Profile.Width = 300;
 
         var exitCode = await CommandLine.RunAsync([
             "apps", "open", "com.haas.demo-app", "--mode", mode,
@@ -57,6 +56,41 @@ public sealed class AppsCommandTests : IDisposable
         }
         Assert.DoesNotContain("userId", output.ToString());
         Assert.DoesNotContain("expiresAt", output.ToString());
+    }
+
+    [Theory]
+    [InlineData("url")]
+    [InlineData("json")]
+    public async Task OpenAsync_PreservesLongLinkAtNarrowConsoleWidth(string format)
+    {
+        var url = "https://demo.example.test/people?view=notes&returnTo=" + new string('x', 240);
+        using var server = new FakeCoreServer(JsonSerializer.Serialize(new
+        {
+            appId = "com.haas.demo-app", mode = "standalone", url,
+        }));
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+        console.Profile.Width = 24;
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps", "open", "com.haas.demo-app", "--format", format,
+        ], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        var rendered = output.ToString();
+        var line = Assert.Single(rendered.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries));
+        if (format == "json")
+        {
+            using var result = JsonDocument.Parse(rendered);
+            Assert.Equal(url, result.RootElement.GetProperty("url").GetString());
+            Assert.Equal("com.haas.demo-app", result.RootElement.GetProperty("appId").GetString());
+        }
+        else
+        {
+            Assert.Equal(url, line);
+            Assert.Equal(url + Environment.NewLine, rendered);
+        }
     }
 
     [Fact]

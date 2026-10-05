@@ -361,6 +361,75 @@ describe("AppIdentityBridge embedded sign-in", () => {
     expect(browser.location.search).not.toContain("code=");
   });
 
+  it.each(["embedded", "standalone"])("restarts a correlated protocol_required %s callback exactly once", async mode => {
+    const coreOrigin = `https://required-${mode}.test`;
+    const old = JSON.parse(pendingAttempt(state, "http://app.localhost/draft", mode === "embedded" ? "silent" : "standalone")); old.coreOrigin = coreOrigin;
+    stored.set(`${APP_AUTH_ATTEMPT_PREFIX}${state}`, JSON.stringify(old));
+    stored.set(mode === "embedded" ? `hosty.auth.silent-attempted:${appId}` : "hosty.auth.recovery-attempted", "1");
+    if (mode === "standalone") Object.assign(browser, { top: browser });
+    browser.location.href = `http://app.localhost/draft?state=${state}&error=protocol_required`;
+    const fetcher = probe("not-present", { recovery: { appId, corePublicOrigin: coreOrigin, appAuthProtocol: 2 } }); mount();
+    await vi.waitFor(() => expect(intents.submit).toHaveBeenCalledOnce());
+    const next = intents.submit.mock.calls[0][0];
+    expect(next.protocol).toBe(2); expect(next.state).not.toBe(state); expect(next.codeVerifier).not.toBe(codeVerifier);
+    expect(stored.has(`${APP_AUTH_ATTEMPT_PREFIX}${state}`)).toBe(false);
+    expect(browser.location.search).not.toContain("error="); expect(browser.location.search).not.toContain("state=");
+    expect(fetcher.mock.calls.every(call => call[0] === "/api/auth/identity")).toBe(true);
+    cleanup!(); mount(); await vi.waitFor(() => expect(hooks.state.kind).toBe("signin"));
+    expect(intents.submit).toHaveBeenCalledOnce();
+  });
+
+  it.each(["older", "missing", "other-core", "other-app"])("refuses to restart an old callback with %s metadata", async kind => {
+    const coreOrigin = `https://required-refusal-${kind}.test`;
+    const old = JSON.parse(pendingAttempt(state, "http://app.localhost/draft")); old.coreOrigin = coreOrigin;
+    stored.set(`${APP_AUTH_ATTEMPT_PREFIX}${state}`, JSON.stringify(old)); stored.set(`hosty.auth.silent-attempted:${appId}`, "1");
+    browser.location.href = `http://app.localhost/draft?state=${state}&error=protocol_required`;
+    probe("not-present", { recovery: { appId: kind === "other-app" ? "other" : appId,
+      corePublicOrigin: kind === "other-core" ? "https://different-core.test" : coreOrigin,
+      appAuthProtocol: kind === "older" ? 1 : kind === "missing" ? null : 2 } }); mount();
+    await vi.waitFor(() => expect(hooks.state.kind).toBe("unavailable"));
+    expect(intents.submit).not.toHaveBeenCalled(); expect(browser.location.replace).not.toHaveBeenCalled();
+    expect(stored.has(`${APP_AUTH_ATTEMPT_PREFIX}${state}`)).toBe(false);
+  });
+
+  it.each(["unmatched-state", "protocol-2"])("does not treat a %s callback as a legacy upgrade", async kind => {
+    const coreOrigin = `https://uncorrelated-${kind}.test`;
+    const old = JSON.parse(pendingAttempt(state, "http://app.localhost/draft")); old.coreOrigin = coreOrigin;
+    if (kind === "protocol-2") old.protocol = 2;
+    stored.set(`${APP_AUTH_ATTEMPT_PREFIX}${state}`, JSON.stringify(old)); stored.set(`hosty.auth.silent-attempted:${appId}`, "1");
+    browser.location.href = `http://app.localhost/draft?state=${kind === "unmatched-state" ? "e".repeat(64) : state}&error=protocol_required`;
+    probe("not-present", { recovery: { appId, corePublicOrigin: coreOrigin, appAuthProtocol: 2 } }); mount();
+    await vi.waitFor(() => expect(hooks.state.kind).toBe("signin"));
+    expect(intents.submit).not.toHaveBeenCalled(); expect(browser.location.replace).not.toHaveBeenCalled();
+  });
+
+  it("discards a correlated old code without exchange when this tab already knows protocol 2", async () => {
+    const coreOrigin = "https://observed-before-callback.test";
+    const old = JSON.parse(pendingAttempt(state, "http://app.localhost/draft")); old.coreOrigin = coreOrigin;
+    stored.set(`${APP_AUTH_ATTEMPT_PREFIX}${state}`, JSON.stringify(old));
+    stored.set(`hosty.auth.protocol:${coreOrigin}`, "2"); stored.set(`hosty.auth.silent-attempted:${appId}`, "1");
+    browser.location.href = `http://app.localhost/draft?state=${state}&code=old-issued-code`;
+    const fetcher = probe("not-present", { recovery: { appId, corePublicOrigin: coreOrigin, appAuthProtocol: 2 } }); mount();
+    await vi.waitFor(() => expect(intents.submit).toHaveBeenCalledOnce());
+    expect(fetcher.mock.calls.every(call => call[0] === "/api/auth/identity")).toBe(true);
+    expect(intents.submit.mock.calls[0][0].codeVerifier).not.toBe(codeVerifier);
+    expect(stored.has(`${APP_AUTH_ATTEMPT_PREFIX}${state}`)).toBe(false);
+  });
+
+  it("discards an old issued code after rejection and restarts only with fresh verified protocol-2 proof", async () => {
+    const coreOrigin = "https://issued-before-upgrade.test";
+    const old = JSON.parse(pendingAttempt(state, "http://app.localhost/draft")); old.coreOrigin = coreOrigin;
+    stored.set(`${APP_AUTH_ATTEMPT_PREFIX}${state}`, JSON.stringify(old)); stored.set(`hosty.auth.silent-attempted:${appId}`, "1");
+    browser.location.href = `http://app.localhost/draft?state=${state}&code=old-issued-code`;
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ code: "app_auth_code_rejected" }, { status: 401 }))
+      .mockResolvedValue(Response.json({ status: "not-present", recovery: { appId, corePublicOrigin: coreOrigin, appAuthProtocol: 2 } }));
+    vi.stubGlobal("fetch", fetcher); mount();
+    await vi.waitFor(() => expect(intents.submit).toHaveBeenCalledOnce());
+    expect(fetcher.mock.calls.filter(call => call[0] === "/api/auth/app-code")).toHaveLength(1);
+    expect(intents.submit.mock.calls[0][0].codeVerifier).not.toBe(codeVerifier);
+    expect(intents.submit.mock.calls[0][0].state).not.toBe(state);
+  });
+
   it("restarts once with fresh protocol-2 proof when old navigation returns without a code after upgrade", async () => {
     const coreOrigin = "https://upgraded-core.test";
     const old = JSON.parse(pendingAttempt(state, "http://app.localhost/draft")); old.coreOrigin = coreOrigin;

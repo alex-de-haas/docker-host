@@ -2,9 +2,8 @@
 import { useEffect, useState } from "react";
 import { AuthNotice, AuthNoticeButton } from "./auth-notice";
 import { APP_SESSION_ENDED, APP_ACTIVITY_RENEWED, appActivityNeedsRenewal, configureAppActivity, updateAppActivity, renewAppActivity, cancelActivityRenewal } from "./browser-auth";
-import { appFetch } from "./browser-auth";
-import { readRecoveryParams, resolveLaunchMode, detectLaunchMode, normalizeLaunchMode, LAUNCH_MODE_ATTRIBUTE, LAUNCH_MODE_PARAM, LAUNCH_MODE_STORAGE_KEY } from "./index";
-import { acceptAppAuthProtocol } from "./browser-auth";
+import { resolveLaunchMode, detectLaunchMode, normalizeLaunchMode, LAUNCH_MODE_ATTRIBUTE, LAUNCH_MODE_PARAM, LAUNCH_MODE_STORAGE_KEY } from "./index";
+import { acceptAppAuthProtocol, refreshAppAuthProtocol } from "./browser-auth";
 import type { AppAuthProtocol } from "./app-code";
 
 /** Keep mounted beside app content so expiry never discards drafts or component state. */
@@ -31,7 +30,7 @@ export function AppActivityBridge({ openUrl, appCodePath, activeUntil, activityR
       const mode = normalizeLaunchMode(document.documentElement.getAttribute(LAUNCH_MODE_ATTRIBUTE)) ?? resolveLaunchMode({
         param: new URL(window.location.href).searchParams.get(LAUNCH_MODE_PARAM), stored, heuristic: detectLaunchMode(window),
       }).mode;
-      cleanup = configureAppActivity({ openUrl, appAuthProtocol: protocol, native: native ?? mode === "native", activeUntil, activityRequired, exchangeCode: async proof => {
+      cleanup = configureAppActivity({ openUrl, appAuthProtocol: protocol, probePath, native: native ?? mode === "native", activeUntil, activityRequired, exchangeCode: async proof => {
       const response = await fetch(appCodePath, { method: "POST", credentials: "same-origin", redirect: "error",
         headers: { "Content-Type": "application/json" }, body: JSON.stringify(proof) });
       const body = await response.json();
@@ -39,13 +38,11 @@ export function AppActivityBridge({ openUrl, appCodePath, activeUntil, activityR
       return body;
       } });
     };
-    if (appAuthProtocol !== undefined) configure(appAuthProtocol);
-    else void appFetch(probePath, { cache: "no-store", signal: controller.signal }, false)
-      .then(response => response.json()).then(body => {
-        const recovery = readRecoveryParams(body);
-        if (recovery.corePublicOrigin && new URL(recovery.corePublicOrigin).origin === new URL(openUrl).origin)
-          configure(recovery.appAuthProtocol);
-      }).catch(() => { /* Discovery failure never enables an older/unbound popup. */ });
+    if (appAuthProtocol !== undefined && !(appAuthProtocol === 1 && acceptAppAuthProtocol(new URL(openUrl).origin, 1) === null))
+      configure(appAuthProtocol);
+    else void refreshAppAuthProtocol(openUrl, probePath, controller.signal).then(configure);
+    // A stale protocol-1 prop cannot overwrite a protocol-2 minimum already verified
+    // by this app. Unknown discovery leaves renewal disabled instead of downgrading.
     const expired = () => setNeeded(true);
     const renewed = () => { setNeeded(false); setError(""); };
     const click = (event: MouseEvent) => {

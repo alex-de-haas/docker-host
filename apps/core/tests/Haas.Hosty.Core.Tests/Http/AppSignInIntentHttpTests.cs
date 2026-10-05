@@ -239,6 +239,125 @@ public sealed class AppSignInIntentHttpTests
     }
 
     [Theory]
+    [InlineData("standalone", false)]
+    [InlineData("standalone", true)]
+    [InlineData("silent", false)]
+    [InlineData("silent", true)]
+    [InlineData("popup", false)]
+    [InlineData("popup", true)]
+    public async Task LegacyGet_UpgradeRefusalReturnsOnlyCorrelatedError_AndPreservesLiveIntentAndCode(string mode, bool callbackHasState)
+    {
+        await using var host = await HostAsync();
+        using var browser = Browser(host);
+        using var pending = await IntentAsync(browser);
+        var pendingId = QueryHelpers.ParseQuery(pending.Headers.Location!.OriginalString.Split('?')[1])["requestId"].ToString();
+        var intents = host.Services.GetRequiredService<AppSignInIntentStore>();
+        var intent = intents.Find(AppId, pendingId, Cookie(pending).Split('=')[1]);
+        var previous = await host.Services.GetRequiredService<AppIdentityService>().CreateAuthorizationCodeAsync(
+            AppId, "user", AppOrigin + "/callback", AuthCodeProof.Challenge, "S256", SessionId);
+        var sessions = (await host.Services.GetRequiredService<UserDirectoryStore>().ReadAsync()).Sessions;
+        var redirect = AppOrigin + "/page?view=notes" + (callbackHasState ? "&state=" + State : "");
+        using var request = LegacyRequest(mode, redirect);
+        request.Headers.Add("Cookie", "hosty_session=" + SessionId + "; " + Cookie(pending));
+        using var response = await browser.SendAsync(request);
+
+        Assert.Equal("no-store", response.Headers.CacheControl!.ToString());
+        Assert.Equal("no-referrer", response.Headers.GetValues("Referrer-Policy").Single());
+        Assert.False(response.Headers.Contains("Set-Cookie"));
+        if (mode == "popup")
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Null(response.Headers.Location);
+            var html = await response.Content.ReadAsStringAsync();
+            Assert.Contains("type:\"hosty:app-auth-code\"", html);
+            Assert.Contains("state:\"" + State + "\"", html);
+            Assert.Contains("error:\"protocol_required\"},\"" + AppOrigin + "\"", html);
+            Assert.DoesNotContain("code:", html);
+            Assert.DoesNotContain("window.close()", html);
+            Assert.Contains("frame-ancestors 'none'", response.Headers.GetValues("Content-Security-Policy").Single());
+        }
+        else
+        {
+            Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+            var query = QueryHelpers.ParseQuery(response.Headers.Location!.Query);
+            Assert.Equal("notes", query["view"].ToString());
+            Assert.Equal("protocol_required", query["error"].ToString());
+            Assert.Equal(State, query["state"].ToString());
+            Assert.Equal(1, query["state"].Count);
+            Assert.False(query.ContainsKey("code"));
+            Assert.False(query.ContainsKey("codeChallenge"));
+        }
+        Assert.Same(intent, intents.Find(AppId, pendingId, Cookie(pending).Split('=')[1]));
+        var code = Assert.Single((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        Assert.Equal(previous.Code, code.Code);
+        Assert.Null(code.ConsumedAt);
+        Assert.Empty((await host.Services.GetRequiredService<AppSessionGrantStore>().ReadAsync()).Grants);
+        Assert.Equal(sessions, (await host.Services.GetRequiredService<UserDirectoryStore>().ReadAsync()).Sessions);
+        var audit = await File.ReadAllTextAsync(host.Services.GetRequiredService<CoreDataPaths>().AuditLogPath);
+        Assert.Contains("protocol_required", audit);
+        foreach (var secret in new[] { previous.Code, State, AuthCodeProof.Challenge, AuthCodeProof.Verifier, Cookie(pending).Split('=')[1] })
+            Assert.DoesNotContain(secret, audit);
+    }
+
+    [Theory]
+    [InlineData("missing-state")]
+    [InlineData("short-state")]
+    [InlineData("callback-state")]
+    [InlineData("duplicate-callback-state")]
+    [InlineData("missing-challenge")]
+    [InlineData("plain-method")]
+    [InlineData("noncanonical-challenge")]
+    [InlineData("unknown-field")]
+    [InlineData("duplicate-field")]
+    [InlineData("foreign-redirect")]
+    [InlineData("unknown-app")]
+    [InlineData("wrong-prompt")]
+    [InlineData("wrong-response-mode")]
+    [InlineData("both-modes")]
+    [InlineData("empty-selector")]
+    [InlineData("wrong-destination")]
+    [InlineData("no-navigation")]
+    [InlineData("foreign-origin")]
+    [InlineData("null-origin")]
+    public async Task LegacyGet_MalformedOrForeignAttemptStillFailsClosed(string mutation)
+    {
+        await using var host = await HostAsync();
+        using var browser = Browser(host);
+        using var request = LegacyRequest();
+        var query = QueryHelpers.ParseQuery(request.RequestUri!.Query).ToDictionary(field => field.Key, field => field.Value.ToString());
+        switch (mutation)
+        {
+            case "missing-state": query.Remove("state"); break;
+            case "short-state": query["state"] = "short"; break;
+            case "callback-state": query["redirectUri"] += "?state=" + new string('b', 64); break;
+            case "duplicate-callback-state": query["redirectUri"] += "?state=" + State + "&state=" + State; break;
+            case "missing-challenge": query.Remove("codeChallenge"); break;
+            case "plain-method": query["codeChallengeMethod"] = "plain"; break;
+            case "noncanonical-challenge": query["codeChallenge"] = new string('_', 43); break;
+            case "unknown-field": query["userId"] = "user"; break;
+            case "foreign-redirect": query["redirectUri"] = "http://evil.example.test/callback"; break;
+            case "wrong-prompt": query["prompt"] = "login"; break;
+            case "wrong-response-mode": query["responseMode"] = "native"; break;
+            case "both-modes": query["prompt"] = "none"; query["responseMode"] = "web_message"; break;
+            case "empty-selector": query["prompt"] = ""; break;
+            case "wrong-destination": request.Headers.Remove("Sec-Fetch-Dest"); request.Headers.Add("Sec-Fetch-Dest", "iframe"); break;
+            case "no-navigation": request.Headers.Remove("Sec-Fetch-Mode"); break;
+            case "foreign-origin": request.Headers.Add("Origin", "http://evil.example.test"); break;
+            case "null-origin": request.Headers.Add("Origin", "null"); break;
+        }
+        var path = $"/api/apps/{(mutation == "unknown-app" ? "unknown.app" : AppId)}/open";
+        request.RequestUri = new Uri(QueryHelpers.AddQueryString("http://127.0.0.1:7070" + path, query.Select(field =>
+            new KeyValuePair<string, string?>(field.Key, field.Value))) + (mutation == "duplicate-field" ? "&state=" + State : ""));
+        using var response = await browser.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("sign_in_intent_invalid", await ErrorAsync(response));
+        Assert.Null(response.Headers.Location);
+        Assert.False(response.Headers.Contains("Set-Cookie"));
+        Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        Assert.Empty((await host.Services.GetRequiredService<AppSessionGrantStore>().ReadAsync()).Grants);
+    }
+
+    [Theory]
     [InlineData("/api/auth/apps/authorize")]
     [InlineData("/api/apps/example.app/launch-code")]
     public async Task AuthenticatedIssuer_RequiresProof_AndPreservesSessionBinding(string route)
@@ -368,6 +487,17 @@ public sealed class AppSignInIntentHttpTests
 
     private static HttpClient Browser(CoreHttpHarness host, string origin = "http://127.0.0.1:7070")
     { var client = host.CreateClient(); client.BaseAddress = new Uri(origin); return client; }
+    private static HttpRequestMessage LegacyRequest(string mode = "standalone", string redirect = AppOrigin + "/callback")
+    {
+        var fields = new Dictionary<string, string?>
+        { ["redirectUri"] = redirect, ["state"] = State, ["codeChallenge"] = AuthCodeProof.Challenge, ["codeChallengeMethod"] = "S256" };
+        if (mode == "silent") fields["prompt"] = "none";
+        if (mode == "popup") fields["responseMode"] = "web_message";
+        var request = new HttpRequestMessage(HttpMethod.Get, QueryHelpers.AddQueryString("http://127.0.0.1:7070/api/apps/" + AppId + "/open", fields));
+        request.Headers.Add("Sec-Fetch-Mode", "navigate");
+        request.Headers.Add("Sec-Fetch-Dest", mode == "silent" ? "iframe" : "document");
+        return request;
+    }
     private static async Task<HttpResponseMessage> IntentAsync(HttpClient client, string? origin = AppOrigin, string redirect = AppOrigin + "/callback")
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/apps/{AppId}/sign-in-intent");

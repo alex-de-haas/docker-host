@@ -92,7 +92,9 @@ function callbackLocation(url: URL): string {
 }
 
 /** Correlation is local; URL fields never supply a verifier or a pending attempt. */
-export function takeAppAuthAttempt(callback: URL): AppAuthAttempt | null {
+// Only the recovery bridge opts in to classify and discard an obsolete local v1
+// record. Such a record must never be exchanged after v2 has already been observed.
+export function takeAppAuthAttempt(callback: URL, allowLegacyUpgrade = false): AppAuthAttempt | null {
   const states = callback.searchParams.getAll("state");
   const state = states[0];
   if (!state || !/^[a-f0-9]{64}$/.test(state) || states.some(value => value !== state)) return null;
@@ -109,7 +111,7 @@ export function takeAppAuthAttempt(callback: URL): AppAuthAttempt | null {
         typeof attempt.createdAt !== "number" || attempt.createdAt > Date.now() || Date.now() - attempt.createdAt >= ATTEMPT_LIFETIME ||
         new URL(attempt.redirectUri).origin !== window.location.origin || callbackLocation(new URL(attempt.redirectUri)) !== callbackLocation(callback) ||
         new URL(attempt.coreOrigin).origin !== attempt.coreOrigin ||
-        acceptAppAuthProtocol(attempt.coreOrigin, attempt.protocol) !== attempt.protocol) return null;
+        (acceptAppAuthProtocol(attempt.coreOrigin, attempt.protocol) !== attempt.protocol && !(allowLegacyUpgrade && attempt.protocol === 1))) return null;
     return attempt;
   } catch { return null; }
 }
@@ -249,31 +251,103 @@ export async function appFetch(input: string | URL, init: RequestInit = {}, reco
   return response;
 }
 
+/** Refresh only the app-local, server-verified metadata for this frozen app/Core pair. */
+export async function refreshAppAuthProtocol(openUrl: string, probePath = "/api/auth/identity", signal?: AbortSignal): Promise<AppAuthProtocol | null> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) controller.abort();
+  const timer = window.setTimeout(abort, 4_000);
+  try {
+    const open = new URL(openUrl);
+    const match = /^\/api\/apps\/([^/]+)\/open$/.exec(open.pathname);
+    if (!match || !["http:", "https:"].includes(open.protocol) || open.username || open.password) return null;
+    const response = await appFetch(probePath, { cache: "no-store", signal: controller.signal }, false);
+    if (![200, 401].includes(response.status) || !response.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return null;
+    const body = await response.json() as { recovery?: { appId?: unknown; corePublicOrigin?: unknown; appAuthProtocol?: unknown } };
+    const recovery = body?.recovery;
+    if (recovery?.appId !== decodeURIComponent(match[1]) || typeof recovery.corePublicOrigin !== "string") return null;
+    const core = new URL(recovery.corePublicOrigin);
+    if (core.origin !== open.origin || core.username || core.password || core.pathname !== "/" || core.search || core.hash) return null;
+    if (controller.signal.aborted) return null;
+    return acceptAppAuthProtocol(open.origin, recovery.appAuthProtocol === 2 ? 2 : recovery.appAuthProtocol === 1 ? 1 : null);
+  } catch { return null; }
+  finally { window.clearTimeout(timer); signal?.removeEventListener("abort", abort); }
+}
+
 /** Must be called directly from a user gesture. Native hosts intercept before any request. */
-export function openAppSignIn(openUrl: string, signal?: AbortSignal, appAuthProtocol: AppAuthProtocol = 2, native = false): Promise<AppSignInResult> {
-  let attempt;
-  try { attempt = createAppAuthAttempt(openUrl, native ? "native" : "popup", appAuthProtocol); }
+export function openAppSignIn(openUrl: string, signal?: AbortSignal, appAuthProtocol: AppAuthProtocol = 2, native = false, probePath = "/api/auth/identity"): Promise<AppSignInResult> {
+  let initialAttempt: AppAuthAttempt | null;
+  try { initialAttempt = createAppAuthAttempt(openUrl, native ? "native" : "popup", appAuthProtocol); }
   catch (error) { return Promise.reject(error); }
-  if (native) return openNativeAppSignIn(attempt, signal);
+  if (native) return openNativeAppSignIn(initialAttempt, signal);
   return new Promise((resolve, reject) => {
+    let attempt: AppAuthAttempt | null = initialAttempt;
+    initialAttempt = null;
     let popup: Window | null = null;
     let settled = false;
+    let upgraded = false;
+    let restartPoll: ReturnType<typeof setInterval> | undefined;
+    const refreshController = new AbortController();
     const finish = (code?: string, error?: string) => {
       if (settled) return;
       settled = true;
+      const proof = code && attempt ? { code, codeVerifier: attempt.codeVerifier } : null;
+      attempt = null;
+      refreshController.abort();
       window.removeEventListener("message", receive);
       signal?.removeEventListener("abort", abort);
       popupCancellations.delete(abort);
       window.clearTimeout(timer);
       clearInterval(closedCheck);
+      clearInterval(restartPoll);
       popup?.close();
-      if (code) resolve({ code, codeVerifier: attempt.codeVerifier }); else reject(new Error(error ?? "Sign-in was cancelled."));
+      if (proof) resolve(proof); else reject(new Error(error ?? "Sign-in was cancelled."));
+    };
+    const restart = async () => {
+      // The correlated Core refusal carries no authority. The app server must verify v2
+      // before the existing gesture-opened window receives an entirely fresh attempt.
+      attempt = null;
+      if (await refreshAppAuthProtocol(openUrl, probePath, refreshController.signal) !== 2) {
+        if (!settled) finish(undefined, "Hosty sign-in protocol could not be verified. Please try again.");
+        return;
+      }
+      if (settled || !popup || popup.closed) return;
+      try { popup.location.href = "about:blank"; }
+      catch { finish(undefined, "The app could not restart Hosty sign-in. Please try again."); return; }
+      const deadline = Date.now() + 5_000;
+      const submit = () => {
+        if (settled) return;
+        if (!popup || popup.closed) { finish(); return; }
+        let doc: Document;
+        try {
+          // Access is possible only after the app-initiated blank navigation restores
+          // this app's origin. Never write an intent into the old Core document.
+          doc = popup.document;
+          if (doc.URL !== "about:blank") throw new Error("Popup is still navigating.");
+        } catch {
+          if (Date.now() >= deadline) finish(undefined, "The app could not restart Hosty sign-in. Please try again.");
+          return;
+        }
+        clearInterval(restartPoll);
+        try { attempt = createAppAuthAttempt(openUrl, "popup", 2); submitAppAuthIntent(attempt, doc); }
+        catch { finish(undefined, "The app could not restart Hosty sign-in. Please try again."); }
+      };
+      restartPoll = setInterval(submit, 20);
+      submit();
     };
     const receive = (event: MessageEvent) => {
-      if (!popup || event.source !== popup || event.origin !== attempt.coreOrigin) return;
+      if (!popup || !attempt || event.source !== popup || event.origin !== attempt.coreOrigin) return;
       const data = event.data;
       if (data?.type !== "hosty:app-auth-code" || data.state !== attempt.state) return;
-      if (typeof data.error === "string") { finish(undefined, "Hosty could not authorize this sign-in. Please try again."); return; }
+      if (typeof data.error === "string") {
+        if (data.error === "protocol_required" && attempt.protocol === 1 && !upgraded &&
+            Object.keys(data).length === 3 && data.code === undefined) {
+          upgraded = true;
+          void restart();
+        } else finish(undefined, "Hosty could not authorize this sign-in. Please try again.");
+        return;
+      }
       if (typeof data.code !== "string" || !data.code || data.code.length > 4096) return;
       finish(data.code);
     };
@@ -285,10 +359,10 @@ export function openAppSignIn(openUrl: string, signal?: AbortSignal, appAuthProt
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) { finish(); return; }
     // No await precedes window.open: browser activation belongs to this exact app gesture.
-    popup = window.open(appAuthProtocol === 1 ? appAuthNavigationUrl(attempt) : "about:blank", "_blank", "popup,width=520,height=700");
+    popup = window.open(appAuthProtocol === 1 ? appAuthNavigationUrl(attempt!) : "about:blank", "_blank", "popup,width=520,height=700");
     if (!popup) { finish(undefined, "Allow the sign-in popup and try again."); return; }
     if (appAuthProtocol === 2) {
-      try { submitAppAuthIntent(attempt, popup.document); }
+      try { submitAppAuthIntent(attempt!, popup.document); }
       catch { finish(undefined, "The app could not open the Hosty sign-in form. Please try again."); }
     }
   });
@@ -335,6 +409,7 @@ export type AppActivityConfig = {
   openUrl: string;
   appAuthProtocol: AppAuthProtocol;
   native?: boolean;
+  probePath?: string;
   activeUntil?: string | null;
   activityRequired?: boolean;
   exchangeCode: (result: AppSignInResult) => Promise<{ accessToken?: string; activeUntil?: string | null }>;
@@ -368,8 +443,9 @@ export function renewAppActivity(): Promise<void> {
   const controller = new AbortController();
   const revision = grantRevision;
   renewalController = controller;
-  const popup = openAppSignIn(config.openUrl, controller.signal, config.appAuthProtocol, config.native);
+  const popup = openAppSignIn(config.openUrl, controller.signal, config.appAuthProtocol, config.native, config.probePath);
   renewal = popup.then(async proof => {
+    if (config.appAuthProtocol === 1 && acceptAppAuthProtocol(new URL(config.openUrl).origin, 1) === null) config.appAuthProtocol = 2;
     const result = await config.exchangeCode(proof);
     if (controller.signal.aborted || activityConfig !== config || revision !== grantRevision)
       throw new Error("Sign-in was cancelled.");
