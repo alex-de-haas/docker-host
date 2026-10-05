@@ -154,6 +154,61 @@ Inventory at the 2026-10-05 baseline:
 
 `hosty-catalog` has no `docs/` and is out of scope.
 
+### docker-host dispositions (proposed 2026-10-05, awaiting owner approval)
+
+"Move" creates `features/<target>/feature.md` and rewrites the content as current behavior verified
+against the code. "Merge" folds still-true facts into an existing document and deletes the legacy
+file. "Plan" carries unbuilt intent into a Draft `plan.md`. "Delete" drops a document whose content
+is superseded or abandoned. Every inbound link is updated in the same change.
+
+Shipped behavior (`docs/features/*.md`):
+
+| Document | Disposition |
+| --- | --- |
+| `app-auth-origin-separation.md` | Merge into `auth-gateway` |
+| `catalog-hosted-app-feeds.md` | Move to `app-feeds` (the `feeds.json` contract) |
+| `cli-app-commands.md` | Merge into `cli-bootstrap` |
+| `container-capabilities.md` | Move to `container-capabilities` |
+| `direct-origin-runtime-app-ui.md` | Merge into `auth-gateway` |
+| `external-mounts.md` | Move to `external-mounts` |
+| `final-hosty-architecture.md` | Merge still-current boundaries into `domain-model` and `repository-release-model` |
+| `host-networking.md` | Move to `host-networking` |
+| `hosty-app-skill.md` | Move to `hosty-app-skill` |
+| `hosty-runtime-app-platform.md` | Merge into `domain-model` and `runtime-app-manifest` |
+| `hosty-shell-image.md` | Merge into `core-app-shell` |
+| `manifest-level-app-assets.md` | Move to `manifest-level-app-assets` (workstreams A1–A4 shipped); still-open questions become its Draft `plan.md` |
+| `multi-service-runtime-apps.md` | Merge into `runtime-app-manifest` |
+| `raw-ports.md` | Move to `raw-ports` |
+| `runtime-app-compact-view.md` | Merge into `shell-navigation` if the Dashboard ships it; otherwise Plan in `shell-navigation` |
+| `user-management.md` | Move to `user-management` |
+
+Promoted or implemented designs:
+
+| Document | Disposition |
+| --- | --- |
+| `ideas/core-settings.md` | Merge missing facts into `core-runtime-parameters`, then delete |
+| `ideas/marketplace-system-app.md` | Delete; `runtime-app-marketplace/feature.md` is the reality |
+| `ideas/runtime-app-repository-feeds.md` | Delete; the contract lives in `app-feeds` |
+| `planning/marketplace-system-app.md` | Delete; implemented |
+| `planning/plan-first-app-updates.md` | Merge missing facts into `runtime-app-update`, then delete |
+| `ideas/system-app-updates.md` | Shipped part merges into `runtime-app-update`; the open items (staged apply, readiness gate with rollback, immutable Shell image tags, compatibility metadata, update-pending notice) become `runtime-app-update/plan.md` |
+
+Unbuilt ideas (owner decision: keep as Draft or delete):
+
+| Document | Proposal |
+| --- | --- |
+| `ideas/agent-bridge-workflow.md` | Delete: superseded by ai-agent-bridge step 12, development sessions and the feedback inbox |
+| `ideas/gateway-and-app-wrapping.md` | Delete: superseded by Cloudflare ingress, internal endpoint exposure and app authoring's adaptation work |
+| `ideas/system-app-pages.md` | Delete: superseded by app UI surfaces |
+| `ideas/account-switching.md` | Delete: retired behavior with no plan to restore it |
+| `ideas/runtime-app-repository-install.md` | Delete: its own recommendation is not to build it; manifest URLs cover installation |
+| `ideas/runtime-source-extensions.md` | Delete: private repositories shipped as private app sources; multi-repository apps stay split |
+| `ideas/auth-provider-extensions.md` | Keep as Draft `auth-provider-extensions/plan.md` (OIDC, trusted-proxy provisioning, password reset, durable throttling); the login-method item stays in the core extension model |
+| `ideas/backup-retention-extensions.md` | Keep as Draft `app-data-backup-retention/plan.md` (age-based rules, per-app overrides) |
+| `ideas/cross-app-auth.md` | Keep as Draft `cross-app-auth/plan.md` (peer introspection; vision open question 1 relies on app-to-app calls) |
+| `ideas/replaceable-ui-clients.md` | Keep as Draft `replaceable-ui-clients/plan.md` (the `ui-client` role) |
+| `ideas/future-work.md` | The image `pullPolicy: ifChanged` item joins `runtime-app-update/plan.md`; the CLI launcher shim and the removal preview are deleted |
+
 ## Deliverables
 
 ### Phase 1 — Format and tooling (docker-host)
