@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-07-10
-Updated: 2026-09-29
+Updated: 2026-10-05
 
 Exploratory. This plan authorizes no implementation and changes no current system-app behavior; it
 formalizes a pattern the platform already uses ad hoc so the next capability does not invent a second
@@ -482,7 +482,7 @@ extraction remain unimplemented and outside that feature.
   with system-app pages.
 - [Marketplace As A System App](../../ideas/marketplace-system-app.md) — the read-only catalog ownership
   boundary and migration design.
-- [System App Pages](../../ideas/system-app-pages.md) — the shared admin-only page model for UI-capable
+- [System App Pages](../system-app-pages/plan.md) — the shared admin-only page model for UI-capable
   system apps.
 - [Runtime App Repository Feeds](../../ideas/runtime-app-repository-feeds.md) — current feed behavior
   with repository ownership and Core resolution.

@@ -2,7 +2,7 @@
 
 Status: Promoted
 Created: 2026-07-10
-Updated: 2026-07-11
+Updated: 2026-10-05
 
 ## Motivation
 
@@ -101,7 +101,7 @@ An installed app stores `FeedsUrl`, `FollowedFeedId`, and the last resolved `Man
 
 `hosty.marketplace` should expose its UI through the same `ui.entrypoint` and `ui.navigation` contract used by runtime apps. Shell displays UI-capable system apps in a separate administrator-only System group and renders their pages through the existing app-origin iframe/SSO machinery.
 
-No marketplace-specific Shell route or native page contract is required. The hardcoded `/marketplace` route is removed when the app UI ships. Details are tracked in [System App Pages](system-app-pages.md).
+No marketplace-specific Shell route or native page contract is required. The hardcoded `/marketplace` route is removed when the app UI ships. Details are tracked in [System App Pages](../features/system-app-pages/plan.md).
 
 ## Runtime Shape And Configuration
 
@@ -243,7 +243,7 @@ Catalog entries point to runtime-app-owned `feeds.json`. Shell/CLI pass `feedsUr
 
 - [Marketplace vertical-slice plan](../planning/marketplace-system-app.md) - approved replacement scope and remaining deliverables.
 - [Core Extension Model](../features/core-extension-model/plan.md) - the general system-app extension mechanism.
-- [System App Pages](system-app-pages.md) - generic Shell pages for UI-capable system apps.
+- [System App Pages](../features/system-app-pages/plan.md) - generic Shell pages for UI-capable system apps.
 - [Runtime App Repository Feeds](runtime-app-repository-feeds.md) - current feed behavior moved unchanged to app-owned `feeds.json` with Core-owned resolution.
 - [Runtime App Marketplace](../features/runtime-app-marketplace/feature.md) - the shipped implementation being extracted.
 - [Catalog-Hosted App Feeds](../features/catalog-hosted-app-feeds.md) - current feed ownership being replaced in future work.

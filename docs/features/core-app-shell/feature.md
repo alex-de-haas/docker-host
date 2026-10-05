@@ -215,12 +215,12 @@ While an embedded workspace route is launching before the iframe exists, Shell s
 
 The removed Legacy Host included `/ingress` and gateway exposure UI. That route tree no longer exists in the repository.
 
-Gateway and external ingress readiness remain target architecture topics for service/API exposure publishing. Future work is tracked in [Gateway And App Wrapping Ideas](../ideas/gateway-and-app-wrapping.md). Until then, Shell documentation and UI should not present `/ingress`, `/api/gateway/*`, or `/api/ingress/*` as current implemented surfaces.
+Gateway and external ingress readiness remain target architecture topics for service/API exposure publishing. Future work is tracked in [Gateway And App Wrapping Ideas](../../ideas/gateway-and-app-wrapping.md). Until then, Shell documentation and UI should not present `/ingress`, `/api/gateway/*`, or `/api/ingress/*` as current implemented surfaces.
 
 ## Links
 
-- [System App Pages](../ideas/system-app-pages.md) - originating design for administrator-only pages.
-- [Marketplace System App](runtime-app-marketplace/feature.md) - the first storefront using the generic system-app and install-intent paths.
+- [System App Pages](../system-app-pages/plan.md) - originating design for administrator-only pages.
+- [Marketplace System App](../runtime-app-marketplace/feature.md) - the first storefront using the generic system-app and install-intent paths.
 
 ## App Icons
 

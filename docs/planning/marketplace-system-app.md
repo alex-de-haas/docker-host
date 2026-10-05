@@ -2,7 +2,7 @@
 
 Status: Implemented
 Created: 2026-07-10
-Updated: 2026-07-11 (implemented; single-source retained)
+Updated: 2026-10-05
 
 ## Goal
 
@@ -228,7 +228,7 @@ None.
 - [Runtime App Repository Feeds](../ideas/runtime-app-repository-feeds.md)
 - [Runtime App Marketplace](../features/runtime-app-marketplace/feature.md)
 - [Catalog-Hosted App Feeds](../features/catalog-hosted-app-feeds.md)
-- [System App Pages](../ideas/system-app-pages.md)
+- [System App Pages](../features/system-app-pages/plan.md)
 
 ## Notes
 
