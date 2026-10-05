@@ -37,9 +37,10 @@ isolated Core-managed client-first acceptance are complete. Native live acceptan
 by UI automation: after the owner unlocked the Mac, inventory returned the running isolated QA
 clone, but acquiring it by bundle ID or exact path still returned no accessibility state and was
 aborted. No native GUI scenario has passed. Its temporary QA signature does not establish Keychain
-persistence. Production client merge/release/deployment before Core enforcement also remains open;
-isolated QA deployment does not establish production rollout. The plan stays blocked and PR #547
-stays draft; all remaining work is explicit in the unchecked deliverables.
+persistence. Both external client PRs are merged, but production release/deployment before Core
+enforcement remains open; isolated QA deployment does not establish production rollout. The owner
+opened PR #547 for review, and it targets main after dependency #546 merged. The plan stays blocked;
+enforcement merge waits for its remaining gates, all explicit in the unchecked deliverables.
 
 ## Current Behavior And The Two Bypasses
 
@@ -340,8 +341,8 @@ Remaining work:
   Supersede local header-only SDK/Media candidate patches with the full protocol.
 - [x] Complete actual-registry Core-managed client-first deployment acceptance on old Core and
   after enforcing-Core upgrade, including protected content and revoked-grant cleanup.
-- [ ] Complete production client merge/release/deployment before Core enforcement. Local QA
-  deployment is not production release evidence.
+- [ ] Complete production client release/deployment before Core enforcement. Both client merges
+  are complete; local QA deployment is not production release or deployment evidence.
 - [x] Update Media browser-test fixtures for strict protocol discovery and proof-bearing intent
   navigation; complete final green registry-based external CI.
 - [ ] Update app auth references and affected feature documents, create current `feature.md`, remove
@@ -414,7 +415,7 @@ Shell's upgrade, IPv6 CSP and actual Next header-matching regressions pass 300 t
 zero errors and two existing warnings. Documentation-index,
 version consistency and whitespace checks pass. The final Shell, Demo, Marketplace and Telemetry UI webpack builds pass; Marketplace 109,
 Telemetry UI 10 and Demo 4 tests pass. Final actual-registry installations pass Project
-Manager 164 and Media Server 175 tests, lint and fresh webpack builds. Media's full protocol-aware
+Manager 177 and Media Server 175 tests, lint and fresh webpack builds. Media's full protocol-aware
 Playwright suite passes 159 cases. Real old-Core-to-new-Core upgrade acceptance passes for all four
 pending attempt modes; both external actual-registry clients also pass standalone and real Shell
 silent iframe sign-in before and after enforcement.
@@ -467,15 +468,22 @@ upgrade checks in a separate normally authenticated runtime.
   are retained for resuming acceptance when native UI control works.
 - [x] Complete SDK registry publication, real external dependency locks and isolated client-first
   deployment acceptance following the approved IPv6 amendment. Production release remains the
-  separate unchecked deliverable above; keep PR #547 draft until its tracked work is done.
+  separate unchecked deliverable above; keep PR #547 unmerged until its tracked work is done.
 
 External source integration is available in [Project Manager #103](https://github.com/alex-de-haas/project-manager/pull/103)
 and [Media Server #318](https://github.com/alex-de-haas/media-server/pull/318). Final Project Manager
-source `be0604e` passes [Verify CI](https://github.com/alex-de-haas/project-manager/actions/runs/37355238205).
+source `a39bded8` passes [Verify CI](https://github.com/alex-de-haas/project-manager/actions/runs/37362723843).
 Final Media source `69211b4` passes [API, web unit/lint/build, Playwright, manifest and docs CI](https://github.com/alex-de-haas/media-server/actions/runs/37356881355).
 The registry update supersedes the older SDK 0.19.1 failures; protocol-aware fixtures supersede the
-obsolete GET-recovery expectations. Both external PRs are ready for client-first review and release;
-this evidence claims no production merge or deployment.
+obsolete GET-recovery expectations. Both external PRs have merged with regular merge commits,
+as has dependency Hosty #546. Their image publication workflows do not deploy or restart installed
+apps, so production release/deployment evidence remains required before Core enforcement.
+Project Manager review regressions reproduce six rejected valid-default-port cases before the fix;
+canonical public URL origin comparison permits HTTP :80 and HTTPS :443 while retaining foreign,
+wrong-scheme, non-default-port and malformed-authority refusal. All 36 route tests and 177 unit
+tests, lint, a fresh registry production build, manifest rendering and final Verify CI pass.
+The real-browser fixture below uses the preceding `be0604e` source; the bounded normalization
+correction is verified separately by these regressions and CI.
 
 The predecessor SDK 0.20.0 from first-feature commit `497a4e85` is published through workflow
 [37350302179](https://github.com/alex-de-haas/docker-host/actions/runs/37350302179): 209 SDK tests
@@ -496,7 +504,6 @@ completes nonce validation and proof exchange 200. All three cases have zero CSP
 The SDK recognizes reserved localhost subdomains, and Next global headers preserve the auth
 route-owned policy while retaining ordinary Shell frame protection. These bounded corrections
 are included in the existing SDK/Shell deliverables above.
-
 
 Final actual-registry deployment acceptance uses a fresh isolated normally authenticated Core
 instance. Before any protocol-2 observation, Core 0.119.0 metadata 404 selects protocol 1; both
