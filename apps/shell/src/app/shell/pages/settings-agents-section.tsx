@@ -49,7 +49,7 @@ export function SettingsAgentsSection({ coreOrigin, sendCsrfJson }: {
   };
   return <section className="max-w-4xl space-y-5">
     <div className="flex items-start justify-between gap-4">
-      <div><h2 className="text-lg font-medium">Agents</h2>
+      <div><h2 className="text-lg font-medium">Agents</h2><p className="text-sm text-muted-foreground">Host-wide administration for all assistants. Configure Harness access, instructions and tool rules in Harness settings → MCP access.</p>
         <p className="text-sm text-muted-foreground">Choose available MCP applications and grant access to individual assistants. Tool approval rules stay with each assistant.</p></div>
       <Button variant="outline" disabled={busy} onClick={() => void load().catch(showLoadError)}>Refresh</Button>
     </div>

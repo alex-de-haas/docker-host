@@ -10,7 +10,7 @@ internal sealed record InstallationCaller(string UserId, string? AppId, string? 
 internal sealed class InstallationApprovalService(
     InstallationApprovalStore approvals, CoreLifecycleService lifecycle, AppRegistryStore apps,
     AppIdentityService identity, AppServiceTokenService serviceTokens, AuditStore audit, IClock clock,
-    PrivateSourceService? privateSources = null, AppManifestService? manifests = null, HostPathApprovalService? hostPaths = null)
+    PrivateSourceService? privateSources = null, AppManifestService? manifests = null, HostPathApprovalService? hostPaths = null, AgentMcpDirectory? agents = null)
 {
     public async Task<InstallationCaller> AuthenticateAppAsync(string appId, HttpRequest request, CancellationToken ct)
     {
@@ -166,12 +166,15 @@ internal sealed class InstallationApprovalService(
     }
 
     public Task RecordAsync(InstallationApproval entry, string outcome, CancellationToken ct)
-        => audit.AppendAsync(new AuditRecord($"audit_{Guid.NewGuid():N}", entry.PermissionPlan is null ? "app.installation.approval" : "app.permissions.approval", "app",
-            entry.HostPathPlan?.Change.AppId ?? entry.PermissionPlan?.AppId ?? entry.RemovalPlan?.AppId ?? entry.InstallPlan?.AppId ?? entry.UpdatePlan?.AppId, outcome, entry.UserId, clock.UtcNow,
+        => audit.AppendAsync(new AuditRecord($"audit_{Guid.NewGuid():N}", entry.AssistantAccessPlan is not null ? "app.mcp.approval" : entry.PermissionPlan is null ? "app.installation.approval" : "app.permissions.approval", "app",
+            entry.AssistantAccessPlan?.AssistantId ?? entry.HostPathPlan?.Change.AppId ?? entry.PermissionPlan?.AppId ?? entry.RemovalPlan?.AppId ?? entry.InstallPlan?.AppId ?? entry.UpdatePlan?.AppId, outcome, entry.UserId, clock.UtcNow,
             new Dictionary<string, string> { ["requestId"] = entry.Id, ["caller"] = entry.CallerAppId ?? "operator",
                 ["hostPathChange"] = entry.HostPathPlan is { } path ? CoreJson.Text(path.Change) : "",
-                ["operation"] = entry.HostPathPlan?.Change.Kind ?? (entry.RemovalPlan is not null ? "remove" : entry.PermissionPlan is not null ? "permissions" : entry.UpdatePlan is not null ? "update" : "install"),
+                ["operation"] = entry.AssistantAccessPlan is not null ? "mcp-access" : entry.HostPathPlan?.Change.Kind ?? (entry.RemovalPlan is not null ? "remove" : entry.PermissionPlan is not null ? "permissions" : entry.UpdatePlan is not null ? "update" : "install"),
                 ["removalOptions"] = entry.RemovalPlan is { } removal ? CoreJson.Text(removal.Options) : "",
+                ["assistantTarget"] = entry.AssistantAccessPlan?.Target.Id ?? "",
+                ["assistantAccessEnabled"] = entry.AgentEnabled.ToString(),
+                ["assistantInstructions"] = string.Join(",", entry.AgentSkills),
                 ["selectedOptionalPermissions"] = string.Join(",", entry.SelectedOptionalPermissions ?? []) }), ct);
 
     public InstallationApproval Owned(string id, InstallationCaller caller)
@@ -193,7 +196,10 @@ internal sealed class InstallationApprovalService(
                     throw new AppIdentityException("admin_required", "The requesting administrator no longer has access.");
                 await RequireRequestPermissionsAsync(new(entry.UserId, appId, entry.IdentityToken, entry.CallerName), entry, ct);
             }
-            if (entry.HostPathPlan is { } pathPlan)
+            if (entry.AssistantAccessPlan is { } agentPlan)
+                await (agents ?? throw new InvalidOperationException()).ApplyAssistantReviewAsync(agentPlan,
+                    entry.AgentEnabled, entry.AgentSkills, entry.UserId, ct);
+            else if (entry.HostPathPlan is { } pathPlan)
                 await (hostPaths ?? throw new InvalidOperationException()).ApplyAsync(pathPlan, entry.UserId, ct, async () =>
                 {
                     if (entry.CallerAppId is not { } callerAppId) return;
@@ -288,6 +294,26 @@ internal static class InstallationApprovalEndpoints
                 return CoreJson.Json(store.View(entry, origins.Effective));
             }));
 
+        app.MapGet("/install/agents/{appId}/{targetId}", async (string appId, string targetId, HttpContext context,
+            InstallationApprovalStore store, AgentMcpDirectory agents, InstallationApprovalService service,
+            UserDirectoryStore users, AppRegistryStore apps, IClock clock) => await HandleAsync(async () =>
+            {
+                ProtectPage(context.Response);
+                if (!await HasIsolatedCookieHostAsync(context.Request, apps, context.RequestAborted))
+                    return Results.Text("Open MCP review on Core's isolated browser origin.", statusCode: 409);
+                if (!IsPageNavigation(context.Request)) return Results.StatusCode(403);
+                var actor = await BrowserActorAsync(context.Request, users, clock, context.RequestAborted);
+                if (actor is null)
+                    return Results.Redirect($"/login?returnTo={Uri.EscapeDataString(context.Request.Path)}");
+                if (!AppAccessPolicy.IsAdmin(actor)) return Results.StatusCode(403);
+                var plan = await agents.ReviewAssistantAsync(appId, targetId, context.RequestAborted);
+                var entry = store.Add(new InstallationApproval { UserId = actor.Id, CallerName = "Core MCP review",
+                    ExpiresAt = clock.UtcNow.Add(InstallationApprovalStore.Lifetime), AssistantAccessPlan = plan });
+                await service.RecordAsync(entry, "requested", context.RequestAborted);
+                store.Submit(entry, new());
+                return Results.Redirect($"/install/confirm/{entry.Id}");
+            })).WithMetadata(new DisableCorsAttribute());
+
         app.MapGet("/install/permissions/{appId}", async (string appId, HttpContext context,
             InstallationApprovalStore store, InstallationApprovalService service,
             UserDirectoryStore users, AppRegistryStore apps, IClock clock) => await HandleAsync(async () =>
@@ -339,7 +365,8 @@ internal static class InstallationApprovalEndpoints
                 if (entry.UserId != actor.Id) return Results.StatusCode(403);
                 var form = await context.Request.ReadFormAsync(context.RequestAborted);
                 var approve = form["decision"] == "approve";
-                store.Decide(entry, form["nonce"].ToString(), CoreSessionAuthorization.ReadSessionId(context.Request)!, approve, form["optionalPermission"].Select(p => p!).ToArray());
+                store.Decide(entry, form["nonce"].ToString(), CoreSessionAuthorization.ReadSessionId(context.Request)!, approve, form["optionalPermission"].Select(p => p!).ToArray(),
+                    form["agentEnabled"] == "true", form["agentSkill"].Select(p => p!).ToArray());
                 try
                 {
                     await service.RecordAsync(entry, approve ? "approved" : "denied", lifetime.ApplicationStopping);
@@ -433,8 +460,8 @@ internal static class InstallationApprovalEndpoints
     {
         static string E(string? text) => WebUtility.HtmlEncode(text ?? "");
         var installing = entry.InstallPlan is not null;
-        var title = entry.HostPathPlan is not null ? "Confirm host path access" : entry.RemovalPlan is not null ? "Confirm app removal" : entry.PermissionPlan is not null ? "Review app permissions" : installing ? "Confirm app installation" : "Confirm app update";
-        var name = entry.HostPathPlan?.DisplayName ?? entry.RemovalPlan?.DisplayName ?? entry.PermissionPlan?.DisplayName ?? entry.InstallPlan?.DisplayName ?? entry.UpdatePlan?.AppId;
+        var title = entry.AssistantAccessPlan is not null ? "Review assistant MCP access" : entry.HostPathPlan is not null ? "Confirm host path access" : entry.RemovalPlan is not null ? "Confirm app removal" : entry.PermissionPlan is not null ? "Review app permissions" : installing ? "Confirm app installation" : "Confirm app update";
+        var name = entry.AssistantAccessPlan?.DisplayName ?? entry.HostPathPlan?.DisplayName ?? entry.RemovalPlan?.DisplayName ?? entry.PermissionPlan?.DisplayName ?? entry.InstallPlan?.DisplayName ?? entry.UpdatePlan?.AppId;
         var permissions = entry.PermissionPlan?.Required ?? entry.InstallPlan?.CorePermissions ?? entry.UpdatePlan?.TargetCorePermissions ?? [];
         var before = entry.PermissionPlan?.Granted ?? entry.UpdatePlan?.CurrentCorePermissions ?? [];
         var optional = entry.PermissionPlan?.Optional ?? entry.InstallPlan?.OptionalCorePermissions ?? entry.UpdatePlan?.TargetOptionalCorePermissions ?? [];
@@ -476,14 +503,31 @@ internal static class InstallationApprovalEndpoints
         var version = entry.RemovalPlan?.Version ?? entry.InstallPlan?.TargetVersion ?? entry.UpdatePlan?.TargetVersion;
         var nameLine = $"<p><strong>{E(name)}</strong>{(version is null ? "" : " · " + E(version))}</p>";
         var sourceAndRoles = entry.PermissionPlan is not null ? "" : $"<p class=source>Source: {E(source)}</p><h2>Provider roles</h2><ul>{roleItems}</ul>";
-        var review = entry.HostPathPlan is { } pathPlan ? "<ul>" + string.Join("", pathPlan.Details.Select(d => $"<li>{E(d)}</li>")) + "</ul>" : entry.RemovalPlan is { } removal ? RenderRemoval(removal, entry.CallerAppId)
+        var review = entry.AssistantAccessPlan is not null ? "" : entry.HostPathPlan is { } pathPlan ? "<ul>" + string.Join("", pathPlan.Details.Select(d => $"<li>{E(d)}</li>")) + "</ul>" : entry.RemovalPlan is { } removal ? RenderRemoval(removal, entry.CallerAppId)
             : $"{sourceAndRoles}<h2>Core permissions</h2><ul>{rights}{string.Join("", removed)}</ul>{warning}{accessReview}";
-        var action = entry.HostPathPlan is not null ? "Approve change" : entry.RemovalPlan is not null ? "Remove app" : entry.PermissionPlan is not null ? "Save permissions" : installing ? "Install app" : "Apply update";
+        if (entry.AssistantAccessPlan is { } agentPlan) optionalReview = RenderAssistantAccess(agentPlan);
+        var action = entry.AssistantAccessPlan is not null ? "Save MCP access" : entry.HostPathPlan is not null ? "Approve change" : entry.RemovalPlan is not null ? "Remove app" : entry.PermissionPlan is not null ? "Save permissions" : installing ? "Install app" : "Apply update";
         var body = entry.Status == "pending"
             ? $"{nameLine}<p>Requested by {E(entry.CallerName)}</p>{review}<form method=post>{optionalReview}<div class=actions><input type=hidden name=nonce value=\"{E(nonce)}\"><button name=decision value=deny>Cancel</button><button class=primary name=decision value=approve>{action}</button></div></form>"
             : $"<p role=status>{E(entry.Status switch { "succeeded" => "Completed. You can close this window.", "denied" => "Cancelled. Nothing was changed. You can close this window.", "failed" => entry.Error ?? "The operation failed.", "executing" => "Your request was accepted. Follow its progress in the app. You can close this window.", _ => "Finish preparing this request in the app first." })}</p>";
         if (closeWindow) body += $"<script>{CloseWindowScript}</script>";
         return $"<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>{title} — Hosty Core</title><style>:root{{color-scheme:light dark;font-family:system-ui}}body{{margin:0;padding:24px;background:Canvas;color:CanvasText}}main{{max-width:560px;margin:8vh auto}}h1{{font-size:1.5rem}}h2{{font-size:1rem}}li{{margin:12px 0}}.source{{overflow-wrap:anywhere;font-size:.9rem;opacity:.75}}.warning{{padding:12px;border:1px solid #b7791f;border-radius:8px}}form{{margin-top:32px}}.actions{{display:flex;justify-content:flex-end;gap:12px;margin-top:24px}}fieldset{{border:1px solid GrayText;border-radius:8px}}button{{font:inherit;padding:10px 18px;border:1px solid GrayText;border-radius:8px;cursor:pointer}}.primary{{background:#2563eb;color:white;border-color:#2563eb}}button:focus-visible{{outline:3px solid #60a5fa;outline-offset:3px}}</style><main><p>HOSTY CORE</p><h1>{title}</h1>{body}</main></html>";
+    }
+
+    private static string RenderAssistantAccess(AssistantAccessPlan plan)
+    {
+        static string E(string? value) => WebUtility.HtmlEncode(value ?? "");
+        var target = plan.Target;
+        var enabled = target.Offered && target.AssistantIds?.Contains(plan.AssistantId, StringComparer.Ordinal) == true;
+        var skills = string.Join("", target.Skills.Select(skill =>
+            $"<details><summary>{E(skill.Key)} instructions</summary><pre style='white-space:pre-wrap;overflow-wrap:anywhere'>{E(skill.Markdown ?? "Instructions unavailable")}</pre></details>"
+            + (skill.Digest is null ? "" : skill.Digest == skill.ApprovedDigest
+                ? "<p>These exact instructions are already approved.</p>"
+                : $"<label><input type=checkbox name=agentSkill value=\"{E(skill.Key)}\">Approve these exact instructions for Hosty assistants</label>")));
+        return $"<h2>{E(target.DisplayName)}</h2><p>Change MCP access for {E(plan.DisplayName)} only. Tool execution still requires a Core-authorized conversation and the acting user's access.</p>"
+            + $"<label><input type=checkbox name=agentEnabled value=true{(enabled ? " checked" : "")}>Allow this assistant to use this application's MCP</label>"
+            + (!target.Offered ? "<p class=warning>Enabling access also makes this target available in the host MCP directory. Other assistants are not assigned automatically.</p>" : "")
+            + (skills.Length == 0 ? "<p>No application instructions.</p>" : "<h2>Application instructions</h2><p>Instruction approval is shared across Hosty consumers. Enabling access alone does not approve instructions.</p>" + skills);
     }
 
     private static string RenderRemoval(AppRemovalPlan plan, string? callerAppId)

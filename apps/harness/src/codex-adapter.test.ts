@@ -42,6 +42,7 @@ describe("codex harness adapter", () => {
     run = null;
     delete process.env.HOSTY_HARNESS_CODEX_COMMAND;
     delete process.env.HOSTY_FAKE_CODEX_REJECT_RESUME;
+    delete process.env.HOSTY_TEST_AUTONOMY;
   });
 
   function start(resumeHarnessSessionId?: string): HarnessRun {
@@ -54,6 +55,18 @@ describe("codex harness adapter", () => {
     });
     return run;
   }
+
+  it.each(["normal", "autonomous"] as const)("applies %s policy on new and resumed threads and turns", async autonomy => {
+    process.env.HOSTY_TEST_AUTONOMY = autonomy;
+    for (const resumeHarnessSessionId of [undefined, "existing-native-thread"]) {
+      events = [];
+      run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(), autonomy, resumeHarnessSessionId, onEvent: e => events.push(e) });
+      run.send("hello");
+      await waitFor(() => events.find(e => e.type === "result"), "turn under selected policy");
+      expect(events.some(e => e.type === "error" || e.type === "approval_request")).toBe(false);
+      await run.stop(); run = null;
+    }
+  });
 
   it("reports the harness session id from thread/start", async () => {
     start();
@@ -268,6 +281,7 @@ describe("codex binary resolution", () => {
   afterEach(() => {
     delete process.env.HOSTY_HARNESS_CODEX_COMMAND;
     delete process.env.HOSTY_FAKE_CODEX_REJECT_RESUME;
+    delete process.env.HOSTY_TEST_AUTONOMY;
   });
 
   it("prefers the operator override over the pinned dependency", async () => {
@@ -297,6 +311,7 @@ describe("codex auth modes", () => {
   afterEach(() => {
     delete process.env.HOSTY_HARNESS_CODEX_COMMAND;
     delete process.env.HOSTY_FAKE_CODEX_REJECT_RESUME;
+    delete process.env.HOSTY_TEST_AUTONOMY;
     rmSync(dir, { recursive: true, force: true });
   });
 

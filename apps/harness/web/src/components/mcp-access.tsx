@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Box, Search, Server } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -10,27 +10,42 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/in
 import { call, CORE_PROVIDER_ID, type Settings, type SettingsResponse, type ToolCatalog, type ToolRule } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-export function McpAccess({ data, busy, error, status, feedbackAppId, onSave }: {
+export function McpAccess({ data, busy, error, status, feedbackAppId, onSave, onRefresh }: {
   data: SettingsResponse;
   busy: boolean;
   error: string | null;
   status: string | null;
   feedbackAppId: string | null;
+  onRefresh: () => Promise<void>;
   onSave: (patch: Partial<Settings>, appId: string) => Promise<void>;
 }) {
-  const [sessions, setSessions] = useState<{ id: string; title: string | null }[]>([]);
-  const [authoritySession, setAuthoritySession] = useState("");
-  useEffect(() => { let live = true; void call("/sessions").then(r => r.json()).then(value => { if (live) setSessions(value.sessions ?? []); }).catch(() => {}); return () => { live = false; }; }, []);
   const [selectedId, setSelectedId] = useState(CORE_PROVIDER_ID);
   const [search, setSearch] = useState("");
   const [catalogs, setCatalogs] = useState<ToolCatalog[]>(data.toolCatalogs ?? []);
   const [toolError, setToolError] = useState("");
+  const [reviewPending, setReviewPending] = useState(false);
+  const [reviewUrl, setReviewUrl] = useState<string | null>(null);
+  const refreshRef = useRef(onRefresh);
+  refreshRef.current = onRefresh;
+  useEffect(() => {
+    if (!reviewPending) return;
+    let refreshing = false;
+    const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try { await refreshRef.current(); } finally { refreshing = false; }
+    };
+    window.addEventListener("focus", refresh);
+    const timer = setInterval(refresh, 3000);
+    const expiry = setTimeout(() => setReviewPending(false), 15 * 60_000);
+    return () => { window.removeEventListener("focus", refresh); clearInterval(timer); clearTimeout(expiry); };
+  }, [reviewPending, selectedId]);
   const [loading, setLoading] = useState(false);
   const { settings, discovery } = data;
   const providers = [...data.providers, { appId: "hosty:development", displayName: "Development & publications", running: true, url: null }];
   const refreshTools = async () => {
     setLoading(true); setToolError("");
-    try { const result = await (await call(`/settings/tools?sessionId=${encodeURIComponent(authoritySession)}`)).json() as { catalogs: ToolCatalog[]; unavailable?: string[] }; setCatalogs(result.catalogs); if (result.unavailable?.length) setToolError(`Tools unavailable for: ${result.unavailable.join(", ")}. Existing rules are preserved.`); await onSave({}, selectedId); }
+    try { const result = await (await call("/settings/tools")).json() as { catalogs: ToolCatalog[]; unavailable?: string[] }; setCatalogs(result.catalogs); if (result.unavailable?.length) setToolError(`Tools unavailable for: ${result.unavailable.join(", ")}. Existing rules are preserved.`); await onRefresh(); }
     catch (cause) { setToolError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setLoading(false); }
   };
@@ -55,8 +70,7 @@ export function McpAccess({ data, busy, error, status, feedbackAppId, onSave }: 
         <aside aria-label="MCP applications" className="flex min-w-0 flex-col gap-4 md:border-r md:pr-6">
           <div className="flex flex-col gap-1">
             <h2 className="text-base font-semibold">Applications</h2>
-            <p className="text-sm text-muted-foreground">Offers and instruction approvals are managed in Shell.</p>
-            {data.agentsSettingsUrl && <a className="text-sm underline" href={data.agentsSettingsUrl} target="_top">Open Settings → Agents</a>}
+            <p className="text-sm text-muted-foreground">Manage this assistant’s MCP access and tool approval rules.</p>
           </div>
           <InputGroup>
             <InputGroupInput
@@ -111,10 +125,8 @@ export function McpAccess({ data, busy, error, status, feedbackAppId, onSave }: 
                 </div>
               </header>
               <p className="text-sm text-muted-foreground">Choose how each tool runs for Claude and Codex. Run unprompted also applies to writes; Core permissions and repository checks still apply.</p>
-              <label>Session with Core-approved tool access <select aria-label="Tool discovery session" value={authoritySession} onChange={event => setAuthoritySession(event.target.value)}>
-                <option value="">Choose a session</option>{sessions.map(session => <option key={session.id} value={session.id}>{session.title || session.id}</option>)}
-              </select></label>
-              <Button variant="outline" disabled={loading || !authoritySession} onClick={() => void refreshTools()}>{loading ? "Loading tools…" : "Refresh tools"}</Button>
+
+              <Button variant="outline" disabled={loading} onClick={() => void refreshTools()}>{loading ? "Loading tools…" : "Refresh tools"}</Button>
               {toolError && <p role="alert" className="text-destructive">{toolError}</p>}
               {(() => {
                 const catalog = catalogs.find(c => c.provider === provider?.appId);
@@ -136,10 +148,25 @@ export function McpAccess({ data, busy, error, status, feedbackAppId, onSave }: 
               <Card className="gap-0 overflow-hidden py-0 shadow-none">
                 <CardHeader className="bg-muted/40 px-5 py-4">
                   <CardTitle>Application instructions</CardTitle>
-                  <CardDescription>Review and approve application instructions in Hosty Shell Settings → Agents.</CardDescription>
+                  <CardDescription>{data.instructions?.find(item => item.appId === selected.appId)?.approved
+                    ? "Current instructions approved in Core." : "Instructions require Core review before the assistant uses them."}</CardDescription>
+                  {data.instructions?.find(item => item.appId === selected.appId)?.markdown
+                    ? <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-sm">{data.instructions.find(item => item.appId === selected.appId)!.markdown}</pre>
+                    : <p className="text-sm text-muted-foreground">No readable application instructions.</p>}
                 </CardHeader>
               </Card>
-              <p role="status" className="text-sm text-muted-foreground">{feedbackAppId === selected.appId && busy ? "Saving…" : (feedbackAppId === selected.appId ? status : null) ?? "Access changes save automatically."}</p>
+              {selected.appId !== "hosty:development" && data.mcpReviewBaseUrl && <Button variant="outline" onClick={() => {
+                setReviewPending(true);
+                const url = `${data.mcpReviewBaseUrl}/${encodeURIComponent(selected.appId)}`;
+                setReviewUrl(window.parent === window ? url : null);
+                if (window.parent !== window) {
+                  window.parent.postMessage({ type: "hosty:request-mcp-review", targetAppId: selected.appId }, "*");
+                } else {
+                  window.open(url, "_blank", "noopener,noreferrer");
+                }
+              }}>Change access and review instructions</Button>}
+              {reviewPending && <p className="text-sm text-muted-foreground">Finish the review in Core. This page refreshes automatically. {reviewUrl && <a className="underline" href={reviewUrl} target="_blank" rel="noopener noreferrer">Open review</a>} <button className="underline" onClick={() => setReviewPending(false)}>Done</button></p>}
+              <p role="status" className="text-sm text-muted-foreground">{feedbackAppId === selected.appId && busy ? "Saving…" : (feedbackAppId === selected.appId ? status : null) ?? "Tool rules save automatically. Access changes require Core confirmation."}</p>
             </>
           ) : (
             <Empty><EmptyHeader>

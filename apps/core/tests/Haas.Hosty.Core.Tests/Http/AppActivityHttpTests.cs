@@ -82,8 +82,10 @@ public sealed class AppActivityHttpTests
         }
     }
 
-    [Fact]
-    public async Task SessionApprovalRequiresCoreBrowserForm_AndCannotBeWrittenThroughServiceApi()
+    [Theory]
+    [InlineData("approve")]
+    [InlineData("approve_session")]
+    public async Task SessionApprovalRequiresCoreBrowserForm_AndCannotBeWrittenThroughServiceApi(string choice)
     {
         await using var host = await CoreHttpHarness.StartAsync();
         using var service = await AppManagementHttpTests.CreateAppClient(host, "assistant", []);
@@ -100,13 +102,47 @@ public sealed class AppActivityHttpTests
         Assert.Contains("Allow for one hour", html);
         var nonce = System.Text.RegularExpressions.Regex.Match(html, "name=\"nonce\" value=\"([^\"]+)\"").Groups[1].Value;
         Assert.NotEmpty(nonce);
-        var form = new Dictionary<string, string> { ["nonce"] = nonce, ["decision"] = "approve" };
+        var form = new Dictionary<string, string> { ["nonce"] = nonce, ["decision"] = choice };
         Assert.Equal(HttpStatusCode.Forbidden, (await browser.PostAsync(path, new FormUrlEncodedContent(form))).StatusCode);
         browser.DefaultRequestHeaders.Add("Origin", "http://localhost:7070");
         (await browser.PostAsync(path, new FormUrlEncodedContent(form))).EnsureSuccessStatusCode();
         Assert.False((await browser.PostAsync(path, new FormUrlEncodedContent(form))).IsSuccessStatusCode);
         var token = service.DefaultRequestHeaders.GetValues(AppManagementAuthorization.IdentityHeader).Single();
         Assert.True((await host.Services.GetRequiredService<AssistantSessionAuthority>().StatusAsync("assistant", "session-one", token, default)).Active);
+    }
+
+    [Fact]
+    public async Task SessionDurationSurvivesOneHour_ButHonorsRevocationAndSignInExpiry()
+    {
+        var clock = new Clock();
+        await using var host = await CoreHttpHarness.StartAsync(clock);
+        using var client = await AppManagementHttpTests.CreateAppClient(host, "assistant", []);
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        await apps.UpsertAppAsync((await apps.GetAppAsync("assistant"))! with { ConfirmedRoles = ["assistant"],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["assistant"] = [new("default", null, "/assistant")] } });
+        var grant = await BrowserAuthorityFixture.Grant(host, "assistant", "actor");
+        var authority = host.Services.GetRequiredService<AssistantSessionAuthority>();
+        var hash = AppIdentityService.HashToken(grant.AccessToken);
+        async Task Decide(string choice)
+        {
+            var nonce = await authority.CreateDecisionAsync("assistant", "chat", "actor", "browser-session", default);
+            await authority.DecideAsync(nonce, "assistant", "chat", "actor", "browser-session", choice, default);
+        }
+        await Decide("approve_session");
+        var users = host.Services.GetRequiredService<UserDirectoryStore>();
+        var browser = (await users.ReadAsync()).Sessions.Single(s => s.Id == "browser-session");
+        Assert.Equal(browser.ExpiresAt, (await authority.RequireAsync("assistant", "chat", hash, default)).ActiveUntil);
+        clock.UtcNow = clock.UtcNow.AddMinutes(61);
+        await users.UpdateAsync(state => state with { Sessions = state.Sessions.Select(s => s.Id == browser.Id ? s with { LastSeenAt = clock.UtcNow } : s).ToArray() });
+        Assert.Equal("session", (await authority.StatusAsync("assistant", "chat", grant.AccessToken, default)).Duration);
+        await Decide("revoke");
+        await Assert.ThrowsAsync<AppIdentityException>(() => authority.RequireAsync("assistant", "chat", hash, default));
+        await Decide("approve_session");
+        await users.UpdateAsync(state => state with { Sessions = state.Sessions.Select(s => s.Id == browser.Id ? s with { RevokedAt = clock.UtcNow } : s).ToArray() });
+        await Assert.ThrowsAsync<AppIdentityException>(() => authority.RequireAsync("assistant", "chat", hash, default));
+        await users.UpdateAsync(state => state with { Sessions = state.Sessions.Select(s => s.Id == browser.Id ? s with { RevokedAt = null } : s).ToArray() });
+        clock.UtcNow = browser.ExpiresAt;
+        await Assert.ThrowsAsync<AppIdentityException>(() => authority.RequireAsync("assistant", "chat", hash, default));
     }
 
     [Fact]

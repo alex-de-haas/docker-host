@@ -3,11 +3,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { GatewaySettings } from "./gateway-settings";
-import { approveSkill, loadSettings, saveSettings, type SettingsResponse } from "../lib/api";
+import { approveSkill, call, loadSettings, saveSettings, type SettingsResponse } from "../lib/api";
 
 vi.mock("../lib/api", async original => ({
   ...await original<typeof import("../lib/api")>(),
-  approveSkill: vi.fn(), loadSettings: vi.fn(), saveSettings: vi.fn(),
+  approveSkill: vi.fn(), call: vi.fn(), loadSettings: vi.fn(), saveSettings: vi.fn(),
 }));
 vi.mock("./agent-providers", () => ({ AgentProviders: () => null }));
 
@@ -24,6 +24,8 @@ beforeEach(() => {
       { appId: "media", displayName: "Media Server", url: null, running: false },
     ],
     discovery: "ok",
+    mcpReviewBaseUrl: "https://core.test/install/agents/hosty.harness",
+    instructions: [{ appId: "projects", markdown: "Complete updated instructions", approved: false }],
     agentConnections: true,
     harness: { name: "Claude", capabilities: { autoAllow: true, liveReconfigure: true } },
     pendingSkills: [{ appId: "projects", displayName: "Project Manager", markdown: "Complete updated instructions", approvedDigest: "old" }],
@@ -57,7 +59,7 @@ it("selects and searches applications without changing access or showing another
   await render();
   expect(details().querySelector("h2")?.textContent).toBe("Hosty Core");
   await select("Project Manager");
-  expect(details().textContent).toContain("Review and approve application instructions in Hosty Shell");
+  expect(details().textContent).toContain("Complete updated instructions");
   await select("Media Server");
   expect(details().textContent).not.toContain("Complete updated instructions");
   expect(details().textContent).toContain("Refresh tools to load the available actions.");
@@ -71,14 +73,20 @@ it("selects and searches applications without changing access or showing another
   expect(approveSkill).not.toHaveBeenCalled();
 });
 
-it("shows Core offers and a Shell link without local policy mutation controls", async () => {
-  data.agentsSettingsUrl = "https://shell.test/settings?tab=agents";
+it("opens Core review from Harness without a Shell redirect or silent policy mutation", async () => {
+  const open = vi.spyOn(window, "open").mockReturnValue(null);
   await render();
   await select("Project Manager");
   expect(details().textContent).toContain("Core permissions and repository checks still apply.");
   expect(details().querySelector('[role="switch"]')).toBeNull();
-  expect(details().querySelector("pre")).toBeNull();
-  expect(container.querySelector<HTMLAnchorElement>('a[target="_top"]')?.href).toBe(data.agentsSettingsUrl);
+  expect(details().querySelector("pre")?.textContent).toBe("Complete updated instructions");
+  const review = [...details().querySelectorAll("button")].find(button => button.textContent === "Change access and review instructions")!;
+  await act(async () => review.click());
+  expect(open).toHaveBeenCalledWith("https://core.test/install/agents/hosty.harness/projects", "_blank", "noopener,noreferrer");
+  expect(details().querySelector<HTMLAnchorElement>("a")?.href).toBe("https://core.test/install/agents/hosty.harness/projects");
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  expect(loadSettings).toHaveBeenCalledTimes(2);
+  expect(container.querySelector('a[target="_top"]')).toBeNull();
   expect(approveSkill).not.toHaveBeenCalled();
   expect(saveSettings).not.toHaveBeenCalled();
 });
@@ -98,4 +106,26 @@ it("offers shared write approval controls even when the native adapter has no au
   const select = details().querySelector<HTMLSelectElement>('[aria-label="Approval for merge"]')!;
   expect(select.disabled).toBe(false);
   expect([...select.options].map(o => o.text)).toEqual(["Ask", "Run unprompted", "Disabled"]);
+});
+
+it("loads tools without selecting or creating a chat", async () => {
+  vi.mocked(call).mockResolvedValue(Response.json({ catalogs: [{ provider: "hosty:core", identity: "core", tools: [{ name: "list_apps" }] }] }));
+  await render();
+  expect(container.querySelector('[aria-label="Tool discovery session"]')).toBeNull();
+  const refresh = [...details().querySelectorAll("button")].find(button => button.textContent === "Refresh tools")!;
+  await act(async () => refresh.click());
+  expect(call).toHaveBeenCalledWith("/settings/tools");
+  expect(details().querySelector('[aria-label="Approval for list_apps"]')).not.toBeNull();
+  expect(saveSettings).not.toHaveBeenCalled();
+});
+
+it("asks the embedder to open review without supplying an assistant identity", async () => {
+  const postMessage = vi.fn();
+  vi.stubGlobal("parent", { postMessage });
+  await render();
+  await select("Project Manager");
+  const review = [...details().querySelectorAll("button")].find(button => button.textContent === "Change access and review instructions")!;
+  await act(async () => review.click());
+  expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: "hosty:request-mcp-review", targetAppId: "projects" }, "*");
+  expect(saveSettings).not.toHaveBeenCalled();
 });

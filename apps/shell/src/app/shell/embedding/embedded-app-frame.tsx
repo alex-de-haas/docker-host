@@ -1,5 +1,6 @@
 "use client";
 
+import { mcpReviewRequest } from "./mcp-review";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ExternalLink, ShieldAlert } from "lucide-react";
 import { ASK_ASSISTANT_TYPE, DELEGATED_TOKEN_TYPE } from "@hosty-sdk/app";
@@ -111,8 +112,9 @@ export function EmbeddedAppFrame({
     const review = (event: MessageEvent) => {
       const trustedApp = parseActiveFramePermissionReview(event, iframeRef.current?.contentWindow, src, appId);
       const assistant = parseActiveFrameAssistantReview(event, iframeRef.current?.contentWindow, src, appId);
-      if (!trustedApp && !assistant) return;
-      const url = assistant ? new URL(`/activity/assistants/${encodeURIComponent(assistant.appId)}/${encodeURIComponent(assistant.sessionId)}`, coreOrigin).href : permissionReviewUrl(coreOrigin, trustedApp!);
+      const mcp = mcpReviewRequest(event, iframeRef.current?.contentWindow, src, appId);
+      if (!trustedApp && !assistant && !mcp) return;
+      const url = mcp ? new URL(`/install/agents/${encodeURIComponent(mcp.appId)}/${encodeURIComponent(mcp.targetAppId)}`, coreOrigin).href : assistant ? new URL(`/activity/assistants/${encodeURIComponent(assistant.appId)}/${encodeURIComponent(assistant.sessionId)}`, coreOrigin).href : permissionReviewUrl(coreOrigin, trustedApp!);
       // Some browsers do not carry user activation across postMessage; keep a clickable fallback.
       setReviewUrl(url);
       window.open(url, "_blank", "noopener,noreferrer");
@@ -265,7 +267,7 @@ export function EmbeddedAppFrame({
 
   return (
     <>
-    {reviewUrl && <a className="absolute right-4 top-4 z-50 rounded border bg-background p-3 text-sm underline" href={reviewUrl} target="_blank" rel="noopener noreferrer">Review this app’s permissions in Core</a>}
+    {reviewUrl && <a className="absolute right-4 top-4 z-50 rounded border bg-background p-3 text-sm underline" href={reviewUrl} target="_blank" rel="noopener noreferrer">Review access in Core</a>}
     <iframe
       ref={iframeRef}
       key={documentKey}

@@ -492,12 +492,12 @@ internal static class CoreIngressSettings
             + "are mutually exclusive: 'Cloudflare' manages a remotely managed tunnel over the API, so you "
             + "publish one endpoint at a time under a label you choose; 'Cloudflare Tunnel (local config)' "
             + "writes a config file for a locally managed tunnel you run yourself and derives a hostname for "
-            + "every running app; 'Disabled' leaves exposure to you and you set each app's public origin by "
-            + "hand. Hosty never creates a tunnel or runs a connector. "
+            + "every running app; 'Local' provides named localhost browser addresses automatically. You can also set a manual origin for "
+            + "your own proxy. Hosty never creates a tunnel or runs a connector. "
             + "See docs/features/cloudflare-ingress/feature.md.",
             "select",
             [
-                new(IngressSettings.ProviderNone, "Disabled"),
+                new(IngressSettings.ProviderNone, "Local"),
                 new(IngressSettings.ProviderCloudflareRemote, "Cloudflare"),
                 new(IngressSettings.ProviderCloudflared, "Cloudflare Tunnel (local config)"),
             ],
@@ -745,6 +745,13 @@ internal sealed class CoreSettingsService
     // "null to clear" contract. Unknown keys or invalid values throw AppLifecycleException (surfaced as
     // 400). Auth keys carry a number of hours; ingress keys carry their string value.
     public async Task UpdateAsync(IReadOnlyDictionary<string, string?> input, CancellationToken cancellationToken = default)
+    {
+        if (apps is not null) await apps.BrowserOriginGate.WaitAsync(cancellationToken);
+        try { await UpdateCoreAsync(input, cancellationToken); }
+        finally { apps?.BrowserOriginGate.Release(); }
+    }
+
+    private async Task UpdateCoreAsync(IReadOnlyDictionary<string, string?> input, CancellationToken cancellationToken)
     {
         if (apps is not null && config is not null && input.TryGetValue(CoreOriginSettings.PublicOriginKey, out var requested))
         {

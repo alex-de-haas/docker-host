@@ -76,6 +76,19 @@ export class TokenExchange {
     }
   }
 
+  /** Read a catalog through Core without creating a conversation or receiving an MCP token. */
+  async catalog(presented: string, targetAppId: string): Promise<import("./upstream.js").UpstreamTool[]> {
+    if (!this.coreOrigin || !this.serviceToken) throw new Error("Core discovery is unavailable.");
+    const response = await fetch(`${this.coreOrigin}/api/internal/apps/${encodeURIComponent(this.appId)}/mcp/catalog/${encodeURIComponent(targetAppId)}`, {
+      method: "POST", headers: { authorization: `Bearer ${this.serviceToken}`, "X-Hosty-User-Token": presented },
+      signal: AbortSignal.timeout(25_000), redirect: "error",
+    });
+    if (!response.ok) throw new Error("Core could not load this tool catalog.");
+    const result = await response.json() as { tools?: import("./upstream.js").UpstreamTool[] };
+    if (!Array.isArray(result.tools)) throw new Error("Core returned an invalid tool catalog.");
+    return result.tools;
+  }
+
   /** Revalidates the app session, or renews a same-audience legacy credential within its lifetime cap. */
   async refreshSelf(presented: string): Promise<IssuedToken | null> {
     if (!presented.startsWith("hostyg_")) return this.exchange(presented, this.appId);

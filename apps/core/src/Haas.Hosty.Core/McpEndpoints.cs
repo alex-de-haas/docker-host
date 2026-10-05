@@ -68,6 +68,9 @@ internal static class McpEndpoints
                         try
                         {
                             using var body = await System.Text.Json.JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
+                            if (actor.DiscoveryOnly && (!body.RootElement.TryGetProperty("method", out var discoveryMethod)
+                                || discoveryMethod.GetString() is not ("initialize" or "notifications/initialized" or "tools/list" or "ping")))
+                                return CoreJson.Json(new ErrorResponse("mcp_discovery_only", "This credential can only read the tool catalog."), 403);
                             if (body.RootElement.TryGetProperty("method", out var method) && method.GetString() == "tools/call")
                             {
                                 var name = body.RootElement.GetProperty("params").GetProperty("name").GetString();

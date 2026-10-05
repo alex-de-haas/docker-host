@@ -1,7 +1,7 @@
 # Core App Shell
 
 Created: 2026-05-19
-Updated: 2026-10-04
+Updated: 2026-10-05
 
 Hosty Shell is the Core-managed browser UI runtime app. It renders a single authenticated Shell surface backed by Hosty Core APIs; it does not own Core lifecycle logic and it does not reintroduce the retired combined Next.js Host package.
 
@@ -113,12 +113,12 @@ Below 1240 px of dashboard workspace width, the header actions collapse into an 
 ellipsis menu at the same breakpoint as the row shortcuts. The menu contains Install app,
 Check updates (disabled while a check is running), and Update all when routine updates are available.
 Checking updates keeps the menu open so its progress indicator remains visible.
-Every update requested by Shell, including a routine update without new grants, goes through
-Core's installation confirmation flow. Update all reuses one popup for sequential confirmations,
-with Shell itself last. Denial leaves the app unchanged; success is reported only after Core
-finishes applying the update. During a Shell self-update, interrupted status reads are retried
-within the confirmation deadline without repeating the mutation, and the page reloads only after
-Core reports success and the new Shell origin responds.
+Routine updates use Core's queued update endpoint without a confirmation popup. Update all
+submits only routine plans and queues Shell itself last. New permissions, provider roles and
+other review-required manifest changes still open Core confirmation through the plan view.
+Core validates the cached plan, current permissions and installed base; stale plans do not apply.
+During a Shell self-update, the page waits for Core's operation to settle and the new Shell origin
+to respond before reloading. Interrupted reads are retried without repeating the mutation.
 At wider widths, the existing icon buttons remain visible. Opening the assistant panel or resizing
 it changes this layout based on the remaining workspace width, not the browser viewport.
 
@@ -243,15 +243,24 @@ streaming responses remain tied to that signal after headers arrive. A proxy dea
 `core_request_timeout` (504), with guidance to check current state before retrying. Shell never
 replays a mutation automatically.
 
+## Assistant MCP Review
+
+Harness configures its own MCP target access, instructions and tool rules in its settings. Shell's
+Agents settings remain a fleet-wide administrative view. Embedded Harness can send
+`hosty:request-mcp-review` with a target ID; Shell validates the sending frame and origin and derives
+the assistant ID from that mounted frame. It opens Core's isolated review page and exposes a fallback
+link if a popup is blocked. Message-supplied assistant IDs and URLs are not trusted.
+
 ## Testing Expectations
 
-Shell has no browser or component-rendering harness: `npm test --workspace @haas/hosty-shell` runs
-`node --test` over `apps/shell/test/*.test.mjs`, which import the TypeScript modules directly. Coverage
-therefore depends on decision logic living in a pure module rather than inside JSX, and that is the
-requirement rather than an accident of the current layout — any rule that decides **what Shell sends to
-Core** or **what a field shows** belongs in such a module, with tests, not in a component body.
+`npm test --workspace @haas/hosty-shell` runs `node --test` over the pure TypeScript decision
+modules and Vitest for component and embedding behavior. Keep payload and access decisions in
+separately testable modules; component tests cover their UI wiring.
 
 Required coverage:
+
+- Embedded MCP review accepts only the mounted frame and exact origin, derives the assistant identity
+  locally and ignores forged assistant IDs or review URLs;
 
 - `settings-draft.ts` — the draft's untouched/cleared split, the configure payload it produces, and a
   secret field's display value and placeholder across the reveal-and-delete sequence;
@@ -264,9 +273,8 @@ Required coverage:
   accept/reject rules and the insecure-embed guard;
 - `ingress.ts` — public-origin and ingress-provider resolution.
 
-What the harness cannot reach — JSX wiring, event handling, and anything requiring a live Core session —
-is verified by `npx tsc --noEmit`, `npx eslint`, `npm run build`, and manual checks against a running
-Shell.
+Build and lint checks complement these suites. Behavior requiring a live Core browser session is
+verified against a Core-managed Shell rather than a standalone app without Hosty identity.
 
 - Icon coverage includes manifest-declared names without catalog metadata for both live and compiled
   runtimes, unknown names, image priority, and recovery after a failed URL changes.

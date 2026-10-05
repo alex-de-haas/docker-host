@@ -1,7 +1,7 @@
 # Local Browser Origins
 
 Created: 2026-09-30
-Updated: 2026-10-02
+Updated: 2026-10-05
 
 Core derives browser addresses for plain HTTP loopback endpoints without storing a public-origin
 setting or provisioning DNS. The default instance uses `core.hosty.localhost:<port>` for Core.
@@ -16,6 +16,13 @@ as `-u`, then split into 50-character chunks wrapped in `a` and `z` to keep ever
 For example, `hosty.shell` uses `ahosty-dshellz.hosty.localhost`. Distinct accepted app IDs retain
 distinct names; display names do not participate. Core's `core` label is reserved.
 
+A managed `HOSTY_LOCAL_NAME_<ENDPOINT>` label replaces the generated app hostname for that endpoint
+beneath the same instance suffix; its port is always derived from the endpoint's current transport.
+The Local provider editor stores this label and supports reset to the generated name. Core reserves
+local names across apps, even when hidden behind an external origin. Core and generated labels are
+reserved, and private endpoints cannot receive local labels. Renaming is an explicit operator action;
+upgrades preserve existing generated names and manual full origins.
+
 A valid explicit app `HOSTY_PUBLIC_ORIGIN_<ENDPOINT>` takes precedence. Clearing it restores the
 local default. Core resolves the persisted setting, environment baseline, then listen address,
 and canonicalizes plain HTTP `localhost`, `127.0.0.1` and `::1` to its separate browser hostname.
@@ -26,7 +33,9 @@ Endpoint summaries expose `browserOrigin` separately from transport `url` and ex
 `HOSTY_PUBLIC_ORIGIN_*` environment use the browser projection. Container-to-Core transport still
 uses `host.docker.internal`; local processes, readiness probes, port assignment and CLI control keep
 their existing direct transport. Generated origins are absent from publication settings and ingress
-publication state. Ingress `none` still accepts a full custom origin; it provisions no DNS or proxy.
+publication state. Ingress Local (wire value `none`) provides the local name editor and an advanced full-origin option;
+it provisions no DNS or proxy. Endpoint summaries additionally carry `localOrigin`, `localName`,
+`localSuffix` and `localDefaultOrigin` for an editor that does not guess the assigned port or namespace.
 
 App origin edits reject the Core hostname and another app's effective or reserved generated name.
 Core origin edits reject a hostname used by a registered public app endpoint. Confirmation also

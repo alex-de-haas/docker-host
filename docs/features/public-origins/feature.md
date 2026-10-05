@@ -1,7 +1,7 @@
 # Feature: Public Origins
 
 Created: 2026-08-10
-Updated: 2026-09-30
+Updated: 2026-10-05
 
 A public origin is an explicit HTTP or HTTPS address one app endpoint answers on. It is a durable property of
 the endpoint, not of the process behind it: Core reserves the endpoint's local port at install, so the
@@ -12,10 +12,27 @@ Three ingress providers implement it, and exactly one owns a given endpoint's or
 full). What this document describes is what they have in common: one control that sets an origin, one
 owner that decides who may, and one reconcile that materializes it whoever moved the underlying port.
 
-Automatic [local browser origins](../local-browser-origins/feature.md) are separate from publication.
-An unset public origin uses the generated `.localhost` browser address. Under `none`, a full custom
-origin can also name a local subdomain with its endpoint port; saving it creates no DNS record or
-proxy. Clearing it returns to the generated address. Origin validation rejects Core/app host collisions.
+Local is the default address provider (the stored provider value remains `none` for compatibility).
+Every public HTTP loopback endpoint has a generated browser address without manual configuration.
+Its editor accepts a local DNS label and previews the full address using Core's instance suffix and
+assigned endpoint port. The operator does not enter or maintain that port. `HOSTY_LOCAL_NAME_<KEY>`
+stores the optional label separately from the full `HOSTY_PUBLIC_ORIGIN_<KEY>` override. Local names
+survive updates and runtime changes; clearing a label restores the generated default.
+
+The Dashboard shows **Service address** from transport `url` on the left and **Browser address**
+from effective `browserOrigin` on the right, including the local default. Local addresses are marked
+as usable on this computer only. Private endpoints keep only their technical service address.
+An advanced custom-proxy option preserves a manually supplied full origin exactly. Existing manual
+origins are not converted or assigned a different port on upgrade. A configured external origin
+wins; clearing it restores the saved local label or generated default. These browser names do not
+create DNS records, proxies, LAN listeners or firewall rules.
+
+Local-label changes use the app configure permission and current administrator identity. Core
+serializes operator origin edits across apps and Core, checks the displayed-address precondition,
+and rejects invalid labels, Core names and another app's effective or reserved local name, including
+its fallback behind an external origin. Generated `a…z` labels are reserved. Multiple endpoints of
+the same app may share a hostname. A changed runtime environment uses the existing restart-required
+behavior; cookies do not move between renamed hosts.
 
 ## One control
 
@@ -28,7 +45,7 @@ is made of, and what applying it does:
 
 | Provider | Input | Applying it |
 | --- | --- | --- |
-| `none` | a full URL | writes `HOSTY_PUBLIC_ORIGIN_<KEY>`; instantly reversible |
+| Local (`none`) | a local name; full URL in advanced mode | stores `HOSTY_LOCAL_NAME_<KEY>` or an explicit `HOSTY_PUBLIC_ORIGIN_<KEY>` |
 | `cloudflared` | the app's subdomain | writes `HOSTY_INGRESS_SUBDOMAIN`; Core renders it into `config.yml` on the next reconcile |
 | `cloudflare-remote` | a subdomain label | creates a proxied CNAME and a tunnel route; clearing it **deletes a DNS record** |
 
@@ -142,6 +159,12 @@ origin is operator-owned, it publishes one host-admin notification naming the ol
 and saying to update the upstream. A standing "broken" badge would claim knowledge Core does not have.
 
 ## Testing Expectations
+
+- Local editor sends only a label and reviewed-address precondition; preview uses Core’s suffix and port.
+- Rename/reset, port reassignment, concurrent reservation, reserved names, private endpoints and
+  external-to-local fallback preserve the transport and manual-origin contracts.
+- Core-managed browser acceptance covers rename, restart, normal Core sign-in on the new name,
+  standalone and embedded app access, and the Dashboard copy/open destination.
 
 - The local provider routes an installed app whatever its runtime state, skips an endpoint with no
   resolved URL, and renders byte-identical config across a start/stop of the same app

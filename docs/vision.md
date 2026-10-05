@@ -1,7 +1,7 @@
 # Hosty Platform Vision
 
 Created: 2026-08-19
-Updated: 2026-09-29
+Updated: 2026-10-05
 
 The umbrella document: where Hosty is going, so individual decisions have a criterion to be judged
 against. It authorizes no implementation and owns no deliverables — work it names is tracked in the
@@ -267,6 +267,23 @@ Decisions 1–5: 2026-08-19.
     route, retry and cleanup design to the agent; the
     [Harness/interface plan](features/hosty-harness-rename/feature.md) records those details and owns
     implementation. This direction does not authorize live uninstallation.
+
+19. **Usable delegated work and continuous embedded sign-in (2026-10-05).** The owner prioritizes
+    usability and deliberate operator choices over repeated confirmation. Opening an app, assistant
+    panel or embedded settings within an authenticated Shell must not routinely require another
+    sign-in click. Keep app permissions and Core-owned identity, but provide session continuity.
+    For assistant work, offer an explicitly selected autonomous session mode that includes native
+    terminal/file operations as well as MCP; permitting all MCP tools alone does not satisfy this
+    goal. Repeated approval cards for ordinary investigation defeat delegation and encourage blind
+    approval. An operator who deliberately installs software or grants broad execution authority
+    accepts responsibility for that choice. Do not describe broad native command access as an
+    enforced workspace sandbox. This direction supersedes the product expectation that every native
+    write must ask, but does not silently change current grants or authorize an agent to choose its
+    own autonomy mode. The [session autonomy feature](features/assistant-session-autonomy/feature.md)
+    implements the approved native approval control. The
+    [embedded sign-in plan](features/auth-session-lifecycle/plan.md) remains Draft: Core must exchange
+    target credentials directly with the target app, without giving them to Shell. Additional native
+    isolation and prefix rules remain in the [approval rules plan](features/assistant-approval-rules/plan.md).
 
 ## Expectations And Later Directions
 

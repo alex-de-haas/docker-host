@@ -96,6 +96,7 @@ export type HarnessEvent =
   | { type: "error"; message: string };
 
 export interface HarnessStartOptions {
+  autonomy?: "normal" | "autonomous";
   sessionId: string;
   cwd: string;
   /** Operator-authored instructions, appended to the harness's own sources — never replacing them. */

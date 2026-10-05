@@ -6,8 +6,8 @@ namespace Haas.Hosty.Core;
 
 internal sealed record AssistantMcpTokenRequest(string TargetAppId, string? SessionId = null);
 internal sealed record AssistantMcpClaims(string Caller, string Audience, string UserId, string GrantHash,
-    DateTimeOffset CallerInstallation, DateTimeOffset? TargetInstallation, string GrantRevision, long Expires, string? SessionId = null, string? LeaseRevision = null);
-internal sealed record AssistantMcpActor(string UserId, string Role, AppRecord Caller);
+    DateTimeOffset CallerInstallation, DateTimeOffset? TargetInstallation, string GrantRevision, long Expires, string? SessionId = null, string? LeaseRevision = null, bool DiscoveryOnly = false);
+internal sealed record AssistantMcpActor(string UserId, string Role, AppRecord Caller, bool DiscoveryOnly = false);
 
 // A separate signed format is never accepted by session, delegated-token or app API validators.
 // Receiving MCP handlers introspect every call, so policy and parent-session revocation apply online.
@@ -42,13 +42,16 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
     }
 
     internal async Task<DelegatedTokenResponse> IssueAsync(string callerId, string targetId, string? serviceToken,
-        string userToken, CancellationToken ct, string? sessionId = null)
+        string userToken, CancellationToken ct, string? sessionId = null, bool discoveryOnly = false)
     {
         if (!services.ValidateToken(callerId, serviceToken ?? ""))
             throw new AppIdentityException("token_invalid", "The assistant's service token is required.");
-        if (string.IsNullOrWhiteSpace(sessionId)) throw new AppIdentityException("reauth_required", "A Core-approved assistant session is required.");
-        var lease = await authority.RequireAsync(callerId, sessionId, AppIdentityService.HashToken(userToken), ct);
-        var actor = await identity.RevalidateAsync(userToken, callerId, ct);
+        if (!discoveryOnly && string.IsNullOrWhiteSpace(sessionId)) throw new AppIdentityException("reauth_required", "A Core-approved assistant session is required.");
+        var lease = discoveryOnly ? null : await authority.RequireAsync(callerId, sessionId!, AppIdentityService.HashToken(userToken), ct);
+        var actor = discoveryOnly ? await identity.RequireActivityAsync(userToken, callerId, ct)
+            : await identity.RevalidateAsync(userToken, callerId, ct);
+        if (discoveryOnly && actor.HostRole != "host.admin")
+            throw new AppIdentityException("admin_required", "Catalog settings require an administrator.");
         var link = await RequireLinkAsync(callerId, targetId, ct);
         var grantHash = AppIdentityService.HashToken(userToken);
         var parent = await grants.TryResolveAsync(grantHash, ct);
@@ -56,9 +59,10 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
             throw new AppIdentityException("token_invalid", "Sign in again after reinstalling the assistant.");
         await RequireTargetUserAsync(targetId, actor, ct);
         var expires = clock.UtcNow.AddMinutes(5);
-        if (lease.ActiveUntil < expires) expires = lease.ActiveUntil;
+        if (lease is not null && lease.ActiveUntil < expires) expires = lease.ActiveUntil;
+        if (discoveryOnly) expires = clock.UtcNow.AddSeconds(30);
         var claims = new AssistantMcpClaims(callerId, targetId, actor.UserId, grantHash,
-            link.Caller.InstalledAt, link.Target?.InstalledAt, link.Grant.Revision, expires.ToUnixTimeSeconds(), sessionId, lease.Revision);
+            link.Caller.InstalledAt, link.Target?.InstalledAt, link.Grant.Revision, expires.ToUnixTimeSeconds(), sessionId, lease?.Revision, discoveryOnly);
         var data = Prefix + Encode(JsonSerializer.SerializeToUtf8Bytes(claims, CoreJson.TypeInfo<AssistantMcpClaims>()));
         await audit.AppendAsync(new AuditRecord($"audit_{Guid.NewGuid():N}", "auth.assistant-mcp.issue", "app", targetId,
             "succeeded", actor.UserId, clock.UtcNow, new Dictionary<string, string> { ["callerAppId"] = callerId }), ct);
@@ -77,13 +81,21 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
             var link = await RequireLinkAsync(claims.Caller, audience, ct);
             if (link.Caller.InstalledAt != claims.CallerInstallation || link.Target?.InstalledAt != claims.TargetInstallation
                 || link.Grant.Revision != claims.GrantRevision) return null;
-            if (claims.SessionId is null) return null;
-            var lease = await authority.RequireAsync(claims.Caller, claims.SessionId, claims.GrantHash, ct);
-            if (lease.Revision != claims.LeaseRevision) return null;
+            if (claims.DiscoveryOnly)
+            {
+                var active = await identity.RequireActivityHashAsync(claims.GrantHash, claims.Caller, ct);
+                if (active.HostRole != "host.admin") return null;
+            }
+            else
+            {
+                if (claims.SessionId is null) return null;
+                var lease = await authority.RequireAsync(claims.Caller, claims.SessionId, claims.GrantHash, ct);
+                if (lease.Revision != claims.LeaseRevision) return null;
+            }
             var actor = await identity.RevalidateHashAsync(claims.GrantHash, claims.Caller, ct);
             if (actor.UserId != claims.UserId) return null;
             await RequireTargetUserAsync(audience, actor, ct);
-            return new(actor.UserId, actor.HostRole ?? "", link.Caller);
+            return new(actor.UserId, actor.HostRole ?? "", link.Caller, claims.DiscoveryOnly);
         }
         catch (Exception ex) when (ex is FormatException or JsonException or CryptographicException or ArgumentException or AppIdentityException)
         { return null; }

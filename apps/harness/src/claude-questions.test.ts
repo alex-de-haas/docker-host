@@ -20,7 +20,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 }));
 
 /** Starts a run and hands back the canUseTool the adapter registered with the SDK. */
-async function startRun(): Promise<{
+async function startRun(autonomy: "normal" | "autonomous" = "normal", resumeHarnessSessionId?: string): Promise<{
   canUseTool: (tool: string, input: Record<string, unknown>) => Promise<unknown>;
   events: HarnessEvent[];
   run: import("./harness/adapter.js").HarnessRun;
@@ -40,6 +40,7 @@ async function startRun(): Promise<{
   const { ClaudeHarnessAdapter } = await import("./harness/claude.js");
   const run = new ClaudeHarnessAdapter().start({
     sessionId: "s1",
+    autonomy, resumeHarnessSessionId,
     cwd: "/tmp",
     onEvent: (event) => events.push(event),
   });
@@ -130,4 +131,19 @@ describe("claude adapter questions", () => {
     expect(events.some((event) => event.type === "approval_request")).toBe(true);
     expect(events.some((event) => event.type === "question_request")).toBe(false);
   });
+});
+
+it("applies Autonomous to the SDK and restores Normal on resume", async () => {
+  const autonomous = await startRun("autonomous", "native-thread");
+  expect(queryMock.mock.calls.at(-1)?.[0].options).toMatchObject({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, resume: "native-thread" });
+  await expect(autonomous.canUseTool("Bash", { command: "fixture" })).resolves.toMatchObject({ behavior: "allow" });
+  expect(autonomous.events.some(e => e.type === "approval_request")).toBe(false);
+  await autonomous.run.stop();
+  const normal = await startRun("normal", "native-thread");
+  expect(queryMock.mock.calls.at(-1)?.[0].options).toMatchObject({ permissionMode: "default", allowDangerouslySkipPermissions: false });
+  const pending = normal.canUseTool("Bash", { command: "fixture" });
+  const approval = normal.events.find(e => e.type === "approval_request");
+  expect(approval?.type).toBe("approval_request");
+  await normal.run.stop();
+  await expect(pending).resolves.toMatchObject({ behavior: "deny" });
 });

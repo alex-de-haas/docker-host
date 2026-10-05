@@ -1,10 +1,8 @@
 // Reading the agent skills of the apps an operator has enabled, and folding them into one session's
 // instructions.
 //
-// The gate is not here. A skill follows its app's MCP provider toggle — enabling a provider already
-// accepts that this app's text enters the model's context, because a tool arrives with its
-// description and there is no version of it that does not. A second switch would ask the operator
-// the same question twice.
+// Core independently approves each instruction digest. Offering tools alone does not approve the
+// app's instructions; only current text matching the reviewed digest enters a conversation.
 //
 // What *is* here is attribution. App-authored prose reaching a model without saying whose it is, and
 // without a boundary the model can see, is how an app's instructions get mistaken for the operator's.
@@ -44,7 +42,7 @@ export async function readAppSkill(
     `/agent-skills/${encodeURIComponent(targetAppId)}`;
 
   try {
-    const response = await fetch(url, { headers: { authorization: `Bearer ${serviceToken}` } });
+    const response = await fetch(url, { headers: { authorization: `Bearer ${serviceToken}` }, signal: AbortSignal.timeout(3_000) });
     if (!response.ok) {
       return null;
     }

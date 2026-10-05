@@ -48,6 +48,11 @@ export function GatewaySettings({
       );
   }, []);
 
+  const refresh = useCallback(async () => {
+    try { setData(await loadSettings()); setError(null); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Could not refresh MCP access."); }
+  }, []);
+
   const save = useCallback(async (patch: Partial<Settings>, appId: string | null = null) => {
     setFeedbackAppId(appId);
     setBusy(true);
@@ -176,6 +181,7 @@ export function GatewaySettings({
           className="grid gap-7 data-[state=inactive]:hidden"
         >
           <McpAccess
+            onRefresh={refresh}
             data={data}
             busy={busy}
             error={error}

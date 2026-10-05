@@ -16,8 +16,8 @@ import type {
 // binary; auth comes from the gateway environment (ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN /
 // provider env) — the SDK does not use an interactive `claude login` state.
 //
-// permissionMode stays "default" with every write routed through canUseTool: v1 approval policy is
-// "every write asks", with no exceptions (plan decision) — never widen this to bypassPermissions.
+// Normal preserves native approval prompts. Autonomous is an explicit operator choice for this
+// conversation, with host-process access; Hosty MCP still passes through the separate policy broker.
 
 const AUTH_ENV_KEYS = [
   "ANTHROPIC_API_KEY",
@@ -213,7 +213,8 @@ class ClaudeRun implements HarnessRun {
         options: {
           cwd: this.options.cwd,
           resume: this.options.resumeHarnessSessionId,
-          permissionMode: "default",
+          permissionMode: this.options.autonomy === "autonomous" ? "bypassPermissions" : "default",
+          allowDangerouslySkipPermissions: this.options.autonomy === "autonomous",
           includePartialMessages: true,
           // The preset is named explicitly rather than left to the SDK default, because the operator
           // profile is defined as behaving like the admin running Claude Code by hand — that is the
@@ -274,7 +275,7 @@ class ClaudeRun implements HarnessRun {
     // KNOWS what those tools are; an app tool reaches the branch below only when the operator has
     // said they trust that app's own `readOnlyHint` declarations. Collapsing the two would quietly
     // turn "we verified this" into "someone told us".
-    if (AUTO_ALLOWED_TOOLS.has(toolName) || this.options.isAutoAllowed?.(toolName) === true) {
+    if (this.options.autonomy === "autonomous" || AUTO_ALLOWED_TOOLS.has(toolName) || this.options.isAutoAllowed?.(toolName) === true) {
       return Promise.resolve({ behavior: "allow", updatedInput: input });
     }
 

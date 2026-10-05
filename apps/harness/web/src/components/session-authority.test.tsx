@@ -23,3 +23,20 @@ it("opens the Core session review on a click and refreshes authority without rep
     expect(node.querySelector("textarea")).toBe(draft); expect(draft?.value).toBe("Unsaved message");
   } finally { await act(async()=>root.unmount()); node.remove();vi.restoreAllMocks();vi.unstubAllGlobals(); }
 });
+
+it.each(["hour", "session"])("shows the Core-selected %s duration", async duration => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const node = document.createElement("div"); document.body.append(node); const root = createRoot(node);
+  vi.mocked(appFetch).mockImplementation(async () => Response.json({ active: true, activeUntil: "2026-10-06T12:00:00Z", reviewUrl: "https://core.example/activity/assistants/harness/chat", duration }));
+  try {
+    await act(async () => root.render(<SessionAuthority sessionId="chat" />));
+    if (duration === "session") {
+      expect(node.textContent).toContain("until your Core sign-in session ends");
+      expect(node.textContent).toContain("Manage tool access in Core");
+    } else {
+      expect(node.textContent).toContain("Tool access until");
+      expect(node.textContent).toContain("Renew or revoke in Core");
+    }
+    expect(appFetch).toHaveBeenCalledWith("/api/sessions/chat/authority", expect.objectContaining({ method: "GET" }));
+  } finally { await act(async () => root.unmount()); node.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); }
+});

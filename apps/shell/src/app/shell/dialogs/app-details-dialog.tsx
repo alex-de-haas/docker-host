@@ -527,7 +527,7 @@ function SettingsForm({
   onRevealSetting?: (app: CoreApp, key: string) => Promise<string | null>;
 }) {
   const settings = app.settings || [];
-  const appSettings = settings.filter((setting) => !isPublicOriginSettingKey(setting.key));
+  const appSettings = settings.filter((setting) => !isPublicOriginSettingKey(setting.key) && !setting.key.startsWith("HOSTY_LOCAL_NAME_"));
   const publicOriginSettings = settings.filter((setting) => isPublicOriginSettingKey(setting.key));
   // Which public origins the active ingress provider owns. Rendering only: Core refuses a managed write
   // either way, and the field says why rather than failing on save.
@@ -601,7 +601,7 @@ function SettingsForm({
                         <PublicOriginInput
                           setting={setting}
                           endpoint={endpoint}
-                          value={draft[setting.key] ?? ""}
+                          value={endpoint?.browserOrigin ?? draft[setting.key] ?? ""}
                           disabled
                           onChange={() => {}}
                         />

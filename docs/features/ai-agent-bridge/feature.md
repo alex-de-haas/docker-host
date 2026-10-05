@@ -1,7 +1,7 @@
 # AI Agent Bridge
 
 Created: 2026-08-14
-Updated: 2026-09-29
+Updated: 2026-10-05
 
 The umbrella for Hosty's AI integration: how an authenticated user works with runtime apps and app
 source through an agent, without the model ever holding credentials, unrestricted application access,
@@ -188,8 +188,9 @@ expected app id and fails closed when the id or the key is missing.
 
 Harness enforces shared per-tool MCP Ask / Run unprompted / Disabled rules for both adapters,
 including writes. Its authenticated local proxy owns the pause and checks identity/policy again at
-dispatch; app permissions and Core-issued token audience remain independent hard limits. Native
-file/command controls retain their adapter-specific behavior. See
+dispatch; app permissions and Core-issued token audience remain independent hard limits. The [chat autonomy selector](../assistant-session-autonomy/feature.md) retains native prompts in Normal
+mode and explicitly allows process-level native command/file access in Autonomous mode; it also
+skips Ask cards for enabled Hosty MCP tools. Disabled and Core authorization checks still apply. See
 [assistant approval rules](../assistant-approval-rules/feature.md).
 
 The external facade remains read-only. Internal Core development operations use their separate

@@ -522,23 +522,22 @@ internal sealed partial class CoreLifecycleService(
         }
 
         record = record with { BrowserOriginScope = runtimeConfig?.InstanceId ?? "" };
-        await LocalBrowserOrigins.ValidateAppAsync(record,
-            coreOrigins?.Effective ?? runtimeConfig?.EffectiveCorePublicOrigin ?? "http://core.hosty.localhost:7070", apps, cancellationToken);
-
-        // Reserve host ports now — after settings (including any HOSTY_PORT_* overrides) are final — so a
-        // stopped app carries durable endpoint URLs before its first start, and its ports are excluded
-        // from every other app's allocation. The exclusion-view read, the assignment, and the upsert run
-        // as one critical section under the allocator's gate, so two concurrent installs of different apps
-        // cannot allocate against a stale snapshot. Skipped only in unit fixtures without the coordinator,
-        // where ports resolve at first start as before.
-        var document = portAllocator is not null && string.Equals(record.Kind, "runtime", StringComparison.Ordinal)
-            ? await portAllocator.AssignAndPersistAsync(
-                record,
-                selection,
-                apps.ListAppRecordsAsync,
-                apps.UpsertAppAsync,
-                cancellationToken)
-            : await apps.UpsertAppAsync(record, cancellationToken);
+        AppStateDocument document;
+        await apps.BrowserOriginGate.WaitAsync(cancellationToken);
+        try
+        {
+            async Task<AppStateDocument> Persist(AppRecord candidate, CancellationToken ct)
+            {
+                await LocalBrowserOrigins.ValidateAppAsync(candidate,
+                    coreOrigins?.Effective ?? runtimeConfig?.EffectiveCorePublicOrigin ?? "http://core.hosty.localhost:7070", apps, ct);
+                return await apps.UpsertAppAsync(candidate, ct);
+            }
+            // Reserve ports before validating local names; new installs may not yet have endpoint URLs.
+            document = portAllocator is not null && string.Equals(record.Kind, "runtime", StringComparison.Ordinal)
+                ? await portAllocator.AssignAndPersistAsync(record, selection, apps.ListAppRecordsAsync, Persist, cancellationToken)
+                : await Persist(record, cancellationToken);
+        }
+        finally { apps.BrowserOriginGate.Release(); }
         // Consume the snapshot only once it has been applied. A null `retained` may mean a transient
         // read failure (IO/permissions), so leaving the file lets a later reinstall recover the
         // config instead of permanently discarding it over a hiccup.
@@ -583,31 +582,45 @@ internal sealed partial class CoreLifecycleService(
         var policy = NormalizeConfiguredUpdatePolicy(request.UpdatePolicy);
         // Resolved before the record mutation because it reads the publication store; the comparison
         // itself happens inside the mutator, against the record being committed.
-        var managedOrigins = publicOrigins is null
-            ? []
-            : await publicOrigins.FindManagedKeysAsync(appId, request.Settings?.Keys, cancellationToken);
-        if (request.Settings?.Keys.Any(PublicOriginSettings.IsSettingKey) == true)
+        AppStateDocument document;
+        await apps.BrowserOriginGate.WaitAsync(cancellationToken);
+        try
         {
-            ValidatePublicOriginSettings(request.Settings);
-            var existing = await apps.GetAppAsync(appId, cancellationToken)
-                ?? throw new AppLifecycleException("app_not_found", "The app is not installed.");
-            await LocalBrowserOrigins.ValidateAppAsync(existing with { Settings = MergeSettings(existing.Settings, request.Settings) },
-                coreOrigins?.Effective ?? runtimeConfig?.EffectiveCorePublicOrigin ?? "http://core.hosty.localhost:7070", apps, cancellationToken);
-        }
-        var document = await apps.UpdateAppAsync(appId, app =>
-        {
-            ValidatePublicOriginSettings(request.Settings);
-            RequireUnmanagedPublicOrigins(app, request.Settings, managedOrigins);
-            return AppConfigurationFingerprint.CaptureLegacyBaseline(app, registry) with
+            var managedOrigins = publicOrigins is null
+                ? []
+                : await publicOrigins.FindManagedKeysAsync(appId, request.Settings?.Keys, cancellationToken);
+            if (request.Settings?.Keys.Any(key => PublicOriginSettings.IsSettingKey(key) || LocalBrowserOrigins.IsNameKey(key)) == true)
             {
-                Settings = request.Settings is { Count: > 0 } ? MergeSettings(app.Settings, request.Settings) : app.Settings,
-                Autostart = request.Autostart ?? app.Autostart,
-                UpdatePolicy = policy ?? app.UpdatePolicy,
-                OperationStatus = "configured",
-                LastOperation = "configure",
-                LastError = null,
-            };
-        }, cancellationToken);
+                ValidatePublicOriginSettings(request.Settings);
+                var existing = await apps.GetAppAsync(appId, cancellationToken)
+                    ?? throw new AppLifecycleException("app_not_found", "The app is not installed.");
+                foreach (var (key, value) in request.Settings!)
+                {
+                    if (!LocalBrowserOrigins.IsNameKey(key)) continue;
+                    var endpoint = existing.Endpoints.FirstOrDefault(e => LocalBrowserOrigins.NameKey(e.Key) == key);
+                    if (endpoint is null || request.ExpectedBrowserOrigins?.GetValueOrDefault(endpoint.Key) != LocalBrowserOrigins.App(existing, endpoint))
+                        throw new AppLifecycleException("browser_origin_changed", "The browser address changed. Reload and review it again.");
+                }
+                await LocalBrowserOrigins.ValidateAppAsync(existing with { Settings = MergeSettings(existing.Settings, request.Settings) },
+                    coreOrigins?.Effective ?? runtimeConfig?.EffectiveCorePublicOrigin ?? "http://core.hosty.localhost:7070", apps, cancellationToken);
+            }
+            document = await apps.UpdateAppAsync(appId, app =>
+            {
+                ValidatePublicOriginSettings(request.Settings);
+                RequireUnmanagedPublicOrigins(app, request.Settings, managedOrigins);
+                return AppConfigurationFingerprint.CaptureLegacyBaseline(app, registry) with
+                {
+                    Settings = request.Settings is { Count: > 0 } ? MergeSettings(app.Settings, request.Settings) : app.Settings,
+                    Autostart = request.Autostart ?? app.Autostart,
+                    UpdatePolicy = policy ?? app.UpdatePolicy,
+                    OperationStatus = "configured",
+                    LastOperation = "configure",
+                    LastError = null,
+                };
+            }, cancellationToken);
+
+        }
+        finally { apps.BrowserOriginGate.Release(); }
 
         // A public-origin or subdomain edit is a routing change, so materialize it now rather than leaving
         // it for whatever start, stop or settings save happens next: the whole point of the unified
@@ -1826,9 +1839,13 @@ internal sealed partial class CoreLifecycleService(
         }, ct);
 
     public Task<AppLifecycleResponse> ApplyUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default)
+        => ApplyUpdateAsync(appId, request, cancellationToken, preserveGrants: false, requireRoutine: false);
+
+    private Task<AppLifecycleResponse> ApplyUpdateAsync(string appId, AppUpdateApplyRequest request,
+        CancellationToken cancellationToken, bool preserveGrants, bool requireRoutine)
         => WithAppLockAsync(appId, async () =>
         {
-            try { return await ApplyUpdateCoreAsync(appId, request, cancellationToken); }
+            try { return await ApplyUpdateCoreAsync(appId, request, cancellationToken, preserveGrants, requireRoutine); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 var failed = await apps.GetAppAsync(appId, CancellationToken.None);
@@ -1850,17 +1867,16 @@ internal sealed partial class CoreLifecycleService(
     // keeps the synchronous ApplyUpdateAsync. Completion flips the record (existing apply path),
     // publishes a notification, and re-plans the app so its row settles without waiting for the
     // next sweep. See docs/planning/plan-first-app-updates.md.
-    public async Task<AppLifecycleResponse> EnqueueUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default)
+    public async Task<AppLifecycleResponse> EnqueueUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default, bool requireRoutine = false)
     {
         // Advisory pre-checks — the background run re-validates both under the app lock. Cheap and
         // local (no network): the confirmed plan must exist and match, and the base must not have
         // moved since it was reviewed.
         var confirmed = await ResolveConfirmedUpdatePlan(appId, request.PlanDigest);
         var app = await RequireAppAsync(appId, cancellationToken);
-        if (request.OptionalPermissions is not null || confirmed.Selection.Manifest.OptionalCorePermissions.Except(app.OptionalCorePermissions ?? [], StringComparer.Ordinal).Any()
-            || confirmed.Selection.Manifest.CorePermissions.Except(app.RequiredCorePermissions ?? app.GrantedCorePermissions ?? [], StringComparer.Ordinal).Any()
-            || PlatformCapabilities.RequestedRoles(confirmed.Selection.Manifest.Provides).Except(app.ConfirmedRoles ?? [], StringComparer.Ordinal).Any())
-            throw new AppLifecycleException("approval_required", "New Core permissions or provider roles require confirmation on the Core approval page.");
+        ValidateUnapprovedUpdate(app, confirmed.Selection.Manifest, request);
+        if (requireRoutine && confirmed.Plan.RequiresReview)
+            throw new AppLifecycleException("approval_required", "This update changes the app configuration or authority. Review it in Core.");
         var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
         if (app.PermissionRevision != confirmed.PreviousPermissionRevision ||
             !string.Equals(app.Version, confirmed.Plan.CurrentVersion, StringComparison.Ordinal) ||
@@ -1900,11 +1916,19 @@ internal sealed partial class CoreLifecycleService(
             throw;
         }
 
-        var run = ExecuteBackgroundUpdateAsync(appId, request, hostLifetime?.ApplicationStopping ?? CancellationToken.None);
+        var run = ExecuteBackgroundUpdateAsync(appId, request, hostLifetime?.ApplicationStopping ?? CancellationToken.None, requireRoutine);
         runningBackgroundUpdates[appId] = run;
         _ = RemoveWhenCompleteAsync(appId, run);
 
         return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "updating");
+    }
+
+    private static void ValidateUnapprovedUpdate(AppRecord app, RuntimeAppManifest manifest, AppUpdateApplyRequest request)
+    {
+        if (request.OptionalPermissions is not null || manifest.OptionalCorePermissions.Except(app.OptionalCorePermissions ?? [], StringComparer.Ordinal).Any()
+            || manifest.CorePermissions.Except(app.RequiredCorePermissions ?? app.GrantedCorePermissions ?? [], StringComparer.Ordinal).Any()
+            || PlatformCapabilities.RequestedRoles(manifest.Provides).Except(app.ConfirmedRoles ?? [], StringComparer.Ordinal).Any())
+            throw new AppLifecycleException("approval_required", "New Core permissions or provider roles require confirmation on the Core approval page.");
     }
 
     // In-flight background update applies, keyed by app id. TryAdd in EnqueueUpdateAsync is the
@@ -1932,11 +1956,11 @@ internal sealed partial class CoreLifecycleService(
     // The detached apply body. Exception-total: every outcome lands on the record, because there is
     // no request left to surface it to. Deliberately silent in the notification inbox — an update is
     // always something the operator just asked for, and its outcome is already on the app row.
-    private async Task ExecuteBackgroundUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken)
+    private async Task ExecuteBackgroundUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken, bool requireRoutine)
     {
         try
         {
-            await ApplyUpdateAsync(appId, request, cancellationToken);
+            await ApplyUpdateAsync(appId, request, cancellationToken, preserveGrants: true, requireRoutine: requireRoutine);
             await RebuildPlanAfterApplyAsync(appId, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -2187,7 +2211,7 @@ internal sealed partial class CoreLifecycleService(
         return cached;
     }
 
-    private async Task<AppLifecycleResponse> ApplyUpdateCoreAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken)
+    private async Task<AppLifecycleResponse> ApplyUpdateCoreAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken, bool preserveGrants, bool requireRoutine)
     {
         // Apply the plan the operator confirmed, verbatim — request.ManifestPath / SelectedRuntime are
         // ignored because the resolved source (feed ref or source override) is already captured in the
@@ -2216,7 +2240,12 @@ internal sealed partial class CoreLifecycleService(
 
         await SetUpdateProgressAsync(appId, "preparing", null, cancellationToken);
         var selection = confirmed.Selection;
-        var grantedPermissions = CoreAppPermissions.ResolveGrants(selection.Manifest.CorePermissions, selection.Manifest.OptionalCorePermissions, request.OptionalPermissions, app.GrantedCorePermissions);
+        if (preserveGrants) ValidateUnapprovedUpdate(app, selection.Manifest, request);
+        if (requireRoutine && plan.RequiresReview)
+            throw new AppLifecycleException("approval_required", "This update requires Core review.");
+        var grantedPermissions = preserveGrants
+            ? (app.GrantedCorePermissions ?? []).Intersect(selection.Manifest.CorePermissions.Concat(selection.Manifest.OptionalCorePermissions), StringComparer.Ordinal).ToArray()
+            : CoreAppPermissions.ResolveGrants(selection.Manifest.CorePermissions, selection.Manifest.OptionalCorePermissions, request.OptionalPermissions, app.GrantedCorePermissions);
         await ValidatePrivateSelectionAsync(selection, cancellationToken);
 
         // Check the target's managed checkout before any stop, backup, manifest replacement or pin
@@ -3527,7 +3556,7 @@ internal sealed partial class CoreLifecycleService(
         {
             foreach (var (key, value) in existing.Settings)
             {
-                if (key.StartsWith("HOSTY_PORT_", StringComparison.Ordinal) && !settings.ContainsKey(key))
+                if ((key.StartsWith("HOSTY_PORT_", StringComparison.Ordinal) || LocalBrowserOrigins.IsNameKey(key)) && !settings.ContainsKey(key))
                 {
                     settings[key] = value;
                 }
@@ -6481,7 +6510,8 @@ internal sealed record AppConfigureRequest(
     // Only "pinned" is accepted; null leaves the current policy unchanged. The authoritative
     // pull/lock policy for compiled artifacts (replaces the removed manifest pullPolicy; the
     // "rolling" opt-out is gone).
-    string? UpdatePolicy = null);
+    string? UpdatePolicy = null,
+    IReadOnlyDictionary<string, string?>? ExpectedBrowserOrigins = null);
 
 internal sealed record AppAutostartRequest(bool Autostart);
 

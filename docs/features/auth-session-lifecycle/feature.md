@@ -1,7 +1,7 @@
 # Auth Session Lifecycle And Recovery
 
 Created: 2026-07-13
-Updated: 2026-10-02
+Updated: 2026-10-05
 
 How a Hosty app session begins, how long it lives, and how a browser that lost one gets back in.
 Two credentials are in scope: the **Core browser session** (`hosty_session`, the signed-in Host user)
@@ -75,6 +75,14 @@ internal sealed record AppSessionGrantRecord(
   cookie `Max-Age` from it.
 - `hosty apps identity <app> --user <email>` issues a `cli-diagnostic` grant through the same path.
   These are probe credentials, not sessions, and get a single short fixed lifetime.
+
+## Assistant Tool Grants
+
+[Assistant session authority](../assistant-session-autonomy/feature.md#core-tool-authority) has an
+additional explicit Core review: one hour or until the approving browser session ends. The latter
+uses the browser's absolute expiry and continues checking its idle/revoked state. This privileged
+authority cannot outlive the Core sign-in even when an ordinary app identity grant remains valid.
+The assistant's native approval mode does not grant or renew Core authority.
 
 ## Account Recovery Revocation
 

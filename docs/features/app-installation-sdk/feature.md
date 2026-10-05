@@ -1,7 +1,7 @@
 # App Installation SDK And Core Confirmation
 
 Created: 2026-09-18
-Updated: 2026-10-02
+Updated: 2026-10-05
 
 ## Installation Ownership
 
@@ -40,7 +40,7 @@ checks as other apps. Custom app clients use the SDK server adapter.
 | Permission | App-delegated authority |
 | --- | --- |
 | `apps.skills.read` | Read agent skills published by installed apps |
-| `apps.install` | Prepare installation/update/removal requests and submit them for Core confirmation |
+| `apps.install` | Apply routine updates; prepare other installation/update/removal requests for Core confirmation |
 | `apps.sources` | Session worktrees, local Git operations and session pull requests with the acting administrator's Git account |
 | `providers.speech-to-text` | List and use all confirmed speech providers |
 | `providers.assistant` | List and make user-attributed requests to all confirmed assistant providers |
@@ -63,7 +63,10 @@ The catalogue also recognizes `apps.read`, `apps.logs`, `apps.notifications`, `a
 Core records the approved set as `GrantedCorePermissions` on installation and reviewed update.
 Live-source projection, restart, runtime switching and manifest backfill preserve that stored
 set; editing a source manifest does not grant new permissions. Update plans include additions and
-removals. The queued update path, including MCP callers, refuses additions with `approval_required`.
+removals. Routine updates requested by authorized apps use the queued apply endpoint without a
+confirmation popup. The queued update path, including MCP callers, refuses additions with
+`approval_required` and preserves existing grants without restoring revoked required rights.
+App callers cannot use it for non-routine manifest changes; these retain Core review.
 After accepting confirmation, Core applies the reviewed update in the background. Explicit local control-secret
 operations remain trusted operator operations.
 

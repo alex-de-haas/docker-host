@@ -122,7 +122,7 @@ internal static class AppManagementAuthorization
         Add(CoreAppPermissions.Install,
             "GET /api/apps/{appId}/feeds", "POST /api/apps/{appId}/feed",
             "POST /api/apps/update-check", "GET /api/apps/{appId}/update/plan",
-            "POST /api/apps/{appId}/update/plan",
+            "POST /api/apps/{appId}/update/plan", "POST /api/apps/{appId}/update",
             "GET /api/apps/{appId}/remove-impact");
         Add(CoreAppPermissions.ReadCore,
             "GET /api/core/status", "GET /api/core/development", "GET /api/core/operations/{id}",

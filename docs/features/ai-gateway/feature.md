@@ -1,7 +1,7 @@
 # Hosty Harness
 
 Created: 2026-08-09
-Updated: 2026-10-01
+Updated: 2026-10-05
 
 The Hosty assistant: an optional, removable system app (`hosty.harness`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
@@ -193,12 +193,15 @@ a stopped process does not transfer a chat to another provider.
 
 ### Claude
 
+[Chat autonomy](../assistant-session-autonomy/feature.md) selects native approval mode. Autonomous
+uses `bypassPermissions` with explicit SDK opt-in; Normal uses the behavior below.
+
 - Drives the Claude Agent SDK with streaming input, partial-message deltas, and
   `settingSources: ["user", "project"]` — project instructions and connection-local user settings
   are included. The isolated connection home does not inherit the operator's global Claude home.
-- `permissionMode: "default"` with read-only tools (Read, Glob, Grep, WebFetch, WebSearch,
+- In Normal mode, `permissionMode: "default"` with read-only tools (Read, Glob, Grep, WebFetch, WebSearch,
   TodoWrite, Task) auto-allowed; every other tool pauses inside `canUseTool` until the operator
-  decides in Shell. A deny unblocks the harness with a message. The SDK's third `canUseTool`
+  decides in Harness. A deny unblocks the harness with a message. The SDK's third `canUseTool`
   argument is read for its `title` (the SDK's own prompt sentence) and `decisionReason`; both ride on
   the `approval_request` event when present and the card shows them under its own heading. A deny
   carrying the operator's reason reaches the model as `Denied by the operator in Hosty: <reason>` —
@@ -287,7 +290,7 @@ a stopped process does not transfer a chat to another provider.
 - Three protocol properties are load-bearing and easy to get wrong, so they are pinned in
   `codex-protocol.ts` and enforced by a scripted test fake that fails the suite on a violation:
   - **The sandbox is what creates the approval.** Codex asks only when an action must escalate out
-    of its sandbox, so the thread runs `read-only`; with `danger-full-access` there is nothing to
+    of its sandbox, so Normal runs `read-only`; Autonomous explicitly uses `danger-full-access`. With the latter there is nothing to
     escalate past and writes execute silently (a live run denied three approvals and the file was
     created anyway). An approved action then runs outside the sandbox.
   - **Two decision vocabularies, chosen per method.** v2 `item/*` approvals take
