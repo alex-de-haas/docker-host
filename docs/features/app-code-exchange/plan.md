@@ -1,6 +1,6 @@
 # App Code Exchange — Bind Redemption To The App And Its Sign-In Attempt
 
-Status: Blocked
+Status: In Progress
 Created: 2026-10-05
 Updated: 2026-10-05
 
@@ -31,14 +31,12 @@ CLI/Swift behavior and HTTP constraints. Implementation proceeds in the isolated
 
 ## Completion Blockers
 
-The owner's IPv6 CSP amendment decision is required before completing the SDK package and its
-publication, actual external registry locks and client rollout. Native live acceptance also needs
-working UI automation: after the owner unlocked the Mac, inventory returned the running isolated
-QA clone, but acquiring it by bundle ID or exact path still returned no accessibility state and
-was aborted. No GUI sign-in/app scenario has passed. The clone uses the unchanged production text
-section; its temporary ad-hoc signature does not establish Keychain persistence. Automated, DNS
-HTTPS browser, CLI-account and real old-Core upgrade checks are complete; remaining deliverables
-stay unchecked.
+The owner approved the IPv6-only CSP amendment on 2026-10-05. Its implementation and real IPv6
+acceptance pass; SDK publication and registry-based client rollout are in progress. Native live
+acceptance remains blocked by UI automation: after the owner unlocked the Mac, inventory returned
+the running isolated QA clone, but acquiring it by bundle ID or exact path still returned no
+accessibility state and was aborted. No native GUI scenario has passed. The temporary QA signature
+does not establish Keychain persistence. All remaining work stays in the unchecked deliverables.
 
 ## Current Behavior And The Two Bypasses
 
@@ -199,7 +197,8 @@ proof is persisted before replacing the document; popup proof stays in the opene
 Shell's server `/auth/start` returns its own minimal form document with an explicit origin policy
 and nonce-protected auto-submit/noscript action. Auth documents/pages permit only the configured
 Core origin and their own validated callback origin in form-action CSP, covering both the form
-submission and its return redirect chain; inherited iframe restrictions are verified in acceptance. No public app bootstrap/start route may reflect caller-supplied
+submission and its return redirect chain. The explicitly approved IPv6-only exception below
+omits that directive when the parsed configured Core hostname is an IPv6 literal; inherited iframe restrictions are verified in acceptance. No public app bootstrap/start route may reflect caller-supplied
 state/challenge/verifier into this form: Shell generates a fresh attempt on the server, and SDK
 forms derive their fields only from the matching locally created attempt. Navigating the victim
 through a trusted app URL must not launder an attacker-selected challenge into a valid Origin.
@@ -277,10 +276,10 @@ for exchange. It contains no report-only release or temporary legacy-exchange sw
 SDK publishing, actual external dependency locks, client deployment and live acceptance are explicit
 deliverables below. Local tarball tests are not evidence of those release/deployment steps.
 
-## IPv6 CSP Compatibility Amendment — Awaiting Owner Approval
+## IPv6 CSP Compatibility Amendment — Approved 2026-10-05
 
 A fresh Chromium probe on 2026-10-05 rejects bracketed IPv6 host sources in CSP, so the approved
-exact-Core `form-action` directive blocks an otherwise valid literal-IP deployment. The proposed
+exact-Core `form-action` directive blocks an otherwise valid literal-IP deployment. The approved
 bounded exception applies only when the verified configured Core hostname is an IPv6 literal:
 the minimal SDK/Shell intent document omits `form-action` rather than emitting an ineffective or
 wildcard destination. It retains `default-src 'none'`, `base-uri 'none'`, the existing script policy,
@@ -288,11 +287,10 @@ fixed DOM/server-generated Core form action, exact app-Origin checks and nonce/p
 Because `form-action` has no `default-src` fallback, the exception removes CSP destination
 enforcement for these forms; the other checks do not replace that defense.
 Non-IPv6 Core origins retain Core-plus-self `form-action`. No verifier enters this public form.
-This exception changes the agreed CSP defense, so implementation awaits explicit approval.
+The owner explicitly approved this bounded change to the agreed CSP defense on 2026-10-05.
 
-- [ ] Approve and implement the IPv6-only CSP exception; verify real submission and unchanged
-  destination construction, Origin/nonce checks and proof confidentiality. Without approval,
-  retain the original policy and leave IPv6 browser acceptance unfinished.
+- [x] Implement the approved IPv6-only CSP exception; verify real submission and unchanged
+  destination construction, Origin/nonce checks and proof confidentiality.
 
 ## Owner Decisions
 
@@ -303,6 +301,8 @@ This exception changes the agreed CSP defense, so implementation awaits explicit
    prepare the protocol and obtain approval before implementing the expansion.
 4. 2026-10-05: approve the full protocol above, including origin/nonce browser initiation, constrained
    HTTP support, app-first native/browser/CLI launches and removal of `apps open --user` semantics.
+5. 2026-10-05: approve omission of only `form-action` for verified configured IPv6 Core origins,
+   preserving the exact form target and all other origin/nonce/proof/CSP protections.
 
 ## Deliverables
 
@@ -395,10 +395,10 @@ Live acceptance uses a fresh isolated Core-managed data root, normal setup and p
 
 The current Core upgrade-refusal batch passes an exact isolated-output build (zero errors, four
 existing warnings), 119 affected HTTP tests and the full Core suite: 2632 passed, four opt-in
-skips, zero failures. The final SDK upgrade batch passes 310 tests and its production build;
-Harness passes 515 tests and its fresh webpack production export. CLI passes 230 tests and its
+skips, zero failures. The final SDK passes 328 tests and its production build, including IPv6 CSP and reserved-localhost
+recovery regressions. Harness passes 515 tests and its fresh webpack production export. CLI passes 230 tests and its
 exact build, including long URL/JSON output at a narrow console width. Swift HostyKit passes 181 tests, with macOS and generic iOS Simulator Release builds.
-Shell's correlated upgrade callback adds five regressions: 283 tests pass. Documentation-index,
+Shell's upgrade, IPv6 CSP and actual Next header-matching regressions pass 300 tests. Documentation-index,
 version consistency and whitespace checks pass. The final Shell, Demo, Marketplace and Telemetry UI webpack builds pass; Marketplace 109,
 Telemetry UI 10 and Demo 4 tests pass. Final external published-dist candidates pass Project
 Manager 132 and Media Server 168 tests, lint and fresh webpack builds. Real old-Core-to-new-Core upgrade acceptance passes for all four pending attempt modes.
@@ -450,7 +450,8 @@ upgrade checks in a separate normally authenticated runtime.
   Only the isolated Core/runtime graph and exact QA clone were stopped; private fixtures/evidence
   are retained for resuming acceptance when native UI control works.
 - [ ] Complete SDK registry publication, real external dependency locks and client-first deployment
-  after the pending IPv6 CSP amendment decision. Keep PR #547 draft until its tracked work is done.
+  following the completed IPv6 CSP amendment and acceptance. Keep PR #547 draft until its
+  tracked work is done.
 
 External source integration is available for review in draft [Project Manager #103](https://github.com/alex-de-haas/project-manager/pull/103)
 and [Media Server #318](https://github.com/alex-de-haas/media-server/pull/318). Their source matches
@@ -461,3 +462,19 @@ External GitHub CI confirms Project Manager Verify passes. Media API, web e2e, m
 pass; Media web reports 158 passed / 10 failed against its still-locked SDK 0.19.1, which lacks
 proof enforcement and protocol recovery metadata. The complete 0.21.0 candidate passes all 168.
 Registry lock refresh and green registry-based CI remain part of the unchecked rollout deliverable.
+
+The predecessor SDK 0.20.0 from first-feature commit `497a4e85` is published through workflow
+[37350302179](https://github.com/alex-de-haas/docker-host/actions/runs/37350302179): 209 SDK tests
+and its build pass, and actual npm metadata confirms the immutable artifact. Publish complete
+0.21.0 next; later main-branch workflows skip already-published versions.
+
+Fresh real HTTP IPv6 acceptance uses literal Core `[::1]` and distinct default generated
+`.hosty.localhost` app origins, with public overrides cleared. Standalone intent POST returns 303,
+its nonce-bearing continuation returns 302 and matching private-proof exchange returns 200.
+Shell server login consumes one bound code and creates one grant; its actual response retains
+nonce script, default/base and frame policies while omitting only IPv6 `form-action`. An embedded
+silent attempt whose nonce is blocked returns only `login_required`, then one gesture popup
+completes nonce validation and proof exchange 200. All three cases have zero CSP violations.
+The SDK recognizes reserved localhost subdomains, and Next global headers preserve the auth
+route-owned policy while retaining ordinary Shell frame protection. These bounded corrections
+are included in the existing SDK/Shell deliverables above.

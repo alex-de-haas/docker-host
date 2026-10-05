@@ -140,8 +140,11 @@ export function submitAppAuthIntent(attempt: AppAuthAttempt, doc: Document = doc
   doc.close();
   const policy = doc.createElement("meta");
   policy.httpEquiv = "Content-Security-Policy";
-  // Form policies also govern redirect chains: Core returns to this frozen app origin.
-  policy.content = `default-src 'none'; form-action ${attempt.coreOrigin} 'self'; base-uri 'none'`;
+  // CSP host sources cannot represent IPv6 literals; the form target remains fixed to Core.
+  // Other origins permit Core and this frozen app origin through the return redirect chain.
+  const core = new URL(attempt.coreOrigin);
+  const formAction = core.hostname.startsWith("[") ? "" : `form-action ${core.origin} 'self'; `;
+  policy.content = `default-src 'none'; ${formAction}base-uri 'none'`;
   doc.head.append(policy);
   const form = doc.createElement("form");
   form.method = "POST";

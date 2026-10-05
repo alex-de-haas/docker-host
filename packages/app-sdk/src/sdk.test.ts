@@ -366,6 +366,36 @@ describe("core helpers", () => {
     expect(isLoopbackHost("media.example.com")).toBe(false);
   });
 
+  it.each([
+    ["app.localhost", true],
+    ["demo.hosty.localhost", true],
+    ["demo.i-a1b2c3d4.hosty.localhost", true],
+    ["DEMO.I-A1B2C3D4.HOSTY.LOCALHOST", true],
+    ["localhost.example.test", false],
+    ["evil-localhost", false],
+    ["app.localhost.example.test", false],
+    ["remote.example.test", false],
+  ])("classifies the reserved localhost boundary for %s", (hostname, expected) => {
+    expect(isLoopbackHost(hostname as string)).toBe(expected);
+  });
+
+  it("builds the IPv6 Core recovery URL from a generated instance-local app origin", () => {
+    const localPage = { origin: "http://demo.i-a1b2c3d4.hosty.localhost:3100", hostname: "demo.i-a1b2c3d4.hosty.localhost",
+      pathname: "/draft", search: "?view=movies" };
+    const openUrl = buildCoreOpenUrl("http://[::1]:7070", "com.haas.demo-app", localPage);
+    expect(openUrl).not.toBeNull();
+    const parsed = new URL(openUrl!);
+    expect(parsed.origin).toBe("http://[::1]:7070");
+    expect(parsed.pathname).toBe("/api/apps/com.haas.demo-app/open");
+    expect(parsed.searchParams.get("redirectUri")).toBe(`${localPage.origin}/draft?view=movies`);
+  });
+
+  it("still refuses a literal IPv6 Core recovery URL from a genuinely remote app origin", () => {
+    expect(buildCoreOpenUrl("http://[::1]:7070", "com.haas.demo-app", {
+      origin: "https://media.example.test", hostname: "media.example.test", pathname: "/draft", search: "",
+    })).toBeNull();
+  });
+
   it("reads recovery params tolerantly", () => {
     expect(readRecoveryParams({ recovery: { appId: "a", corePublicOrigin: "http://c" } })).toEqual({
       appId: "a",

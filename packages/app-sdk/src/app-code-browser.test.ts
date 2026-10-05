@@ -99,6 +99,41 @@ describe("private browser sign-in attempts", () => {
     expect(doc.querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute("content"))
       .toBe(`default-src 'none'; form-action ${core} 'self'; base-uri 'none'`);
   });
+  it.each([
+    "http://[::1]:7070", "https://[::1]:8443",
+    "http://[2001:db8::1]:7070", "https://[2001:0db8:0:0:0:0:0:1]:8443",
+  ])("omits only the unsupported form directive for configured IPv6 Core %s", configuredCore => {
+    core = configuredCore;
+    const attempt = createAppAuthAttempt(openUrl(), "silent", 2);
+    const doc = document.implementation.createHTMLDocument();
+    submitAppAuthIntent(attempt, doc);
+    const form = submitted[0];
+    expect(form.method).toBe("post");
+    expect(form.action).toBe(`${new URL(configuredCore).origin}/api/apps/sample/sign-in-intent`);
+    expect(doc.querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute("content"))
+      .toBe("default-src 'none'; base-uri 'none'");
+    expect(doc.querySelector('meta[name="referrer"]')?.getAttribute("content")).toBe("origin");
+    expect(form.querySelector<HTMLInputElement>('input[name="redirectUri"]')?.value).toBe(attempt.redirectUri);
+    expect(form.querySelector<HTMLInputElement>('input[name="state"]')?.value).toBe(attempt.state);
+    expect(form.querySelector<HTMLInputElement>('input[name="codeChallenge"]')?.value).toBe(attempt.codeChallenge);
+    expect(form.querySelector<HTMLInputElement>('input[name="codeChallengeMethod"]')?.value).toBe("S256");
+    expect(form.querySelector<HTMLInputElement>('input[name="prompt"]')?.value).toBe("none");
+    expect(form.querySelector('input[name="codeVerifier"]')).toBeNull();
+    expect(doc.documentElement.outerHTML).not.toContain(attempt.codeVerifier);
+    expect(doc.documentElement.outerHTML).not.toContain("<script");
+  });
+  it.each([
+    "http://core.example.test:7070", "https://core.example.test",
+    "http://127.0.0.1:7070", "https://192.168.1.10:8443",
+  ])("retains exact Core-plus-self form policy for non-IPv6 Core %s", configuredCore => {
+    core = configuredCore;
+    const attempt = createAppAuthAttempt(openUrl(), "popup", 2);
+    const doc = document.implementation.createHTMLDocument();
+    submitAppAuthIntent(attempt, doc);
+    expect(submitted[0].action).toBe(`${new URL(configuredCore).origin}/api/apps/sample/sign-in-intent`);
+    expect(doc.querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute("content"))
+      .toBe(`default-src 'none'; form-action ${new URL(configuredCore).origin} 'self'; base-uri 'none'`);
+  });
   it("puts only public proof fields and correlation state in native GET", () => {
     const attempt = createAppAuthAttempt(openUrl(), "native", 2);
     const url = new URL(appAuthNavigationUrl(attempt));

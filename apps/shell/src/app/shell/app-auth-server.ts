@@ -60,11 +60,13 @@ function html(value: string): string {
 
 function signInForm(target: URL, fields: Record<string, string>): Response {
   const nonce = randomBytes(16).toString("base64");
+  // The parsed, configured IPv6 target keeps its exact form action without a CSP host source.
+  const formAction = target.hostname.startsWith("[") ? "" : `form-action ${target.origin} 'self'; `;
   const inputs = Object.entries(fields).map(([name, value]) =>
     `<input type="hidden" name="${html(name)}" value="${html(value)}">`).join("");
   return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="origin"><title>Sign in to Hosty</title></head><body><p>Opening Hosty sign-in…</p><form id="hosty-sign-in" method="post" action="${html(target.href)}">${inputs}<noscript><button type="submit">Continue to sign in</button></noscript></form><script nonce="${nonce}">document.getElementById("hosty-sign-in").requestSubmit();</script></body></html>`, {
     headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "origin",
-      "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; form-action ${target.origin} 'self'; base-uri 'none'; frame-ancestors 'none'` },
+      "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; ${formAction}base-uri 'none'; frame-ancestors 'none'` },
   });
 }
 

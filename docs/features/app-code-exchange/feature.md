@@ -75,8 +75,14 @@ Strict Mode, stale responses and duplicate/late completion cannot exchange a new
 Shell's server generates its own state and verifier, retains them in separate short-lived HttpOnly
 attempt cookies, submits its app-origin form and exchanges only after callback correlation. Its
 renewal endpoint updates the app cookie without exposing the grant to browser JavaScript.
-App-owned intent documents use origin-only referrers, a fixed Core action and restrictive CSP.
-IPv6 CSP compatibility remains tracked in [the implementation plan](plan.md).
+App-owned intent documents use origin-only referrers and a fixed Core action. DNS/IPv4 Core
+origins retain exact Core-plus-self `form-action` CSP. For parsed configured IPv6 Core origins,
+the minimal SDK/Shell form omits only `form-action`, because CSP host sources cannot represent
+an IPv6 literal. It keeps `default-src`/`base-uri` and the existing script/frame policies. This
+omission removes CSP form-destination enforcement; the fixed target and Core Origin/nonce/proof
+checks remain in force. Shell global headers preserve the route-owned nonce-bearing policy
+while retaining frame protection for ordinary pages. Local recovery recognizes reserved
+`.localhost` subdomains, including Core-generated app hosts, alongside existing loopback literals.
 
 Embedded grants retain the per-tab persistence described in
 [embedded app sign-in](../embedded-app-sign-in/feature.md). Identity rejection and explicit logout

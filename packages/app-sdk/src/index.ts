@@ -183,7 +183,7 @@ export function readRecoveryParams(body: unknown): SessionRecoveryParams {
 /** True for hosts that only resolve on the machine itself. */
 export function isLoopbackHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
-  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
+  return host === "localhost" || host.endsWith(".localhost") || host === "127.0.0.1" || host === "::1" || host === "[::1]";
 }
 
 export interface PageLocation {

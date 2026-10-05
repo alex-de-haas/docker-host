@@ -40,6 +40,39 @@ it("starts a browser-bound Core intent with public form fields and a private ver
   expect(response.headers.get("content-security-policy")).toContain("form-action http://core.hosty.localhost:7070");
   expect(fetchMock).not.toHaveBeenCalled();
 });
+it.each([
+  { coreOrigin: "http://[::1]:7070", ipv6: true },
+  { coreOrigin: "https://[2001:db8::1]:7443", ipv6: true },
+  { coreOrigin: "http://127.0.0.1:7070", ipv6: false },
+  { coreOrigin: "https://127.0.0.1:7443", ipv6: false },
+  { coreOrigin: "http://core.hosty.localhost:7070", ipv6: false },
+  { coreOrigin: "https://core.example.test:7443", ipv6: false },
+])("keeps the fixed form and CSP protections for Core $coreOrigin", async ({ coreOrigin, ipv6 }) => {
+  vi.stubEnv("HOSTY_CORE_PUBLIC_ORIGIN", coreOrigin);
+  const response = await startAppLogin(new Request(`${origin}/auth/start`));
+  expect(response.status).toBe(200);
+  expect(response.headers.get("referrer-policy")).toBe("origin");
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  const page = await response.text();
+  expect(page).toContain(`method="post" action="${coreOrigin}/api/apps/example.console/sign-in-intent"`);
+  expect(page).toContain('<meta name="referrer" content="origin">');
+  const nonce = /<script nonce="([^"]+)">/.exec(page)![1];
+  const policy = response.headers.get("content-security-policy")!;
+  expect(policy).toBe(`default-src 'none'; script-src 'nonce-${nonce}'; ${ipv6 ? "" : `form-action ${coreOrigin} 'self'; `}base-uri 'none'; frame-ancestors 'none'`);
+  const fields = new Map([...page.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)].map(match => [match[1], match[2]]));
+  expect([...fields.keys()]).toEqual(["redirectUri", "state", "codeChallenge", "codeChallengeMethod"]);
+  expect(fields.get("state")).toMatch(/^[a-f0-9]{64}$/);
+  expect(fields.get("codeChallenge")).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  expect(fields.get("codeChallengeMethod")).toBe("S256");
+  const callback = new URL(fields.get("redirectUri")!);
+  expect(callback.origin).toBe(origin);
+  expect(callback.pathname).toBe("/auth/callback");
+  expect(callback.searchParams.get("state")).toBe(fields.get("state"));
+  const storedVerifier = response.headers.getSetCookie().find(cookie => cookie.startsWith("hosty_shell_auth_verifier_"))!.split("=")[1].split(";")[0];
+  expect(page).not.toContain(storedVerifier);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
 it("uses additive proof fields only for a verified older Core", async () => {
   protocol.mockResolvedValue(1);
   const response = await startAppLogin(new Request(`${origin}/auth/start?returnTo=%2Fapps`));
