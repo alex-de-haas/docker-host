@@ -209,7 +209,7 @@ Unbuilt ideas (owner decision: keep as Draft or delete):
 | `ideas/replaceable-ui-clients.md` | Keep as Draft `replaceable-ui-clients/plan.md` (the `ui-client` role) |
 | `ideas/future-work.md` | The image `pullPolicy: ifChanged` item joins `runtime-app-update/plan.md`; the CLI launcher shim and the removal preview are deleted. Executed: `pullPolicy: ifChanged` turned out to be superseded — every start runs the pinned digest lock and the update check detects a moved tag through the registry — so it was dropped instead |
 
-### Other repositories' dispositions (proposed 2026-10-05, awaiting owner approval)
+### Other repositories' dispositions (approved by the owner on 2026-10-05)
 
 The same four dispositions apply. Paths are relative to each repository's `docs/`.
 
