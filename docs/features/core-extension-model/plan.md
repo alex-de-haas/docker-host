@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-07-10
-updated: 2026-09-29
+updated: 2026-10-05
 summary: Exploratory model for delivering platform capabilities as swappable apps through named contribution points.
 components: [apps/core]
 ---
@@ -330,8 +330,7 @@ session. It suits whole-perimeter SSO; login methods suit per-user, per-account 
 
 Marketplace's extraction shipped 2026-07-11 as the first zero-scope API client with system-app pages,
 and its boundaries are current behavior — see
-[runtime-app-marketplace](../runtime-app-marketplace/feature.md) and
-[marketplace-system-app](../runtime-app-marketplace/feature.md). Two of them constrain this model:
+[runtime-app-marketplace](../runtime-app-marketplace/feature.md). Two of them constrain this model:
 
 - **The install decision never leaves Core.** Feed resolution, manifest validation, operator consent,
   artifact locks, and any install-blocking trust policy run in Core. Marketplace output is treated like
@@ -476,7 +475,7 @@ extraction remain unimplemented and outside that feature.
 
 ## Links
 
-- [Final Hosty architecture boundaries](../domain-model/feature.md) — the Core/Shell/CLI ownership
+- [Domain model](../domain-model/feature.md#component-boundaries) — the Core/Shell/CLI ownership
   rules this model extends.
 - [Observability — telemetry backend](../observability/feature.md) — the de-facto first plugin; source
   of the sink contract.
@@ -484,15 +483,13 @@ extraction remain unimplemented and outside that feature.
   for.
 - [Runtime app marketplace](../runtime-app-marketplace/feature.md) — the shipped zero-scope API client
   with system-app pages.
-- [Marketplace As A System App](../runtime-app-marketplace/feature.md) — the read-only catalog ownership
-  boundary and migration design.
-- [System App Pages](../app-ui-surfaces/feature.md) — the shared admin-only page model for UI-capable
-  system apps.
-- [Runtime App Repository Feeds](../app-feeds/feature.md) — current feed behavior
+- [App UI surfaces](../app-ui-surfaces/feature.md) — where app pages, settings and panels are placed,
+  including those of UI-capable system apps.
+- [App feeds](../app-feeds/feature.md) — current feed behavior
   with repository ownership and Core resolution.
 - [AI Agent Bridge](../ai-agent-bridge/feature.md) — shares the Core-issued scoped-token direction for
   data planes.
 - [Auth provider extensions](../auth-provider-extensions/plan.md) — auth directions the
   login-methods contract gives a delivery mechanism for.
-- [On-Demand System App Updates](../runtime-app-update/plan.md) — the reviewed update path provider
+- [Runtime app update](../runtime-app-update/feature.md) — the reviewed update path provider
   apps rely on, since they update like any other app.

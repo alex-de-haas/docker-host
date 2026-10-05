@@ -9,8 +9,9 @@ components: [scripts, docs]
 
 Features and plans live as Markdown in Git, next to the code they describe, and change in the same
 commit and pull request. Their metadata is structured so tools can read it without parsing prose:
-the generated index in `docs/root.md` and any YAML-aware viewer read the same frontmatter. The writing rules are in the Documentation section of
-[AGENTS.md](../../../AGENTS.md); this document describes the tooling that enforces them.
+the generated index in `docs/root.md` and any YAML-aware viewer read the same frontmatter. The
+writing rules are in the Documentation section of [AGENTS.md](../../../AGENTS.md); this document
+describes the tooling that enforces them.
 
 ## Repositories
 
@@ -31,8 +32,8 @@ first and is then copied. CI runs `node scripts/docs-index.mjs --check` in every
 - The block is a strict subset of YAML: one `key: value` per line, plain scalars, double-quoted
   strings with only `\"` and `\\` escapes, and `[a, b]` lists. A standard YAML parser reads every
   block exactly as the validator does.
-- A plan's deliverables are the only checkboxes in it, all top-level items under one
-  `## Deliverables` section, each starting with a stable ID such as `- [ ] D3. Text`.
+- Every plan has exactly one `## Deliverables` section. Its deliverables are the only checkboxes in
+  the plan, all top-level items, each starting with a stable ID such as `- [ ] D3. Text`.
 
 ## Validator
 
@@ -43,14 +44,18 @@ block) and `--check` (exit 1 on any error or a stale index). It reports:
 - missing, unknown, duplicated or malformed frontmatter keys; an invalid status, date, summary or
   component; `updated` earlier than `created`; header lines left beside frontmatter;
 - a missing `# Title` heading after the frontmatter;
-- checkboxes outside `## Deliverables`, nested checkboxes, a second Deliverables section, and
-  deliverables without an ID or with a duplicate ID;
+- a plan without a `## Deliverables` section or with a second one, checkboxes outside it, nested
+  checkboxes, and deliverables without an ID or with a duplicate ID;
 - relative links inside workflow documents and `docs/root.md` that do not resolve, and absolute
-  links; links in code spans and fences are ignored;
-- Markdown in any other location under `docs/` — a flat `docs/features/*.md`, `docs/ideas/`,
-  `docs/planning/` or an unknown top-level file — except `store.md` and `agent.md`, which belong
-  to other tooling;
+  links;
+- Markdown in any other location under `docs/` — a flat `docs/features/*.md`, any Markdown in a
+  feature folder besides `feature.md` and `plan.md`, `docs/ideas/`, `docs/planning/` or an unknown
+  top-level file — except `store.md` and `agent.md`, which belong to other tooling;
 - NUL bytes.
+
+Checkboxes and links inside code spans and fenced code blocks are ignored. As in CommonMark, a fence
+closes only on a bare run of the same character at least as long as the one that opened it, so a
+four-backtick fence can show a three-backtick example.
 
 ## Generated Index
 

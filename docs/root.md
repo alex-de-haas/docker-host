@@ -90,7 +90,7 @@ Plans: 10 In Progress · 1 Blocked · 34 Draft · 5 On Hold.
 - [Core App Shell](features/core-app-shell/feature.md) — Shell is the Core-managed browser UI app that authenticates users and embeds app pages.
 - [Core Development Mode](features/core-dev-target/feature.md) — Run Core from source in Debug, restart into isolated build generations and switch back to the installed release. · [plan](features/core-dev-target/plan.md): In Progress, 0/3, updated 2026-09-18
 - [Core Event Bus — Ephemeral Domain Events Over A Unified SSE Stream](features/core-event-bus/feature.md) — An in-process event bus that tells session clients over one SSE stream that something changed.
-- [Core Extension Model](features/core-extension-model/plan.md) — Exploratory model for delivering platform capabilities as swappable apps through named contribution points. · Draft, 0/6, updated 2026-09-29
+- [Core Extension Model](features/core-extension-model/plan.md) — Exploratory model for delivering platform capabilities as swappable apps through named contribution points. · Draft, 0/6, updated 2026-10-05
 - [Core Lifecycle Parallelism](features/core-lifecycle-parallelism/feature.md) — Core runs per-app lifecycle work concurrently and queries Docker in batches.
 - [Core MCP](features/core-mcp/feature.md) — An embedded MCP endpoint on Core with typed tools for apps, their state and their logs. · [plan](features/core-mcp/plan.md): In Progress, 3/10, updated 2026-08-28
 - [Core's Own Public Origin](features/core-public-origin/feature.md) — Core's public origin is a live setting, editable in Shell and publishable through the Cloudflare provider.

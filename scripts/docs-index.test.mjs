@@ -152,6 +152,12 @@ test("deliverables", async (t) => {
     const deliverables = "### Phase 1\n\n- [ ] D1. One.\n\n```markdown\n- [ ] Example only.\n```\n\n### Phase 2\n\n- [x] D3. Three.\n";
     assert.equal(check({ "docs/features/a/plan.md": plan(deliverables) }).code, 0);
   });
+  await t.test("a plan without a Deliverables section", () =>
+    assertError({ "docs/features/a/plan.md": plan().replace("## Deliverables\n\n- [ ] D1. Do it.\n", "## Goal\n\nText.\n") }, /needs a "## Deliverables" section/));
+  await t.test("a longer fence keeps a shorter one as content", () => {
+    const deliverables = "- [ ] D1. One.\n\n````markdown\n```\n- [ ] Example only.\n[gone](missing.md)\n```\n````\n";
+    assert.equal(check({ "docs/features/a/plan.md": plan(deliverables) }).code, 0);
+  });
 });
 
 test("links", async (t) => {
@@ -172,6 +178,12 @@ test("locations", async (t) => {
     assertError({ "docs/features/old.md": "# Old\n" }, /features\/old\.md: flat feature document/));
   await t.test("legacy ideas folder", () =>
     assertError({ "docs/ideas/thing.md": "# Thing\n" }, /ideas\/thing\.md: not a workflow location/));
+  await t.test("extra Markdown in a feature folder", () =>
+    assertError({ "docs/features/a/feature.md": feature(), "docs/features/a/notes.md": "# Notes\n" }, /a\/notes\.md: a feature folder holds only feature\.md and plan\.md/));
+  await t.test("nested Markdown in a feature folder", () =>
+    assertError({ "docs/features/a/feature.md": feature(), "docs/features/a/old/plan.md": "# Old\n" }, /a\/old\/plan\.md: a feature folder holds only/));
+  await t.test("assets in a feature folder are fine", () =>
+    assert.equal(check({ "docs/features/a/feature.md": feature(), "docs/features/a/diagram.png": "png" }).code, 0));
   await t.test("unknown top-level document", () =>
     assertError({ "docs/notes.md": "# Notes\n" }, /docs\/notes\.md: not a workflow location/));
   await t.test("tooling files, reviews and asset folders are fine", () => {
