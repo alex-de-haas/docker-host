@@ -288,7 +288,7 @@ The contract is `hosty.auth.method@1`, a fan-out driver contract. The canonical 
 - **Linking.** A signed-in user connects a Google account to their existing Hosty user. The method app
   runs the OIDC flow and returns a verified external subject to Core; Core stores the identity link.
   Linking requires an existing session, so there is no automatic user provisioning by default — which
-  keeps the [auth-provider-extensions](../../ideas/auth-provider-extensions.md) boundaries intact.
+  keeps the [auth-provider-extensions](../auth-provider-extensions/plan.md) boundaries intact.
 - **Sign-in.** The login surface shows a button per *available* confirmed method. Choosing one delegates
   verification to the method app; the app returns the verified subject; Core resolves the linked user
   and issues its own session. A method app never issues credentials.
@@ -331,7 +331,7 @@ session. It suits whole-perimeter SSO; login methods suit per-user, per-account 
 Marketplace's extraction shipped 2026-07-11 as the first zero-scope API client with system-app pages,
 and its boundaries are current behavior — see
 [runtime-app-marketplace](../runtime-app-marketplace/feature.md) and
-[marketplace-system-app](../../ideas/marketplace-system-app.md). Two of them constrain this model:
+[marketplace-system-app](../runtime-app-marketplace/feature.md). Two of them constrain this model:
 
 - **The install decision never leaves Core.** Feed resolution, manifest validation, operator consent,
   artifact locks, and any install-blocking trust policy run in Core. Marketplace output is treated like
@@ -396,7 +396,7 @@ extraction remain unimplemented and outside that feature.
   mistaken for an extension of it.
 - The manifest `capabilities` field name collides conceptually with capability contracts; the new
   sections need distinct names (`provides`/`corePermissions`) and documentation.
-- [auth-provider-extensions](../../ideas/auth-provider-extensions.md) lists OIDC and provisioning
+- [auth-provider-extensions](../auth-provider-extensions/plan.md) lists OIDC and provisioning
   directions; the login-methods contract supplies a delivery mechanism for the OIDC half while keeping
   its boundaries. Full replacement of Core authentication by an external provider is not pursued.
 
@@ -476,7 +476,7 @@ extraction remain unimplemented and outside that feature.
 
 ## Links
 
-- [Final Hosty architecture boundaries](../final-hosty-architecture.md) — the Core/Shell/CLI ownership
+- [Final Hosty architecture boundaries](../domain-model/feature.md) — the Core/Shell/CLI ownership
   rules this model extends.
 - [Observability — telemetry backend](../observability/feature.md) — the de-facto first plugin; source
   of the sink contract.
@@ -484,15 +484,15 @@ extraction remain unimplemented and outside that feature.
   for.
 - [Runtime app marketplace](../runtime-app-marketplace/feature.md) — the shipped zero-scope API client
   with system-app pages.
-- [Marketplace As A System App](../../ideas/marketplace-system-app.md) — the read-only catalog ownership
+- [Marketplace As A System App](../runtime-app-marketplace/feature.md) — the read-only catalog ownership
   boundary and migration design.
-- [System App Pages](../../ideas/system-app-pages.md) — the shared admin-only page model for UI-capable
+- [System App Pages](../app-ui-surfaces/feature.md) — the shared admin-only page model for UI-capable
   system apps.
-- [Runtime App Repository Feeds](../../ideas/runtime-app-repository-feeds.md) — current feed behavior
+- [Runtime App Repository Feeds](../app-feeds/feature.md) — current feed behavior
   with repository ownership and Core resolution.
 - [AI Agent Bridge](../ai-agent-bridge/feature.md) — shares the Core-issued scoped-token direction for
   data planes.
-- [Auth provider extensions](../../ideas/auth-provider-extensions.md) — auth directions the
+- [Auth provider extensions](../auth-provider-extensions/plan.md) — auth directions the
   login-methods contract gives a delivery mechanism for.
-- [On-Demand System App Updates](../../ideas/system-app-updates.md) — the reviewed update path provider
+- [On-Demand System App Updates](../runtime-app-update/plan.md) — the reviewed update path provider
   apps rely on, since they update like any other app.

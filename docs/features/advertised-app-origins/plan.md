@@ -188,4 +188,4 @@ Shell and native client keeps serving the old URLs until something else forces a
 - [Auth And Gateway Model](../auth-gateway/feature.md) — the redirect allowlist, and the standing
   decision that Core does not proxy app UIs.
 - [Cloudflare Ingress](../cloudflare-ingress/feature.md) — the path that already solves remote access.
-- [Raw L4 Ports](../raw-ports.md) — the `expose: host` declaration this depends on.
+- [Raw L4 Ports](../raw-ports/feature.md) — the `expose: host` declaration this depends on.

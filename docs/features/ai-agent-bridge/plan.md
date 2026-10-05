@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-06-09
-updated: 2026-09-29
+updated: 2026-10-05
 summary: The remaining AI agent bridge rollout steps, from the user profile and app-to-model calls to durable jobs and development agents.
 components: [apps/core, apps/harness]
 ---
@@ -268,7 +268,7 @@ validation prerequisites do not gate that interactive journey. Shared source/ses
 belongs to [prototype workspaces](../app-prototype-workspaces/plan.md), and development lifecycle
 controls to [app development controls](../app-development-controls/plan.md).
 
-The source-changing layer, building on [agent-bridge-workflow](../../ideas/agent-bridge-workflow.md).
+The source-changing layer.
 In the operator profile this work is already interactive — an admin's session edits source through
 existing dev-mode and source workflows with approval-gated writes — so what remains is the
 **non-interactive** contract: one-shot sandboxed jobs (`codex exec`, `claude -p`) in an isolated

@@ -1,6 +1,6 @@
 ---
 created: 2026-06-04
-updated: 2026-10-02
+updated: 2026-10-05
 summary: The app.0.1 manifest contract for installing and running runtime apps.
 components: [apps/core]
 ---
@@ -91,13 +91,13 @@ Each `runtimeProfiles[]` entry has `key`, `type` (`docker` or `localCommand`), a
 - `HOSTY_SERVICE_{KEY}_URL` (intra-app: a sibling service's internal base URL — see below)
 - `HOSTY_MOUNT_{KEY}` (one per configured `externalMounts` slot)
 
-`HOSTY_CORE_PUBLIC_ORIGIN` is the browser-facing Core origin, injected when the service starts (so a change to it reaches a running app only when the app restarts). `HOSTY_CORE_ORIGIN` is the runtime process-to-Core origin and is derived from Core's listen URL rather than from the public origin, so app-to-Core traffic never depends on a value whose purpose is to be edited. For `docker` profiles a loopback listen URL is rewritten to a container-reachable origin using `host.docker.internal`, so app server code can exchange Hosty app codes and revalidate identity with Core from inside the container. For `localCommand` profiles, `HOSTY_CORE_ORIGIN` uses the listen URL unchanged. Published runtime endpoint URLs remain browser-facing `localhost` URLs unless a generated public origin setting overrides them.
+`HOSTY_CORE_PUBLIC_ORIGIN` is the browser-facing Core origin, injected when the service starts (so a change to it reaches a running app only when the app restarts). `HOSTY_CORE_ORIGIN` is the runtime process-to-Core origin and is derived from Core's listen URL rather than from the public origin, so app-to-Core traffic never depends on a value whose purpose is to be edited. For `docker` profiles a loopback listen URL is rewritten to a container-reachable origin using `host.docker.internal`, so app server code can exchange Hosty app codes and revalidate identity with Core from inside the container. For `localCommand` profiles, `HOSTY_CORE_ORIGIN` uses the listen URL unchanged. Published runtime endpoint URLs are browser-facing addresses from [local browser origins](../local-browser-origins/feature.md) unless a public origin setting overrides them.
 
-For `localCommand` profiles, omit `localPort` and `hostPort` unless the app explicitly requires a fixed local port. Core assigns an available loopback port on first successful start, stores the resulting endpoint URL, reuses that port on later start/restart operations, and exposes it as `HOSTY_PORT_{KEY}`. When a service has exactly one assigned port and did not explicitly set `PORT`, Core also injects `PORT` with the assigned value for framework compatibility.
+Omit `localPort` and `hostPort` unless the app explicitly requires a fixed port. Core reserves an available host port for every declared port at install, keeps the stored endpoint URL pointing at it, and exposes it as `HOSTY_PORT_{KEY}` ([automatic runtime app ports](../automatic-runtime-app-ports/feature.md)). When a service has exactly one assigned port and did not explicitly set `PORT`, Core also injects `PORT` with the assigned value for framework compatibility.
 
 Use explicit `localPort` / `hostPort` only as an override. If an explicit local command port is already in use, Core fails start instead of launching the process against a conflicting port.
 
-Core publishes local runtime endpoint URLs as `http://localhost:<assigned-port>`. It does not use `127.0.0.1` or `app.localhost` in app URLs. Install review only asks for manifest-owned settings. After installation, each public endpoint gets a Hosty-managed optional setting named `HOSTY_PUBLIC_ORIGIN_{ENDPOINT_KEY}`, where the endpoint key is normalized to uppercase env style. For example, `http` becomes `HOSTY_PUBLIC_ORIGIN_HTTP` and `app.http` becomes `HOSTY_PUBLIC_ORIGIN_APP_HTTP`. The `HOSTY_PUBLIC_ORIGIN_` prefix is reserved for Hosty-managed settings; manifest-provided settings with that prefix are ignored and cannot pre-seed public origins. Leave the generated setting empty for local `localhost` URLs, or set it to an absolute `http`/`https` origin such as `https://project.example.com` when Shell and standalone links should use an externally exposed origin. The public origin setting must be an origin only, without a path, query, or fragment.
+A public endpoint's local browser address is a stable app hostname beneath `hosty.localhost` with the assigned port ([local browser origins](../local-browser-origins/feature.md)). Install review only asks for manifest-owned settings. After installation, each public endpoint gets a Hosty-managed optional setting named `HOSTY_PUBLIC_ORIGIN_{ENDPOINT_KEY}`, where the endpoint key is normalized to uppercase env style. For example, `http` becomes `HOSTY_PUBLIC_ORIGIN_HTTP` and `app.http` becomes `HOSTY_PUBLIC_ORIGIN_APP_HTTP`. The `HOSTY_PUBLIC_ORIGIN_` prefix is reserved for Hosty-managed settings; manifest-provided settings with that prefix are ignored and cannot pre-seed public origins. Leave the generated setting empty for local `localhost` URLs, or set it to an absolute `http`/`https` origin such as `https://project.example.com` when Shell and standalone links should use an externally exposed origin. The public origin setting must be an origin only, without a path, query, or fragment.
 
 ### Port fields
 
@@ -111,7 +111,7 @@ Each entry in a service runtime's `ports` array accepts:
 - `expose` - `loopback` (default) or `host`. `host` binds the published port on `0.0.0.0` (all interfaces) instead of `127.0.0.1`, for raw L4 listeners reachable off the host. A `host`-exposed port **must** pin `hostPort` (or `localPort`); recommended `hostPort == containerPort`. Docker runtime only.
 - `transport` - subset of `["tcp", "udp"]`, default `["tcp"]`. Each transport is published as a separate `-p` rule. Docker runtime only.
 
-`expose` and `transport` are opt-in and off by default; a port that omits both publishes exactly as before (loopback, TCP). See [Raw L4 ports](../raw-ports.md).
+`expose` and `transport` are opt-in and off by default; a port that omits both publishes exactly as before (loopback, TCP). See [Raw L4 ports](../raw-ports/feature.md).
 
 ### Local command setup
 
@@ -150,7 +150,7 @@ A `docker` service runtime accepts an optional `network` field:
 
 - `network` - `"bridge"` (default) or `"host"`. `"host"` runs the container with `--network host`: it shares the host's network namespace, so its listeners bind the host interfaces directly with no NAT and no `-p` publishing (each declared port's `HOSTY_PORT_{KEY}` carries its `containerPort`). Docker runtime only; `"host"` under `localCommand` is rejected. Off by default.
 
-Host networking is for high-churn peer-to-peer workloads (e.g. BitTorrent) where the docker bridge NAT — and, on Docker Desktop/WSL2, the VM network layer — collapses throughput. It exposes **all** of the service's ports on the host (no per-port isolation), and on Windows/WSL2 also requires WSL2 mirrored networking. See [Host networking](../host-networking.md).
+Host networking is for high-churn peer-to-peer workloads (e.g. BitTorrent) where the docker bridge NAT — and, on Docker Desktop/WSL2, the VM network layer — collapses throughput. It exposes **all** of the service's ports on the host (no per-port isolation), and on Windows/WSL2 also requires WSL2 mirrored networking. See [Host networking](../host-networking/feature.md).
 
 ### Service capabilities and devices
 
@@ -159,9 +159,11 @@ A `docker` service runtime accepts two optional privileged lists (empty by defau
 - `capabilities` - Linux capabilities to add (`--cap-add`), e.g. `["NET_ADMIN"]`. Accepted with or without the `CAP_` prefix; must be real capability names. No blanket `--privileged`.
 - `devices` - host device nodes to expose (`--device`), each an absolute path under `/dev`, e.g. `["/dev/net/tun"]`.
 
-Both are docker-only (rejected under `localCommand`), widen container privilege, and are surfaced for install review. The canonical use is an in-container VPN (`NET_ADMIN` + `/dev/net/tun`). See [Container capabilities & devices](../container-capabilities.md).
+Both are docker-only (rejected under `localCommand`), widen container privilege, and are surfaced for install review. The canonical use is an in-container VPN (`NET_ADMIN` + `/dev/net/tun`). See [Container capabilities and devices](../container-capabilities/feature.md).
 
 ### Service dependencies and intra-app discovery
+
+An app may declare several services, each with its own per-runtime configuration. Core starts them in dependency order, injects `HOSTY_APP_SERVICE_KEY` into each, and reports health, logs, endpoints and process or container state per service. Public endpoints appear in Shell and are what `hosty apps open` opens.
 
 A service may declare `dependsOn` to reference one or more sibling services in the same app. Each entry is either a service-key string or a `{ "service", "port" }` object that names a specific port:
 
@@ -220,7 +222,7 @@ Backups cover only this primary app data directory. External mounts and dependen
 
 ## External Mounts
 
-When the app needs large operator-owned host folders outside app data (for example media catalog roots), declare `externalMounts` slots. The manifest declares the slot; the operator binds concrete host paths after install. Core injects each configured slot as `HOSTY_MOUNT_{KEY}` — container paths under `docker`, host paths under `localCommand`. See [External host-path mounts](../external-mounts.md) for the full contract.
+When the app needs large operator-owned host folders outside app data (for example media catalog roots), declare `externalMounts` slots. The manifest declares the slot; the operator binds concrete host paths after install. Core injects each configured slot as `HOSTY_MOUNT_{KEY}` — container paths under `docker`, host paths under `localCommand`. See [External host-path mounts](../external-mounts/feature.md) for the full contract.
 
 ## User Directory
 
@@ -252,7 +254,7 @@ Optional catalog-style display metadata for an installed app. It is **entirely o
 }
 ```
 
-All fields are optional; blanks are dropped and an all-empty block is ignored. `category` is catalog-style metadata, distinct from the simpler `ui.category` used by the app directory. `icon` is an asset path or URL (richer than `ui.icon`, which is a Lucide name). Core exposes the normalized block on each installed app summary as `catalogMetadata` for Shell's installed-app surfaces.
+All fields are optional; blanks are dropped and an all-empty block is ignored. `category` is catalog-style metadata, distinct from the simpler `ui.category` used by the app directory. `icon` is an asset path or URL (richer than `ui.icon`, which is a Lucide name). Core exposes the normalized block on each installed app summary as `catalogMetadata` for Shell's installed-app surfaces. `catalogMetadata.descriptionFile`, `ui.pages[].iconAsset` and how Core serves an app's icon, screenshots and description from its manifest folder are described in [manifest-level app assets](../manifest-level-app-assets/feature.md).
 
 
 ## Core Operation Permissions

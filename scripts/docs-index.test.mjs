@@ -167,6 +167,24 @@ test("links", async (t) => {
     assertError({ "docs/root.md": `# Documentation\n\n[gone](features/gone/feature.md)\n\n<!-- docs-index:begin -->\n<!-- docs-index:end -->\n` }, /root\.md:3: broken link/));
 });
 
+test("locations", async (t) => {
+  await t.test("flat feature document", () =>
+    assertError({ "docs/features/old.md": "# Old\n" }, /features\/old\.md: flat feature document/));
+  await t.test("legacy ideas folder", () =>
+    assertError({ "docs/ideas/thing.md": "# Thing\n" }, /ideas\/thing\.md: not a workflow location/));
+  await t.test("unknown top-level document", () =>
+    assertError({ "docs/notes.md": "# Notes\n" }, /docs\/notes\.md: not a workflow location/));
+  await t.test("tooling files, reviews and asset folders are fine", () => {
+    const files = {
+      "docs/store.md": "# Store\n",
+      "docs/agent.md": "# Agent\n",
+      "docs/img/icon.png": "png",
+      "docs/reviews/2026-01-01-review.md": "# Review\n",
+    };
+    assert.equal(check(files).code, 0);
+  });
+});
+
 test("a NUL byte is reported", () => {
   assertError({ "docs/features/a/feature.md": feature("", "bad\u0000byte\n") }, /contains a NUL byte/);
 });

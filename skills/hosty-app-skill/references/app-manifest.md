@@ -5,7 +5,7 @@ Use this reference when authoring or reviewing Hosty runtime app manifests, stor
 ## Sources Of Truth
 
 - `docs/features/runtime-app-manifest/feature.md`
-- `docs/features/hosty-runtime-app-platform.md`
+- `docs/features/domain-model/feature.md`
 - `apps/core/src/Haas.Hosty.Core/RuntimeAppManifest.cs`
 - `apps/demo-app/manifest.json`
 

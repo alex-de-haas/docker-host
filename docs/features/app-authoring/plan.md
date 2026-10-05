@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-16
-updated: 2026-09-27
+updated: 2026-10-05
 summary: Epic for prompt-driven app creation, live iteration, integration with installed apps and optional publication.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -256,9 +256,8 @@ a discard, save or publish operation. Pinned starts refuse dirty checkouts.
   backups do not protect source edits. Loss warnings and Git save/push belong to the first slice.
 - [AI Agent Bridge step 12](../ai-agent-bridge/plan.md#step-12--development-agent-bridge) remains the
   isolated, non-interactive branch/PR workflow. Its Git and disposable-validation prerequisites do
-  not apply to a local interactive prototype. Its older
-  [workflow sketch](../../ideas/agent-bridge-workflow.md) is context, not this feature's implementation
-  contract; its Core-owned bridge proposal does not move model execution into Core.
+  not apply to a local interactive prototype, and its Core-owned bridge proposal does not move model
+  execution into Core.
 - [Assistant entry points](../assistant-entry-points/plan.md) owns generic panel and context handoff.
   Reuse it. Third-party app messages still only fill a draft; an operator pressing Create with their
   own prompt is a separate explicit submission. Do not turn `ask-assistant` into auto-send.

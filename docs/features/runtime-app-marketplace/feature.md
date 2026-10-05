@@ -123,11 +123,11 @@ Marketplace supports a Docker runtime and a Core-managed `dev` local-command run
 
 ## Links
 
-- [Runtime App Repository Feeds](../catalog-hosted-app-feeds.md)
+- [Runtime App Repository Feeds](../app-feeds/feature.md)
 - [Runtime App Manifest](../runtime-app-manifest/feature.md)
-- [Direct-Origin Runtime App UI](../direct-origin-runtime-app-ui.md)
+- [Direct-Origin Runtime App UI](../auth-gateway/feature.md)
 - [Shell Access And System Apps](../shell-access-and-system-apps/feature.md)
-- [Marketplace As A System App idea](../../ideas/marketplace-system-app.md)
+- [Marketplace As A System App idea](../runtime-app-marketplace/feature.md)
 
 Marketplace uses the SDK identity bridge in both Docker and DEV runtimes. Its launch-code exchange
 survives React development effect replay, so opening it through Shell establishes the administrator

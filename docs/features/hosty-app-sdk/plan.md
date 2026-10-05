@@ -94,7 +94,7 @@ and Core confirmation workflow.
 ## Open Questions
 
 - Question: Where does cross-app auth land if it is ratified?
-  Answer: [cross-app-auth](../../ideas/cross-app-auth.md) proposes a provider middleware and a consumer
+  Answer: [cross-app-auth](../cross-app-auth/plan.md) proposes a provider middleware and a consumer
   handler, which are the same surface as item 5.
   Recommendation: fold it into the capability-client work rather than opening a parallel extraction; it
   needs no new distribution channel.

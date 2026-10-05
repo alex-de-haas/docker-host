@@ -48,7 +48,7 @@ defence-in-depth improvement, not a hole being closed — worth doing carefully,
 4. Does removing the `expose: "host"` requirement change the endpoint availability vocabulary
    (`assigned` / `running` / `unavailable`) the Shell already renders?
 5. Is this subsumed by, or in conflict with, the cross-app authentication sketch in
-   [cross-app-auth](../../ideas/cross-app-auth.md)? That document argued for identity over network
+   [cross-app-auth](../cross-app-auth/plan.md)? That document argued for identity over network
    boundaries; the two answers should not be designed independently.
 
 ## Deliverables

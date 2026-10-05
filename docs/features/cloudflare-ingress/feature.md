@@ -419,6 +419,6 @@ The `hosty` CLI has no ingress or Cloudflare commands.
   which give a stopped app the local URL a publication targets.
 - [Advertised App Origins](../advertised-app-origins/plan.md) — the LAN-without-a-proxy case, which ingress
   deliberately does not cover.
-- [Core Settings](../../ideas/core-settings.md) — the live-settings surface the provider fields use.
+- [Core Settings](../core-runtime-parameters/feature.md#the-settings-store) — the live-settings surface the provider fields use.
 - [Cloudflare API Token Templates](https://developers.cloudflare.com/fundamentals/api/reference/template/)
 - [Cloudflare Tunnel Configuration API](https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/subresources/configurations/methods/update)

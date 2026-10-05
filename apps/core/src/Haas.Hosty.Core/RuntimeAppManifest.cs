@@ -531,7 +531,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         ValidateInterfaces(manifest.Interfaces, errors);
         ValidateAgent(manifest.Agent, errors);
 
-        // System-app UI is validated strictly and fail-closed (docs/ideas/system-app-pages.md):
+        // System-app UI is validated strictly and fail-closed (docs/features/app-ui-surfaces/feature.md):
         // its pages are rendered as administrator Shell surfaces, so a system app must not rely on
         // the permissive runtime fallbacks (endpoint guessing, path prefixing) ordinary app.0.1
         // manifests keep for compatibility. Headless system apps (no ui block) are unaffected.
@@ -3118,7 +3118,7 @@ internal sealed class DockerRuntimeAdapter(
             "App '{AppId}' uses host networking or a host-exposed UDP port for peer-to-peer traffic, and Core appears to be running " +
             "against Docker Desktop on Windows/WSL2. Default WSL2 NAT networking severely throttles peer-to-peer throughput. Enable WSL2 " +
             "mirrored networking: add 'networkingMode=mirrored' under [wsl2] in %UserProfile%\\.wslconfig, run 'wsl --shutdown', then restart " +
-            "Docker Desktop. See docs/features/host-networking.md.",
+            "Docker Desktop. See docs/features/host-networking/feature.md.",
             context.App.Id);
     }
 

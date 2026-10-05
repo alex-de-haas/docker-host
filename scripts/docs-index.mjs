@@ -8,8 +8,9 @@
 // The format is specified in AGENTS.md ("Documentation"). The canonical copy of this script lives in
 // alex-de-haas/docker-host; other repositories carry a byte-identical copy, so change it there first.
 //
-// New-style docs live in docs/features/<name>/{feature.md,plan.md}. Legacy flat docs
-// (docs/features/*.md, docs/ideas/, docs/planning/) are listed as-is and not validated.
+// Workflow docs live in docs/features/<name>/{feature.md,plan.md}, plus docs/vision.md and the
+// docs/reviews/ archive. Any other Markdown under docs/ is rejected, except the top-level files other
+// tooling owns (TOOLING_FILES).
 
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
@@ -22,6 +23,10 @@ const BEGIN = "<!-- docs-index:begin -->";
 const END = "<!-- docs-index:end -->";
 const PLAN_STATUSES = ["In Progress", "Ready", "Blocked", "Draft", "On Hold"];
 const SUMMARY_MAX = 200;
+// Top-level docs/ files that belong to other tooling: the Marketplace store page and an app's agent
+// skill file. They are not workflow documents and are not validated.
+const TOOLING_FILES = new Set(["store.md", "agent.md"]);
+const WORKFLOW_DIRS = new Set(["features", "reviews"]);
 
 // Required and optional frontmatter keys per document kind. Anything else is rejected so that a
 // misspelled key fails loudly instead of silently dropping a field.
@@ -291,7 +296,6 @@ function readDoc(file, kind) {
 // Walk docs/ and build the index.
 
 const entries = [];
-const legacy = [];
 const statusCounts = new Map();
 
 const featuresDir = join(docsDir, "features");
@@ -320,19 +324,31 @@ if (existsSync(featuresDir)) {
       }
       entries.push(entry);
     } else if (name.endsWith(".md")) {
-      checkPrintable(dir, readFileSync(dir, "utf8"));
-      legacy.push(`- [features/${name.replace(/\.md$/, "")}](features/${name})`);
+      errors.push(`${rel(dir)}: flat feature document; move it to docs/features/<name>/feature.md or plan.md`);
     }
   }
 }
 
-for (const sub of ["ideas", "planning"]) {
-  const dir = join(docsDir, sub);
-  if (!existsSync(dir)) continue;
-  for (const name of readdirSync(dir).sort()) {
-    if (!name.endsWith(".md")) continue;
-    checkPrintable(join(dir, name), readFileSync(join(dir, name), "utf8"));
-    legacy.push(`- [${sub}/${name.replace(/\.md$/, "")}](${sub}/${name})`);
+// Markdown anywhere else under docs/ is a legacy layout (docs/ideas/, docs/planning/, ...). Asset
+// folders without Markdown, such as images referenced by store.md, are fine.
+function markdownUnder(dir) {
+  return readdirSync(dir).flatMap((name) => {
+    const path = join(dir, name);
+    if (statSync(path).isDirectory()) return markdownUnder(path);
+    return name.endsWith(".md") ? [path] : [];
+  });
+}
+
+if (existsSync(docsDir)) {
+  for (const name of readdirSync(docsDir).sort()) {
+    const path = join(docsDir, name);
+    if (statSync(path).isDirectory()) {
+      if (WORKFLOW_DIRS.has(name)) continue;
+      for (const file of markdownUnder(path))
+        errors.push(`${rel(file)}: not a workflow location; documents live in docs/features/<name>/ (feature.md, plan.md)`);
+    } else if (name.endsWith(".md") && !["root.md", "vision.md"].includes(name) && !TOOLING_FILES.has(name)) {
+      errors.push(`${rel(path)}: not a workflow location; documents live in docs/features/<name>/ (feature.md, plan.md)`);
+    }
   }
 }
 
@@ -352,7 +368,6 @@ const lines = [
   ...(counts.length ? [`Plans: ${counts.join(" · ")}.`, ""] : []),
   ...(entries.length ? entries : ["_None yet._"]),
 ];
-if (legacy.length) lines.push("", "### Legacy documents (pre-migration)", "", ...legacy);
 lines.push("", END);
 const block = lines.join("\n");
 

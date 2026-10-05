@@ -12,7 +12,7 @@ components: [apps/core, apps/cli, apps/shell]
 Let an operator register large, operator-owned host folders **once** at the host level (a
 "shared mounts" library) and attach them to any runtime app by reference, instead of re-typing
 the same host path into every app. Editing a library entry's path updates every app that
-references it on the next start. This builds directly on per-app [external mounts](../external-mounts.md)
+references it on the next start. This builds directly on per-app [external mounts](../external-mounts/feature.md)
 — the manifest slot stays the opt-in point and the source of all binding authority; only the
 **source of the host path** changes from inline text to a reference into the shared library.
 

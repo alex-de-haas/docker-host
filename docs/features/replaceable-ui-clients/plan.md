@@ -1,8 +1,15 @@
+---
+status: Draft
+created: 2026-07-17
+updated: 2026-10-05
+summary: Treat shells as ordinary apps that provide a ui-client role, with Core resolving the primary UI by role instead of by app id.
+components: [apps/core, apps/shell]
+---
+
 # Replaceable UI Clients — The `ui-client` Role And Primary Selection
 
-Status: Idea
-Created: 2026-07-17
-Updated: 2026-07-17
+Carried over from `docs/ideas/` on 2026-10-05. The "Decisions" below are the proposal's positions;
+the owner has not ratified them, so this plan stays Draft until they are confirmed.
 
 ## Motivation
 
@@ -20,8 +27,8 @@ Hosty needs two things that look like they pull in opposite directions:
 The tension is smaller than it looks, because most of the separation already shipped:
 
 - Bootstrap installs produce **ordinary app records** — same manifest, same lifecycle, same
-  reviewed update flow. Distribution origin is provenance, not privilege ([removable-system-apps](../features/removable-system-apps/feature.md),
-  [capabilities are not lifecycle grants](../features/core-extension-model/plan.md)).
+  reviewed update flow. Distribution origin is provenance, not privilege ([removable-system-apps](../removable-system-apps/feature.md),
+  [capabilities are not lifecycle grants](../core-extension-model/plan.md)).
 - Core already copes with **no UI client at all**: the Shell origin resolves from the installed app
   record, and a null origin is a valid answer every caller must handle
   (`ShellPublicOriginResolver`, shipped with "Shell config belongs to Shell").
@@ -40,8 +47,8 @@ What remains is exactly one hardcode and one unowned decision:
    to pick without context (login continuation, bootstrap completion, deep links).
 
 This document defines the model that closes both gaps. It complements
-[core-extension-model](../features/core-extension-model/plan.md) (this is a concrete instance of a multi-instance
-contract with a designated default) and [hosty-app-sdk](../features/hosty-app-sdk/feature.md) (whose embedder
+[core-extension-model](../core-extension-model/plan.md) (this is a concrete instance of a multi-instance
+contract with a designated default) and [hosty-app-sdk](../hosty-app-sdk/feature.md) (whose embedder
 contract is the behavioral half of what a shell must implement).
 
 ## Current Architecture Findings
@@ -148,14 +155,14 @@ contract is the behavioral half of what a shell must implement).
 6. **The UI-client contract is small and explicit.** Claiming `provides: ["ui-client"]` commits an
    app to:
    - a public web endpoint (key `web` preferred) — the origin Core resolves;
-   - the **embedder contract** from [hosty-app-sdk](../features/hosty-app-sdk/feature.md#the-embedder-contract): embedding app UIs,
+   - the **embedder contract** from [hosty-app-sdk](../hosty-app-sdk/feature.md#the-embedder-contract): embedding app UIs,
      handling `hosty:auth-required`, launch modes;
    - two **well-known routes**, which are the only URL shapes Core ever mints:
      - `/` — landing target for login continuation without `returnTo` and for bootstrap completion;
      - `/apps/{appId}` — the deep link Core hands to CLI/agents to open an app.
 
    Nothing else is promised. A shell's internal routing, features, and design are its own. This is
-   the `ui-client` contract in [core-extension-model](../features/core-extension-model/plan.md) terms:
+   the `ui-client` contract in [core-extension-model](../core-extension-model/plan.md) terms:
    multi-instance cardinality with a designated default.
 
    **The contract is not enforced by manifest validation.** `ValidateProvides` is deliberately
@@ -199,7 +206,20 @@ contract is the behavioral half of what a shell must implement).
 - No settings migration: absent `primaryUiAppId` plus a sole installed shell resolves identically
   to today's behavior. Wire compatibility of `core/status` is preserved (field addition only).
 
-## Deferred
+## Deliverables
+
+- [ ] D1. Core: a `ui-client` `provides` slot, UI resolution by role instead of app id, and primary-UI
+      resolution as pure state (setting, else the sole installed UI client, else the earliest
+      installed), with the legacy shim that counts an installed `hosty.shell` as a UI client.
+- [ ] D2. CORS admits every installed UI client, not only the primary.
+- [ ] D3. `primaryUiAppId` in Core settings, and the resolved primary app id and origin in
+      `core/status`.
+- [ ] D4. Shell: the Primary UI selector when more than one UI client is installed, and the
+      last-UI-client warning in the uninstall dialog; uninstalling the last shell stays allowed.
+- [ ] D5. Shell's manifest declares `"provides": ["ui-client"]`; the legacy shim is removed once that
+      release has shipped.
+
+## Not In Scope
 
 - **Marketplace listing of the official Shell.** Depends only on publishing the feed entry; no code
   in this design blocks or requires it.
@@ -208,5 +228,5 @@ contract is the behavioral half of what a shell must implement).
 - **Notification links.** The notifications design will mint URLs against the primary UI via the
   same resolver; nothing extra to decide here.
 - **Capability-slot conflict UX.** What Marketplace shows when installing a second app for a
-  single-instance slot is a [core-extension-model](../features/core-extension-model/plan.md) question;
+  single-instance slot is a [core-extension-model](../core-extension-model/plan.md) question;
   `ui-client` is multi-instance and does not hit it.

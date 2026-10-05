@@ -115,7 +115,7 @@ description; the assistant's own title row in the Hosty Harness's pages.
 - [Swift Shell](../swift-shell/feature.md) — the native workspace chrome and the recovery
   interception the `native` mode must not disturb.
 - [Core App Shell](../core-app-shell/feature.md) — the embedded-apps contract this rides on.
-- [Direct Origin Runtime App UI](../direct-origin-runtime-app-ui.md) — why standalone keeps
+- [Direct Origin Runtime App UI](../auth-gateway/feature.md) — why standalone keeps
   everything.
 
 ## Testing Expectations

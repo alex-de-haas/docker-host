@@ -73,7 +73,9 @@ docs/
   only the work that belongs to the umbrella itself.
 - Two top-level files belong to other tooling and are not workflow documents:
   `docs/store.md` (the Marketplace store page) and `docs/agent.md` (the app's
-  agent skill file).
+  agent skill file). Any other Markdown under `docs/` — flat
+  `docs/features/*.md`, `docs/ideas/`, `docs/planning/` — is rejected by the
+  validator.
 
 ### Frontmatter
 

@@ -1,6 +1,6 @@
 ---
 created: 2026-09-01
-updated: 2026-09-02
+updated: 2026-10-05
 summary: Core launches with only a data root and a port, and everything else lives in the instance's settings store.
 components: [apps/core, apps/cli]
 ---
@@ -31,6 +31,22 @@ instance itself (`{root}/core/run/control.json`).
 `HOSTY_CORE_PUBLIC_ORIGIN` is not a launch parameter either: it is a live setting in the same store,
 with the environment variable surviving as a baseline the stored value wins over. See
 [core-public-origin](../core-public-origin/feature.md).
+
+## The Settings Store
+
+Core's behavior settings live in `{root}/core/settings.json` (schema `core-settings.0.1`), owned by
+`CoreSettingsService`. Core is the kernel, not an installed app, so it has no manifest and no
+Installed Apps record; it reuses the app settings *shape* (key, type, value, label, description, plus
+a group and a default) so Shell's settings components render it in the Core section of Settings.
+Sections are additive under the same schema: auth session and grant lifetimes, public ingress,
+app update checks, user management (disabled-user retention), agent clients and the Core process.
+
+A setting's effective value is the persisted override, else its environment variable, else the
+built-in default: the environment stays an ambient development override that the store wins over.
+Saved values apply live, without a restart. Auth idle windows apply immediately, including to
+existing sessions; absolute windows apply to sessions and grants issued after the change. Ingress
+changes re-render the tunnel configuration at once. The listen port, below, is the exception that
+applies on the next start.
 
 ## Port in the Settings Store
 

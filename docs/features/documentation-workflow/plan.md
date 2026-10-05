@@ -107,7 +107,7 @@ byte-identical copy whose header comment names its origin. In addition to the ex
   `docs/planning/`).
 
 Top-level files that belong to other tooling are allowed and not validated: `store.md` (the
-Marketplace store page, see [manifest-level app assets](../manifest-level-app-assets.md)) and
+Marketplace store page, see [manifest-level app assets](../manifest-level-app-assets/feature.md)) and
 `agent.md` (an app-provided agent skill file). `--fix` upgrades legacy header lines in a
 new-style document to frontmatter. An in-flight branch that adds or edits documents in the old
 style therefore converts with one command after rebasing.
@@ -154,7 +154,7 @@ Inventory at the 2026-10-05 baseline:
 
 `hosty-catalog` has no `docs/` and is out of scope.
 
-### docker-host dispositions (proposed 2026-10-05, awaiting owner approval)
+### docker-host dispositions (approved by the owner on 2026-10-05)
 
 "Move" creates `features/<target>/feature.md` and rewrites the content as current behavior verified
 against the code. "Merge" folds still-true facts into an existing document and deletes the legacy
@@ -179,7 +179,7 @@ Shipped behavior (`docs/features/*.md`):
 | `manifest-level-app-assets.md` | Move to `manifest-level-app-assets` (workstreams A1–A4 shipped); still-open questions become its Draft `plan.md` |
 | `multi-service-runtime-apps.md` | Merge into `runtime-app-manifest` |
 | `raw-ports.md` | Move to `raw-ports` |
-| `runtime-app-compact-view.md` | Merge into `shell-navigation` if the Dashboard ships it; otherwise Plan in `shell-navigation` |
+| `runtime-app-compact-view.md` | Merge into `shell-navigation` if the Dashboard ships it; otherwise Plan in `shell-navigation`. Executed: the Dashboard ships it, and its rows are described in `core-app-shell`, so the facts went there |
 | `user-management.md` | Move to `user-management` |
 
 Promoted or implemented designs:
@@ -207,13 +207,13 @@ Unbuilt ideas (owner decision: keep as Draft or delete):
 | `ideas/backup-retention-extensions.md` | Keep as Draft `app-data-backup-retention/plan.md` (age-based rules, per-app overrides) |
 | `ideas/cross-app-auth.md` | Keep as Draft `cross-app-auth/plan.md` (peer introspection; vision open question 1 relies on app-to-app calls) |
 | `ideas/replaceable-ui-clients.md` | Keep as Draft `replaceable-ui-clients/plan.md` (the `ui-client` role) |
-| `ideas/future-work.md` | The image `pullPolicy: ifChanged` item joins `runtime-app-update/plan.md`; the CLI launcher shim and the removal preview are deleted |
+| `ideas/future-work.md` | The image `pullPolicy: ifChanged` item joins `runtime-app-update/plan.md`; the CLI launcher shim and the removal preview are deleted. Executed: `pullPolicy: ifChanged` turned out to be superseded — every start runs the pinned digest lock and the update check detects a moved tag through the registry — so it was dropped instead |
 
 ## Deliverables
 
 ### Phase 1 — Format and tooling (docker-host)
 
-- [ ] D1. Validator v2 in `scripts/docs-index.mjs`, as specified under Target Format, including
+- [x] D1. Validator v2 in `scripts/docs-index.mjs`, as specified under Target Format, including
       `--fix` header upgrade, link resolution, legacy-location rejection and the non-workflow
       allowlist.
 - [x] D2. Validator tests (`node:test` fixtures for every rejection and for the header upgrade),
@@ -228,8 +228,8 @@ Unbuilt ideas (owner decision: keep as Draft or delete):
 
 ### Phase 2 — Legacy triage (docker-host)
 
-- [ ] D6. Disposition table for the 33 legacy documents, approved by the owner.
-- [ ] D7. Approved dispositions executed, inbound references updated repository-wide, and
+- [x] D6. Disposition table for the 33 legacy documents, approved by the owner.
+- [x] D7. Approved dispositions executed, inbound references updated repository-wide, and
       `docs/ideas/` and `docs/planning/` removed.
 
 ### Phase 3 — Other repositories (one pull request each)
@@ -250,8 +250,10 @@ Unbuilt ideas (owner decision: keep as Draft or delete):
 
 ## Versioning
 
-No version changes. Every repository changes only documentation and repository tooling that no
-release artifact ships.
+Documentation and repository tooling need no version change. One exception surfaced during the
+docker-host migration: a Core log warning names the host-networking document by path, so moving
+that document changes Core's output and bumps the platform patch version (0.118.0 → 0.118.1).
+Comment-only path updates in Core and Shell change no shipped artifact.
 
 ## Interactions
 

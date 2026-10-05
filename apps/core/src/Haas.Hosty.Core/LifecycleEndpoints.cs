@@ -382,7 +382,7 @@ internal static class LifecycleEndpoints
         // back immediately; the apply itself runs detached on the application lifetime token so a
         // page reload never aborts it. Progress is the record's operationStatus ("updating"), the
         // outcome is the record flip plus a notification. The CLI control-plane twin below stays
-        // synchronous. See docs/planning/plan-first-app-updates.md (phase 3).
+        // synchronous. See docs/features/runtime-app-update/feature.md.
         app.MapPost("/api/apps/{appId}/update", async (
             string appId,
             HttpRequest request,
@@ -543,7 +543,7 @@ internal static class LifecycleEndpoints
         });
 
         // `refresh=true` forces a plan rebuild; otherwise a fresh cached plan is projected without
-        // network work (plan-first updates, docs/planning/plan-first-app-updates.md).
+        // network work (plan-first updates, docs/features/runtime-app-update/feature.md).
         app.MapGet("/api/apps/{appId}/update-status", async (
             string appId,
             bool? refresh,

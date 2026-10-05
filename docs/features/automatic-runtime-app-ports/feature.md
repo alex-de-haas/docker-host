@@ -384,5 +384,5 @@ beyond blocking its own app's reassigned ports.
   and the reconcile that re-points it whenever this feature moves a port.
 - [Cross-App Dependencies](../cross-app-dependencies/feature.md) — consumes a dependency's local
   endpoint URL, which a reassignment invalidates until the dependent restarts.
-- [Raw L4 Ports](../raw-ports.md) — `expose: host` and UDP publishing.
-- [Host Networking](../host-networking.md) — fixed host-namespace ports.
+- [Raw L4 Ports](../raw-ports/feature.md) — `expose: host` and UDP publishing.
+- [Host Networking](../host-networking/feature.md) — fixed host-namespace ports.
