@@ -1,6 +1,6 @@
 # App Code Exchange — Bind Redemption To The App And Its Sign-In Attempt
 
-Status: In Progress
+Status: Blocked
 Created: 2026-10-05
 Updated: 2026-10-05
 
@@ -20,8 +20,9 @@ discloses the proof request. The separate cross-port session-capture investigati
 
 The owner approved the original service-token plan on 2026-10-05 and the expanded protocol later
 the same day. Core, SDK, Harness, Shell, first-party app, Swift, CLI and both external-client source
-changes are implemented locally. Production publication, actual external registry locks and live
-acceptance remain tracked below; local SDK tarballs do not establish release completion.
+changes are implemented. SDK 0.21.0 is published with verified npm integrity; both external clients
+use actual registry locks and pass clean-install, CI and Core-managed acceptance. Production client
+rollout and native live acceptance remain tracked below.
 
 Inspection found that an app's public code handler forwards an arbitrary supplied code using its
 own credential. On 2026-10-05 the owner chose to expand this same plan and review the protocol
@@ -31,12 +32,14 @@ CLI/Swift behavior and HTTP constraints. Implementation proceeds in the isolated
 
 ## Completion Blockers
 
-The owner approved the IPv6-only CSP amendment on 2026-10-05. Its implementation and real IPv6
-acceptance pass; SDK publication and registry-based client rollout are in progress. Native live
-acceptance remains blocked by UI automation: after the owner unlocked the Mac, inventory returned
-the running isolated QA clone, but acquiring it by bundle ID or exact path still returned no
-accessibility state and was aborted. No native GUI scenario has passed. The temporary QA signature
-does not establish Keychain persistence. All remaining work stays in the unchecked deliverables.
+The owner-approved IPv6 CSP amendment, SDK publication, actual external registry locks, CI and
+isolated Core-managed client-first acceptance are complete. Native live acceptance remains blocked
+by UI automation: after the owner unlocked the Mac, inventory returned the running isolated QA
+clone, but acquiring it by bundle ID or exact path still returned no accessibility state and was
+aborted. No native GUI scenario has passed. Its temporary QA signature does not establish Keychain
+persistence. Production client merge/release/deployment before Core enforcement also remains open;
+isolated QA deployment does not establish production rollout. The plan stays blocked and PR #547
+stays draft; all remaining work is explicit in the unchecked deliverables.
 
 ## Current Behavior And The Two Bypasses
 
@@ -325,13 +328,22 @@ Remaining work:
 - [x] Update SDK proof generation/lifecycle, standalone, silent, popup and activity renewal; require
   proof in server exchange/handlers and refuse redirected proof POSTs.
 - [x] Update Harness browser/server exchange and Shell server login/renewal/CSP/referrer behavior.
+- [x] Preserve same-app browser-origin protection in the Project Manager custom exchange and
+  safe Core rejection codes in both external identity probes, so rejected per-tab grants clear
+  while activity expiry and transient errors preserve their intended recovery behavior.
 - [x] Update Swift app-first launch, trusted navigation validation, proof-bearing launch requests,
   external-browser handoff, tests and documentation. Cardputer remains unchanged.
 - [x] Remove credential-bearing CLI/control open links and explicit `apps open --user` impersonation;
   update public contracts, help, tests and relevant feature documentation.
-- [ ] Update Project Manager custom proof flow; publish the complete SDK, update both external clients'
-  real dependency locks, verify and deploy them before Core enforcement. Supersede local header-only
-  SDK/Media candidate patches with the full protocol.
+- [x] Update Project Manager custom proof flow; publish the complete SDK, update both external clients'
+  actual registry locks and verify clean registry installations, tests, lint and production builds.
+  Supersede local header-only SDK/Media candidate patches with the full protocol.
+- [x] Complete actual-registry Core-managed client-first deployment acceptance on old Core and
+  after enforcing-Core upgrade, including protected content and revoked-grant cleanup.
+- [ ] Complete production client merge/release/deployment before Core enforcement. Local QA
+  deployment is not production release evidence.
+- [x] Update Media browser-test fixtures for strict protocol discovery and proof-bearing intent
+  navigation; complete final green registry-based external CI.
 - [ ] Update app auth references and affected feature documents, create current `feature.md`, remove
   this plan only after all deliverables, and regenerate the documentation index. Touched legacy
   auth/direct-UI docs use their migrated feature folders.
@@ -398,10 +410,14 @@ existing warnings), 119 affected HTTP tests and the full Core suite: 2632 passed
 skips, zero failures. The final SDK passes 328 tests and its production build, including IPv6 CSP and reserved-localhost
 recovery regressions. Harness passes 515 tests and its fresh webpack production export. CLI passes 230 tests and its
 exact build, including long URL/JSON output at a narrow console width. Swift HostyKit passes 181 tests, with macOS and generic iOS Simulator Release builds.
-Shell's upgrade, IPv6 CSP and actual Next header-matching regressions pass 300 tests. Documentation-index,
+Shell's upgrade, IPv6 CSP and actual Next header-matching regressions pass 300 tests; lint has
+zero errors and two existing warnings. Documentation-index,
 version consistency and whitespace checks pass. The final Shell, Demo, Marketplace and Telemetry UI webpack builds pass; Marketplace 109,
-Telemetry UI 10 and Demo 4 tests pass. Final external published-dist candidates pass Project
-Manager 132 and Media Server 168 tests, lint and fresh webpack builds. Real old-Core-to-new-Core upgrade acceptance passes for all four pending attempt modes.
+Telemetry UI 10 and Demo 4 tests pass. Final actual-registry installations pass Project
+Manager 164 and Media Server 175 tests, lint and fresh webpack builds. Media's full protocol-aware
+Playwright suite passes 159 cases. Real old-Core-to-new-Core upgrade acceptance passes for all four
+pending attempt modes; both external actual-registry clients also pass standalone and real Shell
+silent iframe sign-in before and after enforcement.
 
 Fresh isolated Core-managed HTTPS browser evidence verifies Demo standalone and Shell server
 login, initial Shell-embedded silent sign-in, real third-party nonce refusal followed by a
@@ -449,24 +465,26 @@ upgrade checks in a separate normally authenticated runtime.
   persistence is outside the temporary signature's evidence. The operator app was never launched.
   Only the isolated Core/runtime graph and exact QA clone were stopped; private fixtures/evidence
   are retained for resuming acceptance when native UI control works.
-- [ ] Complete SDK registry publication, real external dependency locks and client-first deployment
-  following the completed IPv6 CSP amendment and acceptance. Keep PR #547 draft until its
-  tracked work is done.
+- [x] Complete SDK registry publication, real external dependency locks and isolated client-first
+  deployment acceptance following the approved IPv6 amendment. Production release remains the
+  separate unchecked deliverable above; keep PR #547 draft until its tracked work is done.
 
-External source integration is available for review in draft [Project Manager #103](https://github.com/alex-de-haas/project-manager/pull/103)
-and [Media Server #318](https://github.com/alex-de-haas/media-server/pull/318). Their source matches
-the verified SDK-dist candidates; actual SDK dependencies, registry locks and deployment remain
-unchecked until publication and registry-based verification. Neither draft is ready to merge.
-
-External GitHub CI confirms Project Manager Verify passes. Media API, web e2e, manifest and docs
-pass; Media web reports 158 passed / 10 failed against its still-locked SDK 0.19.1, which lacks
-proof enforcement and protocol recovery metadata. The complete 0.21.0 candidate passes all 168.
-Registry lock refresh and green registry-based CI remain part of the unchecked rollout deliverable.
+External source integration is available in [Project Manager #103](https://github.com/alex-de-haas/project-manager/pull/103)
+and [Media Server #318](https://github.com/alex-de-haas/media-server/pull/318). Final Project Manager
+source `be0604e` passes [Verify CI](https://github.com/alex-de-haas/project-manager/actions/runs/37355238205).
+Final Media source `69211b4` passes [API, web unit/lint/build, Playwright, manifest and docs CI](https://github.com/alex-de-haas/media-server/actions/runs/37356881355).
+The registry update supersedes the older SDK 0.19.1 failures; protocol-aware fixtures supersede the
+obsolete GET-recovery expectations. Both external PRs are ready for client-first review and release;
+this evidence claims no production merge or deployment.
 
 The predecessor SDK 0.20.0 from first-feature commit `497a4e85` is published through workflow
 [37350302179](https://github.com/alex-de-haas/docker-host/actions/runs/37350302179): 209 SDK tests
-and its build pass, and actual npm metadata confirms the immutable artifact. Publish complete
-0.21.0 next; later main-branch workflows skip already-published versions.
+and its build pass, and actual npm metadata confirms the immutable artifact. Complete SDK 0.21.0
+is published from final source `25fd9a85` through workflow
+[37352390777](https://github.com/alex-de-haas/docker-host/actions/runs/37352390777), with 328 tests
+and its build passing. Actual registry integrity and SHA-1 match the final tested dist-only archive;
+later main-branch workflows skip already-published versions. Actual npm/pnpm locks resolve that
+artifact; fresh registry installations and final production builds pass for both clients.
 
 Fresh real HTTP IPv6 acceptance uses literal Core `[::1]` and distinct default generated
 `.hosty.localhost` app origins, with public overrides cleared. Standalone intent POST returns 303,
@@ -478,3 +496,27 @@ completes nonce validation and proof exchange 200. All three cases have zero CSP
 The SDK recognizes reserved localhost subdomains, and Next global headers preserve the auth
 route-owned policy while retaining ordinary Shell frame protection. These bounded corrections
 are included in the existing SDK/Shell deliverables above.
+
+
+Final actual-registry deployment acceptance uses a fresh isolated normally authenticated Core
+instance. Before any protocol-2 observation, Core 0.119.0 metadata 404 selects protocol 1; both
+clients sign in standalone and in actual Shell iframes, forward their matching proof and return
+protected content 200. Compatibility does not claim old-Core protection. Exact Core 0.120.0
+build/start passes with zero errors and four existing warnings; fresh protocol-2 cases for both
+clients produce app-Origin intent 303, __Host nonce issuance, matching proof exchange 200,
+protected content 200, no verifier in URLs and zero CSP violations. A foreign browser's simple
+text/plain POST to Project Manager returns 403 without a cookie; the original held code still
+exchanges successfully. After the same parent logout and the existing 30-second positive-cache
+expiry, recreated Shell frames report token_revoked, clear stored grants and display explicit
+app-owned sign-in with zero automatic intents. PM retains its HTTP-200/expired probe contract;
+Media returns 401.
+
+The initial Docker dependency with autostart disabled stops under existing boot policy, while
+local runners survive. After normal isolated-QA configuration enables its autostart, a separate
+lifecycle-only Core 0.119→0.120 transition preserves all four local runner identities, the eligible
+Torrent container, browser origins, mounts and dependency graph health. That returned old-Core
+phase makes no new protocol-1 browser claim after the clients observed protocol 2. Both final
+registry graphs and private proxies are stopped; all recorded PIDs/ports and running instance-owned
+containers are absent. Real Torrent/VPN traffic, TMDB/catalog ingestion and optional transcoding
+are outside this authentication acceptance and were not exercised. Operator lifecycle and local
+original dependency/build directories remain unchanged.

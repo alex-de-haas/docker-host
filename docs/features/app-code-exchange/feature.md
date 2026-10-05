@@ -123,8 +123,9 @@ and stored protocol before clearing the old attempt and returning to its own fre
 Unknown metadata and protocol-2 refusals remain terminal. Old-Core compatibility does not claim
 the new protection.
 
-SDK publication, actual external dependency locks, deployment before Core enforcement and live
-acceptance remain tracked in [the plan](plan.md); local package candidates are not release evidence.
+SDK 0.21.0 is published; both external clients use its verified npm artifact in their actual
+dependency locks. Production client rollout before Core enforcement and native live acceptance
+remain tracked in [the plan](plan.md); isolated QA deployment is not production release evidence.
 
 ## Testing Expectations
 
