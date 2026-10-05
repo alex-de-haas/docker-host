@@ -162,6 +162,13 @@ So Core reports the event instead of asserting a state. When the boot rehoming p
 origin is operator-owned, it publishes one host-admin notification naming the old and new local port
 and saying to update the upstream. A standing "broken" badge would claim knowledge Core does not have.
 
+## Links
+
+- [Cloudflare Ingress](../cloudflare-ingress/feature.md) — the two Cloudflare providers in full.
+- [Automatic Runtime App Ports](../automatic-runtime-app-ports/feature.md) — the local port an origin
+  points at, and the boot pass that moves it.
+- [Core Public Origin](../core-public-origin/feature.md) — Core's own hostname, deliberately separate.
+
 ## Testing Expectations
 
 - Local editor sends only a label and reviewed-address precondition; preview uses Core’s suffix and port.
@@ -189,10 +196,3 @@ and saying to update the upstream. A standing "broken" badge would claim knowled
 - On a published endpoint the primary action resolves to Reapply only for the unchanged label of a
   drifted route, and to Rename everywhere else — enabled for an edit, disabled for an emptied field or
   an intact route; casing and whitespace alone never read as an edit.
-
-## Links
-
-- [Cloudflare Ingress](../cloudflare-ingress/feature.md) — the two Cloudflare providers in full.
-- [Automatic Runtime App Ports](../automatic-runtime-app-ports/feature.md) — the local port an origin
-  points at, and the boot pass that moves it.
-- [Core Public Origin](../core-public-origin/feature.md) — Core's own hostname, deliberately separate.

@@ -16,7 +16,7 @@ const script = join(dirname(fileURLToPath(import.meta.url)), "docs-index.mjs");
 const ROOT = "# Documentation\n\n<!-- docs-index:begin -->\n<!-- docs-index:end -->\n";
 
 const feature = (extra = "", body = "") =>
-  `---\ncreated: 2026-01-01\nupdated: 2026-01-02\nsummary: A feature.\n${extra}---\n\n# Feature\n\nText.\n${body}`;
+  `---\ncreated: 2026-01-01\nupdated: 2026-01-02\nsummary: A feature.\n${extra}---\n\n# Feature\n\nText.\n${body}\n## Testing Expectations\n\n- Covered.\n`;
 
 const plan = (deliverables = "- [ ] D1. Do it.\n", extra = "", status = "Draft") =>
   `---\nstatus: ${status}\ncreated: 2026-01-01\nupdated: 2026-01-02\nsummary: A plan.\n${extra}---\n\n# Plan\n\n## Deliverables\n\n${deliverables}`;
@@ -129,6 +129,13 @@ test("frontmatter schema", async (t) => {
     assertError({ "docs/features/a/feature.md": feature().replace("A feature.", "Uses `code` here.") }, /summary must be plain text/));
   await t.test("unquoted colon in summary", () =>
     assertError({ "docs/features/a/feature.md": feature().replace("A feature.", "Core API: endpoints") }, /wrap it in double quotes/));
+  await t.test("several sentences in summary", () =>
+    assertError({ "docs/features/a/feature.md": feature().replace("A feature.", "One sentence. Another one.") }, /summary must be a single sentence/));
+  await t.test("emphasis in summary", () =>
+    assertError({ "docs/features/a/feature.md": feature().replace("A feature.", "An _important_ feature.") }, /summary must be plain text/));
+  await t.test("identifiers with underscores in summary are fine", () => {
+    assert.equal(check({ "docs/features/a/feature.md": feature().replace("A feature.", "Injects HOSTY_PORT_KEY into every service.") }).code, 0);
+  });
   await t.test("quoted colon in summary is fine", () => {
     assert.equal(check({ "docs/features/a/feature.md": feature().replace("A feature.", '"Core API: endpoints"') }).code, 0);
   });
@@ -152,6 +159,8 @@ test("deliverables", async (t) => {
     const deliverables = "### Phase 1\n\n- [ ] D1. One.\n\n```markdown\n- [ ] Example only.\n```\n\n### Phase 2\n\n- [x] D3. Three.\n";
     assert.equal(check({ "docs/features/a/plan.md": plan(deliverables) }).code, 0);
   });
+  await t.test("a Deliverables section without deliverables", () =>
+    assertError({ "docs/features/a/plan.md": plan("None yet.\n") }, /needs at least one deliverable/));
   await t.test("a plan without a Deliverables section", () =>
     assertError({ "docs/features/a/plan.md": plan().replace("## Deliverables\n\n- [ ] D1. Do it.\n", "## Goal\n\nText.\n") }, /needs a "## Deliverables" section/));
   await t.test("a longer fence keeps a shorter one as content", () => {
@@ -173,6 +182,15 @@ test("links", async (t) => {
     assertError({ "docs/root.md": `# Documentation\n\n[gone](features/gone/feature.md)\n\n<!-- docs-index:begin -->\n<!-- docs-index:end -->\n` }, /root\.md:3: broken link/));
 });
 
+test("feature structure", async (t) => {
+  await t.test("missing Testing Expectations", () =>
+    assertError({ "docs/features/a/feature.md": feature().replace("## Testing Expectations\n\n- Covered.\n", "") }, /must end with a "## Testing Expectations" section/));
+  await t.test("Testing Expectations not last", () =>
+    assertError({ "docs/features/a/feature.md": feature() + "\n## Links\n\n- None.\n" }, /must end with a "## Testing Expectations" section/));
+  await t.test("folder name that is not kebab-case", () =>
+    assertError({ "docs/features/My_Feature/feature.md": feature() }, /My_Feature: feature folder names are kebab-case/));
+});
+
 test("locations", async (t) => {
   await t.test("flat feature document", () =>
     assertError({ "docs/features/old.md": "# Old\n" }, /features\/old\.md: flat feature document/));
@@ -186,6 +204,8 @@ test("locations", async (t) => {
     assert.equal(check({ "docs/features/a/feature.md": feature(), "docs/features/a/diagram.png": "png" }).code, 0));
   await t.test("unknown top-level document", () =>
     assertError({ "docs/notes.md": "# Notes\n" }, /docs\/notes\.md: not a workflow location/));
+  await t.test("review without a dated name", () =>
+    assertError({ "docs/reviews/notes.md": "# Notes\n" }, /reviews\/notes\.md: reviews are named/));
   await t.test("tooling files, reviews and asset folders are fine", () => {
     const files = {
       "docs/store.md": "# Store\n",

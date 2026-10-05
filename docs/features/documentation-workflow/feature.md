@@ -32,8 +32,10 @@ first and is then copied. CI runs `node scripts/docs-index.mjs --check` in every
 - The block is a strict subset of YAML: one `key: value` per line, plain scalars, double-quoted
   strings with only `\"` and `\\` escapes, and `[a, b]` lists. A standard YAML parser reads every
   block exactly as the validator does.
-- Every plan has exactly one `## Deliverables` section. Its deliverables are the only checkboxes in
-  the plan, all top-level items, each starting with a stable ID such as `- [ ] D3. Text`.
+- Every plan has exactly one `## Deliverables` section with at least one deliverable. Its
+  deliverables are the only checkboxes in the plan, all top-level items, each starting with a stable
+  ID such as `- [ ] D3. Text`.
+- Every `feature.md` ends with a `## Testing Expectations` section.
 
 ## Validator
 
@@ -41,11 +43,15 @@ first and is then copied. CI runs `node scripts/docs-index.mjs --check` in every
 legacy `Status:` / `Created:` / `Updated:` header lines into frontmatter, then rewrite the index
 block) and `--check` (exit 1 on any error or a stale index). It reports:
 
-- missing, unknown, duplicated or malformed frontmatter keys; an invalid status, date, summary or
-  component; `updated` earlier than `created`; header lines left beside frontmatter;
-- a missing `# Title` heading after the frontmatter;
-- a plan without a `## Deliverables` section or with a second one, checkboxes outside it, nested
-  checkboxes, and deliverables without an ID or with a duplicate ID;
+- missing, unknown, duplicated or malformed frontmatter keys; an invalid status, date or component;
+  `updated` earlier than `created`; header lines left beside frontmatter;
+- a summary that is longer than 200 characters, contains Markdown or inline HTML, or has more than
+  one sentence;
+- a missing `# Title` heading after the frontmatter, and a `feature.md` that does not end with
+  `## Testing Expectations`;
+- a feature folder name that is not kebab-case, and a review not named `YYYY-MM-DD-<name>.md`;
+- a plan without a `## Deliverables` section, with a second one or with no deliverable in it,
+  checkboxes outside it, nested checkboxes, and deliverables without an ID or with a duplicate ID;
 - relative links inside workflow documents and `docs/root.md` that do not resolve, and absolute
   links;
 - Markdown in any other location under `docs/` — a flat `docs/features/*.md`, any Markdown in a

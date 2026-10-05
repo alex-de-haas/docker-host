@@ -151,6 +151,12 @@ stays ready there.
 - **CLI** — `ConsoleUi.State` already coloured `starting` and `stopping`, so `hosty apps list` needed
   no change. `hosty apps start|stop` are synchronous and print the settled state.
 
+## Related
+
+- [dependency-ordered-autostart](../dependency-ordered-autostart/plan.md) — adds `waiting` to this
+  vocabulary once dependency-ordered autostart exists.
+- [core-event-bus](../core-event-bus/feature.md) — how transitions reach clients without polling.
+
 ## Testing Expectations
 
 - `CoreLifecycleServiceTests`: the record reads `starting` / `stopping` while the adapter is inside the
@@ -165,9 +171,3 @@ stays ready there.
 - `apps/shell/test/runtime-states.test.mjs`: each predicate's membership, their mutual exclusivity, and
   explicitly that `isAppIdle` is narrower than the negation of `isAppUp`.
 - `apps/shell/test/app-problems.test.mjs`: the settings warning is silent for both transitional states.
-
-## Related
-
-- [dependency-ordered-autostart](../dependency-ordered-autostart/plan.md) — adds `waiting` to this
-  vocabulary once dependency-ordered autostart exists.
-- [core-event-bus](../core-event-bus/feature.md) — how transitions reach clients without polling.
