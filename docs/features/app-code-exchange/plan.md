@@ -32,10 +32,12 @@ CLI/Swift behavior and HTTP constraints. Implementation proceeds in the isolated
 ## Completion Blockers
 
 The owner's IPv6 CSP amendment decision is required before completing the SDK package and its
-publication, actual external registry locks and client rollout. Native live acceptance requires
-a launchable isolated macOS QA build: the prepared unique clone is refused by launchd (RBS 5 /
-POSIX 163). The automated, DNS HTTPS browser, CLI-account and real old-Core upgrade checks below
-are complete; the remaining deliverables stay unchecked.
+publication, actual external registry locks and client rollout. Native live acceptance also needs
+the Mac unlocked manually: the final bounded native inventory reports that the Mac is locked and
+automatic unlock failed. The isolated QA clone launches with the unchanged production text section,
+but no GUI sign-in/app scenario has passed, and its temporary ad-hoc signature does not establish
+Keychain credential-persistence coverage. Automated, DNS HTTPS browser, CLI-account and real
+old-Core upgrade checks are complete; the remaining deliverables stay unchecked.
 
 ## Current Behavior And The Two Bypasses
 
@@ -117,9 +119,10 @@ Cookie isolation is a protocol requirement. Follow the
 [host-cookie prefix contract](https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-rfc6265bis-22#section-4.1.3.2).
 On HTTPS use a unique `__Host-` cookie name, `Secure`,
 `HttpOnly`, `Path=/`, no Domain, `SameSite=Lax`, and Max-Age 300. The existing exact-host app/Core
-separation check also applies. A sibling app must not be able to shadow the nonce using a parent
-Domain cookie. Plain HTTP is supported only when Core's public host is a literal IP and every
-runtime-app browser host differs from it; this preserves an isolated local/LAN setup without a
+separation check applies to every configured endpoint origin on both HTTPS and HTTP, including
+internal, generated, public-override, private and non-HTTP endpoints. A sibling app must not be
+able to shadow the nonce using a parent Domain cookie. Plain HTTP additionally requires a
+literal-IP Core public host; this preserves an isolated local/LAN setup without a
 parent-domain cookie bypass. Compare canonical browser cookie hosts, not raw strings or DNS
 resolution: normalize IP representations, IDN, case and trailing dots, and reject ambiguous forms
 that cannot be safely compared. An unsafe configuration returns an actionable refusal, never an
@@ -127,7 +130,8 @@ unbound fallback. Tests cover IPv4 aliases, IPv6, same-host ports and sibling-do
 
 Ordinary `/open?redirectUri=...` links with no intent or proof validate the destination and redirect
 to the app without a code. The app then initiates this protocol. A proof-bearing GET without an
-intent is refused. This is a bootstrap navigation, not a legacy issuance path.
+intent cannot issue a code; only the narrowly validated legacy shape described below can return
+credential-free `protocol_required`. Ordinary links remain bootstrap navigation.
 
 ### 3. App service identity and proof are checked atomically
 
@@ -280,6 +284,8 @@ bounded exception applies only when the verified configured Core hostname is an 
 the minimal SDK/Shell intent document omits `form-action` rather than emitting an ineffective or
 wildcard destination. It retains `default-src 'none'`, `base-uri 'none'`, the existing script policy,
 fixed DOM/server-generated Core form action, exact app-Origin checks and nonce/proof binding.
+Because `form-action` has no `default-src` fallback, the exception removes CSP destination
+enforcement for these forms; the other checks do not replace that defense.
 Non-IPv6 Core origins retain Core-plus-self `form-action`. No verifier enters this public form.
 This exception changes the agreed CSP defense, so implementation awaits explicit approval.
 
@@ -415,8 +421,8 @@ allowed Origin/Fetch headers, unrelated-proof rejection without consuming the co
 original-proof success, replay rejection and direct Core refusal without an app service token.
 An attacker-owned intent copied into a separate logged-in browser cannot issue without its nonce;
 HTTPS parent-Domain prefix shadowing and foreign-origin forms also fail. Final upgrade-refusal
-behavior is covered by the new Core regressions and is being checked against actual old-Core
-0.119.0 compatibility in a separate normally authenticated runtime.
+behavior is covered by the new Core regressions and the completed actual old-Core 0.119.0
+upgrade checks in a separate normally authenticated runtime.
 
 - [x] Complete final production bundle/cache refresh and local external candidate browser acceptance.
 - [x] Complete CLI logged-out/different-account browser acceptance.
@@ -434,10 +440,19 @@ behavior is covered by the new Core regressions and is being checked against act
   logout produces `token_revoked`/401, clears the grant and leaves explicit app-owned sign-in
   available without framing Core login.
 - [ ] Complete native live first-open, switch/LRU, draft-preserving renewal and browser handoff.
-  The initial macOS UI acquisition stalled for 3917 seconds and was aborted. Resetting the
-  tool restored native inventory; registering only the isolated unique QA bundle did not make it
-  selectable, and direct launch failed with `Launchd job spawn failed` (RBS 5 / POSIX 163). No
-  QA process or native GUI step ran. The operator app was never launched; automated tests/builds
-  do not establish this acceptance.
+  The first macOS UI acquisition stalled for 3917 seconds and was aborted. Initial direct launch
+  failed with RBS 5 / POSIX 163; filtered amfid diagnostics identified restricted entitlements on
+  the QA ad-hoc signature (-424). Removing only those temporary QA rights permits launch while
+  preserving sandbox, network access, unique preferences and the exact production text section.
+  The following CUA acquisition still stalled for 1028.8 seconds despite a requested ten-second
+  timeout and was aborted. A single reset/inventory attempt then reported the Mac locked and
+  automatic unlock failed. The QA app has launched, but no onboarding, password login or app UI
+  scenario passed. Manual unlock is required to continue; Keychain persistence is outside this
+  temporary signature's evidence. The operator app was never launched.
 - [ ] Complete SDK registry publication, real external dependency locks and client-first deployment
   after the pending IPv6 CSP amendment decision. Keep PR #547 draft until its tracked work is done.
+
+External source integration is available for review in draft [Project Manager #103](https://github.com/alex-de-haas/project-manager/pull/103)
+and [Media Server #318](https://github.com/alex-de-haas/media-server/pull/318). Their source matches
+the verified SDK-dist candidates; actual SDK dependencies, registry locks and deployment remain
+unchecked until publication and registry-based verification. Neither draft is ready to merge.

@@ -27,8 +27,9 @@ A claim remains consumed if subsequent issuance fails. Wrong nonce, app or proof
 another valid attempt. Unknown, expired and replayed attempts fail closed.
 
 HTTPS uses unique `__Host-` nonce cookies with Secure, HttpOnly, Path=/, no Domain, SameSite=Lax and
-five-minute lifetime. HTTP requires a literal-IP Core public hostname separated from every configured
-runtime endpoint cookie hostname, including private and non-HTTP endpoints. Canonical comparison
+five-minute lifetime. Both HTTPS and HTTP require separation from every configured runtime endpoint
+cookie hostname, including internal, generated, public-override, private and non-HTTP origins.
+HTTP additionally requires a literal-IP Core public hostname. Canonical comparison
 covers IPv4 aliases, IPv6, IDN, case and trailing dots; unsafe topology returns actionable refusal.
 There are at most 16 browser intents and 4096 global intents, alongside authentication rate limits.
 Capacity refusal preserves existing attempts.

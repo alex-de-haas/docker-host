@@ -23,14 +23,18 @@ The implemented Shell provides:
 
 The route table and sidebar structure live in [Shell Navigation](../shell-navigation/feature.md).
 
-Shell owns only an app-bound HttpOnly cookie. Its `/auth/start` navigates to Core's app-open flow;
-`/auth/callback` checks browser-bound state, exchanges the code and revalidates its audience before
-setting the cookie. Same-origin `/api/core/...` handlers send the server's service credential and
+Shell retains its app grant in an app-bound HttpOnly cookie. `/auth/start` generates independent
+state and a private verifier, keeping state/protocol, verifier and return path in three state-specific
+five-minute HttpOnly attempt cookies. For protocol 2 its fixed-action, origin-referrer form posts
+the public S256 challenge to Core's sign-in-intent broker. `/auth/callback` checks its own state
+and verifier cookies, exchanges the code with the app service credential and revalidates its
+audience before setting the grant cookie and clearing the attempt. A verified Core upgrade
+replaces an obsolete protocol-1 attempt once with fresh proof; refusals cannot downgrade. Same-origin `/api/core/...` handlers send the server's service credential and
 app-bound user grant to Core. Core checks the app's confirmed permission and the user's current
 role/assignment. Core's primary cookie is never forwarded to Shell; no credentialed Core CORS
 exception remains for Shell. Public status comes from `/api/core/status`; protected data comes from Core APIs such as `/api/auth/session`, `/api/apps`, `/api/auth/users`, and `/api/apps/{appId}/...` lifecycle endpoints. If a protected Core API returns `401`, Shell treats that as an authentication-required state and navigates to its `/auth/start` flow instead of rendering a reduced unauthenticated Shell surface. `403` responses remain visible authorization or CSRF failures.
 
-Shell is a thin browser client for Core APIs. Its browser-facing Core origin comes from `HOSTY_CORE_PUBLIC_ORIGIN` or, for client-side build compatibility, `NEXT_PUBLIC_HOSTY_CORE_PUBLIC_ORIGIN`. `NEXT_PUBLIC_HOSTY_CORE_ORIGIN` is accepted only as a legacy fallback. When Core manages Shell without an explicit public origin, Shell uses Core's fallback `http://localhost:<core-port>` value. `HOSTY_CORE_ORIGIN` is reserved for runtime process-to-Core calls; Docker runtimes may receive it as `http://host.docker.internal:<core-port>`, but Shell must not serialize that internal container origin into browser fetches or login links.
+Shell is a thin browser client for Core APIs. Its browser-facing Core origin comes from `HOSTY_CORE_PUBLIC_ORIGIN` or, for client-side build compatibility, `NEXT_PUBLIC_HOSTY_CORE_PUBLIC_ORIGIN`. `NEXT_PUBLIC_HOSTY_CORE_ORIGIN` is accepted only as a legacy fallback. Core injects its effective public origin when it starts Shell. Without injection, Shell's server helper falls back to `http://core.hosty.localhost:<core-port>`; the checked-in local source launch profile explicitly configures `http://[::1]:3001`. `HOSTY_CORE_ORIGIN` is reserved for runtime process-to-Core calls; Docker runtimes may receive it as `http://host.docker.internal:<core-port>`, but Shell must not serialize that internal container origin into browser fetches or login links.
 
 Without an explicit public origin, Core derives separate per-app browser names under `hosty.localhost`, keeping the assigned ports. Login, account/consent, setup/recovery and status links use these effective browser origins; internal transport remains separate.
 
