@@ -29,9 +29,10 @@ code to a status class, so an app can tell "re-authorize" from "you are not allo
 App-side rules, implemented once in [`@hosty-sdk/app`](../hosty-app-sdk/feature.md) and consumed by
 the fleet: 401 drops the app cookie and starts recovery; 403 renders an access-denied state and never
 auto-redirects (the redirect-loop guard); 503 keeps the cookie and offers retry, so a transient Core
-outage is not a logout. Apps classify on the status, not on the code string — code strings pass
-through for logging only, which is why moving a code between 401 and 403 is a breaking contract change
-and reviewed as one.
+outage is not a logout. Apps classify recovery and denial by status. Machine-readable codes also
+identify the specific identity rejections that clear the embedded stored grant; `reauth_required`
+retains it. This cleanup does not change the recovery/denial status contract, so moving a code
+between 401 and 403 is a breaking change and reviewed as one.
 
 ## App Session Grants
 
@@ -201,9 +202,20 @@ to null on a host with no Shell.
 
 ## Recovery — Embedded
 
-Shell opens the app URL without minting credentials. An app with a valid own-origin session opens
-immediately; otherwise `AppIdentityBridge` offers a user-initiated Core sign-in popup. The frame does
-not navigate its parent or ask Shell for a user token.
+Shell opens the app URL without minting credentials. `AppIdentityBridge` restores an embedded
+document's app-origin `sessionStorage` grant before its first identity probe. When no stored grant
+exists and that first probe answers `not-present` or `expired`, the bridge attempts one silent
+Core sign-in in its own frame, guarded once per tab per app. The frame does not navigate its parent
+or ask Shell for a user token.
+
+`/api/apps/{appId}/open?prompt=none&state=...` accepts only iframe navigation with a random 256-bit
+hex state. It validates the app redirect origin and returns a code with that state for a live Core
+session, `error=login_required` for no live session, or `error=access_denied` for denied access.
+It never sends the frame to `/login`. The SDK exchanges a silent code only with the matching stored
+state, shows the inline popup button on `login_required`, and shows denial on `access_denied`.
+Silent codes establish identity without privileged activity and keep Core-session provenance for
+explicit-logout revocation. [Embedded app sign-in](../embedded-app-sign-in/feature.md) describes the
+deployment that lets the browser send Core's `SameSite=Lax` cookie in this frame.
 
 Core `/api/apps/{appId}/open?responseMode=web_message&state=...` requires a browser navigation and
 its own origin-bound session cookie. It validates the app assignment and registered callback origin,
@@ -213,10 +225,15 @@ sessions go through Core's password form. Invalid targets, mismatched state and 
 
 The app's own server exchanges the code and validates the result with its service credential before
 returning its app grant and setting its host-only HttpOnly cookie. Where iframe cookie access is
-blocked, the bridge keeps the app grant only in document memory; `appFetch` attaches it exclusively
-to same-origin requests and refuses redirects. The token is never stored in browser storage or sent
-to Shell. A reload discards that memory and probes the cookie again. A 401 triggers recovery, a 403
-is terminal denial, and a 503 preserves credentials.
+blocked, embedded documents keep their grant in document memory and app-origin `sessionStorage`,
+so recreated frames and Shell reloads can restore it in the same tab. Standalone documents never
+write the grant there. `localStorage` is not used, and blocked storage leaves document memory as the
+fallback. `appFetch` attaches the grant exclusively to same-origin requests and refuses redirects;
+it never sends a credential to Shell. Identity rejection (`token_invalid`, `token_revoked`,
+`token_expired`, or `token_app_mismatch`) and `forgetAppGrant` clear the stored grant.
+`reauth_required` preserves it because activity expiry does not invalidate identity. Renewal
+replaces it. After a bridge has been active, expiry shows the inline recovery button and preserves
+the document without a silent redirect. A 403 remains terminal denial and a 503 keeps credentials.
 
 Use `appFetch` from `@hosty-sdk/app/browser-auth` for protected client API calls and streams. Gate
 protected content with the bridge's children or `renderState`; a custom sign-in view must invoke
@@ -243,7 +260,8 @@ browser acceptance are tracked in [local browser origins](../local-browser-origi
   parameter is followed.
 - On 503 an app keeps its session cookie and does not trigger recovery navigation.
 - Apps render no login UI of their own: Core `/login` is the only authentication surface, and an app's
-  job is to open Core from a sign-in action when embedded, or navigate to `/open` when standalone.
+  job is to attempt initial silent sign-in or open Core from a sign-in action when embedded, or
+  navigate to `/open` when standalone.
 
 
 ## Privileged App Activity
@@ -285,3 +303,7 @@ SDK popup renewal preserves the existing document and drafts.
 - Pruning drops expired and long-revoked records while keeping live ones, for both stores.
 - Embedded sign-in rejects messages from a foreign window, mismatched Core origin or initiation state.
 - Exercise popup blocking/cancellation, code replay, foreign app audience, and recovery with iframe cookies unavailable.
+- Silent frame sign-in requires state and iframe navigation, returns state-bound code or login/denial
+  errors without framing Core login, establishes no activity, and participates in explicit logout.
+- Embedded grants survive frame recreation in the same tab and are removed on identity rejection;
+  standalone persistence, `localStorage` use and navigation after mounted expiry are excluded.

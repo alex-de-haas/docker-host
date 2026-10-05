@@ -3,10 +3,10 @@
 // functions plus a small rate limiter — the embedder wires them to its own DOM, its own "open
 // this app" flow, and its own Core session.
 //
-// Recovery, in one sentence: on a VERIFIED `hosty:auth-required` from an app you embed,
-// re-run your normal open flow for that app (which mints a fresh launch code), rate-limited.
-// The re-open must take the full launch-code path — an "already open → reuse the URL
-// without a code" optimization must not short-circuit recovery.
+// Authentication belongs to the app frame: it restores its own per-tab grant, tries a silent
+// Core navigation on first load, and opens its own Core popup when interaction is required.
+// An embedder may observe a verified `hosty:auth-required` intent, but never carries or
+// redeems another app's code or grant.
 //
 // Delegated tokens, in one sentence: on a VERIFIED `hosty:request-delegated-token` from an app
 // you have decided to grant one, mint a token from Core with your own session and post it back
@@ -38,7 +38,8 @@ export type AuthRequiredMessage = EmbedderMessage;
  * - `event.origin` must match the frame URL's origin (the app itself, not an inner frame);
  * - the payload's `appId` must match the app the embedder actually mounted there.
  * No credential crosses the boundary in either direction: the payload is only the app id,
- * and the embedder answers by reissuing a code through its own authenticated Core call.
+ * and the app owns its direct sign-in with Core. This parser gives the embedder no authority
+ * to issue or redeem credentials for the app.
  */
 export function parseActiveFrameAuthRequired(
   event: AuthRequiredMessage,

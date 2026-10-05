@@ -67,6 +67,27 @@ internal sealed class AppSessionGrantStore(CoreDataPaths paths)
         }
     }
 
+    // Reject only a newly issued grant whose authorizing session disappeared during exchange.
+    // Older identity grants remain independent of an expired parent's retention in the session store.
+    public async Task RevokeByIdAsync(string grantId, DateTimeOffset now, CancellationToken cancellationToken = default)
+    {
+        await mutex.WaitAsync(cancellationToken);
+        try
+        {
+            var state = await ReadAsync(cancellationToken);
+            var match = state.Grants.FirstOrDefault(candidate => string.Equals(candidate.Id, grantId, StringComparison.Ordinal));
+            if (match is null || match.RevokedAt is not null) return;
+            var next = Prune(state.Grants, now)
+                .Select(candidate => string.Equals(candidate.Id, grantId, StringComparison.Ordinal) ? candidate with { RevokedAt = now } : candidate)
+                .ToArray();
+            await JsonStorage.WriteAsync(StatePath, state with { Grants = next }, restrictToOwner: true, cancellationToken);
+        }
+        finally
+        {
+            mutex.Release();
+        }
+    }
+
     // Logout cascade: revoke every live grant authorized by the Core session being logged out. Grant
     // validity is otherwise independent of Core session liveness (a grant outlives an expired session),
     // so this fires only on an explicit logout — the user's intent to leave.

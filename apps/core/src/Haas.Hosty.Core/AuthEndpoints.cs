@@ -200,6 +200,7 @@ internal static class AuthEndpoints
             string? redirectUri,
             string? responseMode,
             string? state,
+            string? prompt,
             HttpRequest request,
             AppRegistryStore apps,
             UserDirectoryStore users,
@@ -210,6 +211,38 @@ internal static class AuthEndpoints
             if (string.IsNullOrWhiteSpace(redirectUri))
             {
                 return CoreJson.Json(new ErrorResponse("redirect_uri_missing", "Redirect URI is required."), statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            if (prompt is not null)
+            {
+                if (!string.Equals(prompt, "none", StringComparison.Ordinal) || responseMode is not null
+                    || state is null || state.Length != 64 || !state.All(Uri.IsHexDigit))
+                    return CoreJson.Json(new ErrorResponse("prompt_invalid", "Silent sign-in requires a 256-bit initiation state and no response mode."), statusCode: StatusCodes.Status400BadRequest);
+                if (!string.Equals(request.Headers["Sec-Fetch-Dest"], "iframe", StringComparison.OrdinalIgnoreCase))
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
+
+                return await HandleIdentityError(async () =>
+                {
+                    // Check the app-owned destination before returning either credentials or errors.
+                    // Silent recovery stays in its frame: the Core login page cannot be framed.
+                    await identity.RequireAllowedRedirectUriAsync(appId, redirectUri, cancellationToken);
+                    request.HttpContext.Response.Headers.CacheControl = "no-store";
+                    var silentSession = await CoreSessionAuthorization.ResolveNavigationSessionAsync(request, users, clock, cancellationToken);
+                    if (silentSession.User is null)
+                        return SilentAppRedirect(redirectUri, state, silentSession.Denied is null ? "login_required" : "access_denied");
+
+                    try
+                    {
+                        var authorization = await identity.CreateAuthorizationCodeAsync(
+                            appId, silentSession.User.Id, redirectUri, CoreSessionAuthorization.ReadSessionId(request), cancellationToken,
+                            activityAuthorized: false);
+                        return Results.Redirect(Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(authorization.RedirectUri, "state", state));
+                    }
+                    catch (AppIdentityException exception) when (exception.Code is "user_not_found" or "user_disabled" or "app_access_denied" or "system_app_admin_required")
+                    {
+                        return SilentAppRedirect(redirectUri, state, "access_denied");
+                    }
+                });
             }
 
             var popup = string.Equals(responseMode, "web_message", StringComparison.Ordinal);
@@ -250,6 +283,10 @@ internal static class AuthEndpoints
             });
         });
     }
+
+    private static IResult SilentAppRedirect(string redirectUri, string state, string error)
+        => Results.Redirect(Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(
+            redirectUri, new Dictionary<string, string?> { ["error"] = error, ["state"] = state }));
 
     // The exchange (docs/features/delegated-token-exchange/plan.md). Bounds, in the order a reader
     // should think about them:

@@ -1,7 +1,7 @@
 # Core API
 
 Created: 2026-05-13
-Updated: 2026-10-01
+Updated: 2026-10-05
 
 ## Description
 
@@ -26,6 +26,13 @@ Mutating browser endpoints are CSRF-protected: `GET /api/auth/csrf` sets the dou
 - `POST /api/auth/bootstrap` - consume a setup token, create the first administrator, store the submitted password credential, and create a Core session.
 - `POST /api/auth/recovery` - consume a recovery token, create or restore an administrator, replace the submitted password credential, and create a Core session.
 - `POST /api/auth/apps/authorize` - create an app authorization code for an authenticated Host user.
+- `GET /api/apps/{appId}/open` - browser app sign-in on a validated app-origin redirect URI.
+  Ordinary navigation follows Core login when needed; `responseMode=web_message` returns a code
+  from the Core popup to the app origin. `prompt=none` requires an iframe navigation and 256-bit
+  hex `state`: it returns `code` and `state` for a live session, or `error=login_required` /
+  `error=access_denied` and `state`, without sending the frame to `/login`. Silent codes carry
+  identity only and establish no privileged activity. See
+  [embedded app sign-in](../embedded-app-sign-in/feature.md).
 - `POST /api/auth/apps/token` - exchange an app authorization code for an app identity token.
 - `POST /api/auth/apps/revalidate` - validate an app identity token; requires the calling app's `HOSTY_APP_SERVICE_TOKEN` as a bearer token and rejects tokens issued for another app.
 - `POST /api/auth/trusted-proxy/session` - create a session for a reverse-proxy-asserted user; disabled unless `HOSTY_TRUSTED_PROXY_SECRET` is configured and the proxy presents it via `X-Hosty-Trusted-Proxy-Secret`.

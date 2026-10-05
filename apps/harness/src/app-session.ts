@@ -17,7 +17,8 @@ export type AppSessionIdentity = { userId: string; hostRole: string | null; acti
 
 export type AppSessionResult =
   | { status: "active"; identity: AppSessionIdentity }
-  | { status: "not-present" | "expired" | "forbidden" | "unavailable" | "misconfigured" };
+  | { status: "not-present" | "expired" | "forbidden" | "unavailable" | "misconfigured";
+      error?: { status: number; code: string; message: string } };
 
 export function readIdentityCookie(request: IncomingMessage): string | null {
   const header = request.headers.cookie;
@@ -75,7 +76,14 @@ export async function resolveAppSession(token: string | null): Promise<AppSessio
   }
 
   if (!response.ok) {
-    return { status: classifyRevalidationStatus(response.status) };
+    const body = await response.json().catch(() => null) as
+      { code?: unknown; message?: unknown; error?: { code?: unknown; message?: unknown } } | null;
+    const error = body?.error ?? body;
+    return { status: classifyRevalidationStatus(response.status), error: {
+      status: response.status,
+      code: typeof error?.code === "string" ? error.code : "app_session_revalidation_failed",
+      message: typeof error?.message === "string" ? error.message : "Core could not validate this app session.",
+    } };
   }
 
   // Core's shape, flattened — `AppSessionValidationResult` in AppIdentityService.cs, serialized with
@@ -111,9 +119,9 @@ function classifyRevalidationStatus(status: number): Exclude<AppSessionResult["s
  * Trades a Hosty launch code for this app's session cookie.
  *
  * Core returns a code to this app through navigation or a popup. The server exchanges and
- * validates it against its own app identity before returning the app grant and cookie. `sameSite` follows `secure` because an embedded page is
- * cross-site to Shell whenever Hosty is served over https — a lax cookie would simply not be sent
- * from inside the frame, which looks exactly like "the app refused me".
+ * validates it against its own app identity before returning the app grant and cookie. HTTPS uses
+ * SameSite=None so browsers that allow third-party cookies can send it from a cross-site frame.
+ * Plain HTTP keeps SameSite=Lax; the SDK's own-app bearer covers frames without cookie access.
  */
 export async function exchangeLaunchCode(
   code: string,

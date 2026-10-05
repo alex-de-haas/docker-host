@@ -7,7 +7,7 @@
 import { AppActivityBridge } from "./activity-react";
 import { AuthNotice, AuthNoticeButton, authNoticeActionStyle } from "./auth-notice";
 import { useEffect, useRef, useState } from "react";
-import { appFetch, appSessionActive, rememberAppGrant, openAppSignIn, APP_SESSION_ENDED } from "./browser-auth";
+import { appFetch, appSessionActive, appGrantRevision, rememberAppGrant, restoreAppGrant, forgetRejectedAppGrant, openAppSignIn, APP_SESSION_ENDED } from "./browser-auth";
 import type { ReactNode } from "react";
 import {
   buildCoreOpenUrl,
@@ -38,6 +38,8 @@ import {
 // Once-per-tab guard so a standalone app that returns from Core still unauthorized does
 // not bounce through /open forever. Cleared on a successful code exchange.
 const RECOVERY_GUARD_KEY = "hosty.auth.recovery-attempted";
+const SILENT_STATE_KEY = "hosty.auth.silent-state";
+const SILENT_GUARD_PREFIX = "hosty.auth.silent-attempted:";
 // Cap the status probe so a stalled request cannot leave the bridge stuck hidden — on
 // timeout it classifies as unavailable and the user gets a Retry affordance.
 const IDENTITY_PROBE_TIMEOUT_MS = 4_000;
@@ -92,6 +94,36 @@ function writeGuard(value: boolean): void {
     }
   } catch {
     // sessionStorage may be blocked; recovery still works, only the guard is lost.
+  }
+}
+
+/** Both state and the per-app guard must survive navigation, or the popup is the fallback. */
+function beginSilentSignIn(openUrl: string, appId: string): string | null {
+  try {
+    const guardKey = `${SILENT_GUARD_PREFIX}${appId}`;
+    if (window.sessionStorage.getItem(guardKey) === "1") return null;
+    const state = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, "0")).join("");
+    window.sessionStorage.setItem(SILENT_STATE_KEY, state);
+    window.sessionStorage.setItem(guardKey, "1");
+    if (window.sessionStorage.getItem(SILENT_STATE_KEY) !== state || window.sessionStorage.getItem(guardKey) !== "1") return null;
+    const url = new URL(openUrl);
+    url.searchParams.set("prompt", "none");
+    url.searchParams.set("state", state);
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+function consumeSilentState(state: string | null): boolean {
+  if (!state) return false;
+  try {
+    const expected = window.sessionStorage.getItem(SILENT_STATE_KEY);
+    if (!expected || expected !== state || !/^[a-f0-9]{64}$/.test(state)) return false;
+    window.sessionStorage.removeItem(SILENT_STATE_KEY);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -200,7 +232,8 @@ export interface AppIdentityBridgeProps {
 /**
  * Mount once at the top of the root layout body. On first load it consumes a `?code` from
  * the URL (exchanging it for the identity cookie), then probes the session and runs the
- * recovery decision: an app-owned Core popup when embedded, a once-per-tab
+ * recovery decision: a silent first-load Core navigation followed by an app-owned popup
+ * when embedded, a once-per-tab
  * redirect through Core `/open` when standalone, and cards only in fallback/terminal states
  * — never a login UI while recovery is still running.
  */
@@ -214,12 +247,16 @@ export function AppIdentityBridge({
   // A launch code is single-use. Strict Mode replays the effect after the URL is cleaned;
   // keep its exchange alive and let the replacement effect await the same response.
   const wasActive = useRef(false);
+  const firstProbe = useRef(true);
+  const initialGrantPresent = useRef<boolean | null>(null);
+  const silentError = useRef<"login_required" | "access_denied" | null>(null);
   const [activity, setActivity] = useState<{ openUrl: string; activeUntil?: string | null; activityRequired?: boolean } | null>(null);
   const exchangeRef = useRef<{ path: string; response: Promise<Response> } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
+    if (initialGrantPresent.current === null) initialGrantPresent.current = restoreAppGrant();
 
     async function probeAndRecover() {
       // Dedicated controller + setTimeout instead of AbortSignal.any/timeout, which are not
@@ -233,6 +270,8 @@ export function AppIdentityBridge({
       let status: AppSessionStatus | null = null;
       let openUrl: string | null = null;
       let appId: string | null = null;
+      let rejectionCode: unknown;
+      const revision = appGrantRevision();
       try {
         const response = await appFetch(probePath, {
           headers: { Accept: "application/json" },
@@ -241,6 +280,8 @@ export function AppIdentityBridge({
         }, false);
         const body: unknown = await response.json().catch(() => null);
         status = readProbedSessionStatus(body);
+        const identityError = body as { error?: { code?: unknown }; appSession?: { error?: { code?: unknown } } } | null;
+        rejectionCode = identityError?.error?.code ?? identityError?.appSession?.error?.code;
         const recovery = readRecoveryParams(body);
         appId = recovery.appId;
         openUrl = appId ? buildCoreOpenUrl(recovery.corePublicOrigin, appId, window.location) : null;
@@ -256,12 +297,33 @@ export function AppIdentityBridge({
       if (cancelled) {
         return;
       }
+      if (revision !== appGrantRevision()) {
+        initialGrantPresent.current ||= restoreAppGrant();
+        void probeAndRecover();
+        return;
+      }
+      forgetRejectedAppGrant(rejectionCode, revision);
+
+      const initialLoad = firstProbe.current;
+      firstProbe.current = false;
+      if (silentError.current === "access_denied") {
+        setUi({ kind: "denied" });
+        return;
+      }
+      if (initialLoad && !wasActive.current && !initialGrantPresent.current && !silentError.current &&
+          detectLaunchMode(window) === "embedded" && (status === "not-present" || status === "expired") && appId && openUrl) {
+        const silentUrl = beginSilentSignIn(openUrl, appId);
+        if (silentUrl) {
+          window.location.replace(silentUrl);
+          return;
+        }
+      }
 
       const action: RecoveryAction =
         !status || !appId
           ? { kind: "card", card: "unavailable" }
           : decideRecoveryAction({
-              status,
+              status: silentError.current === "login_required" ? "not-present" : status,
               mode: detectLaunchMode(window),
               appId,
               openUrl,
@@ -290,6 +352,7 @@ export function AppIdentityBridge({
                   throw new Error("Hosty could not establish this app session.");
                 if (cancelled) return;
                 rememberAppGrant(body.accessToken);
+                silentError.current = null;
                 writeGuard(false);
                 await probeAndRecover();
               }).catch(error => { if (!cancelled) showSignIn(error instanceof Error ? error.message : "Sign-in failed."); });
@@ -315,9 +378,20 @@ export function AppIdentityBridge({
     window.addEventListener(APP_SESSION_ENDED, recover);
     const url = new URL(window.location.href);
     const code = url.searchParams.get("code")?.trim();
-    if (code) {
+    const error = url.searchParams.get("error");
+    const embedded = detectLaunchMode(window) === "embedded";
+    const isSilentError = error === "login_required" || error === "access_denied";
+    const accepted = embedded && (code || isSilentError) ? consumeSilentState(url.searchParams.get("state")) : !embedded;
+    if (embedded && accepted && isSilentError) silentError.current = error;
+    if (code || (embedded && isSilentError)) {
       url.searchParams.delete("code");
+      if (embedded) {
+        url.searchParams.delete("state");
+        if (isSilentError) url.searchParams.delete("error");
+      }
       window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+    if (code && accepted) {
       exchangeRef.current = {
         path: appCodePath,
         response: fetch(appCodePath, {

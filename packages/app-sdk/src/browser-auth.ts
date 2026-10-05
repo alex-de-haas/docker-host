@@ -1,14 +1,54 @@
-/** App-only browser credentials. Never persisted or sent to an embedder. */
+/** App-only credentials. Embedded documents keep them for this tab on the app's own origin. */
 let grant: { token: string; origin: string } | null = null;
+let grantRevision = 0;
 let recoveryPending = false;
 export const APP_SESSION_ENDED = "hosty:app-session-ended";
+export const APP_GRANT_STORAGE_KEY = "hosty.auth.app-grant";
+
+function isEmbedded(): boolean {
+  try { return window.self !== window.top; } catch { return true; }
+}
+
+/** Restore before the first identity probe; standalone documents use their first-party cookie. */
+export function restoreAppGrant(): boolean {
+  if (typeof window === "undefined") return false;
+  if (grant?.origin === window.location.origin) return true;
+  if (!isEmbedded()) return false;
+  try {
+    const token = window.sessionStorage.getItem(APP_GRANT_STORAGE_KEY);
+    if (token) { grant = { token, origin: window.location.origin }; grantRevision++; }
+  } catch {
+    // Blocked storage leaves the in-memory transport available.
+  }
+  return grant?.origin === window.location.origin;
+}
 
 export function rememberAppGrant(token: string): void {
   grant = { token, origin: window.location.origin };
+  grantRevision++;
   recoveryPending = false;
+  if (isEmbedded()) {
+    try { window.sessionStorage.setItem(APP_GRANT_STORAGE_KEY, token); } catch { /* In-memory fallback. */ }
+  }
 }
 
-export function forgetAppGrant(): void { grant = null; recoveryPending = false; }
+export function forgetAppGrant(): void {
+  if (grant) grantRevision++;
+  grant = null;
+  recoveryPending = false;
+  if (typeof window !== "undefined") {
+    try { window.sessionStorage.removeItem(APP_GRANT_STORAGE_KEY); } catch { /* In-memory fallback. */ }
+  }
+}
+/** Snapshot the grant generation so older probes cannot invalidate a renewed identity. */
+export function appGrantRevision(): number { return grantRevision; }
+/** Activity expiry keeps identity; only explicit identity rejection discards the credential. */
+export function forgetRejectedAppGrant(code: unknown, expectedRevision = grantRevision): boolean {
+  if (expectedRevision !== grantRevision) return false;
+  if (typeof code !== "string" || !["token_invalid", "token_revoked", "token_expired", "token_app_mismatch"].includes(code)) return false;
+  forgetAppGrant();
+  return true;
+}
 export function appSessionActive(): void { recoveryPending = false; }
 
 /** Use for app-local API calls, including streams. Redirects cannot carry the credential away. */
@@ -21,10 +61,17 @@ export async function appFetch(input: string | URL, init: RequestInit = {}, reco
   const headers = new Headers(init.headers);
   if (current) headers.set("authorization", `Bearer ${current.token}`);
   const response = await fetch(input, { ...init, headers, credentials: "same-origin", redirect: "error" });
-  if (response.status === 401 && recover && (!current || grant === current)) {
+  if ((response.status === 401 || response.status === 403) && grant === current && !init.signal?.aborted) {
+    const revision = grantRevision;
     const body = await response.clone().json().catch(() => null) as { code?: string } | null;
+    if (grant !== current || grantRevision !== revision || init.signal?.aborted) return response;
+    // Identity probes disable recovery, but a rejected grant must still be forgotten. Activity
+    // expiry is different: the identity remains valid and the popup renews the same session.
+    const rejected = forgetRejectedAppGrant(body?.code);
+    if (response.status !== 401) return response;
+    if (!rejected && recover && body?.code !== "reauth_required" && current) forgetAppGrant();
+    if (!recover) return response;
     if (activityConfig) {
-      if (body?.code !== "reauth_required" && current) grant = null;
       const renewed = waitForActivity(init.signal);
       window.dispatchEvent(new Event(APP_SESSION_ENDED));
       // A response may arrive while the originating click still has browser activation.
@@ -32,7 +79,6 @@ export async function appFetch(input: string | URL, init: RequestInit = {}, reco
       if (navigator.userActivation?.isActive) void renewAppActivity().catch(() => undefined);
       if (await renewed) return appFetch(input, init, false);
     } else if (!recoveryPending) {
-      if (current) grant = null;
       recoveryPending = true;
       window.dispatchEvent(new Event(APP_SESSION_ENDED));
     }
