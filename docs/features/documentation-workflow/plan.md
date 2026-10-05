@@ -209,6 +209,46 @@ Unbuilt ideas (owner decision: keep as Draft or delete):
 | `ideas/replaceable-ui-clients.md` | Keep as Draft `replaceable-ui-clients/plan.md` (the `ui-client` role) |
 | `ideas/future-work.md` | The image `pullPolicy: ifChanged` item joins `runtime-app-update/plan.md`; the CLI launcher shim and the removal preview are deleted. Executed: `pullPolicy: ifChanged` turned out to be superseded — every start runs the pinned digest lock and the update check detects a moved tag through the registry — so it was dropped instead |
 
+### Other repositories' dispositions (proposed 2026-10-05, awaiting owner approval)
+
+The same four dispositions apply. Paths are relative to each repository's `docs/`.
+
+project-manager:
+
+| Document | Disposition |
+| --- | --- |
+| `features/blockers.md` | Move to `blockers` |
+| `features/domain-model.md` | Move to `domain-model` |
+| `features/host-user-relinking.md` | Move to `host-user-relinking` |
+| `features/notifications.md` | Move to `notifications` |
+| `features/settings.md` | Move to `settings` |
+| `ideas/azure-devops-pat-retirement.md` | Owner decision — proposal: keep as Draft `azure-devops-integration/plan.md` (the parked PAT-retirement migration) |
+
+media-server:
+
+| Document | Disposition |
+| --- | --- |
+| `features/automation-pipeline.md` | Move to `automation-pipeline`; its future acquisition extension points join the watchlist plan |
+| `features/domain-model.md` | Move to `domain-model`; the future discovery entities and the `IContentSource` contract join the watchlist plan |
+| `features/implementation-plan.md` | Delete: milestones M0–M5a shipped and are described by their feature folders; still-current stack facts merge into `build-and-deployment`; M5b is the watchlist plan |
+| `ideas/catalog-library-browsing.md` | Delete: promoted into `catalogs`, `frontend-application` and `title-preview` |
+| `ideas/torrent-engine-app.md` | Delete: implemented as the torrent-engine app and `torrents-and-organizer` |
+| `features/watchlist-and-discovery.md` | Owner decision — proposal: keep as Draft `watchlist-and-discovery/plan.md` (M5b discovery and acquisition) |
+| `ideas/transcode-engine-app.md` | Owner decision — proposal: delete; the engine and Convert dialog shipped, downscaling shipped as `maxHeight`, and the remaining "later" items (whole-season transcode, live transcoding, restart hardening) are loose ideas |
+
+torrent-engine: `features/downloads-mounts.md` moves to `downloads-mounts`.
+
+transcode-engine: `features/media-mounts.md` moves to `media-mounts`.
+
+solitaire:
+
+| Document | Disposition |
+| --- | --- |
+| `features/solitaire-game.md` | Move to `solitaire-game` |
+| `ideas/solitaire-game.md` | Delete: archived, superseded by the shipped game |
+| `ideas/hosty-leaderboard.md` | Delete: promoted into the leaderboard plan |
+| `planning/hosty-leaderboard.md` | Owner decision — proposal: keep as Draft `hosty-leaderboard/plan.md` |
+
 ## Deliverables
 
 ### Phase 1 — Format and tooling (docker-host)
