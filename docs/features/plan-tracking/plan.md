@@ -108,9 +108,12 @@ Verified against `main` at `024b369a`.
   uncommitted changes, Core lists `docs/**/*.md` with path and blob SHA, and returns one document's
   content. Nothing outside `docs/`, nothing but Markdown, no symbolic links, and a size cap per file.
 - **Sessions.** A read-only projection of active session workspaces: workspace id, repository,
-  target branch, assistant app, session id and UI path, administrator, branch, observation time, the
-  subset of `SessionFiles` under `docs/`, and pull request references. A session belongs to the entry
-  with the same repository and tracked branch as its target. No Git operation is reachable.
+  target branch, assistant app, session id, an absolute session URL, administrator, branch,
+  observation time, the subset of `SessionFiles` under `docs/`, and pull request references. Core
+  builds the session URL from the assistant app's browser origin and the recorded session path and
+  refuses a path that would leave that origin, so the app needs neither `apps.read` nor its own
+  origin lookup. A session belongs to the entry with the same repository and tracked branch as its
+  target. No Git operation is reachable.
 
 ### The app
 
@@ -128,11 +131,14 @@ Verified against `main` at `024b369a`.
   that exists only in a session's worktree appears as new in that session, and a plan a session
   deletes while writing its `feature.md` appears as being completed. `components` map to apps
   through the `manifest.json` they contain; in a single-app repository the repository is the app.
-- **Detail.** The tracked-branch version rendered with Marketplace's safe Markdown rules, relative
-  links resolved within its repository, and deliverables with their IDs and state. Beside it, one
-  entry per session changing the plan: the session's status, progress and `updated` date, the
+- **Detail.** The tracked-branch version rendered with Marketplace's safe Markdown rules, and
+  deliverables with their IDs and state. A relative link to another `docs/**/*.md` document of the
+  same repository opens that document in the app; any other relative target — a source file outside
+  `docs/`, or a non-Markdown file — renders as plain text with its repository path, and a relative
+  image as its alt text and path, because Core serves nothing else. Beside the document, one entry
+  per session changing the plan: the session's status, progress and `updated` date, the
   deliverables it checks off or adds, a diff of the document against the tracked branch, the last
-  observation time, and a link to the session in its assistant.
+  observation time, and the session URL from Core's projection.
 - **Live updates.** Session links come from the observer's `SessionFiles`. While a page is open the
   app re-reads the session projection on the observer's twenty-second cadence; Core publishes no
   new event for it.
@@ -167,7 +173,7 @@ app's.
       changes included), restricted to `docs/**/*.md` with size caps and symlink refusal; Native AOT
       serialization and path-guard tests.
 - [ ] D5. The read-only session workspace projection, including the `docs/` subset of
-      `SessionFiles`.
+      `SessionFiles` and an absolute session URL validated against the assistant app's origin.
 
 ### Phase 2 — App
 
@@ -179,8 +185,9 @@ app's.
 - [ ] D8. Overview: tracked-branch state, session markers with each session's version in brief,
       plans new or being completed in sessions, status counts, filters and component-to-app mapping.
 - [ ] D9. Detail: the rendered tracked-branch version beside each session's version, with status and
-      progress changes, deliverable changes, a document diff and a link to the session; live
-      re-reads while the page is open.
+      progress changes, deliverable changes, a document diff and a link to the session; in-app
+      navigation between documents and plain-text rendering of other relative targets; live re-reads
+      while the page is open.
 
 ### Phase 3 — Integration
 
@@ -196,6 +203,7 @@ app's.
 - Platform (Core and CLI): minor, for the new permission, the rename and the document endpoints.
 - Harness: minor, for the renamed permission in its manifest; installed after Core.
 - `hosty.plans`: a new app starting at `0.1.0`.
+- Shell: a patch, for the renamed permission's texts and their tests.
 - SDK packages: a patch where a permission reference changes.
 - Media Server: per its own rules, in its own PR.
 
