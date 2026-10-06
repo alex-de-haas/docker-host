@@ -91,8 +91,9 @@ Verified against `main` at `024b369a`.
 - **Repositories.** A list of entries, one per canonical repository and tracked branch behind
   installed apps' `source` declarations, so a monorepo whose apps share a branch appears once. Apps of
   one repository that track different branches yield one entry per branch, each the baseline for its
-  own apps; no branch is chosen arbitrarily. Each entry carries the apps it serves and their manifest
-  subpaths, the last fetched commit and time, and an availability state with its error.
+  own apps; no branch is chosen arbitrarily. Each entry carries the apps it serves with their manifest
+  subpaths and declared `source.paths`, the last fetched commit and time, and an availability
+  state with its error.
 - **Tracked branch and freshness.** The tracked branch follows the rule session workspaces already
   use for their target, and it is read from the same `refs/hosty/targets/<hash(branch)>` ref in the
   same shared repository — never a second registry. Freshness is tracked per repository and branch,
@@ -118,10 +119,11 @@ Verified against `main` at `024b369a`.
   installation time — is still installed; after the assistant is removed or reinstalled the session
   stays in the projection, because its worktree changes remain, with no URL and the reason, and is
   never linked to a different installation. A session belongs to the entry with the same repository
-  and tracked branch as its target. A session whose explicit target branch no installed app tracks
-  adds a session-derived entry for that repository and branch, marked as such, whose baseline is the
-  target ref the workspace already fetched; the entry exists only while an active session targets
-  that branch, so no session and none of its plan changes disappear. No Git operation is reachable.
+  and tracked branch as its target. Any active session without such an entry — its explicit target
+  branch is one no installed app tracks, or the app it was prepared for has since been uninstalled —
+  adds a session-derived entry for its repository and target branch, marked as such, whose baseline
+  is the target ref the workspace already fetched; the entry exists only while an active session
+  needs it, so no session and none of its plan changes disappear. No Git operation is reachable.
 
 ### The app
 
@@ -138,7 +140,9 @@ Verified against `main` at `024b369a`.
   the number of sessions and each session's version in brief, such as `In Progress · 5/9`. A plan
   that exists only in a session's worktree appears as new in that session, and a plan a session
   deletes while writing its `feature.md` appears as being completed. `components` map to apps
-  through the `manifest.json` they contain; in a single-app repository the repository is the app.
+  through each installed app's declared source paths — its manifest subpath plus `source.paths`, so
+  `apps/telemetry-backend` and `apps/telemetry-ui` both map to Telemetry; the repository listing
+  carries these paths per app. In a single-app repository the repository is the app.
 - **Detail.** The tracked-branch version rendered with Marketplace's safe Markdown rules, and
   deliverables with their IDs and state. A relative link to another `docs/**/*.md` document of the
   same repository opens that document in the app; any other relative target — a source file outside
@@ -196,7 +200,8 @@ app's.
 - [ ] D5. The read-only session workspace projection, including the `docs/` subset of
       `SessionFiles` and an absolute session URL validated against the assistant app's origin, absent
       with a reason once the owning installation is removed or reinstalled; a session-derived entry
-      for an explicit target branch that no installed app tracks.
+      for any active session without an installed-app entry (an untracked explicit target branch, or
+      an uninstalled source app).
 
 ### Phase 2 — App
 
@@ -257,7 +262,8 @@ app's.
   entry for another administrator's grant, two apps of one repository on different branches, the
   per-branch fetch interval (a fetch of one branch never marks the other fresh) and explicit
   refresh, a session worktree read that includes an uncommitted change, and a session whose assistant
-  was reinstalled keeping its changes but losing its URL, and a session targeting a branch no app
+  was reinstalled keeping its changes but losing its URL, a session whose source app was
+  uninstalled, and a session targeting a branch no app
   tracks appearing under its own entry.
 - App tests: parsing against docker-host's `docs/`, status counts and progress, component-to-app
   mapping, session markers for a changed, a new and a deleted plan, and two sessions changing one
