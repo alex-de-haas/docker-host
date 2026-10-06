@@ -25,8 +25,7 @@ public sealed class EndpointAuthorizationHttpTests
         "/api/auth/bootstrap",
         "/api/auth/recovery",
         "/api/auth/trusted-proxy/session",
-        // App identity exchange: the code/token are the credential, no session.
-        "/api/auth/apps/token",
+        // App identity revalidation requires the app service token rather than a Core session.
         "/api/auth/apps/revalidate",
         // Invitation accept: the invitation token is the credential (the list/create routes at
         // /api/auth/invitations are admin-gated and deliberately NOT covered by this prefix).
@@ -50,15 +49,16 @@ public sealed class EndpointAuthorizationHttpTests
         "/api/auth/oauth/authorize",
         "/api/auth/oauth/token",
         "/api/auth/oauth/register",
+        // Fixed read-only app sign-in protocol metadata; no authority or code is returned.
+        "/api/auth/apps/protocol",
     ];
 
-    // Browser-navigation endpoints: still protected, but they DENY an anonymous caller by redirecting
-    // to /login (a top-level GET the browser can act on) rather than a JSON 401. Excluded from the
-    // 401/403 loop and asserted precisely below (AppOpenNavigation_RedirectsAnonymousToLogin) so their
-    // redirect denial can't hide a dropped guard either.
+    // Browser broker routes have their own Origin/nonce guards and a credential-free bootstrap.
+    // Their negative issuance cases are exercised by AppSignInIntentHttpTests.
     private static readonly string[] NavigationApiPatterns =
     [
         "/api/apps/{appId}/open",
+        "/api/apps/{appId}/sign-in-intent",
     ];
 
     // Service-token (bearer) app->Core routes. The no-credential loop already proves they reject a
@@ -68,6 +68,8 @@ public sealed class EndpointAuthorizationHttpTests
     private static readonly string[] ServiceTokenApiPrefixes =
     [
         "/api/internal/",
+        "/api/auth/apps/token",
+        "/api/auth/apps/revalidate",
     ];
 
     [Fact]
@@ -156,21 +158,15 @@ public sealed class EndpointAuthorizationHttpTests
     }
 
     [Fact]
-    public async Task AppOpenNavigation_RedirectsAnonymousToLogin()
+    public async Task AppOpenNavigation_WithoutBoundIntentCannotIssueACode()
     {
-        // The one navigation endpoint's denial contract: an anonymous caller is sent to /login (302),
-        // never served the resource. Asserted directly so the generic loop's exclusion above cannot
-        // hide a dropped guard here. redirectUri is supplied so the request clears input validation and
-        // actually reaches the session check.
         await using var harness = await CoreHttpHarness.StartAsync();
-        // TestServer's client does not auto-follow redirects, so the 302 is observed directly.
         using var client = harness.CreateClient();
-
         using var response = await client.GetAsync(
-            "/api/apps/com.example.notes/open?redirectUri=https://app.example.test/");
-
-        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-        Assert.StartsWith("/login", response.Headers.Location?.OriginalString ?? "");
+            "/api/apps/com.example.notes/open?redirectUri=https://app.example.test/&codeChallenge=" + AuthCodeProof.Challenge);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Null(response.Headers.Location);
+        Assert.Empty((await harness.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
     }
 
     private static async Task<HttpStatusCode> SendAnonymousAsync(HttpClient client, string method, string path)

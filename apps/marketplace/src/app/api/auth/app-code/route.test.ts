@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearRevalidationCache } from "@hosty-sdk/app/server";
 import { POST } from "@/app/api/auth/app-code/route";
 
+const codeVerifier = "v".repeat(43);
+
 afterEach(() => {
   clearRevalidationCache();
   vi.unstubAllGlobals();
@@ -19,6 +21,17 @@ describe("Marketplace app-code exchange", () => {
     await expect(response.json()).resolves.toMatchObject({ code: "app_auth_code_required" });
   });
 
+  it.each([undefined, "", "short", "v".repeat(129), "!".repeat(43)])("rejects an invalid proof before contacting Core (%s)", async codeVerifier => {
+    const coreFetch = vi.fn();
+    vi.stubGlobal("fetch", coreFetch);
+    const response = await POST(new Request("http://marketplace.local/api/auth/app-code", {
+      method: "POST", headers: { "sec-fetch-site": "same-origin" },
+      body: JSON.stringify({ code: "code", codeVerifier }),
+    }));
+    expect(response.status).toBe(400);
+    expect(coreFetch).not.toHaveBeenCalled();
+  });
+
   it("exchanges through Core and establishes an app-origin HttpOnly cookie", async () => {
     vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "service-token");
     vi.stubEnv("HOSTY_APP_ID", "hosty.marketplace");
@@ -33,13 +46,15 @@ describe("Marketplace app-code exchange", () => {
     const response = await POST(new Request("http://marketplace.local/api/auth/app-code", {
       method: "POST",
       headers: { "Content-Type": "application/json", "sec-fetch-site": "same-origin" },
-      body: JSON.stringify({ code: " one-time-code " }),
+      body: JSON.stringify({ code: " one-time-code ", codeVerifier }),
     }));
 
     expect(response.status).toBe(200);
     expect(coreFetch).toHaveBeenCalledWith("http://core.local:7070/api/auth/apps/token", expect.objectContaining({
       method: "POST",
-      body: JSON.stringify({ code: "one-time-code" }),
+      redirect: "error",
+      headers: expect.objectContaining({ authorization: "Bearer service-token" }),
+      body: JSON.stringify({ code: "one-time-code", codeVerifier }),
     }));
     const cookie = response.headers.get("set-cookie");
     expect(cookie).toContain("hosty_marketplace_identity=app-identity-token");
@@ -60,7 +75,7 @@ describe("Marketplace app-code exchange", () => {
     const response = await POST(new Request("http://marketplace.local/api/auth/app-code", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Forwarded-Proto": "https", "sec-fetch-site": "same-origin" },
-      body: JSON.stringify({ code: "code" }),
+      body: JSON.stringify({ code: "code", codeVerifier }),
     }));
 
     const cookie = response.headers.get("set-cookie");

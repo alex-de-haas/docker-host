@@ -6,6 +6,7 @@
       "environmentVariables": {
         "DOTNET_ENVIRONMENT": "Development",
         "HOSTY_CORE_URL": "http://localhost:3001",
+        "HOSTY_CORE_PUBLIC_ORIGIN": "http://[::1]:3001",
         "HOSTY_CORE_PORT": "3001",
         "HOSTY_SHELL_PORT": "3000"
       }

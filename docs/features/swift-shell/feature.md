@@ -1,6 +1,6 @@
 ---
 created: 2026-07-29
-updated: 2026-10-01
+updated: 2026-10-06
 summary: A native SwiftUI client for iOS, iPadOS and macOS that manages a host's installed apps.
 components: [apps/shell-swift]
 ---
@@ -326,12 +326,25 @@ one grey dot for both `stopped` and `unknown` would say it is. The words and col
 `AppRuntimeState` rather than being restated per view — two lists for the same five states drift, and
 the one that drifts is the one shown least often.
 
-Opening an app is the browser Shell's mechanism exactly, with no Core change: `POST
-/api/apps/{id}/launch-code` against the URL Core advertises, then load the URL it returns and let the
-app exchange the code for its own identity. The bearer session is CSRF-exempt, so no CSRF pair is
-involved. A code is single-use and expires in five minutes, so re-opening always mints again rather
-than replaying a spent URL — which would land on a signed-out app. A page switch inside an app that is
-already open is a plain navigation: its cookie is already set on that origin.
+Opening an app first loads its approved app URL without an authorization code. The app SDK creates
+its own private proof and public state, then attempts a GET navigation to this host's exact
+`/api/apps/{id}/open` path carrying only the challenge, `S256`, state and app callback. Native Shell
+cancels that navigation before network dispatch, validates the app's initiating document, and sends
+the public challenge through the bearer-authorized `POST /api/apps/{id}/launch-code`. The returned
+callback must preserve that exact redirect and state and append only its own unexpired code. The app
+retains its verifier and exchanges code plus proof through its own server; native Shell never reads
+or transfers the verifier. See [App Code Exchange](../app-code-exchange/plan.md).
+
+Protocol discovery reads fixed `GET /api/auth/apps/protocol` without a credential, cache or redirects.
+Version 2 uses proof-bound launch codes. Only a definite metadata 404 followed by the exact running
+`hosty-core` public status and a strict version below `0.120.0` permits the older protocol with additive
+proof fields. Malformed, unknown and failed discovery never selects the older protocol, and observing
+version 2 prevents subsequent downgrade on that Core connection. An older Core retains its existing
+exchange weakness until upgraded.
+
+The bearer session is CSRF-exempt, so no CSRF pair is involved. A new app attempt receives a new,
+single-use, short-lived code; returning to a cached workspace keeps the loaded document. Switching a
+manifest page loads the approved page normally and lets the app establish or retain its own identity.
 
 **The client declares its launch mode on the URL it loads**, `hosty_launch=native`, so the app drops
 the name and page navigation this client already renders in its navigation bar and pages menu — see
@@ -361,15 +374,43 @@ never appeared at all: the run loop never got far enough to load the page. The l
 therefore writes nothing, and the mutating one is called from the task that opens the app, before the
 state that renders the web view is set.
 
-**Identity expiry arrives as a navigation, not a callback.** In a web view the app is the top frame,
-so the app SDK takes its standalone path: a redirect to Core's `/api/apps/{id}/open`, which without a
-Core cookie lands on `/login`. That navigation is intercepted and turned into a fresh launch — main
-frame only, this host's Core origin only, this app only, and at most one re-mint every few seconds, so
-an app that fails immediately after recovering cannot drive an unbounded loop. Nothing in the SDK
-changes.
+**Identity recovery uses the same app-owned attempt.** The navigation delegate accepts the broker
+only when both source and target are main frames, the source frame's scheme/host/port equals an
+approved app origin, the target is this host's Core and app path, and the redirect matches that same
+source origin and public state. Duplicate fields, invalid proof, fragments and credential-bearing
+callbacks are refused. An arbitrary `/login` navigation never authorizes minting. The coordinator
+bounds recent claimed states and throttles fresh recovery attempts; late callbacks cannot replace a
+newer attempt. Eviction and logout discard the coordinator together with its web view.
 
-**Open in Browser mints its own code** immediately before handing the URL over: the one already loaded
-in the web view has been spent.
+Explicit renewal adds `responseMode=web_message` to that public proof navigation. Native Shell
+requests `interactiveRenewal=true` and delivers only the correlated public code/state in a
+`hosty:native-auth-result` event to the same loaded app document. A captured frame, coordinator ID,
+document generation and document marker prevent delivery after navigation, eviction or logout.
+The SDK retains the private proof in memory and completes its exchange without reloading the page,
+so drafts remain mounted. Generic initial launch omits the interactive selector and authorizes
+identity only.
+
+Core permits interactive native renewal only from a live primary Core session presented as a
+bearer; a long-lived device/access token does not authorize activity. Every in-place renewal first
+keeps the app document mounted and opens Core's normal login page in a fresh, separate
+non-persistent sheet, even if the saved native credential is already a primary session. A timer-created
+app navigation can open this sheet but cannot issue interactive activity without the user's new
+Core login. Retained primary confirmations are used only for logout cleanup, never another renewal. It verifies that the harvested primary session belongs to
+the current native account, then uses that primary bearer for the pending renewal. The client retains these primary
+confirmations only in workspace memory for later logout cleanup; they never replace the device
+credential in Keychain. Cancellation, host logout and workspace navigation
+invalidate the pending attempt. A different account is refused and its new confirmation session
+is logged out.
+
+The renewed grant belongs to that newly authenticated primary Core session and follows its normal
+activity, lifetime and revocation rules. Native logout, session loss and host replacement discard
+local app documents/cookies immediately and request ordinary Core logout for each retained primary
+confirmation, cascading to its grants. Cleanup uses only those actually-created sessions and never
+enumerates unrelated credentials. A network failure cannot guarantee server-side revocation, while
+local clearing still occurs. The existing device token's lifetime and authority are unchanged.
+
+**Open in Browser opens the plain app URL.** The external browser creates its own attempt and uses
+its own Core account. It can require login or use a different account from native Shell.
 
 **A loopback app URL is diagnosed rather than loaded.** Core advertises `127.0.0.1:<port>` by default,
 which means "this machine" and so resolves to the reader's device rather than the host. The client
@@ -521,8 +562,18 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
   special-cases an empty navigation list, and a declared page without a URL is dropped rather than
   offered. Both UI fields are optional, so a Core that omits them describes a headless app rather than
   failing the whole list decode.
-- The launch-code request carries the bearer and a JSON body and no CSRF header, and the Core update
-  apply maps 202 (started), 503 and 500 (nothing started) apart.
+- The launch-code request carries the bearer and JSON redirect/challenge/`S256`, no private verifier,
+  cookie or CSRF header. Protocol discovery stays on the configured Core origin, is public and
+  uncached, rejects redirects, permits fallback only for definite 404 plus verified older Core, and
+  never downgrades after observing version 2.
+- Native proof parsing covers exact Core/app origin and path, both main-frame flags, source port and
+  scheme, unique public state, same-origin callback, canonical challenge and `S256`. Invalid and
+  duplicate fields cannot authorize minting. Callback validation accepts only the exact correlated
+  unexpired code response; replay, recovery throttling, bounded attempts and stale completions are
+  covered without a live host. Account confirmation rejects another, disabled or anonymous user;
+  temporary primary credentials remain independent from the device client, and workspace cleanup
+  drains/logout only its own retained primary sessions once.
+- The Core update apply maps 202 (started), 503 and 500 (nothing started) apart.
 - The loopback predicate covers `localhost`, `127.0.0.1`, another `127.0.0.0/8` address and `[::1]`;
   an operator-configured public origin is never flagged, a loopback URL read *on* the host is never
   flagged, and an unparseable URL is not reported as unreachable — guessing there would replace a
@@ -592,7 +643,9 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
   open, a fleet update check, a reviewed update applied end to end, opening an app and confirming it
   reports the signed-in user, switching apps and back without a reload, two apps open at once keeping
   their own identity in the shared data store, a workspace recovering after its app session expires,
-  and a Core update surviving the restart it causes.
+  and a Core update surviving the restart it causes. Native launch/recovery acceptance also checks
+  that no public proof GET reaches Core, the app retains its verifier, and Open in Browser uses its
+  browser account without transferring a native launch code.
 - A row's update marker is verified against a live host in both directions: the tap applies the update
   rather than opening the app, and a tap anywhere else on the row still navigates. A `List` gives a
   plain button the whole row, so this is the check that the borderless style and the marker's own

@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-07-10
-updated: 2026-10-05
+updated: 2026-10-06
 summary: Exploratory model for delivering platform capabilities as swappable apps through named contribution points.
 components: [apps/core]
 ---
@@ -485,6 +485,7 @@ extraction remain unimplemented and outside that feature.
   with system-app pages.
 - [App UI surfaces](../app-ui-surfaces/feature.md) — where app pages, settings and panels are placed,
   including those of UI-capable system apps.
+- [System App Pages](../system-app-pages/plan.md) — the retained proposal for system pages, with its navigation and access policy awaiting approval.
 - [App feeds](../app-feeds/feature.md) — current feed behavior
   with repository ownership and Core resolution.
 - [AI Agent Bridge](../ai-agent-bridge/feature.md) — shares the Core-issued scoped-token direction for

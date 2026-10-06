@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   const identity = await getMarketplaceIdentity(request.headers);
-  return NextResponse.json({ ...identity, recovery: getRecoveryParams() }, {
+  return NextResponse.json({ ...identity, recovery: await getRecoveryParams() }, {
     headers: { "Cache-Control": "no-store" },
   });
 }

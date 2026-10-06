@@ -13,14 +13,23 @@ permissions, user role and assignments still constrain every call; activity neve
 
 ## Browser-established activity
 
-Core stores nullable `ActiveUntil` with each app grant. Exchanging a code issued by a real browser
-top-level navigation to `/api/apps/{id}/open` establishes the deadline, including
-`responseMode=web_message`.
-The navigation uses an isolated Core cookie host and a live Core browser session. Generic code
-issuance, diagnostic CLI grants, app service calls and revalidation establish no activity. Old grants
+Core stores nullable `ActiveUntil` with each app grant. A real app-origin intent POST followed by
+a nonce-bound top-level `/api/apps/{id}/open?requestId=...` continuation establishes the deadline,
+including `responseMode=web_message`. The continuation uses an isolated Core cookie host and a live
+Core browser session; redemption requires the app service identity and matching S256 proof.
+
+Native in-place renewal uses a separate authenticated `launch-code` request with
+`interactiveRenewal: true`. Core accepts this flag only from a live primary-session bearer, with
+no kind/audience/grant binding or delegated scopes. A device token, app service or delegated
+credential cannot establish this activity. Every Swift renewal opens a fresh normal password-login
+sheet, matches the native account and retains the mounted app and saved device credential. Temporary
+confirmation sessions remain only in workspace memory for ordinary Core logout cleanup on native
+logout, eviction or host replacement; they are never reused to automate renewal.
+
+Generic code issuance, diagnostic CLI grants, app service calls and revalidation establish no activity. Old grants
 without a deadline need browser renewal for privileged actions.
 
-The frame-only `prompt=none` mode issues identity-only codes, so silently opening an embedded app
+The frame-only intent mode `prompt=none` issues identity-only codes, so silently opening an embedded app
 establishes no activity. Its resulting grant is still bound to the authorizing Core session for
 explicit-logout revocation. [Embedded app sign-in](../embedded-app-sign-in/feature.md) owns that
 initial sign-in and the embedded grant's per-tab persistence.
@@ -61,7 +70,9 @@ so Shell and embedded apps do not need their own stylesheets for these notices. 
 the current app document (or its iframe); the authentication popup itself belongs to Core.
 
 Shell uses `/api/auth/renew` to update its HttpOnly cookie without returning the credential to browser
-JavaScript. The endpoint checks the request origin, JSON content type and exchanged app audience.
+JavaScript. The endpoint checks the request origin, JSON content type, private sign-in verifier and exchanged
+app audience. It refuses code-only requests locally and uses a fixed-origin, redirect-refusing Core
+exchange with its app service credential.
 The Core event stream reconnects and resynchronizes after `APP_ACTIVITY_RENEWED`. Dashboard input,
 app frames and other mounted state survive renewal.
 
@@ -124,7 +135,9 @@ change. The operator's running Core and apps were not restarted.
 
 ## Testing Expectations
 
-- Browser-open code exchange establishes activity; generic code, diagnostics and revalidation do not.
+- Nonce-bound top-level browser intent exchange establishes activity; generic code, diagnostics and
+  revalidation do not. Native flagged renewal requires a live primary bearer and fresh same-account
+  login in Swift; device/delegated/service credentials are refused and a timer cannot reuse authority.
 - Expiry, revoked/expired parent sessions and alternate credential representations deny privileged
   calls while valid identity-only calls continue; browser renewal restores access.
 - Provider and MCP child tokens cannot outlive revoked authority, installations or lease revisions.

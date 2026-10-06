@@ -28,7 +28,7 @@ internal sealed class AppAuthCodeStore(CoreDataPaths paths)
         }
     }
 
-    public async Task<AppAuthCodeConsumeResult> ConsumeCodeAsync(string code, DateTimeOffset now, CancellationToken cancellationToken = default)
+    public async Task<AppAuthCodeConsumeResult> ConsumeCodeAsync(string? code, string callingAppId, string? codeVerifier, DateTimeOffset now, CancellationToken cancellationToken = default)
     {
         await mutex.WaitAsync(cancellationToken);
         try
@@ -39,6 +39,18 @@ internal sealed class AppAuthCodeStore(CoreDataPaths paths)
             {
                 return new AppAuthCodeConsumeResult(AppAuthCodeConsumeOutcome.NotFound, null);
             }
+
+            // Match and consume under one lock. A foreign app cannot burn the code or learn
+            // whether its rightful owner has already used it or its lifetime has ended.
+            if (!string.Equals(match.AppId, callingAppId, StringComparison.Ordinal))
+            {
+                return new AppAuthCodeConsumeResult(AppAuthCodeConsumeOutcome.AppMismatch, match);
+            }
+
+            // An old unbound record and an unrelated proof disclose neither consumption nor expiry.
+            // A refused proof never burns the rightful browser's code.
+            if (!AppCodeProof.Matches(match.CodeChallenge, codeVerifier))
+                return new AppAuthCodeConsumeResult(AppAuthCodeConsumeOutcome.ProofMismatch, match);
 
             if (match.ConsumedAt is not null)
             {
@@ -70,6 +82,8 @@ internal enum AppAuthCodeConsumeOutcome
 {
     Consumed,
     NotFound,
+    AppMismatch,
+    ProofMismatch,
     AlreadyConsumed,
     Expired,
 }
@@ -87,7 +101,8 @@ internal sealed record AppAuthCodeRecord(
     DateTimeOffset ExpiresAt,
     DateTimeOffset? ConsumedAt,
     // The Core session that authorized this code, carried onto the issued grant so an explicit logout can
-    // cascade-revoke it. Null for codes minted outside a browser session (e.g. the CLI/control path).
+    // cascade-revoke it. Null only for authenticated non-browser issuers without a parent session.
     string? AuthorizingSessionId = null,
     string? AuthRevision = null,
-    bool ActivityAuthorized = false);
+    bool ActivityAuthorized = false,
+    string? CodeChallenge = null);

@@ -15,8 +15,8 @@ internal static class BrowserAuthorityFixture
         });
         var code = Guid.NewGuid().ToString("N");
         await host.Services.GetRequiredService<AppAuthCodeStore>().AppendCodeAsync(new(code, appId, userId,
-            "http://app.test/callback", now, now.AddMinutes(5), null, browserId, ActivityAuthorized: true), now);
-        return await host.Services.GetRequiredService<AppIdentityService>().ExchangeCodeAsync(code);
+            "http://app.test/callback", now, now.AddMinutes(5), null, browserId, ActivityAuthorized: true, CodeChallenge: AuthCodeProof.Challenge), now);
+        return await host.Services.GetRequiredService<AppIdentityService>().ExchangeCodeAsync(code, appId, AuthCodeProof.Verifier);
     }
     internal static async Task Approve(CoreHttpHarness host, string appId, string userId, string sessionId = "session-one", string browserId = "browser-session")
     {

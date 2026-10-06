@@ -194,8 +194,8 @@ public struct AppNavigationItem: Hashable, Sendable, Codable, Identifiable {
 
 /// A one-time authorization code and the URL that carries it, from `POST /api/apps/{id}/launch-code`.
 ///
-/// Single-use and short-lived: opening the same app again mints a new one rather than reloading a URL
-/// whose code has already been spent, which would land on a signed-out app.
+/// Single-use and short-lived: the approved app creates a fresh proof before a new code is issued.
+/// A live workspace is reused without replaying its callback URL.
 public struct AppLaunchCode: Hashable, Sendable, Codable {
     public let code: String
     public let redirectUri: String

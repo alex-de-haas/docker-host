@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { appFetch, configureAppActivity, forgetAppGrant, restoreAppGrant, openAppSignIn, rememberAppGrant, APP_SESSION_ENDED, APP_GRANT_STORAGE_KEY } from "./browser-auth";
+import { appFetch, configureAppActivity, forgetAppGrant, restoreAppGrant, openAppSignIn, rememberAppGrant, appCodeChallenge, NATIVE_APP_AUTH_RESULT, APP_SESSION_ENDED, APP_GRANT_STORAGE_KEY } from "./browser-auth";
 
 let browser: EventTarget & { location: URL; open: ReturnType<typeof vi.fn>; setTimeout: typeof setTimeout; clearTimeout: typeof clearTimeout };
 let popup: { close: ReturnType<typeof vi.fn> };
@@ -20,7 +20,7 @@ function message(origin: string, source: unknown, state: string) {
 
 describe("app-owned popup", () => {
   it("accepts only the exact Core origin, initiation state and opened window, once", async () => {
-    const result = openAppSignIn("http://core.localhost/api/apps/example/open?redirectUri=http%3A%2F%2Fapp.localhost%2F");
+    const result = openAppSignIn("http://core.localhost/api/apps/example/open?redirectUri=http%3A%2F%2Fapp.localhost%2F", undefined, 1);
     const url = new URL(browser.open.mock.calls[0][0]);
     const state = url.searchParams.get("state")!;
     expect(state).toMatch(/^[a-f0-9]{64}$/);
@@ -30,18 +30,61 @@ describe("app-owned popup", () => {
     message(url.origin, popup, "wrong");
     expect(popup.close).not.toHaveBeenCalled();
     message(url.origin, popup, state);
-    expect(await result).toBe("one-use-code");
+    expect(await result).toMatchObject({ code: "one-use-code", codeVerifier: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) });
     message(url.origin, popup, state);
     expect(popup.close).toHaveBeenCalledTimes(1);
   });
   it("rejects a blocked popup and permits a new attempt", async () => {
     browser.open.mockReturnValueOnce(null);
-    await expect(openAppSignIn("http://core.localhost/open")).rejects.toThrow("Allow the sign-in popup");
+    await expect(openAppSignIn("http://core.localhost/api/apps/example/open?redirectUri=http%3A%2F%2Fapp.localhost%2F", undefined, 1)).rejects.toThrow("Allow the sign-in popup");
     const controller = new AbortController();
-    const next = openAppSignIn("http://core.localhost/open", controller.signal);
+    const next = openAppSignIn("http://core.localhost/api/apps/example/open?redirectUri=http%3A%2F%2Fapp.localhost%2F", controller.signal, 1);
     controller.abort();
     await expect(next).rejects.toThrow("cancelled");
     expect(popup.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("native in-place sign-in", () => {
+  const openUrl = "http://native-core.localhost/api/apps/example/open?redirectUri=http%3A%2F%2Fapp.localhost%2Fpage";
+  const resultEvent = (detail: unknown) => browser.dispatchEvent(Object.assign(new Event(NATIVE_APP_AUTH_RESULT), { detail }));
+
+  it("keeps proof only in memory and accepts one exact-state public result without a popup", async () => {
+    const assign = vi.fn(); Object.assign(browser.location, { assign });
+    const getItem = vi.fn(() => { throw new Error("blocked"); });
+    Object.assign(browser, { sessionStorage: { getItem, setItem: getItem } });
+    const operation = openAppSignIn(openUrl, undefined, 2, true);
+    expect(browser.open).not.toHaveBeenCalled(); expect(assign).toHaveBeenCalledOnce();
+    const url = new URL(assign.mock.calls[0][0]);
+    const state = url.searchParams.get("state")!;
+    expect([...url.searchParams.keys()].sort()).toEqual(["codeChallenge", "codeChallengeMethod", "redirectUri", "responseMode", "state"]);
+    expect(url.searchParams.get("responseMode")).toBe("web_message");
+    expect(new URL(url.searchParams.get("redirectUri")!).searchParams.get("state")).toBe(state);
+    let settled = false; void operation.then(() => { settled = true; });
+    resultEvent({ state: "wrong", code: "injected" }); resultEvent({ state, code: "x".repeat(4097) });
+    await Promise.resolve(); expect(settled).toBe(false);
+    resultEvent({ state, code: "public-code", codeVerifier: "attacker" });
+    const result = await operation;
+    expect(result.code).toBe("public-code"); expect(result.codeVerifier).not.toBe("attacker");
+    expect(appCodeChallenge(result.codeVerifier)).toBe(url.searchParams.get("codeChallenge"));
+    expect(url.href).not.toContain(result.codeVerifier);
+  });
+
+  it.each(["abort", "logout", "refused", "timeout"])("discards memory proof on %s and ignores late delivery", async kind => {
+    vi.useFakeTimers();
+    Object.assign(browser, { setTimeout, clearTimeout });
+    const assign = vi.fn(); Object.assign(browser.location, { assign });
+    const controller = new AbortController();
+    const operation = openAppSignIn(openUrl, controller.signal, 2, true);
+    const refused = expect(operation).rejects.toThrow(kind === "refused" ? "could not authorize" : kind === "timeout" ? "timed out" : "cancelled");
+    const state = new URL(assign.mock.calls[0][0]).searchParams.get("state");
+    if (kind === "abort") controller.abort();
+    if (kind === "logout") forgetAppGrant();
+    if (kind === "refused") resultEvent({ state, error: { code: "access_denied", message: "server detail" } });
+    if (kind === "timeout") await vi.advanceTimersByTimeAsync(180_000);
+    resultEvent({ state, code: "late-code" });
+    await refused;
+    expect(browser.open).not.toHaveBeenCalled();
   });
 });
 
@@ -138,7 +181,7 @@ describe("embedded per-tab app grants", () => {
     vi.stubGlobal("navigator", { userActivation: { isActive: true } });
     browser.open.mockReturnValue(null);
     const exchangeCode = vi.fn();
-    const cleanup = configureAppActivity({ openUrl: "http://core.localhost/open", exchangeCode });
+    const cleanup = configureAppActivity({ appAuthProtocol: 1, openUrl: "http://core.localhost/open", exchangeCode });
     const ended = vi.fn(); browser.addEventListener(APP_SESSION_ENDED, ended);
     const denied = Response.json({ code: "token_app_mismatch" }, { status: 403 });
     const fetcher = vi.fn().mockResolvedValue(denied); vi.stubGlobal("fetch", fetcher);

@@ -8,7 +8,7 @@ The Demo App is the repository-local Hosty runtime app used to validate app life
 hosty core start
 hosty apps install apps/demo-app/manifest.json --runtime dev
 hosty apps start com.haas.demo-app
-hosty apps open com.haas.demo-app --user user@docker-host.local
+hosty apps open com.haas.demo-app
 ```
 
 If Core is already running from another terminal or debugger, run the `hosty apps ...` commands against that process.

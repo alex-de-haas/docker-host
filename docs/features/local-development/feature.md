@@ -1,6 +1,6 @@
 ---
 created: 2026-05-13
-updated: 2026-10-01
+updated: 2026-10-06
 summary: The Core-managed local development and test loops for Core, Shell and runtime apps.
 components: [apps/core, apps/cli]
 ---
@@ -50,7 +50,7 @@ npm install
 npm run dev
 ```
 
-`npm run dev` starts Core and Shell together. Core listens on `http://localhost:3001`, Shell listens on `http://localhost:3000`, and local state is stored in `.hosty-dev/` so branch development does not mutate an installed Hosty CLI data root. The script does not create users or modify existing accounts. Core requires the same email/password sign-in in Development and Production.
+`npm run dev` starts Core and Shell together. Core advertises `http://[::1]:3001` and listens on both local loopbacks, Shell listens on `http://localhost:3000`, and local state is stored in `.hosty-dev/` so branch development does not mutate an installed Hosty CLI data root. The script does not create users or modify existing accounts. Core requires the same email/password sign-in in Development and Production.
 
 Once Core is ready, run this from another terminal for a new data root:
 
@@ -76,7 +76,7 @@ The script also lets Core bootstrap `hosty.shell` into the `.hosty-dev` app regi
 If those ports are already occupied, stop the existing process or choose an alternate local pair:
 
 ```bash
-HOSTY_CORE_URL=http://localhost:3301 HOSTY_SHELL_PUBLIC_ORIGIN=http://localhost:3300 npm run dev
+HOSTY_CORE_URL=http://localhost:3301 HOSTY_CORE_PUBLIC_ORIGIN='http://[::1]:3301' HOSTY_SHELL_PUBLIC_ORIGIN=http://localhost:3300 npm run dev
 ```
 
 Run Core and Shell separately when debugging one side:
@@ -86,7 +86,7 @@ npm run core:dev
 npm run shell:dev
 ```
 
-Use `HOSTY_CORE_PUBLIC_ORIGIN` when Core is reached through a public origin that differs from its listen URL. Use `HOSTY_SHELL_PUBLIC_ORIGIN` when Shell runs on a different origin, and make the browser URL match exactly. For example, use `http://localhost:3000` consistently instead of mixing `localhost` and `127.0.0.1`.
+Use `HOSTY_CORE_PUBLIC_ORIGIN` when Core is reached through a public origin that differs from its listen URL. Use `HOSTY_SHELL_PUBLIC_ORIGIN` when Shell runs on a different origin, and make the browser URL match exactly. For example, use `http://localhost:3000` consistently for Shell and `http://[::1]:3001` for Core. Browser authorization over plain HTTP requires a literal-IP Core host and a different hostname for every app. HTTPS uses isolated host-only nonce cookies and still requires distinct Core/app hosts; changing only the port does not isolate cookies. See [app code exchange](../app-code-exchange/plan.md).
 
 Use `HOSTY_SHELL_AUTOSTART=false npm run core:dev` when Shell is running as a separate Next.js dev process and Core should keep the installed `hosty.shell` app autostart setting disabled. To have that Core process register and run Shell from the manifest's local-command runtime, set `HOSTY_SHELL_BOOTSTRAP_RUNTIME=dev` and `HOSTY_SHELL_SOURCE_OVERRIDE_PATH=<repo-root>` — both are ambient dev/fork overrides Core reads directly (no longer `hosty config` launch settings; the `npm run dev` orchestrator sets them for you). Use Core-managed Shell when validating Shell runtime lifecycle behavior.
 
@@ -129,7 +129,7 @@ The `dev` runtime profile in `apps/demo-app/manifest.json` starts local command 
 - frontend on a Core-assigned public app UI port;
 - backend on a Core-assigned internal API port.
 
-When Shell opens the Demo App, Core issues a one-time app authorization code. The Demo App exchanges that code through `HOSTY_CORE_ORIGIN`, creates its own app-origin cookie, and reports revalidation status on `/api/auth/identity`.
+Shell opens the Demo App without credentials. The app creates its own state and verifier, then submits the public S256 challenge to Core from its own origin. Core binds the continuation to that browser with an isolated nonce cookie and issues a one-time code after normal login. The Demo App exchanges the code and verifier through `HOSTY_CORE_ORIGIN` using its service token, creates its own app-origin cookie, and reports revalidation status on `/api/auth/identity`.
 
 Use normal app lifecycle commands while iterating:
 
@@ -189,11 +189,11 @@ curl -H "X-Docker-Host-Identity: $TOKEN" <assigned-demo-app-origin>/api/auth/ide
 For Shell or standalone launch validation, ask Core for an app open link:
 
 ```bash
-hosty apps open com.haas.demo-app --user user@docker-host.local --mode shell
-hosty apps open com.haas.demo-app --user user@docker-host.local --mode standalone
+hosty apps open com.haas.demo-app --mode shell
+hosty apps open com.haas.demo-app --mode standalone
 ```
 
-The CLI helpers use existing enabled Host users and normal app access checks. Disabled users, missing app assignments, incompatible exposure policy, and unavailable runtime state fail instead of silently issuing app identity. There is no deterministic development-user seeding or default bypass flag in the local source runtime workflow.
+Open links use the browser's normal account and app access checks. The identity diagnostic helper requires an existing enabled Host user and checks the app assignment. Incompatible exposure policy and unavailable runtime state refuse opening before navigation. There is no deterministic development-user seeding or default bypass flag in the local source runtime workflow.
 
 Do not validate Hosty identity, Shell embedding, app assignments, or scoped directory behavior by running an app only in standalone mode.
 

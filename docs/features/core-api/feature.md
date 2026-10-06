@@ -29,15 +29,19 @@ Mutating browser endpoints are CSRF-protected: `GET /api/auth/csrf` sets the dou
 - `GET /api/users` - admin user directory state.
 - `POST /api/auth/bootstrap` - consume a setup token, create the first administrator, store the submitted password credential, and create a Core session.
 - `POST /api/auth/recovery` - consume a recovery token, create or restore an administrator, replace the submitted password credential, and create a Core session.
-- `POST /api/auth/apps/authorize` - create an app authorization code for an authenticated Host user.
-- `GET /api/apps/{appId}/open` - browser app sign-in on a validated app-origin redirect URI.
-  Ordinary navigation follows Core login when needed; `responseMode=web_message` returns a code
-  from the Core popup to the app origin. `prompt=none` requires an iframe navigation and 256-bit
-  hex `state`: it returns `code` and `state` for a live session, or `error=login_required` /
-  `error=access_denied` and `state`, without sending the frame to `/login`. Silent codes carry
-  identity only and establish no privileged activity. See
-  [embedded app sign-in](../embedded-app-sign-in/feature.md).
-- `POST /api/auth/apps/token` - exchange an app authorization code for an app identity token.
+- `GET /api/auth/apps/protocol` - fixed no-store metadata `{ version: 2 }`.
+- `POST /api/auth/apps/authorize` and `POST /api/apps/{appId}/launch-code` - authenticated issuers;
+  require a canonical `codeChallenge` and `codeChallengeMethod=S256` alongside the validated redirect.
+- `POST /api/apps/{appId}/sign-in-intent` - app-origin browser form initiation, with state, redirect,
+  public S256 challenge and optional silent/popup mode. Exact Origin/navigation checks precede the
+  isolated nonce cookie and 303 immutable continuation.
+- `GET /api/apps/{appId}/open?requestId=...` - nonce-bound one-time browser continuation. It checks
+  the nonce before login, then claims and issues once after normal access checks. Silent frames never
+  receive login HTML; popups post only code/state to the validated app origin. Bare validated redirect
+  links bootstrap the app without a code; direct proof-bearing GETs are refused.
+- `POST /api/auth/apps/token` - exchange `{ code, codeVerifier }` using the target app service-token
+  bearer. App match and constant-time S256 proof validation precede consumption. See
+  [App Code Exchange](../app-code-exchange/feature.md).
 - `POST /api/auth/apps/revalidate` - validate an app identity token; requires the calling app's `HOSTY_APP_SERVICE_TOKEN` as a bearer token and rejects tokens issued for another app.
 - `POST /api/auth/trusted-proxy/session` - create a session for a reverse-proxy-asserted user; disabled unless `HOSTY_TRUSTED_PROXY_SECRET` is configured and the proxy presents it via `X-Hosty-Trusted-Proxy-Secret`.
 - `POST /api/apps/{appId}/switch-runtime/plan` - admin runtime switch review for browser Shell clients.
@@ -81,6 +85,8 @@ Core exposes no catalog or Marketplace proxy endpoints. The optional `hosty.mark
 
 `/api/core/status` reports effective public origins. If `HOSTY_CORE_PUBLIC_ORIGIN` or `HOSTY_SHELL_PUBLIC_ORIGIN` is unset, Core falls back to `http://localhost:<core-port>` and `http://localhost:<shell-port>`.
 
+Native in-place activity renewal additionally sets `interactiveRenewal: true` only after fresh normal Core login. This flag requires a live primary-session bearer; device, delegated, app-service and scoped credentials receive `native_session_required`. Generic launch remains identity-only.
+
 ## Control APIs
 
 The CLI discovers Core control information from the local run directory and sends `X-Hosty-Control-Secret` to `/control/v1`.
@@ -102,7 +108,8 @@ The CLI discovers Core control information from the local run directory and send
 - `POST /control/v1/auth/setup-token`
 - `POST /control/v1/auth/recovery-token`
 - `POST /control/v1/apps/{appId}/identity`
-- `POST /control/v1/apps/{appId}/open-link`
+- `POST /control/v1/apps/{appId}/open-link` - validated credential-free app/Shell URL; no expiry or
+  claimed user, and legacy `user` fields receive explicit migration guidance.
 
 ## Backups
 

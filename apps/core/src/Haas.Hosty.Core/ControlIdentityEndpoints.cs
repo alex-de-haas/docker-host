@@ -108,7 +108,6 @@ internal static class ControlIdentityEndpoints
             string appId,
             HttpRequest request,
             ControlSecret secret,
-            UserDirectoryStore users,
             AppRegistryStore apps,
             AppIdentityService identity,
             ShellPublicOriginResolver shellOrigins,
@@ -117,13 +116,18 @@ internal static class ControlIdentityEndpoints
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 await HandleIdentityError(async () =>
                 {
-                    var user = await ResolveUserAsync(users, input.User, cancellationToken);
+                    if (input.User.ValueKind != System.Text.Json.JsonValueKind.Undefined)
+                    {
+                        return CoreJson.Json(
+                            new ErrorResponse("open_user_removed", "Open links use the browser's signed-in account. Remove the user field; apps identity remains a diagnostic helper."),
+                            statusCode: StatusCodes.Status400BadRequest);
+                    }
+
+                    var appRecord = await apps.GetAppAsync(appId, cancellationToken) ??
+                        throw new AppIdentityException("app_not_found", "Runtime app was not found.");
                     var mode = string.IsNullOrWhiteSpace(input.Mode) ? "standalone" : input.Mode;
                     if (string.Equals(mode, "shell", StringComparison.OrdinalIgnoreCase))
                     {
-                        // No Shell installed (it is an optional distribution app) means there is no shell
-                        // link to mint. Say so plainly — `hosty open` surfaces this — instead of handing
-                        // back a URL built on a fallback origin that nothing is listening on.
                         if (await shellOrigins.ResolveAsync(cancellationToken) is not { } shellOrigin)
                         {
                             return CoreJson.Json(
@@ -133,10 +137,8 @@ internal static class ControlIdentityEndpoints
 
                         return CoreJson.Json(new AppOpenLinkResponse(
                             AppId: appId,
-                            UserId: user.Id,
                             Mode: "shell",
-                            Url: BuildShellWorkspaceUrl(shellOrigin, appId),
-                            ExpiresAt: null));
+                            Url: BuildShellWorkspaceUrl(shellOrigin, appId)));
                     }
 
                     if (!string.Equals(mode, "standalone", StringComparison.OrdinalIgnoreCase))
@@ -144,15 +146,18 @@ internal static class ControlIdentityEndpoints
                         return CoreJson.Json(new ErrorResponse("open_mode_invalid", "Open mode must be shell or standalone."), statusCode: StatusCodes.Status400BadRequest);
                     }
 
-                    var redirectUri = input.RedirectUri ?? await ResolveDefaultRedirectUriAsync(apps, appId, cancellationToken);
-                    // Control-channel open link: no browser Core session authorizes it, so no logout cascade.
-                    var authorization = await identity.CreateAuthorizationCodeAsync(appId, user.Id, redirectUri, cancellationToken: cancellationToken);
+                    var redirectUri = input.RedirectUri ?? AppSummary.From(appRecord).EmbeddedUrl;
+                    if (string.IsNullOrWhiteSpace(redirectUri))
+                    {
+                        throw new AppIdentityException("app_open_url_missing", "Runtime app does not have a browser UI URL. Pass --redirect-uri for standalone open.");
+                    }
+
+                    RequirePlainOpenUri(redirectUri);
+                    await identity.RequireAllowedRedirectUriAsync(appId, redirectUri, cancellationToken);
                     return CoreJson.Json(new AppOpenLinkResponse(
                         AppId: appId,
-                        UserId: user.Id,
                         Mode: "standalone",
-                        Url: authorization.RedirectUri,
-                        ExpiresAt: authorization.ExpiresAt));
+                        Url: redirectUri));
                 })));
     }
 
@@ -181,21 +186,22 @@ internal static class ControlIdentityEndpoints
             throw new AppIdentityException("user_not_found", "Host user was not found.");
     }
 
-    private static async Task<string> ResolveDefaultRedirectUriAsync(
-        AppRegistryStore apps,
-        string appId,
-        CancellationToken cancellationToken)
+    private static void RequirePlainOpenUri(string value)
     {
-        var app = await apps.GetAppAsync(appId, cancellationToken) ??
-            throw new AppIdentityException("app_not_found", "Runtime app was not found.");
-        var endpoint = app.Endpoints.FirstOrDefault(candidate => candidate.Public && !string.IsNullOrWhiteSpace(candidate.Url)) ??
-            app.Endpoints.FirstOrDefault(candidate => !string.IsNullOrWhiteSpace(candidate.Url));
-        if (endpoint?.Url is null)
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
+            !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Fragment))
         {
-            throw new AppIdentityException("app_open_url_missing", "Runtime app does not have a public endpoint URL. Pass --redirect-uri for standalone open.");
+            throw new AppIdentityException("redirect_uri_invalid", "Open URL must be an absolute credential-free http(s) URI without a fragment.");
         }
 
-        return endpoint.Url;
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        string[] reserved = ["code", "state", "codeVerifier", "code_verifier", "codeChallenge", "code_challenge",
+            "codeChallengeMethod", "code_challenge_method", "requestId", "access_token", "hosty_launch"];
+        if (reserved.Any(query.ContainsKey))
+        {
+            throw new AppIdentityException("redirect_uri_invalid", "Open URL must not contain authorization callback or proof parameters.");
+        }
     }
 
     /// <summary>
@@ -263,6 +269,9 @@ internal sealed record AppIdentityIssueRequest(string User);
 
 internal sealed record AppIdentityIssueResponse(string AppId, string UserId, AppIdentityTokenResult Token);
 
-internal sealed record AppOpenLinkRequest(string User, string? Mode = null, string? RedirectUri = null);
+internal sealed record AppOpenLinkRequest(
+    string? Mode = null,
+    string? RedirectUri = null,
+    System.Text.Json.JsonElement User = default);
 
-internal sealed record AppOpenLinkResponse(string AppId, string UserId, string Mode, string Url, DateTimeOffset? ExpiresAt);
+internal sealed record AppOpenLinkResponse(string AppId, string Mode, string Url);

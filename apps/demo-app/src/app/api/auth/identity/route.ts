@@ -1,3 +1,4 @@
+import { getAppAuthProtocol } from "@hosty-sdk/app/server";
 import { NextResponse } from "next/server";
 import { getDemoConfig } from "@/lib/demo-config";
 import { getDemoAuthSnapshot } from "@/lib/host-auth";
@@ -15,7 +16,7 @@ export async function GET(request: Request) {
   const status = snapshot.appSession.status === "active" ? 200
     : snapshot.appSession.status === "forbidden" ? 403
     : snapshot.appSession.status === "unavailable" || snapshot.appSession.status === "error" ? 503 : 401;
-  return NextResponse.json({ ...snapshot, recovery: { appId, corePublicOrigin } }, {
+  return NextResponse.json({ ...snapshot, recovery: { appId, corePublicOrigin, appAuthProtocol: await getAppAuthProtocol() } }, {
     status,
     headers: {
       "Cache-Control": "no-store",

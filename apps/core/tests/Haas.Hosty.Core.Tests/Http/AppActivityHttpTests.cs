@@ -73,8 +73,8 @@ public sealed class AppActivityHttpTests
         using var client = await AppManagementHttpTests.CreateAppClient(host, "console", [CoreAppPermissions.ReadApps]);
         var identity = host.Services.GetRequiredService<AppIdentityService>();
         var now = host.Services.GetRequiredService<IClock>().UtcNow;
-        await host.Services.GetRequiredService<AppAuthCodeStore>().AppendCodeAsync(new("generic", "console", "actor", "http://app.test", now, now.AddMinutes(1), null, "operator"), now);
-        foreach (var grant in new[] { await identity.ExchangeCodeAsync("generic"), await identity.CreateLaunchTokenAsync("console", "actor") })
+        await host.Services.GetRequiredService<AppAuthCodeStore>().AppendCodeAsync(new("generic", "console", "actor", "http://app.test", now, now.AddMinutes(1), null, "operator", CodeChallenge: AuthCodeProof.Challenge), now);
+        foreach (var grant in new[] { await identity.ExchangeCodeAsync("generic", "console", AuthCodeProof.Verifier), await identity.CreateLaunchTokenAsync("console", "actor") })
         {
             Assert.Null(grant.ActiveUntil);
             Assert.True((await identity.RevalidateAsync(grant.AccessToken, "console")).Active);

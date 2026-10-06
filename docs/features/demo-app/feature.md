@@ -1,6 +1,6 @@
 ---
 created: 2026-06-03
-updated: 2026-10-01
+updated: 2026-10-06
 summary: The repository-local reference app used to validate lifecycle, identity, directory access and app roles.
 components: [apps/demo-app]
 ---
@@ -38,7 +38,7 @@ hosty core start
 hosty apps install apps/demo-app --runtime dev
 hosty apps start com.haas.demo-app
 hosty apps health com.haas.demo-app
-hosty apps open com.haas.demo-app --user user@docker-host.local --mode shell
+hosty apps open com.haas.demo-app --mode shell
 ```
 
 The `dev` runtime profile starts two Core-managed local command services from `apps/demo-app`. Core assigns available local ports and injects each service's selected port as `HOSTY_PORT_HTTP` and `PORT`.
