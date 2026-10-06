@@ -116,7 +116,10 @@ Verified against `main` at `024b369a`.
   installation time — is still installed; after the assistant is removed or reinstalled the session
   stays in the projection, because its worktree changes remain, with no URL and the reason, and is
   never linked to a different installation. A session belongs to the entry with the same repository
-  and tracked branch as its target. No Git operation is reachable.
+  and tracked branch as its target. A session whose explicit target branch no installed app tracks
+  adds a session-derived entry for that repository and branch, marked as such, whose baseline is the
+  target ref the workspace already fetched; the entry exists only while an active session targets
+  that branch, so no session and none of its plan changes disappear. No Git operation is reachable.
 
 ### The app
 
@@ -177,7 +180,8 @@ app's.
       serialization and path-guard tests.
 - [ ] D5. The read-only session workspace projection, including the `docs/` subset of
       `SessionFiles` and an absolute session URL validated against the assistant app's origin, absent
-      with a reason once the owning installation is removed or reinstalled.
+      with a reason once the owning installation is removed or reinstalled; a session-derived entry
+      for an explicit target branch that no installed app tracks.
 
 ### Phase 2 — App
 
@@ -237,7 +241,8 @@ app's.
   entry for another administrator's grant, two apps of one repository on different branches, the
   per-branch fetch interval (a fetch of one branch never marks the other fresh) and explicit
   refresh, a session worktree read that includes an uncommitted change, and a session whose assistant
-  was reinstalled keeping its changes but losing its URL.
+  was reinstalled keeping its changes but losing its URL, and a session targeting a branch no app
+  tracks appearing under its own entry.
 - App tests: parsing against docker-host's `docs/`, status counts and progress, component-to-app
   mapping, session markers for a changed, a new and a deleted plan, and two sessions changing one
   plan.
