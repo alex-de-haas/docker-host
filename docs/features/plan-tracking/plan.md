@@ -106,12 +106,17 @@ Verified against `main` at `024b369a`.
   time and size.
 - **Private repositories.** No new connection selection exists. A fetch uses the Git grant already
   persisted on an installed app of that repository, and only when the grant's owner is the acting
-  administrator — the rule session workspaces apply. When no such grant exists, for example because
-  another administrator connected the source, the entry is listed as unavailable with that reason
-  and its documents are not served. A session-derived entry whose source app is gone falls back to
-  the grant stored on the workspace itself, as workspace fetches already do, and serves it only to
-  that workspace's administrator; to everyone else it is unavailable with the reason. Public
-  repositories need no grant.
+  administrator — the rule session workspaces apply. When no such installed-app grant is available,
+  an active workspace for the same canonical repository and target branch may supply its effective
+  Git grant, whether the session belongs to an installed-app entry or a session-derived entry. Core
+  resolves it by the existing workspace rules, including reviewed rebinding or clearing and current
+  connection-validity checks; both the workspace's administrator and the grant's owner must be the
+  acting administrator. This fallback authorizes the entry's baseline and that administrator's
+  matching session documents, never another administrator's worktree through that grant. Thus, if
+  the source app is uninstalled but another app still tracks the same repository and branch under
+  another administrator's grant, the original administrator retains access through their workspace.
+  With neither an owned installed-app grant nor an eligible workspace grant, the entry is listed as
+  unavailable with the reason and its documents are not served. Public repositories need no grant.
 - **Documents.** For the tracked branch, or for a session workspace's worktree including its
   uncommitted changes, Core lists `docs/**/*.md` with path and blob SHA, and returns one document's
   content. Nothing outside `docs/`, nothing but Markdown, no symbolic links, and a size cap per file.
@@ -198,8 +203,9 @@ app's.
       Harness's grant and still lists it as a source tool in Shell.
 - [ ] D3. Repository listing from installed apps' `source` declarations, deduplicated by canonical
       identity and tracked branch, reading the workspace target refs with interval-limited fetches
-      on read, an explicit refresh, and private access only through an installed app's persisted Git
-      grant owned by the acting administrator.
+      on read, an explicit refresh, and private access through an installed app's persisted Git
+      grant or the matching active-workspace fallback defined above, with ownership and current
+      connection checks.
 - [ ] D4. Document listing and content for the tracked branch and for session worktrees (uncommitted
       changes included), restricted to `docs/**/*.md` with size caps and symlink refusal; Native AOT
       serialization and path-guard tests.
@@ -207,7 +213,8 @@ app's.
       `SessionFiles` and an absolute session URL validated against the assistant app's origin, absent
       with a reason once the owning installation is removed or reinstalled; a session-derived entry
       for any active session without an installed-app entry (an untracked explicit target branch, or
-      an uninstalled source app).
+      an uninstalled source app); matching sessions in either entry kind use the private-grant rules
+      above.
 
 ### Phase 2 — App
 
@@ -235,8 +242,11 @@ app's.
       `ai-gateway`, `app-installation-sdk`, `app-permission-management`,
       `assistant-session-workspaces`, `core-api`, `core-app-shell`, `core-source-inspection`,
       `private-app-sources`, `runtime-app-manifest`, `runtime-source-workflows` and
-      `user-profile-connections` feature documents and the still-active `local-browser-origins`
-      plan; this plan deleted and the index regenerated.
+      `user-profile-connections` feature documents, the still-active `local-browser-origins` plan,
+      and the authoritative app-skill references
+      [app-auth-and-users.md](../../../skills/hosty-app-skill/references/app-auth-and-users.md) and
+      [app-manifest.md](../../../skills/hosty-app-skill/references/app-manifest.md); this plan deleted
+      and the index regenerated.
 
 ## Versioning
 
@@ -275,8 +285,12 @@ app's.
   refresh, a session worktree read that includes an uncommitted change, and a session whose assistant
   was reinstalled keeping its changes but losing its URL, a session whose source app was
   uninstalled (readable by its own administrator through the workspace grant when private,
-  unavailable to others), and a session targeting a branch no app
-  tracks appearing under its own entry.
+  unavailable to others), and the same private-source uninstall while another installed app still
+  tracks the repository and branch with another administrator's grant (the original administrator
+  reads the shared entry's baseline and their session changes through the workspace grant; another
+  administrator cannot inherit that fallback or use it to read the original administrator's
+  worktree). Cover reviewed grant clearing and revoked connections so the fallback cannot restore
+  removed access. A session targeting a branch no app tracks appears under its own entry.
 - App tests: parsing against docker-host's `docs/`, status counts and progress, component-to-app
   mapping, session markers for a changed, a new and a deleted plan, and two sessions changing one
   plan.
