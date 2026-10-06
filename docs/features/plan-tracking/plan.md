@@ -93,10 +93,11 @@ Verified against `main` at `024b369a`.
   subpaths, the last fetched commit and time, and an availability state with its error.
 - **Tracked branch and freshness.** The tracked branch follows the rule session workspaces already
   use for their target, and it is read from the same `refs/hosty/targets/<hash(branch)>` ref in the
-  same shared repository — never a second registry. A read fetches that ref when the last fetch is
-  older than a short interval, at most once per repository per interval; an explicit refresh
-  bypasses the interval; and workspace preparation and `refresh` keep updating the same ref, so
-  their fetches serve the app too. Nothing polls remotes in the background. Fetches are bounded in
+  same shared repository — never a second registry. Freshness is tracked per repository and branch,
+  because each fetch updates one branch's ref: a read fetches that ref when its own last fetch is
+  older than a short interval, at most once per repository and branch per interval; an explicit
+  refresh bypasses the interval; and workspace preparation and `refresh` keep updating the same
+  ref, so their fetches count as that branch's last fetch and serve the app too. Nothing polls remotes in the background. Fetches are bounded in
   time and size.
 - **Private repositories.** No new connection selection exists. A fetch uses the Git grant already
   persisted on an installed app of that repository, and only when the grant's owner is the acting
@@ -222,7 +223,7 @@ app's.
   root, path guards (`..`, symlinks, non-Markdown, outside `docs/`, oversized files),
   private-repository access through a grant owned by the acting administrator and the unavailable
   entry for another administrator's grant, two apps of one repository on different branches, the
-  fetch interval and explicit
+  per-branch fetch interval (a fetch of one branch never marks the other fresh) and explicit
   refresh, and a session worktree read that includes an uncommitted change.
 - App tests: parsing against docker-host's `docs/`, status counts and progress, component-to-app
   mapping, session markers for a changed, a new and a deleted plan, and two sessions changing one
