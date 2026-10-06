@@ -1,8 +1,12 @@
-# AI Agent Bridge — Remaining Rollout
+---
+status: In Progress
+created: 2026-06-09
+updated: 2026-10-05
+summary: The remaining AI agent bridge rollout steps, from the user profile and app-to-model calls to durable jobs and development agents.
+components: [apps/core, apps/harness]
+---
 
-Status: In Progress
-Created: 2026-06-09
-Updated: 2026-09-29
+# AI Agent Bridge — Remaining Rollout
 
 The shared model, the boundaries and the decision log live in [feature.md](feature.md) and are in
 force. This document holds only what is **not built**: the rollout checklist, and the design for the
@@ -22,21 +26,21 @@ parked it as a future separate app, with Core serving only the
 
 ## Deliverables
 
-- [x] 1. Document the shared concept and boundaries — [feature.md](feature.md).
-- [x] 2. Token infrastructure — [access-tokens](../access-tokens/feature.md). Its first consumer was
+- [x] D1. Document the shared concept and boundaries — [feature.md](feature.md).
+- [x] D2. Token infrastructure — [access-tokens](../access-tokens/feature.md). Its first consumer was
       `hosty login`, removed 2026-08-17 when the CLI was made local-only; the Swift Shell is the
       consumer now, and the credential itself is unchanged.
-- [x] 3. Manifest interface discovery metadata, no model execution. Shipped 2026-08-11 alongside step
+- [x] D3. Manifest interface discovery metadata, no model execution. Shipped 2026-08-11 alongside step
       4: `interfaces` validated as a draft `app.0.1` extension, normalized onto the app record and
       resolved to URLs on `AppSummary` and the app-directory roster.
-- [x] 4. One demo app MCP interface. Shipped 2026-08-11 — `apps/demo-app` serves `/api/mcp` and Core
+- [x] D4. One demo app MCP interface. Shipped 2026-08-11 — `apps/demo-app` serves `/api/mcp` and Core
       reports declared interfaces to apps: [app-mcp](../app-mcp/feature.md).
-- [x] 5. Embedded Core MCP: discovery and read-only observability. Shipped 2026-08-09 —
+- [x] D5. Embedded Core MCP: discovery and read-only observability. Shipped 2026-08-09 —
       [core-mcp](../core-mcp/feature.md). Delegated token issuance shipped with
       [ai-gateway](../ai-gateway/feature.md) as a Core HTTP route rather than an MCP tool.
-- [x] 6. Validate with stock external agent clients — no gateway code. Every cell of the matrix
+- [x] D6. Validate with stock external agent clients — no gateway code. Every cell of the matrix
       below is closed, the last two on 2026-09-06.
-- [x] 7. The `hosty mcp` connector and the Claude Code plugin packaging. Shipped 2026-08-15 and
+- [x] D7. The `hosty mcp` connector and the Claude Code plugin packaging. Shipped 2026-08-15 and
       verified live on 2026-08-16 — [hosty-mcp-connector](../hosty-mcp-connector/feature.md): the
       connector, the Core control route it mints through, and `packages/hosty-claude-plugin`. Claude
       Code connects, and a session called an app's tool with no credential in its config. The
@@ -45,17 +49,17 @@ parked it as a future separate app, with Core serving only the
       alongside the remote topology it keeps blocked. Checked here regardless, because this step is
       the local connector and its packaging, both of which exist and are verified end to end; it was
       never gated on the remote topology.
-- [x] 8. The operator milestone — the `hosty.ai-gateway` system app plus the Shell assistant surface.
+- [x] D8. The operator milestone — the `hosty.ai-gateway` system app plus the Shell assistant surface.
       Shipped 2026-08-09 and verified live: [ai-gateway](../ai-gateway/feature.md).
-- [ ] 9. The user profile: MCP-only sessions with delegated user tokens and approval-gated writes.
-- [ ] 10. Replace one app-local model integration with a discovered `/api/ai/generate`. **Gated on
+- [ ] D9. The user profile: MCP-only sessions with delegated user tokens and approval-gated writes.
+- [ ] D10. Replace one app-local model integration with a discovered `/api/ai/generate`. **Gated on
       an authorization decision** recorded as open question 1 of the
       [platform vision](../../vision.md): the gateway is a system app, so Core
       refuses non-admin delegated tokens for it — a regular user's app-mediated AI call has no
       credential path until it is decided (direction: the app calls the gateway as the app, and the
       user never holds an AI credential).
-- [ ] 11. Durable delegation and job runner, plus notifications.
-- [ ] 12. Development Agent Bridge: source checkout, PR, and an approved isolated-validation workflow.
+- [ ] D11. Durable delegation and job runner, plus notifications.
+- [ ] D12. Development Agent Bridge: source checkout, PR, and an approved isolated-validation workflow.
 
 Backward compatibility is preserved throughout: an app without an `mcp` interface stays an ordinary
 runtime app.
@@ -66,17 +70,17 @@ Both endpoints were driven live over HTTP on 2026-08-11, which proves the server
 client compatibility not at all. One cell of the matrix is now closed; the rest are listed
 individually, because "a stock client connected" is four different claims and only one is true.
 
-- [x] **Claude Code → Core `/api/mcp`** (2026-08-15). Registered as an HTTP server with an admin
+- **Claude Code → Core `/api/mcp`** (2026-08-15). Registered as an HTTP server with an admin
       access token in an `Authorization` header; `claude mcp list` reports connected and a session
       answered from the real fleet. Recorded in [core-mcp](../core-mcp/feature.md).
-- [x] **Claude Code → demo-app `/api/mcp`** (2026-08-16), **through the connector, which is the only
+- **Claude Code → demo-app `/api/mcp`** (2026-08-16), **through the connector, which is the only
       way it was ever going to work**. A static header entry was not merely undone but unreachable:
       the app endpoint wants a delegated token, which lives five minutes. `hosty mcp` holds the
       credential instead, so the client config carries none at all. A session called
       `get_my_app_role` and came back with demo-app's own `host-admin-bootstrap` and its seven
       permissions — values that cannot be guessed, which is why they were the ones asked for.
       Recorded in [hosty-mcp-connector](../hosty-mcp-connector/feature.md).
-- [x] **Codex → Core `/api/mcp`** (2026-09-06). A stock `codex exec` with `-c` overrides — no
+- **Codex → Core `/api/mcp`** (2026-09-06). A stock `codex exec` with `-c` overrides — no
       gateway code, and the operator's own `~/.codex/config.toml` untouched — called
       `get_host_status` over HTTP with a credential scoped to `hosty:core`, and answered with Core
       `0.97.1` and 9 running, 0 stopped, 0 errored apps: values matching `hosty apps list` and the
@@ -86,12 +90,12 @@ individually, because "a stock client connected" is four different claims and on
       carry `readOnlyHint: true`, the five mutating ones `destructiveHint`/`idempotentHint` and no
       read-only claim. That the annotation was the **only** cause remains unproven: the Codex CLI
       moved between the two runs as well, and no isolating experiment was made.
-- [x] **Codex → demo-app `/api/mcp`** (2026-08-20), through the connector, exactly as Claude reached
+- **Codex → demo-app `/api/mcp`** (2026-08-20), through the connector, exactly as Claude reached
       it. A stock `codex exec` with `-c` overrides — no gateway code, and the operator's own
       `~/.codex/config.toml` untouched — called `com_dhaas_ddemo-app__get_my_app_role` and returned
       role `admin` with its seven permissions, matching what Shell's demo-app panel shows. Values
       that cannot be guessed, which is the standard the Claude cell set.
-- [x] **A Hosty skill** telling a client how to discover apps and which tools need confirmation
+- **A Hosty skill** telling a client how to discover apps and which tools need confirmation
       (2026-08-20). `packages/hosty-claude-plugin/skills/hosty-mcp-connector`, installed as a
       user-scoped plugin, demonstrably reaches the client: asked why a running app's tool is missing
       from the connector, a headless `claude -p` answered with the connector's own fail-closed rule —
@@ -100,7 +104,7 @@ individually, because "a stock client connected" is four different claims and on
       the rule is a Hosty design choice, not general MCP knowledge. What this proves is that a loaded
       skill supplies facts the model otherwise lacks — the assumption
       [app-provided-skills](../app-provided-skills/feature.md) rests on.
-- [x] **A non-loopback origin** (2026-09-06). A stock Claude Code reached Core `/api/mcp` at the
+- **A non-loopback origin** (2026-09-06). A stock Claude Code reached Core `/api/mcp` at the
       prod host's public origin — external ingress, TLS and Cloudflare's proxy in the path, the
       client arriving over IPv6 — and completed the whole OAuth flow with no credential in its
       config; recorded in [mcp-oauth](../mcp-oauth/feature.md). What this does **not** cover is the
@@ -264,7 +268,7 @@ validation prerequisites do not gate that interactive journey. Shared source/ses
 belongs to [prototype workspaces](../app-prototype-workspaces/plan.md), and development lifecycle
 controls to [app development controls](../app-development-controls/plan.md).
 
-The source-changing layer, building on [agent-bridge-workflow](../../ideas/agent-bridge-workflow.md).
+The source-changing layer.
 In the operator profile this work is already interactive — an admin's session edits source through
 existing dev-mode and source workflows with approval-gated writes — so what remains is the
 **non-interactive** contract: one-shot sandboxed jobs (`codex exec`, `claude -p`) in an isolated

@@ -1,7 +1,11 @@
-# Notifications
+---
+created: 2026-06-16
+updated: 2026-08-31
+summary: A Core-owned per-user notification inbox with app and Core producers and live delivery to any client.
+components: [apps/core, apps/shell]
+---
 
-Created: 2026-06-16
-Updated: 2026-08-31
+# Notifications
 
 Hosty notifications are a **platform capability owned by Core**: a per-user inbox that any producer
 writes into and any client renders. Notifications are always **user-targeted**. Runtime apps emit them

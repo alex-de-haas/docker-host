@@ -1,7 +1,11 @@
-# App Code Exchange
+---
+created: 2026-10-05
+updated: 2026-10-06
+summary: Authorization codes require target-app service identity and private S256 proof, with browser-origin and nonce-bound sign-in attempts.
+components: [apps/core, apps/cli, packages/app-sdk, apps/shell, apps/harness, apps/shell-swift]
+---
 
-Created: 2026-10-05
-Updated: 2026-10-05
+# App Code Exchange
 
 Core binds authorization-code redemption to both the installed app and the private proof of its
 sign-in attempt. A disclosed code, state or S256 challenge cannot by itself produce an app grant.

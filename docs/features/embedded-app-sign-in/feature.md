@@ -1,7 +1,11 @@
-# Embedded App Sign-In
+---
+created: 2026-10-05
+updated: 2026-10-05
+summary: Embedded apps keep their own per-tab sign-in grant and sign in silently through Core without Shell handling their codes.
+components: [apps/core, apps/shell, packages/app-sdk]
+---
 
-Created: 2026-10-05
-Updated: 2026-10-05
+# Embedded App Sign-In
 
 Embedded apps keep their own sign-in grant for the tab and attempt silent initial sign-in directly
 through Core. Shell mounts only the selected workspace and destroys its frame when the user leaves;

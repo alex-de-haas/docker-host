@@ -1,7 +1,11 @@
-# Core Lifecycle Parallelism
+---
+created: 2026-08-26
+updated: 2026-09-27
+summary: Core runs per-app lifecycle work concurrently and queries Docker in batches.
+components: [apps/core]
+---
 
-Created: 2026-08-26
-Updated: 2026-09-27
+# Core Lifecycle Parallelism
 
 Core does its per-app lifecycle work concurrently and asks docker in batches, so boot latency and
 steady-state process churn stop scaling with the number of installed apps. Implements findings H4 and

@@ -1,8 +1,12 @@
-# System App Pages
+---
+status: Draft
+created: 2026-07-10
+updated: 2026-10-06
+summary: Reconcile the original administrator-only system-page proposal with current navigation, access and availability behavior.
+components: [apps/core, apps/shell]
+---
 
-Status: Draft
-Created: 2026-07-10
-Updated: 2026-10-05
+# System App Pages
 
 ## Goal And Approval Boundary
 
@@ -25,7 +29,7 @@ The original proposal also called for a separate administrator-only System group
 - [Shell Access And System Apps](../shell-access-and-system-apps/feature.md) owns the shared assignment rule and the separate checks for administrative authority.
 - [Core App Shell](../core-app-shell/feature.md) owns the shared workspace renderer, stopped-app visibility, and app-owned authentication flow.
 - [Runtime App Manifest](../runtime-app-manifest/feature.md) owns the existing system-role and UI validation contract.
-- [Marketplace System App](../runtime-app-marketplace/feature.md) owns the shipped storefront. The originating runtime smoke gate remains in the [legacy vertical-slice plan](../../planning/marketplace-system-app.md); its MCP proposal stays in its [owning plan](../runtime-app-marketplace/plan.md).
+- [Marketplace System App](../runtime-app-marketplace/feature.md) owns the shipped storefront. Its feature document retains runtime testing expectations; the MCP proposal stays in its [owning plan](../runtime-app-marketplace/plan.md).
 
 The target sections below preserve the original page proposal. Navigation and authorization changes require an explicit owner decision against this baseline; they must not be treated as missing parts of the already shipped generic page foundation.
 
@@ -162,13 +166,13 @@ System pages and system lifecycle actions are independent:
 - each system action continues to follow system-app policy and Core authorization;
 - safe reviewed system-app updates remain tracked separately.
 
-## Remaining Deliverables
+## Deliverables
 
-- [ ] Reconcile the original separate System group and administrator-only page policy with the current unified Apps group and assignment-based Core access; obtain explicit approval before changing either.
-- [ ] Decide whether `/system-apps/<id>` should regain canonical status or remain a compatibility route over `/workspace`, while keeping one shared workspace engine.
-- [ ] Specify and implement any missing UI endpoint readiness and unavailable-page behavior: retain stopped/unhealthy entries, show status and the inventory/repair path, and avoid stale iframe launches. Reuse [App Readiness](../app-readiness/feature.md) rather than duplicating its runtime-health contract.
-- [ ] Define a compatibility requirement for any newly approved system-page semantics so unsupported older Core versions fail closed.
-- [ ] Verify the resulting navigation, access, recovery, and headless-manifest cases below, and update the owning Shell/access/manifest feature documents with the shipped result.
+- [ ] D1. Reconcile the original separate System group and administrator-only page policy with the current unified Apps group and assignment-based Core access; obtain explicit approval before changing either.
+- [ ] D2. Decide whether `/system-apps/<id>` should regain canonical status or remain a compatibility route over `/workspace`, while keeping one shared workspace engine.
+- [ ] D3. Specify and implement any missing UI endpoint readiness and unavailable-page behavior: retain stopped/unhealthy entries, show status and the inventory/repair path, and avoid stale iframe launches. Reuse [App Readiness](../app-readiness/feature.md) rather than duplicating its runtime-health contract.
+- [ ] D4. Define a compatibility requirement for any newly approved system-page semantics so unsupported older Core versions fail closed.
+- [ ] D5. Verify the resulting navigation, access, recovery, and headless-manifest cases below, and update the owning Shell/access/manifest feature documents with the shipped result.
 
 The shared page-link helper, workspace renderer, system-role/UI validation, and Marketplace extraction are already shipped foundations, not pending deliverables here. Page participation follows each app's current `ui` metadata: Shell has no external page contract, while Telemetry declares UI pages. Do not make either headless through an app-specific rule.
 
@@ -225,7 +229,7 @@ Keep the shared app-page, iframe, and app-local session contracts. Resolve the n
 - [Marketplace System App](../runtime-app-marketplace/feature.md) - the shipped UI-capable system app and its current authority boundary.
 - [Core App Shell](../core-app-shell/feature.md) - current runtime app navigation and iframe behavior.
 - [Shell Access And System Apps](../shell-access-and-system-apps/feature.md) - current administrator/system visibility policy.
-- [Direct Origin Runtime App UI](../direct-origin-runtime-app-ui/feature.md) - app-origin SSO and session flow.
+- [Auth And Gateway Model](../auth-gateway/feature.md) - app-origin SSO and session flow.
 
 ## Notes
 

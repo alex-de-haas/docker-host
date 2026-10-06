@@ -1,7 +1,11 @@
-# Hosty MCP Connector
+---
+created: 2026-08-15
+updated: 2026-09-26
+summary: hosty mcp, a stdio MCP server in the CLI that presents every app on one host as a single server.
+components: [apps/cli, packages/hosty-claude-plugin]
+---
 
-Created: 2026-08-15
-Updated: 2026-09-26
+# Hosty MCP Connector
 
 `hosty mcp` is a stdio MCP server inside the CLI, spawned by an agent client on the operator's own
 machine, presenting every app on one Hosty host as a single server. It is step 7 of the

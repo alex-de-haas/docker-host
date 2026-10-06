@@ -19,78 +19,12 @@ flowchart LR
   D --> G["Runtime app services"]
 ```
 
-## Current Feature Documents
+## Documents
 
-- [Core app shell](features/core-app-shell/feature.md) - Shell foundation: what it is, how it authenticates, and how it embeds app UIs.
-- [Shell navigation](features/shell-navigation/feature.md) - the three destinations (Dashboard, Settings, Apps), the route table, and the sidebar.
-- [Shell access and system apps](features/shell-access-and-system-apps/feature.md) - administrator-only management views and system app visibility.
-- [Hosty runtime app platform](features/hosty-runtime-app-platform.md) - current runtime app lifecycle platform.
-- [Runtime app manifest](features/runtime-app-manifest/feature.md) - `app.0.1` manifest contract.
-- [Automatic runtime app ports](features/automatic-runtime-app-ports/feature.md) - host ports reserved at install so a stopped app has durable endpoints, `HOSTY_PORT_*` / `PORT` compatibility, conflict preflight, and operator reassignment or pinning.
-- [Raw L4 ports](features/raw-ports.md) - opt-in `expose: host` / `transport` publishing of a docker port on all interfaces over TCP/UDP.
-- [Host networking](features/host-networking.md) - opt-in `network: host` for a docker service (full host namespace, no NAT) for high-churn peer-to-peer workloads; WSL2 mirrored-networking advisory.
-- [Cloudflare ingress](features/cloudflare-ingress/feature.md) - opt-in `cloudflared` provider that renders an operator-run Cloudflare Tunnel's config from the running-app set and derives `HOSTY_PUBLIC_ORIGIN_*`, plus an API-token connection that publishes one endpoint at a time under a chosen label; `none` (default) keeps operator-owned exposure.
-- [Container capabilities & devices](features/container-capabilities.md) - opt-in `capabilities` (`--cap-add`) and `devices` (`--device`) for a docker service, e.g. `NET_ADMIN` + `/dev/net/tun` for an in-container VPN; no blanket `--privileged`.
-- [External host-path mounts](features/external-mounts.md) - operator-configured external folders (`externalMounts`) injected as `HOSTY_MOUNT_{KEY}`.
-- [Global (shared) host-path mounts](features/global-mounts/feature.md) - host-level shared-mounts library registered once (`hosty storage`) and attached to apps by reference; extends external mounts (the manifest slot stays the opt-in point).
-- [Cross-app dependencies](features/cross-app-dependencies/feature.md) - declare a dependency on another installed app; Core wires `HOSTY_DEPENDENCY_{ALIAS}_URL` and reports each dependency's installed/running state on the app summary, which the Shell renders as problem icons (no auth, no auto-install).
-- [Runtime app update](features/runtime-app-update/feature.md) - update plan and apply behavior.
-- [Runtime source workflows](features/runtime-source-workflows/feature.md) - source checkout, local override, and runtime switching.
-- [Runtime artifact model](features/runtime-artifact-model/feature.md) - execution and artifact kinds, profile-bound development, compatibility and immutable prebuilt folder delivery. Remaining delivery and update extensions are tracked in its plan.
-- [Multi-service runtime apps](features/multi-service-runtime-apps.md) - multiple services per app.
-- [Runtime app compact view](features/runtime-app-compact-view.md) - compact Shell view of installed app services and assigned endpoints.
-- [Direct origin runtime app UI](features/direct-origin-runtime-app-ui/feature.md) - app-origin UI and auth code exchange.
-- [App Auth And Origin Separation](features/app-auth-origin-separation/feature.md) - Core-owned app auth and app-local sessions.
-- [Auth And Gateway Model](features/auth-gateway/feature.md) - current app auth, assignments, and scoped app directory.
-- [User Management](features/user-management.md) - users, invitations, roles, and app access assignment.
-- [Local Password Login](features/local-password-login/feature.md) - Core-owned local password setup, recovery, invitations, and login.
-- [Auth session lifecycle and recovery](features/auth-session-lifecycle/feature.md) - the identity error contract (401 recoverable / 403 terminal), opaque server-side app session grants, sliding idle + absolute lifetimes for grants and Core sessions, and standalone/embedded session recovery through app-open with a login continuation.
-- [App Data Backup Retention](features/app-data-backup-retention/feature.md) - backup cleanup and retention.
-- [Notifications](features/notifications/feature.md) - Core-owned user-targeted notification stream: opt-in app producers scoped to their directory, in-process Core producers, a client-agnostic session consumer, live delivery over the unified event stream, retention, and the Shell bell. Remaining surfaces (interface registration, the MCP facade, app read-back, delivery channels): [plan](features/notifications/plan.md).
-- [App Secrets Store](features/app-secrets-store/feature.md) - Core-managed keychain for runtime-acquired app secrets (OAuth tokens and the like): service-token API, `apps/<id>/secrets.json` beside `state.json` and therefore outside backup scope, removal following the operator's keep-data choice, and SDK clients in both packages. Deferred follow-ups (at-rest encryption pass, CLI diagnostic): [plan](features/app-secrets-store/plan.md).
-- [Observability](features/observability/feature.md) - OpenTelemetry from runtime apps → OTel collector → telemetry backend (embedded SQLite store + query API) → telemetry UI system app (metrics, structured logs, traces); Core contributes only the host-privileged signals (`docker stats` exposition, on-demand `docker logs`). Ingest/query auth, realtime tail, and the fleet heat-map remain — see the [plan](features/observability/plan.md).
-- [Marketplace System App](features/runtime-app-marketplace/feature.md) - optional first-party storefront that owns one catalog source and hands app-owned feed URLs to Shell without lifecycle authority.
-- [Runtime App Repository Feeds](features/catalog-hosted-app-feeds.md) - `app-feeds.0.1`, digest-bound feed installs, stored followed-feed state, and Core-owned update resolution.
-- [CLI bootstrap](features/cli-bootstrap/feature.md) - `hosty` command setup and Core control discovery.
-- [CLI app commands](features/cli-app-commands/feature.md) - runtime app CLI commands.
-- [Core API](features/core-api/feature.md) - current Core browser and control APIs.
-- [Domain model](features/domain-model/feature.md) - shared app-oriented vocabulary.
-- [Repository and release model](features/repository-release-model/feature.md) - monorepo and release workflows.
-- [Hosty Shell Docker Image](features/hosty-shell-image.md) - implemented Shell image publishing and Core-managed bootstrap behavior.
-- [Demo App](features/demo-app/feature.md) - repository-local runtime app used for validation.
-- [Local development and testing](features/local-development/feature.md) - Core-managed local workflows.
-- [Hosty App Skill](features/hosty-app-skill.md) - repository-shipped agent skill.
-- [Hosty App SDK](features/hosty-app-sdk/feature.md) - the shared app-side Host integration published as `@hosty-sdk/app` (npmjs) and `HostySdk.App` (NuGet): session state machine with a `misconfigured` class, silent embedded recovery, standalone redirect recovery, the embedder contract for shells, launch-mode awareness, app secrets and delegated-token clients, and the no-version-sync compatibility policy. Second-wave extraction: [plan](features/hosty-app-sdk/plan.md).
-- [AI Agent Bridge](features/ai-agent-bridge/feature.md) - the umbrella model for development agents and runtime app action agents: component boundaries, execution profiles, the interface registry, token mechanics, and the decision log. Remaining rollout steps: [plan](features/ai-agent-bridge/plan.md).
-- [Final Hosty architecture boundaries](features/final-hosty-architecture.md) - Core/Shell/CLI ownership boundaries.
-
-- [Assistant app context](features/assistant-app-context/feature.md) - persistent multi-app selection
-  in chat and new-session actions in app menus, shared by authoring and ordinary operator sessions.
-
-## Planning
-
-- [App authoring in Hosty](features/app-authoring/plan.md) - epic for prompt-driven app creation,
-  live iteration, installed-app integration and optional publication; links the independently
-  scoped prototype workspace, development control and publication plans.
-- [Marketplace System App - Vertical Slice](planning/marketplace-system-app.md) - approved replacement of the Core-owned catalog with a Marketplace system app and generic Core feed lifecycle.
-
-## Ideas
-
-Draft, exploratory, or backlog items that are not current implementation commitments:
-
-- [Runtime App Repository Feeds](ideas/runtime-app-repository-feeds.md) - promoted design that moved the feed contract from inline catalog data to app-owned `feeds.json` resolved by Core.
-- [On-Demand System App Updates](ideas/system-app-updates.md) - concept for explicit Shell/system-app update discovery, reviewed apply, self-reload, and rollback without restarting Core.
-- [Marketplace As A System App](ideas/marketplace-system-app.md) - read-only catalog data, API, and UI in an optional first-party system app while Core retains all feed and lifecycle decisions.
-- [System App Pages](features/system-app-pages/plan.md) - Draft retaining the original separate administrator-only group proposal, with its conflict against current navigation and access still open.
-- [Agent Bridge Workflow](ideas/agent-bridge-workflow.md) - concept for Shell annotation, agent request lifecycle, repository changes, branch/PR workflow, and an unresolved isolated-validation boundary.
-- [Browser account switching](ideas/account-switching.md) - retired behavior and future restoration boundary.
-- [Gateway and app wrapping ideas](ideas/gateway-and-app-wrapping.md) - future gateway, ingress, and third-party app wrapping boundaries.
-- [Replaceable UI Clients](ideas/replaceable-ui-clients.md) - concept for shells as ordinary apps: a `ui-client` provides slot replacing the hardcoded `hosty.shell` lookup, primary-UI selection as pure resolution (setting > sole > earliest-installed), CORS for every installed UI client, and uninstall of the last shell always allowed with the CLI as recovery path.
-- [Auth provider extensions](ideas/auth-provider-extensions.md) - future OIDC, trusted-proxy provisioning, password reset, and durable throttling directions.
-- [Runtime source extensions](ideas/runtime-source-extensions.md) - future multi-repository source and private repository credential handling.
-- [Runtime app repository install](ideas/runtime-app-repository-install.md) - future direct Git repository install flow for runtime apps.
-- [Backup retention extensions](ideas/backup-retention-extensions.md) - future age-based and per-app backup retention policy.
-- [Future work ideas](ideas/future-work.md) - small backlog items that are not yet planned in detail.
+Every feature folder is listed below with its summary and, where it has a plan, the plan's status,
+deliverable progress and last update. The list is generated from each document's frontmatter;
+the format and the rules for writing documents are in the Documentation section of
+[AGENTS.md](../AGENTS.md).
 
 <!-- docs-index:begin -->
 
@@ -98,147 +32,126 @@ _Generated by `scripts/docs-index.mjs --fix` — do not edit this block by hand.
 
 ### Features
 
-- **access-tokens** — [feature](features/access-tokens/feature.md)
-- **advertised-app-origins** — [plan](features/advertised-app-origins/plan.md): Draft, updated 2026-07-30
-- **agent-app-evaluations** — [plan](features/agent-app-evaluations/plan.md): Draft, updated 2026-09-26
-- **agent-background-sessions** — [feature](features/agent-background-sessions/feature.md)
-- **agent-mcp-directory** — [feature](features/agent-mcp-directory/feature.md)
-- **ai-agent-bridge** — [feature](features/ai-agent-bridge/feature.md) · [plan](features/ai-agent-bridge/plan.md): In Progress, updated 2026-09-29
-- **ai-gateway** — [feature](features/ai-gateway/feature.md)
-- **ai-gateway-chat-ui** — [feature](features/ai-gateway-chat-ui/feature.md)
-- **ai-gateway-providers** — [feature](features/ai-gateway-providers/feature.md)
-- **app-activity-window** — [feature](features/app-activity-window/feature.md)
-- **app-auth-origin-separation** — [feature](features/app-auth-origin-separation/feature.md)
-- **app-authoring** — [plan](features/app-authoring/plan.md): Draft, updated 2026-09-27
-- **app-cache-storage** — [feature](features/app-cache-storage/feature.md)
-- **app-code-exchange** — [feature](features/app-code-exchange/feature.md) · [plan](features/app-code-exchange/plan.md): Blocked, updated 2026-10-05
-- **app-data-backup-retention** — [feature](features/app-data-backup-retention/feature.md)
-- **app-development-controls** — [plan](features/app-development-controls/plan.md): Draft, updated 2026-09-27
-- **app-feedback-inbox** — [plan](features/app-feedback-inbox/plan.md): Draft, updated 2026-09-26
-- **app-installation-sdk** — [feature](features/app-installation-sdk/feature.md) · [plan](features/app-installation-sdk/plan.md): In Progress, updated 2026-09-18
-- **app-lifecycle-states** — [feature](features/app-lifecycle-states/feature.md)
-- **app-mcp** — [feature](features/app-mcp/feature.md)
-- **app-permission-management** — [feature](features/app-permission-management/feature.md)
-- **app-prototype-workspaces** — [plan](features/app-prototype-workspaces/plan.md): Draft, updated 2026-09-29
-- **app-provided-skills** — [feature](features/app-provided-skills/feature.md)
-- **app-publication** — [plan](features/app-publication/plan.md): Draft, updated 2026-09-29
-- **app-readiness** — [feature](features/app-readiness/feature.md)
-- **app-sandbox-runtimes** — [plan](features/app-sandbox-runtimes/plan.md): On Hold, updated 2026-10-01
-- **app-secrets-store** — [feature](features/app-secrets-store/feature.md) · [plan](features/app-secrets-store/plan.md): Draft, updated 2026-09-06
-- **app-ui-surfaces** — [feature](features/app-ui-surfaces/feature.md) · [plan](features/app-ui-surfaces/plan.md): Draft, updated 2026-09-27
-- **assistant-action-summary** — [plan](features/assistant-action-summary/plan.md): Draft, updated 2026-09-26
-- **assistant-ahp** — [plan](features/assistant-ahp/plan.md): Draft, updated 2026-09-29
-- **assistant-app-context** — [feature](features/assistant-app-context/feature.md)
-- **assistant-approval-rules** — [feature](features/assistant-approval-rules/feature.md) · [plan](features/assistant-approval-rules/plan.md): Draft, updated 2026-10-05
-- **assistant-attachments** — [feature](features/assistant-attachments/feature.md)
-- **assistant-development-sessions** — [plan](features/assistant-development-sessions/plan.md): Draft, updated 2026-09-29
-- **assistant-entry-points** — [feature](features/assistant-entry-points/feature.md) · [plan](features/assistant-entry-points/plan.md): In Progress, updated 2026-09-27
-- **assistant-external-session-context** — [plan](features/assistant-external-session-context/plan.md): Draft, updated 2026-09-26
-- **assistant-pr-lifecycle** — [feature](features/assistant-pr-lifecycle/feature.md)
-- **assistant-pr-lifecycle-azure** — [plan](features/assistant-pr-lifecycle-azure/plan.md): Draft, updated 2026-09-29
-- **assistant-provider-permissions** — [feature](features/assistant-provider-permissions/feature.md)
-- **assistant-runtime-containment** — [plan](features/assistant-runtime-containment/plan.md): On Hold, updated 2026-09-27
-- **assistant-session-autonomy** — [feature](features/assistant-session-autonomy/feature.md)
-- **assistant-session-workspaces** — [feature](features/assistant-session-workspaces/feature.md)
-- **assistant-shared-history** — [plan](features/assistant-shared-history/plan.md): Draft, updated 2026-09-26
-- **assistant-timeline-analysis** — [plan](features/assistant-timeline-analysis/plan.md): Draft, updated 2026-09-26
-- **audit-log** — [feature](features/audit-log/feature.md)
-- **auth-gateway** — [feature](features/auth-gateway/feature.md)
-- **auth-session-lifecycle** — [feature](features/auth-session-lifecycle/feature.md)
-- **automatic-runtime-app-ports** — [feature](features/automatic-runtime-app-ports/feature.md) · [plan](features/automatic-runtime-app-ports/plan.md): Draft, updated 2026-09-09
-- **cardputer-shell** — [plan](features/cardputer-shell/plan.md): In Progress, updated 2026-08-23
-- **cli-app-commands** — [feature](features/cli-app-commands/feature.md)
-- **cli-bootstrap** — [feature](features/cli-bootstrap/feature.md)
-- **cloudflare-ingress** — [feature](features/cloudflare-ingress/feature.md)
-- **core-api** — [feature](features/core-api/feature.md)
-- **core-app-shell** — [feature](features/core-app-shell/feature.md)
-- **core-dev-target** — [feature](features/core-dev-target/feature.md) · [plan](features/core-dev-target/plan.md): In Progress, updated 2026-09-18
-- **core-event-bus** — [feature](features/core-event-bus/feature.md)
-- **core-extension-model** — [plan](features/core-extension-model/plan.md): Draft, updated 2026-10-05
-- **core-lifecycle-parallelism** — [feature](features/core-lifecycle-parallelism/feature.md)
-- **core-mcp** — [feature](features/core-mcp/feature.md) · [plan](features/core-mcp/plan.md): In Progress, updated 2026-08-28
-- **core-public-origin** — [feature](features/core-public-origin/feature.md)
-- **core-read-path-caching** — [feature](features/core-read-path-caching/feature.md)
-- **core-runtime-parameters** — [feature](features/core-runtime-parameters/feature.md)
-- **core-service-unit** — [plan](features/core-service-unit/plan.md): On Hold, updated 2026-09-01
-- **core-single-binary** — [plan](features/core-single-binary/plan.md): On Hold, updated 2026-09-01
-- **core-source-inspection** — [feature](features/core-source-inspection/feature.md)
-- **cross-app-dependencies** — [feature](features/cross-app-dependencies/feature.md) · [plan](features/cross-app-dependencies/plan.md): Draft, updated 2026-08-17
-- **delegated-token-exchange** — [feature](features/delegated-token-exchange/feature.md)
-- **demo-app** — [feature](features/demo-app/feature.md)
-- **dependency-ordered-autostart** — [plan](features/dependency-ordered-autostart/plan.md): Draft, updated 2026-09-21
-- **direct-origin-runtime-app-ui** — [feature](features/direct-origin-runtime-app-ui/feature.md)
-- **domain-model** — [feature](features/domain-model/feature.md)
-- **embedded-app-chrome** — [feature](features/embedded-app-chrome/feature.md)
-- **embedded-app-sign-in** — [feature](features/embedded-app-sign-in/feature.md)
-- **global-mounts** — [feature](features/global-mounts/feature.md)
-- **hosty-app-sdk** — [feature](features/hosty-app-sdk/feature.md) · [plan](features/hosty-app-sdk/plan.md): In Progress, updated 2026-09-18
-- **hosty-harness-rename** — [feature](features/hosty-harness-rename/feature.md)
-- **hosty-harness-swift** — [plan](features/hosty-harness-swift/plan.md): Draft, updated 2026-09-29
-- **hosty-mcp-connector** — [feature](features/hosty-mcp-connector/feature.md)
-- **internal-endpoint-exposure** — [plan](features/internal-endpoint-exposure/plan.md): Draft, updated 2026-09-06
-- **local-browser-origins** — [feature](features/local-browser-origins/feature.md) · [plan](features/local-browser-origins/plan.md): In Progress, updated 2026-10-05
-- **local-development** — [feature](features/local-development/feature.md)
-- **local-password-login** — [feature](features/local-password-login/feature.md)
-- **manifest-projection-backfill** — [feature](features/manifest-projection-backfill/feature.md)
-- **mcp-facade** — [feature](features/mcp-facade/feature.md) · [plan](features/mcp-facade/plan.md): On Hold, updated 2026-09-26
-- **mcp-oauth** — [feature](features/mcp-oauth/feature.md)
-- **mixed-development-runtimes** — [feature](features/mixed-development-runtimes/feature.md) · [plan](features/mixed-development-runtimes/plan.md): In Progress, updated 2026-09-17
-- **notifications** — [feature](features/notifications/feature.md) · [plan](features/notifications/plan.md): Draft, updated 2026-08-31
-- **oauth-core-control-scopes** — [feature](features/oauth-core-control-scopes/feature.md)
-- **observability** — [feature](features/observability/feature.md) · [plan](features/observability/plan.md): In Progress, updated 2026-09-25
-- **private-app-sources** — [feature](features/private-app-sources/feature.md)
-- **private-distribution-access** — [plan](features/private-distribution-access/plan.md): Draft, updated 2026-09-28
-- **provider-consumption** — [feature](features/provider-consumption/feature.md) · [plan](features/provider-consumption/plan.md): Blocked, updated 2026-09-29
-- **public-origins** — [feature](features/public-origins/feature.md)
-- **removable-system-apps** — [feature](features/removable-system-apps/feature.md)
-- **repository-release-model** — [feature](features/repository-release-model/feature.md)
-- **runtime-app-manifest** — [feature](features/runtime-app-manifest/feature.md)
-- **runtime-app-marketplace** — [feature](features/runtime-app-marketplace/feature.md) · [plan](features/runtime-app-marketplace/plan.md): Draft, updated 2026-09-26
-- **runtime-app-update** — [feature](features/runtime-app-update/feature.md)
-- **runtime-artifact-model** — [feature](features/runtime-artifact-model/feature.md) · [plan](features/runtime-artifact-model/plan.md): Draft, updated 2026-09-26
-- **runtime-resource-usage** — [feature](features/runtime-resource-usage/feature.md)
-- **runtime-source-workflows** — [feature](features/runtime-source-workflows/feature.md)
-- **scoped-access-tokens** — [feature](features/scoped-access-tokens/feature.md)
-- **shell-access-and-system-apps** — [feature](features/shell-access-and-system-apps/feature.md)
-- **shell-navigation** — [feature](features/shell-navigation/feature.md)
-- **shell-operation-feedback** — [feature](features/shell-operation-feedback/feature.md)
-- **shell-panel-resize** — [feature](features/shell-panel-resize/feature.md)
-- **swift-shell** — [feature](features/swift-shell/feature.md)
-- **system-app-pages** — [plan](features/system-app-pages/plan.md): Draft, updated 2026-10-05
-- **telemetry-mcp** — [feature](features/telemetry-mcp/feature.md)
-- **user-profile-connections** — [feature](features/user-profile-connections/feature.md)
+Plans: 10 In Progress · 2 Blocked · 34 Draft · 5 On Hold.
 
-### Legacy documents (pre-migration)
-
-- [features/catalog-hosted-app-feeds](features/catalog-hosted-app-feeds.md)
-- [features/container-capabilities](features/container-capabilities.md)
-- [features/external-mounts](features/external-mounts.md)
-- [features/final-hosty-architecture](features/final-hosty-architecture.md)
-- [features/host-networking](features/host-networking.md)
-- [features/hosty-app-skill](features/hosty-app-skill.md)
-- [features/hosty-runtime-app-platform](features/hosty-runtime-app-platform.md)
-- [features/hosty-shell-image](features/hosty-shell-image.md) — Implemented.
-- [features/manifest-level-app-assets](features/manifest-level-app-assets.md) — **In progress.** Design (Q1–Q13, incl. Q3/D1–D7) confirmed 2026-07-07.
-- [features/multi-service-runtime-apps](features/multi-service-runtime-apps.md)
-- [features/raw-ports](features/raw-ports.md)
-- [features/runtime-app-compact-view](features/runtime-app-compact-view.md)
-- [features/user-management](features/user-management.md)
-- [ideas/account-switching](ideas/account-switching.md) — Idea.
-- [ideas/agent-bridge-workflow](ideas/agent-bridge-workflow.md) — Idea
-- [ideas/auth-provider-extensions](ideas/auth-provider-extensions.md) — Idea.
-- [ideas/backup-retention-extensions](ideas/backup-retention-extensions.md) — Idea.
-- [ideas/core-settings](ideas/core-settings.md) — Implemented (v1 — auth lifetimes; v2 — cloudflared ingress)
-- [ideas/cross-app-auth](ideas/cross-app-auth.md) — Idea (proposed 2026-07-20 — awaiting owner ratification)
-- [ideas/future-work](ideas/future-work.md) — Idea.
-- [ideas/gateway-and-app-wrapping](ideas/gateway-and-app-wrapping.md) — Idea.
-- [ideas/marketplace-system-app](ideas/marketplace-system-app.md) — Promoted
-- [ideas/replaceable-ui-clients](ideas/replaceable-ui-clients.md) — Idea
-- [ideas/runtime-app-repository-feeds](ideas/runtime-app-repository-feeds.md) — Promoted
-- [ideas/runtime-app-repository-install](ideas/runtime-app-repository-install.md) — Idea
-- [ideas/runtime-source-extensions](ideas/runtime-source-extensions.md) — Idea.
-- [ideas/system-app-updates](ideas/system-app-updates.md) — Partially implemented (2026-07-13)
-- [planning/marketplace-system-app](planning/marketplace-system-app.md) — Implemented
-- [planning/plan-first-app-updates](planning/plan-first-app-updates.md) — Implemented
+- [Access Tokens — Credentials For Clients Without A Browser](features/access-tokens/feature.md) — Device-flow access tokens that let clients without a browser engine sign in to Core, plus the page that lists and revokes them.
+- [Advertised App Origins — Advertise A Host-Published Endpoint At A Usable Address](features/advertised-app-origins/plan.md) — Advertise endpoints already published beyond loopback at one host-wide address that other devices can use. · Draft, 0/8, updated 2026-07-30
+- [Synthetic Agent App Evaluations](features/agent-app-evaluations/plan.md) — Use agents as bounded exploratory app testers whose findings are reproduced and triaged independently. · Draft, 0/3, updated 2026-09-26
+- [Agent Background Sessions](features/agent-background-sessions/feature.md) — Assistant sessions that keep working after the tab closes and notify the operator when they wait for a person.
+- [Agent MCP Directory](features/agent-mcp-directory/feature.md) — Core-owned policy for which MCP targets Hosty assistants may reach, configured in Harness and administered in Shell.
+- [AI Agent Bridge](features/ai-agent-bridge/feature.md) — The umbrella model for Hosty's AI integration, covering component boundaries, execution profiles, token mechanics and the decision log. · [plan](features/ai-agent-bridge/plan.md): In Progress, 8/12, updated 2026-10-05
+- [Hosty Harness](features/ai-gateway/feature.md) — Hosty Harness, the optional administrator assistant app hosting operator chat sessions on a host-resident agent harness.
+- [Hosty Harness Chat Components](features/ai-gateway-chat-ui/feature.md) — The chat components Harness uses for messages, code blocks, attachments, the composer and collapsible activity.
+- [Hosty Harness Provider Connections](features/ai-gateway-providers/feature.md) — Named Claude and Codex agent connections that administrators manage in the Harness Providers settings.
+- [App Activity Window](features/app-activity-window/feature.md) — App grants keep identity after their privileged activity window expires, and activity never adds a permission.
+- [App Authoring In Hosty](features/app-authoring/plan.md) — Epic for prompt-driven app creation, live iteration, integration with installed apps and optional publication. · Draft, 0/8, updated 2026-10-05
+- [Feature: App Cache Storage](features/app-cache-storage/feature.md) — A Core-managed per-app cache directory that persists across restarts and updates but is never backed up.
+- [App Code Exchange](features/app-code-exchange/feature.md) — Authorization codes require target-app service identity and private S256 proof, with browser-origin and nonce-bound sign-in attempts. · [plan](features/app-code-exchange/plan.md): Blocked, 16/20, updated 2026-10-06
+- [Feature: App Data Backup Retention](features/app-data-backup-retention/feature.md) — Retention and cleanup of app data backups, which cover only each app's primary data directory. · [plan](features/app-data-backup-retention/plan.md): Draft, 0/2, updated 2026-10-05
+- [App Development Controls](features/app-development-controls/plan.md) — Typed inspect, enter, run and leave operations for app development, with runtime verification and authority checks. · Draft, 0/7, updated 2026-09-27
+- [App Feedback Inbox](features/app-feedback-inbox/plan.md) — An inbox where users submit app observations and administrators send reviewed batches to assistant sessions. · Draft, 0/4, updated 2026-09-26
+- [Runtime App Feeds](features/app-feeds/feature.md) — Apps publish named update sources in an app-owned feeds.json that Core validates and follows without a catalog or Marketplace.
+- [App Installation SDK And Core Confirmation](features/app-installation-sdk/feature.md) — A shared install dialog for Marketplace and Shell, with final authorization on a separate Core-origin confirmation page. · [plan](features/app-installation-sdk/plan.md): In Progress, 0/5, updated 2026-09-18
+- [App Lifecycle States — Intermediate `starting` And `stopping`](features/app-lifecycle-states/feature.md) — Intermediate starting and stopping runtime states, so every client sees a lifecycle action while it is in flight.
+- [App-Owned MCP](features/app-mcp/feature.md) — Runtime apps expose domain actions through an MCP endpoint they own, and Core tells agent clients which apps have one.
+- [App Permission Management](features/app-permission-management/feature.md) — The Permissions tab where administrators review an app's declared, accepted and effective Core permissions.
+- [App Prototype Workspaces — Create, View, Change](features/app-prototype-workspaces/plan.md) — Durable no-Git app creation from a prompt, with bootstrap, development guide and assisted initial Git setup. · Draft, 0/18, updated 2026-09-29
+- [App-Provided Skills](features/app-provided-skills/feature.md) — Apps ship an agent skill file that explains how their tools are meant to be used.
+- [App Publication](features/app-publication/plan.md) — Repository provisioning, installable releases and feeds, and catalog promotion for apps built in Hosty. · Draft, 0/7, updated 2026-09-29
+- [App Readiness — Readiness Is Health](features/app-readiness/feature.md) — Readiness is per-service health, probed by default and read by every consumer before it uses an endpoint.
+- [App Sandbox Runtimes And Agent Testing](features/app-sandbox-runtimes/plan.md) — Isolated runtime instances for testing session worktrees with synthetic data and scoped browser automation. · On Hold, 0/9, updated 2026-10-01
+- [App Secrets Store](features/app-secrets-store/feature.md) — A Core-managed keychain for secrets an app obtains at runtime, stored outside backups, with clients in both SDKs. · [plan](features/app-secrets-store/plan.md): Draft, 0/5, updated 2026-09-06
+- [App UI Surfaces](features/app-ui-surfaces/feature.md) — Apps declare where their pages belong, such as settings, panels or navigation, and Shell places them. · [plan](features/app-ui-surfaces/plan.md): Draft, 0/4, updated 2026-09-27
+- [Assistant Action Summary](features/assistant-action-summary/plan.md) — A readable summary of the tools and MCP calls an agent used during a session. · Draft, 0/3, updated 2026-09-26
+- [AHP Client Interface For Hosty Sessions](features/assistant-ahp/plan.md) — Evaluate AHP as a replaceable external client interface over Hosty's existing session implementation. · Draft, 0/5, updated 2026-09-29
+- [Assistant App Context](features/assistant-app-context/feature.md) — Administrators attach up to 16 installed apps to an assistant session as shared context for Claude and Codex.
+- [Assistant MCP Approval Rules](features/assistant-approval-rules/feature.md) — A shared per-tool MCP policy for Claude and Codex with Ask, Run unprompted and Disabled controls. · [plan](features/assistant-approval-rules/plan.md): Draft, 0/16, updated 2026-10-05
+- [Assistant Attachments](features/assistant-attachments/feature.md) — Files attached in the assistant composer land in the session's working directory and are recorded in the transcript.
+- [Shared Assistant Development Sessions](features/assistant-development-sessions/plan.md) — Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests. · Draft, 0/3, updated 2026-09-29
+- [Assistant Entry Points](features/assistant-entry-points/feature.md) — The assistant docks as a Shell panel reachable from every page, and apps can hand it context without driving it. · [plan](features/assistant-entry-points/plan.md): In Progress, 4/6, updated 2026-09-27
+- [External Agent Session Context](features/assistant-external-session-context/plan.md) — Let an authenticated local external agent read a Hosty session, work in its registered folders and save a report back. · Draft, 0/3, updated 2026-09-26
+- [Assistant Pull Request Lifecycle](features/assistant-pr-lifecycle/feature.md) — GitHub pull request publication, review, merge and completion for assistant session workspaces.
+- [Azure DevOps Pull Request Lifecycle](features/assistant-pr-lifecycle-azure/plan.md) — Extend the assistant pull request lifecycle to Azure DevOps Services. · Draft, 0/4, updated 2026-09-29
+- [Assistant Provider Permissions](features/assistant-provider-permissions/feature.md) — Apps request the assistant role with provides, and Core records administrator-confirmed roles.
+- [Assistant Runtime Containment](features/assistant-runtime-containment/plan.md) — Run the assistant's agent harness in a container by default so approved commands reach only what it is given. · On Hold, 0/7, updated 2026-09-27
+- [Assistant Session Autonomy](features/assistant-session-autonomy/feature.md) — A per-chat Normal or Autonomous mode that controls whether native commands and file changes ask for approval.
+- [Assistant Session Workspaces](features/assistant-session-workspaces/feature.md) — Core-owned Git worktrees per assistant session, with managed Git operations, observation and cleanup.
+- [Shared Assistant History And Provider Switching](features/assistant-shared-history/plan.md) — Durable session events and cross-provider context so one conversation can switch between Claude and Codex. · Draft, 0/6, updated 2026-09-26
+- [Assistant Timeline And Tool Analysis](features/assistant-timeline-analysis/plan.md) — A session timeline for analysing how agents work and which MCP tools would help them. · Draft, 0/3, updated 2026-09-26
+- [Audit Log — A Bounded, Append-Ordered Trail](features/audit-log/feature.md) — Core's bounded, append-ordered audit trail of security-relevant events, read backwards from the end.
+- [Auth And Gateway Model](features/auth-gateway/feature.md) — Core owns user authentication, app assignments, identity issuance and scoped directory access, while apps own their sessions.
+- [Auth Provider Extensions](features/auth-provider-extensions/plan.md) — External identity providers, password reset and durable login throttling beyond local password login. · Draft, 0/5, updated 2026-10-05
+- [Auth Session Lifecycle And Recovery](features/auth-session-lifecycle/feature.md) — The identity error contract, opaque app session grants, sliding lifetimes and session recovery through Core login.
+- [Feature: Automatic Runtime App Ports](features/automatic-runtime-app-ports/feature.md) — Core reserves host ports at install, injects them into the environment and lets operators reassign or pin them. · [plan](features/automatic-runtime-app-ports/plan.md): Draft, 0/10, updated 2026-09-09
+- [Cardputer Operator Shell](features/cardputer-shell/plan.md) — Firmware that turns an M5Stack Cardputer ADV into a pocket Hosty operator console. · In Progress, 26/33, updated 2026-08-23
+- [CLI Bootstrap](features/cli-bootstrap/feature.md) — The hosty CLI installs itself and Core, discovers the Core control API and manages runtime apps.
+- [Feature: Cloudflare Ingress](features/cloudflare-ingress/feature.md) — An opt-in Cloudflare Tunnel provider that publishes app endpoints and derives their public origins.
+- [Container Capabilities And Devices](features/container-capabilities/feature.md) — A docker service can add named Linux capabilities and device nodes under /dev, opt-in per service and never as --privileged.
+- [Core API](features/core-api/feature.md) — Core's browser and control APIs and the serialization rules every endpoint must follow.
+- [Core App Shell](features/core-app-shell/feature.md) — Shell is the Core-managed browser UI app that authenticates users and embeds app pages.
+- [Core Development Mode](features/core-dev-target/feature.md) — Run Core from source in Debug, restart into isolated build generations and switch back to the installed release. · [plan](features/core-dev-target/plan.md): In Progress, 0/3, updated 2026-09-18
+- [Core Event Bus — Ephemeral Domain Events Over A Unified SSE Stream](features/core-event-bus/feature.md) — An in-process event bus that tells session clients over one SSE stream that something changed.
+- [Core Extension Model](features/core-extension-model/plan.md) — Exploratory model for delivering platform capabilities as swappable apps through named contribution points. · Draft, 0/6, updated 2026-10-06
+- [Core Lifecycle Parallelism](features/core-lifecycle-parallelism/feature.md) — Core runs per-app lifecycle work concurrently and queries Docker in batches.
+- [Core MCP](features/core-mcp/feature.md) — An embedded MCP endpoint on Core with typed tools for apps, their state and their logs. · [plan](features/core-mcp/plan.md): In Progress, 3/10, updated 2026-08-28
+- [Core's Own Public Origin](features/core-public-origin/feature.md) — Core's public origin is a live setting, editable in Shell and publishable through the Cloudflare provider.
+- [Core Read-Path Caching](features/core-read-path-caching/feature.md) — Core serves hot reads from in-memory caches guarded by on-disk file stamps.
+- [Core Runtime Parameters — Two Launch Flags, Everything Else Lives Inside](features/core-runtime-parameters/feature.md) — Core launches with only a data root and a port, and everything else lives in the instance's settings store.
+- [Core Service Unit — Surviving A Reboot](features/core-service-unit/plan.md) — Parked idea for an OS service unit that starts Core again after a host reboot. · On Hold, 0/1, updated 2026-09-01
+- [Core Single Binary — One Executable For Server And Terminal](features/core-single-binary/plan.md) — Parked decision on whether the CLI and Core merge into one executable. · On Hold, 0/1, updated 2026-09-01
+- [Core Source Inspection](features/core-source-inspection/feature.md) — The development-mode Core row shows branch and changed-file statistics through a read-only Core API.
+- [Cross-App Auth — Identifying the Caller on App-to-App Control APIs](features/cross-app-auth/plan.md) — Providers learn which installed app is calling their control API by introspecting the caller's service token against Core. · Draft, 0/6, updated 2026-10-05
+- [Cross-App Dependencies — Declared Providers, Injected URLs, And Reported State](features/cross-app-dependencies/feature.md) — Apps declare dependencies on other installed apps, Core injects their URLs and reports their state. · [plan](features/cross-app-dependencies/plan.md): Draft, 0/6, updated 2026-08-17
+- [Assistant MCP Delegation](features/delegated-token-exchange/feature.md) — Core grants individual assistants access to selected MCP targets through administrator-configured delegation.
+- [Demo App](features/demo-app/feature.md) — The repository-local reference app used to validate lifecycle, identity, directory access and app roles.
+- [Dependency-Ordered Autostart — Start Providers First, And Say So With `waiting`](features/dependency-ordered-autostart/plan.md) — Start providers before their consumers and report a held-back app as waiting rather than stopped. · Draft, 0/6, updated 2026-09-21
+- [Documentation Workflow](features/documentation-workflow/feature.md) — Workflow documents carry YAML frontmatter and stable deliverable IDs, checked by one validator shared by every Hosty repository.
+- [Feature: Domain Model](features/domain-model/feature.md) — The shared vocabulary for Core, Shell, the CLI and runtime apps.
+- [Embedded App Chrome](features/embedded-app-chrome/feature.md) — Embedded apps drop the name and navigation their shell already renders, and keep them when opened standalone.
+- [Embedded App Sign-In](features/embedded-app-sign-in/feature.md) — Embedded apps keep their own per-tab sign-in grant and sign in silently through Core without Shell handling their codes.
+- [External Host-Path Mounts](features/external-mounts/feature.md) — Apps declare external mount slots and operators bind host folders to them, injected as HOSTY_MOUNT_{KEY} and never backed up or deleted.
+- [Global (Shared) Host-Path Mounts](features/global-mounts/feature.md) — A host-level library of shared host folders that apps attach by reference.
+- [Host Networking](features/host-networking/feature.md) — A docker service can run with network host to share the host network namespace, for peer-to-peer workloads the bridge NAT throttles.
+- [Hosty App SDK](features/hosty-app-sdk/feature.md) — The shared app-side Host integration published as an npm package and a NuGet package. · [plan](features/hosty-app-sdk/plan.md): In Progress, 1/7, updated 2026-09-18
+- [Hosty App Skill](features/hosty-app-skill/feature.md) — The repository ships hosty-app-skill, an agent skill for creating, wrapping, updating and validating Hosty runtime apps.
+- [Hosty Harness Integration](features/hosty-harness-rename/feature.md) — Hosty Harness replaces the former AI Gateway as the administrator assistant and MCP facade app.
+- [Hosty Harness Swift Client](features/hosty-harness-swift/plan.md) — A native Swift client for Hosty Harness sessions, approvals and changes, aimed at phone use. · Draft, 0/8, updated 2026-09-29
+- [Hosty MCP Connector](features/hosty-mcp-connector/feature.md) — hosty mcp, a stdio MCP server in the CLI that presents every app on one host as a single server.
+- [Internal Endpoint Exposure — Keep Machine-Only Routes Off The Published Origin](features/internal-endpoint-exposure/plan.md) — Keep machine-only internal routes off the published ingress origin. · Draft, 0/4, updated 2026-09-06
+- [Local Browser Origins](features/local-browser-origins/feature.md) — Core derives local browser addresses under hosty.localhost without stored public origins or DNS. · [plan](features/local-browser-origins/plan.md): In Progress, 30/39, updated 2026-10-05
+- [Local Development And Testing](features/local-development/feature.md) — The Core-managed local development and test loops for Core, Shell and runtime apps.
+- [Local Password Login](features/local-password-login/feature.md) — Core-owned email and password setup, recovery, invitations and login.
+- [Manifest-Level App Assets](features/manifest-level-app-assets/feature.md) — An app's icon, screenshots and markdown description live in its own repository and Core serves them for installed apps. · [plan](features/manifest-level-app-assets/plan.md): Draft, 0/3, updated 2026-10-05
+- [Manifest Projection Backfill](features/manifest-projection-backfill/feature.md) — A Core upgrade re-projects installed app records from their manifests without operator action.
+- [MCP Facade — One Remote Endpoint For The Whole Fleet](features/mcp-facade/feature.md) — A Harness MCP endpoint that exposes Core and every enabled app's tools through one remote entry. · [plan](features/mcp-facade/plan.md): On Hold, 0/5, updated 2026-09-26
+- [MCP OAuth — Automated Issuance For Scoped Tokens](features/mcp-oauth/feature.md) — Core acts as an OAuth 2.1 authorization server so MCP clients obtain and rotate scoped tokens themselves.
+- [Mixed Development Runtimes](features/mixed-development-runtimes/feature.md) — Development profiles can combine Docker and local-command services and run editable source inside Docker. · [plan](features/mixed-development-runtimes/plan.md): In Progress, 10/13, updated 2026-09-17
+- [Notifications](features/notifications/feature.md) — A Core-owned per-user notification inbox with app and Core producers and live delivery to any client. · [plan](features/notifications/plan.md): Draft, 0/5, updated 2026-08-31
+- [OAuth Core Control Scopes](features/oauth-core-control-scopes/feature.md) — OAuth consent can grant Core MCP lifecycle and update scopes in addition to read.
+- [Feature: Observability (telemetry collection, storage, and UI)](features/observability/feature.md) — OpenTelemetry from apps flows to a collector, an SQLite-backed telemetry backend and the telemetry UI app. · [plan](features/observability/plan.md): In Progress, 7/11, updated 2026-09-25
+- [Private App Sources](features/private-app-sources/feature.md) — Core reads private repository manifests and sources through explicitly selected personal provider connections.
+- [Private Distribution Access](features/private-distribution-access/plan.md) — Authenticate private feeds, release assets and container registries independently of source access. · Draft, 0/4, updated 2026-09-28
+- [Provider Consumption And Speech Recognition](features/provider-consumption/feature.md) — Apps discover and call confirmed speech-to-text and assistant providers with short-lived Core credentials. · [plan](features/provider-consumption/plan.md): Blocked, 0/3, updated 2026-09-29
+- [Feature: Public Origins](features/public-origins/feature.md) — An endpoint's public origin is a durable property of the endpoint that exists before the app first starts.
+- [Raw L4 Port Publishing](features/raw-ports/feature.md) — A docker service port can opt into publishing on all interfaces over TCP and UDP with expose and transport.
+- [Removable System Apps — Distribution Catalog and One Lifecycle](features/removable-system-apps/feature.md) — First-party apps are ordinary runtime apps, seeded once from a distribution catalog and removable like any other.
+- [Replaceable UI Clients — The `ui-client` Role And Primary Selection](features/replaceable-ui-clients/plan.md) — Treat shells as ordinary apps that provide a ui-client role, with Core resolving the primary UI by role instead of by app id. · Draft, 0/5, updated 2026-10-05
+- [Repository And Release Model](features/repository-release-model/feature.md) — The repository layout, release artifacts and versioning rules for every component.
+- [Runtime App Manifest](features/runtime-app-manifest/feature.md) — The app.0.1 manifest contract for installing and running runtime apps.
+- [Marketplace System App](features/runtime-app-marketplace/feature.md) — The optional Marketplace app that owns catalog discovery and requests Core-confirmed installations. · [plan](features/runtime-app-marketplace/plan.md): Draft, 0/6, updated 2026-09-26
+- [Runtime App Update](features/runtime-app-update/feature.md) — Reviewed update plans and their apply behavior, including permission changes and routine updates. · [plan](features/runtime-app-update/plan.md): Draft, 0/5, updated 2026-10-05
+- [Runtime Artifact Model](features/runtime-artifact-model/feature.md) — Runtime profiles pair a command recipe with an execution type and deliver immutable prebuilt folders. · [plan](features/runtime-artifact-model/plan.md): Draft, 0/6, updated 2026-09-26
+- [Unified runtime resource usage](features/runtime-resource-usage/feature.md) — One Core resource sampler for containers, local process trees and Core itself, shared by Dashboard and Telemetry.
+- [Runtime Source Workflows](features/runtime-source-workflows/feature.md) — Source checkouts, local overrides and runtime switching for installed apps, with Git inspection.
+- [Scoped Access Tokens — Audience-Bound Credentials For External Clients](features/scoped-access-tokens/feature.md) — Access tokens can be bound to one audience and a set of scopes, validated against live state on every call.
+- [Shell Access And System Apps](features/shell-access-and-system-apps/feature.md) — Assignments apply equally to system and ordinary apps, and management views are administrator-only.
+- [Shell Navigation](features/shell-navigation/feature.md) — Shell's three destinations, Dashboard, Settings and Apps, with the route table and the sidebar.
+- [Shell operation feedback](features/shell-operation-feedback/feature.md) — Shell separates confirmations, transient operation results and persistent diagnostics.
+- [Resizable Shell Panel](features/shell-panel-resize/feature.md) — Shell's right panel is resizable by pointer and keyboard and remembers its width.
+- [Swift Shell](features/swift-shell/feature.md) — A native SwiftUI client for iOS, iPadOS and macOS that manages a host's installed apps.
+- [System App Pages](features/system-app-pages/plan.md) — Reconcile the original administrator-only system-page proposal with current navigation, access and availability behavior. · Draft, 0/5, updated 2026-10-06
+- [Telemetry Over MCP](features/telemetry-mcp/feature.md) — Stored logs, traces and resource metrics exposed as an MCP interface behind a scoped credential.
+- [User Management](features/user-management/feature.md) — Administrators invite, disable, delete and assign app access to Host users from the Shell User Management view.
+- [User Profile And Provider Connections](features/user-profile-connections/feature.md) — A self-service profile API and page for the current user's name and email.
 
 <!-- docs-index:end -->

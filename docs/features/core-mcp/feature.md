@@ -1,7 +1,11 @@
-# Core MCP
+---
+created: 2026-08-09
+updated: 2026-09-18
+summary: An embedded MCP endpoint on Core with typed tools for apps, their state and their logs.
+components: [apps/core]
+---
 
-Created: 2026-08-09
-Updated: 2026-09-18
+# Core MCP
 
 An embedded Model Context Protocol endpoint on Core, giving agent clients typed tools for the things
 Core already knows — which apps exist, what state they are in, what their logs say — instead of

@@ -1,7 +1,11 @@
-# Core Development Mode
+---
+created: 2026-09-18
+updated: 2026-09-27
+summary: Run Core from source in Debug, restart into isolated build generations and switch back to the installed release.
+components: [apps/core, apps/cli, apps/shell]
+---
 
-Created: 2026-09-18
-Updated: 2026-09-27
+# Core Development Mode
 
 Core remains a CLI-launched platform process. The Dashboard Core row exposes release/dev selection,
 Restart, console logs, and a Source-only settings dialog. Its state comes from the running Core;

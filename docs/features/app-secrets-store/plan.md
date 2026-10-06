@@ -1,8 +1,12 @@
-# App Secrets Store
+---
+status: Draft
+created: 2026-09-06
+updated: 2026-09-06
+summary: Uncommitted follow-ups for the app secrets store, such as at-rest encryption and a CLI diagnostic.
+components: [apps/core, apps/cli]
+---
 
-Status: Draft
-Created: 2026-09-06
-Updated: 2026-09-06
+# App Secrets Store
 
 ## Goal
 
@@ -27,18 +31,18 @@ Diff against [feature.md](feature.md):
 
 ## Deliverables
 
-- [ ] Service-token hardening reaching the secrets API: scopes, expiry, and a per-install
+- [ ] D1. Service-token hardening reaching the secrets API: scopes, expiry, and a per-install
       generation on `AppServiceTokenService`, with a compatibility window for running apps, so a
       token leaked from one install no longer unlocks live third-party credentials after remove and
       reinstall. A Core-wide token change; tracked here because the secrets store is what made the
       token worth stealing and no other plan carries it. SEC-4 in the
       [consolidated review](../../reviews/2026-09-06-consolidated-review.md).
-- [ ] Platform-wide at-rest encryption pass (one Core master key, the durable
+- [ ] D2. Platform-wide at-rest encryption pass (one Core master key, the durable
       `AppServiceSigningKey` file pattern) covering `state.json` secret settings, the Cloudflare
       credential store, and `secrets.json`.
-- [ ] Core-state backup including app secrets, encrypted, for whole-machine migration.
-- [ ] Names-only CLI diagnostic `hosty apps secrets list <appId>`.
-- [ ] Change events for reactive secret reloads.
+- [ ] D3. Core-state backup including app secrets, encrypted, for whole-machine migration.
+- [ ] D4. Names-only CLI diagnostic `hosty apps secrets list <appId>`.
+- [ ] D5. Change events for reactive secret reloads.
 
 ## Open Questions
 

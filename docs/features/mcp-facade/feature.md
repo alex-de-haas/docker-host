@@ -1,7 +1,11 @@
-# MCP Facade — One Remote Endpoint For The Whole Fleet
+---
+created: 2026-08-24
+updated: 2026-09-27
+summary: A Harness MCP endpoint that exposes Core and every enabled app's tools through one remote entry.
+components: [apps/harness]
+---
 
-Created: 2026-08-24
-Updated: 2026-09-27
+# MCP Facade — One Remote Endpoint For The Whole Fleet
 
 `POST /mcp` on the `hosty.harness` app is an MCP server that is the whole host: one entry in an
 external agent client's configuration yields Core's control-plane tools, every enabled app's tools,

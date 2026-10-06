@@ -1,7 +1,11 @@
-# Hosty Harness
+---
+created: 2026-08-09
+updated: 2026-10-05
+summary: Hosty Harness, the optional administrator assistant app hosting operator chat sessions on a host-resident agent harness.
+components: [apps/harness, apps/shell]
+---
 
-Created: 2026-08-09
-Updated: 2026-10-05
+# Hosty Harness
 
 The Hosty assistant: an optional, removable system app (`hosty.harness`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.

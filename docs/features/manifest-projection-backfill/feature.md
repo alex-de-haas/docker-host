@@ -1,7 +1,11 @@
-# Manifest Projection Backfill
+---
+created: 2026-08-09
+updated: 2026-09-27
+summary: A Core upgrade re-projects installed app records from their manifests without operator action.
+components: [apps/core]
+---
 
-Created: 2026-08-09
-Updated: 2026-09-27
+# Manifest Projection Backfill
 
 A Core upgrade heals installed app records without operator action. Records only re-run
 manifest→record normalization at install, update, runtime switch, or a live-source start, so an app
@@ -67,6 +71,14 @@ Properties:
   its last-good internal copy; the next start re-adopts the live folder manifest as always (adoption
   rewrites the internal copy, so the two never drift apart at rest).
 
+## Related
+
+- [ai-gateway](../ai-gateway/feature.md) — the rollout that motivated this; its discovery gating
+  consumes the healed `interfaces` projection.
+- [automatic-runtime-app-ports](../automatic-runtime-app-ports/feature.md) — `PortAssignmentMigration`,
+  the boot-backfill precedent this follows (durable Core-owned state, so it derives rather than
+  re-projects).
+
 ## Testing Expectations
 
 - `CoreLifecycleServiceTests`: install stamps `NormalizedBy` with the running build; the backfill
@@ -76,11 +88,3 @@ Properties:
   retries; a null `interfaces` declaration in a legacy copy is dropped, not dereferenced; a copy the
   projection throws on skips its own record un-stamped while the records behind it still heal; a
   live-source adoption carries an `interfaces` block added to the folder manifest.
-
-## Related
-
-- [ai-gateway](../ai-gateway/feature.md) — the rollout that motivated this; its discovery gating
-  consumes the healed `interfaces` projection.
-- [automatic-runtime-app-ports](../automatic-runtime-app-ports/feature.md) — `PortAssignmentMigration`,
-  the boot-backfill precedent this follows (durable Core-owned state, so it derives rather than
-  re-projects).

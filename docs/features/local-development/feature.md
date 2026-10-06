@@ -1,7 +1,11 @@
-# Local Development And Testing
+---
+created: 2026-05-13
+updated: 2026-10-06
+summary: The Core-managed local development and test loops for Core, Shell and runtime apps.
+components: [apps/core, apps/cli]
+---
 
-Created: 2026-05-13
-Updated: 2026-10-05
+# Local Development And Testing
 
 This document describes the current local feedback loops after the Core/Shell/runtime app split.
 

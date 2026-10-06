@@ -1,7 +1,11 @@
-# Shell Access And System Apps
+---
+created: 2026-06-04
+updated: 2026-10-01
+summary: Assignments apply equally to system and ordinary apps, and management views are administrator-only.
+components: [apps/core, apps/shell]
+---
 
-Created: 2026-06-04
-Updated: 2026-10-01
+# Shell Access And System Apps
 
 ## Access Model
 

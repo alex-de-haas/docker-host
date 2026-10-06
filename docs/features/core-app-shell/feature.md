@@ -1,7 +1,11 @@
-# Core App Shell
+---
+created: 2026-05-19
+updated: 2026-10-06
+summary: Shell is the Core-managed browser UI app that authenticates users and embeds app pages.
+components: [apps/shell]
+---
 
-Created: 2026-05-19
-Updated: 2026-10-05
+# Core App Shell
 
 Hosty Shell is the Core-managed browser UI runtime app. It renders a single authenticated Shell surface backed by Hosty Core APIs; it does not own Core lifecycle logic and it does not reintroduce the retired combined Next.js Host package.
 
@@ -103,6 +107,12 @@ Apps expose actions according to Core state, plus — for the two entries that a
 - inspect logs and health;
 - create, restore, delete, and prune backups;
 - remove an app, with optional backup deletion.
+
+Each app row expands into its service details: per service, the runtime state and health message,
+resource usage, and for image-based services the locked, running and available image digests.
+Endpoints are grouped by service with their key, the service address (`not assigned` until Core has
+assigned one) and, for public endpoints, the browser address, each with copy and open controls. A
+stopped app still lists its declared endpoints; a service without endpoints says so.
 
 The Status badge composes the two axes when they differ ([App Readiness](../app-readiness/feature.md)):
 a running app whose health fold is not `healthy` reads `running · starting` or `running · degraded`,
@@ -215,11 +225,12 @@ While an embedded workspace route is launching before the iframe exists, Shell s
 
 The removed Legacy Host included `/ingress` and gateway exposure UI. That route tree no longer exists in the repository.
 
-Gateway and external ingress readiness remain target architecture topics for service/API exposure publishing. Future work is tracked in [Gateway And App Wrapping Ideas](../../ideas/gateway-and-app-wrapping.md). Until then, Shell documentation and UI should not present `/ingress`, `/api/gateway/*`, or `/api/ingress/*` as current implemented surfaces.
+Public exposure goes through [Cloudflare ingress](../cloudflare-ingress/feature.md), configured in Shell's Settings. Shell presents no `/ingress`, `/api/gateway/*` or `/api/ingress/*` surfaces.
 
 ## Links
 
-- [System App Pages](../system-app-pages/plan.md) - originating design for administrator-only pages.
+- [App UI surfaces](../app-ui-surfaces/feature.md) - where app pages, settings and panels are placed.
+- [System App Pages](../system-app-pages/plan.md) - originating proposal with navigation and access decisions still open.
 - [Marketplace System App](../runtime-app-marketplace/feature.md) - the first storefront using the generic system-app and install-intent paths.
 
 ## App Icons
@@ -238,6 +249,13 @@ a previous failure into the new version's icon.
 Shell development and production commands explicitly select webpack. Its extension aliases resolve
 the workspace SDK's `.js` imports to TypeScript sources; the Docker image uses the same production
 build command.
+
+Shell ships as the `ghcr.io/alex-de-haas/hosty-shell` image, published by `shell-image.yml` (see
+[repository and release model](../repository-release-model/feature.md#release-artifacts)). Core
+installs it as the system app `hosty.shell` from the release-owned distribution list
+([removable system apps](../removable-system-apps/feature.md)); its manifest defaults to the
+`docker` profile and also offers a `dev` `localCommand` profile. An installed Shell advances only
+through the operator's reviewed update flow, like every other runtime app.
 
 Shell's app-session proxy uses a 15-second response-header deadline for reads and auth checks,
 and a 10-minute operation deadline for mutations, matching the local CLI's operation budget.

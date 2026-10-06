@@ -1,5 +1,9 @@
-Created: 2026-09-25
-Updated: 2026-09-27
+---
+created: 2026-09-25
+updated: 2026-09-27
+summary: Shell separates confirmations, transient operation results and persistent diagnostics.
+components: [apps/shell]
+---
 
 # Shell operation feedback
 

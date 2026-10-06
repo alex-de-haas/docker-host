@@ -1,8 +1,12 @@
-# Internal Endpoint Exposure — Keep Machine-Only Routes Off The Published Origin
+---
+status: Draft
+created: 2026-07-24
+updated: 2026-09-06
+summary: Keep machine-only internal routes off the published ingress origin.
+components: [apps/core]
+---
 
-Status: Draft
-Created: 2026-07-24
-Updated: 2026-09-06
+# Internal Endpoint Exposure — Keep Machine-Only Routes Off The Published Origin
 
 ## Goal
 
@@ -57,10 +61,10 @@ A diff against today's ingress publication:
 
 ## Deliverables
 
-- [ ] Decide question 1 (owner call — the answer may be "close this and keep only the doc note").
-- [ ] A declared prefix list + ingress rule emission in the Cloudflare publication path.
-- [ ] Patcher tests covering rule order and sibling preservation.
-- [ ] Feature doc stating explicitly that credentials, not routing, are the boundary.
+- [ ] D1. Decide question 1 (owner call — the answer may be "close this and keep only the doc note").
+- [ ] D2. A declared prefix list + ingress rule emission in the Cloudflare publication path.
+- [ ] D3. Patcher tests covering rule order and sibling preservation.
+- [ ] D4. Feature doc stating explicitly that credentials, not routing, are the boundary.
 
 ## Verification
 

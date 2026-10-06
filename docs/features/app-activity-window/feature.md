@@ -1,7 +1,11 @@
-# App Activity Window
+---
+created: 2026-10-02
+updated: 2026-10-05
+summary: App grants keep identity after their privileged activity window expires, and activity never adds a permission.
+components: [apps/core, packages/app-sdk]
+---
 
-Created: 2026-10-02
-Updated: 2026-10-05
+# App Activity Window
 
 App identity and authority to perform privileged Core operations have separate lifetimes.
 An app grant remains usable for identity after its privileged activity expires. Current app

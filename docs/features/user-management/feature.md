@@ -1,0 +1,149 @@
+---
+created: 2026-05-22
+updated: 2026-10-05
+summary: Administrators invite, disable, delete and assign app access to Host users from the Shell User Management view.
+components: [apps/core, apps/shell]
+---
+
+# User Management
+
+Hosty administrators manage users from the Shell User Management view. The old Legacy Host `/settings/users` route has been removed with the combined Next.js Host package.
+
+Host users can enter the system through these implemented flows:
+
+- first-administrator setup creates the initial local `host.admin` with a password after a valid local setup token;
+- local administrator recovery creates or restores a `host.admin` and replaces its password after a valid local recovery token;
+- local invitations create `host.admin` or `host.user` accounts with passwords after the invite is accepted;
+
+First-administrator bootstrap and local administrator recovery are Core auth flows, not User Management flows. The removed Legacy Host auth-token writer is not part of the current implementation.
+
+User Management owns persisted users, invitations, assignments, sessions, and audit events. One browser context holds one Core session; there is no account switching. External identity providers are tracked in the [auth provider extensions plan](../auth-provider-extensions/plan.md).
+
+The feature uses Core-owned auth state:
+
+- users are stored as `HostUserRecord` entries in Core's `auth/state.json`;
+- local password credentials are stored separately from `HostUserRecord` entries in Core auth state;
+- roles remain `host.admin` and `host.user`;
+- local invitations use one-time setup-token style links with only token hashes stored at rest;
+- local password credentials use PBKDF2-HMAC-SHA256 with per-password salts;
+- setup and recovery tokens use separate hash-only storage under `core/auth/bootstrap-tokens.json`;
+- app access uses Core `AppAssignmentRecord` entries;
+- mutating browser requests require an active administrator session and same-origin CSRF validation;
+- user lifecycle changes append auth audit events.
+
+```mermaid
+flowchart LR
+  A["Admin opens User Management"] --> B["Create invitation"]
+  B --> C["One-time setup URL"]
+  C --> D["/setup/invite"]
+  D --> E["Local Host user"]
+  E --> F["Browser session"]
+  E --> G["App assignments"]
+  G --> H["Shell Apps portal and app directory"]
+```
+
+## Administrator Surface
+
+The Shell User Management view is available only to `host.admin` principals.
+
+Administrators can:
+
+- list Host users with role, disabled state, active sessions, and assigned app count;
+- invite local `host.user` or `host.admin` accounts;
+- choose invitation expiry from 15 minutes, 24 hours, or 7 days;
+- assign installed apps during invitation creation;
+- revoke pending invitations;
+- change local user roles;
+- disable users;
+- replace a user's app assignments.
+
+User Management does not add a separate permissions store. It reuses Core auth state in `auth/state.json`: users are `HostUserRecord` entries, invitations are token-hash records, and app access is stored as `AppAssignmentRecord` entries.
+
+Shell reaches these endpoints as an app: reads require the `users.read` app permission and mutations `users.manage`, both on top of an administrator user. An administrator browser session with CSRF reaches them directly.
+
+## Invitation Flow
+
+Invitations create local Hosty users in the current implementation.
+
+An invitation requires an email address. Hosty Core rejects invitation creation when an enabled or disabled user already has that email, or when another active invitation for the same email is still pending. The administrator can provide an optional display name, target role, initial app assignments, and an expiry of 15 minutes, 24 hours, or 7 days. The 24-hour option is the default. Hosty Core does not send email in this version; the administrator copies and delivers the generated URL.
+
+The administrator generates a URL like:
+
+```text
+/setup/invite?setupToken=dhstp_...
+```
+
+The recipient opens the URL, confirms the token, sets a password, and creates the account. On success, Hosty Core:
+
+- marks the invitation token as used;
+- creates a local Host user with the invited role;
+- stores the local password credential separately from the user record;
+- applies the stored app assignments;
+- creates a normal browser session;
+- redirects `host.user` accounts to `/apps` and `host.admin` accounts to `/`.
+
+The raw setup token is returned only once to the administrator and is never stored in auth state.
+
+Hosty does not create users directly from User Management. New local users are invite-first, and there is no self-service password reset.
+
+After logout, local users sign in through Core `/login` with email and password. Existing users from older builds that do not have password credentials need administrator recovery before they can use password login.
+
+## Safety Rules
+
+Deleting a user is a two-step operation: disable first, then permanently delete. This makes both steps deliberate and keeps a disabled user recoverable until an administrator (or the retention job) removes the record for good.
+
+**Disable** is the reversible first step. Disabled users remain in auth history but cannot authenticate. When a user is disabled, Hosty Core:
+
+- revokes active browser sessions;
+- removes app assignments.
+
+**Permanent deletion** removes the stored record entirely — the account, its local password credential, and any leftover sessions and assignments. A user must already be disabled before it can be permanently deleted (`DELETE /api/auth/users/{userId}/record` returns `user_not_disabled` otherwise). Deleting an account frees its email to be invited again. Permanent deletion cannot be undone.
+
+Disabled users are also deleted automatically once they age past the retention window. The window is the `HOSTY_USERS_DISABLED_RETENTION_DAYS` Core setting (default 10 days, editable from the Shell platform Settings panel under **User management**). The countdown starts when the user is disabled. Setting the window to `0` keeps disabled users indefinitely; manual permanent deletion stays available either way. The automatic purge runs in the background (`UserRetentionScheduler`) and writes an `auth.user.retention.cleanup` audit event when it removes accounts.
+
+Hosty Core prevents disabling or demoting the last active administrator. Administrators also cannot disable their own account from User Management. (A disabled administrator does not count as active, so purging one carries no last-admin risk.)
+
+Changing a local user's role revokes that user's active sessions.
+
+Every user, invitation, role, disable, and assignment mutation appends an auth audit event with actor, target, result, and relevant mutation details.
+
+## App Access
+
+User Management uses the existing app assignment model.
+
+Enabled administrators have implicit access to every installed app. Other enabled users reach an app only through an explicit assignment; an unassigned app is unavailable to them, not public. The same rule applies to system and ordinary apps ([Shell access and system apps](../shell-access-and-system-apps/feature.md)). App directory responses include only explicitly assigned, enabled users.
+
+The access picker lists installed runtime apps, including system apps. Assignments are app-wide.
+
+Invitation assignments are stored on the invitation and applied only when the invite is accepted, because the target user id does not exist before acceptance.
+
+## API Summary
+
+The UI uses the Core auth API:
+
+- `GET /api/auth/users` lists users, pending invitation summaries, assignable apps, and invite expiry options.
+- `GET /api/auth/invitations` lists invitation summaries.
+- `POST /api/auth/invitations` creates an invitation and returns the raw setup token and setup URL once.
+- `DELETE /api/auth/invitations/{inviteId}` revokes a pending invitation.
+- `GET /api/auth/invitations/accept?setupToken=...` returns a safe invitation preview.
+- `POST /api/auth/invitations/accept` consumes an invitation, stores the submitted password credential, and creates the user session.
+- `PATCH /api/auth/users/{userId}` updates local user profile or role.
+- `DELETE /api/auth/users/{userId}` disables the user (soft-delete).
+- `DELETE /api/auth/users/{userId}/record` permanently deletes an already-disabled user's record.
+- `PUT /api/auth/users/{userId}/assignments` replaces app assignments for the user.
+
+Reads require an administrator with `users.read` and mutations an administrator with `users.manage` when the caller is an app; a direct administrator browser session needs same-origin CSRF for mutations.
+
+Common business errors include duplicate email, active invitation already exists, invalid or expired invitation token, last active administrator protection, self-disable protection, disabled or missing user, and deleting a user that is not disabled (`user_not_disabled`).
+
+## Testing Expectations
+
+- Invitation creation rejects a duplicate email and a second pending invitation; acceptance stores
+  the password credential, applies the stored assignments and creates a session; a used or expired
+  token is refused.
+- Disabling revokes sessions and assignments; permanent deletion requires a disabled user
+  (`user_not_disabled`); the retention job deletes disabled users past the window and audits it.
+- The last active administrator cannot be disabled or demoted, and administrators cannot disable
+  themselves; a role change revokes the user's sessions.
+- App callers need `users.read` or `users.manage` on top of an administrator user; unassigned apps
+  stay unavailable to ordinary users.

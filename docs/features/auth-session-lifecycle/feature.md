@@ -1,7 +1,11 @@
-# Auth Session Lifecycle And Recovery
+---
+created: 2026-07-13
+updated: 2026-10-05
+summary: The identity error contract, opaque app session grants, sliding lifetimes and session recovery through Core login.
+components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet]
+---
 
-Created: 2026-07-13
-Updated: 2026-10-05
+# Auth Session Lifecycle And Recovery
 
 How a Hosty app session begins, how long it lives, and how a browser that lost one gets back in.
 Two credentials are in scope: the **Core browser session** (`hosty_session`, the signed-in Host user)
@@ -154,7 +158,7 @@ daily-login problem without buying real security.
 
 `AuthLifetimes` is no longer a startup snapshot: `CoreSettingsService` owns the values and the record
 is resolved per use, so operator edits from the platform panel apply live — idle immediately, absolute
-for credentials issued afterwards (see [core-settings](../../ideas/core-settings.md)). Access tokens
+for credentials issued afterwards (see [core-settings](../core-runtime-parameters/feature.md#the-settings-store)). Access tokens
 get their own, longer idle window because a credential in a keychain is not a browser tab
 ([access-tokens](../access-tokens/feature.md)).
 
@@ -256,7 +260,7 @@ browser acceptance are tracked in [local browser origins](../local-browser-origi
 - Grant validity is never coupled to Core session liveness; `AuthorizingSessionId` cascades only on
   explicit logout or admin revoke.
 - Core session cookies are never forwarded to app origins or gateway targets
-  ([gateway-and-app-wrapping](../../ideas/gateway-and-app-wrapping.md)).
+  ([auth and gateway model](../auth-gateway/feature.md)).
 - The Shell embed iframe sandbox keeps `allow-top-navigation*` off.
 - `returnTo` and `redirectUri` are always validated server-side; no raw absolute URL from a query
   parameter is followed.

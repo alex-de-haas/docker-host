@@ -1,7 +1,11 @@
-# Feature: App Data Backup Retention
+---
+created: 2026-06-03
+updated: 2026-08-26
+summary: Retention and cleanup of app data backups, which cover only each app's primary data directory.
+components: [apps/core, apps/shell]
+---
 
-Created: 2026-06-03
-Updated: 2026-08-26
+# Feature: App Data Backup Retention
 
 ## Description
 
@@ -23,7 +27,7 @@ The default retention policy is conservative:
 - `pre-update`, `pre-restore`, `pre-runtime-switch`, and `scheduled` backups keep the latest 5 backups per app.
 - No age-based deletion is enabled by default.
 - Retention cleanup does not delete the only known backup candidate unless policy support is explicitly expanded later.
-- Per-app retention overrides are not part of the current implementation. Future retention policy extensions are tracked in [Backup Retention Extensions](../../ideas/backup-retention-extensions.md).
+- Per-app retention overrides are not part of the current implementation. Future retention policy extensions are tracked in [Backup Retention Extensions](plan.md).
 
 Backup list responses include retention status so Shell and CLI can show whether each backup is retained by policy, manually kept, or part of the current cleanup plan.
 

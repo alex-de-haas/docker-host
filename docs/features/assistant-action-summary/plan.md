@@ -1,8 +1,12 @@
-# Assistant Action Summary
+---
+status: Draft
+created: 2026-09-26
+updated: 2026-09-26
+summary: A readable summary of the tools and MCP calls an agent used during a session.
+components: [apps/harness]
+---
 
-Status: Draft
-Created: 2026-09-26
-Updated: 2026-09-26
+# Assistant Action Summary
 
 Part of [shared assistant development sessions](../assistant-development-sessions/plan.md).
 The umbrella's common invariants apply; this feature has independent scope and requires its own Ready approval.
@@ -53,9 +57,9 @@ it does not build a second adapter event pipeline. Timeline analysis requires in
 
 ## Deliverables
 
-- [ ] Implement deterministic action counts/outcomes and evidence links over the shared invocation stream.
-- [ ] Implement compact and expanded summary UI with coverage, retry and provider attribution.
-- [ ] Implement optional generated narrative with event coverage and redaction/retention rules.
+- [ ] D1. Implement deterministic action counts/outcomes and evidence links over the shared invocation stream.
+- [ ] D2. Implement compact and expanded summary UI with coverage, retry and provider attribution.
+- [ ] D3. Implement optional generated narrative with event coverage and redaction/retention rules.
 
 ## Open Questions
 

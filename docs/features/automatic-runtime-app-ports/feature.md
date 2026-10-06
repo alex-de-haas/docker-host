@@ -1,7 +1,11 @@
-# Feature: Automatic Runtime App Ports
+---
+created: 2026-06-05
+updated: 2026-09-30
+summary: Core reserves host ports at install, injects them into the environment and lets operators reassign or pin them.
+components: [apps/core, apps/shell]
+---
 
-Created: 2026-06-05
-Updated: 2026-09-30
+# Feature: Automatic Runtime App Ports
 
 Runtime apps do not hard-code host ports. Core reserves an available host port for every declared
 service port at install and reconciles reservations on reviewed updates and runtime switches.
@@ -326,6 +330,16 @@ beyond blocking its own app's reassigned ports.
 - Sticky reuse means an app that has started once keeps its port across restarts, so reverse proxies
   and local bookmarks stay valid.
 
+## Links
+
+- [Automatic Runtime App Ports Plan](plan.md) — the reservation work that remains.
+- [Public Origins](../public-origins/feature.md) — the external address a reserved port sits behind,
+  and the reconcile that re-points it whenever this feature moves a port.
+- [Cross-App Dependencies](../cross-app-dependencies/feature.md) — consumes a dependency's local
+  endpoint URL, which a reassignment invalidates until the dependent restarts.
+- [Raw L4 Ports](../raw-ports/feature.md) — `expose: host` and UDP publishing.
+- [Host Networking](../host-networking/feature.md) — fixed host-namespace ports.
+
 ## Testing Expectations
 
 - Local command start injects matching `PORT` and `HOSTY_PORT_{KEY}` for a single-port service, and
@@ -372,13 +386,3 @@ beyond blocking its own app's reassigned ports.
 - An `unavailable` endpoint becomes an app problem naming the endpoint, and `assigned` / `running`
   endpoints raise nothing
   ([app-problems.test.mjs](../../../apps/shell/test/app-problems.test.mjs)).
-
-## Links
-
-- [Automatic Runtime App Ports Plan](plan.md) — the reservation work that remains.
-- [Public Origins](../public-origins/feature.md) — the external address a reserved port sits behind,
-  and the reconcile that re-points it whenever this feature moves a port.
-- [Cross-App Dependencies](../cross-app-dependencies/feature.md) — consumes a dependency's local
-  endpoint URL, which a reassignment invalidates until the dependent restarts.
-- [Raw L4 Ports](../raw-ports.md) — `expose: host` and UDP publishing.
-- [Host Networking](../host-networking.md) — fixed host-namespace ports.

@@ -1,7 +1,11 @@
-# Feature: Observability (telemetry collection, storage, and UI)
+---
+created: 2026-06-28
+updated: 2026-10-01
+summary: OpenTelemetry from apps flows to a collector, an SQLite-backed telemetry backend and the telemetry UI app.
+components: [apps/telemetry, apps/telemetry-backend, apps/telemetry-ui, apps/core]
+---
 
-Created: 2026-06-28
-Updated: 2026-10-01
+# Feature: Observability (telemetry collection, storage, and UI)
 
 Runtime apps export OpenTelemetry to a collector; a Hosty-native **telemetry backend** stores the
 three signals in embedded SQLite and serves a query API; a **telemetry UI** system app renders
@@ -324,7 +328,7 @@ that stayed in Shell, because they run off Core alone.
 **Why the store left Core.** Core does not consume telemetry for its own logic — it only re-served it
 — while owning a store in the lifecycle kernel cost a 10 s poll latency, no persistence across
 restarts, and a responsibility off-model relative to the platform's capability-provider split
-([final-hosty-architecture.md](../final-hosty-architecture.md)). The fix was not "delete the store"
+([final-hosty-architecture.md](../domain-model/feature.md)). The fix was not "delete the store"
 but "move it where it belongs": something has to be queryable, because the collector is a funnel, a
 browser cannot tail `traces.jsonl` or run `docker stats`, and `container → app` attribution is
 host-side knowledge.
@@ -360,7 +364,7 @@ the app-directory roster; app-to-app auth is deliberately absent platform-wide
 ([cross-app-dependencies.md](../cross-app-dependencies/feature.md): single-tenant homelab, all installed apps
 trusted), and telemetry inherits that. What the telemetry data path itself has is a **network**
 posture, not a token: the collector's OTLP ingest port is `expose: host`, so it binds `0.0.0.0` and
-is reachable from the LAN unless the host firewall blocks it (see [raw-ports.md](../raw-ports.md)),
+is reachable from the LAN unless the host firewall blocks it (see [raw-ports.md](../raw-ports/feature.md)),
 while the backend's query port takes the default loopback bind and is reachable by any process on the
 host. Neither is on an isolated network, so neither is behind a boundary that would justify their
 lack of auth. Closing that gap is [plan.md](plan.md)'s first deliverable.

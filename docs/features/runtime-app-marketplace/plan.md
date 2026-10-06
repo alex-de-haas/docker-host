@@ -1,8 +1,12 @@
-# Marketplace MCP Capability Discovery And App Reuse
+---
+status: Draft
+created: 2026-09-25
+updated: 2026-09-26
+summary: Expose Marketplace discovery through MCP so authoring agents can reuse ready-made capabilities.
+components: [apps/marketplace]
+---
 
-Status: Draft
-Created: 2026-09-25
-Updated: 2026-09-26
+# Marketplace MCP Capability Discovery And App Reuse
 
 ## Goal
 
@@ -94,18 +98,18 @@ to run commands or broaden permissions.
 
 ## Deliverables
 
-- [ ] Define and implement paginated read-only search and detail MCP tools using Marketplace's
+- [ ] D1. Define and implement paginated read-only search and detail MCP tools using Marketplace's
   configured catalog and feed resolution, with provenance, freshness and explicit unknown fields.
-- [ ] Expose the app-owned MCP interface through existing discovery and authenticated scoped access;
+- [ ] D2. Expose the app-owned MCP interface through existing discovery and authenticated scoped access;
   preserve current administrator-only Marketplace access unless a separate policy is approved.
-- [ ] Specify capability/operation and interface metadata needed to find and compare reusable
+- [ ] D3. Specify capability/operation and interface metadata needed to find and compare reusable
   providers by user need, including partial matches, constraints, evidence and upstream identities;
   use existing fields where sufficient and design necessary additive contract changes explicitly.
-- [ ] Define and expose the Tools classification in catalog discovery/details and storefront filters,
+- [ ] D4. Define and expose the Tools classification in catalog discovery/details and storefront filters,
   independently of system role, UI presence and whether the provider exposes MCP.
-- [ ] Integrate the authoring reuse workflow with Core installed-provider discovery and existing
+- [ ] D5. Integrate the authoring reuse workflow with Core installed-provider discovery and existing
   installation handoff; show reasons for reuse, adaptation or an unresolved compatibility result.
-- [ ] Verify the acceptance cases below and document shipped behavior in `feature.md`.
+- [ ] D6. Verify the acceptance cases below and document shipped behavior in `feature.md`.
 
 ## Phases And Open Questions
 

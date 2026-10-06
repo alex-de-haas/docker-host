@@ -1,7 +1,11 @@
-# App Permission Management
+---
+created: 2026-09-30
+updated: 2026-10-03
+summary: The Permissions tab where administrators review an app's declared, accepted and effective Core permissions.
+components: [apps/shell, apps/core]
+---
 
-Created: 2026-09-30
-Updated: 2026-10-03
+# App Permission Management
 
 Administrators manage an installed app's permission declarations and optional choices from the
 Permissions tab in its existing settings panel. The tab remains accessible for empty and legacy

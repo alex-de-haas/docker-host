@@ -1,7 +1,11 @@
-# Local Browser Origins
+---
+created: 2026-09-30
+updated: 2026-10-05
+summary: Core derives local browser addresses under hosty.localhost without stored public origins or DNS.
+components: [apps/core, apps/shell, packages/app-sdk]
+---
 
-Created: 2026-09-30
-Updated: 2026-10-05
+# Local Browser Origins
 
 Core derives browser addresses for plain HTTP loopback endpoints without storing a public-origin
 setting or provisioning DNS. The default instance uses `core.hosty.localhost:<port>` for Core.

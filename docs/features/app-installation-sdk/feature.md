@@ -1,7 +1,11 @@
-# App Installation SDK And Core Confirmation
+---
+created: 2026-09-18
+updated: 2026-10-05
+summary: A shared install dialog for Marketplace and Shell, with final authorization on a separate Core-origin confirmation page.
+components: [packages/app-sdk, apps/marketplace, apps/shell, apps/core]
+---
 
-Created: 2026-09-18
-Updated: 2026-10-05
+# App Installation SDK And Core Confirmation
 
 ## Installation Ownership
 

@@ -1,7 +1,11 @@
-# Swift Shell
+---
+created: 2026-07-29
+updated: 2026-10-06
+summary: A native SwiftUI client for iOS, iPadOS and macOS that manages a host's installed apps.
+components: [apps/shell-swift]
+---
 
-Created: 2026-07-29
-Updated: 2026-10-05
+# Swift Shell
 
 `apps/shell-swift` is a native SwiftUI client for iOS, iPadOS, and macOS that manages a Hosty host's
 installed apps: their state, lifecycle, and updates.

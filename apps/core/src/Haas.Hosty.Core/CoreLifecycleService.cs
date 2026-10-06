@@ -1866,7 +1866,7 @@ internal sealed partial class CoreLifecycleService(
     // abort a half-done apply (the request-scoped token did exactly that). The CLI control plane
     // keeps the synchronous ApplyUpdateAsync. Completion flips the record (existing apply path),
     // publishes a notification, and re-plans the app so its row settles without waiting for the
-    // next sweep. See docs/planning/plan-first-app-updates.md.
+    // next sweep. See docs/features/runtime-app-update/feature.md.
     public async Task<AppLifecycleResponse> EnqueueUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default, bool requireRoutine = false)
     {
         // Advisory pre-checks — the background run re-validates both under the app lock. Cheap and
@@ -2838,7 +2838,7 @@ internal sealed partial class CoreLifecycleService(
     // and projected. `refresh` forces the rebuild. Apps a plan cannot be built for (live source,
     // unreachable manifest URL, a feed binding with no selection) fall back to the legacy live
     // computation, which degrades per-source to "unknown": this report must stay total for every
-    // app, never throw for one source being dark. See docs/planning/plan-first-app-updates.md.
+    // app, never throw for one source being dark. See docs/features/runtime-app-update/feature.md.
     public async Task<AppUpdateStatusResponse> GetUpdateStatusAsync(string appId, bool refresh = false, CancellationToken cancellationToken = default)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
@@ -5345,7 +5345,7 @@ internal sealed partial class CoreLifecycleService(
     // later) is review-class by default: expanding an app's shape or privileges stays
     // operator-approved (see the `role:runtime->system` note in BuildUpdateChanges), and an
     // `artifact:...->unknown` target means applying would pull an image nobody could resolve even as a
-    // digest. See docs/planning/plan-first-app-updates.md.
+    // digest. See docs/features/runtime-app-update/feature.md.
     internal static bool PlanRequiresReview(IReadOnlyList<string> changes)
         => changes.Any(change => !IsRoutineChange(change));
 

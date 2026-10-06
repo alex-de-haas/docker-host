@@ -1,7 +1,11 @@
-# Assistant App Context
+---
+created: 2026-09-16
+updated: 2026-09-30
+summary: Administrators attach up to 16 installed apps to an assistant session as shared context for Claude and Codex.
+components: [apps/harness, apps/shell]
+---
 
-Created: 2026-09-16
-Updated: 2026-09-30
+# Assistant App Context
 
 Administrators associate up to 16 installed apps with an assistant session. The gateway persists
 an ordered, unique `appIds` selection and an `appContextRevision`; it resolves fresh metadata from

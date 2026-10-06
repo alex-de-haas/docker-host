@@ -1,8 +1,12 @@
-# App Code Exchange — Bind Redemption To The App And Its Sign-In Attempt
+---
+status: Blocked
+created: 2026-10-05
+updated: 2026-10-06
+summary: Complete proof-bound app authorization rollout and native live acceptance while retaining verified browser and registry results.
+components: [apps/core, apps/cli, packages/app-sdk, apps/shell, apps/harness, apps/shell-swift]
+---
 
-Status: Blocked
-Created: 2026-10-05
-Updated: 2026-10-05
+# App Code Exchange — Bind Redemption To The App And Its Sign-In Attempt
 
 ## Goal
 
@@ -39,8 +43,9 @@ clone, but acquiring it by bundle ID or exact path still returned no accessibili
 aborted. No native GUI scenario has passed. Its temporary QA signature does not establish Keychain
 persistence. Both external client PRs are merged, but production release/deployment before Core
 enforcement remains open; isolated QA deployment does not establish production rollout. The owner
-opened PR #547 for review, and it targets main after dependency #546 merged. The plan stays blocked;
-enforcement merge waits for its remaining gates, all explicit in the unchecked deliverables.
+authorized source integration and merge of PR #547 on 2026-10-06 after conflict resolution.
+This approval does not establish native live acceptance or production deployment. The plan
+stays blocked by native UI automation; its remaining deliverables stay unchecked.
 
 ## Current Behavior And The Two Bypasses
 
@@ -293,7 +298,7 @@ enforcement for these forms; the other checks do not replace that defense.
 Non-IPv6 Core origins retain Core-plus-self `form-action`. No verifier enters this public form.
 The owner explicitly approved this bounded change to the agreed CSP defense on 2026-10-05.
 
-- [x] Implement the approved IPv6-only CSP exception; verify real submission and unchanged
+- Implemented: Implement the approved IPv6-only CSP exception; verify real submission and unchanged
   destination construction, Origin/nonce checks and proof confidentiality.
 
 ## Owner Decisions
@@ -307,54 +312,68 @@ The owner explicitly approved this bounded change to the agreed CSP defense on 2
    HTTP support, app-first native/browser/CLI launches and removal of `apps open --user` semantics.
 5. 2026-10-05: approve omission of only `form-action` for verified configured IPv6 Core origins,
    preserving the exact form target and all other origin/nonce/proof/CSP protections.
+6. 2026-10-06: authorize source integration and merge of PR #547 after conflict resolution; retain
+   native live acceptance and production client deployment as unchecked work in this plan.
 
 ## Deliverables
 
 Implemented under the original approval and included in PR #547:
 
-- [x] SDK and Harness send their service token and return `app_service_token_missing` before fetch
+- [x] D1. SDK and Harness send their service token and return `app_service_token_missing` before fetch
   when missing/blank; all in-repo exchange callers identified.
-- [x] Core authenticates the calling app, atomically matches it before consuming, and audits refusals;
+- [x] D2. Core authenticates the calling app, atomically matches it before consuming, and audits refusals;
   existing callers/tests updated and 16 Core regression cases added.
-- [x] Project Manager's custom exchange sends the token, with seven regression cases.
+- [x] D3. Project Manager's custom exchange sends the token, with seven regression cases.
 
-Remaining work:
+Expanded protocol and remaining work:
 
-- [x] Implement Core browser-intent store, Origin checks, isolated nonce cookies, login continuation,
+- [x] D4. Implement Core browser-intent store, Origin checks, isolated nonce cookies, login continuation,
   one-time claim, silent/popup handling and credential-free ordinary bootstrap.
-- [x] Require S256 on every authenticated issuer; store challenges and atomically verify proof before
+- [x] D5. Require S256 on every authenticated issuer; store challenges and atomically verify proof before
   code consumption; reject unbound legacy records and preserve grant/access/activity semantics.
-- [x] Add Core protocol metadata and client discovery with explicit old-Core-only compatibility,
+- [x] D6. Add Core protocol metadata and client discovery with explicit old-Core-only compatibility,
   mismatch invalidation and no transient-error downgrade.
-- [x] Update SDK proof generation/lifecycle, standalone, silent, popup and activity renewal; require
+- [x] D7. Update SDK proof generation/lifecycle, standalone, silent, popup and activity renewal; require
   proof in server exchange/handlers and refuse redirected proof POSTs.
-- [x] Update Harness browser/server exchange and Shell server login/renewal/CSP/referrer behavior.
-- [x] Preserve same-app browser-origin protection in the Project Manager custom exchange and
+- [x] D8. Update Harness browser/server exchange and Shell server login/renewal/CSP/referrer behavior.
+- [x] D9. Preserve same-app browser-origin protection in the Project Manager custom exchange and
   safe Core rejection codes in both external identity probes, so rejected per-tab grants clear
   while activity expiry and transient errors preserve their intended recovery behavior.
-- [x] Update Swift app-first launch, trusted navigation validation, proof-bearing launch requests,
+- [x] D10. Update Swift app-first launch, trusted navigation validation, proof-bearing launch requests,
   external-browser handoff, tests and documentation. Cardputer remains unchanged.
-- [x] Remove credential-bearing CLI/control open links and explicit `apps open --user` impersonation;
+- [x] D11. Remove credential-bearing CLI/control open links and explicit `apps open --user` impersonation;
   update public contracts, help, tests and relevant feature documentation.
-- [x] Update Project Manager custom proof flow; publish the complete SDK, update both external clients'
+- [x] D12. Update Project Manager custom proof flow; publish the complete SDK, update both external clients'
   actual registry locks and verify clean registry installations, tests, lint and production builds.
   Supersede local header-only SDK/Media candidate patches with the full protocol.
-- [x] Complete actual-registry Core-managed client-first deployment acceptance on old Core and
+- [x] D13. Complete actual-registry Core-managed client-first deployment acceptance on old Core and
   after enforcing-Core upgrade, including protected content and revoked-grant cleanup.
-- [ ] Complete production client release/deployment before Core enforcement. Both client merges
+- [ ] D14. Complete production client release/deployment before Core enforcement. Both client merges
   are complete; local QA deployment is not production release or deployment evidence.
-- [x] Update Media browser-test fixtures for strict protocol discovery and proof-bearing intent
+- [x] D15. Update Media browser-test fixtures for strict protocol discovery and proof-bearing intent
   navigation; complete final green registry-based external CI.
-- [ ] Update app auth references and affected feature documents, create current `feature.md`, remove
-  this plan only after all deliverables, and regenerate the documentation index. Touched legacy
-  auth/direct-UI docs use their migrated feature folders.
-- [x] Apply one final version bump per artifact from PR #546's baseline: platform 0.119.0→0.120.0;
+- [ ] D16. Finalize app-auth references and current feature documentation after the remaining acceptance
+  and rollout deliverables; remove this plan only after all deliverables and regenerate the
+  documentation index. Auth and embedding references use main's consolidated feature homes.
+- [x] D17. Apply one final version bump per artifact from PR #546's baseline: platform 0.119.0→0.120.0;
   SDK 0.20.0→0.21.0; Swift 0.10.1→0.11.0; Shell 0.93.1→0.94.0; Harness 0.41.1→0.42.0;
   demo-app 0.12.1→0.13.0; Marketplace 0.6.1→0.7.0; Telemetry 0.12.1→0.13.0;
   Project Manager 0.12.0→0.13.0; Media Server 0.85.5→0.86.0. Broader required auth contracts
   replace the current header-only patch candidates. Keep manifest/package/image/lock sources in step.
-- [ ] Complete the automated and real-browser acceptance below; record any platform/hardware
+- [ ] D18. Complete the automated and real-browser acceptance below; record any platform/hardware
   verification that cannot run and leave its deliverable open rather than claiming completion.
+
+
+### IPv6 Compatibility Amendment
+
+- [x] D19. Implement the approved IPv6-only CSP exception; verify real submission and unchanged
+  destination construction, Origin/nonce checks and proof confidentiality.
+
+### Native Live Acceptance
+
+- [ ] D20. Complete native live first-open, switch/LRU, draft-preserving renewal and browser handoff.
+  Use normal password login; do not infer GUI acceptance or Keychain persistence from tests,
+  builds or the temporary ad-hoc QA signature.
 
 ## Phases
 
@@ -442,9 +461,9 @@ HTTPS parent-Domain prefix shadowing and foreign-origin forms also fail. Final u
 behavior is covered by the new Core regressions and the completed actual old-Core 0.119.0
 upgrade checks in a separate normally authenticated runtime.
 
-- [x] Complete final production bundle/cache refresh and local external candidate browser acceptance.
-- [x] Complete CLI logged-out/different-account browser acceptance.
-- [x] Complete actual old-Core-to-new-Core pending navigation/popup upgrade checks: source Core
+- Verified: Complete final production bundle/cache refresh and local external candidate browser acceptance.
+- Verified: Complete CLI logged-out/different-account browser acceptance.
+- Verified: Complete actual old-Core-to-new-Core pending navigation/popup upgrade checks: source Core
   0.119.0 metadata 404 selects protocol 1 and exchanges successfully, with its old unauthenticated
   weakness verified explicitly. A normal `--keep-apps` upgrade changes Core PID 21154 to 22503,
   reports protocol 2/version 0.120.0 and preserves both Demo runners and public origins. Held
@@ -452,12 +471,12 @@ upgrade checks in a separate normally authenticated runtime.
   new intent with fresh proof and finish active after exchange 200. The obsolete issued code
   receives 401; legacy GETs return only the correlated credential-free refusal. All independent
   upgrade fixture processes are stopped and private evidence is retained.
-- [x] Complete parent-session logout cascade/per-tab grant recovery against the final production
+- Verified: Complete parent-session logout cascade/per-tab grant recovery against the final production
   bundles. Concurrent legitimate Demo attempts use distinct code/proof and both exchange 200.
   Shell frame recreation reuses its per-tab grant without a new intent/exchange; own-session
   logout produces `token_revoked`/401, clears the grant and leaves explicit app-owned sign-in
   available without framing Core login.
-- [ ] Complete native live first-open, switch/LRU, draft-preserving renewal and browser handoff.
+- Native live acceptance remains open under D20.
   The QA clone launches with sandbox/network access, unique preferences and the exact production
   text section after removing restricted rights from its temporary ad-hoc signature. The owner
   unlocked the Mac; native inventory sees the running clone, but both bundle-ID and exact-path
@@ -466,9 +485,10 @@ upgrade checks in a separate normally authenticated runtime.
   persistence is outside the temporary signature's evidence. The operator app was never launched.
   Only the isolated Core/runtime graph and exact QA clone were stopped; private fixtures/evidence
   are retained for resuming acceptance when native UI control works.
-- [x] Complete SDK registry publication, real external dependency locks and isolated client-first
+- Verified: Complete SDK registry publication, real external dependency locks and isolated client-first
   deployment acceptance following the approved IPv6 amendment. Production release remains the
-  separate unchecked deliverable above; keep PR #547 unmerged until its tracked work is done.
+  separate unchecked deliverable D14; source integration is owner-authorized on 2026-10-06
+  while native acceptance and production deployment remain open.
 
 External source integration is available in [Project Manager #103](https://github.com/alex-de-haas/project-manager/pull/103)
 and [Media Server #318](https://github.com/alex-de-haas/media-server/pull/318). Final Project Manager

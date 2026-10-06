@@ -1,8 +1,12 @@
-# Shared Assistant History And Provider Switching
+---
+status: Draft
+created: 2026-09-26
+updated: 2026-09-26
+summary: Durable session events and cross-provider context so one conversation can switch between Claude and Codex.
+components: [apps/harness]
+---
 
-Status: Draft
-Created: 2026-09-26
-Updated: 2026-09-26
+# Shared Assistant History And Provider Switching
 
 Part of [shared assistant development sessions](../assistant-development-sessions/plan.md).
 The umbrella invariants apply. This feature extends the existing Hosty SessionManager/SessionStore
@@ -61,17 +65,17 @@ on reconnect, tool execution and attachment reads.
 
 ## Deliverables
 
-- [ ] Extend the existing Hosty journal/native adapters with correlated invocation IDs, terminal
+- [ ] D1. Extend the existing Hosty journal/native adapters with correlated invocation IDs, terminal
   evidence, attribution and schema/recovery behavior shared by all consumers.
-- [ ] Implement common idempotent session command handling and recovery for uncertain operations
+- [ ] D2. Implement common idempotent session command handling and recovery for uncertain operations
   and multiple clients, preserving the current REST/SSE experience.
-- [ ] Implement provider/account execution cursors and safe native resume or recreation using
+- [ ] D3. Implement provider/account execution cursors and safe native resume or recreation using
   Hosty's durable conversation and attribution contract.
-- [ ] Implement bounded context assembly, summary coverage and retrievable history/attachments
+- [ ] D4. Implement bounded context assembly, summary coverage and retrievable history/attachments
   so the returning provider receives intervening work without replaying actions.
-- [ ] Implement internal provider switching and its web/client selection semantics, including
+- [ ] D5. Implement internal provider switching and its web/client selection semantics, including
   finish/interrupt boundaries and revalidation of executor permissions.
-- [ ] Implement the selected session sharing/visibility contract and verify cross-administrator
+- [ ] D6. Implement the selected session sharing/visibility contract and verify cross-administrator
   access, attachment access, external context import and feedback destination eligibility.
 
 ## Open Questions

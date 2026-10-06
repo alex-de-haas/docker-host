@@ -1,8 +1,12 @@
-# App Development Controls
+---
+status: Draft
+created: 2026-09-16
+updated: 2026-09-27
+summary: Typed inspect, enter, run and leave operations for app development, with runtime verification and authority checks.
+components: [apps/core, apps/harness]
+---
 
-Status: Draft
-Created: 2026-09-16
-Updated: 2026-09-27
+# App Development Controls
 
 ## Session Source Selection Dependency (2026-09-24)
 
@@ -77,22 +81,22 @@ Data compatibility and backup/restore decisions remain distinct from source disc
 
 ## Deliverables
 
-- [ ] **Deferred migration:** demonstrate private/local-source, external-agent and self-development parity
+- [ ] D1. **Deferred migration:** demonstrate private/local-source, external-agent and self-development parity
       before proposing removal of source overrides; obtain separate approval for a non-destructive migration.
       Existing overrides remain available throughout workspace delivery.
 
-- [ ] Decide the authorization route, scope semantics and public tool/CLI contract; make the built-in
+- [ ] D2. Decide the authorization route, scope semantics and public tool/CLI contract; make the built-in
       assistant path explicit before claiming MCP-based development works there.
-- [ ] Implement bounded development-context reads and runtime-switch MCP wrappers with honest
+- [ ] D3. Implement bounded development-context reads and runtime-switch MCP wrappers with honest
       mutation annotations and Core-enforced grants; reuse the existing runtime-switch CLI.
-- [ ] Compose existing source APIs with enter/edit/leave orchestration, preserving prior settings,
+- [ ] D4. Compose existing source APIs with enter/edit/leave orchestration, preserving prior settings,
       shared source-loss warnings/Git choices and partial-failure state. Reuse the general session
       source binding from assistant approval rules; do not introduce a prototype-only binding.
-- [ ] Expose an Edit with assistant entry point and effective source/runtime state, including absent
+- [ ] D5. Expose an Edit with assistant entry point and effective source/runtime state, including absent
       source/profile, non-source runtimes, restart requirements and partial-failure results.
-- [ ] Audit each new mutation's actor, target, outcome and reviewed operation reference without
+- [ ] D6. Audit each new mutation's actor, target, outcome and reviewed operation reference without
       credentials. Compose with [Core MCP audit work](../core-mcp/plan.md), without duplicating it.
-- [ ] Verify permission, failure and data-compatibility cases, update affected feature documentation,
+- [ ] D7. Verify permission, failure and data-compatibility cases, update affected feature documentation,
       remove this plan, regenerate the index and bump affected release artifacts.
 
 ## Phases And Open Questions

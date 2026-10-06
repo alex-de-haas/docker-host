@@ -1,8 +1,12 @@
-# Notifications — Remaining Surfaces
+---
+status: Draft
+created: 2026-06-16
+updated: 2026-08-31
+summary: Expose notifications to non-browser clients and add delivery channels that reach users outside any client.
+components: [apps/core]
+---
 
-Status: Draft
-Created: 2026-06-16
-Updated: 2026-08-31
+# Notifications — Remaining Surfaces
 
 The v1 backend, the consumer contract, live delivery, retention, and the Shell bell all ship — see
 [feature.md](feature.md). What remains is exposing the same `NotificationService` to the clients that
@@ -14,7 +18,7 @@ the existing service rather than a redesign.
 
 ## Deliverables
 
-- [ ] **Register the built-in `notifications` platform interface** so clients discover it uniformly
+- [ ] D1. **Register the built-in `notifications` platform interface** so clients discover it uniformly
       instead of hardcoding the path:
 
       ```json
@@ -23,24 +27,24 @@ the existing service rather than a redesign.
 
       Externalizing later (a white-labeled delivery app, say) then swaps `"provider": "core"` for a
       system app with no consumer-contract change.
-- [ ] **Core MCP facade** ([core-mcp](../core-mcp/feature.md)): resources `hosty://notifications`
+- [ ] D2. **Core MCP facade** ([core-mcp](../core-mcp/feature.md)): resources `hosty://notifications`
       (+ `?unread=true`) and `hosty://notifications/unread-count` backing the `GET` data, plus a
       `mark_notification_read(ids?)` tool backing the read route. The **producer** endpoint is
       deliberately not an agent tool: apps produce, agents do not. The facade resolves the Hosty user
       from the presented credential and calls the service with that identity — the same scoping as the
       session consumer. Core MCP is admin-gated and read-only today, so this is the first mutation
       tool there and inherits that decision: shipping it means saying where its approval lives.
-- [ ] **App read-back endpoint** for standalone-UI rendering, scoped to the app's own records:
+- [ ] D3. **App read-back endpoint** for standalone-UI rendering, scoped to the app's own records:
 
       ```text
       GET /api/internal/apps/{appId}/notifications?user={userId}     # service token, source.appId == appId
       ```
 
       Optional and additive; the unified inbox stays a user surface.
-- [ ] **Pluggable delivery channels** behind a `NotificationChannel` seam — email and web/mobile push —
+- [ ] D4. **Pluggable delivery channels** behind a `NotificationChannel` seam — email and web/mobile push —
       for the case the inbox cannot cover: nobody has a client open. Each channel needs its own
       retry and failure posture, which is why it is a seam rather than an inline call.
-- [ ] Docs: fold each shipped surface into [feature.md](feature.md) and regenerate the index.
+- [ ] D5. Docs: fold each shipped surface into [feature.md](feature.md) and regenerate the index.
 
 Not tracked here: the macOS OS banner on the `notification` event, which belongs to
 [agent-background-sessions](../agent-background-sessions/feature.md) along with the gateway's use of the

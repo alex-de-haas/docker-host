@@ -1,7 +1,11 @@
-# Shell Navigation
+---
+created: 2026-07-30
+updated: 2026-10-02
+summary: Shell's three destinations, Dashboard, Settings and Apps, with the route table and the sidebar.
+components: [apps/shell]
+---
 
-Created: 2026-07-30
-Updated: 2026-10-02
+# Shell Navigation
 
 The browser Shell has three top-level destinations: **Dashboard**, the host you manage; **Settings**,
 the host you configure; and **Apps**, the apps you use. This document owns the route table and the

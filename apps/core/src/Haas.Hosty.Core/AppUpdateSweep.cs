@@ -48,7 +48,7 @@ internal sealed record AppUpdateCheckTriggerResponse(bool Started, AppUpdateChec
 // ready-to-apply pending plan. Single-flight — a trigger while a sweep is running joins it — and
 // detached from the triggering request: manual triggers run on the host lifetime token, so a closed
 // tab never aborts a sweep. Per-app failures are captured as that app's verdict, never the sweep's.
-// See docs/planning/plan-first-app-updates.md.
+// See docs/features/runtime-app-update/feature.md.
 internal sealed class AppUpdateSweepService(
     CoreLifecycleService lifecycle,
     IClock clock,

@@ -202,8 +202,8 @@ jobs:
       - name: Check version consistency
         run: node scripts/check-versions.mjs
 
-  # Ungated for the same reason as `versions`: it validates doc headers and the generated index across
-  # the whole docs/ tree, needs no `npm ci`, and finishes in seconds.
+  # Ungated for the same reason as `versions`: it validates doc frontmatter, deliverables, links and the
+  # generated index across the whole docs/ tree, needs no `npm ci`, and finishes in seconds.
   docs:
     name: Docs index
     runs-on: ubuntu-latest
@@ -216,7 +216,10 @@ jobs:
         with:
           node-version: 24
 
-      - name: Check docs index and headers
+      - name: Test the docs validator
+        run: node --test scripts/docs-index.test.mjs
+
+      - name: Check docs index and frontmatter
         run: node scripts/docs-index.mjs --check
 
   # Type-checks the workflows themselves: expression syntax, `needs`/`outputs` references, action input

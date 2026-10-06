@@ -1,7 +1,11 @@
-# Hosty Harness Chat Components
+---
+created: 2026-09-22
+updated: 2026-09-30
+summary: The chat components Harness uses for messages, code blocks, attachments, the composer and collapsible activity.
+components: [apps/harness]
+---
 
-Created: 2026-09-22
-Updated: 2026-09-30
+# Hosty Harness Chat Components
 
 The [Hosty Harness assistant](../ai-gateway/feature.md#shell-surface) uses Message Scroller,
 Code Block, Attachment, Input Group and collapsible activity in its existing Radix/shadcn

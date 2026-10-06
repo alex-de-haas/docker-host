@@ -1,7 +1,11 @@
-# Provider Consumption And Speech Recognition
+---
+created: 2026-09-29
+updated: 2026-10-02
+summary: Apps discover and call confirmed speech-to-text and assistant providers with short-lived Core credentials.
+components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/whisper, apps/harness]
+---
 
-Created: 2026-09-29
-Updated: 2026-10-02
+# Provider Consumption And Speech Recognition
 
 ## Permissions And Review
 

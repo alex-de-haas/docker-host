@@ -1,7 +1,11 @@
-# Embedded App Chrome
+---
+created: 2026-08-04
+updated: 2026-10-06
+summary: Embedded apps drop the name and navigation their shell already renders, and keep them when opened standalone.
+components: [packages/app-sdk, apps/shell, apps/shell-swift]
+---
 
-Created: 2026-08-04
-Updated: 2026-10-05
+# Embedded App Chrome
 
 An app opened inside a shell drops the chrome that shell already renders — its own name, and the
 navigation between its manifest pages. Opened standalone on its own origin it keeps both, because
@@ -111,7 +115,7 @@ description; the assistant's own title row in the Hosty Harness's pages.
 - [Swift Shell](../swift-shell/feature.md) — the native workspace chrome and the recovery
   interception the `native` mode must not disturb.
 - [Core App Shell](../core-app-shell/feature.md) — the embedded-apps contract this rides on.
-- [Direct Origin Runtime App UI](../direct-origin-runtime-app-ui/feature.md) — why standalone keeps
+- [App-origin authentication](../auth-gateway/feature.md) — why standalone keeps
   everything.
 
 ## Testing Expectations

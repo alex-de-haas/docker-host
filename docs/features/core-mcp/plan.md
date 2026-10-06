@@ -1,8 +1,12 @@
-# Core MCP: The Host's Own Audit
+---
+status: In Progress
+created: 2026-08-26
+updated: 2026-08-28
+summary: Let Core MCP answer what was done to an app by exposing the audit log and recording every lifecycle action.
+components: [apps/core]
+---
 
-Status: In Progress
-Created: 2026-08-26
-Updated: 2026-08-28
+# Core MCP: The Host's Own Audit
 
 Let an agent answer "what happened to this app", which is the question Core MCP currently cannot
 answer about the thing it owns.
@@ -55,26 +59,26 @@ answer "why did this restart" only when an agent was the one who restarted it.
 
 ## Deliverables
 
-- [ ] **Core records lifecycle actions wherever they originate**, not only on the MCP path:
+- [ ] D1. **Core records lifecycle actions wherever they originate**, not only on the MCP path:
       `LifecycleEndpoints` (start, stop, restart, update, autostart, runtime switch) writing the same
       `app.lifecycle.*` shape with the acting user. Without this the reader below has almost nothing
       to read, and the surface would quietly imply the host keeps a history it does not keep.
-- [x] `AuditStore` gains a filtered, bounded read: by resource id, action prefix, outcome and time
+- [x] D2. `AuditStore` gains a filtered, bounded read: by resource id, action prefix, outcome and time
       range, without loading the whole file for every call.
-- [x] `search_audit` on Core MCP, `readOnlyHint: true`, with the window contract in every result.
-- [ ] A stated rule for `Details`, enforced where audit records are written rather than where they
+- [x] D3. `search_audit` on Core MCP, `readOnlyHint: true`, with the window contract in every result.
+- [ ] D4. A stated rule for `Details`, enforced where audit records are written rather than where they
       are read: this tool turns that map into an export surface, and today nothing constrains what a
       future call site puts in it.
-- [ ] Retention for the audit log, or an explicit decision that it grows forever with the reason.
-- [ ] Tests: the filters as pairs (a match beside a non-match), the window contract in every
+- [ ] D5. Retention for the audit log, or an explicit decision that it grows forever with the reason.
+- [ ] D6. Tests: the filters as pairs (a match beside a non-match), the window contract in every
       direction, and `Details` asserted to carry no credential material for every existing writer.
-- [ ] Docs: `feature.md`, index.
+- [ ] D7. Docs: `feature.md`, index.
 
-## Deliverables — updates
+### Updates
 
-- [x] `plan_app_update` / `apply_app_update`, two steps, behind a **new `mcp:update` scope**.
-- [ ] `feature.md` describes both, and the audit tool, as current reality.
-- [ ] **The settled outcome of an update reaches the audit.** Applying is reported as *accepted*,
+- [x] D8. `plan_app_update` / `apply_app_update`, two steps, behind a **new `mcp:update` scope**.
+- [ ] D9. `feature.md` describes both, and the audit tool, as current reality.
+- [ ] D10. **The settled outcome of an update reaches the audit.** Applying is reported as *accepted*,
       because the work runs detached and the response carries the pre-update runtime state. Nobody
       writes what happened afterwards: `CoreLifecycleService` holds no `AuditStore`, which is the same
       missing wire as the producer deliverable above. Until it lands, `search_audit` can show that an

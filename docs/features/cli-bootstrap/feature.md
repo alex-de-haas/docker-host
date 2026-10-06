@@ -1,7 +1,11 @@
-# CLI Bootstrap
+---
+created: 2026-05-13
+updated: 2026-10-06
+summary: The hosty CLI installs itself and Core, discovers the Core control API and manages runtime apps.
+components: [apps/cli]
+---
 
-Created: 2026-05-13
-Updated: 2026-09-18
+# CLI Bootstrap
 
 ## Description
 
@@ -23,6 +27,45 @@ hosty auth recovery-token
 hosty apps list
 hosty apps install apps/demo-app --runtime dev
 ```
+
+## App Commands
+
+`hosty apps` manages installed runtime apps through the Core control API:
+
+```bash
+hosty apps list
+hosty apps install apps/demo-app --runtime dev
+hosty apps start com.haas.demo-app
+hosty apps health com.haas.demo-app
+hosty apps logs com.haas.demo-app
+hosty apps open com.haas.demo-app
+hosty apps identity com.haas.demo-app --user user@docker-host.local --format token
+hosty apps stop com.haas.demo-app
+hosty apps remove com.haas.demo-app
+```
+
+`hosty apps install` accepts an HTTP(S) URL of a `manifest.json`, a local manifest file, or a local
+app directory containing one; from inside an app directory, `hosty apps install .` works.
+
+`hosty apps open` returns a validated app URL in the default `--mode standalone`, or a Shell
+workspace URL with `--mode shell`. The default `--format url` prints the URL as one unwrapped line;
+`--format json` returns only `appId`, `mode` and `url`. Neither output contains an authorization code,
+grant, expiry or selected user. The browser starts the app-owned sign-in flow using its own Core
+account; a logged-out browser completes normal Core password login.
+
+The removed `apps open --user` option returns migration guidance instead of choosing an identity.
+The control open-link endpoint likewise rejects an explicit `user` field with `open_user_removed`.
+`hosty apps identity --user` remains a separate diagnostic command.
+
+`hosty apps identity` is a diagnostic helper for direct endpoint probes against an app origin:
+
+```bash
+TOKEN="$(hosty apps identity com.haas.demo-app --user user@docker-host.local --format token)"
+curl -H "X-Docker-Host-Identity: $TOKEN" <assigned-demo-app-origin>/api/auth/identity
+```
+
+Integration with Shell and other apps is still checked through Core and Shell URLs and
+`hosty apps open`.
 
 ## Root Selection
 
@@ -157,3 +200,9 @@ agent recovery.
 - `hosty core settings` round-trips (list/get/set/reset) over `/control/v1/settings`, including the
   down-Core failure mode.
 - Uninstall against both the default root and an explicitly addressed external root.
+- Text and JSON app-open output contains no code, grant, expiry or selected user; URL output remains
+  one unwrapped line and JSON contains only `appId`, `mode` and `url`.
+- Legacy `apps open --user` and control open-link user fields receive explicit migration errors.
+- App-open destination validation, standalone and Shell launch modes, and the missing-Shell error
+  apply before returning a URL.
+- Identity diagnostic requests retain their explicit user and app-access checks.

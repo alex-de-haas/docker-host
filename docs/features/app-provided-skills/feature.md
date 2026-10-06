@@ -1,7 +1,11 @@
-# App-Provided Skills
+---
+created: 2026-08-21
+updated: 2026-09-27
+summary: Apps ship an agent skill file that explains how their tools are meant to be used.
+components: [apps/core, apps/harness]
+---
 
-Created: 2026-08-21
-Updated: 2026-09-27
+# App-Provided Skills
 
 An app ships the prose an agent needs to use it well, the way it already ships its icon and its long
 description. MCP tells an agent *what calls exist*; a skill tells it how this app is meant to be

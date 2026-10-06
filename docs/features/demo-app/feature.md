@@ -1,7 +1,11 @@
-# Demo App
+---
+created: 2026-06-03
+updated: 2026-10-06
+summary: The repository-local reference app used to validate lifecycle, identity, directory access and app roles.
+components: [apps/demo-app]
+---
 
-Created: 2026-06-03
-Updated: 2026-10-05
+# Demo App
 
 Demo App is the repository-local Hosty runtime app under `apps/demo-app`. It is the primary first-party app used to validate runtime app lifecycle work, source overrides, local command runtime profiles, runtime switching, Hosty identity, scoped app directory access, storage probes, and app-owned roles.
 

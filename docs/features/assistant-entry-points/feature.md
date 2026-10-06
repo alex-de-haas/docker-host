@@ -1,7 +1,11 @@
-# Assistant Entry Points
+---
+created: 2026-08-19
+updated: 2026-09-16
+summary: The assistant docks as a Shell panel reachable from every page, and apps can hand it context without driving it.
+components: [apps/shell, apps/harness, packages/app-sdk]
+---
 
-Created: 2026-08-19
-Updated: 2026-09-16
+# Assistant Entry Points
 
 The assistant is reachable from anywhere in Shell, and an app can hand it context — without letting
 an app drive it.

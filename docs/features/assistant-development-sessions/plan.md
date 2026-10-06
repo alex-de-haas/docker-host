@@ -1,8 +1,12 @@
-# Shared Assistant Development Sessions
+---
+status: Draft
+created: 2026-09-24
+updated: 2026-09-29
+summary: Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests.
+components: [apps/harness, apps/core, apps/shell]
+---
 
-Status: Draft
-Created: 2026-09-24
-Updated: 2026-09-29
+# Shared Assistant Development Sessions
 
 ## Goal
 
@@ -181,12 +185,12 @@ Keep the current web REST/SSE contract. The Swift client targets the official AH
 client/auth/reconnect spike succeeds. A future web migration is optional, not part of this plan.
 Rename, feedback, analytics, external context and synthetic evaluation retain separate approvals.
 
-## Deliverables Owned By This Umbrella
+## Deliverables
 
-- [ ] Integrate shared session, source/workspace and PR identities across feature APIs and clients;
+- [ ] D1. Integrate shared session, source/workspace and PR identities across feature APIs and clients;
   verify recovery when a service restarts between prepare, attach, publish and observed result.
-- [ ] Verify the cross-feature user journey below without duplicating component implementation work.
-- [ ] Reconcile shipped feature documentation and ownership links as the complete journey becomes
+- [ ] D2. Verify the cross-feature user journey below without duplicating component implementation work.
+- [ ] D3. Reconcile shipped feature documentation and ownership links as the complete journey becomes
   available; record actual cross-feature behavior in `feature.md` when it ships.
 
 ## Open Integration Questions

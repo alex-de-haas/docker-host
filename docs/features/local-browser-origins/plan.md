@@ -1,8 +1,12 @@
-# Local Browser Origins Without Public-Origin Configuration
+---
+status: In Progress
+created: 2026-09-30
+updated: 2026-10-05
+summary: Every local browser workflow works without a domain, DNS or configured public origin.
+components: [apps/core, apps/shell, packages/app-sdk, apps/harness]
+---
 
-Status: In Progress
-Created: 2026-09-30
-Updated: 2026-10-05
+# Local Browser Origins Without Public-Origin Configuration
 
 ## Goal
 
@@ -57,12 +61,14 @@ separate provider apps are a direction, not part of this implementation. Core re
 storage and source operations. Shell declares no `apps.sources` and does not list or configure
 source connections. Source connection access still requires the current owner and administrator role.
 
-- [x] Separate basic profile data from source connection summaries, provider availability and Git
+Completed:
+
+- Separate basic profile data from source connection summaries, provider availability and Git
   attribution; gate source connection APIs with `apps.sources`, live app identity and owner checks.
-- [x] Add Harness Source providers settings for GitHub/DevOps, including Git attribution, PAT/device
+- Add Harness Source providers settings for GitHub/DevOps, including Git attribution, PAT/device
   authorization, connection checks/rename/disconnect and the app-local server transport.
-- [x] Remove connection forms from Shell; retain self-profile and link to authorized source tools.
-- [x] Update owning documentation and app-authoring instructions; verify Core/Harness/Shell API,
+- Remove connection forms from Shell; retain self-profile and link to authorized source tools.
+- Update owning documentation and app-authoring instructions; verify Core/Harness/Shell API,
   transport and UI tests, builds and a Core-managed browser flow without real provider credentials.
 
 Private-source installation/binding and broader browser acceptance remain separately tracked below.
@@ -283,9 +289,9 @@ Investigate coordinated Core/system-app upgrade and propose its concrete behavio
 the owner before implementing the upgrade change. Verify the approved approach with
 the existing 0.116.0 upgrade fixture.
 
-- [x] C1: Remove lifecycle permission gates and enforcement; verify launch without grants and per-call denial until approval, and document grant-only authority.
-- [x] C2: Implement and adopt shared SDK missing-permission notice, including secure embedding and refresh tests.
-- [ ] C3: Propose coordinated upgrade/preflight, implement the approved option, and verify the upgrade fixture.
+- C1 (done): Remove lifecycle permission gates and enforcement; verify launch without grants and per-call denial until approval, and document grant-only authority.
+- C2 (done): Implement and adopt shared SDK missing-permission notice, including secure embedding and refresh tests.
+- C3 (open, tracked under Deliverables): Propose coordinated upgrade/preflight, implement the approved option, and verify the upgrade fixture.
 
 ### C3 investigation and proposal (2026-10-02; owner selection pending)
 
@@ -480,20 +486,20 @@ Approved behavior:
 
 Deliverables for this extension:
 
-- [x] Owner approval of the source policy and the mount/global-registry scope above.
-- [x] Implement shared real-path source classification and unconditional protected-path denial;
+- [x] D1. Owner approval of the source policy and the mount/global-registry scope above.
+- [x] D2. Implement shared real-path source classification and unconditional protected-path denial;
   verify compatibility with source bootstrap and existing operator folders.
-- [x] Require Core confirmation for every app source override, remove the worktree exception,
+- [x] D3. Require Core confirmation for every app source override, remove the worktree exception,
   and preserve direct operator workspace selection and Harness workspace APIs (owner revision, 2026-10-02).
-- [x] Implement frozen Core source-override plans, caller revalidation, nonce/expiry/replay checks,
+- [x] D4. Implement frozen Core source-override plans, caller revalidation, nonce/expiry/replay checks,
   command/ongoing-trust disclosure and stale-plan refusal under that same lock.
-- [x] Migrate Shell source selection to the confirmation flow and update permission descriptions.
-- [x] Add HTTP/service tests for app data and symlink denial, mandatory app confirmation including worktrees,
+- [x] D5. Migrate Shell source selection to the confirmation flow and update permission descriptions.
+- [x] D6. Add HTTP/service tests for app data and symlink denial, mandatory app confirmation including worktrees,
   direct operator workspace selection, operator denial of protected paths, changed manifest,
   symlink retargeting, reinstallation, concurrent set/clear, revoked caller, denial and expiry.
-- [x] Close arbitrary external mount delegation, app-mediated global-registry bypass and ancestor
+- [x] D7. Close arbitrary external mount delegation, app-mediated global-registry bypass and ancestor
   exposure of the Core data root; cover mount/source ordering and approved development mounts.
-- [x] Build affected artifacts, run focused source/workspace/approval/mount and Shell tests,
+- [x] D8. Build affected artifacts, run focused source/workspace/approval/mount and Shell tests,
   update runtime-source, workspace, mount and approval documentation, and verify artifact versions.
 
 Verification of the 2026-10-02 lifecycle revision: `dotnet test` with isolated artifacts and
@@ -506,56 +512,56 @@ browser login QA was performed for this revision; browser acceptance remains tra
 
 ### Approved implementation
 
-- [x] Close the app-delegated removal bypass through Core-owned confirmation; freeze cleanup
+- [x] D9. Close the app-delegated removal bypass through Core-owned confirmation; freeze cleanup
   options and target identity, migrate Shell, and verify denial/replay/stale consent and trusted
   operator compatibility (owner-requested correction, 2026-10-02).
 
-- [x] Apply assignments uniformly to system and ordinary apps, including Shell; cover standalone login
+- [x] D10. Apply assignments uniformly to system and ordinary apps, including Shell; cover standalone login
   without Shell access, user-role restrictions on management, and revocation after assignment removal.
 
-- [x] Remove development login impersonation and direct session creation; remove development-user
+- [x] D11. Remove development login impersonation and direct session creation; remove development-user
   seeding, document setup/recovery and test-fixture boundaries, and verify password login plus bypass
   rejection in Development and Production, including an isolated browser check.
-- [x] Approve the canonical local browser-origin policy and finalize the deterministic app-hostname mapping.
-- [x] Trace the Safari failure and verify the existing Core-owned navigation/code/grant flow without
+- [x] D12. Approve the canonical local browser-origin policy and finalize the deterministic app-hostname mapping.
+- [x] D13. Trace the Safari failure and verify the existing Core-owned navigation/code/grant flow without
   assuming a new permission catalogue is necessary. Resolution support alone is insufficient.
-- [x] Select the initial coarse permission catalogue and names with the owner.
-- [x] Register the catalogue, consolidate installation/update and workspace/publication checks,
+- [x] D14. Select the initial coarse permission catalogue and names with the owner.
+- [x] D15. Register the catalogue, consolidate installation/update and workspace/publication checks,
   and update Shell/Harness declarations. Management API enforcement remains in the migration below.
-- [x] Complete the per-operation mapping, installation/source-grant migrations and required/optional declarations
+- [x] D16. Complete the per-operation mapping, installation/source-grant migrations and required/optional declarations
   under the selected catalogue, including mixed private-source requests and telemetry reads.
-- [x] Implement and test idempotent removal of unsupported stored grants at startup and write-time
+- [x] D17. Implement and test idempotent removal of unsupported stored grants at startup and write-time
   validation; preserve manifest declarations for diagnostics and preserve known grants, and
   reject stale reviews without requiring renewed approval for unchanged names whose scope expands.
-- [x] Move Shell to the common app identity/permission transport, remove its privileged browser-session
+- [x] D18. Move Shell to the common app identity/permission transport, remove its privileged browser-session
   exception, and preserve Core-only confirmation. Cover revocation, expiry, callback security and denied
   operations with generic app tests, including a replacement Shell client.
-- [x] Implement shared local/browser/transport origin resolution, including explicit-origin
+- [x] D19. Implement shared local/browser/transport origin resolution, including explicit-origin
   precedence and collision-safe app identities, without changing runtime port allocation.
-- [ ] Integrate Core browser links, Shell navigation, endpoint projections, app identity redirect
+- [ ] D20. Integrate Core browser links, Shell navigation, endpoint projections, app identity redirect
   validation, runtime browser environment and affected SDK consumers with the shared policy.
-- [ ] Provide safe legacy local entry navigation and fresh-session migration; preserve configured
+- [ ] D21. Provide safe legacy local entry navigation and fresh-session migration; preserve configured
   public origins, direct API/control traffic, OAuth/MCP behavior and native clients. Include browser
   profiles that retained redirects to a previous instance, as observed in the Safari QA run below.
-- [x] Handle upgrade of running apps with old origin environment explicitly; verify both a clean
+- [x] D22. Handle upgrade of running apps with old origin environment explicitly; verify both a clean
   install and an existing installation after the required lifecycle transition.
-- [ ] Verify login/logout, setup/recovery, Shell, standalone and embedded apps, installation/update,
+- [ ] D23. Verify login/logout, setup/recovery, Shell, standalone and embedded apps, installation/update,
   required/optional permission approval and revocation, and relevant popup/speech behavior with
   no public-origin settings and no external DNS/internet dependency.
-- [ ] Verify isolation: app servers do not receive Core's session cookie; shared-host and foreign-
+- [ ] D24. Verify isolation: app servers do not receive Core's session cookie; shared-host and foreign-
   origin decisions, foreign redirects, replay and stale approval requests remain rejected.
-- [ ] Run the supported browser/OS matrix, including a WebKit client and Docker/localCommand runtimes;
+- [ ] D25. Run the supported browser/OS matrix, including a WebKit client and Docker/localCommand runtimes;
   record unavailable environments as unfinished verification rather than passing acceptance.
-- [x] Resolve native Linux Docker-to-Core reachability under the default loopback listener and
+- [x] D26. Resolve native Linux Docker-to-Core reachability under the default loopback listener and
   verify Shell callback/recovery revocation, renamed origins, late Docker availability, default
   and per-app networks. Keep the broader standalone/embedded browser checks in the acceptance
   deliverables above; do not broaden the default listener to all interfaces.
-- [ ] Exercise the published installer on a clean machine and submit the setup/recovery forms
+- [ ] D27. Exercise the published installer on a clean machine and submit the setup/recovery forms
   interactively in a browser; clean-data source/AOT initialization and HTTP submissions are covered
   by the 2026-10-01 acceptance pass below.
-- [x] Bump changed release artifacts; update the owning feature documents, create the reality document,
+- [x] D28. Bump changed release artifacts; update the owning feature documents, create the reality document,
   and regenerate the index. All touched owning documents already use feature folders.
-- [ ] Finish acceptance, update the final reality document and delete this plan only when every remaining
+- [ ] D29. Finish acceptance, update the final reality document and delete this plan only when every remaining
   deliverable is complete.
 
 ### Remaining client migration details
@@ -568,33 +574,38 @@ returned app grant in document memory for same-origin API requests when iframe c
 no primary Core credential or persistent browser token storage is involved. Standalone navigation
 continues to use an app HttpOnly cookie. Session denial and unavailable Core remain distinct states.
 
-- [x] Replace all four Shell launch-code issuance call sites with common app-owned embedded recovery;
+- [x] D30. Replace all four Shell launch-code issuance call sites with common app-owned embedded recovery;
   verify Safari cookie restrictions, exact popup/message targets, initiation binding and replay.
-- [x] Complete embedded recovery acceptance with password entry inside the popup, API-triggered
+- [x] D31. Complete embedded recovery acceptance with password entry inside the popup, API-triggered
   revocation recovery without reload, and the non-privileged sandbox flow in Safari.
-- [x] Check remaining first-party SSR-only consumers and migrate their protected client API requests
+- [x] D32. Check remaining first-party SSR-only consumers and migrate their protected client API requests
   to the common app-grant transport; verify both standalone and embedded content.
   Demo App now loads overview, people, roles and panel user data after app authentication,
   prioritizes explicit bearer identity over stale cookies, and keeps role mutations and JSON
   inspection on `appFetch`. Marketplace, Telemetry and Harness already use this transport.
-- [x] Separate Harness's own app credential for workspace/source operations from its cross-app MCP
+- [x] D33. Separate Harness's own app credential for workspace/source operations from its cross-app MCP
   credential; ordinary chat must not gain cross-app access from an app login. This preparation is
   independent of the assistant-target authorization below (owner requested continuation on Harness).
-- [x] Complete Harness MCP authorization with Core-owned assistant-to-target grants. On 2026-10-01
+- [x] D34. Complete Harness MCP authorization with Core-owned assistant-to-target grants. On 2026-10-01
   the owner approved this model instead of a blanket MCP permission or separate per-user consent.
   The existing host-wide offers remain an upper bound for all consumers; they do not automatically
   grant any assistant access. Administrators explicitly assign installed assistants to targets.
   Grants bind both installation identities and are checked by Core at issue and use.
-- [x] Issue a distinct MCP-only credential carrying the calling assistant, target and acting user;
+- [x] D35. Issue a distinct MCP-only credential carrying the calling assistant, target and acting user;
   revalidate current app identity, target access and grant. Ordinary app APIs must reject it.
   Core MCP retains its own operation permission checks. Update SDK/reference consumers and Harness.
-- [x] Expose assistant-target grants in the existing Agents settings and verify issuance/refusal,
+- [x] D36. Expose assistant-target grants in the existing Agents settings and verify issuance/refusal,
   revocation, reinstallation, target/identity spoofing and ordinary-API rejection. Verify a
   Core-managed embedded Harness tool call and update the owning documentation.
-- [x] Verify Shell's server-side assistant handoff against a real Core-managed provider, including
+- [x] D37. Verify Shell's server-side assistant handoff against a real Core-managed provider, including
   optional `providers.assistant` approval/revocation and retries after an uncertain response.
-- [ ] Complete Shell profile, Harness source-selection and Core confirmation browser acceptance, including installed private-source
+- [ ] D38. Complete Shell profile, Harness source-selection and Core confirmation browser acceptance, including installed private-source
   update recovery; deterministic provider fixtures do not prove a real external account integration.
+
+### Missing-permission notice and coordinated upgrade
+
+- [ ] D39. C3: Propose coordinated upgrade/preflight, implement the approved option, and verify the
+      upgrade fixture.
 
 ## Phases
 

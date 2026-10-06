@@ -1,7 +1,11 @@
-# Core Source Inspection
+---
+created: 2026-09-22
+updated: 2026-10-01
+summary: The development-mode Core row shows branch and changed-file statistics through a read-only Core API.
+components: [apps/core, apps/shell]
+---
 
-Created: 2026-09-22
-Updated: 2026-10-01
+# Core Source Inspection
 
 ## Dashboard
 

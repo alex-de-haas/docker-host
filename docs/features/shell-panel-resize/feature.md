@@ -1,7 +1,11 @@
-# Resizable Shell Panel
+---
+created: 2026-09-22
+updated: 2026-09-24
+summary: Shell's right panel is resizable by pointer and keyboard and remembers its width.
+components: [apps/shell]
+---
 
-Created: 2026-09-22
-Updated: 2026-09-24
+# Resizable Shell Panel
 
 Shell's [right panel](../app-ui-surfaces/feature.md#shells-chrome) shares a horizontal
 shadcn Resizable group with the workspace. The navigation rail remains outside this

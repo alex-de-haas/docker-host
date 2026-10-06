@@ -1,7 +1,11 @@
-# Assistant Pull Request Lifecycle
+---
+created: 2026-09-29
+updated: 2026-09-29
+summary: GitHub pull request publication, review, merge and completion for assistant session workspaces.
+components: [apps/core, apps/harness]
+---
 
-Created: 2026-09-29
-Updated: 2026-09-29
+# Assistant Pull Request Lifecycle
 
 The owner explicitly approved Ready and implementation in chat on 2026-09-29, including GitHub-first
 scope and the shared MCP policy. The approved working plan was marked Ready before implementation;

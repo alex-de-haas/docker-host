@@ -1,7 +1,11 @@
-# Runtime Source Workflows
+---
+created: 2026-06-03
+updated: 2026-10-05
+summary: Source checkouts, local overrides and runtime switching for installed apps, with Git inspection.
+components: [apps/core, apps/shell]
+---
 
-Created: 2026-06-03
-Updated: 2026-10-02
+# Runtime Source Workflows
 
 Runtime source workflows let administrators and local operators inspect and update the source state stored for an installed Hosty runtime app. Manifests declare source metadata, Core stores managed checkout and local override state, local command runtimes run from those folders, and Core exposes Git inspection and reviewed file discard to authorized source tools.
 
@@ -16,7 +20,7 @@ flowchart LR
 
 ## Source State
 
-An app manifest may declare one app-level source repository. Multi-repository runtime apps are out of scope for the first source runtime implementation; split independently-owned services into separate runtime apps. Future source extensions are tracked in [Runtime Source Extensions](../../ideas/runtime-source-extensions.md).
+An app manifest may declare one app-level source repository. Multi-repository runtime apps are out of scope for the first source runtime implementation; split independently-owned services into separate runtime apps. Private repositories are read through [private app sources](../private-app-sources/feature.md).
 
 Core stores source state as Host installation state, not as public manifest metadata:
 
