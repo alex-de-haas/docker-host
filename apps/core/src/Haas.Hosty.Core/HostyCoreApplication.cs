@@ -81,6 +81,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AssistantMcpAccess>();
         builder.Services.AddSingleton<AgentMcpDirectory>();
         builder.Services.AddSingleton<AppAuthCodeStore>();
+        builder.Services.AddSingleton<AppSignInIntentStore>();
         builder.Services.AddSingleton<DeviceAuthorizationStore>();
         builder.Services.AddSingleton<OAuthStore>();
         builder.Services.AddHostedService<OAuthRevocationRecovery>();
@@ -900,7 +901,7 @@ internal sealed record HostyCoreRuntimeConfig(
     // The env baseline resolved against the listen URL, and nothing more. It is NOT what Core advertises:
     // the persisted setting layers over this, so every reader goes through CorePublicOriginResolver and
     // only a fixture without one falls back here.
-    public string EffectiveCorePublicOrigin => LocalBrowserOrigins.Core(CorePublicOrigin ?? ListenUrl, InstanceId);
+    public string EffectiveCorePublicOrigin => CorePublicOrigin ?? LocalBrowserOrigins.Core(ListenUrl, InstanceId);
 
     // No EffectiveShellPublicOrigin: where Shell is reachable is resolved from Shell's own app record
     // (ShellPublicOriginResolver), not from Core's launch config. Shell is an optional distribution app,

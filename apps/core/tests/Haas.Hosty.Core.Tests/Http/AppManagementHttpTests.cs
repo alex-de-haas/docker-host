@@ -366,8 +366,8 @@ public sealed class AppManagementHttpTests
         var identity = host.Services.GetRequiredService<AppIdentityService>();
         // Create a real app-bound grant through a code; only fixture accounts/sessions are seeded.
         var codes = host.Services.GetRequiredService<AppAuthCodeStore>();
-        await codes.AppendCodeAsync(new("qa-code", appId, "actor", "http://app.test/callback", now, now.AddMinutes(5), null, "operator", ActivityAuthorized: true), now);
-        var token = await identity.ExchangeCodeAsync("qa-code");
+        await codes.AppendCodeAsync(new("qa-code", appId, "actor", "http://app.test/callback", now, now.AddMinutes(5), null, "operator", ActivityAuthorized: true, CodeChallenge: AuthCodeProof.Challenge), now);
+        var token = await identity.ExchangeCodeAsync("qa-code", appId, AuthCodeProof.Verifier);
         var client = host.CreateClient();
         client.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(appId));
         client.DefaultRequestHeaders.Add(AppManagementAuthorization.IdentityHeader, token.AccessToken);

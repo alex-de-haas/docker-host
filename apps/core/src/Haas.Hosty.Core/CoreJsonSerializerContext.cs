@@ -162,6 +162,7 @@ internal static class CoreJson
 // HTTP request bodies.
 [JsonSerializable(typeof(AppAuthorizeRequest))]
 [JsonSerializable(typeof(AppTokenExchangeRequest))]
+[JsonSerializable(typeof(AppAuthProtocolResponse))]
 [JsonSerializable(typeof(AppRevalidateRequest))]
 [JsonSerializable(typeof(AppLaunchCodeRequest))]
 [JsonSerializable(typeof(AuthBootstrapRequest))]

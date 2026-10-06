@@ -1,6 +1,6 @@
 ---
 created: 2026-06-25
-updated: 2026-10-05
+updated: 2026-10-06
 summary: The optional Marketplace app that owns catalog discovery and requests Core-confirmed installations.
 components: [apps/marketplace]
 ---

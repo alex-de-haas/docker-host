@@ -1,6 +1,8 @@
 // Server slice: Next route-handler factories and Core revalidation. Never reaches a client
 // bundle — the service token lives here.
 import "server-only";
+import { resolveAppAuthProtocol, appAuthProtocolMinimum, isValidCodeVerifier, type AppAuthProtocol } from "./app-code";
+export { isValidCodeVerifier } from "./app-code";
 
 import {
   classifyRevalidationHttpStatus,
@@ -78,8 +80,12 @@ export function getServiceToken(): string | null {
   return process.env.HOSTY_APP_SERVICE_TOKEN?.trim() || null;
 }
 
-export function getRecoveryParams(config: HostyAppConfig): SessionRecoveryParams {
-  return { appId: getAppId(config), corePublicOrigin: getCorePublicOrigin() };
+export function getAppAuthProtocol(): Promise<AppAuthProtocol | null> {
+  return resolveAppAuthProtocol(getCoreOrigin());
+}
+
+export async function getRecoveryParams(config: HostyAppConfig): Promise<SessionRecoveryParams> {
+  return { appId: getAppId(config), corePublicOrigin: getCorePublicOrigin(), appAuthProtocol: await getAppAuthProtocol() };
 }
 
 export type HeaderReader = { get(name: string): string | null };
@@ -336,10 +342,17 @@ export type AppCodeExchange =
   | { ok: true; accessToken: string; expiresInSeconds: number | null; activeUntil?: string | null }
   | { ok: false; status: number; code: string; message: string };
 
-/** Exchanges a one-time Shell/Core launch code for an identity token at Core. The code is
- * the only credential — the endpoint is deliberately unauthenticated on Core's side. */
-export async function exchangeAppCode(code: string): Promise<AppCodeExchange> {
+/** Exchanges a one-time Core code using this app's service credential. */
+export async function exchangeAppCode(code: string, codeVerifier: string): Promise<AppCodeExchange> {
+  if (!isValidCodeVerifier(codeVerifier))
+    return { ok: false, status: 400, code: "app_auth_proof_required", message: "A valid Hosty sign-in proof is required." };
+  const serviceToken = getServiceToken();
+  if (!serviceToken) {
+    return { ok: false, status: 503, code: "app_service_token_missing", message: "HOSTY_APP_SERVICE_TOKEN is not configured." };
+  }
   const coreOrigin = getCoreOrigin();
+  if (appAuthProtocolMinimum(coreOrigin) === 2 && await getAppAuthProtocol() !== 2)
+    return { ok: false, status: 503, code: "app_auth_protocol_unavailable", message: "Hosty sign-in protocol could not be verified." };
   let endpoint: string;
   try {
     endpoint = new URL("/api/auth/apps/token", coreOrigin ?? "").toString();
@@ -351,9 +364,10 @@ export async function exchangeAppCode(code: string): Promise<AppCodeExchange> {
   try {
     response = await fetch(endpoint, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ code }),
+      headers: { "content-type": "application/json", authorization: `Bearer ${serviceToken}` },
+      body: JSON.stringify({ code, codeVerifier }),
       cache: "no-store",
+      redirect: "error",
       signal: AbortSignal.timeout(CORE_AUTH_TIMEOUT_MS),
     });
   } catch (error) {
@@ -417,7 +431,10 @@ export function createAppCodeRouteHandler(config: HostyAppConfig) {
       return jsonResponse({ code: "app_auth_code_required", message: "A Hosty app authorization code is required." }, 422);
     }
 
-    const exchange = await exchangeAppCode(code);
+    const codeVerifier = body && typeof body === "object" ? (body as { codeVerifier?: unknown }).codeVerifier : null;
+    if (!isValidCodeVerifier(codeVerifier))
+      return jsonResponse({ code: "app_auth_proof_required", message: "A valid Hosty sign-in proof is required." }, 400);
+    const exchange = await exchangeAppCode(code, codeVerifier);
     if (!exchange.ok) {
       return jsonResponse({ code: exchange.code, message: exchange.message }, exchange.status);
     }

@@ -13,7 +13,7 @@ public sealed class AppIdentityServiceTests
         var fixture = await IdentityFixture.CreateAsync();
         await fixture.WriteUsersAsync([CreateUser("user_1") with { AuthRevision = initialRevision }],
             [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
-        var code = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback");
+        var code = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback", AuthCodeProof.Challenge, "S256");
         var grant = await fixture.Service.CreateLaunchTokenAsync("com.example.notes", "user_1");
         var oldRecord = Assert.Single((await fixture.Grants.ReadAsync()).Grants);
         await fixture.Users.UpdateAsync(state => state with
@@ -21,7 +21,7 @@ public sealed class AppIdentityServiceTests
             Users = state.Users.Select(user => user with { AuthRevision = "new-recovery" }).ToArray(),
         });
 
-        var codeError = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.ExchangeCodeAsync(code.Code));
+        var codeError = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.ExchangeCodeAsync(code.Code, "com.example.notes", AuthCodeProof.Verifier));
         var grantError = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.RevalidateAsync(grant.AccessToken, "com.example.notes"));
         Assert.Equal("token_revoked", codeError.Code);
         Assert.Equal("token_revoked", grantError.Code);
@@ -33,8 +33,8 @@ public sealed class AppIdentityServiceTests
         var late = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.RevalidateHashAsync("late-hash", "com.example.notes", default));
         Assert.Equal("token_revoked", late.Code);
 
-        var freshCode = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback");
-        var freshGrant = await fixture.Service.ExchangeCodeAsync(freshCode.Code);
+        var freshCode = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback", AuthCodeProof.Challenge, "S256");
+        var freshGrant = await fixture.Service.ExchangeCodeAsync(freshCode.Code, "com.example.notes", AuthCodeProof.Verifier);
         Assert.True((await fixture.Service.RevalidateAsync(freshGrant.AccessToken, "com.example.notes")).Active);
     }
 
@@ -43,10 +43,10 @@ public sealed class AppIdentityServiceTests
     {
         var fixture = await IdentityFixture.CreateAsync();
         await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
-        var authorization = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback");
+        var authorization = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback", AuthCodeProof.Challenge, "S256");
         fixture.Clock.UtcNow = authorization.ExpiresAt.AddSeconds(1);
 
-        var error = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.ExchangeCodeAsync(authorization.Code));
+        var error = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.ExchangeCodeAsync(authorization.Code, "com.example.notes", AuthCodeProof.Verifier));
 
         Assert.Equal("code_expired", error.Code);
     }
@@ -56,10 +56,10 @@ public sealed class AppIdentityServiceTests
     {
         var fixture = await IdentityFixture.CreateAsync();
         await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
-        var authorization = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback");
+        var authorization = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback", AuthCodeProof.Challenge, "S256");
 
-        var token = await fixture.Service.ExchangeCodeAsync(authorization.Code);
-        var error = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.ExchangeCodeAsync(authorization.Code));
+        var token = await fixture.Service.ExchangeCodeAsync(authorization.Code, "com.example.notes", AuthCodeProof.Verifier);
+        var error = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.ExchangeCodeAsync(authorization.Code, "com.example.notes", AuthCodeProof.Verifier));
 
         Assert.Equal("Bearer", token.TokenType);
         Assert.Equal("code_consumed", error.Code);
@@ -70,13 +70,13 @@ public sealed class AppIdentityServiceTests
     {
         var fixture = await IdentityFixture.CreateAsync();
         await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
-        var authorization = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback");
+        var authorization = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback", AuthCodeProof.Challenge, "S256");
 
         var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(async attempt =>
         {
             try
             {
-                await fixture.Service.ExchangeCodeAsync(authorization.Code);
+                await fixture.Service.ExchangeCodeAsync(authorization.Code, "com.example.notes", AuthCodeProof.Verifier);
                 return (Succeeded: true, Code: (string?)null);
             }
             catch (AppIdentityException ex)
@@ -94,12 +94,12 @@ public sealed class AppIdentityServiceTests
     {
         var fixture = await IdentityFixture.CreateAsync();
         await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
-        var first = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback");
-        var second = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback");
-        _ = await fixture.Service.ExchangeCodeAsync(first.Code);
-        _ = await fixture.Service.ExchangeCodeAsync(second.Code);
+        var first = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback", AuthCodeProof.Challenge, "S256");
+        var second = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback", AuthCodeProof.Challenge, "S256");
+        _ = await fixture.Service.ExchangeCodeAsync(first.Code, "com.example.notes", AuthCodeProof.Verifier);
+        _ = await fixture.Service.ExchangeCodeAsync(second.Code, "com.example.notes", AuthCodeProof.Verifier);
 
-        var replay = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.ExchangeCodeAsync(first.Code));
+        var replay = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.ExchangeCodeAsync(first.Code, "com.example.notes", AuthCodeProof.Verifier));
 
         Assert.Equal("invalid_code", replay.Code);
     }
@@ -109,10 +109,10 @@ public sealed class AppIdentityServiceTests
     {
         var fixture = await IdentityFixture.CreateAsync();
         await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
-        var authorization = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback");
+        var authorization = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback", AuthCodeProof.Challenge, "S256");
         var issuedAt = fixture.Clock.UtcNow;
 
-        var token = await fixture.Service.ExchangeCodeAsync(authorization.Code);
+        var token = await fixture.Service.ExchangeCodeAsync(authorization.Code, "com.example.notes", AuthCodeProof.Verifier);
 
         // Regular (non-system) app: the default absolute grant lifetime, and an opaque hostyg_ value —
         // never a signed JWT.
@@ -171,7 +171,7 @@ public sealed class AppIdentityServiceTests
         var fixture = await IdentityFixture.CreateAsync();
         await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
         var token = await fixture.Service.ExchangeCodeAsync(
-            (await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback")).Code);
+            (await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback", AuthCodeProof.Challenge, "S256")).Code, "com.example.notes", AuthCodeProof.Verifier);
 
         // Advance past the idle window but before the absolute cap.
         fixture.Clock.UtcNow = fixture.Clock.UtcNow.Add(AuthLifetimes.Defaults.AppGrantIdle).AddSeconds(1);
@@ -193,8 +193,8 @@ public sealed class AppIdentityServiceTests
         });
         // Issue via a code stamped with an authorizing session, then cascade-revoke that session's grants.
         var authorization = await fixture.Service.CreateAuthorizationCodeAsync(
-            "com.example.notes", "user_1", "https://notes.example/callback", authorizingSessionId: "session_1");
-        var token = await fixture.Service.ExchangeCodeAsync(authorization.Code);
+            "com.example.notes", "user_1", "https://notes.example/callback", AuthCodeProof.Challenge, "S256", authorizingSessionId: "session_1");
+        var token = await fixture.Service.ExchangeCodeAsync(authorization.Code, "com.example.notes", AuthCodeProof.Verifier);
         Assert.True((await fixture.Service.RevalidateAsync(token.AccessToken, "com.example.notes")).Active);
 
         await fixture.Grants.RevokeByAuthorizingSessionAsync("session_1", fixture.Clock.UtcNow);
@@ -212,7 +212,7 @@ public sealed class AppIdentityServiceTests
         await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
         // A code-issued grant gets the regular app idle/absolute windows (a CLI grant is short and fixed).
         var token = await fixture.Service.ExchangeCodeAsync(
-            (await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback")).Code);
+            (await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback", AuthCodeProof.Challenge, "S256")).Code, "com.example.notes", AuthCodeProof.Verifier);
 
         // Use it just before the idle deadline; the idle window should slide forward from the new use.
         fixture.Clock.UtcNow = fixture.Clock.UtcNow.Add(AuthLifetimes.Defaults.AppGrantIdle).AddHours(-1);
@@ -230,7 +230,7 @@ public sealed class AppIdentityServiceTests
         await fixture.WriteUsersAsync([CreateUser("user_1", disabled: true)], []);
 
         var error = await Assert.ThrowsAsync<AppIdentityException>(() =>
-            fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback"));
+            fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback", AuthCodeProof.Challenge, "S256"));
 
         Assert.Equal("user_disabled", error.Code);
     }
@@ -242,7 +242,7 @@ public sealed class AppIdentityServiceTests
         await fixture.WriteUsersAsync([CreateUser("user_1")], []);
 
         var error = await Assert.ThrowsAsync<AppIdentityException>(() =>
-            fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "javascript:alert(1)"));
+            fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "javascript:alert(1)", AuthCodeProof.Challenge, "S256"));
 
         Assert.Equal("redirect_uri_invalid", error.Code);
     }
@@ -259,12 +259,12 @@ public sealed class AppIdentityServiceTests
             Endpoints = [new AppEndpointContract("web", "http", "http://127.0.0.1:3210", true)],
         });
         var origin = $"http://{LocalBrowserOrigins.AppHost(id)}:3210";
-        var authorization = await fixture.Service.CreateAuthorizationCodeAsync(id, "user_1", origin + "/callback");
+        var authorization = await fixture.Service.CreateAuthorizationCodeAsync(id, "user_1", origin + "/callback", AuthCodeProof.Challenge, "S256");
         Assert.StartsWith(origin + "/callback?code=", authorization.RedirectUri, StringComparison.Ordinal);
         foreach (var denied in new[] { $"http://{LocalBrowserOrigins.AppHost("com.example.other")}:3210", $"http://{LocalBrowserOrigins.AppHost(id)}.attacker.test:3210", "http://core.hosty.localhost:3210" })
         {
             var error = await Assert.ThrowsAsync<AppIdentityException>(() =>
-                fixture.Service.CreateAuthorizationCodeAsync(id, "user_1", denied + "/callback"));
+                fixture.Service.CreateAuthorizationCodeAsync(id, "user_1", denied + "/callback", AuthCodeProof.Challenge, "S256"));
             Assert.Equal("redirect_uri_denied", error.Code);
         }
     }
@@ -278,7 +278,7 @@ public sealed class AppIdentityServiceTests
         var authorization = await fixture.Service.CreateAuthorizationCodeAsync(
             "com.example.notes",
             "user_1",
-            "https://notes-public.example/settings");
+            "https://notes-public.example/settings", AuthCodeProof.Challenge, "S256");
 
         Assert.StartsWith("https://notes-public.example/settings?code=", authorization.RedirectUri, StringComparison.Ordinal);
     }
@@ -290,7 +290,7 @@ public sealed class AppIdentityServiceTests
         await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
 
         var error = await Assert.ThrowsAsync<AppIdentityException>(() =>
-            fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://attacker.example/settings"));
+            fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://attacker.example/settings", AuthCodeProof.Challenge, "S256"));
 
         Assert.Equal("redirect_uri_denied", error.Code);
     }
@@ -303,7 +303,7 @@ public sealed class AppIdentityServiceTests
         await fixture.WriteUsersAsync([CreateUser("user_1")], []);
 
         var error = await Assert.ThrowsAsync<AppIdentityException>(() =>
-            fixture.Service.CreateAuthorizationCodeAsync("hosty.sysapp", "user_1", "https://sysapp.example/callback"));
+            fixture.Service.CreateAuthorizationCodeAsync("hosty.sysapp", "user_1", "https://sysapp.example/callback", AuthCodeProof.Challenge, "S256"));
 
         Assert.Equal("app_access_denied", error.Code);
     }
@@ -316,8 +316,8 @@ public sealed class AppIdentityServiceTests
         await fixture.WriteUsersAsync([CreateUser("member")],
             [new AppAssignmentRecord("hosty.sysapp", "member", fixture.Clock.UtcNow)]);
         var code = await fixture.Service.CreateAuthorizationCodeAsync(
-            "hosty.sysapp", "member", "https://sysapp.example/callback");
-        var grant = await fixture.Service.ExchangeCodeAsync(code.Code);
+            "hosty.sysapp", "member", "https://sysapp.example/callback", AuthCodeProof.Challenge, "S256");
+        var grant = await fixture.Service.ExchangeCodeAsync(code.Code, "hosty.sysapp", AuthCodeProof.Verifier);
         var actor = await fixture.Service.RevalidateAsync(grant.AccessToken, "hosty.sysapp");
         Assert.Equal("host.user", actor.HostRole);
         await fixture.WriteUsersAsync([CreateUser("member")], []);
@@ -336,7 +336,7 @@ public sealed class AppIdentityServiceTests
         var authorization = await fixture.Service.CreateAuthorizationCodeAsync(
             "hosty.sysapp",
             "admin_1",
-            "https://sysapp.example/callback");
+            "https://sysapp.example/callback", AuthCodeProof.Challenge, "S256");
 
         Assert.StartsWith("https://sysapp.example/callback?code=", authorization.RedirectUri, StringComparison.Ordinal);
     }
@@ -350,10 +350,10 @@ public sealed class AppIdentityServiceTests
         var authorization = await fixture.Service.CreateAuthorizationCodeAsync(
             "hosty.sysapp",
             "admin_1",
-            "https://sysapp.example/callback");
+            "https://sysapp.example/callback", AuthCodeProof.Challenge, "S256");
         await fixture.WriteUsersAsync([CreateUser("admin_1")], []);
 
-        var error = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.ExchangeCodeAsync(authorization.Code));
+        var error = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.ExchangeCodeAsync(authorization.Code, "hosty.sysapp", AuthCodeProof.Verifier));
 
         Assert.Equal("app_access_denied", error.Code);
     }
@@ -526,7 +526,7 @@ public sealed class AppIdentityServiceTests
             var grants = new AppSessionGrantStore(paths);
             var clock = new FakeClock(DateTimeOffset.UtcNow);
             var settings = new CoreSettingsService(new CoreSettingsStore(paths, NullLogger<CoreSettingsStore>.Instance));
-            var service = new AppIdentityService(users, codes, apps, grants, settings, clock);
+            var service = new AppIdentityService(users, codes, apps, grants, settings, new AuditStore(paths), clock);
             await users.WriteAsync(new UserDirectoryState(1, [], [], [], []));
             await apps.UpsertAppAsync(CreateApp());
             return new IdentityFixture(users, apps, grants, service, paths, clock);

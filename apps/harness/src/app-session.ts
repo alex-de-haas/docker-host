@@ -1,4 +1,5 @@
 import type { IncomingMessage } from "node:http";
+import { isValidCodeVerifier, resolveAppAuthProtocol, appAuthProtocolMinimum } from "@hosty-sdk/app/app-code";
 
 // Validating this app's own Hosty session for its browser API.
 //
@@ -12,6 +13,11 @@ import type { IncomingMessage } from "node:http";
 // keyed on HTTP status only — never on error-code strings, so a new Core code cannot break this app.
 
 export const identityCookieName = "hosty_harness_identity";
+
+export async function getAppRecoveryParams() {
+  return { appId: process.env.HOSTY_APP_ID ?? "hosty.harness", corePublicOrigin: process.env.HOSTY_CORE_PUBLIC_ORIGIN ?? null,
+    appAuthProtocol: await resolveAppAuthProtocol(process.env.HOSTY_CORE_ORIGIN?.trim() || null) };
+}
 
 export type AppSessionIdentity = { userId: string; hostRole: string | null; activeUntil?: string | null; activityRequired?: boolean };
 
@@ -125,19 +131,29 @@ function classifyRevalidationStatus(status: number): Exclude<AppSessionResult["s
  */
 export async function exchangeLaunchCode(
   code: string,
+  codeVerifier: string,
   secure: boolean,
 ): Promise<{ ok: true; setCookie: string; accessToken: string; expiresInSeconds: number; activeUntil?: string | null } | { ok: false; status: number; code: string; message: string }> {
+  if (!isValidCodeVerifier(codeVerifier))
+    return { ok: false, status: 400, code: "app_auth_proof_required", message: "A valid Hosty sign-in proof is required." };
+  const serviceToken = process.env.HOSTY_APP_SERVICE_TOKEN?.trim();
+  if (!serviceToken) {
+    return { ok: false, status: 503, code: "app_service_token_missing", message: "HOSTY_APP_SERVICE_TOKEN is not configured." };
+  }
   const coreOrigin = process.env.HOSTY_CORE_ORIGIN?.trim();
   if (!coreOrigin) {
     return { ok: false, status: 503, code: "core_origin_missing", message: "HOSTY_CORE_ORIGIN is not configured." };
   }
+  if (appAuthProtocolMinimum(coreOrigin) === 2 && await resolveAppAuthProtocol(coreOrigin) !== 2)
+    return { ok: false, status: 503, code: "app_auth_protocol_unavailable", message: "Hosty sign-in protocol could not be verified." };
 
   let response: Response;
   try {
     response = await fetch(new URL("/api/auth/apps/token", coreOrigin), {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ code }),
+      headers: { "content-type": "application/json", authorization: `Bearer ${serviceToken}` },
+      body: JSON.stringify({ code, codeVerifier }),
+      cache: "no-store", redirect: "error", signal: AbortSignal.timeout(1_500),
     });
   } catch {
     return { ok: false, status: 503, code: "core_unreachable", message: "Hosty Core could not be reached." };

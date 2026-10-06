@@ -93,9 +93,26 @@ public sealed class PasswordLoginHttpTests
             "manifest", null, null, "dev", "installed", "stopped", null, null, [], new Dictionary<string, AppSettingValue>(),
             [], [], [new("web", "http", "http://app.example.test", true)], now, now));
         using var client = harness.CreateClient();
-        client.BaseAddress = new Uri("http://core.hosty.localhost:7070");
-        var continuation = "/api/apps/example.app/open?redirectUri=" + Uri.EscapeDataString("http://app.example.test/page")
-            + (popup ? "&responseMode=web_message&state=" + new string('a', 64) : "");
+        client.BaseAddress = new Uri("http://127.0.0.1:7070");
+        client.DefaultRequestHeaders.Add("Sec-Fetch-Mode", "navigate");
+        client.DefaultRequestHeaders.Add("Sec-Fetch-Dest", "document");
+        async Task<HttpResponseMessage> StartAsync(string state, string redirect = "http://app.example.test/page")
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/apps/example.app/sign-in-intent");
+            request.Headers.Add("Origin", "http://app.example.test");
+            request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["redirectUri"] = redirect, ["state"] = state,
+                ["codeChallenge"] = AuthCodeProof.Challenge, ["codeChallengeMethod"] = "S256",
+                ["responseMode"] = popup ? "web_message" : "",
+            });
+            return await client.SendAsync(request);
+        }
+        using var started = await StartAsync(new string('a', 64));
+        Assert.Equal(HttpStatusCode.SeeOther, started.StatusCode);
+        var nonceCookie = started.Headers.GetValues("Set-Cookie").Single().Split(';')[0];
+        client.DefaultRequestHeaders.Add("Cookie", nonceCookie);
+        var continuation = started.Headers.Location!.OriginalString;
         using var first = await client.GetAsync(continuation);
         Assert.Equal(HttpStatusCode.Redirect, first.StatusCode);
         Assert.StartsWith("/login?returnTo=", first.Headers.Location!.ToString());
@@ -103,7 +120,8 @@ public sealed class PasswordLoginHttpTests
             { ["email"] = "admin@example.test", ["password"] = Password, ["returnTo"] = continuation }));
         Assert.Equal(continuation, login.Headers.Location!.OriginalString);
         var cookie = Assert.Single(login.Headers.GetValues("Set-Cookie"), c => c.StartsWith("hosty_session="));
-        client.DefaultRequestHeaders.Add("Cookie", cookie.Split(';')[0]);
+        client.DefaultRequestHeaders.Remove("Cookie");
+        client.DefaultRequestHeaders.Add("Cookie", nonceCookie + "; " + cookie.Split(';')[0]);
         using var opened = await client.GetAsync(login.Headers.Location);
         string code;
         if (popup)
@@ -125,22 +143,28 @@ public sealed class PasswordLoginHttpTests
             code = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(target.Query)["code"].ToString();
         }
         Assert.NotEmpty(code);
-        using var exchanged = await client.PostAsJsonAsync("/api/auth/apps/token", new { code });
+        using var appClient = harness.CreateClient();
+        appClient.DefaultRequestHeaders.Authorization = new("Bearer", harness.Services.GetRequiredService<AppServiceTokenService>().CreateToken("example.app"));
+        using var exchanged = await appClient.PostAsJsonAsync("/api/auth/apps/token", new { code, codeVerifier = AuthCodeProof.Verifier });
         exchanged.EnsureSuccessStatusCode();
         Assert.True((await exchanged.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>()).GetProperty("activeUntil").GetDateTimeOffset() > now);
         if (popup)
         {
-            using var replay = await client.PostAsJsonAsync("/api/auth/apps/token", new { code });
+            using var replay = await appClient.PostAsJsonAsync("/api/auth/apps/token", new { code, codeVerifier = AuthCodeProof.Verifier });
             Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);
-            using var badState = await client.GetAsync(continuation.Replace(new string('a', 64), "short"));
+            using var badState = await StartAsync("short");
             Assert.Equal(HttpStatusCode.BadRequest, badState.StatusCode);
-            using var foreignPopup = await client.GetAsync(continuation.Replace("app.example.test", "evil.example.test"));
+            using var foreignPopup = await StartAsync(new string('a', 64), "http://evil.example.test/page");
             Assert.Equal(HttpStatusCode.Forbidden, foreignPopup.StatusCode);
         }
         using var foreign = await client.GetAsync("/api/apps/example.app/open?redirectUri=https%3A%2F%2Fother.example.test%2Fcallback");
         Assert.Equal(HttpStatusCode.Forbidden, foreign.StatusCode);
         await users.UpdateAsync(s => s with { Assignments = [] });
-        using var revoked = await client.GetAsync(continuation);
+        using var revokedStart = await StartAsync(new string('b', 64));
+        var revokedNonce = revokedStart.Headers.GetValues("Set-Cookie").Single().Split(';')[0];
+        client.DefaultRequestHeaders.Remove("Cookie");
+        client.DefaultRequestHeaders.Add("Cookie", revokedNonce + "; " + cookie.Split(';')[0]);
+        using var revoked = await client.GetAsync(revokedStart.Headers.Location);
         Assert.Equal(HttpStatusCode.Forbidden, revoked.StatusCode);
     }
 

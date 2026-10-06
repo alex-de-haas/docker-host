@@ -78,7 +78,7 @@ export async function getMarketplaceIdentity(headersList: HeaderReader): Promise
 }
 
 /** Recovery parameters for the identity probe response (request-time env, never baked). */
-export function getRecoveryParams(): RecoveryParams {
+export async function getRecoveryParams(): Promise<RecoveryParams> {
   return readSdkRecoveryParams(hostyAppConfig);
 }
 

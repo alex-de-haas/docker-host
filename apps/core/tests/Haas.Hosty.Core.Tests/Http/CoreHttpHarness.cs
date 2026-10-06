@@ -54,7 +54,7 @@ public sealed class CoreHttpHarness : IAsyncDisposable
             ControlDiscoveryPath: Path.Combine(dataRoot, "core", "run", "control.json"),
             CorePort: 7070,
             ListenUrl: "http://localhost:7070",
-            CorePublicOrigin: "http://localhost:7070",
+            CorePublicOrigin: null,
             RuntimePublicHost: "127.0.0.1",
             ShellSourceOverridePath: null,
             ShellAutostart: false));

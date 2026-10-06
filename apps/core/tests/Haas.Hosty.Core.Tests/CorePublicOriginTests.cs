@@ -50,6 +50,24 @@ public sealed class CorePublicOriginTests : IDisposable
         Assert.Equal("https://env.example.test", origins.GetRow().BaselineOrigin);
     }
 
+    [Theory]
+    [InlineData("http://[::1]:7070")]
+    [InlineData("http://127.0.0.1:7070")]
+    [InlineData("http://localhost:7070")]
+    public async Task ExplicitCookieHost_IsPreservedAcrossEnvironmentStoreAndReset(string origin)
+    {
+        var config = Config(envBaseline: origin);
+        var (origins, settings) = CoreOriginTestFactory.Create(config, Paths);
+        Assert.Equal(origin, config.EffectiveCorePublicOrigin);
+        Assert.Equal(origin, origins.Effective);
+        Assert.Equal(origin, origins.Baseline);
+        await CoreOriginTestFactory.SetAsync(settings, "http://[::1]:8080");
+        Assert.Equal("http://[::1]:8080", origins.Effective);
+        Assert.Equal(origin, origins.Baseline);
+        await CoreOriginTestFactory.SetAsync(settings, null);
+        Assert.Equal(origin, origins.Effective);
+    }
+
     [Fact]
     public async Task ClearingTheOverrideFallsBackToTheEnvironmentBaseline()
     {

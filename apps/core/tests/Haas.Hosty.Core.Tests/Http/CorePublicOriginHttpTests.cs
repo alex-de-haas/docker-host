@@ -39,7 +39,7 @@ public sealed class CorePublicOriginHttpTests
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("publication").ValueKind);
         Assert.Equal("http://core.hosty.localhost:7070", document.RootElement.GetProperty("origin").GetString());
-        Assert.True(document.RootElement.GetProperty("configured").GetBoolean());
+        Assert.False(document.RootElement.GetProperty("configured").GetBoolean());
     }
 
     [Theory]
@@ -166,7 +166,7 @@ public sealed class CorePublicOriginHttpTests
         // control plane: the browser recovery path, not just the headless one.
         using var repaired = await PutAdminSettingAsync(client, session!, "http://localhost:7070");
         Assert.Equal(HttpStatusCode.OK, repaired.StatusCode);
-        Assert.Equal("http://core.hosty.localhost:7070", (await ReadSettingAsync(client, secret)).Value);
+        Assert.Equal("http://localhost:7070", (await ReadSettingAsync(client, secret)).Value);
     }
 
     // The session cookie's Secure flag follows the request scheme, not the public origin. A cookie marked

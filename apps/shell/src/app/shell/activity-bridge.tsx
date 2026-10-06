@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { AppActivityBridge } from "@hosty-sdk/app/react";
 import { APP_ACTIVITY_RENEWED } from "@hosty-sdk/app/browser-auth";
 export function ShellActivityBridge({ coreOrigin, appId }: { coreOrigin: string; appId: string }) {
-  const [state, setState] = useState<{ activeUntil?: string | null; activityRequired?: boolean }>({});
+  const [state, setState] = useState<{ activeUntil?: string | null; activityRequired?: boolean; appAuthProtocol?: 1 | 2 | null }>({});
   useEffect(() => {
     const abort = new AbortController();
     const refresh = () => { void fetch("/api/hosty/permissions", { cache: "no-store", signal: abort.signal })
@@ -11,5 +11,5 @@ export function ShellActivityBridge({ coreOrigin, appId }: { coreOrigin: string;
     refresh(); window.addEventListener(APP_ACTIVITY_RENEWED, refresh);
     return () => { abort.abort(); window.removeEventListener(APP_ACTIVITY_RENEWED, refresh); };
   }, []);
-  return <AppActivityBridge openUrl={`${coreOrigin}/api/apps/${encodeURIComponent(appId)}/open?redirectUri=${encodeURIComponent(typeof window === "undefined" ? "" : window.location.origin + "/auth/callback")}`} appCodePath="/api/auth/renew" {...state} />;
+  return <AppActivityBridge openUrl={`${coreOrigin}/api/apps/${encodeURIComponent(appId)}/open?redirectUri=${encodeURIComponent(typeof window === "undefined" ? "" : window.location.origin + "/auth/callback")}`} appCodePath="/api/auth/renew" probePath="/api/hosty/permissions" {...state} />;
 }

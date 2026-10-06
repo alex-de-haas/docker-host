@@ -1,13 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const hooks = vi.hoisted(() => ({ effect: null as (() => (() => void)) | null, state: { kind: "recovering" } as { kind: string } }));
+const intents = vi.hoisted(() => ({ submit: vi.fn() }));
+vi.mock("./browser-auth", async importOriginal => ({ ...await importOriginal<typeof import("./browser-auth")>(), submitAppAuthIntent: intents.submit }));
 vi.mock("react", () => ({
   useEffect: (effect: () => (() => void)) => { hooks.effect = effect; },
   useRef: (initial: unknown) => ({ current: initial }),
   useState: (initial: { kind?: string }) => [initial?.kind ? hooks.state : null, (state: { kind: string }) => { if (state.kind) hooks.state = state; }],
 }));
 import { AppIdentityBridge } from "./react";
-import { APP_GRANT_STORAGE_KEY, APP_SESSION_ENDED, appFetch, forgetAppGrant, rememberAppGrant } from "./browser-auth";
+import { APP_GRANT_STORAGE_KEY, APP_SESSION_ENDED, appFetch, forgetAppGrant, rememberAppGrant, appCodeChallenge, APP_AUTH_ATTEMPT_PREFIX } from "./browser-auth";
+
+
+const codeVerifier = "v".repeat(43);
+function pendingAttempt(state: string, uri: string, mode = "silent") {
+  const redirect = new URL(uri);
+  for (const name of ["code", "error", "state"]) redirect.searchParams.delete(name);
+  redirect.hash = ""; redirect.searchParams.set("state", state);
+  return JSON.stringify({ state, codeVerifier, codeChallenge: appCodeChallenge(codeVerifier), appId: "sample",
+    coreOrigin: "http://core.localhost", redirectUri: redirect.href, createdAt: Date.now(), mode, protocol: 1 });
+}
 
 function deferredResponse() {
   let resolve!: (response: Response) => void;
@@ -22,14 +34,15 @@ describe("AppIdentityBridge launch exchange", () => {
   let reload: ReturnType<typeof vi.fn>;
   beforeEach(() => {
     hooks.state = { kind: "recovering" };
+    intents.submit.mockClear();
     reload = vi.fn();
-    const location = { origin: "http://app.local", href: "http://app.local/?code=one-time-code", reload };
+    const location = { origin: "http://app.local", href: `http://app.local/?code=one-time-code&state=${"b".repeat(64)}`, reload };
     vi.stubGlobal("window", {
       location,
       history: { replaceState: (_state: unknown, _title: string, path: string) => {
         location.href = new URL(path, location.href).href;
       } },
-      sessionStorage: { removeItem: vi.fn(), getItem: () => null },
+      sessionStorage: { removeItem: vi.fn(), getItem: (key: string) => key === `${APP_AUTH_ATTEMPT_PREFIX}${"b".repeat(64)}` ? pendingAttempt("b".repeat(64), "http://app.local/", "standalone") : null },
       setTimeout, clearTimeout, addEventListener: vi.fn(), removeEventListener: vi.fn(),
     });
   });
@@ -47,7 +60,7 @@ describe("AppIdentityBridge launch exchange", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [path, init] = fetchMock.mock.calls[0];
     expect(path).toBe("/api/auth/app-code");
-    expect(init.body).toBe(JSON.stringify({ code: "one-time-code" }));
+    expect(init.body).toBe(JSON.stringify({ code: "one-time-code", codeVerifier }));
     expect(init.signal?.aborted ?? false).toBe(false);
     expect(window.location.href).not.toContain("code=");
 
@@ -114,18 +127,19 @@ describe("AppIdentityBridge launch exchange", () => {
 describe("AppIdentityBridge embedded sign-in", () => {
   const state = "a".repeat(64);
   const appId = "sample";
-  const recovery = { appId, corePublicOrigin: "http://core.localhost" };
+  const recovery = { appId, corePublicOrigin: "http://core.localhost", appAuthProtocol: 1 };
   let stored: Map<string, string>;
   let browser: EventTarget & { location: URL & { replace: ReturnType<typeof vi.fn>; assign: ReturnType<typeof vi.fn> } };
   let cleanup: (() => void) | undefined;
 
   beforeEach(() => {
     hooks.state = { kind: "recovering" };
+    intents.submit.mockClear();
     stored = new Map();
     const location = Object.assign(new URL("http://app.localhost/draft?topic=one#draft"), { replace: vi.fn(), assign: vi.fn() });
     browser = Object.assign(new EventTarget(), { location,
       sessionStorage: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => stored.set(key, value),
-        removeItem: (key: string) => stored.delete(key) },
+        removeItem: (key: string) => stored.delete(key), get length() { return stored.size; }, key: (index: number) => [...stored.keys()][index] ?? null },
       history: { replaceState: (_state: unknown, _title: string, path: string) => { location.href = new URL(path, location.href).href; } },
       setTimeout, clearTimeout,
     });
@@ -148,8 +162,9 @@ describe("AppIdentityBridge embedded sign-in", () => {
     const url = new URL(browser.location.replace.mock.calls[0][0]);
     expect(url.searchParams.get("prompt")).toBe("none");
     expect(url.searchParams.get("state")).toMatch(/^[a-f0-9]{64}$/);
-    expect(url.searchParams.get("redirectUri")).toBe("http://app.localhost/draft?topic=one");
-    expect(stored.get("hosty.auth.silent-state")).toBe(url.searchParams.get("state"));
+    expect(new URL(url.searchParams.get("redirectUri")!).searchParams.get("state")).toBe(url.searchParams.get("state"));
+    expect(url.searchParams.get("codeChallengeMethod")).toBe("S256");
+    expect(JSON.parse(stored.get(`${APP_AUTH_ATTEMPT_PREFIX}${url.searchParams.get("state")}`)!).codeVerifier).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(stored.get(`hosty.auth.silent-attempted:${appId}`)).toBe("1");
     cleanup!(); mount();
     await vi.waitFor(() => expect(hooks.state.kind).toBe("signin"));
@@ -179,7 +194,7 @@ describe("AppIdentityBridge embedded sign-in", () => {
   });
 
   it("uses the button if Core cannot be reached from this app origin", async () => {
-    probe("not-present", { recovery: { appId, corePublicOrigin: null } }); mount();
+    probe("not-present", { recovery: { appId, corePublicOrigin: null, appAuthProtocol: 1 } }); mount();
     await vi.waitFor(() => expect(hooks.state.kind).toBe("signin"));
     expect(browser.location.replace).not.toHaveBeenCalled();
   });
@@ -193,22 +208,22 @@ describe("AppIdentityBridge embedded sign-in", () => {
 
   it("exchanges a silent code only with the pending state and persists its grant", async () => {
     browser.location.href = `http://app.localhost/draft?code=app-code&state=${state}`;
-    stored.set("hosty.auth.silent-state", state);
+    stored.set(`${APP_AUTH_ATTEMPT_PREFIX}${state}`, pendingAttempt(state, browser.location.href));
     stored.set(`hosty.auth.silent-attempted:${appId}`, "1");
     const fetcher = vi.fn().mockImplementation(async path => path === "/api/auth/app-code"
       ? Response.json({ accessToken: "embedded-grant" }) : Response.json({ status: "active", recovery }));
     vi.stubGlobal("fetch", fetcher); mount();
     await vi.waitFor(() => expect(hooks.state.kind).toBe("active"));
     expect(fetcher.mock.calls[0][0]).toBe("/api/auth/app-code");
-    expect(fetcher.mock.calls[0][1].body).toBe(JSON.stringify({ code: "app-code" }));
+    expect(fetcher.mock.calls[0][1].body).toBe(JSON.stringify({ code: "app-code", codeVerifier }));
     expect(stored.get(APP_GRANT_STORAGE_KEY)).toBe("embedded-grant");
-    expect(stored.has("hosty.auth.silent-state")).toBe(false);
+    expect(stored.has(`${APP_AUTH_ATTEMPT_PREFIX}${state}`)).toBe(false);
     expect(browser.location.search).toBe("");
   });
 
   it.each([null, "wrong-state"])("ignores a code with %s state", async returnedState => {
     browser.location.href = `http://app.localhost/?code=injected${returnedState ? `&state=${returnedState}` : ""}`;
-    stored.set("hosty.auth.silent-state", state);
+    stored.set(`${APP_AUTH_ATTEMPT_PREFIX}${state}`, pendingAttempt(state, browser.location.href));
     stored.set(`hosty.auth.silent-attempted:${appId}`, "1");
     const fetcher = probe("not-present"); mount();
     await vi.waitFor(() => expect(hooks.state.kind).toBe("signin"));
@@ -220,7 +235,7 @@ describe("AppIdentityBridge embedded sign-in", () => {
 
   it.each([["login_required", "signin"], ["access_denied", "denied"]])("renders the %s fallback without another navigation", async (error, kind) => {
     browser.location.href = `http://app.localhost/?error=${error}&state=${state}`;
-    stored.set("hosty.auth.silent-state", state);
+    stored.set(`${APP_AUTH_ATTEMPT_PREFIX}${state}`, pendingAttempt(state, browser.location.href));
     stored.set(`hosty.auth.silent-attempted:${appId}`, "1");
     probe("not-present"); mount();
     await vi.waitFor(() => expect(hooks.state.kind).toBe(kind));
@@ -231,7 +246,7 @@ describe("AppIdentityBridge embedded sign-in", () => {
 
   it("allows a popup sign-in after login_required and then activates the verified session", async () => {
     browser.location.href = `http://app.localhost/?error=login_required&state=${state}`;
-    stored.set("hosty.auth.silent-state", state);
+    stored.set(`${APP_AUTH_ATTEMPT_PREFIX}${state}`, pendingAttempt(state, browser.location.href));
     stored.set(`hosty.auth.silent-attempted:${appId}`, "1");
     const popup = { closed: false, close: vi.fn() };
     const open = vi.fn(() => popup); Object.assign(browser, { open });
@@ -251,7 +266,7 @@ describe("AppIdentityBridge embedded sign-in", () => {
 
   it.each([null, "wrong-state"])("ignores a denied response with %s state", async returnedState => {
     browser.location.href = `http://app.localhost/?error=access_denied${returnedState ? `&state=${returnedState}` : ""}`;
-    stored.set("hosty.auth.silent-state", state);
+    stored.set(`${APP_AUTH_ATTEMPT_PREFIX}${state}`, pendingAttempt(state, browser.location.href));
     stored.set(`hosty.auth.silent-attempted:${appId}`, "1");
     probe("not-present"); mount();
     await vi.waitFor(() => expect(hooks.state.kind).toBe("signin"));
@@ -305,5 +320,129 @@ describe("AppIdentityBridge embedded sign-in", () => {
     browser.dispatchEvent(new Event(APP_SESSION_ENDED));
     expect(browser.location.replace).not.toHaveBeenCalled();
     expect(hooks.state.kind).toBe("active");
+  });
+
+  it.each(["embedded", "standalone"])("submits a persisted protocol-2 intent on first %s load", async mode => {
+    if (mode === "standalone") Object.assign(browser, { top: browser });
+    probe("not-present", { recovery: { appId, corePublicOrigin: `https://v2-${mode}.test`, appAuthProtocol: 2 } }); mount();
+    await vi.waitFor(() => expect(intents.submit).toHaveBeenCalledOnce());
+    const attempt = intents.submit.mock.calls[0][0];
+    expect(attempt.mode).toBe(mode === "embedded" ? "silent" : "standalone");
+    expect(attempt.protocol).toBe(2);
+    expect(JSON.parse(stored.get(`${APP_AUTH_ATTEMPT_PREFIX}${attempt.state}`)!).codeVerifier).toBe(attempt.codeVerifier);
+    expect(browser.location.assign).not.toHaveBeenCalled(); expect(browser.location.replace).not.toHaveBeenCalled();
+  });
+
+  it("persists native proof and requests the intercepted GET instead of a browser form", async () => {
+    Object.assign(browser, { top: browser });
+    browser.location.search = "?hosty_launch=native";
+    probe("not-present", { recovery: { appId, corePublicOrigin: "https://v2-native.test", appAuthProtocol: 2 } }); mount();
+    await vi.waitFor(() => expect(browser.location.assign).toHaveBeenCalledOnce());
+    const url = new URL(browser.location.assign.mock.calls[0][0]);
+    expect(url.searchParams.get("codeChallengeMethod")).toBe("S256");
+    const attempt = JSON.parse(stored.get(`${APP_AUTH_ATTEMPT_PREFIX}${url.searchParams.get("state")}`)!);
+    expect(attempt.mode).toBe("native"); expect(url.href).not.toContain(attempt.codeVerifier);
+    expect(intents.submit).not.toHaveBeenCalled();
+  });
+
+  it("refuses recovery when the app server could not verify Core metadata", async () => {
+    probe("not-present", { recovery: { ...recovery, appAuthProtocol: null } }); mount();
+    await vi.waitFor(() => expect(hooks.state.kind).toBe("unavailable"));
+    expect(intents.submit).not.toHaveBeenCalled(); expect(browser.location.replace).not.toHaveBeenCalled();
+  });
+
+  it("exchanges no public code that lacks a local attempt", async () => {
+    Object.assign(browser, { top: browser });
+    stored.set("hosty.auth.recovery-attempted", "1");
+    browser.location.href = `http://app.localhost/?code=stolen&state=${state}&codeVerifier=${codeVerifier}`;
+    const fetcher = probe("not-present"); mount();
+    await vi.waitFor(() => expect(hooks.state.kind).toBe("signin"));
+    expect(fetcher).toHaveBeenCalledOnce(); expect(fetcher.mock.calls[0][0]).toBe("/api/auth/identity");
+    expect(browser.location.search).not.toContain("code=");
+  });
+
+  it.each(["embedded", "standalone"])("restarts a correlated protocol_required %s callback exactly once", async mode => {
+    const coreOrigin = `https://required-${mode}.test`;
+    const old = JSON.parse(pendingAttempt(state, "http://app.localhost/draft", mode === "embedded" ? "silent" : "standalone")); old.coreOrigin = coreOrigin;
+    stored.set(`${APP_AUTH_ATTEMPT_PREFIX}${state}`, JSON.stringify(old));
+    stored.set(mode === "embedded" ? `hosty.auth.silent-attempted:${appId}` : "hosty.auth.recovery-attempted", "1");
+    if (mode === "standalone") Object.assign(browser, { top: browser });
+    browser.location.href = `http://app.localhost/draft?state=${state}&error=protocol_required`;
+    const fetcher = probe("not-present", { recovery: { appId, corePublicOrigin: coreOrigin, appAuthProtocol: 2 } }); mount();
+    await vi.waitFor(() => expect(intents.submit).toHaveBeenCalledOnce());
+    const next = intents.submit.mock.calls[0][0];
+    expect(next.protocol).toBe(2); expect(next.state).not.toBe(state); expect(next.codeVerifier).not.toBe(codeVerifier);
+    expect(stored.has(`${APP_AUTH_ATTEMPT_PREFIX}${state}`)).toBe(false);
+    expect(browser.location.search).not.toContain("error="); expect(browser.location.search).not.toContain("state=");
+    expect(fetcher.mock.calls.every(call => call[0] === "/api/auth/identity")).toBe(true);
+    cleanup!(); mount(); await vi.waitFor(() => expect(hooks.state.kind).toBe("signin"));
+    expect(intents.submit).toHaveBeenCalledOnce();
+  });
+
+  it.each(["older", "missing", "other-core", "other-app"])("refuses to restart an old callback with %s metadata", async kind => {
+    const coreOrigin = `https://required-refusal-${kind}.test`;
+    const old = JSON.parse(pendingAttempt(state, "http://app.localhost/draft")); old.coreOrigin = coreOrigin;
+    stored.set(`${APP_AUTH_ATTEMPT_PREFIX}${state}`, JSON.stringify(old)); stored.set(`hosty.auth.silent-attempted:${appId}`, "1");
+    browser.location.href = `http://app.localhost/draft?state=${state}&error=protocol_required`;
+    probe("not-present", { recovery: { appId: kind === "other-app" ? "other" : appId,
+      corePublicOrigin: kind === "other-core" ? "https://different-core.test" : coreOrigin,
+      appAuthProtocol: kind === "older" ? 1 : kind === "missing" ? null : 2 } }); mount();
+    await vi.waitFor(() => expect(hooks.state.kind).toBe("unavailable"));
+    expect(intents.submit).not.toHaveBeenCalled(); expect(browser.location.replace).not.toHaveBeenCalled();
+    expect(stored.has(`${APP_AUTH_ATTEMPT_PREFIX}${state}`)).toBe(false);
+  });
+
+  it.each(["unmatched-state", "protocol-2"])("does not treat a %s callback as a legacy upgrade", async kind => {
+    const coreOrigin = `https://uncorrelated-${kind}.test`;
+    const old = JSON.parse(pendingAttempt(state, "http://app.localhost/draft")); old.coreOrigin = coreOrigin;
+    if (kind === "protocol-2") old.protocol = 2;
+    stored.set(`${APP_AUTH_ATTEMPT_PREFIX}${state}`, JSON.stringify(old)); stored.set(`hosty.auth.silent-attempted:${appId}`, "1");
+    browser.location.href = `http://app.localhost/draft?state=${kind === "unmatched-state" ? "e".repeat(64) : state}&error=protocol_required`;
+    probe("not-present", { recovery: { appId, corePublicOrigin: coreOrigin, appAuthProtocol: 2 } }); mount();
+    await vi.waitFor(() => expect(hooks.state.kind).toBe("signin"));
+    expect(intents.submit).not.toHaveBeenCalled(); expect(browser.location.replace).not.toHaveBeenCalled();
+  });
+
+  it("discards a correlated old code without exchange when this tab already knows protocol 2", async () => {
+    const coreOrigin = "https://observed-before-callback.test";
+    const old = JSON.parse(pendingAttempt(state, "http://app.localhost/draft")); old.coreOrigin = coreOrigin;
+    stored.set(`${APP_AUTH_ATTEMPT_PREFIX}${state}`, JSON.stringify(old));
+    stored.set(`hosty.auth.protocol:${coreOrigin}`, "2"); stored.set(`hosty.auth.silent-attempted:${appId}`, "1");
+    browser.location.href = `http://app.localhost/draft?state=${state}&code=old-issued-code`;
+    const fetcher = probe("not-present", { recovery: { appId, corePublicOrigin: coreOrigin, appAuthProtocol: 2 } }); mount();
+    await vi.waitFor(() => expect(intents.submit).toHaveBeenCalledOnce());
+    expect(fetcher.mock.calls.every(call => call[0] === "/api/auth/identity")).toBe(true);
+    expect(intents.submit.mock.calls[0][0].codeVerifier).not.toBe(codeVerifier);
+    expect(stored.has(`${APP_AUTH_ATTEMPT_PREFIX}${state}`)).toBe(false);
+  });
+
+  it("discards an old issued code after rejection and restarts only with fresh verified protocol-2 proof", async () => {
+    const coreOrigin = "https://issued-before-upgrade.test";
+    const old = JSON.parse(pendingAttempt(state, "http://app.localhost/draft")); old.coreOrigin = coreOrigin;
+    stored.set(`${APP_AUTH_ATTEMPT_PREFIX}${state}`, JSON.stringify(old)); stored.set(`hosty.auth.silent-attempted:${appId}`, "1");
+    browser.location.href = `http://app.localhost/draft?state=${state}&code=old-issued-code`;
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ code: "app_auth_code_rejected" }, { status: 401 }))
+      .mockResolvedValue(Response.json({ status: "not-present", recovery: { appId, corePublicOrigin: coreOrigin, appAuthProtocol: 2 } }));
+    vi.stubGlobal("fetch", fetcher); mount();
+    await vi.waitFor(() => expect(intents.submit).toHaveBeenCalledOnce());
+    expect(fetcher.mock.calls.filter(call => call[0] === "/api/auth/app-code")).toHaveLength(1);
+    expect(intents.submit.mock.calls[0][0].codeVerifier).not.toBe(codeVerifier);
+    expect(intents.submit.mock.calls[0][0].state).not.toBe(state);
+  });
+
+  it("restarts once with fresh protocol-2 proof when old navigation returns without a code after upgrade", async () => {
+    const coreOrigin = "https://upgraded-core.test";
+    const old = JSON.parse(pendingAttempt(state, "http://app.localhost/draft")); old.coreOrigin = coreOrigin;
+    stored.set(`${APP_AUTH_ATTEMPT_PREFIX}${state}`, JSON.stringify(old));
+    stored.set(`hosty.auth.silent-attempted:${appId}`, "1");
+    browser.location.href = `http://app.localhost/draft?state=${state}`;
+    probe("not-present", { recovery: { appId, corePublicOrigin: coreOrigin, appAuthProtocol: 2 } }); mount();
+    await vi.waitFor(() => expect(intents.submit).toHaveBeenCalledOnce());
+    const next = intents.submit.mock.calls[0][0];
+    expect(next.protocol).toBe(2); expect(next.state).not.toBe(state); expect(next.codeVerifier).not.toBe(codeVerifier);
+    expect(stored.has(`${APP_AUTH_ATTEMPT_PREFIX}${state}`)).toBe(false);
+    cleanup!(); mount();
+    await vi.waitFor(() => expect(hooks.state.kind).toBe("signin"));
+    expect(intents.submit).toHaveBeenCalledOnce();
   });
 });

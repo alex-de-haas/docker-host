@@ -3,6 +3,15 @@ import HostyKit
 import Observation
 import WebKit
 
+/// Captured from one approved app document; replacement views/documents cannot receive its result.
+struct WorkspaceSignIn {
+    let request: NativeAppSignIn
+    let coordinatorID: UUID
+    let generation: UInt64
+    let sourceFrame: WKFrameInfo
+    let documentToken = UUID().uuidString
+}
+
 /// The web views one host's apps are running in.
 ///
 /// Kept per host session rather than per screen: switching to Dashboard and back, or between two apps,
@@ -11,7 +20,7 @@ import WebKit
 ///
 /// Bounded rather than unbounded. A `WKWebView` is an expensive object, and an operator with a dozen
 /// apps would otherwise accumulate a dozen live ones; the least recently used are dropped, and an
-/// evicted app re-opens by minting a fresh code, which is the same path a first open takes.
+/// evicted app re-opens at its own origin and creates a fresh sign-in attempt.
 @MainActor
 @Observable
 final class WorkspaceStore {
@@ -19,6 +28,7 @@ final class WorkspaceStore {
     static let capacity = 4
 
     private var webViews: [String: WKWebView] = [:]
+    private var pageURLs: [String: String] = [:]
     /// Least recently used first.
     private var order: [String] = []
 
@@ -28,6 +38,9 @@ final class WorkspaceStore {
     private let dataStore = WKWebsiteDataStore.nonPersistent()
 
     private var recoveries: [String: RecoveryCoordinator] = [:]
+    private var confirmationSessions = NativeConfirmationSessions()
+
+    func retainConfirmationSession(_ client: CoreClient) { confirmationSessions.retain(client) }
 
     /// The web view an app already has, or nil.
     ///
@@ -39,6 +52,10 @@ final class WorkspaceStore {
     func existingWebView(for appID: String) -> WKWebView? {
         webViews[appID]
     }
+
+    func rememberedPageURL(for appID: String) -> String? { pageURLs[appID] }
+
+    func rememberPage(_ url: String, for appID: String) { pageURLs[appID] = url }
 
     /// The web view for an app, created on first use and marked as most recently used.
     ///
@@ -63,19 +80,89 @@ final class WorkspaceStore {
         return webView
     }
 
-    /// Installs identity recovery for an app.
-    ///
-    /// In a web view the app is the top frame, so when its identity expires the app SDK takes its
-    /// standalone path: a redirect to Core's `/api/apps/{id}/open`, which without a Core cookie lands
-    /// on `/login`. That navigation is this client's cue — the native equivalent of the browser
-    /// Shell's `hosty:auth-required` — and nothing in the SDK changes for it.
-    /// Safe in either order: it registers the coordinator for this app, and attaches it to the web
-    /// view if one already exists — `prepare(_:)` attaches it to any view created later.
-    func installRecovery(for appID: String, origin: HostOrigin, reopen: @escaping () -> Void) {
+    /// Installs the native handoff for proof created by this app's own main-frame document.
+    func installRecovery(
+        for appID: String, origin: HostOrigin, approvedAppURLs: [String],
+        signIn: @escaping (WorkspaceSignIn) -> Void, refused: @escaping (String) -> Void
+    ) {
         let coordinator = recoveries[appID] ?? RecoveryCoordinator(appID: appID, origin: origin)
-        coordinator.reopen = reopen
+        coordinator.approvedAppURLs = approvedAppURLs
+        coordinator.signIn = signIn
+        coordinator.refused = refused
         recoveries[appID] = coordinator
         webViews[appID]?.navigationDelegate = coordinator
+    }
+
+    func isCurrentSignIn(_ attempt: WorkspaceSignIn, appID: String) -> Bool {
+        guard let coordinator = recoveries[appID], coordinator.identifier == attempt.coordinatorID,
+              coordinator.gate.isCurrent(attempt.request, generation: attempt.generation),
+              let loadedURL = webViews[appID]?.url,
+              (try? HostOrigin(parsing: loadedURL.absoluteString)) ==
+                (try? HostOrigin(parsing: attempt.request.redirectURI))
+        else { return false }
+        return true
+    }
+
+    func finishSignIn(_ attempt: WorkspaceSignIn, appID: String) {
+        guard recoveries[appID]?.identifier == attempt.coordinatorID,
+              recoveries[appID]?.gate.documentGeneration == attempt.generation else { return }
+        recoveries[appID]?.gate.finish(attempt.request)
+    }
+
+    /// A page-world marker ties asynchronous delivery to this exact document, not only its origin.
+    func prepareInPlaceSignIn(_ attempt: WorkspaceSignIn, appID: String) async -> Bool {
+        guard isCurrentSignIn(attempt, appID: appID), let view = webViews[appID],
+              let origin = try? HostOrigin(parsing: attempt.request.redirectURI) else { return false }
+        do {
+            let result = try await runDocumentScript("""
+                if (window.location.origin !== expectedOrigin) return false;
+                Object.defineProperty(window, '__hostyNativeAuthDocument', {
+                    configurable: true, value: documentToken
+                });
+                return true;
+                """, arguments: ["expectedOrigin": origin.url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
+                    "documentToken": attempt.documentToken], frame: attempt.sourceFrame, view: view)
+            return result && isCurrentSignIn(attempt, appID: appID)
+        } catch { return false }
+    }
+
+    /// Delivers public code/state only. No URL load, verifier or grant crosses the native boundary.
+    func deliverInPlaceSignIn(_ attempt: WorkspaceSignIn, appID: String, code: String = "",
+        errorCode: String = "", errorMessage: String = "") async -> Bool {
+        guard isCurrentSignIn(attempt, appID: appID), let view = webViews[appID],
+              let origin = try? HostOrigin(parsing: attempt.request.redirectURI) else { return false }
+        do {
+            let result = try await runDocumentScript("""
+                if (window.location.origin !== expectedOrigin ||
+                    window.__hostyNativeAuthDocument !== documentToken) return false;
+                delete window.__hostyNativeAuthDocument;
+                const detail = errorCode ? {state, error: {code: errorCode, message: errorMessage}} : {state, code};
+                window.dispatchEvent(new CustomEvent('hosty:native-auth-result', {detail}));
+                return true;
+                """, arguments: [
+                    "expectedOrigin": origin.url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
+                    "documentToken": attempt.documentToken, "state": attempt.request.state,
+                    "code": code, "errorCode": errorCode, "errorMessage": errorMessage,
+                ], frame: attempt.sourceFrame, view: view)
+            let accepted = result && isCurrentSignIn(attempt, appID: appID)
+            finishSignIn(attempt, appID: appID)
+            return accepted
+        } catch {
+            finishSignIn(attempt, appID: appID)
+            return false
+        }
+    }
+
+    private func runDocumentScript(_ body: String, arguments: [String: Any],
+        frame: WKFrameInfo, view: WKWebView) async throws -> Bool {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, Error>) in
+            view.callAsyncJavaScript(body, arguments: arguments, in: frame, in: .page) { result in
+                switch result {
+                case .success(let value): continuation.resume(returning: value as? Bool == true)
+                case .failure(let error): continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 
     /// True when this app has a recovery coordinator registered. Exists so a test — and a reader —
@@ -85,22 +172,24 @@ final class WorkspaceStore {
     }
 
     /// True when this app already has a loaded page, so opening it again is a switch rather than a
-    /// launch. A caller uses this to decide whether a fresh code is needed at all.
+    /// launch. A caller uses this to retain the existing document on a workspace remount.
     func isLoaded(_ appID: String) -> Bool {
         webViews[appID]?.url != nil
     }
 
     /// Drops everything. Called when the session ends: the credential that authorized these grants is
     /// gone, so the pages holding them must go too.
-    func reset() {
+    func reset() -> [CoreClient] {
         for webView in webViews.values {
             webView.stopLoading()
             webView.loadHTMLString("", baseURL: nil)
         }
 
         webViews.removeAll()
+        pageURLs.removeAll()
         order.removeAll()
         recoveries.removeAll()
+        return confirmationSessions.takeAll()
     }
 
     private func touch(_ appID: String) {
@@ -112,29 +201,22 @@ final class WorkspaceStore {
         while order.count > Self.capacity, let oldest = order.first {
             order.removeFirst()
             webViews.removeValue(forKey: oldest)?.stopLoading()
+            pageURLs.removeValue(forKey: oldest)
             recoveries.removeValue(forKey: oldest)
         }
     }
 }
 
-/// Turns an app's own "I need identity again" navigation into a fresh launch.
-///
-/// Narrow on purpose, for the same reason the browser Shell's handler is: only a main-frame
-/// navigation, only to this host's own Core origin, only for this app, and at most one recovery every
-/// few seconds. An app that fails immediately after recovering would otherwise drive an unbounded
-/// mint-and-reload loop against Core; past the throttle the navigation is simply allowed, and whatever
-/// Core answers is what the operator sees.
+/// Cancels the public proof navigation before dispatch and hands only its challenge to Core.
 @MainActor
 private final class RecoveryCoordinator: NSObject, WKNavigationDelegate {
-    /// Long enough that a broken app cannot spin, short enough that a genuine expiry recovers while the
-    /// operator is still looking at the screen.
-    private static let throttle: TimeInterval = 3
-
     private let appID: String
     private let origin: HostOrigin
-    private var lastRecovery: Date?
-
-    var reopen: (() -> Void)?
+    let identifier = UUID()
+    var gate = NativeSignInGate()
+    var approvedAppURLs: [String] = []
+    var signIn: ((WorkspaceSignIn) -> Void)?
+    var refused: ((String) -> Void)?
 
     init(appID: String, origin: HostOrigin) {
         self.appID = appID
@@ -142,38 +224,35 @@ private final class RecoveryCoordinator: NSObject, WKNavigationDelegate {
     }
 
     func webView(
-        _ webView: WKWebView,
-        decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        _ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
     ) {
-        guard navigationAction.targetFrame?.isMainFrame ?? false,
-              let url = navigationAction.request.url,
-              isRecoveryNavigation(url),
-              allowedByThrottle()
+        guard let url = navigationAction.request.url,
+              NativeAppSignIn.isBrokerNavigation(url, appID: appID, coreOrigin: origin)
         else {
+            if navigationAction.targetFrame?.isMainFrame == true { gate.documentChanged() }
             decisionHandler(.allow)
             return
         }
-
         decisionHandler(.cancel)
-        lastRecovery = Date()
-        reopen?()
-    }
-
-    /// Core's own origin, and one of the two paths the SDK's standalone recovery uses: the open
-    /// endpoint for this app, or the login page it bounces to without a Core cookie. Anything else on
-    /// Core's origin is left alone.
-    private func isRecoveryNavigation(_ url: URL) -> Bool {
-        guard (try? HostOrigin(parsing: url.absoluteString)) == origin else { return false }
-
-        if url.path == "/login" { return true }
-
-        return url.path == "/api/apps/\(appID)/open"
-            || url.path == "/api/apps/\(appID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? appID)/open"
-    }
-
-    private func allowedByThrottle() -> Bool {
-        guard let lastRecovery else { return true }
-        return Date().timeIntervalSince(lastRecovery) > Self.throttle
+        let source = navigationAction.sourceFrame.securityOrigin
+        var sourceURL = URLComponents()
+        sourceURL.scheme = source.protocol
+        sourceURL.host = source.host
+        if source.port > 0 { sourceURL.port = source.port }
+        guard let sourceString = sourceURL.string,
+              let sourceOrigin = try? HostOrigin(parsing: sourceString),
+              let request = NativeAppSignIn.parse(
+                url, appID: appID, coreOrigin: origin, sourceOrigin: sourceOrigin,
+                approvedAppURLs: approvedAppURLs,
+                sourceIsMainFrame: navigationAction.sourceFrame.isMainFrame,
+                targetIsMainFrame: navigationAction.targetFrame?.isMainFrame == true)
+        else {
+            refused?("The app's sign-in request did not match its approved origin and proof.")
+            return
+        }
+        guard gate.claim(request) else { return }
+        signIn?(WorkspaceSignIn(request: request, coordinatorID: identifier,
+            generation: gate.documentGeneration, sourceFrame: navigationAction.sourceFrame))
     }
 }

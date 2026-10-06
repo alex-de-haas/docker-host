@@ -1,6 +1,6 @@
 ---
 created: 2026-08-04
-updated: 2026-09-27
+updated: 2026-10-06
 summary: Embedded apps drop the name and navigation their shell already renders, and keep them when opened standalone.
 components: [packages/app-sdk, apps/shell, apps/shell-swift]
 ---
@@ -115,7 +115,7 @@ description; the assistant's own title row in the Hosty Harness's pages.
 - [Swift Shell](../swift-shell/feature.md) — the native workspace chrome and the recovery
   interception the `native` mode must not disturb.
 - [Core App Shell](../core-app-shell/feature.md) — the embedded-apps contract this rides on.
-- [Direct Origin Runtime App UI](../auth-gateway/feature.md) — why standalone keeps
+- [App-origin authentication](../auth-gateway/feature.md) — why standalone keeps
   everything.
 
 ## Testing Expectations

@@ -28,10 +28,10 @@ internal sealed class CorePublicOriginResolver(HostyCoreRuntimeConfig config, Co
     public string? Configured => settings.StoredCorePublicOrigin ?? config.CorePublicOrigin;
 
     // What Core advertises for itself, always a usable origin.
-    public string Effective => LocalBrowserOrigins.Core(Configured ?? config.ListenUrl, config.InstanceId);
+    public string Effective => Configured ?? LocalBrowserOrigins.Core(config.ListenUrl, config.InstanceId);
 
     // Clearing the persisted value uses the environment baseline, else the local browser default.
-    public string Baseline => LocalBrowserOrigins.Core(config.CorePublicOrigin ?? config.ListenUrl, config.InstanceId);
+    public string Baseline => config.CorePublicOrigin ?? LocalBrowserOrigins.Core(config.ListenUrl, config.InstanceId);
 
     public CorePublicOriginSettingRow GetRow()
         => new(Effective, Baseline, Overridden: settings.StoredCorePublicOrigin is not null);

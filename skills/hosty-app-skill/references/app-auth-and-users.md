@@ -17,11 +17,27 @@ flow. A CLI app-identity token remains a direct-endpoint diagnostic only.
 
 ## App Session Flow
 
-1. The app navigates to Core or opens its sign-in popup. Core checks the user and app assignment.
-2. Core returns a short-lived single-use code directly to the app; Shell does not mint it.
-3. The app exchanges the code through `/api/auth/apps/token`.
-4. The app validates the exchanged token against its own service identity, then stores the app identity token in an app-origin HttpOnly cookie. Derive the cookie's `Secure`/`SameSite` attributes from the effective request protocol (`X-Forwarded-Proto` or the request URL): use `SameSite=None; Secure` only over https, and fall back to `SameSite=Lax` without `Secure` on plain http — browsers silently drop `Secure` cookies on insecure origins (Safari even on localhost), which breaks the app session. Set the cookie `Max-Age` from the exchange response `expiresInSeconds` (time to the token's absolute expiry); do not hardcode a fixed cap.
-5. The app revalidates through `/api/auth/apps/revalidate`, authenticating with `Authorization: Bearer <HOSTY_APP_SERVICE_TOKEN>`. Core rejects revalidation when the identity token was issued for a different app.
+1. Use SDK recovery to create a private verifier and independent state on the app origin. The app-owned
+   form submits only the public S256 challenge to Core's `sign-in-intent` endpoint.
+2. Core validates Origin/navigation and binds a five-minute intent to an isolated HttpOnly nonce cookie.
+   Its immutable `/open?requestId=...` continuation checks the nonce before login and issues once after
+   normal user/assignment checks. A bare `/open` link only bootstraps the app without credentials.
+3. The app server exchanges `{ code, codeVerifier }` at `/api/auth/apps/token` using its service bearer.
+   Validate proof before contacting Core and set `redirect: "error"`. Core checks the app and proof
+   before consumption; wrong app/proof cannot burn the original code. Never put a verifier in a URL,
+   popup/embedder message, log or telemetry body.
+4. Validate the resulting own-app grant and store it in an app-origin HttpOnly cookie. Derive Secure and
+   SameSite from the effective request protocol: HTTPS uses `SameSite=None; Secure`, plain HTTP uses
+   `SameSite=Lax`. Set `Max-Age` from `expiresInSeconds`; embedded browser transport can retain its own
+   grant in tab-scoped sessionStorage when iframe cookies are unavailable.
+5. Revalidation authenticates with `Authorization: Bearer <HOSTY_APP_SERVICE_TOKEN>` and rejects another
+   app's grant. Core credentials and target-app credentials never go to Shell.
+
+HTTPS Core/app hosts must differ; nonce cookies use `__Host-`, Secure, Path=/ and no Domain. Plain HTTP
+requires a literal-IP Core public host different from every app origin. Source development uses Core
+`[::1]` and app `localhost` names. Ports alone do not isolate cookies. Protocol metadata has a strict
+old-Core compatibility path; unknown/transient failures never authorize a downgrade. See
+[the exchange plan](../../../docs/features/app-code-exchange/feature.md).
 
 ## Core Origin Variables
 
@@ -46,9 +62,13 @@ Pick the recovery channel by embedding mode (`window.self === window.top` → st
 
 Top-level page, recoverable failure:
 
-1. Navigate the **top window** to `{HOSTY_CORE_PUBLIC_ORIGIN}/api/apps/{appId}/open?redirectUri=<current app URL>`. Build the redirect URI from `location.origin + location.pathname + location.search` — **exclude any `#` fragment**, which Core rejects (`redirect_uri_invalid`) and which would not survive the redirect anyway. Core issues a fresh code and redirects back with `?code=`; if the Core session is also gone, Core routes through `/login` and returns the user to the same app URL afterward.
-2. **Guard against loops:** auto-navigate at most once per tab (e.g. a `sessionStorage` flag cleared on a successful code exchange). If the flag is already set, render an explicit **"Sign in via Hosty"** button pointing at the same URL instead of redirecting again.
-3. On return, exchange the `?code=` as in the App Session Flow and reload.
+1. Let `AppIdentityBridge` create and persist a fresh app-owned attempt, verify its storage round trip,
+   and submit the Core intent form in the current document. The callback excludes fragments and carries
+   state; Core login preserves the exact immutable request ID.
+2. Guard automatic navigation once per tab. Storage refusal or another recovery attempt offers the
+   explicit sign-in action, which opens an app-owned popup from a user gesture.
+3. On callback, match local state, take its private verifier once, remove code/state from the URL and
+   exchange on the app's own server. A public bootstrap URL never supplies an accepted proof attempt.
 
 ### Embedded (iframe) Recovery
 
@@ -58,11 +78,10 @@ single-use code on the app's own server. Custom `renderState` views must wire `s
 show `state.error` when present. The password form belongs to Core.
 
 Use `appFetch` from `@hosty-sdk/app/browser-auth` for all protected same-origin API calls, including
-streams. The bridge keeps the app-only grant in document memory when iframe cookies are blocked;
+streams. The bridge keeps the app-only grant in document memory and app-origin `sessionStorage` for embedded tabs when iframe cookies are blocked;
 `appFetch` attaches it as an explicit bearer and starts recovery on 401. The server reads the bearer
 before a possibly stale app cookie and revalidates it with its own service credential. A server-only
-cookie reader is insufficient for this browser mode. Never store grants in localStorage or
-sessionStorage, send them to Shell, or rely on Shell to mint another app's credentials.
+cookie reader is insufficient for this browser mode. Never store grants in localStorage, send them to Shell, or rely on Shell to mint another app's credentials. Standalone documents use their first-party cookie; blocked sessionStorage degrades to memory.
 
 The frame keeps its sandbox. Sign-in needs popup support, not top-navigation permission or
 `apps.install`. Test both embedded and standalone entry; SSR-only protected pages need an explicit

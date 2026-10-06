@@ -13,7 +13,8 @@ import { stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { isSameOriginRequest, resolveAdminActor } from "./auth.js";
-import { readAppCredential, resolveAppSession, exchangeLaunchCode } from "./app-session.js";
+import { readAppCredential, resolveAppSession, exchangeLaunchCode, getAppRecoveryParams } from "./app-session.js";
+import { isValidCodeVerifier } from "@hosty-sdk/app/app-code";
 import { isSourceConnectionRoute, requestSourceConnection } from "./source-connections.js";
 import { serveStaticSite } from "./settings/static-site.js";
 
@@ -149,11 +150,12 @@ async function route(
   }
 
   if (method === "GET" && url.pathname === "/api/auth/identity") {
+    response.setHeader("Cache-Control", "no-store");
     const session = await resolveAppSession(readAppCredential(request));
     sendJson(response, 200, { status: session.status === "active" && session.identity.hostRole !== "host.admin" ? "forbidden" : session.status,
       ...(session.status === "active" ? { activeUntil: session.identity.activeUntil, activityRequired: session.identity.activityRequired } : {}),
       ...(session.status !== "active" && session.error ? { error: session.error } : {}),
-      recovery: { appId: process.env.HOSTY_APP_ID ?? "hosty.harness", corePublicOrigin: process.env.HOSTY_CORE_PUBLIC_ORIGIN ?? null } });
+      recovery: await getAppRecoveryParams() });
     return;
   }
 
@@ -161,6 +163,7 @@ async function route(
   // one-time code to this app's navigation or its own popup; Shell does not carry the code. This
   // endpoint exchanges it and revalidates the grant for Harness before setting the app cookie.
   if (method === "POST" && url.pathname === "/api/app-code") {
+    response.setHeader("Cache-Control", "no-store");
     if (!isSameOriginRequest(request)) {
       // The page calls this with a relative URL, so a legitimate exchange is always same-origin.
       // Refusing anything else closes login CSRF: a cross-site post of *its own* valid code would
@@ -178,10 +181,15 @@ async function route(
       sendJson(response, 422, { code: "app_auth_code_required", message: "A Hosty app authorization code is required." });
       return;
     }
+    const codeVerifier = body.codeVerifier;
+    if (!isValidCodeVerifier(codeVerifier)) {
+      sendJson(response, 400, { code: "app_auth_proof_required", message: "A valid Hosty sign-in proof is required." });
+      return;
+    }
 
     const forwardedProto = request.headers["x-forwarded-proto"];
     const proto = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto;
-    const exchange = await exchangeLaunchCode(code, (proto ?? "").split(",")[0]?.trim() === "https");
+    const exchange = await exchangeLaunchCode(code, codeVerifier, (proto ?? "").split(",")[0]?.trim() === "https");
     if (!exchange.ok) {
       sendJson(response, exchange.status, { code: exchange.code, message: exchange.message });
       return;

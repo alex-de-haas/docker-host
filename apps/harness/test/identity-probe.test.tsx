@@ -43,6 +43,7 @@ it.each([
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input) === "http://core.test/api/auth/apps/protocol") return Response.json({ version: 2 });
       if (String(input) === "http://core.test/api/auth/apps/revalidate") {
         return Response.json({ code, message: "Identity rejected." }, { status });
       }
@@ -61,6 +62,7 @@ it.each([
       expect(node.textContent).toBe(uiKind);
     });
     expect(probeBody).toMatchObject({ status: sessionStatus, error: { code, status } });
+    expect(probeBody).toMatchObject({ recovery: { appAuthProtocol: 2 } });
     expect(sessionStorage.getItem(APP_GRANT_STORAGE_KEY)).toBeNull();
   } finally {
     await act(async () => root.unmount()); node.remove();

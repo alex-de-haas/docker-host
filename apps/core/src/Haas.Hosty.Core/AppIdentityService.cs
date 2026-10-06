@@ -9,6 +9,7 @@ internal sealed class AppIdentityService(
     AppRegistryStore apps,
     AppSessionGrantStore grants,
     CoreSettingsService settings,
+    AuditStore audit,
     IClock clock)
 {
     private static readonly TimeSpan AuthCodeLifetime = TimeSpan.FromMinutes(5);
@@ -23,36 +24,65 @@ internal sealed class AppIdentityService(
         string appId,
         string userId,
         string redirectUri,
+        string? codeChallenge,
+        string? codeChallengeMethod,
         string? authorizingSessionId = null,
         CancellationToken cancellationToken = default,
         bool activityAuthorized = false)
     {
+        AppCodeProof.RequireChallenge(codeChallenge, codeChallengeMethod);
         await RequireAllowedRedirectUriAsync(appId, redirectUri, cancellationToken);
         var (user, _) = await RequireAccessibleUserAsync(appId, userId, cancellationToken);
         var now = clock.UtcNow;
         var code = CreateOpaqueToken();
         await codes.AppendCodeAsync(
-            new AppAuthCodeRecord(code, appId, user.Id, redirectUri, now, now.Add(AuthCodeLifetime), null, authorizingSessionId, user.AuthRevision, activityAuthorized),
+            new AppAuthCodeRecord(code, appId, user.Id, redirectUri, now, now.Add(AuthCodeLifetime), null, authorizingSessionId, user.AuthRevision, activityAuthorized, codeChallenge),
             now,
             cancellationToken);
 
         return new AppAuthorizeResult(code, BuildRedirectUri(redirectUri, code), now.Add(AuthCodeLifetime));
     }
 
-    public async Task<AppIdentityTokenResult> ExchangeCodeAsync(string code, CancellationToken cancellationToken = default)
+    public async Task<AppIdentityTokenResult> ExchangeCodeAsync(string? code, string callingAppId, string? codeVerifier, CancellationToken cancellationToken = default)
     {
-        var result = await codes.ConsumeCodeAsync(code, clock.UtcNow, cancellationToken);
-        var match = result.Outcome switch
+        var result = await codes.ConsumeCodeAsync(code, callingAppId, codeVerifier, clock.UtcNow, cancellationToken);
+        try
         {
-            AppAuthCodeConsumeOutcome.Consumed => result.Record!,
-            AppAuthCodeConsumeOutcome.AlreadyConsumed => throw new AppIdentityException("code_consumed", "Authorization code has already been consumed."),
-            AppAuthCodeConsumeOutcome.Expired => throw new AppIdentityException("code_expired", "Authorization code has expired."),
-            _ => throw new AppIdentityException("invalid_code", "Authorization code is invalid."),
-        };
+            var match = result.Outcome switch
+            {
+                AppAuthCodeConsumeOutcome.Consumed => result.Record!,
+                AppAuthCodeConsumeOutcome.AlreadyConsumed => throw new AppIdentityException("code_consumed", "Authorization code has already been consumed."),
+                AppAuthCodeConsumeOutcome.Expired => throw new AppIdentityException("code_expired", "Authorization code has expired."),
+                _ => throw new AppIdentityException("invalid_code", "Authorization code is invalid."),
+            };
 
-        var (user, app) = await RequireAccessibleUserAsync(match.AppId, match.UserId, cancellationToken);
-        RequireCurrentAuthRevision(match.AuthRevision, user);
-        return await CreateGrantAsync(app, user, AppGrantIssuedVia.Code, match.AuthorizingSessionId, cancellationToken, match.ActivityAuthorized);
+            var (user, app) = await RequireAccessibleUserAsync(match.AppId, match.UserId, cancellationToken);
+            RequireCurrentAuthRevision(match.AuthRevision, user);
+            return await CreateGrantAsync(app, user, AppGrantIssuedVia.Code, match.AuthorizingSessionId, cancellationToken, match.ActivityAuthorized);
+        }
+        catch (AppIdentityException exception)
+        {
+            await AppendCodeExchangeRefusalAsync(callingAppId, result.Record?.AppId,
+                result.Outcome switch { AppAuthCodeConsumeOutcome.AppMismatch => "code_app_mismatch", AppAuthCodeConsumeOutcome.ProofMismatch => "code_proof_mismatch", _ => exception.Code }, cancellationToken);
+            throw;
+        }
+    }
+
+    internal async Task AuditRejectedCodeExchangeAsync(string? code, string reason, CancellationToken cancellationToken)
+    {
+        var codeAppId = (await codes.ReadAsync(cancellationToken)).Codes
+            .FirstOrDefault(candidate => string.Equals(candidate.Code, code, StringComparison.Ordinal))?.AppId;
+        await AppendCodeExchangeRefusalAsync(null, codeAppId, reason, cancellationToken);
+    }
+
+    private Task AppendCodeExchangeRefusalAsync(string? callingAppId, string? codeAppId, string reason, CancellationToken cancellationToken)
+    {
+        var details = new Dictionary<string, string> { ["reason"] = reason };
+        if (callingAppId is not null) details["callingAppId"] = callingAppId;
+        if (codeAppId is not null) details["codeAppId"] = codeAppId;
+        return audit.AppendAsync(new AuditRecord(
+            Id: $"audit_{Guid.NewGuid():N}", Action: "auth.app-code.exchange", ResourceType: "app",
+            ResourceId: codeAppId, Outcome: reason, ActorUserId: null, CreatedAt: clock.UtcNow, Details: details), cancellationToken);
     }
 
     public async Task<AppIdentityTokenResult> CreateLaunchTokenAsync(
@@ -299,7 +329,7 @@ internal sealed class AppIdentityService(
         }
     }
 
-    private static IEnumerable<string?> GetAllowedEndpointOrigins(
+    internal static IEnumerable<string?> GetAllowedEndpointOrigins(
         AppRecord app,
         AppEndpointContract endpoint)
     {

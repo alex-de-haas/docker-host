@@ -9,6 +9,12 @@ internal static class AppPopupResponse
     private static string Js(string value) => "\"" + JsonEncodedText.Encode(value).ToString() + "\"";
 
     internal static IResult Render(HttpResponse response, string redirectUri, string state, string code)
+        => RenderMessage(response, redirectUri, state, "code", code, close: true);
+
+    internal static IResult RenderProtocolRequired(HttpResponse response, string redirectUri, string state)
+        => RenderMessage(response, redirectUri, state, "error", "protocol_required", close: false);
+
+    private static IResult RenderMessage(HttpResponse response, string redirectUri, string state, string field, string value, bool close)
     {
         var origin = new Uri(redirectUri).GetLeftPart(UriPartial.Authority);
         var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
@@ -24,8 +30,8 @@ internal static class AppPopupResponse
             <p id="status">Completing sign-in. You can close this window.</p>
             <script nonce="{{nonce}}">
             if (window.opener) {
-              window.opener.postMessage({type:"hosty:app-auth-code",state:{{Js(state)}},code:{{Js(code)}}},{{Js(origin)}});
-              window.close();
+              window.opener.postMessage({type:"hosty:app-auth-code",state:{{Js(state)}},{{field}}:{{Js(value)}}},{{Js(origin)}});
+              {{(close ? "window.close();" : "")}}
             } else {
               document.getElementById("status").textContent="The requesting window is unavailable. Return to the app and try signing in again.";
             }

@@ -193,7 +193,7 @@ TOKEN="$(hosty apps identity com.haas.demo-app --user user@hosty.local --format 
 curl -H "X-Docker-Host-Identity: $TOKEN" http://127.0.0.1:3100/api/auth/identity
 ```
 
-Use `hosty apps open com.haas.demo-app --user user@hosty.local` for Shell or standalone launch links. Standalone app runs are not valid Hosty identity tests.
+Use `hosty apps open com.haas.demo-app` for Shell or standalone launch links. Standalone app runs are not valid Hosty identity tests.
 
 ## CLI development
 

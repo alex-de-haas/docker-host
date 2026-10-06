@@ -282,31 +282,186 @@ struct CoreClientTests {
             #expect(StubURLProtocol.requests.first?.request.url?.query == nil)
         }
 
-        @Test("A launch code posts the redirect URI as JSON and carries only the bearer")
+        @Test("A launch code discovers the protocol publicly and posts only public proof with the bearer")
         func launchCode() async throws {
-            StubURLProtocol.install(json: #"""
-            {"code":"abc","redirectUri":"http://127.0.0.1:3100/?code=abc","expiresAt":"2026-07-30T14:05:00Z"}
-            """#)
+            StubURLProtocol.install([
+                StubURLProtocol.stub(json: #"{"version":2}"#),
+                StubURLProtocol.stub(json: #"{"code":"abc","redirectUri":"https://app.example.test/?state=attempt&code=abc","expiresAt":"2026-07-30T14:05:00Z"}"#),
+            ])
+            let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
 
             let launch = try await client().createLaunchCode(
-                appID: "com.haas.demo-app",
-                redirectURI: "http://127.0.0.1:3100/")
+                appID: "com.haas.demo-app", redirectURI: "https://app.example.test/?state=attempt",
+                codeChallenge: challenge, codeChallengeMethod: "S256")
 
-            #expect(launch.redirectUri == "http://127.0.0.1:3100/?code=abc")
-
-            let sent = try #require(StubURLProtocol.requests.first)
+            #expect(launch.code == "abc")
+            let metadata = try #require(StubURLProtocol.requests.first?.request)
+            #expect(metadata.url?.path == "/api/auth/apps/protocol")
+            #expect(metadata.value(forHTTPHeaderField: "Authorization") == nil)
+            #expect(metadata.value(forHTTPHeaderField: "Cache-Control") == "no-store")
+            #expect(metadata.cachePolicy == .reloadIgnoringLocalAndRemoteCacheData)
+            let sent = try #require(StubURLProtocol.requests.last)
+            #expect(StubURLProtocol.requests.count == 2)
             #expect(sent.request.httpMethod == "POST")
             #expect(sent.request.url?.path == "/api/apps/com.haas.demo-app/launch-code")
             #expect(sent.request.value(forHTTPHeaderField: "Content-Type") == "application/json")
             #expect(sent.request.value(forHTTPHeaderField: "Authorization") == "Bearer session_1")
-
-            // Core requires CSRF for a cookie session and exempts a bearer one. This client only ever
-            // presents a bearer, so a CSRF header appearing here would mean the credential path changed.
             #expect(sent.request.value(forHTTPHeaderField: "X-Hosty-CSRF") == nil)
-
+            #expect(sent.request.value(forHTTPHeaderField: "Cookie") == nil)
             let body = try #require(sent.body)
             let decoded = try JSONDecoder().decode([String: String].self, from: body)
-            #expect(decoded == ["redirectUri": "http://127.0.0.1:3100/"])
+            #expect(decoded == [
+                "redirectUri": "https://app.example.test/?state=attempt",
+                "codeChallenge": challenge, "codeChallengeMethod": "S256",
+            ])
+            #expect(!String(decoding: body, as: UTF8.self).contains("codeVerifier"))
+        }
+
+        @Test("Only explicit native renewal requests interactive activity")
+        func interactiveNativeRenewal() async throws {
+            StubURLProtocol.install([
+                StubURLProtocol.stub(json: #"{"version":2}"#),
+                StubURLProtocol.stub(json: #"{"code":"abc","redirectUri":"https://app.example.test/?state=attempt&code=abc","expiresAt":"2026-07-30T14:05:00Z"}"#),
+            ])
+            _ = try await client().createLaunchCode(appID: "demo", redirectURI: "https://app.example.test/?state=attempt",
+                codeChallenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", codeChallengeMethod: "S256",
+                interactiveRenewal: true)
+            let body = try #require(StubURLProtocol.requests.last?.body)
+            let json = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            #expect(json["interactiveRenewal"] as? Bool == true)
+            #expect(json["codeVerifier"] == nil)
+        }
+
+        @Test("Temporary primary confirmation does not replace or clear the native device credential")
+        func temporaryConfirmationIsIndependent() async throws {
+            let native = try client(sessionID: "device_token")
+            let confirmation = try client(sessionID: "primary_session")
+            StubURLProtocol.install([
+                StubURLProtocol.stub(json: #"{"authenticated":true,"user":{"id":"native","email":"native@example.test","displayName":"Native","role":"host.member","disabled":false}}"#),
+                StubURLProtocol.stub(status: 401, json: #"{"code":"session_expired","message":"Session expired"}"#),
+                StubURLProtocol.stub(json: #"{"apps":[]}"#),
+            ])
+            _ = try await confirmation.authSession()
+            await #expect(throws: CoreError.self) { try await confirmation.authSession() }
+            _ = try await native.apps()
+            #expect(await native.isAuthenticated)
+            #expect(await confirmation.isAuthenticated == false)
+            #expect(StubURLProtocol.requests.map { $0.request.value(forHTTPHeaderField: "Authorization") } ==
+                ["Bearer primary_session", "Bearer primary_session", "Bearer device_token"])
+        }
+
+        @Test("Workspace cleanup drains only retained primary confirmations and logs each out once")
+        func confirmationCleanup() async throws {
+            let first = try client(sessionID: "primary_first")
+            let second = try client(sessionID: "primary_second")
+            var owned = NativeConfirmationSessions()
+            owned.retain(first)
+            owned.retain(first)
+            owned.retain(second)
+            let cleanup = owned.takeAll()
+            #expect(cleanup.count == 2)
+            let drained = owned.takeAll()
+            #expect(drained.isEmpty)
+            StubURLProtocol.install()
+            for confirmation in cleanup { try await confirmation.logout() }
+            #expect(StubURLProtocol.requests.count == 2)
+            #expect(StubURLProtocol.requests.allSatisfy {
+                $0.request.httpMethod == "POST" && $0.request.url?.path == "/api/auth/logout" &&
+                $0.request.value(forHTTPHeaderField: "Cookie") == nil
+            })
+            #expect(Set(StubURLProtocol.requests.compactMap {
+                $0.request.value(forHTTPHeaderField: "Authorization")
+            }) == ["Bearer primary_first", "Bearer primary_second"])
+        }
+
+        @Test("Only definite metadata 404 and verified older running Core allow protocol one")
+        func legacyAppAuthProtocol() async throws {
+            StubURLProtocol.install([
+                StubURLProtocol.stub(status: 404, json: #"{"code":"not_found"}"#),
+                StubURLProtocol.stub(json: #"{"component":"hosty-core","status":"running","version":"0.119.0"}"#),
+            ])
+            #expect(try await client().appAuthProtocol() == 1)
+            #expect(StubURLProtocol.requests.map { $0.request.url?.path } ==
+                ["/api/auth/apps/protocol", "/api/core/status"])
+            #expect(StubURLProtocol.requests.allSatisfy {
+                $0.request.value(forHTTPHeaderField: "Authorization") == nil &&
+                $0.request.value(forHTTPHeaderField: "Cookie") == nil &&
+                $0.request.value(forHTTPHeaderField: "Cache-Control") == "no-store"
+            })
+        }
+
+        @Test("Metadata failures and unknown protocol versions never downgrade", arguments: [
+            StubURLProtocol.Stub(status: 500, body: Data(#"{"version":2}"#.utf8)),
+            StubURLProtocol.Stub(status: 302, body: Data(#"{"version":2}"#.utf8)),
+            StubURLProtocol.Stub(status: 200, body: Data(#"{"version":1}"#.utf8)),
+            StubURLProtocol.Stub(status: 200, body: Data(#"{"version":3}"#.utf8)),
+            StubURLProtocol.Stub(status: 200, body: Data(#"{"version":"2"}"#.utf8)),
+            StubURLProtocol.Stub(status: 200, body: Data("not JSON".utf8)),
+        ])
+        func appAuthProtocolRefusals(stub: StubURLProtocol.Stub) async throws {
+            StubURLProtocol.install([stub])
+            await #expect(throws: CoreError.self) { try await client().appAuthProtocol() }
+            #expect(StubURLProtocol.requests.count == 1)
+        }
+
+        @Test("A status payload cannot authorize fallback unless exact identity and strict old version match", arguments: [
+            #"{"component":"proxy","status":"running","version":"0.119.0"}"#,
+            #"{"component":"hosty-core","status":"ready","version":"0.119.0"}"#,
+            #"{"component":"hosty-core","status":"running","version":"0.120.0"}"#,
+            #"{"component":"hosty-core","status":"running","version":"1.0.0"}"#,
+            #"{"component":"hosty-core","status":"running","version":"0.119"}"#,
+            #"{"component":"hosty-core","status":"running","version":"00.119.0"}"#,
+            #"{"component":"hosty-core","status":"running","version":"0.119.0-rc.1"}"#,
+            #"{"component":"hosty-core","status":"running","version":"0.119.0+build"}"#,
+            #"{"component":"hosty-core","status":"running","version":" 0.119.0"}"#,
+            #"{"status":"running","version":"0.119.0"}"#,
+        ])
+        func invalidLegacyStatus(json: String) async throws {
+            StubURLProtocol.install([StubURLProtocol.stub(status: 404, json: "{}"), StubURLProtocol.stub(json: json)])
+            await #expect(throws: CoreError.self) { try await client().appAuthProtocol() }
+            #expect(StubURLProtocol.requests.count == 2)
+        }
+
+        @Test("Observed protocol two remains the floor for this Core connection")
+        func appAuthProtocolNeverDowngrades() async throws {
+            let client = try client()
+            StubURLProtocol.install(json: #"{"version":2}"#)
+            #expect(try await client.appAuthProtocol() == 2)
+            StubURLProtocol.install([
+                StubURLProtocol.stub(status: 404, json: "{}"),
+                StubURLProtocol.stub(json: #"{"component":"hosty-core","status":"running","version":"0.119.0"}"#),
+            ])
+            await #expect(throws: CoreError.self) { try await client.appAuthProtocol() }
+            #expect(StubURLProtocol.requests.count == 1)
+            #expect(await client.isAuthenticated)
+        }
+
+        @Test("Malformed proof and plain method fail before discovery or bearer dispatch", arguments: [
+            ("short", "S256"), (String(repeating: "A", count: 42) + "B", "S256"),
+            ("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "plain"),
+        ])
+        func invalidLaunchProof(challenge: String, method: String) async throws {
+            StubURLProtocol.install()
+            await #expect(throws: CoreError.self) {
+                try await client().createLaunchCode(appID: "demo", redirectURI: "https://app.example.test/",
+                    codeChallenge: challenge, codeChallengeMethod: method)
+            }
+            #expect(StubURLProtocol.requests.isEmpty)
+        }
+
+        @Test("Older verified Core receives the same additive public proof fields")
+        func legacyLaunchCode() async throws {
+            StubURLProtocol.install([
+                StubURLProtocol.stub(status: 404, json: "{}"),
+                StubURLProtocol.stub(json: #"{"component":"hosty-core","status":"running","version":"0.119.0"}"#),
+                StubURLProtocol.stub(json: #"{"code":"abc","redirectUri":"https://app.example.test/?state=attempt&code=abc","expiresAt":"2026-07-30T14:05:00Z"}"#),
+            ])
+            _ = try await client().createLaunchCode(appID: "demo", redirectURI: "https://app.example.test/?state=attempt",
+                codeChallenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", codeChallengeMethod: "S256")
+            #expect(StubURLProtocol.requests.count == 3)
+            let posted = try #require(StubURLProtocol.requests.last)
+            #expect(posted.request.value(forHTTPHeaderField: "Authorization") == "Bearer session_1")
+            #expect(String(decoding: try #require(posted.body), as: UTF8.self).contains("codeChallenge"))
         }
 
         @Test("The Core update check reads the same refresh contract as the app one")

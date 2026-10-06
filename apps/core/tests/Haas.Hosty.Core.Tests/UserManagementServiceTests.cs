@@ -349,7 +349,7 @@ public sealed class UserManagementServiceTests
                 ControlDiscoveryPath: Path.Combine(root, "core", "run", "control.json"),
                 CorePort: 3001,
                 ListenUrl: "http://127.0.0.1:3001",
-                CorePublicOrigin: "http://127.0.0.1:3001",
+                CorePublicOrigin: null,
                 RuntimePublicHost: "localhost",
                 ShellSourceOverridePath: null,
                 ShellAutostart: false);
