@@ -81,8 +81,10 @@ Verified against `main` at `024b369a`.
 - **`apps.sources.full`** replaces `apps.sources` with the same grant. Core migrates persisted
   declarations and grants from the old name at startup, before unsupported grants are removed, and
   keeps accepting `apps.sources` in a manifest as an alias, so an installed Harness keeps working
-  until it is updated. Harness declares the new name. Review descriptions, Shell's permission texts
-  and SDK references follow.
+  until it is updated. Harness declares the new name. Shell's source-tool gate — which finds
+  source-capable apps by their granted permission and drives the development-workspace and private-
+  source views — recognizes the new name, and review descriptions, Shell's permission texts and SDK
+  references follow.
 
 ### Core: repository documents
 
@@ -181,8 +183,9 @@ app's.
       for an MCP credential presented to any other Core API.
 - [ ] D2. Rename `apps.sources` to `apps.sources.full`: startup migration of persisted declarations
       and grants ahead of unsupported-grant removal, the legacy name accepted as an alias in
-      manifests, Harness's manifest and code, Shell's permission texts and SDK references updated,
-      with tests for an upgraded host that keeps Harness's grant.
+      manifests, Harness's manifest and code, Shell's source-tool gate with its test fixtures, Shell's
+      permission texts and SDK references updated, with tests for an upgraded host that keeps
+      Harness's grant and still lists it as a source tool in Shell.
 - [ ] D3. Repository listing from installed apps' `source` declarations, deduplicated by canonical
       identity and tracked branch, reading the workspace target refs with interval-limited fetches
       on read, an explicit refresh, and private access only through an installed app's persisted Git
@@ -224,7 +227,7 @@ app's.
 - Platform (Core and CLI): minor, for the new permission, the rename and the document endpoints.
 - Harness: minor, for the renamed permission in its manifest; installed after Core.
 - `hosty.plans`: a new app starting at `0.1.0`.
-- Shell: a patch, for the renamed permission's texts and their tests.
+- Shell: a patch, for the renamed permission's source-tool gate, texts and tests.
 - SDK packages: a patch where a permission reference changes.
 - Media Server: per its own rules, in its own PR.
 
