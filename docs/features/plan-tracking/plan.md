@@ -27,7 +27,9 @@ defines and validates in every repository: YAML frontmatter (`status`, `created`
   not a Core module.
 - Administrators only.
 - Repositories come only from the `source` declarations of installed apps' manifests. Media Server
-  has a development runtime and therefore must declare its `source`; it gains one.
+  has a development runtime and therefore must declare its `source`; it gains one. Refined during
+  review: the one exception is an active session's own repository and target branch when no
+  installed-app entry covers them (see Sessions below), so that no session disappears.
 - The app shows the **current state of each plan**: the version on the tracked branch is the
   baseline, and every active session whose worktree changes the plan is shown beside it, with its
   version of the plan and a link to the session. Several sessions may change the same plan at once;
@@ -228,8 +230,13 @@ app's.
       with the tool call's MCP credential, and an agent skill file.
 - [ ] D11. Media Server's manifest declares `source`, in a Media Server PR, verified to leave its
       `docker` runtime unchanged and to let a feed installation switch to `dev`.
-- [ ] D12. `feature.md` for this feature, the Core API, permission and session workspace documents
-      updated, this plan deleted and the index regenerated.
+- [ ] D12. `feature.md` for this feature; the Core API document; every document that names
+      `apps.sources` updated to `apps.sources.full` or `apps.sources.read` as appropriate —
+      `ai-gateway`, `app-installation-sdk`, `app-permission-management`,
+      `assistant-session-workspaces`, `core-api`, `core-app-shell`, `core-source-inspection`,
+      `private-app-sources`, `runtime-app-manifest`, `runtime-source-workflows` and
+      `user-profile-connections` feature documents and the still-active `local-browser-origins`
+      plan; this plan deleted and the index regenerated.
 
 ## Versioning
 
