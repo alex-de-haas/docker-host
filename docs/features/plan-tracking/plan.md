@@ -149,10 +149,19 @@ Verified against `main` at `024b369a`.
   app re-reads the session projection on the observer's twenty-second cadence; Core publishes no
   new event for it.
 - **Cache.** Parsed documents are cached by blob SHA in the app's cache directory; nothing the app
-  stores is authoritative, and deleting the cache loses nothing.
+  stores is authoritative, and deleting the cache loses nothing. The cache holds content, never an
+  access decision: every request first asks Core for the document listing with the acting
+  administrator's credential, and only blob SHAs Core has just returned for that request may be
+  served from the cache. A private document one administrator loaded is therefore never served to
+  another whom Core refuses.
 - **Agents.** An app-owned MCP interface offers read-only tools — list plans, get a plan, sessions
   changing a plan — that return the tracked-branch state together with the session versions, plus an
-  agent skill file, so an agent can ask what is in progress across repositories.
+  agent skill file, so an agent can ask what is in progress across repositories. A tool call carries
+  a `hosty_mcp.1` credential, which ordinary app-session validators reject, so Core's document and
+  session endpoints explicitly accept, as the acting-user credential, an MCP credential addressed to
+  the calling app. Core validates it exactly as MCP introspection does — relationship, installations,
+  parent grant and current user — and applies the same administrator and private-grant checks to that
+  credential's user. The acceptance covers only these read endpoints, never other Core APIs.
 
 ### Media Server
 
@@ -165,8 +174,11 @@ app's.
 ### Phase 1 — Core
 
 - [ ] D1. `apps.sources.read`: catalogue entry, review description, endpoint mapping and the
-      per-request administrator check, with HTTP tests for refusal without the grant, for a
-      non-administrator user and for an app-mediated call.
+      per-request administrator check; the document and session endpoints also accept an MCP
+      credential addressed to the calling app as the acting-user credential, validated like MCP
+      introspection. HTTP tests for refusal without the grant, for a non-administrator user, for an
+      app-mediated call, for an MCP credential of an administrator and of a non-administrator, and
+      for an MCP credential presented to any other Core API.
 - [ ] D2. Rename `apps.sources` to `apps.sources.full`: startup migration of persisted declarations
       and grants ahead of unsupported-grant removal, the legacy name accepted as an alias in
       manifests, Harness's manifest and code, Shell's permission texts and SDK references updated,
@@ -189,7 +201,8 @@ app's.
       UI, `docker` and `dev` profiles, SDK identity, feed, image workflow, and version sources
       registered in `scripts/check-versions.mjs`.
 - [ ] D7. Frontmatter and deliverable parsing with contract tests against docker-host's `docs/`, and
-      the blob-SHA cache.
+      the blob-SHA cache, served only for SHAs Core has just authorized for the acting
+      administrator.
 - [ ] D8. Overview: tracked-branch state, session markers with each session's version in brief,
       plans new or being completed in sessions, status counts, filters and component-to-app mapping.
 - [ ] D9. Detail: the rendered tracked-branch version beside each session's version, with status and
@@ -199,8 +212,8 @@ app's.
 
 ### Phase 3 — Integration
 
-- [ ] D10. Read-only MCP tools returning tracked-branch state with session versions, and an agent
-      skill file.
+- [ ] D10. Read-only MCP tools returning tracked-branch state with session versions, calling Core
+      with the tool call's MCP credential, and an agent skill file.
 - [ ] D11. Media Server's manifest declares `source`, in a Media Server PR, verified to leave its
       `docker` runtime unchanged and to let a feed installation switch to `dev`.
 - [ ] D12. `feature.md` for this feature, the Core API, permission and session workspace documents
