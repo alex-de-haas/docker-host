@@ -106,7 +106,10 @@ Verified against `main` at `024b369a`.
   persisted on an installed app of that repository, and only when the grant's owner is the acting
   administrator — the rule session workspaces apply. When no such grant exists, for example because
   another administrator connected the source, the entry is listed as unavailable with that reason
-  and its documents are not served. Public repositories need no grant.
+  and its documents are not served. A session-derived entry whose source app is gone falls back to
+  the grant stored on the workspace itself, as workspace fetches already do, and serves it only to
+  that workspace's administrator; to everyone else it is unavailable with the reason. Public
+  repositories need no grant.
 - **Documents.** For the tracked branch, or for a session workspace's worktree including its
   uncommitted changes, Core lists `docs/**/*.md` with path and blob SHA, and returns one document's
   content. Nothing outside `docs/`, nothing but Markdown, no symbolic links, and a size cap per file.
@@ -123,7 +126,8 @@ Verified against `main` at `024b369a`.
   branch is one no installed app tracks, or the app it was prepared for has since been uninstalled —
   adds a session-derived entry for its repository and target branch, marked as such, whose baseline
   is the target ref the workspace already fetched; the entry exists only while an active session
-  needs it, so no session and none of its plan changes disappear. No Git operation is reachable.
+  needs it, so no session disappears; for a private repository its documents follow the private
+  rule above. No Git operation is reachable.
 
 ### The app
 
@@ -263,7 +267,8 @@ app's.
   per-branch fetch interval (a fetch of one branch never marks the other fresh) and explicit
   refresh, a session worktree read that includes an uncommitted change, and a session whose assistant
   was reinstalled keeping its changes but losing its URL, a session whose source app was
-  uninstalled, and a session targeting a branch no app
+  uninstalled (readable by its own administrator through the workspace grant when private,
+  unavailable to others), and a session targeting a branch no app
   tracks appearing under its own entry.
 - App tests: parsing against docker-host's `docs/`, status counts and progress, component-to-app
   mapping, session markers for a changed, a new and a deleted plan, and two sessions changing one
