@@ -112,8 +112,11 @@ Verified against `main` at `024b369a`.
   observation time, the subset of `SessionFiles` under `docs/`, and pull request references. Core
   builds the session URL from the assistant app's browser origin and the recorded session path and
   refuses a path that would leave that origin, so the app needs neither `apps.read` nor its own
-  origin lookup. A session belongs to the entry with the same repository and tracked branch as its
-  target. No Git operation is reachable.
+  origin lookup. The URL exists only while the workspace's owning installation — app id and
+  installation time — is still installed; after the assistant is removed or reinstalled the session
+  stays in the projection, because its worktree changes remain, with no URL and the reason, and is
+  never linked to a different installation. A session belongs to the entry with the same repository
+  and tracked branch as its target. No Git operation is reachable.
 
 ### The app
 
@@ -173,7 +176,8 @@ app's.
       changes included), restricted to `docs/**/*.md` with size caps and symlink refusal; Native AOT
       serialization and path-guard tests.
 - [ ] D5. The read-only session workspace projection, including the `docs/` subset of
-      `SessionFiles` and an absolute session URL validated against the assistant app's origin.
+      `SessionFiles` and an absolute session URL validated against the assistant app's origin, absent
+      with a reason once the owning installation is removed or reinstalled.
 
 ### Phase 2 — App
 
@@ -232,7 +236,8 @@ app's.
   private-repository access through a grant owned by the acting administrator and the unavailable
   entry for another administrator's grant, two apps of one repository on different branches, the
   per-branch fetch interval (a fetch of one branch never marks the other fresh) and explicit
-  refresh, and a session worktree read that includes an uncommitted change.
+  refresh, a session worktree read that includes an uncommitted change, and a session whose assistant
+  was reinstalled keeping its changes but losing its URL.
 - App tests: parsing against docker-host's `docs/`, status counts and progress, component-to-app
   mapping, session markers for a changed, a new and a deleted plan, and two sessions changing one
   plan.
