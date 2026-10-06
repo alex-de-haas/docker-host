@@ -1,7 +1,10 @@
-# AI Agent Bridge
+---
+created: 2026-08-14
+updated: 2026-10-05
+summary: The umbrella model for Hosty's AI integration, covering component boundaries, execution profiles, token mechanics and the decision log.
+---
 
-Created: 2026-08-14
-Updated: 2026-10-05
+# AI Agent Bridge
 
 The umbrella for Hosty's AI integration: how an authenticated user works with runtime apps and app
 source through an agent, without the model ever holding credentials, unrestricted application access,

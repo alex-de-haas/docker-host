@@ -1,8 +1,12 @@
-# AHP Client Interface For Hosty Sessions
+---
+status: Draft
+created: 2026-09-26
+updated: 2026-09-29
+summary: Evaluate AHP as a replaceable external client interface over Hosty's existing session implementation.
+components: [apps/harness]
+---
 
-Status: Draft
-Created: 2026-09-26
-Updated: 2026-09-29
+# AHP Client Interface For Hosty Sessions
 
 ## Goal And Owner Direction
 
@@ -106,15 +110,15 @@ Hosty executor integration; upstream-host examples are references, not an assume
 
 ## Deliverables
 
-- [ ] Complete the pinned Swift/ingress/reconnect/approval spike and document generic-client and
+- [ ] D1. Complete the pinned Swift/ingress/reconnect/approval spike and document generic-client and
   upstream-host alternatives with evidence and a scoped adoption decision.
-- [ ] Define the Hosty-to-AHP mapping and required internal event fields with the shared-history
+- [ ] D2. Define the Hosty-to-AHP mapping and required internal event fields with the shared-history
   owner, keeping transport-specific types out of Hosty persistence/execution.
-- [ ] Implement the authenticated AHP projection and inbound command adapter for the selected first
+- [ ] D3. Implement the authenticated AHP projection and inbound command adapter for the selected first
   surface over existing session services, with common permission and operation-identity checks.
-- [ ] Implement protocol version negotiation, projection fixtures, replay/snapshot recovery and
+- [ ] D4. Implement protocol version negotiation, projection fixtures, replay/snapshot recovery and
   explicit missing/unsupported behavior while maintaining REST/SSE operation.
-- [ ] Verify web/AHP coexistence and official Swift interoperability, then document the shipped
+- [ ] D5. Verify web/AHP coexistence and official Swift interoperability, then document the shipped
   capability matrix and supported SDK/protocol revisions.
 
 ## Open Questions

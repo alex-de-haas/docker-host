@@ -1,7 +1,11 @@
-# Scoped Access Tokens — Audience-Bound Credentials For External Clients
+---
+created: 2026-08-24
+updated: 2026-08-25
+summary: Access tokens can be bound to one audience and a set of scopes, validated against live state on every call.
+components: [apps/core]
+---
 
-Created: 2026-08-24
-Updated: 2026-08-25
+# Scoped Access Tokens — Audience-Bound Credentials For External Clients
 
 An [access token](../access-tokens/feature.md) may carry an **audience** and **scopes**. Without
 them it is the credential that always existed: its approver's whole role, accepted wherever a Core

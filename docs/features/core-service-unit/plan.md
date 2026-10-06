@@ -1,8 +1,12 @@
-# Core Service Unit — Surviving A Reboot
+---
+status: On Hold
+created: 2026-09-01
+updated: 2026-09-01
+summary: Parked idea for an OS service unit that starts Core again after a host reboot.
+components: [apps/cli, apps/core]
+---
 
-Status: On Hold
-Created: 2026-09-01
-Updated: 2026-09-01
+# Core Service Unit — Surviving A Reboot
 
 Parked by owner decision (2026-09-01), recorded so it is not lost.
 
@@ -26,7 +30,7 @@ installed instance.
 
 ## Deliverables
 
-- [ ] Design and per-platform decision recorded; then per-platform units, `hosty setup` wiring and
+- [ ] D1. Design and per-platform decision recorded; then per-platform units, `hosty setup` wiring and
       docs — expanded when this leaves On Hold.
 
 ## Links

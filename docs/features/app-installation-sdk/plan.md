@@ -1,8 +1,12 @@
-# Independent App Installation SDK — Remaining Verification
+---
+status: In Progress
+created: 2026-09-18
+updated: 2026-09-18
+summary: Remaining browser verification of the independent installation SDK and Core-owned confirmation.
+components: [packages/app-sdk, apps/marketplace, apps/shell, apps/core]
+---
 
-Status: In Progress
-Created: 2026-09-18
-Updated: 2026-09-18
+# Independent App Installation SDK — Remaining Verification
 
 ## Goal
 
@@ -10,21 +14,21 @@ Complete verification of the implementation described in [feature.md](feature.md
 approved independent Marketplace/Shell installation, manifest-declared app permissions and
 Core-owned final confirmation on 2026-09-18, then authorized local deployment and browser testing.
 
-## Remaining Deliverables
+## Deliverables
 
-- [ ] Complete an installation from embedded Marketplace, including a generic embedder with no
+- [ ] D1. Complete an installation from embedded Marketplace, including a generic embedder with no
   installation responder, and verify frame reload after revoking installation grants. Both
   embedded surfaces load with an authenticated app session; the
   in-app browser's automation currently fails to activate controls inside the iframe.
-- [ ] Verify popup-blocker fallback and mobile layouts in a browser with working popup/viewport
+- [ ] D2. Verify popup-blocker fallback and mobile layouts in a browser with working popup/viewport
   automation. The current in-app browser opens separate native popup windows outside the tool's
   tab inventory and ignores the requested viewport override; these checks are not recorded as passed.
-- [ ] Verify a request's continuation through a fresh Core login and rejected shared-cookie origins
+- [ ] D3. Verify a request's continuation through a fresh Core login and rejected shared-cookie origins
   in the real browser. HTTP tests cover both, but the live installation used an existing fresh session.
-- [ ] Verify live runtime switching cannot grow the approved permission set. Live-source restart
+- [ ] D4. Verify live runtime switching cannot grow the approved permission set. Live-source restart
   retained empty Marketplace grants until its explicit reviewed update; automated tests also reject
   queued updates that add permissions and source drift after review.
-- [ ] Fold any remaining verification fixes into feature.md, delete this plan once every deliverable
+- [ ] D5. Fold any remaining verification fixes into feature.md, delete this plan once every deliverable
   is complete, and regenerate the index.
 
 ## Local Environment

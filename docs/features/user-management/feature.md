@@ -1,3 +1,10 @@
+---
+created: 2026-05-22
+updated: 2026-10-05
+summary: Administrators invite, disable, delete and assign app access to Host users from the Shell User Management view.
+components: [apps/core, apps/shell]
+---
+
 # User Management
 
 Hosty administrators manage users from the Shell User Management view. The old Legacy Host `/settings/users` route has been removed with the combined Next.js Host package.
@@ -10,7 +17,7 @@ Host users can enter the system through these implemented flows:
 
 First-administrator bootstrap and local administrator recovery are Core auth flows, not User Management flows. The removed Legacy Host auth-token writer is not part of the current implementation.
 
-Browser account switching is a separate compatibility topic tracked in [Browser Account Switching](../ideas/account-switching.md). External auth provider extensions are tracked in [Auth Provider Extensions](../ideas/auth-provider-extensions.md). User Management owns persisted users, invitations, assignments, sessions, and audit events.
+User Management owns persisted users, invitations, assignments, sessions, and audit events. One browser context holds one Core session; there is no account switching. External identity providers are tracked in the [auth provider extensions plan](../auth-provider-extensions/plan.md).
 
 The feature uses Core-owned auth state:
 
@@ -50,11 +57,9 @@ Administrators can:
 - disable users;
 - replace a user's app assignments.
 
-External-provider users are reserved for future auth-provider work tracked in [Auth Provider Extensions](../ideas/auth-provider-extensions.md). When enabled, they should be listed, disabled, and assigned to apps in the same surface, while their roles remain provider-managed.
-
 User Management does not add a separate permissions store. It reuses Core auth state in `auth/state.json`: users are `HostUserRecord` entries, invitations are token-hash records, and app access is stored as `AppAssignmentRecord` entries.
 
-`host.users.manage` is the authorization action for the feature. In the current two-role model, `host.admin` satisfies this action; it is not a separate RBAC role.
+Shell reaches these endpoints as an app: reads require the `users.read` app permission and mutations `users.manage`, both on top of an administrator user. An administrator browser session with CSRF reaches them directly.
 
 ## Invitation Flow
 
@@ -79,11 +84,9 @@ The recipient opens the URL, confirms the token, sets a password, and creates th
 
 The raw setup token is returned only once to the administrator and is never stored in auth state.
 
-Hosty does not create users directly from User Management in this version. New local users are invite-first. Password-reset ideas are tracked in [Auth Provider Extensions](../ideas/auth-provider-extensions.md).
+Hosty does not create users directly from User Management. New local users are invite-first, and there is no self-service password reset.
 
-After logout, local users sign in through Core `/login` with email and password. Existing users from older builds that do not have password credentials need administrator recovery or a future reset-password flow before they can use password login.
-
-Invitations do not pre-provision future OIDC or trusted-proxy identities. External users should be created or updated when they authenticate through their provider, then administrators can disable them or assign app access after first login.
+After logout, local users sign in through Core `/login` with email and password. Existing users from older builds that do not have password credentials need administrator recovery before they can use password login.
 
 ## Safety Rules
 
@@ -102,22 +105,15 @@ Hosty Core prevents disabling or demoting the last active administrator. Adminis
 
 Changing a local user's role revokes that user's active sessions.
 
-Provider-managed roles are read-only in User Management. Future OIDC and trusted-proxy login can overwrite stored roles from provider mappings, so external role changes belong to the provider configuration instead of this page.
-
 Every user, invitation, role, disable, and assignment mutation appends an auth audit event with actor, target, result, and relevant mutation details.
 
 ## App Access
 
 User Management uses the existing app assignment model.
 
-For ordinary users, an app is visible when:
+Enabled administrators have implicit access to every installed app. Other enabled users reach an app only through an explicit assignment; an unassigned app is unavailable to them, not public. The same rule applies to system and ordinary apps ([Shell access and system apps](../shell-access-and-system-apps/feature.md)). App directory responses include only explicitly assigned, enabled users.
 
-- the app has no assignments, which means all authenticated users can see it; or
-- the app has assignments and the current user is assigned.
-
-Administrators can see all Hosty apps. App directory responses still include only explicitly assigned, enabled users.
-
-The access picker lists installed runtime apps. Hosty access assignments are app-wide and currently control Shell visibility. Future gateway work is tracked in [Gateway And App Wrapping Ideas](../ideas/gateway-and-app-wrapping.md) and should reuse the same assignment model for assigned-only service/API exposure policy.
+The access picker lists installed runtime apps, including system apps. Assignments are app-wide.
 
 Invitation assignments are stored on the invitation and applied only when the invite is accepted, because the target user id does not exist before acceptance.
 
@@ -136,6 +132,18 @@ The UI uses the Core auth API:
 - `DELETE /api/auth/users/{userId}/record` permanently deletes an already-disabled user's record.
 - `PUT /api/auth/users/{userId}/assignments` replaces app assignments for the user.
 
-All administrator mutation endpoints require `host.users.manage` and same-origin CSRF checks for browser sessions.
+Reads require an administrator with `users.read` and mutations an administrator with `users.manage` when the caller is an app; a direct administrator browser session needs same-origin CSRF for mutations.
 
-Common business errors include duplicate email, active invitation already exists, invalid or expired invitation token, provider-managed role, last active administrator protection, self-disable protection, disabled or missing user, and deleting a user that is not disabled (`user_not_disabled`).
+Common business errors include duplicate email, active invitation already exists, invalid or expired invitation token, last active administrator protection, self-disable protection, disabled or missing user, and deleting a user that is not disabled (`user_not_disabled`).
+
+## Testing Expectations
+
+- Invitation creation rejects a duplicate email and a second pending invitation; acceptance stores
+  the password credential, applies the stored assignments and creates a session; a used or expired
+  token is refused.
+- Disabling revokes sessions and assignments; permanent deletion requires a disabled user
+  (`user_not_disabled`); the retention job deletes disabled users past the window and audits it.
+- The last active administrator cannot be disabled or demoted, and administrators cannot disable
+  themselves; a role change revokes the user's sessions.
+- App callers need `users.read` or `users.manage` on top of an administrator user; unassigned apps
+  stay unavailable to ordinary users.

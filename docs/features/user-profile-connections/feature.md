@@ -1,7 +1,11 @@
-# User Profile And Provider Connections
+---
+created: 2026-09-28
+updated: 2026-10-01
+summary: A self-service profile API and page for the current user's name and email.
+components: [apps/core, apps/shell]
+---
 
-Created: 2026-09-28
-Updated: 2026-10-01
+# User Profile And Provider Connections
 
 Core exposes the current user's ID, email and display name through `/api/profile`; Shell renders
 name editing at `/settings?tab=profile`. This self-service API has no user-management permission

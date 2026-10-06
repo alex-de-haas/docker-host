@@ -1,8 +1,12 @@
-# App Authoring In Hosty
+---
+status: Draft
+created: 2026-09-16
+updated: 2026-10-05
+summary: Epic for prompt-driven app creation, live iteration, integration with installed apps and optional publication.
+components: [apps/core, apps/harness, apps/shell]
+---
 
-Status: Draft
-Created: 2026-09-16
-Updated: 2026-09-27
+# App Authoring In Hosty
 
 ## Development Session Direction (2026-09-24)
 
@@ -252,9 +256,8 @@ a discard, save or publish operation. Pinned starts refuse dirty checkouts.
   backups do not protect source edits. Loss warnings and Git save/push belong to the first slice.
 - [AI Agent Bridge step 12](../ai-agent-bridge/plan.md#step-12--development-agent-bridge) remains the
   isolated, non-interactive branch/PR workflow. Its Git and disposable-validation prerequisites do
-  not apply to a local interactive prototype. Its older
-  [workflow sketch](../../ideas/agent-bridge-workflow.md) is context, not this feature's implementation
-  contract; its Core-owned bridge proposal does not move model execution into Core.
+  not apply to a local interactive prototype, and its Core-owned bridge proposal does not move model
+  execution into Core.
 - [Assistant entry points](../assistant-entry-points/plan.md) owns generic panel and context handoff.
   Reuse it. Third-party app messages still only fill a draft; an operator pressing Create with their
   own prompt is a separate explicit submission. Do not turn `ask-assistant` into auto-send.
@@ -275,23 +278,23 @@ a discard, save or publish operation. Pinned starts refuse dirty checkouts.
 - [Core extension model](../core-extension-model/plan.md) owns new contribution points. A template
   marketplace, scale-to-zero runtime and general development environment are not prerequisites.
 
-## Deliverables Owned By This Umbrella
+## Deliverables
 
-- [ ] Approve the cross-feature implementation boundaries for the selected first milestone; keep each
+- [ ] D1. Approve the cross-feature implementation boundaries for the selected first milestone; keep each
       child gated by its own unresolved decisions rather than approving all later work implicitly.
-- [ ] Define integration selection as a concrete authoring flow: provider, interface, intended actor,
+- [ ] D2. Define integration selection as a concrete authoring flow: provider, interface, intended actor,
       required dependency/configuration, unavailable-provider behavior and a reviewable access diff.
-- [ ] Implement one complete integration example using existing discovery/SDK contracts, without
+- [ ] D3. Implement one complete integration example using existing discovery/SDK contracts, without
       exposing operator tokens to the generated app or treating app skills as general host authority.
-- [ ] Present unavailable capabilities with actionable reasons (missing source/profile/toolchain,
+- [ ] D4. Present unavailable capabilities with actionable reasons (missing source/profile/toolchain,
       disabled provider, unsupported authorization), and preserve usable local-only apps.
-- [ ] Add repository/image/Compose input and an evidence-backed compatibility assessment to app authoring,
+- [ ] D5. Add repository/image/Compose input and an evidence-backed compatibility assessment to app authoring,
       including explicit unsupported-host and missing-source outcomes.
-- [ ] Deliver reusable adaptation guidance and wrapper generation for selected common app shapes;
+- [ ] D6. Deliver reusable adaptation guidance and wrapper generation for selected common app shapes;
       record upstream provenance, runtime/configuration/storage needs and integration limitations.
-- [ ] Validate a source-based web app, an image-only service and a supported Compose stack through Core, then hand a
+- [ ] D7. Validate a source-based web app, an image-only service and a supported Compose stack through Core, then hand a
       verified wrapper to the existing release/catalog flow without duplicating its implementation.
-- [ ] Verify the cross-feature journey across restart and session replacement, including local-only
+- [ ] D8. Verify the cross-feature journey across restart and session replacement, including local-only
       operation when no repository or catalog is configured; publish current behavior in `feature.md`
       only when it ships, then remove this plan when its own deliverables are complete.
 

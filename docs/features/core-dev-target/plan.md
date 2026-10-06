@@ -1,8 +1,12 @@
-# Core Development Mode — Remaining Acceptance Checks
+---
+status: In Progress
+created: 2026-07-12
+updated: 2026-09-18
+summary: Remaining acceptance checks for Core development mode on Windows, Linux and real agent harnesses.
+components: [apps/core, apps/cli]
+---
 
-Status: In Progress
-Created: 2026-07-12
-Updated: 2026-09-18
+# Core Development Mode — Remaining Acceptance Checks
 
 ## Approved Scope
 
@@ -14,19 +18,19 @@ in [Core development mode](feature.md). There are no remaining product decisions
 This plan remains open for the acceptance checks below; implementation is not described as fully
 accepted across all platforms or real AI harnesses based solely on the local macOS checks.
 
-## Remaining Deliverables
+## Deliverables
 
-- [ ] Run the complete source build/restart/retention and local-service adoption scenario on Windows,
+- [ ] D1. Run the complete source build/restart/retention and local-service adoption scenario on Windows,
       including locked executable output, runner-owned Job Object survival, explicit process-tree
       Stop after adoption and cleanup of locked generations. Run the full CLI/Shell end-to-end
       scenario on Linux too. Linux ARM64 Core process/auth tests (69) and the full CLI suite (221)
       already pass in the official SDK container; the full interactive Linux scenario has not run.
-- [ ] Run an actual provider-backed active agent turn through Core-managed AI Gateway in both local
+- [ ] D2. Run an actual provider-backed active agent turn through Core-managed AI Gateway in both local
       and dev profiles. Have the agent request restart through its authorized CLI or direct Core MCP
       route and verify continuation, token recovery, SSE resync and a new Core identity without another
       user message or duplicate mutation. Real Core-managed Gateway processes with the fake harness
       pass local continuity checks; that does not verify Claude/Codex provider-backed subprocesses.
-- [ ] After these checks pass, record the results in `feature.md`, remove this remaining plan, and
+- [ ] D3. After these checks pass, record the results in `feature.md`, remove this remaining plan, and
       regenerate the documentation index. Keep all implementation and acceptance work in the same
       feature PR.
 

@@ -1141,7 +1141,7 @@ function InstalledAppRow({
   // Live source runtimes have no reviewed-update path (the manifest is adopted on restart), so the
   // Update affordance is hidden and the live-source status icon is shown instead — that live check is
   // all appSupportsReviewedUpdate does. System apps go through the same reviewed plan/apply flow as
-  // every other runtime app (docs/ideas/system-app-updates.md).
+  // every other runtime app (docs/features/runtime-app-update/feature.md).
   const canUpdate = canManageApps && appSupportsReviewedUpdate(app);
   // The row's update affordance renders from the fleet-check verdict on the app summary (plan-first
   // updates), as one icon among the other row actions: blue applies the cached plan straight away,

@@ -1,7 +1,11 @@
-# App Secrets Store
+---
+created: 2026-07-22
+updated: 2026-09-27
+summary: A Core-managed keychain for secrets an app obtains at runtime, stored outside backups, with clients in both SDKs.
+components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet]
+---
 
-Created: 2026-07-22
-Updated: 2026-09-27
+# App Secrets Store
 
 ## Description
 

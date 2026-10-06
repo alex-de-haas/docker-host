@@ -1,8 +1,12 @@
-# MCP Facade — One Remote Endpoint For The Whole Fleet
+---
+status: On Hold
+created: 2026-08-24
+updated: 2026-09-26
+summary: Remaining MCP facade work, on hold since agents moved to the host.
+components: [apps/harness]
+---
 
-Status: On Hold
-Created: 2026-08-24
-Updated: 2026-09-26
+# MCP Facade — One Remote Endpoint For The Whole Fleet
 
 The facade ships on the `hosty.ai-gateway` system app ([feature.md](feature.md)). It was built so that
 full external clients with their own agents — Claude Code, Codex, VS Code — could reach the whole host
@@ -32,14 +36,14 @@ Until it resumes, the gateway facade keeps working and follows the Core policy t
 
 ## Deliverables
 
-- [ ] Resume this plan with the owner and choose the bridge's app identity and first external clients.
-- [ ] Build the bridge on the agent MCP directory and move the facade behavior listed above into it.
-- [ ] `notifications/tools/list_changed` on fleet changes, which the gateway endpoint still refuses
+- [ ] D1. Resume this plan with the owner and choose the bridge's app identity and first external clients.
+- [ ] D2. Build the bridge on the agent MCP directory and move the facade behavior listed above into it.
+- [ ] D3. `notifications/tools/list_changed` on fleet changes, which the gateway endpoint still refuses
       rather than half-implements.
-- [ ] Live verification from a stock Claude Code over a **non-loopback** origin. The loopback half was
+- [ ] D4. Live verification from a stock Claude Code over a **non-loopback** origin. The loopback half was
       proven on the gateway on 2026-08-25 (recorded in [feature.md](feature.md)); external origin, TLS
       and a proxy in the path remain unexercised for this endpoint.
-- [ ] Remove the gateway facade, update `feature.md`, the ai-agent-bridge topology-4 note and decision
+- [ ] D5. Remove the gateway facade, update `feature.md`, the ai-agent-bridge topology-4 note and decision
       log, and regenerate the index.
 
 ## Earlier Decisions (2026-08-24, owner approval in chat)

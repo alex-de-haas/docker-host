@@ -1,8 +1,12 @@
-# Cardputer Operator Shell
+---
+status: In Progress
+created: 2026-07-31
+updated: 2026-08-23
+summary: Firmware that turns an M5Stack Cardputer ADV into a pocket Hosty operator console.
+components: [apps/shell-cardputer]
+---
 
-Status: In Progress
-Created: 2026-07-31
-Updated: 2026-08-23
+# Cardputer Operator Shell
 
 ## Goal
 
@@ -609,9 +613,9 @@ ships, not after.**
 
 ### Contract And Feasibility
 
-- [x] ~~Measure the deep-sleep board floor.~~ Dropped 2026-08-02 with the runtime
+- [x] D1. ~~Measure the deep-sleep board floor.~~ Dropped 2026-08-02 with the runtime
   target; see [The runtime target is withdrawn](#the-runtime-target-is-withdrawn--decided-2026-08-02).
-- [ ] Record the board evidence. **Partly done**: 8 MB flash with A/B slots of
+- [ ] D2. Record the board evidence. **Partly done**: 8 MB flash with A/B slots of
   3.8125 MiB each, ESP32-S3 rev 0.2, 40 MHz crystal, no PSRAM, USB-Serial/JTAG,
   observed across many flash-and-run cycles against a live Core. Still owed: the
   schematic assumptions and GPIO ownership this plan already relies on — GPIO38
@@ -621,7 +625,7 @@ ships, not after.**
   is fitted, which was never established. The RTC answer is not urgent, because
   the boot path does not need one: SNTP over UDP sets the clock before any TLS
   request, and a plain-HTTP LAN origin needs no clock at all.
-- [x] Define and check in a representative Core fixture —
+- [x] D3. Define and check in a representative Core fixture —
   `apps/shell-cardputer/fixtures/apps-50.json`, 2026-07-31: 50 apps carrying a
   3,000-byte ignored description, nested optional fields, unknown runtime and
   operation states, routine and review-required updates, nulls and Unicode. Host
@@ -629,27 +633,27 @@ ships, not after.**
   not depend on response boundaries. The sizes quoted earlier (213,748 and
   533,198 bytes) came from a throwaway measurement spike that is not in the tree;
   the checked-in fixture is the one that counts.
-- [x] Prototype on real hardware — done by running the firmware itself rather
+- [x] D4. Prototype on real hardware — done by running the firmware itself rather
   than a spike: TLS with SNTP-set time, streaming app parsing, the event stream
   and its reconnect, screen power control, keyboard wake, motion sampling and
   speaker notification all exercised on a physical Cardputer ADV against a live
   Core 0.73.0.
-- [x] Compare the event stream held open against periodic polling **on data** —
+- [x] D5. Compare the event stream held open against periodic polling **on data** —
   the event stream is cheapest in bytes (5,400/h against 23,040/h for the best
   polling variant) *and* has no notification latency, which is the opposite of
   what this plan assumed. The comparison in current is not happening; the data
   comparison is what the decision rests on.
-- [x] ~~Establish the runtime budget and record the go/no-go.~~ Withdrawn
+- [x] D6. ~~Establish the runtime budget and record the go/no-go.~~ Withdrawn
   2026-08-02: there is no runtime target to hold the answer to, and the go/no-go
   it was meant to gate has been answered another way — the firmware runs on real
   hardware against a live host.
-- [x] Establish heap and image-size budgets: streaming parse peaks at a **flat
+- [x] D7. Establish heap and image-size budgets: streaming parse peaks at a **flat
   19,596 bytes** whether the response is 4 KB or 533 KB, while buffering the
   bloated fixture needs 101.7% of all the SRAM the chip has. Streaming is not an
   optimization here, it is the only option. The production 8 MB A/B layout leaves 3.8125 MiB
   per slot; the current complete ESP-IDF 5.5.4 build is 1,306,288 bytes and leaves
   67% of either slot free.
-- [x] Decide whether a generic compact/paginated Core read contract is required —
+- [x] D8. Decide whether a generic compact/paginated Core read contract is required —
   **it is not**, on heap grounds: the console reads 10 of 37 fields, 8.4% of the
   payload, and a scanner skips the rest at no cost. Transfer size is the argument
   that survives (209 KB per full resync on a 50-app host, repeated on every
@@ -661,26 +665,26 @@ ships, not after.**
 This group's Core and Shell work ships in the owning authentication feature's
 own PR under the platform version, never inside the firmware PR.
 
-- [x] The device credential exists — [`access-tokens`](../access-tokens/feature.md),
+- [x] D9. The device credential exists — [`access-tokens`](../access-tokens/feature.md),
   shipped 2026-07-31: idle-only lifetime with no absolute expiry, revocation that
   terminates an in-flight event stream, and a Shell credential list. Note that it
   carries the approver's full role; see [Security Boundary](#security-boundary).
-- [x] Consume the shipped device-code flow and credential without adding
+- [x] D10. Consume the shipped device-code flow and credential without adding
   Cardputer-only credentials, endpoints, or storage.
-- [x] Implement the administrator-role check on `/api/auth/session`, warning at
+- [x] D11. Implement the administrator-role check on `/api/auth/session`, warning at
   approval time and after enrollment when the device was authorized by a
   `host.user`.
-- [ ] Verify against the shipped implementation that revoking this device's
+- [ ] D12. Verify against the shipped implementation that revoking this device's
   credential ends its in-flight event stream, not only its next request.
 
 ### Firmware Foundation
 
-- [x] Add reproducible ESP-IDF build tooling and the `apps/shell-cardputer`
+- [x] D13. Add reproducible ESP-IDF build tooling and the `apps/shell-cardputer`
   source tree, with pinned toolchain/dependencies and a documented USB-C flash
   path.
-- [x] Add a host-side render harness so the four views can be developed and
+- [x] D14. Add a host-side render harness so the four views can be developed and
   reviewed without hardware in the loop.
-- [x] Implement bounded configuration storage, Wi-Fi provisioning, SNTP time
+- [x] D15. Implement bounded configuration storage, Wi-Fi provisioning, SNTP time
   with the build-timestamp floor and the clock-unset state, time zone, endpoint
   validation, authorization, transport, state synchronization,
   minimum-Core-version handling, and diagnostics — `settings_store.cpp`,
@@ -696,7 +700,7 @@ own PR under the platform version, never inside the firmware PR.
   them for: thirty `show_error`/`show_overlay` sites carry the endpoint,
   authorization, operation and OTA failures in plain words. Storage *migration*
   is not part of this item and is not implemented; it is tracked below.
-- [ ] Implement storage migration and gate health confirmation on it. Added
+- [ ] D16. Implement storage migration and gate health confirmation on it. Added
   2026-08-23 after review found it missing entirely, not merely untested.
   [Firmware Update And Recovery](#firmware-update-and-recovery) requires that a
   new image "marks itself healthy only after storage migration", and that an
@@ -708,7 +712,7 @@ own PR under the platform version, never inside the firmware PR.
   work is a persisted schema version, a migration step ahead of health
   confirmation, and the incompatible-schema path that rolls back rather than
   starting on unreadable settings.
-- [ ] Host tests for the `main/` units. Added 2026-08-23 after review found the
+- [ ] D17. Host tests for the `main/` units. Added 2026-08-23 after review found the
   gap hidden inside the configuration item above.
   [Verification](#verification) requires host-side unit tests for storage
   migration, unset-clock behavior and rejection of a time before the build
@@ -720,14 +724,14 @@ own PR under the platform version, never inside the firmware PR.
   [rollback tests](#power-alerts-and-recovery) deliverable and probably one
   piece of work with it. The migration tests depend on the item above; the
   clock ones do not.
-- [x] Implement the keyboard-first Dashboard, Apps, Updates, and Device views
+- [x] D18. Implement the keyboard-first Dashboard, Apps, Updates, and Device views
   with unknown/stale/busy/error states — `View` covers all four, and the
   states are `ConnectionState::Stale`, `RuntimeState`/`OperationState::Unknown`
   and `is_busy()`, rendered by `render.cpp` under `test_render`.
-- [x] Replace discoverability-dependent hotkeys with cyclic left/right view
+- [x] D19. Replace discoverability-dependent hotkeys with cyclic left/right view
   navigation, connection-aware header, contextual footer/action menus, and a
   selectable persisted Amber/Ocean/Violet theme.
-- [x] Implement lifecycle, autostart, Core operation, and routine
+- [x] D20. Implement lifecycle, autostart, Core operation, and routine
   update flows with confirmation and idempotency behavior aligned to Core, and
   surface review-required updates as read-only with their reason —
   `HostyClient` carries `app_lifecycle`, `set_autostart`, `start_update_check`,
@@ -740,16 +744,16 @@ own PR under the platform version, never inside the firmware PR.
 
 ### Power, Alerts, And Recovery
 
-- [x] Implement Active, Online standby, and optional Deep standby transitions,
+- [x] D21. Implement Active, Online standby, and optional Deep standby transitions,
   including display sleep, GPIO38 control, Wi-Fi power management, keyboard
   wake, and motion wake as a threshold plus cooldown that can be switched off.
-- [x] Implement configurable Eco standby with Wi-Fi/SSE suspension, 5/10/30
+- [x] D22. Implement configurable Eco standby with Wi-Fi/SSE suspension, 5/10/30
   minute delayed-notification polling, keyboard reconnect, and full resync.
-- [x] Implement bounded notification delivery, priority/quiet-hours filtering,
+- [x] D23. Implement bounded notification delivery, priority/quiet-hours filtering,
   sound rate limiting, and screen-wake policy.
-- [x] Implement battery guards for mutation and OTA operations and expose
+- [x] D24. Implement battery guards for mutation and OTA operations and expose
   understandable degraded-power states.
-- [x] Implement A/B firmware OTA from the compiled-in origin over validated
+- [x] D25. Implement A/B firmware OTA from the compiled-in origin over validated
   HTTPS, with health confirmation and downgrade policy — `firmware_ota.cpp`
   streams through `esp_https_ota` against the certificate bundle, refuses a
   candidate **older** than the running image — `version_at_least` compares
@@ -759,33 +763,33 @@ own PR under the platform version, never inside the firmware PR.
   `esp_ota_mark_app_valid_cancel_rollback` on the first boot that reports
   `ESP_OTA_IMG_PENDING_VERIFY`. Clock and battery are preconditions rather than
   advice: OTA is refused with an unset clock, and below 50% off USB-C.
-- [ ] Rollback tests. Split out of the OTA deliverable on 2026-08-20 because the
+- [ ] D26. Rollback tests. Split out of the OTA deliverable on 2026-08-20 because the
   implementation shipped without them: `host/test_main.cpp` has twelve cases and
   none reach `firmware_ota`, so the downgrade refusal and the pending-verify
   transition are asserted nowhere. The rollback itself is the one path that only
   runs when something has already gone wrong, which is the argument for testing
   it rather than observing it.
-- [x] Publish the heap, flash and latency evidence against the Phase 0 budgets;
+- [x] D27. Publish the heap, flash and latency evidence against the Phase 0 budgets;
   the runtime half is withdrawn with the target it measured against.
 
 ### Release And Documentation
 
-- [x] Add Cardputer firmware to the repository release model and versioning
+- [x] D28. Add Cardputer firmware to the repository release model and versioning
   instructions as an independently versioned native client, initially `0.1.0`,
   recording its version in one file under `apps/shell-cardputer` that
   `scripts/check-versions.mjs` reads.
-- [x] Add build, artifact checksum, build provenance, USB-C flashing, recovery,
+- [x] D29. Add build, artifact checksum, build provenance, USB-C flashing, recovery,
   onboarding, revocation-on-loss, operation, and troubleshooting documentation,
   written for an owner who is not this repository's author.
-- [x] State the accepted exposures together in `apps/shell-cardputer/README.md`,
+- [x] D30. State the accepted exposures together in `apps/shell-cardputer/README.md`,
   in plain words and not as a footnote: whoever holds the device has the
   owner's Hosty access until the token is revoked, and on a plain-HTTP LAN
   origin so does anyone on that network — which on WPA2-PSK means anyone who
   knows the Wi-Fi password.
-- [x] Add CI for firmware build, tests, size budgets, and documentation checks.
-- [ ] Exercise a release candidate on physical Cardputer ADV hardware against a
+- [x] D31. Add CI for firmware build, tests, size budgets, and documentation checks.
+- [ ] D32. Exercise a release candidate on physical Cardputer ADV hardware against a
   Core-managed Hosty installation and retain the verification results.
-- [ ] Create `feature.md` from shipped behavior, remove this completed plan, and
+- [ ] D33. Create `feature.md` from shipped behavior, remove this completed plan, and
   regenerate the documentation index in the release PR.
 
 ## Phases

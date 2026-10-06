@@ -1,7 +1,11 @@
-# Core Event Bus — Ephemeral Domain Events Over A Unified SSE Stream
+---
+created: 2026-07-24
+updated: 2026-07-24
+summary: An in-process event bus that tells session clients over one SSE stream that something changed.
+components: [apps/core, apps/shell]
+---
 
-Created: 2026-07-24
-Updated: 2026-07-24
+# Core Event Bus — Ephemeral Domain Events Over A Unified SSE Stream
 
 Core runs an in-process event bus and serves it to session clients over one Server-Sent Events
 endpoint. Clients use it to learn that something changed and re-read it, which is how the Shell

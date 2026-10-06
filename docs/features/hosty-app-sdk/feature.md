@@ -1,7 +1,11 @@
-# Hosty App SDK
+---
+created: 2026-07-15
+updated: 2026-10-05
+summary: The shared app-side Host integration published as an npm package and a NuGet package.
+components: [packages/app-sdk, packages/app-sdk-dotnet]
+---
 
-Created: 2026-07-15
-Updated: 2026-10-05
+# Hosty App SDK
 
 Shared Host integration for runtime apps, in two published packages: **`@hosty-sdk/app`** on npmjs
 (TypeScript, 0.20.0) and **`HostySdk.App`** on NuGet (.NET, 0.6.0). They own the app half of the

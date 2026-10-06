@@ -1,7 +1,11 @@
-# App UI Surfaces
+---
+created: 2026-08-19
+updated: 2026-10-01
+summary: Apps declare where their pages belong, such as settings, panels or navigation, and Shell places them.
+components: [apps/shell, apps/core]
+---
 
-Created: 2026-08-19
-Updated: 2026-10-01
+# App UI Surfaces
 
 An app declares **where** its pages belong, and Shell places them. Before this, an app had exactly
 one placement — the sidebar — so operator configuration, domain work, and always-at-hand tools all

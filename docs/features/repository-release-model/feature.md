@@ -1,7 +1,10 @@
-# Repository And Release Model
+---
+created: 2026-05-12
+updated: 2026-10-05
+summary: The repository layout, release artifacts and versioning rules for every component.
+---
 
-Created: 2026-05-12
-Updated: 2026-09-27
+# Repository And Release Model
 
 This document records the current repository layout and release artifact boundaries after the Core/Shell split and retirement of the legacy combined Host package.
 
@@ -411,6 +414,28 @@ Stable CLI/Core versions can use immutable GitHub releases such as `cli-v0.2.1` 
 `install.sh` detects OS/architecture, downloads the right CLI artifact, verifies checksums when available, installs the executable to `~/.hosty/bin/hosty`, marks it as runnable, and adds the install directory to a detected shell profile. `install.ps1` downloads `hosty-windows-x64.exe`, verifies checksums when available, installs it to `%USERPROFILE%\.hosty\bin\hosty.exe`, and adds the install directory to the current user's PATH. Hosty uses `~/.hosty` as its default local root, or `HOSTY_HOME` when explicitly set.
 
 The installer does not install Core directly. `hosty start` downloads Core only when `~/.hosty/core/bin/hosty-core` is missing. `hosty update` updates the managed CLI executable first, then installs or replaces the managed Core executable. It does not pull a Host image or recreate a Host container. Shell remains a Core-managed system runtime app. Core resolves its manifest from the release-owned distribution list and installs it with the manifest's default runtime profile (`docker`, switchable afterwards with `hosty apps switch-runtime`); when the selected runtime is `docker`, Docker pulls the image according to the Shell manifest. Which first-party apps preinstall — Shell and Marketplace by default, Telemetry opt-in — is decided by the distribution list merged with the operator's `hosty setup` choices, not by per-app manifest-path launch settings.
+
+### First-party app images
+
+The repository's own app images (`shell`, `marketplace`, `telemetry-ui`, `demo-app`) build on a
+base pinned by digest, and each ships the Next standalone bundle rather than a full `node_modules`.
+Ownership is stamped by `--chown` on each `COPY`; a recursive `chown` in the runner stage would
+rewrite every file's metadata and make overlayfs duplicate the whole bundle into an extra layer.
+
+None of them runs its server as root. Core sets no `--user`, so the image decides:
+
+- **Apps with no data mount** (`shell`, `telemetry-ui`) declare `USER node` and start directly.
+- **Apps with a data mount** (`marketplace`, `demo-app`) start as root through
+  `docker-entrypoint.sh`, then drop privileges with `gosu`.
+
+The privileged step only resolves which uid to run as. Core bind-mounts the app data directory from
+its own `apps/<id>/data` tree, owned by the user running Core — normally not root. The entrypoint
+therefore **adopts the mount's existing owner** and changes ownership only when the directory is
+root-owned (a fresh volume, or a Core that runs as root). Taking ownership of a Core-owned mount
+would fail quietly: on a host whose Core uid differs from the image's, Core would lose write access
+to the tree it manages, and "remove app with data" would report success while leaving data behind.
+Because the server may run as an arbitrary uid, the Next image-optimizer cache directory in those
+two images is mode `1777`, holding only derived, non-secret output.
 
 ## Release-Ready Validation
 

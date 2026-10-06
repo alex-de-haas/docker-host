@@ -1,8 +1,12 @@
-# App Feedback Inbox
+---
+status: Draft
+created: 2026-09-26
+updated: 2026-09-26
+summary: An inbox where users submit app observations and administrators send reviewed batches to assistant sessions.
+components: [apps/shell, apps/harness, packages/app-sdk]
+---
 
-Status: Draft
-Created: 2026-09-26
-Updated: 2026-09-26
+# App Feedback Inbox
 
 Part of [shared assistant development sessions](../assistant-development-sessions/plan.md).
 The umbrella's common invariants apply; this feature has independent scope and requires its own Ready approval.
@@ -105,10 +109,10 @@ plan's scope; this feature hands reviewed evidence to assistant sessions only.
 
 ## Deliverables
 
-- [ ] Implement narrow authenticated intake and durable evidence in the selected Core/separate-app location.
-- [ ] Validate and implement supported screenshot/element capture paths with text/context fallback.
-- [ ] Implement administrator triage, reviewed batch and direct-send paths with idempotent session delivery.
-- [ ] Implement per-item outcomes, authorized reporter notifications and evidence retention/access.
+- [ ] D1. Implement narrow authenticated intake and durable evidence in the selected Core/separate-app location.
+- [ ] D2. Validate and implement supported screenshot/element capture paths with text/context fallback.
+- [ ] D3. Implement administrator triage, reviewed batch and direct-send paths with idempotent session delivery.
+- [ ] D4. Implement per-item outcomes, authorized reporter notifications and evidence retention/access.
 
 ## Implementation Phases
 

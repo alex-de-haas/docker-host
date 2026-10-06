@@ -1,8 +1,12 @@
-# App Sandbox Runtimes And Agent Testing
+---
+status: On Hold
+created: 2026-09-25
+updated: 2026-10-01
+summary: Isolated runtime instances for testing session worktrees with synthetic data and scoped browser automation.
+components: [apps/core]
+---
 
-Status: On Hold
-Created: 2026-09-25
-Updated: 2026-10-01
+# App Sandbox Runtimes And Agent Testing
 
 ## Deferral And Caller-Supplied Test Configuration (Owner Decision, 2026-10-01)
 
@@ -145,28 +149,28 @@ CLI use the same underlying services. AHP can carry session activity/results and
 it does not supply OS containment or standardize Hosty's sandbox lifecycle. Exact tool names and
 payloads remain open. Status and artifacts link into the session timeline and feedback evidence.
 
-## Deliverables And Suggested Phases
+## Deliverables
 
 All phases below are unapproved. Start with one representative container-compatible app and one
 repeatable scenario before generalizing or scheduling multiple evaluators.
 
-- [ ] Define and implement selection of a registered session worktree as runtime source, actual running
+- [ ] D1. Define and implement selection of a registered session worktree as runtime source, actual running
   revision reporting, source-bound test evidence and safe completion/return-to-prior-runtime behavior
   where replacement is selected; keep cwd, builds, mounts and manifest inspection on the same source.
-- [ ] Phase 1: specify runtime-instance identity, ownership, routing, scoped auth and dependency
+- [ ] D2. Phase 1: specify runtime-instance identity, ownership, routing, scoped auth and dependency
   resolution; prove compatibility with the single-Core model and existing app lifecycle.
-- [ ] Phase 1: define caller-supplied settings/environment, substitute mounts and explicit dependency
+- [ ] D3. Phase 1: define caller-supplied settings/environment, substitute mounts and explicit dependency
   overrides or mocks, including how unsupported or unknown external connections are reported.
-- [ ] Phase 1: choose supported execution backends/platforms and isolation guarantees; verify mounts,
+- [ ] D4. Phase 1: choose supported execution backends/platforms and isolation guarantees; verify mounts,
   inherited environment, builds, egress and Core access against those guarantees.
-- [ ] Phase 2: implement sandbox creation, readiness, stop/reset/dispose, synthetic seeds, separate
+- [ ] D5. Phase 2: implement sandbox creation, readiness, stop/reset/dispose, synthetic seeds, separate
   resource names and bounded resource usage without changing the production installation.
-- [ ] Phase 2: expose authorized Core APIs/MCP and manual UI controls; bind sessions/worktrees and
+- [ ] D6. Phase 2: expose authorized Core APIs/MCP and manual UI controls; bind sessions/worktrees and
   show actual running revision, data mode, isolation level and cleanup blockers.
-- [ ] Phase 2: define optional sanitized snapshot import, consistency and retention before enabling it.
-- [ ] Phase 3: integrate a scoped browser runner, test identities, repeatable scenarios, evidence
+- [ ] D7. Phase 2: define optional sanitized snapshot import, consistency and retention before enabling it.
+- [ ] D8. Phase 3: integrate a scoped browser runner, test identities, repeatable scenarios, evidence
   artifacts and truthful pass/fail/unknown outcomes in the session timeline.
-- [ ] Verify the acceptance cases below, document shipped guarantees in `feature.md`, and reconcile
+- [ ] D9. Verify the acceptance cases below, document shipped guarantees in `feature.md`, and reconcile
   dependent plans without broadening previously granted agent authority.
 
 ## Open Questions

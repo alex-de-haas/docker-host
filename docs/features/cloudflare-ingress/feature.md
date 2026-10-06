@@ -1,7 +1,11 @@
-# Feature: Cloudflare Ingress
+---
+created: 2026-06-17
+updated: 2026-10-05
+summary: An opt-in Cloudflare Tunnel provider that publishes app endpoints and derives their public origins.
+components: [apps/core, apps/shell]
+---
 
-Created: 2026-06-17
-Updated: 2026-10-05
+# Feature: Cloudflare Ingress
 
 Runtime app services listen only on loopback. Ingress is the layer that accepts public traffic,
 terminates HTTPS, and routes by hostname to the right loopback port. Core never runs a reverse proxy
@@ -348,6 +352,19 @@ The `hosty` CLI has no ingress or Cloudflare commands.
   update on the tunnel configuration. A Dashboard change *completed before* a Hosty operation is read and
   preserved.
 
+## Links
+
+- [Public Origins](../public-origins/feature.md) — the control, the ownership rule and the reconcile
+  both Cloudflare providers share with the manual one.
+- [Shell Navigation](../shell-navigation/feature.md) — the Settings page this feature's tab belongs to.
+- [Automatic Runtime App Ports](../automatic-runtime-app-ports/feature.md) — install-time port reservations,
+  which give a stopped app the local URL a publication targets.
+- [Advertised App Origins](../advertised-app-origins/plan.md) — the LAN-without-a-proxy case, which ingress
+  deliberately does not cover.
+- [Core Settings](../core-runtime-parameters/feature.md#the-settings-store) — the live-settings surface the provider fields use.
+- [Cloudflare API Token Templates](https://developers.cloudflare.com/fundamentals/api/reference/template/)
+- [Cloudflare Tunnel Configuration API](https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/subresources/configurations/methods/update)
+
 ## Testing Expectations
 
 - Provider `none` is a no-op; a complete `cloudflared` configuration derives origins and writes the config;
@@ -414,16 +431,3 @@ The `hosty` CLI has no ingress or Cloudflare commands.
   while the route is drifted and a disabled `Rename` in every other state, an emptied field presses nothing,
   and casing or whitespace alone never reads as an edit
   ([public-origin-control.test.mjs](../../../apps/shell/test/public-origin-control.test.mjs)).
-
-## Links
-
-- [Public Origins](../public-origins/feature.md) — the control, the ownership rule and the reconcile
-  both Cloudflare providers share with the manual one.
-- [Shell Navigation](../shell-navigation/feature.md) — the Settings page this feature's tab belongs to.
-- [Automatic Runtime App Ports](../automatic-runtime-app-ports/feature.md) — install-time port reservations,
-  which give a stopped app the local URL a publication targets.
-- [Advertised App Origins](../advertised-app-origins/plan.md) — the LAN-without-a-proxy case, which ingress
-  deliberately does not cover.
-- [Core Settings](../../ideas/core-settings.md) — the live-settings surface the provider fields use.
-- [Cloudflare API Token Templates](https://developers.cloudflare.com/fundamentals/api/reference/template/)
-- [Cloudflare Tunnel Configuration API](https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/subresources/configurations/methods/update)

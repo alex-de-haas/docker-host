@@ -1,7 +1,11 @@
-# App Readiness — Readiness Is Health
+---
+created: 2026-09-09
+updated: 2026-09-21
+summary: Readiness is per-service health, probed by default and read by every consumer before it uses an endpoint.
+components: [apps/core, apps/shell]
+---
 
-Created: 2026-09-09
-Updated: 2026-09-21
+# App Readiness — Readiness Is Health
 
 A client — Shell, a dependent app, `hosty mcp` — acts on an app's endpoint when that endpoint can
 answer, and not a moment before. No third state axis was added for it: `runtimeState` says whether

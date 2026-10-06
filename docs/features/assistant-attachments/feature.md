@@ -1,7 +1,11 @@
-# Assistant Attachments
+---
+created: 2026-09-03
+updated: 2026-09-27
+summary: Files attached in the assistant composer land in the session's working directory and are recorded in the transcript.
+components: [apps/harness]
+---
 
-Created: 2026-09-03
-Updated: 2026-09-27
+# Assistant Attachments
 
 An operator hands the assistant a file from the composer. It lands in a working directory that
 belongs to the session, the transcript records that it did, and the harness is told where to find

@@ -1,7 +1,11 @@
-# Auth And Gateway Model
+---
+created: 2026-05-13
+updated: 2026-10-05
+summary: Core owns user authentication, app assignments, identity issuance and scoped directory access, while apps own their sessions.
+components: [apps/core, packages/app-sdk]
+---
 
-Created: 2026-05-13
-Updated: 2026-10-01
+# Auth And Gateway Model
 
 ## Description
 
@@ -78,6 +82,13 @@ and explicit public origins are supported independently of ingress. Removing the
 subsequent issuance and revalidation. Harness MCP consent and remaining browser acceptance are tracked in
 [local browser origins](../local-browser-origins/plan.md).
 
+Authorization codes are one-time and expire after five minutes. Exchanging one rechecks the user,
+their disabled state, the installed app and its assignments. A redirect URI must be an absolute
+`http` or `https` URI without a fragment (`redirect_uri_invalid`) on a registered origin of that
+app. Runtime apps never receive Core's session cookie: each keeps an app-specific `HttpOnly` session
+on its own origin and revalidates it through Core. The Demo App's `/api/auth/app-code` and
+`/api/auth/identity` routes are the reference implementation.
+
 ## App Identity
 
 Runtime apps can validate the current Host user by calling:
@@ -110,7 +121,7 @@ Public traffic reaches runtime apps through [Cloudflare Ingress](../cloudflare-i
 
 Browser app launch does not go through a gateway at all. A Hosty-aware runtime app redirects to Core, exchanges an app authorization code, and creates its own app-local session on its own origin — the flow described above.
 
-Gateway concerns neither of those covers, chiefly wrapping an app that has no Hosty-aware auth of its own, are recorded in [Gateway And App Wrapping Ideas](../../ideas/gateway-and-app-wrapping.md).
+Wrapping an app that has no Hosty-aware auth of its own is part of [app authoring](../app-authoring/plan.md)'s work on adapting existing apps.
 
 ## Testing Expectations
 
@@ -119,4 +130,5 @@ Gateway concerns neither of those covers, chiefly wrapping an app that has no Ho
 - A revoked, expired, or unknown session fails identically on both credential paths.
 - Logout revokes the session and cascades to the app grants it authorized, whichever way the session was presented.
 - App identity tokens issued for one app are rejected when replayed against another.
+- Authorization codes are consumed once, expire after five minutes, and recheck access on exchange; redirect URIs with a fragment, a non-HTTP scheme or an unregistered origin are rejected.
 - The scoped app directory returns assigned users plus enabled admins, and never the full Host user directory.

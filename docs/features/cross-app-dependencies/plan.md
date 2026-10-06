@@ -1,8 +1,12 @@
-# Cross-App Dependencies — Provider Endpoints Off The Host And LAN
+---
+status: Draft
+created: 2026-07-28
+updated: 2026-08-17
+summary: Let a consumer reach a provider endpoint that is not reachable from the host or the LAN.
+components: [apps/core]
+---
 
-Status: Draft
-Created: 2026-07-28
-Updated: 2026-08-17
+# Cross-App Dependencies — Provider Endpoints Off The Host And LAN
 
 ## Goal
 
@@ -44,18 +48,18 @@ defence-in-depth improvement, not a hole being closed — worth doing carefully,
 4. Does removing the `expose: "host"` requirement change the endpoint availability vocabulary
    (`assigned` / `running` / `unavailable`) the Shell already renders?
 5. Is this subsumed by, or in conflict with, the cross-app authentication sketch in
-   [cross-app-auth](../../ideas/cross-app-auth.md)? That document argued for identity over network
+   [cross-app-auth](../cross-app-auth/plan.md)? That document argued for identity over network
    boundaries; the two answers should not be designed independently.
 
 ## Deliverables
 
-- [ ] Answer open questions 1–3; without them there is no design to review.
-- [ ] Network lifecycle owned by Core (create, attach, detach, remove) with the ordering guarantees a
+- [ ] D1. Answer open questions 1–3; without them there is no design to review.
+- [ ] D2. Network lifecycle owned by Core (create, attach, detach, remove) with the ordering guarantees a
       start path can rely on.
-- [ ] URL resolution and injection updated for the new path, both runtimes.
-- [ ] Uninstall/runtime-switch cleanup, so a removed app leaves no networks behind.
-- [ ] `feature.md` connectivity caveat rewritten to describe what actually ships.
-- [ ] **Confine telemetry ingest**, handed here on 2026-08-17 from
+- [ ] D3. URL resolution and injection updated for the new path, both runtimes.
+- [ ] D4. Uninstall/runtime-switch cleanup, so a removed app leaves no networks behind.
+- [ ] D5. `feature.md` connectivity caveat rewritten to describe what actually ships.
+- [ ] D6. **Confine telemetry ingest**, handed here on 2026-08-17 from
       [telemetry-mcp](../telemetry-mcp/feature.md) because it needs this network and nothing less.
       Today `apps/telemetry`'s OTLP port carries `"expose": "host"`, so Core publishes it on
       `0.0.0.0` and anything on the LAN can inject spans attributed to any `hosty.app.id`. That is not

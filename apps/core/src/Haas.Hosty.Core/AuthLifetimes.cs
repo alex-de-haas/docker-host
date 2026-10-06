@@ -6,7 +6,7 @@ namespace Haas.Hosty.Core;
 // is immutable, but the effective value is no longer a startup snapshot: CoreSettingsService owns it
 // and AuthLifetimes is DI-registered as a transient resolved from that service, so operator edits from
 // the platform panel apply live (idle immediately, absolute for sessions/grants issued afterward) — see
-// CoreSettings.cs and docs/ideas/core-settings.md. Because every revalidation re-checks role /
+// CoreSettings.cs and docs/features/core-runtime-parameters/feature.md. Because every revalidation re-checks role /
 // assignment / disabled online and grants are instantly revocable server-side, the defaults are days,
 // not hours — short TTLs would recreate the daily-login problem without adding real security. System
 // apps (all host.admin) get a tighter window than regular apps. See docs/features/auth-session-lifecycle/feature.md.

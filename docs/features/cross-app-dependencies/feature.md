@@ -1,7 +1,11 @@
-# Cross-App Dependencies — Declared Providers, Injected URLs, And Reported State
+---
+created: 2026-06-22
+updated: 2026-09-09
+summary: Apps declare dependencies on other installed apps, Core injects their URLs and reports their state.
+components: [apps/core, apps/shell]
+---
 
-Created: 2026-06-22
-Updated: 2026-09-09
+# Cross-App Dependencies — Declared Providers, Injected URLs, And Reported State
 
 ## Goal
 
@@ -133,19 +137,6 @@ are purged once, at boot.
 - **Change detection** (`AddDependencyChanges` / `DependencySignature`): app id + version + required
   + sorted `endpointKey=alias`, so any dependency change drives a restart.
 
-## Testing Expectations
-
-- `AppManifestServiceTests`: accepts a dependency with endpoints (and `required` defaults true);
-  rejects empty id, a duplicate dependency id, an endpoint with no key, and an alias collision.
-- `CoreLifecycleServiceTests`: dependency URLs resolve per alias into the runtime context; the
-  injected env for a localCommand consumer uses the alias (`HOSTY_DEPENDENCY_CACHE_URL`).
-- `CoreLifecycleServiceTests`: the summary projection reports installed/running/version and per-endpoint
-  resolution for a provider that is running, one that is stopped, and one that is absent; a running
-  provider with an unmatched endpoint key reads unresolved; an app with no dependencies projects null.
-- `apps/shell/test/app-problems.test.mjs`: every row of the state table above, including the silent
-  one, the severity split on `required`, the env-var name in the unresolved-endpoint detail, the
-  stopped-provider case raising exactly one problem, and an older Core sending no `dependencies` at all.
-
 ## Decision
 
 The dependency is discovery + lifecycle-awareness only, with **no** app-to-app auth, because the
@@ -160,3 +151,16 @@ becomes true and false on its own as the operator starts and stops apps, and a n
 dedupe and `ReadAt` but no revoke can only ever accumulate stale copies of it. The corollary is that
 Core sends resolved state and the client decides severity — moving the verdict into Core would fix the
 required/optional policy on the server and split problem derivation across two codebases.
+
+## Testing Expectations
+
+- `AppManifestServiceTests`: accepts a dependency with endpoints (and `required` defaults true);
+  rejects empty id, a duplicate dependency id, an endpoint with no key, and an alias collision.
+- `CoreLifecycleServiceTests`: dependency URLs resolve per alias into the runtime context; the
+  injected env for a localCommand consumer uses the alias (`HOSTY_DEPENDENCY_CACHE_URL`).
+- `CoreLifecycleServiceTests`: the summary projection reports installed/running/version and per-endpoint
+  resolution for a provider that is running, one that is stopped, and one that is absent; a running
+  provider with an unmatched endpoint key reads unresolved; an app with no dependencies projects null.
+- `apps/shell/test/app-problems.test.mjs`: every row of the state table above, including the silent
+  one, the severity split on `required`, the env-var name in the unresolved-endpoint detail, the
+  stopped-provider case raising exactly one problem, and an older Core sending no `dependencies` at all.

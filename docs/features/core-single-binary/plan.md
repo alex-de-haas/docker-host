@@ -1,8 +1,12 @@
-# Core Single Binary — One Executable For Server And Terminal
+---
+status: On Hold
+created: 2026-09-01
+updated: 2026-09-01
+summary: Parked decision on whether the CLI and Core merge into one executable.
+components: [apps/cli, apps/core]
+---
 
-Status: On Hold
-Created: 2026-09-01
-Updated: 2026-09-01
+# Core Single Binary — One Executable For Server And Terminal
 
 Parked by owner decision (2026-09-01): the question deserves its own working session, with the
 trade-offs weighed before any commitment. Recorded here so it is not lost.
@@ -47,7 +51,7 @@ instance — or stay two artifacts with the same client/server contract.
 
 ## Deliverables
 
-- [ ] The worked decision, with the analysis recorded. On "merge", this plan gains the
+- [ ] D1. The worked decision, with the analysis recorded. On "merge", this plan gains the
       implementation deliverables and a status change; on "stay split", this plan is deleted and
       the reasoning lands in the relevant `feature.md`.
 

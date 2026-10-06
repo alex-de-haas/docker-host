@@ -1,8 +1,12 @@
-# Synthetic Agent App Evaluations
+---
+status: Draft
+created: 2026-09-26
+updated: 2026-09-26
+summary: Use agents as bounded exploratory app testers whose findings are reproduced and triaged independently.
+components: [apps/harness]
+---
 
-Status: Draft
-Created: 2026-09-26
-Updated: 2026-09-26
+# Synthetic Agent App Evaluations
 
 Part of [shared assistant development sessions](../assistant-development-sessions/plan.md).
 The umbrella's common invariants apply; this feature has independent scope and requires its own Ready approval.
@@ -31,11 +35,11 @@ preference, conversion or a substitute for real-user A/B testing.
 
 ## Deliverables
 
-- [ ] Implement bounded exploratory jobs with synthetic roles, reproducible seeds and per-run
+- [ ] D1. Implement bounded exploratory jobs with synthetic roles, reproducible seeds and per-run
   resource/cost limits.
-- [ ] Submit evidence-linked synthetic observations to the feedback inbox with independent reproduction
+- [ ] D2. Submit evidence-linked synthetic observations to the feedback inbox with independent reproduction
   and administrator triage.
-- [ ] Implement controlled multi-agent/variant comparisons with model/instruction provenance and repeated
+- [ ] D3. Implement controlled multi-agent/variant comparisons with model/instruction provenance and repeated
   measurements.
 
 ## Open Questions

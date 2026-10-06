@@ -1,8 +1,12 @@
-# Core Extension Model
+---
+status: Draft
+created: 2026-07-10
+updated: 2026-10-05
+summary: Exploratory model for delivering platform capabilities as swappable apps through named contribution points.
+components: [apps/core]
+---
 
-Status: Draft
-Created: 2026-07-10
-Updated: 2026-09-29
+# Core Extension Model
 
 Exploratory. This plan authorizes no implementation and changes no current system-app behavior; it
 formalizes a pattern the platform already uses ad hoc so the next capability does not invent a second
@@ -284,7 +288,7 @@ The contract is `hosty.auth.method@1`, a fan-out driver contract. The canonical 
 - **Linking.** A signed-in user connects a Google account to their existing Hosty user. The method app
   runs the OIDC flow and returns a verified external subject to Core; Core stores the identity link.
   Linking requires an existing session, so there is no automatic user provisioning by default — which
-  keeps the [auth-provider-extensions](../../ideas/auth-provider-extensions.md) boundaries intact.
+  keeps the [auth-provider-extensions](../auth-provider-extensions/plan.md) boundaries intact.
 - **Sign-in.** The login surface shows a button per *available* confirmed method. Choosing one delegates
   verification to the method app; the app returns the verified subject; Core resolves the linked user
   and issues its own session. A method app never issues credentials.
@@ -326,8 +330,7 @@ session. It suits whole-perimeter SSO; login methods suit per-user, per-account 
 
 Marketplace's extraction shipped 2026-07-11 as the first zero-scope API client with system-app pages,
 and its boundaries are current behavior — see
-[runtime-app-marketplace](../runtime-app-marketplace/feature.md) and
-[marketplace-system-app](../../ideas/marketplace-system-app.md). Two of them constrain this model:
+[runtime-app-marketplace](../runtime-app-marketplace/feature.md). Two of them constrain this model:
 
 - **The install decision never leaves Core.** Feed resolution, manifest validation, operator consent,
   artifact locks, and any install-blocking trust policy run in Core. Marketplace output is treated like
@@ -356,18 +359,18 @@ release that adds a contract. Three things soften this:
 Sequenced so each step is independently useful; nothing here is approved for implementation while this
 plan is Draft.
 
-- [ ] 1. Surface ownership and roles in the UI: one Installed Apps list, badges from Core-confirmed
+- [ ] D1. Surface ownership and roles in the UI: one Installed Apps list, badges from Core-confirmed
       facts, uniform lifecycle actions with registry-derived warnings, immediate navigation updates on
       app state changes.
-- [ ] 2. Formalize the telemetry push as the first sink contract (`hosty.telemetry.sink@1`) with scoped
+- [ ] D2. Formalize the telemetry push as the first sink contract (`hosty.telemetry.sink@1`) with scoped
       data-plane tokens — no behavior change, mechanism proven, and the deferred ingest-auth item
       closed.
-- [ ] 3. Introduce the durable domain event log and pull subscriptions; ship a notification-channel
+- [ ] D3. Introduce the durable domain event log and pull subscriptions; ship a notification-channel
       plugin (e.g. Telegram delivery) as the first external consumer.
-- [ ] 4. Design `hosty.auth.method@1` (link-first login methods) after the mechanism has survived steps
+- [ ] D4. Design `hosty.auth.method@1` (link-first login methods) after the mechanism has survived steps
       2–3; keep the identity token broker explicitly deferred. The authenticating-proxy pattern remains
       available meanwhile for perimeter SSO.
-- [ ] 5. Replace every `role: system` privilege check with the permission model above: a delegation
+- [ ] D5. Replace every `role: system` privilege check with the permission model above: a delegation
       permission for the exchange and on-behalf-of tokens, grant-and-user intersection for access, a
       lifetime setting, and Core-side ownership state; align permission names with access-token scopes.
 Optional consumer permissions and the speech/assistant category contracts are owned by
@@ -376,7 +379,7 @@ Optional consumer permissions and the speech/assistant category contracts are ow
 The agreed name for an agent consumer permission is `providers.agent`; its contract and agent
 extraction remain unimplemented and outside that feature.
 
-- [ ] 7. Docs: a `feature.md` here once a contract ships, plus the manifest and Shell documents the
+- [ ] D7. Docs: a `feature.md` here once a contract ships, plus the manifest and Shell documents the
       `provides`/`corePermissions` sections touch.
 
 ## Conflicts With Existing Features
@@ -392,7 +395,7 @@ extraction remain unimplemented and outside that feature.
   mistaken for an extension of it.
 - The manifest `capabilities` field name collides conceptually with capability contracts; the new
   sections need distinct names (`provides`/`corePermissions`) and documentation.
-- [auth-provider-extensions](../../ideas/auth-provider-extensions.md) lists OIDC and provisioning
+- [auth-provider-extensions](../auth-provider-extensions/plan.md) lists OIDC and provisioning
   directions; the login-methods contract supplies a delivery mechanism for the OIDC half while keeping
   its boundaries. Full replacement of Core authentication by an external provider is not pursued.
 
@@ -472,7 +475,7 @@ extraction remain unimplemented and outside that feature.
 
 ## Links
 
-- [Final Hosty architecture boundaries](../final-hosty-architecture.md) — the Core/Shell/CLI ownership
+- [Domain model](../domain-model/feature.md#component-boundaries) — the Core/Shell/CLI ownership
   rules this model extends.
 - [Observability — telemetry backend](../observability/feature.md) — the de-facto first plugin; source
   of the sink contract.
@@ -480,15 +483,13 @@ extraction remain unimplemented and outside that feature.
   for.
 - [Runtime app marketplace](../runtime-app-marketplace/feature.md) — the shipped zero-scope API client
   with system-app pages.
-- [Marketplace As A System App](../../ideas/marketplace-system-app.md) — the read-only catalog ownership
-  boundary and migration design.
-- [System App Pages](../../ideas/system-app-pages.md) — the shared admin-only page model for UI-capable
-  system apps.
-- [Runtime App Repository Feeds](../../ideas/runtime-app-repository-feeds.md) — current feed behavior
+- [App UI surfaces](../app-ui-surfaces/feature.md) — where app pages, settings and panels are placed,
+  including those of UI-capable system apps.
+- [App feeds](../app-feeds/feature.md) — current feed behavior
   with repository ownership and Core resolution.
 - [AI Agent Bridge](../ai-agent-bridge/feature.md) — shares the Core-issued scoped-token direction for
   data planes.
-- [Auth provider extensions](../../ideas/auth-provider-extensions.md) — auth directions the
+- [Auth provider extensions](../auth-provider-extensions/plan.md) — auth directions the
   login-methods contract gives a delivery mechanism for.
-- [On-Demand System App Updates](../../ideas/system-app-updates.md) — the reviewed update path provider
+- [Runtime app update](../runtime-app-update/feature.md) — the reviewed update path provider
   apps rely on, since they update like any other app.

@@ -1,12 +1,19 @@
+---
+status: Draft
+created: 2026-07-20
+updated: 2026-10-05
+summary: Providers learn which installed app is calling their control API by introspecting the caller's service token against Core.
+components: [apps/core, packages/app-sdk-dotnet]
+---
+
 # Cross-App Auth — Identifying the Caller on App-to-App Control APIs
 
-Status: Idea (proposed 2026-07-20 — awaiting owner ratification)
-Created: 2026-07-20
-Updated: 2026-07-20
+Carried over from `docs/ideas/` on 2026-10-05. The proposal still awaits owner ratification; the
+open questions below must be answered before this plan can become Ready.
 
 ## Motivation — This Reopens a Settled Decision, Deliberately
 
-[cross-app-dependencies.md](../features/cross-app-dependencies/feature.md) ratified the opposite of
+[cross-app-dependencies.md](../cross-app-dependencies/feature.md) ratified the opposite of
 what this note proposes: "A cross-app dependency is **not** an access barrier … There is
 **no app-to-app authentication** in this model", because "the threat model is a trusted
 single-tenant homelab". That decision was coherent when it was made. Three things have
@@ -76,7 +83,7 @@ three .NET.
   Core can answer "does app X declare an edge to app Y" without new state.
 - **The SDK has a decided validation pattern** to copy verbatim: online against Core,
   never local; 30s positive cache clamped, negatives never cached; classify by HTTP
-  status ([hosty-app-sdk](../features/hosty-app-sdk/feature.md#classification-and-caching)).
+  status ([hosty-app-sdk](../hosty-app-sdk/feature.md#classification-and-caching)).
 - **Known limits of the token, stated openly:** no expiry, no per-install nonce — a
   leaked token is valid until the signing key rotates (which recreates every app; the
   #220 adopt-vs-recreate machinery already handles that), and a token for an
@@ -121,21 +128,22 @@ No new credential is minted, no new env is injected, no lifecycle changes:
   `dependsOnCaller`) is a later opt-in, not the default — enforcement policy can then
   tighten per app without another platform change.
 
-## Rollout (each step independently shippable)
+## Deliverables
 
-1. **Core:** the introspection endpoint + tests.
-2. **SDK:** provider middleware + consumer handler in `HostySdk.App` (.NET first — every
-   edge today is .NET on both sides; the TS server-slice twin waits for a TS provider to
-   exist). This folds naturally into the Second Wave's Core-capability-client area
-   ([hosty-app-sdk plan](../features/hosty-app-sdk/plan.md)), same package, no new distribution channel.
-3. **torrent-engine:** adopt the middleware. (The interim `CONTROL_API_TOKEN` was already
-   removed unused in 0.5.0, torrent-engine#22 — no legacy-header window is needed, since
-   nothing ever sent it.)
-4. **transcode-engine:** adopt the middleware.
-5. **media-server:** register the handler on both engine clients.
-6. **Enforcement staged like the token-adoption boot check:** providers first run
-   accept-and-log (warn on anonymous calls), flip to require once the consumer handler
-   has shipped. Default becomes require.
+Each step ships independently.
+
+- [ ] D1. Core: the introspection endpoint and its tests.
+- [ ] D2. SDK: provider middleware and consumer handler in `HostySdk.App` (.NET first — every edge
+      today is .NET on both sides; the TypeScript server-slice twin waits for a TypeScript
+      provider). This folds into the Second Wave's Core capability client area
+      ([hosty-app-sdk plan](../hosty-app-sdk/plan.md)), same package, no new distribution channel.
+- [ ] D3. torrent-engine adopts the middleware. The interim `CONTROL_API_TOKEN` was already removed
+      unused in 0.5.0 (torrent-engine#22), so no legacy-header window is needed.
+- [ ] D4. transcode-engine adopts the middleware.
+- [ ] D5. media-server registers the handler on both engine clients.
+- [ ] D6. Enforcement staged like the token-adoption boot check: providers first accept and log
+      anonymous calls, then require identification once the consumer handler has shipped. The
+      default becomes require.
 
 **Stopgap resolved 2026-07-20:** the original draft required `CONTROL_API_TOKEN` to stay
 unset until step 5 exists (enabling it silently 401'd the only consumer). The owner chose
@@ -190,10 +198,10 @@ was resolved 2026-07-20 by deleting the token instead: torrent-engine#22.)
 
 ## References
 
-- [cross-app-dependencies.md](../features/cross-app-dependencies/feature.md) — the ratified
+- [cross-app-dependencies.md](../cross-app-dependencies/feature.md) — the ratified
   no-auth decision this note revisits, and the discovery contract it builds on.
-- [hosty-app-sdk](../features/hosty-app-sdk/feature.md) — trust model, online-validation rule
-  and cache numbers; Second Wave packaging in its [plan](../features/hosty-app-sdk/plan.md).
+- [hosty-app-sdk](../hosty-app-sdk/feature.md) — trust model, online-validation rule
+  and cache numbers; Second Wave packaging in its [plan](../hosty-app-sdk/plan.md).
 - [torrent-engine#22](https://github.com/alex-de-haas/torrent-engine/pull/22) — removal
   of the unused interim `CONTROL_API_TOKEN` (0.5.0); the engine's README keeps the 0.4.x
   history as the motivating precedent for this note.

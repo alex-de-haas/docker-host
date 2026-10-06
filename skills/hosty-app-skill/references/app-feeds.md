@@ -53,4 +53,4 @@ hosty core start
 
 Use Shell's feed install review for an end-to-end check. For repository fixtures, also keep the feed identity synchronized with `manifest.json`; the first-party Demo App is the reference.
 
-See `docs/features/catalog-hosted-app-feeds.md` for Core API, state, selection, and digest behavior.
+See `docs/features/app-feeds/feature.md` for Core API, state, selection, and digest behavior.

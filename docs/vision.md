@@ -1,13 +1,15 @@
-# Hosty Platform Vision
+---
+created: 2026-08-19
+updated: 2026-10-05
+---
 
-Created: 2026-08-19
-Updated: 2026-10-05
+# Hosty Platform Vision
 
 The umbrella document: where Hosty is going, so individual decisions have a criterion to be judged
 against. It authorizes no implementation and owns no deliverables — work it names is tracked in the
 owning feature's `plan.md` — and it links the features it spans rather than duplicating them. It is a
 living document outside the status workflow: when the direction changes, so does this file, and
-`Updated:` says when.
+its `updated` date says when.
 
 ## Thesis
 

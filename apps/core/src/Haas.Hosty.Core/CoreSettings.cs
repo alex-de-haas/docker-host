@@ -7,7 +7,7 @@ namespace Haas.Hosty.Core;
 // Core-owned behavior settings the operator edits from the Shell platform panel (not the CLI's
 // launch settings). v1 carries the auth session/grant lifetimes that were previously env-only and
 // startup-immutable. Persisted in the core data root; absent file means "follow env/defaults".
-// See docs/ideas/core-settings.md.
+// See docs/features/core-runtime-parameters/feature.md.
 internal static class CoreSettingsSchema
 {
     public const string Version = "core-settings.0.1";

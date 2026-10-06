@@ -6,7 +6,7 @@ namespace Haas.Hosty.Core;
 // ingress). The Shell platform panel's Settings section is the consumer; the payload mirrors the
 // per-app settings shape (key/type/value/label/description) so Shell renders it with the same form
 // components. Core stays the kernel — this is not an installed app, just its settings presented in the
-// app shape. See docs/ideas/core-settings.md.
+// app shape. See docs/features/core-runtime-parameters/feature.md.
 internal static class CoreSettingsEndpoints
 {
     public static void Map(WebApplication app)

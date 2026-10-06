@@ -1,8 +1,12 @@
-# External Agent Session Context
+---
+status: Draft
+created: 2026-09-26
+updated: 2026-09-26
+summary: Let an authenticated local external agent read a Hosty session, work in its registered folders and save a report back.
+components: [apps/harness]
+---
 
-Status: Draft
-Created: 2026-09-26
-Updated: 2026-09-26
+# External Agent Session Context
 
 Part of [shared assistant development sessions](../assistant-development-sessions/plan.md).
 The umbrella's common invariants apply; this feature has independent scope and requires its own Ready approval.
@@ -44,11 +48,11 @@ do not turn that observation into a promise about every future version.
 
 ## Deliverables
 
-- [ ] Implement authorized explicit session reads/workspace preparation and attributed report import with
+- [ ] D1. Implement authorized explicit session reads/workspace preparation and attributed report import with
   deduplication.
-- [ ] Package local external-agent instructions and optional CLI/plugin configuration against verified
+- [ ] D2. Package local external-agent instructions and optional CLI/plugin configuration against verified
   capabilities.
-- [ ] Expose external activity/coverage and conflicting-write indicators without claiming OS enforcement.
+- [ ] D3. Expose external activity/coverage and conflicting-write indicators without claiming OS enforcement.
 
 ## Open Questions
 

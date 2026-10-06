@@ -1,7 +1,11 @@
-# OAuth Core Control Scopes
+---
+created: 2026-09-08
+updated: 2026-09-09
+summary: OAuth consent can grant Core MCP lifecycle and update scopes in addition to read.
+components: [apps/core]
+---
 
-Created: 2026-09-08
-Updated: 2026-09-09
+# OAuth Core Control Scopes
 
 OAuth consent can grant Core MCP lifecycle and update permissions in addition to read. The
 [OAuth feature](../mcp-oauth/feature.md#resource-indicators-are-the-audience-rule) owns metadata,

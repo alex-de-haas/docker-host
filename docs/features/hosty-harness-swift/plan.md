@@ -1,8 +1,12 @@
-# Hosty Harness Swift Client
+---
+status: Draft
+created: 2026-09-25
+updated: 2026-09-29
+summary: A native Swift client for Hosty Harness sessions, approvals and changes, aimed at phone use.
+components: [apps/harness]
+---
 
-Status: Draft
-Created: 2026-09-25
-Updated: 2026-09-29
+# Hosty Harness Swift Client
 
 ## Goal And Owner Direction
 
@@ -123,20 +127,20 @@ release boundary before Ready.
 
 ## Deliverables
 
-- [ ] Decide first Apple platforms, deployment target, bundle/source identity, independent version
+- [ ] D1. Decide first Apple platforms, deployment target, bundle/source identity, independent version
       source and release/distribution route; review a phone navigation proposal before Ready.
-- [ ] Reuse HostyKit through the selected shared-package boundary and validate app-specific credentials/storage.
-- [ ] Verify the pinned official AHP Swift client against the AHP client-adapter contracts, including host
+- [ ] D2. Reuse HostyKit through the selected shared-package boundary and validate app-specific credentials/storage.
+- [ ] D3. Verify the pinned official AHP Swift client against the AHP client-adapter contracts, including host
       selection, sign-in, reconnection and unsupported-version handling.
-- [ ] Implement session notification routing, web fallback and dual-client banner deduplication;
+- [ ] D4. Implement session notification routing, web fallback and dual-client banner deduplication;
       define the notification release boundary and integrate device registration if push is selected.
-- [ ] Implement native session list/history/composer, streamed activity, supported attachments and
+- [ ] D5. Implement native session list/history/composer, streamed activity, supported attachments and
       internal-agent selection with preserved drafts and server-authoritative state.
-- [ ] Implement permission/question presentation and replies, cancellation, stale-request handling
+- [ ] D6. Implement permission/question presentation and replies, cancellation, stale-request handling
       and consistent state when another client resolves the same request.
-- [ ] Implement repository/file/diff views and advertised session actions/status; reuse server
+- [ ] D7. Implement repository/file/diff views and advertised session actions/status; reuse server
       evidence for PR/CI, source selection, summary/timeline and Merge/Complete eligibility.
-- [ ] Verify the end-to-end remote phone workflow and failure cases below, document shipped behavior
+- [ ] D8. Verify the end-to-end remote phone workflow and failure cases below, document shipped behavior
       in `feature.md`, remove this plan when complete and regenerate the index. Add the native
       artifact's version policy when implementation ships; documentation alone needs no version bump.
 

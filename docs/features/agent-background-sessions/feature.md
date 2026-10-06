@@ -1,7 +1,11 @@
-# Agent Background Sessions
+---
+created: 2026-08-24
+updated: 2026-09-03
+summary: Assistant sessions that keep working after the tab closes and notify the operator when they wait for a person.
+components: [apps/harness, apps/shell, apps/shell-swift]
+---
 
-Created: 2026-08-24
-Updated: 2026-09-03
+# Agent Background Sessions
 
 Leaving an agent working while you close the tab is a feature rather than a way to lose work: the
 session is findable when you come back, and it reaches you when it needs you.

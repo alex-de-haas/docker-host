@@ -1,7 +1,11 @@
-# Core Read-Path Caching
+---
+created: 2026-08-25
+updated: 2026-08-25
+summary: Core serves hot reads from in-memory caches guarded by on-disk file stamps.
+components: [apps/core]
+---
 
-Created: 2026-08-25
-Updated: 2026-08-25
+# Core Read-Path Caching
 
 Core's hottest read paths serve parsed in-memory state instead of re-reading and
 re-parsing their backing files on every call. Three caches exist, all built on

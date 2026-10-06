@@ -1,7 +1,11 @@
-# Assistant MCP Delegation
+---
+created: 2026-08-15
+updated: 2026-10-05
+summary: Core grants individual assistants access to selected MCP targets through administrator-configured delegation.
+components: [apps/core, apps/harness]
+---
 
-Created: 2026-08-15
-Updated: 2026-10-05
+# Assistant MCP Delegation
 
 Core grants individual installed assistants access to selected MCP targets. The relationship is
 stored in the Core agent policy and requires administrative configuration. A host-wide offer, the

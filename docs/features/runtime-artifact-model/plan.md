@@ -1,8 +1,12 @@
-# Runtime Artifact Extensions
+---
+status: Draft
+created: 2026-07-02
+updated: 2026-09-26
+summary: Delivery and update extensions for prebuilt artifacts, such as release and URL downloads.
+components: [apps/core]
+---
 
-Status: Draft
-Created: 2026-07-02
-Updated: 2026-09-26
+# Runtime Artifact Extensions
 
 ## Goal
 
@@ -11,20 +15,20 @@ loop to new delivery mechanisms. This plan retains the unbuilt work from the leg
 
 ## Deliverables
 
-- [ ] Add reviewed `git-release` and URL delivery for prebuilt artifacts, with integrity verification,
+- [ ] D1. Add reviewed `git-release` and URL delivery for prebuilt artifacts, with integrity verification,
       bounded downloads, safe extraction and reproducible artifact locks.
-- [ ] Detect changed prebuilt delivery content during reviewed update planning even when the manifest
+- [ ] D2. Detect changed prebuilt delivery content during reviewed update planning even when the manifest
       version is unchanged; include the candidate hash in the reviewed operation.
-- [ ] Expose update availability per runtime rather than conflating the active profile and alternatives.
-- [ ] Decide whether a demonstrated multi-source use case warrants per-runtime source bindings and a
+- [ ] D3. Expose update availability per runtime rather than conflating the active profile and alternatives.
+- [ ] D4. Decide whether a demonstrated multi-source use case warrants per-runtime source bindings and a
       unified artifact-state record; preserve app-level source and existing paths until then.
-- [ ] Extend reviewed image artifact locks with selected OS/architecture/variant and the execution
+- [ ] D5. Extend reviewed image artifact locks with selected OS/architecture/variant and the execution
       mode or emulation policy needed by [app adaptation](../app-authoring/plan.md). Persist that
       selection with the resolved image identity, distinguish an image-index digest from its chosen
       platform image, and enforce it during install/start/restart/update. Define behavior for legacy
       locks with missing platform information; never silently substitute the new host's default
       platform or enable emulation when the reviewed selection cannot run.
-- [ ] Verify the selected extensions, update feature.md and retire this plan when its work is complete.
+- [ ] D6. Verify the selected extensions, update feature.md and retire this plan when its work is complete.
 
 ## Open Questions
 

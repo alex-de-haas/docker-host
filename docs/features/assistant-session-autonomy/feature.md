@@ -1,7 +1,11 @@
-# Assistant Session Autonomy
+---
+created: 2026-10-05
+updated: 2026-10-05
+summary: A per-chat Normal or Autonomous mode that controls whether native commands and file changes ask for approval.
+components: [apps/harness]
+---
 
-Created: 2026-10-05
-Updated: 2026-10-05
+# Assistant Session Autonomy
 
 Harness exposes **Normal** and **Autonomous** beneath the message composer, beside the provider
 selector. The choice belongs to the chat and survives reopening and Harness restarts. Missing values
