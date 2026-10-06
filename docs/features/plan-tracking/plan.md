@@ -3,7 +3,7 @@ status: Ready
 created: 2026-10-06
 updated: 2026-10-06
 summary: An administrator app that shows every plan across the installed apps' source repositories, with status, progress and the assistant sessions working on it.
-components: [apps/core, apps/harness]
+components: [apps/core, apps/harness, apps/shell, packages/app-sdk]
 ---
 
 # Plan Tracking App
@@ -52,8 +52,10 @@ Verified against `main` at `024b369a`.
   assistant prepares a session workspace and fetches the target branch — an explicit development
   branch, else the manifest's `source.branch`, else the repository's default — into
   `refs/hosty/targets/<hash(branch)>` on preparation and on the workspace `refresh` operation.
-  Private repositories are fetched with a `SourceReadGrant` from the acting administrator's source
-  connection ([private app sources](../private-app-sources/feature.md)).
+  Private repositories are fetched with the Git grant persisted on the installed app
+  (`PrivateSources.Git`), which names the connection and its owner chosen at the app's reviewed
+  installation ([private app sources](../private-app-sources/feature.md)); a workspace adopts that
+  grant only when its owner is the workspace's administrator.
 - **Session workspaces.** Each record names its owner (assistant app, administrator, session id),
   repository, branch `hosty/session/<id>`, original base, session UI path and pull request
   references. Core's observer refreshes every twenty seconds; its observation includes
@@ -84,23 +86,30 @@ Verified against `main` at `024b369a`.
 
 ### Core: repository documents
 
-- **Repositories.** A list of the canonical repositories behind installed apps' `source`
-  declarations, deduplicated by canonical identity so a monorepo appears once, each with the apps it
-  serves and their manifest subpaths, the tracked branch, the last fetched commit and time, and an
-  availability state with its error.
+- **Repositories.** A list of entries, one per canonical repository and tracked branch behind
+  installed apps' `source` declarations, so a monorepo whose apps share a branch appears once. Apps of
+  one repository that track different branches yield one entry per branch, each the baseline for its
+  own apps; no branch is chosen arbitrarily. Each entry carries the apps it serves and their manifest
+  subpaths, the last fetched commit and time, and an availability state with its error.
 - **Tracked branch and freshness.** The tracked branch follows the rule session workspaces already
   use for their target, and it is read from the same `refs/hosty/targets/<hash(branch)>` ref in the
   same shared repository — never a second registry. A read fetches that ref when the last fetch is
   older than a short interval, at most once per repository per interval; an explicit refresh
   bypasses the interval; and workspace preparation and `refresh` keep updating the same ref, so
   their fetches serve the app too. Nothing polls remotes in the background. Fetches are bounded in
-  time and size and use the acting administrator's source connection for private repositories.
+  time and size.
+- **Private repositories.** No new connection selection exists. A fetch uses the Git grant already
+  persisted on an installed app of that repository, and only when the grant's owner is the acting
+  administrator — the rule session workspaces apply. When no such grant exists, for example because
+  another administrator connected the source, the entry is listed as unavailable with that reason
+  and its documents are not served. Public repositories need no grant.
 - **Documents.** For the tracked branch, or for a session workspace's worktree including its
   uncommitted changes, Core lists `docs/**/*.md` with path and blob SHA, and returns one document's
   content. Nothing outside `docs/`, nothing but Markdown, no symbolic links, and a size cap per file.
 - **Sessions.** A read-only projection of active session workspaces: workspace id, repository,
-  assistant app, session id and UI path, administrator, branch, observation time, the subset of
-  `SessionFiles` under `docs/`, and pull request references. No Git operation is reachable.
+  target branch, assistant app, session id and UI path, administrator, branch, observation time, the
+  subset of `SessionFiles` under `docs/`, and pull request references. A session belongs to the entry
+  with the same repository and tracked branch as its target. No Git operation is reachable.
 
 ### The app
 
@@ -150,8 +159,9 @@ app's.
       manifests, Harness's manifest and code, Shell's permission texts and SDK references updated,
       with tests for an upgraded host that keeps Harness's grant.
 - [ ] D3. Repository listing from installed apps' `source` declarations, deduplicated by canonical
-      identity, reading the workspace target refs with interval-limited fetches on read, an explicit
-      refresh and private access through the acting administrator's source connection.
+      identity and tracked branch, reading the workspace target refs with interval-limited fetches
+      on read, an explicit refresh, and private access only through an installed app's persisted Git
+      grant owned by the acting administrator.
 - [ ] D4. Document listing and content for the tracked branch and for session worktrees (uncommitted
       changes included), restricted to `docs/**/*.md` with size caps and symlink refusal; Native AOT
       serialization and path-guard tests.
@@ -210,7 +220,9 @@ app's.
 
 - Core HTTP tests: permission and administrator checks, the rename migration on an upgraded data
   root, path guards (`..`, symlinks, non-Markdown, outside `docs/`, oversized files),
-  private-repository access through the acting administrator, the fetch interval and explicit
+  private-repository access through a grant owned by the acting administrator and the unavailable
+  entry for another administrator's grant, two apps of one repository on different branches, the
+  fetch interval and explicit
   refresh, and a session worktree read that includes an uncommitted change.
 - App tests: parsing against docker-host's `docs/`, status counts and progress, component-to-app
   mapping, session markers for a changed, a new and a deleted plan, and two sessions changing one
