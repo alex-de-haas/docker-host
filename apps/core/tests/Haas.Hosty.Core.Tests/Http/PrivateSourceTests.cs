@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
@@ -21,9 +22,15 @@ public sealed class PrivateSourceTests
     [Theory]
     [InlineData("https://raw.githubusercontent.com/Team/Private/main/apps/test/manifest.json", "https://api.github.com/repos/team/private/contents/apps/test/manifest.json?ref=main")]
     [InlineData("https://github.com/team/private/blob/v1/manifest.json", "https://api.github.com/repos/team/private/contents/manifest.json?ref=v1")]
-    [InlineData("https://dev.azure.com/acme/Project/_git/Repo?path=/app/manifest.json&version=GBfeature%2Ftest", "https://dev.azure.com/acme/Project/_apis/git/repositories/Repo/items?path=%2Fapp%2Fmanifest.json&versionDescriptor.version=feature%2Ftest&versionDescriptor.versionType=branch&download=true&api-version=7.1")]
     public void ProviderFileUrlsMapToFixedApis(string input, string expected)
-        => Assert.Equal(expected, PrivateSourceService.ParseManifest(input).ApiUrl);
+    {
+        using var client = new HttpClient();
+        var adapter = new GitHubSourceProvider(client, new ConfigurationBuilder().Build(), new SystemClock());
+        var now = DateTimeOffset.UtcNow;
+        var connection = new UserProviderConnection("test", "alice", "Account", "github", "", "", "42", "Alice", "pat", "secret", null, null, null, now, now, "connected", "revision");
+        using var request = adapter.FileRequest(connection, adapter.ParseManifest(input));
+        Assert.Equal(expected, request.RequestUri!.AbsoluteUri);
+    }
 
     [Theory]
     [InlineData("http://raw.githubusercontent.com/team/private/main/manifest.json")]
@@ -34,7 +41,11 @@ public sealed class PrivateSourceTests
     [InlineData("https://dev.azure.com/acme/Project/_git/Repo?path=/../secret&version=GBmain")]
     [InlineData("https://raw.githubusercontent.com/team/private/main/manifest.json?token=secret")]
     public void UntrustedOrUnsupportedFileUrlsAreRejected(string input)
-        => Assert.Throws<AppLifecycleException>(() => PrivateSourceService.ParseManifest(input));
+    {
+        using var client = new HttpClient();
+        var adapter = new GitHubSourceProvider(client, new ConfigurationBuilder().Build(), new SystemClock());
+        Assert.Throws<AppLifecycleException>(() => adapter.ParseManifest(input));
+    }
 
     [Fact]
     public async Task ReadsUseEachOwnersAccountAndNeverExportTokens()
@@ -44,17 +55,16 @@ public sealed class PrivateSourceTests
         var reader = h.Services.GetRequiredService<PrivateSourceService>();
         var github = await reader.BindAsync("alice", "github-a", Url, true, default);
         var azureUrl = "https://dev.azure.com/acme/Project/_git/Repo?path=/manifest.json&version=GBmain";
-        var azure = await reader.BindAsync("bob", "azure-b", azureUrl, true, default);
+        var denied = await Assert.ThrowsAsync<AppLifecycleException>(() => reader.BindAsync("bob", "azure-b", azureUrl, true, default));
+        Assert.Contains("not supported", denied.Message);
         Assert.Equal(Manifest, Encoding.UTF8.GetString(await reader.ReadAsync(github, Url, 1024 * 1024, default)));
-        await reader.ReadAsync(azure, azureUrl, 1024 * 1024, default);
         Assert.Equal("Bearer github-secret", provider.Calls[0].Authorization);
-        Assert.Equal("Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes(":azure-secret")), provider.Calls[1].Authorization);
         Assert.All(provider.Calls, call => Assert.DoesNotContain("secret", call.Url));
-        Assert.DoesNotContain("secret", CoreJson.Text(new PrivateSourceAccess(github, azure)));
+        Assert.DoesNotContain("secret", CoreJson.Text(new PrivateSourceAccess(github)));
         await Assert.ThrowsAsync<AppLifecycleException>(() => reader.BindAsync("bob", "github-a", Url, true, default));
         await Assert.ThrowsAsync<AppLifecycleException>(() => reader.BindAsync("bob", "azure-b", azureUrl.Replace("acme", "other"), true, default));
         await Assert.ThrowsAsync<AppLifecycleException>(() => reader.ReadAsync(github, Url.Replace("private/", "another/"), 1024, default));
-        Assert.Equal(2, provider.Calls.Count);
+        Assert.Single(provider.Calls);
     }
 
     [Theory]
@@ -363,29 +373,31 @@ public sealed class PrivateSourceTests
     }
 
     [Theory]
-    [InlineData("apps.sources")]
-    [InlineData("apps.install")]
-    public async Task AppPrivateReview_RechecksBothPermissionsAtSubmitAndExecution(string revoked)
+    [InlineData("apps.sources", "apps.sources")]
+    [InlineData("apps.sources", "apps.install")]
+    [InlineData("sources.connections", "sources.connections")]
+    [InlineData("sources.connections", "apps.install")]
+    public async Task AppPrivateReview_RechecksBothPermissionsAtSubmitAndExecution(string selectionPermission, string revoked)
     {
         using var provider = new FakeHttp(); await using var h = await Start(provider);
         using var client = await AppClient(h, "alice", [CoreAppPermissions.Install]);
         var input = new { manifestPath = Url, sourceConnections = new { manifestConnectionId = "github-a" } };
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/installations", input)).StatusCode);
         Assert.Empty(provider.Calls);
-        await AppGrants(h, [CoreAppPermissions.Install, CoreAppPermissions.Sources]);
+        await AppGrants(h, [CoreAppPermissions.Install, selectionPermission]);
         using var response = await client.PostAsJsonAsync("/api/installations", input);
         response.EnsureSuccessStatusCode();
         var text = await response.Content.ReadAsStringAsync();
         Assert.DoesNotContain("github-secret", text);
         var id = JsonDocument.Parse(text).RootElement.GetProperty("id").GetString()!;
-        await AppGrants(h, CoreAppPermissions.Known.Except([revoked]).ToArray());
+        await AppGrants(h, new[] { CoreAppPermissions.Install, selectionPermission }.Except([revoked]).ToArray());
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync($"/api/installations/{id}/submit", new { autostart = false })).StatusCode);
-        await AppGrants(h, [CoreAppPermissions.Install, CoreAppPermissions.Sources]);
+        await AppGrants(h, [CoreAppPermissions.Install, selectionPermission]);
         (await client.PostAsJsonAsync($"/api/installations/{id}/submit", new { autostart = false })).EnsureSuccessStatusCode();
         var store = h.Services.GetRequiredService<InstallationApprovalStore>();
         var entry = store.Get(id);
         store.Decide(entry, store.IssueNonce(entry, "alice-browser"), "alice-browser", true);
-        await AppGrants(h, CoreAppPermissions.Known.Except([revoked]).ToArray());
+        await AppGrants(h, new[] { CoreAppPermissions.Install, selectionPermission }.Except([revoked]).ToArray());
         await h.Services.GetRequiredService<InstallationApprovalService>().ExecuteAsync(entry, default);
         Assert.Equal("failed", entry.Status);
         Assert.Contains(revoked, entry.Error);

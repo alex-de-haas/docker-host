@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-05
+updated: 2026-10-07
 ---
 
 # Hosty Platform Vision
@@ -286,6 +286,14 @@ Decisions 1–5: 2026-08-19.
     [embedded app sign-in feature](features/embedded-app-sign-in/feature.md) implements direct Core
     sign-in to the target app's frame without giving its credentials to Shell. Additional native
     isolation and prefix rules remain in the [approval rules plan](features/assistant-approval-rules/plan.md).
+
+20. **Source providers belong to the platform (2026-10-07).** GitHub is the built-in Core source
+    provider behind a typed internal contract, without a separate process. Shell owns personal
+    account/Git identity management through a narrow reviewed permission; Harness consumes selected
+    connections. This supersedes the earlier placement of account and private-install forms in
+    Harness. Azure DevOps leaves active support while saved records remain explicitly unsupported.
+    External provider applications and a plugin transport are outside this implementation. The
+    [source providers feature](features/source-providers/feature.md) owns the shipped boundary.
 
 ## Expectations And Later Directions
 

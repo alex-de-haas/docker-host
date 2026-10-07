@@ -93,10 +93,11 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<LocalPasswordAuthService>();
         builder.Services.AddSingleton<AuthBootstrapService>();
         builder.Services.AddSingleton<UserManagementService>();
+        builder.Services.AddSingleton(sp => new SourceProviderRegistry([sp.GetRequiredService<GitHubSourceProvider>()]));
         builder.Services.AddSingleton<UserConnectionService>();
         builder.Services.AddSingleton(sp => new PrivateSourceService(sp.GetRequiredService<UserConnectionService>(),
             new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = TimeSpan.FromSeconds(30) }));
-        builder.Services.AddHttpClient<UserConnectionProvider>(client => client.Timeout = TimeSpan.FromSeconds(30))
+        builder.Services.AddHttpClient<GitHubSourceProvider>(client => client.Timeout = TimeSpan.FromSeconds(30))
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false });
         builder.Services.AddSingleton(sp => new AppManifestService(AppManifestService.CreateDefaultHttpClient(), sp.GetRequiredService<PrivateSourceService>()));
         // The feed document is untrusted lifecycle input fetched over http(s). Refuse auto-redirects
@@ -111,8 +112,6 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AppSourceService>();
         builder.Services.AddSingleton<DevelopmentWorkspaceService>();
         builder.Services.AddSingleton<WorkspaceAuthorization>();
-        builder.Services.AddSingleton<IPublicationProvider>(sp => new GitHubPublicationProvider(
-            new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = TimeSpan.FromSeconds(45) }, sp.GetRequiredService<IClock>()));
         builder.Services.AddSingleton<PublicationService>();
         builder.Services.AddHostedService<PublicationObserver>();
         builder.Services.AddHostedService<DevelopmentWorkspaceObserver>();

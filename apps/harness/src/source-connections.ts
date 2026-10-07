@@ -1,16 +1,6 @@
-// This is a fixed set of source-provider and reviewed installation operations, not a general Core proxy. Core owns the
-// credentials, checks apps.sources and resolves the current owner from Harness's live app grant.
+// Read-only consumer selection. Account management and installation review belong to Shell.
 export function isSourceConnectionRoute(method: string, path: string): boolean {
-  if (path === "/api/installations") return method === "POST";
-  if (/^\/api\/installations\/[a-f0-9]+(?:\/submit)?$/.test(path)) return path.endsWith("/submit") ? method === "POST" : method === "GET";
-  if (/^\/api\/apps\/[a-zA-Z0-9][a-zA-Z0-9._-]*\/source-access$/.test(path)) return method === "GET";
-  if (path === "/api/source-connections") return method === "GET";
-  if (path === "/api/source-connections/identity") return method === "PUT";
-  if (path === "/api/source-connections/pat" || path === "/api/source-connections/device") return method === "POST";
-  if (/^\/api\/source-connections\/device\/[a-zA-Z0-9_-]+\/poll$/.test(path)) return method === "POST";
-  if (/^\/api\/source-connections\/device\/[a-zA-Z0-9_-]+$/.test(path)) return method === "DELETE";
-  if (/^\/api\/source-connections\/[a-zA-Z0-9_-]+\/check$/.test(path)) return method === "POST";
-  return /^\/api\/source-connections\/[a-zA-Z0-9_-]+$/.test(path) && (method === "PUT" || method === "DELETE");
+  return method === "GET" && (path === "/api/source-connections" || /^\/api\/apps\/[a-zA-Z0-9][a-zA-Z0-9._-]*\/source-access$/.test(path));
 }
 
 export async function requestSourceConnection(method: string, path: string, credential: string | null, body?: unknown): Promise<{ status: number; body: unknown }> {

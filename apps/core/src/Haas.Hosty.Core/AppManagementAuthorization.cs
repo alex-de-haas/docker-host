@@ -56,9 +56,11 @@ internal static class AppManagementAuthorization
                 .RevalidateAsync(request.Headers[IdentityHeader].ToString(), appId, ct);
             var app = await services.GetRequiredService<AppRegistryStore>().GetAppAsync(appId, ct);
             if (app is null) return Denied("app_access_denied", "The calling app is no longer installed.");
-            var missing = permissions.Where(p => !HasPermission(app, p)).ToArray();
+            var connectionSelection = request.Method == "GET" && route is "/api/source-connections" or "/api/source-connections/" or "/api/apps/{appId}/source-access";
+            var missing = permissions.Where(p => !HasPermission(app, p) &&
+                !(p == CoreAppPermissions.Sources && connectionSelection && HasPermission(app, CoreAppPermissions.SourceConnections))).ToArray();
             if (missing.Length > 0)
-                return Denied("app_permission_required", $"The calling app requires: {string.Join(", ", missing)}.");
+                return Denied("app_permission_required", $"The calling app requires: {string.Join(", ", missing.Select(p => p == CoreAppPermissions.Sources && connectionSelection ? "sources.connections or apps.sources" : p))}.");
             if (permissions.Length > 0)
                 await services.GetRequiredService<AppIdentityService>().RequireActivityAsync(request.Headers[IdentityHeader].ToString(), appId, ct);
             var state = await services.GetRequiredService<UserDirectoryStore>().ReadAsync(ct);
@@ -83,7 +85,8 @@ internal static class AppManagementAuthorization
     internal static IResult? RequirePrivateSourceAccess(HttpRequest request, PrivateSourceAccess? access)
     {
         if (Caller(request) is not { } caller || (access?.Manifest is null && access?.Git is null)) return null;
-        if (RequireAdditional(request, CoreAppPermissions.Sources) is { } denied) return denied;
+        if (!HasPermission(caller.App, CoreAppPermissions.Sources) && !HasPermission(caller.App, CoreAppPermissions.SourceConnections))
+            return CoreJson.Json(new ErrorResponse("app_permission_required", "Source selection requires apps.sources or sources.connections."), 403);
         return new[] { access?.Manifest, access?.Git }.OfType<SourceReadGrant>().Any(g => g.OwnerId != caller.User.Id)
             ? CoreJson.Json(new ErrorResponse("source_access_denied", "Only the source owner can review these private connections."), 403)
             : null;
@@ -142,11 +145,13 @@ internal static class AppManagementAuthorization
             "POST /api/auth/invitations", "DELETE /api/auth/invitations/{invitationId}",
             "PATCH /api/auth/users/{userId}", "DELETE /api/auth/users/{userId}",
             "DELETE /api/auth/users/{userId}/record", "PUT /api/auth/users/{userId}/assignments");
-        Add(CoreAppPermissions.Sources,
-            "GET /api/apps/{appId}/source-access", "GET /api/source-connections", "GET /api/source-connections/", "PUT /api/source-connections/identity",
+        Add(CoreAppPermissions.SourceConnections,
+            "PUT /api/source-connections/identity",
             "POST /api/source-connections/pat", "POST /api/source-connections/device",
             "POST /api/source-connections/device/{id}/poll", "DELETE /api/source-connections/device/{id}",
-            "PUT /api/source-connections/{id}", "POST /api/source-connections/{id}/check", "DELETE /api/source-connections/{id}",
+            "PUT /api/source-connections/{id}", "POST /api/source-connections/{id}/check", "DELETE /api/source-connections/{id}");
+        Add(CoreAppPermissions.Sources,
+            "GET /api/apps/{appId}/source-access", "GET /api/source-connections", "GET /api/source-connections/",
             "GET /api/core/source/status", "POST /api/core/source/diff", "GET /api/apps/{appId}/source/status",
             "POST /api/apps/{appId}/source/diff", "POST /api/apps/{appId}/source/discard/plan",
             "POST /api/apps/{appId}/source/discard");

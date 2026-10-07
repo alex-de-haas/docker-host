@@ -1,6 +1,6 @@
 ---
 created: 2026-09-25
-updated: 2026-09-27
+updated: 2026-10-07
 summary: Shell separates confirmations, transient operation results and persistent diagnostics.
 components: [apps/shell]
 ---
@@ -15,11 +15,26 @@ Alert Dialog replaces browser confirmation prompts for Core update, Shell stop/r
 
 Dialogs preserve the original operation permissions, reviewed plans, removal options, and destructive consequences. Cancel receives initial focus; Escape cancels an idle decision. The shared confirmation adapter restores focus to its opener, rejects overlapping requests, and cancels on scope change or unmount. Detailed asynchronous confirmation surfaces retain their busy/error handling. No lifecycle operation is executed merely by opening a dialog.
 
+Core confirmation windows for reviewed updates, removals and host-path changes do not create a
+duplicate prompt toast. A fallback link appears only when the popup could not open. Opening that
+link dismisses the fallback; otherwise Shell dismisses it when Core reports a decision, including
+the start of execution, or when polling fails or expires. Closing an opened popup produces no new
+reminder and does not authorize or cancel work already accepted by Core.
+
 ## Notifications
 
 The shared Sonner surface appears at the top center, 56px below the window edge (16px on mobile), with a desktop width of 420px and responsive mobile gutters. Success, information, warning and error states have distinct icons and semantic theme colors. Ordinary notifications retain Sonner's actions and dismissal behavior.
 
 Dashboard-wide operation error/warning banners are absent. Request errors appear as toasts, and repeated Core warnings are announced only when newly observed. An app action failure refreshes app diagnostics without also writing a persistent global error. Persistent app/service diagnostics remain in expanded rows; form validation and unavailable embedded-workspace explanations remain at their point of use.
+
+Reviewed and routine app updates report their terminal result from Core's app-state stream. An
+installed update that fails readiness produces a warning with the affected service states and an
+Open logs action, instead of an unconditional success toast. Repeated snapshots and page reloads
+do not replay an existing result. The persistent warning distinguishes installation completion
+from app readiness and from a separate available update. Its row label opens app details, where
+console logs are one click away. Running unhealthy/degraded apps also appear in the attention
+filter and retain these diagnostics after another lifecycle operation. A healthy observation
+clears the readiness warning, including a stale needs-attention update label.
 
 Error toasts include a scrollable full description, Copy, and a dismiss button. They remain for 20 seconds by default; Sonner pauses expiration during interaction. Copy includes the title, description and known app ID, and reports clipboard failure locally without removing the error. No Undo action is presented for operations that lack undo support.
 
@@ -44,5 +59,6 @@ Shell configures `@reui` as `https://reui.io/r/radix-vega/{name}.json`. The shar
 - Confirm cancellation, Escape, initial/restored focus, overlapping prompts, and unmount cancellation. Never trigger a real destructive action merely to smoke-test a dialog.
 - Verify copy includes full diagnostics; clipboard rejection leaves the error visible. Verify absent/stopped Gateway and concurrent/retried handoff behavior.
 - Verify app-context capability negotiation and identical idempotency keys across uncertain session-creation retries.
+- Verify readiness warnings, log actions, terminal success/failure notifications, missed intermediate snapshots, no duplicate notifications after refresh, and clearing diagnostics after recovery.
 - Harness tests cover durable drafts, authenticated preparation, complete uploads, unchanged retry outcomes and one execution identity.
 - Run Shell tests/lint/build and Gateway tests/web lint/build. Verify the toast position and confirmation cancellation through Core-managed Shell. Retain contextual diagnostics when removing global banners.

@@ -35,6 +35,29 @@ describe("Core-confirmed app removal", () => {
     expect((await result).status).toBe("denied");
     expect(api.submit).toHaveBeenCalledTimes(1);
   });
+  it("dismisses the confirmation fallback as soon as Core accepts, before execution finishes", async () => {
+    const api = client();
+    vi.mocked(api.status).mockResolvedValueOnce({ ...draft, status: "executing" });
+    const dismiss = vi.fn(); const finished = vi.fn();
+    const result = requestAppRemoval(api, "target", {}, () => dismiss).then(finished);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(dismiss).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(dismiss).toHaveBeenCalledTimes(1);
+    expect(finished).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1000); await result;
+    expect(dismiss).toHaveBeenCalledTimes(1);
+    expect(api.submit).toHaveBeenCalledTimes(1);
+  });
+  it("removes the fallback when polling fails without resubmitting the operation", async () => {
+    const api = client();
+    vi.mocked(api.status).mockRejectedValue(new Error("Access revoked"));
+    const dismiss = vi.fn();
+    const result = expect(requestAppRemoval(api, "target", {}, () => dismiss)).rejects.toThrow("Access revoked");
+    await vi.advanceTimersByTimeAsync(1000); await result;
+    expect(dismiss).toHaveBeenCalledTimes(1);
+    expect(api.submit).toHaveBeenCalledTimes(1);
+  });
   it("reports execution errors", async () => {
     const api = client(); vi.mocked(api.status).mockResolvedValue({ ...draft, status: "failed", error: "Target changed" });
     const result = expect(requestAppRemoval(api, "target", {}, vi.fn())).rejects.toThrow("Target changed");

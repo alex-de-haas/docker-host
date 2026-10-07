@@ -1,6 +1,6 @@
 ---
 created: 2026-05-19
-updated: 2026-10-06
+updated: 2026-10-07
 summary: Shell is the Core-managed browser UI app that authenticates users and embeds app pages.
 components: [apps/shell]
 ---
@@ -93,10 +93,11 @@ flowchart TD
 
 Dashboard is the administrator management surface for installed apps: one table holding non-system runtime apps and Core-managed system apps together, the latter marked by a `System` badge.
 
-The Core and installed-app tables share column widths. Runtime, version/source and status receive
-12%, 17% and 20% of the table respectively; actions reserve 224 px and the app name uses the
-remaining width. Both tables scroll horizontally below their 1040 px minimum width, preserving
-readable names and space between metadata and action controls.
+The Core and installed-app tables share a responsive grid. Identity and version/source use the
+flexible space; runtime, status, resources and actions have compact columns. On narrower workspaces,
+runtime stacks above version beside the identity, with the identity moving onto its own line only
+below 560 px. Both tables fit without horizontal scrolling; the full breakpoint layout is described
+in [Shell Navigation](../shell-navigation/feature.md).
 
 Apps expose actions according to Core state, plus — for the two entries that are optional app features rather than lifecycle verbs — the `logs` and `backup` capabilities the app declares (see below):
 
@@ -114,9 +115,13 @@ Endpoints are grouped by service with their key, the service address (`not assig
 assigned one) and, for public endpoints, the browser address, each with copy and open controls. A
 stopped app still lists its declared endpoints; a service without endpoints says so.
 
-The Status badge composes the two axes when they differ ([App Readiness](../app-readiness/feature.md)):
-a running app whose health fold is not `healthy` reads `running · starting` or `running · degraded`,
-in the health's tone, the way Aspire's dashboard shows it. A healthy app reads its state alone.
+Core and app rows show a compact status indicator: a green dot for a healthy running runtime,
+an amber dot for states needing attention, a grey dot for stopped runtimes, and a sky-coloured
+spinner during starting, stopping or restarting. Hovering or keyboard-focusing the indicator shows
+the full status in a tooltip; the indicator also has an accessible name. The tooltip composes
+lifecycle and health when they differ ([App Readiness](../app-readiness/feature.md)):
+`running · starting` or `running · degraded`. A healthy app reads its state alone. Expanded service
+details retain their labelled status badges.
 
 Autostart has no column of its own: nearly every app starts with the host, so a column that reads
 `On` down its whole length costs width and says nothing. Only the exception is marked — an app that
@@ -188,8 +193,10 @@ System Apps are inspectable and configurable in Shell. Administrators can open t
 ## Profile and authorization surfaces
 
 Shell renders display-name editing at `/settings?tab=profile` through its app-session BFF.
-Harness settings owns source-provider connection forms under `apps.sources`; Shell does not read
-or configure them. Core keeps persistence and ownership checks in the API; it serves no profile/settings page.
+Shell owns source connections and Git identity at `/settings?tab=security&section=connections`, under its optional
+`sources.connections` grant. Administrators review that grant explicitly in Core. Harness consumes
+selected accounts but does not manage them. Shell also selects private manifest/Git connections for
+installation and reviewed source-binding updates. Core keeps persistence and ownership checks in the API; it serves no profile/settings page.
 An authenticated app can read and edit its current user's profile without `users.read/manage`.
 The API accepts profile fields only; user administration remains a separate permission boundary.
 

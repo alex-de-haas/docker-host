@@ -919,7 +919,7 @@ describe("gateway", () => {
     } finally { await new Promise(resolve => core.close(resolve)); }
   });
 
-  it("source provider settings require an app session, same-origin writes and Core permission", async () => {
+  it("source selection requires an app session and Core permission; management routes are absent", async () => {
     const forwarded: { path: string; headers: import("node:http").IncomingHttpHeaders; body: unknown }[] = [];
     const core = createServer(async (request, response) => {
       const chunks: Buffer[] = [];
@@ -938,11 +938,12 @@ describe("gateway", () => {
       const headers = { cookie: "hosty_harness_identity=hostyg_own", "content-type": "application/json" };
       expect((await fetch(`${origin}/api/source-connections/identity`, { method: "PUT", headers, body: "{}" })).status).toBe(403);
       expect(forwarded).toHaveLength(0);
-      const reply = await fetch(`${origin}/api/source-connections/identity`, { method: "PUT", headers: { ...headers, origin }, body: '{"gitIdentity":null}' });
+      expect((await fetch(`${origin}/api/source-connections/identity`, { method: "PUT", headers: { ...headers, origin }, body: "{}" })).status).toBe(404);
+      const reply = await fetch(`${origin}/api/source-connections`, { headers });
       expect(reply.status).toBe(403); expect(await reply.json()).toEqual({ code: "app_permission_required" });
       expect(reply.headers.get("cache-control")).toBe("no-store");
       expect(forwarded).toHaveLength(1);
-      expect(forwarded[0]).toMatchObject({ path: "/api/source-connections/identity", body: { gitIdentity: null }, headers: { authorization: "Bearer source-service", "x-hosty-app-identity": "hostyg_own" } });
+      expect(forwarded[0]).toMatchObject({ path: "/api/source-connections", body: null, headers: { authorization: "Bearer source-service", "x-hosty-app-identity": "hostyg_own" } });
       expect(forwarded[0]!.headers.cookie).toBeUndefined();
       expect((await call("/api/source-connections")).status).toBe(403);
       expect((await fetch(`${origin}/api/source-connections/../auth/credentials`, { method: "POST", headers: { ...headers, origin }, body: "{}" })).status).toBe(404);

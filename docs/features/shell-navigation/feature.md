@@ -1,6 +1,6 @@
 ---
 created: 2026-07-30
-updated: 2026-10-02
+updated: 2026-10-07
 summary: Shell's three destinations, Dashboard, Settings and Apps, with the route table and the sidebar.
 components: [apps/shell]
 ---
@@ -30,21 +30,24 @@ mounted while the operator moves between routes.
 | URL | Renders |
 |---|---|
 | `/`, `/dashboard` | Dashboard: the Core row, app counts, installed-apps table |
-| `/settings?tab=users\|core\|mounts` | Settings, one addressable tab per surface |
+| `/settings?tab=profile\|general\|ingress\|mounts` | Settings, one addressable group per surface |
+| `/settings?tab=security&section=users\|tokens\|connections\|policies` | Security and its selected inner tab |
+| `/settings?tab=harness&section=agents\|shell` | Harness and its selected inner tab |
 | `/apps` | The apps overview — every UI-capable app this session may open |
 | `/workspace?app=<id>&path=<app-path>` | An app's UI, embedded |
 | `/installed-apps` | Dashboard, then the URL is replaced with `/dashboard` |
-| `/users` | Settings, then the URL is replaced with `/settings?tab=users` |
+| `/users` | Settings, then the URL is replaced with `/settings?tab=security&section=users` |
 | `/system-apps/<id>?path=<p>` | The workspace, then the URL is replaced with `/workspace?app=<id>&path=<p>` |
 
 The last three still resolve because they were documented and bookmarkable. Their route files exist so
 Next.js serves them rather than 404ing before the client can canonicalize; each redirect target is
 itself canonical, which is what makes the replacement terminate.
 
-A settings tab travels in the query string for the same reason workspace state does: a top-level
-surface has to survive a refresh and a copied link. A missing or unrecognized `tab` resolves to
-`users` rather than erroring — every link Shell builds names its tab explicitly, so nothing depends on
-that default.
+A settings group and its inner tab travel in `tab` and `section` query parameters, so both survive
+refresh, Back and copied links. Legacy flat links such as `?tab=tokens` and `?tab=agents` still open
+the corresponding grouped destination; `?tab=core` opens General. A missing or invalid inner tab
+selects the first tab in that group. A missing or unrecognized `tab` falls back to Users for an
+administrator. App-owned settings keep their app ID in `tab`.
 
 A path the app does not route — no catch-all segment and no `not-found.tsx` — is answered by Next.js
 with its own 404; the Shell client never renders it. The route parser still resolves such a path to
@@ -130,7 +133,7 @@ than naming it, and matching the row's own icon would put them on equal footing 
 a row is only that icon, so every icon-only control names itself with `aria-label` as well as a
 tooltip; a title attribute is a tooltip and not an accessible name.
 
-The footer carries the account block only. Core's version, the shortcut into `/settings?tab=core`,
+The footer carries the account block only. Core's version, a shortcut into host settings,
 and the Core update action are not repeated there: the Dashboard's Core row already states the
 version and carries the update button, and Settings is a row in the Host group above.
 
@@ -155,12 +158,14 @@ are not displayed in Dashboard rows.
 
 Core and app rows share a container-based responsive layout: the available Dashboard width,
 including space taken by either sidebar, determines the arrangement. Identity and version/source
-share the flexible space, while runtime, status, resources, and actions have compact widths. Below 1240px,
+share the flexible space, while runtime, status, resources, and actions have compact widths. The
+status column reserves 64px for its dot/spinner and optional manual-start marker. Below 1240px,
 action shortcuts are hidden; each row retains its complete actions menu. Runtime remains beside
-version/source until the Dashboard is narrower than 960px, when it moves above version/source.
+version/source until the Dashboard is narrower than 960px, when the two form a tight stack beside
+the app identity. Each stack aligns around its shared boundary rather than spreading across the row.
 Runtime labels, development indicators, and switch arrows stay on one line; long profile keys
 truncate with their full value available on hover, keeping the switch arrow visible.
-Below 760px, app identity occupies its own line; below 400px, status and resources get their own row.
+Only below 560px does app identity occupy its own line; below 400px, status and resources get their own row.
 Long names and branches truncate, badges and source change counts wrap, and both lists fit without
 horizontal scrolling. Expanded endpoint details also respond to the Dashboard width. App details
 sit directly on the expanded row background, without an additional bordered, padded outer card,
@@ -249,39 +254,41 @@ start establishes a known applied snapshot. Source and Docker runtimes share the
 
 ## Settings
 
-Settings sections live in the expandable sidebar item, or its compact flyout. Built-in sections
-and app-owned pages share that navigation, with exactly one app-named entry per application. The selected section
-appears beside Settings in the top strip. The horizontal tab bar is absent. App settings occupy the
+Settings groups live in the expandable sidebar item, or its compact flyout. Built-in groups
+and app-owned pages share that navigation, with exactly one app-named entry per application. The selected group
+appears beside Settings in the top strip. Harness and Security expose their inner sections in a
+horizontal tab bar; it scrolls within the content on narrow screens. App settings occupy the
 full workspace through an iframe; their content padding and modal overlays belong to the app.
 Native host sections retain a screen-reader heading without a duplicate visible title. The Users section
 also omits its repeated User Management title and description. The invitation button sits beside
 search inside the Users section, with no separate refresh button. Users and Pending Invitations
 have no outer border, shadow, separate background, or former card padding; table row separators remain visible.
 With no pending invitations, only `Pending invitations · 0` is shown. A nonempty invitation list renders its table.
-Access tokens likewise omits its repeated visible
-title and introductory description. A Create button at the top opens a dialog for the credential
-label and access scope. The same dialog shows the issued token once, with Copy and Done actions;
-closing clears the token from local state. Creation errors stay in the dialog, and the active
-credential list refreshes after creation.
+Access tokens links to Core's isolated credential-management page.
 
-The Core tab uses a dedicated compact layout: three session categories side by side on desktop,
-access and maintenance in two columns, and connection settings below. Units appear beside numeric
+Security / Policies uses a compact layout: three session categories side by side on desktop,
+with access and privileged activity below. General holds update-check maintenance, Users holds
+disabled-user retention, and Ingress holds Core connection and public-ingress settings. Units appear beside numeric
 fields, with exact duration equivalents such as `168 hours = 7 days` beneath them. Draft edits update
 these hints without changing the stored unit; zero and invalid drafts receive no inferred meaning.
 The layout is defined in Shell; values, types, descriptions and defaults come from Core.
-Unknown keys from newer Core versions remain editable under Additional settings. On smaller screens,
-the groups stack vertically. The repeated Core settings title and introduction are visually omitted.
-Saving still submits only changed keys; default resets, errors and the public-origin warning remain
-available.
+Unknown keys from newer Core versions remain editable under Additional settings in General;
+authentication and OAuth keys belong to Policies, and the Public ingress group belongs to Ingress.
+On smaller screens, the groups stack vertically. Each form submits only its visible changed keys;
+default resets and errors remain available. Ingress uses one draft for Core connection and provider
+settings, including provider-dependent fields and the warning when the public origin changes.
+Core settings load fresh when General, Users, Policies or Ingress opens, because another
+administrator may have changed their live-applied values. Ordinary users see only Your profile
+and Security / Access tokens, enforced by both navigation and route authorization.
 
 One route with addressable host sections and app pages:
 
 - **Your profile** — personal display name and external provider accounts ([profile and connections](../user-profile-connections/feature.md)).
-- **Users** — accounts, invitations, roles, per-app assignment.
-- **Access tokens** — client credentials and OAuth connections.
-- **Core** — sessions, access, maintenance and connection settings. Loaded fresh each time the tab is shown, because the values are
-  live-applied and another administrator may have changed them.
-- **Ingress** — public ingress and the Cloudflare connection.
+- **General** — update-check maintenance and otherwise unclassified Core settings.
+- **Harness** — Agents and Shell tabs; Shell selects the default assistant.
+- **Security** — Users (including disabled-user retention), Access tokens, Source connections,
+  and Policies (session lifetimes, access settings and privileged activity).
+- **Ingress** — Core listen port and public origin, public ingress and the Cloudflare connection.
 - **Shared mounts** — host folders apps attach by reference.
 - Each app settings entry exposes its manifest-declared `ui.settings`. Internal tabs belong to the app.
   See [App UI Surfaces](../app-ui-surfaces/feature.md) for compatibility and routing.
@@ -341,8 +348,11 @@ disabled optional permissions are not a problem. See [App permission management]
   of it the command emitted a URL the Shell has never served.
 - Visual verification covers the merged Dashboard, host settings tabs, the collapsed sidebar
   reaching `/apps`, and each legacy path landing on its canonical URL.
+- Grouped settings verification covers canonical and legacy links, Back and reload, inner-tab
+  selection, ordinary-user access and scoped saves for General, Users and Policies.
 - Core form verification covers desktop and narrow layouts, units, draft edits, default resets,
-  errors and the public-origin warning. Ingress retains its provider-dependent form.
+  errors and the public-origin warning. Ingress saves Core connection and provider-dependent
+  fields together without submitting fields owned by other groups.
 - Visual verification covers the two icon tiers — row icons against the page links nested under an
   expanded app row — and that every collapsed rail control is announced by name.
 - Visual verification of the collapsed rail covers the multi-page app flyout: opening by click and

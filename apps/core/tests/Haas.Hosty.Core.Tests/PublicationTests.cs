@@ -7,6 +7,8 @@ public sealed partial class CoreLifecycleServiceTests
 {
     private sealed class PublicationProviderFixture : IPublicationProvider
     {
+        public string NormalizeRepository(string url) => GitHubPublicationProvider.Repository(url);
+        public string PullRequestUrl(string repository, int number) => $"https://github.com/{repository}/pull/{number}";
         public string Head = "";
         public string State = "open";
         public bool Complete;
@@ -40,9 +42,9 @@ public sealed partial class CoreLifecycleServiceTests
         var users = new UserDirectoryStore(f.Paths);
         await users.WriteAsync(new(1, [new(owner.UserId, "admin@example.test", "Admin", "host.admin", false, f.Clock.UtcNow, f.Clock.UtcNow)], [], [], [],
             ProviderConnections: [new("connection", owner.UserId, "GitHub", "github", "", "", "42", "owner", "pat", "secret-for-fixture", null, null, null, f.Clock.UtcNow, null, "connected", "r1")]));
-        var connections = new UserConnectionService(users, new UserConnectionProvider(new HttpClient(), new ConfigurationBuilder().Build(), f.Clock), f.Clock, new AuditStore(f.Paths), f.CoreSettings);
         var provider = new PublicationProviderFixture { Head = w.Observation!.Head! };
-        var service = new PublicationService(f.Paths, workspaces, connections, provider, f.Apps, users, f.Clock, new AuditStore(f.Paths));
+        var connections = new UserConnectionService(users, new SourceProviderRegistry([new GitHubSourceProvider(new HttpClient(), new ConfigurationBuilder().Build(), f.Clock, provider)]), f.Clock, new AuditStore(f.Paths), f.CoreSettings);
+        var service = new PublicationService(f.Paths, workspaces, connections, f.Apps, users, f.Clock, new AuditStore(f.Paths));
         // Seed the configured provider binding; local Git fixtures intentionally use an offline origin.
         await JsonStorage.WriteAsync(Path.Combine(f.Paths.CoreRoot, "development", "publications", w.Id + ".json"), new PublicationRecord {
             WorkspaceId = w.Id, Owner = owner, Repository = "owner/repo", HeadRepository = "owner/repo", ConnectionId = "connection", Branch = w.Branch, TargetBranch = "main" });

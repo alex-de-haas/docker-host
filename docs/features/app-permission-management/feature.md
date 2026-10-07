@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-10-03
+updated: 2026-10-07
 summary: The Permissions tab where administrators review an app's declared, accepted and effective Core permissions.
 components: [apps/shell, apps/core]
 ---
@@ -121,7 +121,12 @@ Shell retains two pre-existing navigation warnings.
 
 ## Mixed operations
 
-Private-source installation/update requests require `apps.install` and `apps.sources`, including
+Personal account and Git identity management requires `sources.connections`; `apps.sources` permits
+only selection/use and source operations. Shell declares connection management as optional, so a
+manifest edit cannot silently grant it or make public management unavailable.
+
+Private-source installation/update requests require `apps.install` plus either `apps.sources` or
+`sources.connections`, including
 retaining or removing existing private bindings. Current connection ownership and Core confirmation
 still apply. Cached plans cannot bypass these checks; submission and execution recheck both grants.
 Core's host-wide telemetry scrape requires `apps.read` and `core.read` even for system apps.

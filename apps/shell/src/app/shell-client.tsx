@@ -9,6 +9,7 @@ import { fetchCore } from "./shell/core-transport.js";
 import { waitForShellUpdateToSettle } from "./shell/self-update";
 import { isAppUp } from "./shell/runtime-states";
 import { isRoutineUpdate } from "./shell/update-feedback";
+import { useAppUpdateNotifications } from "./shell/update-notifications";
 
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -30,7 +31,8 @@ import { readCoreStatus, reconcileCoreUpdate } from "./shell/core-status";
 import { reconcileAppList } from "./shell/app-list-snapshot";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { SourceInstallDialog } from "./shell/dialogs/private-source-connections";
-import { createInstallationClient, openInstallationConfirmation, showInstallationConfirmation, type InstallationSource } from "@hosty-sdk/app/install";
+import { createInstallationClient, openInstallationConfirmation, type InstallationSource } from "@hosty-sdk/app/install";
+import { showCoreConfirmation } from "./shell/core-confirmation";
 import { useAssistantSelection } from "./shell/assistant/use-assistant-selection";
 import { assistantMessageFor, assistantSupportsContext, createAppSession, createErrorSession, createHandoff, pendingAssistantIntent, assistantOpenUrl } from "./shell/assistant/assistant-client";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
@@ -52,7 +54,8 @@ import {
   SIDEBAR_COMPACT_PREF_KEY,
   RIGHT_PANEL_OPEN_PREF_KEY,
   SHELL_VIEW_LABELS,
-  HOST_SETTINGS_SECTIONS,
+  getHostSettingsSection,
+  getSettingsHref,
   readAssistantSessionParam,
   getShellAuthorizationRedirect,
 } from "./shell/shell-routes";
@@ -95,16 +98,16 @@ import type {
 /** Per app. A human clicking rows never reaches this; a loop is stopped by it. */
 const ASK_MIN_INTERVAL_MS = 1_000;
 
-// Polls this page's own document URL until the restarted Shell answers again. The already-loaded
-// bundle keeps working against Core while the Shell container swaps, but the new build only reaches
-// the browser via a reload — which must wait until the new Shell is actually listening. Resolves
+// Polls this page's own document URL until Shell answers again. Its Core proxy is unavailable while
+// the Shell process swaps, but this loaded bundle can wait locally. The new build only reaches
+// the browser via a reload — which must wait until Shell is actually listening. Resolves
 // false on timeout so the caller keeps the old page alive instead of reloading into a connection
 // error.
 //
 // This answers "is a server accepting connections again", never "is the update done": the old Shell
 // answers exactly the same way. After a self-update it is reached only once Core's record says the
-// apply settled (waitForShellUpdateToSettle); after a synchronous restart the container is already
-// swapped by the time the request returns.
+// apply settled (waitForShellUpdateToSettle). A self-restart normally drops its own proxy connection:
+// probing then recovers the page without claiming the lost request succeeded or replaying it.
 async function waitForOwnOrigin(timeoutMs = 90_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -190,6 +193,8 @@ export function ShellClient({
   }, [state.status?.warnings]);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [activePanel, setActivePanel] = useState<ActivePanel | null>(null);
+  const openUpdateLogs = useCallback((app: CoreApp) => setActivePanel({ appId: app.id, view: "logs" }), []);
+  useAppUpdateNotifications(state.apps, openUpdateLogs);
   const [detailPanel, setDetailPanel] = useState<DetailPanelState>(emptyDetailPanelState);
   const [installOpen, setInstallOpen] = useState(false);
   const [installInitialManifest, setInstallInitialManifest] = useState<string | null>(null);
@@ -763,15 +768,13 @@ export function ShellClient({
 
   const runAppAction = useCallback(
     async (app: CoreApp, action: AppAction) => {
-      // Stopping or restarting the Shell acts on the app serving this very UI. The already-loaded
-      // page keeps working against Core either way (its Start button included), but new page loads
-      // fail while the Shell is down — name the blast radius and get an explicit go-ahead first.
+      // Stopping or restarting Shell also takes down the Core proxy serving this UI.
       if (app.id === shellAppId && (action === "stop" || action === "restart")) {
         const confirmed = await confirm({
           title: action === "stop" ? "Stop the Shell?" : "Restart the Shell?",
           action: action === "stop" ? "Stop Shell" : "Restart Shell", destructive: action === "stop",
           description: action === "stop"
-            ? "Stop the Shell? Loading this UI in a new tab or reload will fail until it is started again — from this already-open page, `hosty apps start`, or a Core restart."
+            ? "Stop the Shell? This UI and its Core connection will be unavailable until Shell is started again with `hosty apps start hosty.shell` or through Core."
             : "Restart the Shell? This page reloads once the Shell answers again.",
         });
         if (!confirmed) {
@@ -784,14 +787,23 @@ export function ShellClient({
       setState((current) => ({ ...current, error: null }));
       try {
         const endpoint = action === "backup" ? appEndpoint(app, "/backups") : appEndpoint(app, `/${action}`);
-        await sendCsrfJson(endpoint, action === "backup" ? { reason: "manual" } : {});
+        let restartResponseLost = false;
+        try {
+          await sendCsrfJson(endpoint, action === "backup" ? { reason: "manual" } : {});
+        } catch (error) {
+          // Core finishes an admitted restart even when stopping Shell kills this request's proxy.
+          // Recover the page after transport loss; explicit Core refusals still surface normally.
+          // Never resend: a missing response does not tell us whether Core accepted the operation.
+          const connectionLost = error instanceof TypeError || (error instanceof CoreRequestError &&
+            (error.code === "core_unavailable" || error.code === "core_request_timeout"));
+          if (app.id !== shellAppId || action !== "restart" || !connectionLost) throw error;
+          restartResponseLost = true;
+        }
 
-        // Shell self-restart: as with a self-update, the old bundle keeps working against Core, but
-        // reconnect the browser to the fresh Shell once it answers instead of leaving a page whose
-        // next navigation would land on a half-restarted server.
         if (app.id === shellAppId && action === "restart") {
-          toast.success("Shell restarting", { description: "Waiting for the Shell, then reloading this page…" });
-          void refresh();
+          toast.info(restartResponseLost ? "Reconnecting to Shell" : "Shell restarting", {
+            description: "Waiting for the Shell, then reloading this page…",
+          });
           if (await waitForOwnOrigin()) {
             window.location.reload();
           } else {
@@ -1199,11 +1211,7 @@ export function ShellClient({
       }
       const result = await requestCoreApproval(installationClient, { hostPathChange: change }, pending => {
         submitted = true;
-        showInstallationConfirmation(popup, pending);
-        toast.info("Confirm host path access in Hosty Core", {
-          duration: 60_000,
-          action: { label: "Open confirmation", onClick: () => window.open(pending.approvalUrl, "_blank", "noopener,noreferrer") },
-        });
+        return showCoreConfirmation(popup, pending);
       });
       if (result.status === "denied") toast.info("Change cancelled");
       return result.status === "succeeded";
@@ -1360,13 +1368,9 @@ export function ShellClient({
       try {
         const result = await requestAppUpdate(installationClient, app.id, planDigest, pending => {
           submitted = true;
-          showInstallationConfirmation(popup, pending);
-          toast.info(`Confirm update: ${app.displayName}`, {
-            description: "Review and approve this update in Hosty Core.",
-            duration: 60_000,
-            action: { label: "Open confirmation", onClick: () => window.open(pending.approvalUrl, "_blank", "noopener,noreferrer") },
-          });
+          const dismissConfirmation = showCoreConfirmation(popup, pending);
           setActivePanel(current => current?.appId === app.id ? null : current);
+          return dismissConfirmation;
         });
         if (result.status === "denied") {
           toast.info("Update cancelled", { description: app.displayName });
@@ -1381,13 +1385,13 @@ export function ShellClient({
           });
           return true;
         }
-        toast.success("App updated", { description: app.displayName });
         await refresh();
         return true;
       } catch (error) {
         if (!submitted) popup?.close();
         if (!isAuthRequiredRedirectError(error)) {
           toast.error("Update not completed", {
+            id: actionKey,
             appId: app.id,
             description: error instanceof Error ? error.message : "Check the update status in Core.",
           });
@@ -1407,7 +1411,7 @@ export function ShellClient({
     try {
       await enqueueRoutineUpdate(sendCsrfJson, coreOrigin, app.id, planDigest);
       setActivePanel(current => current?.appId === app.id ? null : current);
-      toast.info("Update started", { description: app.displayName });
+      toast.info("Update started", { id: actionKey, description: app.displayName });
       void refresh();
       if (app.id === shellAppId) {
         const outcome = await waitForShellUpdateToSettle({
@@ -1429,7 +1433,7 @@ export function ShellClient({
       return true;
     } catch (error) {
       if (!isAuthRequiredRedirectError(error)) {
-        toast.error("Update not completed", { appId: app.id,
+        toast.error("Update not completed", { id: actionKey, appId: app.id,
           description: error instanceof Error ? error.message : "Check the update status in Core." });
         void refresh();
       }
@@ -1521,11 +1525,7 @@ export function ShellClient({
           ignoreRuntimeErrors: options.ignoreRuntimeErrors,
         }, (pending) => {
           submitted = true;
-          showInstallationConfirmation(popup, pending);
-          toast.info("Confirm app removal in Hosty Core", {
-            duration: 60_000,
-            action: { label: "Open confirmation", onClick: () => window.open(pending.approvalUrl, "_blank", "noopener,noreferrer") },
-          });
+          return showCoreConfirmation(popup, pending);
         });
         if (result.status === "denied") {
           toast.info("App removal cancelled");
@@ -1608,10 +1608,10 @@ export function ShellClient({
     }
   }, [normalizedRoutePath, router, searchParams]);
 
-  // Core settings load when a tab that renders them is shown, rather than with the page. Two tabs do:
-  // Core and Ingress split one settings payload by the group Core tags each item with.
+  // Load Core settings when their owning General, Security or Ingress section opens.
+  // These sections share one payload and render only the fields they own.
   useEffect(() => {
-    const rendersCoreSettings = shellRoute.settingsTab === "core" || shellRoute.settingsTab === "ingress";
+    const rendersCoreSettings = ["general", "policies", "users", "ingress"].includes(shellRoute.settingsTab);
     if (!canManageApps || shellRoute.view !== "settings" || !rendersCoreSettings) {
       return;
     }
@@ -1965,7 +1965,7 @@ export function ShellClient({
   const selectedSettingsPage = resolveSettingsSurface(appSettingsTabs, shellRoute.settingsTab);
   const stripSubtitle = workspace?.pageLabel ?? (effectiveView === "settings"
     ? selectedSettingsPage ? selectedSettingsPage.label
-      : HOST_SETTINGS_SECTIONS.find(section => section.id === shellRoute.settingsTab)?.label ?? "Users"
+      : getHostSettingsSection(shellRoute.settingsTab)?.label ?? "Security"
     : null);
 
   const requestDelegatedTokenFor = useCallback((_appId: string) => {
@@ -2165,7 +2165,7 @@ export function ShellClient({
               setMobileSidebarOpen(false);
               setWorkspace(null);
               setOptimisticWorkspaceRoute(null);
-              router.push(`/settings?${new URLSearchParams({ tab: key })}`);
+              router.push(getSettingsHref(key));
             }}
             uiApps={uiApps}
             busyAction={busyAction}

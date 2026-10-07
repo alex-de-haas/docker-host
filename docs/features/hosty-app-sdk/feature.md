@@ -1,6 +1,6 @@
 ---
 created: 2026-07-15
-updated: 2026-10-05
+updated: 2026-10-06
 summary: The shared app-side Host integration published as an npm package and a NuGet package.
 components: [packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -329,6 +329,12 @@ on `active`, using the same recovery lifecycle as the bridge. Omitting the callb
 default recovery UI; optional children render only after an active probe. The initial state is recovering; an active identity probe permits
 content, while failed probes never expose an active state.
 
+The optional `onSession(body)` callback receives the JSON body of a successful active probe before
+protected children mount. An app can validate its own session fields and seed its existing query
+cache instead of making a second initial session request. Failed, cancelled and superseded probes
+never seed the cache. Changing the callback does not restart authorization. This is a handoff of
+the current probe response, not persistent SDK caching; subsequent app revalidation remains app-owned.
+
 ## Assistant Handoff Client
 
 `@hosty-sdk/app/assistant` provides v1 contract checking, UUIDv7 request IDs, prepare/upload/finalize,
@@ -368,6 +374,10 @@ the target from the mounted frame. Payload app ids and URLs never choose the tar
 See [permission management](../app-permission-management/feature.md) for first-party adoption.
 
 ## Testing Expectations
+
+- Identity-probe handoff: only a successful active response reaches `onSession`, before protected
+  children mount; failed HTTP responses, terminal states, unmounted effects and superseded grants
+  never seed an app cache. A seeded consumer reuses the first response and retains explicit refresh.
 
 - The classification table is exercised per status, including that a 503 keeps the cookie while a 401
   drops it — the pair is the contract, and a package that treats every failure alike passes any

@@ -11,7 +11,6 @@ import {
 } from "@/components/ui/field";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { SourceProviders } from "@/components/source-providers";
 import { AgentProviders } from "@/components/agent-providers";
 import { McpAccess } from "@/components/mcp-access";
 import {
@@ -107,7 +106,6 @@ export function GatewaySettings({
             {(
               [
                 ["providers", "Agent providers"],
-                ["sources", "Source providers"],
                 ["prompt", "System prompt"],
                 ["access", "MCP access"],
               ] as const
@@ -125,7 +123,7 @@ export function GatewaySettings({
         >
           {data.agentConnections && <AgentProviders />}
         </TabsContent>
-        <TabsContent value="sources"><SourceProviders /></TabsContent>
+        <TabsContent value="sources"><p>Manage your GitHub connections and Git identity in Hosty Shell → Settings → Source connections.</p></TabsContent>
         <TabsContent
           value="prompt"
           forceMount

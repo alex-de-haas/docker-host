@@ -15,6 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   HOST_SETTINGS_SECTIONS,
+  getHostSettingsSection,
   isNonAdminHostSettingsTab,
 } from "../shell-routes";
 import {
@@ -41,14 +42,16 @@ export function SettingsNavigation({
   const [expandedOverride, setExpandedOverride] = useState<boolean | null>(null);
   const expanded = expandedOverride ?? active;
   const hostSections = HOST_SETTINGS_SECTIONS.filter(
-    (section) => canManageApps || isNonAdminHostSettingsTab(section.id),
+    (section) => canManageApps || section.tabs.some(tab => isNonAdminHostSettingsTab(tab.id)),
   );
+  const selectSection = (section: typeof HOST_SETTINGS_SECTIONS[number]) => {
+    const tab = section.tabs.find(tab => canManageApps || isNonAdminHostSettingsTab(tab.id));
+    if (tab) onSelect(tab.id);
+  };
   const appPages = canManageApps ? pages : [];
   const resolved =
     resolveSettingsSurface(appPages, selected)?.key ??
-    (hostSections.some((section) => section.id === selected)
-      ? selected
-      : hostSections[0]?.id);
+    (getHostSettingsSection(selected)?.id ?? hostSections[0]?.id);
   const isSelected = (key: string) => active && resolved === key;
   const rowClass = (key: string) =>
     cn(
@@ -84,7 +87,7 @@ export function SettingsNavigation({
           {hostSections.map((section) => (
             <DropdownMenuItem
               key={section.id}
-              onSelect={() => onSelect(section.id)}
+              onSelect={() => selectSection(section)}
               aria-current={isSelected(section.id) ? "page" : undefined}
               className={cn(isSelected(section.id) && "bg-accent")}
             >
@@ -136,7 +139,7 @@ export function SettingsNavigation({
             <button
               key={section.id}
               type="button"
-              onClick={() => onSelect(section.id)}
+              onClick={() => selectSection(section)}
               className={rowClass(section.id)}
               aria-current={isSelected(section.id) ? "page" : undefined}
             >

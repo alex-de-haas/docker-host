@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Haas.Hosty.Core;
+using Microsoft.Extensions.Hosting;
 
 namespace Haas.Hosty.Core.Tests;
 
@@ -2581,20 +2582,24 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.True(plan.RequiresReview);
     }
 
-    [Fact]
-    public async Task CreateUpdatePlanAsync_CarriedPortOverrideIsNotAPhantomRemovedSetting()
+    [Theory]
+    [InlineData("HOSTY_PORT_HTTP", "number", "7171")]
+    [InlineData("HOSTY_LOCAL_NAME_HTTP", "string", "notes")]
+    [InlineData("HOSTY_LOCAL_NAME_ADMIN_HTTP", "string", "notes-admin")]
+    public async Task CreateUpdatePlanAsync_CarriedCoreSettingDoesNotReappearAfterUpdate(
+        string key, string type, string value)
     {
         var fixture = await LifecycleFixture.CreateAsync();
         var manifest = await fixture.WriteManifestAsync("1.0.0");
         await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
-        // Legacy Core-reserved port override on the record (never manifest-declared); the update
+        // Core-owned configuration on the record (never manifest-declared); the update
         // carries it forward rather than removing it, so the plan must not report it "removed" —
         // that phantom made the same-version plan review-class forever (apply preserves the key, the
         // next check rebuilds the identical plan, and the Review affordance never converges).
         var app = await fixture.Apps.GetAppAsync("com.example.notes");
         var settings = new Dictionary<string, AppSettingValue>(app!.Settings, StringComparer.Ordinal)
         {
-            ["HOSTY_PORT_HTTP"] = new("HOSTY_PORT_HTTP", "number", "7171", Secret: false),
+            [key] = new(key, type, value, Secret: false),
         };
         await fixture.Apps.UpsertAppAsync(app with { Settings = settings });
 
@@ -2606,6 +2611,42 @@ public sealed partial class CoreLifecycleServiceTests
         // And the availability verdict agrees: nothing to update, no Review affordance.
         var summary = Assert.Single(await fixture.Service.ListAppsAsync());
         Assert.False(summary.UpdateCheck!.UpdateAvailable);
+
+        var target = await fixture.WriteManifestAsync("1.1.0");
+        var update = await fixture.Service.CreateUpdatePlanAsync(app.Id, new AppUpdatePlanRequest(target));
+        Assert.Contains("version:1.0.0->1.1.0", update.Changes);
+        Assert.DoesNotContain(update.Changes, change => change.StartsWith("setting:", StringComparison.Ordinal));
+        await fixture.Service.ApplyUpdateAsync(app.Id, new AppUpdateApplyRequest(update.PlanDigest));
+
+        // Reload persisted state as a replacement Core would, then check the same target again.
+        var restarted = fixture.RecreateService();
+        var recheck = await restarted.CreateUpdatePlanAsync(app.Id, new AppUpdatePlanRequest(target));
+        Assert.Empty(recheck.Changes);
+        Assert.False(recheck.RequiresReview);
+        Assert.Equal(value, (await fixture.Apps.GetAppAsync(app.Id))!.Settings[key].Value);
+        Assert.False(Assert.Single(await restarted.ListAppsAsync()).UpdateCheck!.UpdateAvailable);
+    }
+
+    [Theory]
+    [InlineData("RETIRED_SETTING")]
+    [InlineData("HOSTY_CUSTOM_SETTING")]
+    public async Task CreateUpdatePlanAsync_RemovedAppSettingStillRequiresReview(string key)
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        var app = (await fixture.Apps.GetAppAsync("com.example.notes"))!;
+        await fixture.Apps.UpsertAppAsync(app with
+        {
+            Settings = new Dictionary<string, AppSettingValue>(app.Settings, StringComparer.Ordinal)
+            {
+                [key] = new(key, "string", "value", Secret: false),
+            },
+        });
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync(app.Id, new AppUpdatePlanRequest());
+        Assert.Equal([$"setting:{key}:removed"], plan.Changes);
+        Assert.True(plan.RequiresReview);
+        Assert.True(Assert.Single(await fixture.Service.ListAppsAsync()).UpdateCheck!.UpdateAvailable);
     }
 
     [Fact]
@@ -6335,6 +6376,91 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task RestartAsync_WhenTheRequestDisconnectsDuringStop_CompletesTheRestart()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.StartAsync("com.example.notes");
+        var startsBefore = fixture.Adapter.StartCount;
+        using var request = new CancellationTokenSource();
+        fixture.Adapter.StopProbe = () =>
+        {
+            request.Cancel();
+            return Task.CompletedTask;
+        };
+
+        var result = await fixture.Service.RestartAsync("com.example.notes", request.Token);
+
+        Assert.Equal("restarted", result.Status);
+        Assert.Equal(startsBefore + 1, fixture.Adapter.StartCount);
+        var app = (await fixture.Apps.GetAppAsync("com.example.notes"))!;
+        Assert.Equal(AppRuntimeStates.Running, app.RuntimeState);
+        Assert.Equal("restarted", app.OperationStatus);
+        Assert.Null(app.LastError);
+    }
+
+    [Fact]
+    public async Task RestartAsync_WhenTheRequestIsAlreadyCancelled_DoesNotStopTheApp()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.StartAsync("com.example.notes");
+        var stopsBefore = fixture.Adapter.StopCount;
+        using var request = new CancellationTokenSource();
+        request.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => fixture.Service.RestartAsync("com.example.notes", request.Token));
+
+        Assert.Equal(stopsBefore, fixture.Adapter.StopCount);
+        Assert.Equal(AppRuntimeStates.Running, (await fixture.Apps.GetAppAsync("com.example.notes"))!.RuntimeState);
+    }
+
+    [Fact]
+    public async Task RestartAsync_WhenStartFailsAfterRequestDisconnect_RecordsTheFailure()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.StartAsync("com.example.notes");
+        using var request = new CancellationTokenSource();
+        fixture.Adapter.StopProbe = () =>
+        {
+            request.Cancel();
+            return Task.CompletedTask;
+        };
+        fixture.Adapter.FailOnStartCount = fixture.Adapter.StartCount + 1;
+
+        await Assert.ThrowsAsync<AppLifecycleException>(
+            () => fixture.Service.RestartAsync("com.example.notes", request.Token));
+
+        var app = (await fixture.Apps.GetAppAsync("com.example.notes"))!;
+        Assert.Equal(AppRuntimeStates.Stopped, app.RuntimeState);
+        Assert.Equal("failed", app.OperationStatus);
+        Assert.Equal("Runtime failed to start.", app.LastError);
+    }
+
+    [Fact]
+    public async Task RestartAsync_WhenCoreShutsDownDuringStop_CancelsAndSettlesTheState()
+    {
+        using var lifetime = new RestartTestLifetime();
+        var fixture = await LifecycleFixture.CreateAsync(hostLifetime: lifetime);
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.StartAsync("com.example.notes");
+        var startsBefore = fixture.Adapter.StartCount;
+        fixture.Adapter.StopProbe = () =>
+        {
+            lifetime.StopApplication();
+            return Task.CompletedTask;
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => fixture.Service.RestartAsync("com.example.notes"));
+
+        Assert.Equal(startsBefore, fixture.Adapter.StartCount);
+        Assert.Equal(AppRuntimeStates.Unknown, (await fixture.Apps.GetAppAsync("com.example.notes"))!.RuntimeState);
+    }
+
+    [Fact]
     public async Task StartAsync_PersistsStartingWhileTheVerbIsInFlight()
     {
         // The whole point of the feature: the record — not just the clicking tab — says a start is
@@ -7015,7 +7141,8 @@ public sealed partial class CoreLifecycleServiceTests
             // real localCommand process cannot sit in the production 30 s wait.
             IHealthProbe? healthProbe = null,
             TimeSpan? readinessTimeout = null,
-            IAppRuntimeAdapter? localRuntimeAdapter = null)
+            IAppRuntimeAdapter? localRuntimeAdapter = null,
+            IHostApplicationLifetime? hostLifetime = null)
         {
             var root = Path.Combine(Path.GetTempPath(), $"hosty-core-lifecycle-tests-{Guid.NewGuid():N}");
             Directory.CreateDirectory(root);
@@ -7066,7 +7193,7 @@ public sealed partial class CoreLifecycleServiceTests
             var portAllocator = withPortAllocator ? new RuntimePortAllocator(runtimeConfig) : null;
             var publications = new CloudflarePublicationStore(paths);
             var publicOrigins = new PublicOriginOwnership(coreSettings, publications);
-            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localRuntimeAdapter ?? localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock, portAllocator: portAllocator, selfRestartPortReleaseTimeout: selfRestartPortReleaseTimeout, publicOrigins: publicOrigins, healthProbe: healthProbe, readinessTimeout: readinessTimeout ?? TimeSpan.FromSeconds(2), localProcesses: localProcesses);
+            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localRuntimeAdapter ?? localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock, portAllocator: portAllocator, hostLifetime: hostLifetime, selfRestartPortReleaseTimeout: selfRestartPortReleaseTimeout, publicOrigins: publicOrigins, healthProbe: healthProbe, readinessTimeout: readinessTimeout ?? TimeSpan.FromSeconds(2), localProcesses: localProcesses);
             return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localAdapter, localProcesses, clock, coreSettings, publications);
         }
 
@@ -7441,6 +7568,16 @@ public sealed partial class CoreLifecycleServiceTests
                 """);
             return path;
         }
+    }
+
+    private sealed class RestartTestLifetime : IHostApplicationLifetime, IDisposable
+    {
+        private readonly CancellationTokenSource stopping = new();
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+        public CancellationToken ApplicationStopping => stopping.Token;
+        public CancellationToken ApplicationStopped => CancellationToken.None;
+        public void StopApplication() => stopping.Cancel();
+        public void Dispose() => stopping.Dispose();
     }
 
     private sealed class RecordingRuntimeAdapter(string type = "docker") : IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe

@@ -734,9 +734,9 @@ export type ShellView =
   | "dashboard"
   | "settings";
 
-// Host-level configuration surfaces, addressable as /settings?tab=<value>. Distinct from the per-app
+// Host-level configuration surfaces, resolved from the settings group and section URL parameters. Distinct from the per-app
 // `SettingsTab` above, which describes one app rather than the host.
-export type HostSettingsTab = "profile" | "agents" | "shell" | "users" | "tokens" | "core" | "mounts" | "ingress";
+export type HostSettingsTab = "profile" | "general" | "agents" | "connections" | "shell" | "users" | "tokens" | "policies" | "core" | "mounts" | "ingress";
 
 // A device waiting for someone to approve the code it is showing. Held in memory by Core and gone ten
 // minutes later, so this is never a durable record of anything.

@@ -25,6 +25,13 @@ Minimal Next.js wiring:
 import { AppIdentityBridge } from "@hosty-sdk/app/react";
 // wrap protected client content: <AppIdentityBridge>{children}</AppIdentityBridge>
 
+// Reuse an active probe that already returns the app's session fields:
+// <AppIdentityBridge probePath="/api/auth/session" onSession={seedSessionCache}>
+//   {children}
+// </AppIdentityBridge>
+// seedSessionCache receives unknown JSON; validate app-specific fields before caching.
+// The callback runs before children mount, only for a successful active probe.
+
 // app/api/auth/app-code/route.ts
 import { createAppCodeRouteHandler } from "@hosty-sdk/app/server";
 export const dynamic = "force-dynamic";

@@ -53,7 +53,7 @@ internal static class UserProfileEndpoints
         Task<IResult> Admin(HostUserRecord user) => AppAccessPolicy.IsAdmin(user)
             ? action(user)
             : Task.FromResult<IResult>(CoreJson.Json(new ErrorResponse("admin_required", "Source connections require an administrator."), 403));
-        // App callers have already passed the live apps.sources gate. Direct callers must be
+        // App callers have passed the source-selection or connection-management gate. Direct callers must be
         // operator sessions for reads and browser sessions with CSRF for writes. Neither path
         // accepts a user ID from the body.
         return AppManagementAuthorization.Caller(request) is { } caller

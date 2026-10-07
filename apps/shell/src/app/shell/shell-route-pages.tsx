@@ -5,6 +5,7 @@ import { AvailableAppsPage } from "./pages/available-apps-page";
 import { DashboardPage } from "./pages/dashboard-page";
 import { SettingsPage } from "./pages/settings-page";
 import { useShellActions, useShellState } from "./shell-context";
+import { isHostSettingsTab, isNonAdminHostSettingsTab } from "./shell-routes";
 
 function AdminShellRoute({ children }: { children: ReactNode }) {
   const shell = useShellState();
@@ -62,7 +63,7 @@ export function ShellSettingsRoute() {
   const shell = useShellState();
   const shellActions = useShellActions();
 
-  if (!shell.canManageApps && shell.settingsTab !== "tokens") return <ShellAvailableAppsRoute />;
+  if (!shell.canManageApps && (!isHostSettingsTab(shell.settingsTab) || !isNonAdminHostSettingsTab(shell.settingsTab))) return <ShellAvailableAppsRoute />;
   return (
       <SettingsPage
         assistantSelection={shell.assistantSelection}

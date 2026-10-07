@@ -12,6 +12,43 @@ public sealed class UserConnectionTests
     private const string DeviceJson = """{"device_code":"opaque-secret","user_code":"ABCD-EFGH","expires_in":900,"interval":5}""";
     private const string IdentityJson = """{"id":42,"login":"octocat"}""";
 
+    [Theory]
+    [InlineData(null, "Ov23liDBHP5MgRKVV30I")]
+    [InlineData("  ", "Ov23liDBHP5MgRKVV30I")]
+    [InlineData(" custom-client ", "custom-client")]
+    public async Task GitHubUsesDefaultOrCustomRegistrationAndRetainsItForRenewal(string? configured, string expected)
+    {
+        using var f = await Fixture.Create(configured, null);
+        var profile = await f.Service.ProfileAsync("alice", Ct);
+        Assert.Equal("github", Assert.Single(profile.Providers).Id);
+        f.Http.Json(DeviceJson);
+        var attempt = await f.Service.StartDeviceAsync("alice", "browser", new(null, "github"), Ct);
+        Assert.Contains($"client_id={expected}", f.Http.Calls[0].Body);
+        Assert.Contains("scope=public_repo", f.Http.Calls[0].Body);
+        f.Http.Json("""{"access_token":"first","refresh_token":"refresh","expires_in":1}"""); f.Http.Json(IdentityJson);
+        f.Clock.Advance(5);
+        var connected = (await f.Service.PollAsync("alice", attempt.Id, Ct)).Connection!;
+        Assert.Equal("octocat", connected.Label);
+        Assert.Equal(expected, Assert.Single((await f.Users.ReadAsync()).ProviderConnections!).ClientId);
+        f.Config["ProviderConnections:GitHubClientId"] = "replacement-client";
+        f.Http.Json("""{"access_token":"renewed","expires_in":3600}"""); f.Http.Json(IdentityJson);
+        await f.Service.CheckAsync("alice", connected.Id, Ct);
+        Assert.Contains($"client_id={expected}", f.Http.Calls[3].Body);
+        Assert.All(f.Http.Calls, call => Assert.DoesNotContain("client_secret", call.Body));
+    }
+
+    [Theory]
+    [InlineData(null, "octocat")]
+    [InlineData("  ", "octocat")]
+    [InlineData(" Personal ", "Personal")]
+    public async Task PatConnectionUsesVerifiedAccountNameUnlessOverridden(string? label, string expected)
+    {
+        using var f = await Fixture.Create(); f.Http.Json(IdentityJson);
+        var connection = await f.Service.AddPatAsync("alice", new(label, "github", Token: "secret"), Ct);
+        Assert.Equal(expected, connection.Label);
+        await Assert.ThrowsAsync<UserConnectionException>(() => f.Service.RenameAsync("alice", connection.Id, "", Ct));
+    }
+
     [Fact]
     public async Task MultipleAccountsAreOwnerScopedPersistedAndNeverReturnedAsSecrets()
     {
@@ -118,24 +155,25 @@ public sealed class UserConnectionTests
     }
 
     [Fact]
-    public async Task AzurePatAndEntraUseOnlyTheValidatedOrganizationAndTenant()
+    public async Task UnsupportedProviderRetainsLegacyAccountsUntilOwnerDisconnects()
     {
         using var f = await Fixture.Create();
-        const string identity = """{"authenticatedUser":{"id":"f1763e6a-bbf8-4daf-a36e-e1dd02f88943","providerDisplayName":"Work User"}}""";
-        f.Http.Json(identity);
-        var pat = await f.Service.AddPatAsync("alice", new("Team A", "azure-devops", "team-a", Token: "pat-secret"), Ct);
-        Assert.Equal("team-a", pat.Organization);
-        Assert.Equal("Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes(":pat-secret")), f.Http.Calls[0].Authorization);
-        Assert.Equal("dev.azure.com", f.Http.Calls[0].Uri.Host);
-        f.Http.Json(DeviceJson); f.Http.Json("""{"access_token":"entra-token","expires_in":3600}"""); f.Http.Json(identity);
-        var p = await f.Service.StartDeviceAsync("alice", "browser", new("Team B", "azure-devops", "team-b"), Ct);
-        Assert.Contains("/organizations/oauth2/v2.0/devicecode", f.Http.Calls[1].Uri.AbsolutePath);
-        Assert.Contains("499b84ac", f.Http.Calls[1].Body);
-        f.Clock.Advance(5);
-        Assert.Equal("team-b", (await f.Service.PollAsync("alice", p.Id, Ct)).Connection!.Organization);
-        Assert.Equal("Bearer entra-token", f.Http.Calls.Last().Authorization);
-        await Assert.ThrowsAsync<UserConnectionException>(() => f.Service.AddPatAsync("alice", new("Bad", "azure-devops", "https://attacker.test", Token: "secret"), Ct));
-        Assert.Equal(4, f.Http.Calls.Count);
+        var now = f.Clock.UtcNow;
+        var legacy = new UserProviderConnection("legacy", "alice", "Work", "azure-devops", "team", "tenant", "account", "Alice",
+            "device", "legacy-secret", "legacy-refresh", now.AddHours(1), "old-registration", now, now, "connected", "revision");
+        await f.Users.UpdateAsync(s => s with { ProviderConnections = [legacy] });
+        var profile = await f.Service.ProfileAsync("alice", Ct);
+        Assert.Equal("github", Assert.Single(profile.Providers).Id);
+        Assert.Equal("unsupported", Assert.Single(profile.Connections).Status);
+        Assert.DoesNotContain("legacy-secret", CoreJson.Text(profile));
+        Assert.Equal("provider_unsupported", (await Assert.ThrowsAsync<UserConnectionException>(() => f.Service.CheckAsync("alice", "legacy", Ct))).Code);
+        Assert.Equal("provider_unsupported", (await Assert.ThrowsAsync<UserConnectionException>(() => f.Service.UseForSourceAsync("alice", "legacy", _ => Task.FromResult(true), Ct))).Code);
+        Assert.Equal("provider_unsupported", (await Assert.ThrowsAsync<UserConnectionException>(() => f.Service.AddPatAsync("alice", new("Work", "azure-devops", "team", Token: "secret"), Ct))).Code);
+        Assert.Equal("provider_unsupported", (await Assert.ThrowsAsync<UserConnectionException>(() => f.Service.StartDeviceAsync("alice", "browser", new("Work", "azure-devops", "team"), Ct))).Code);
+        Assert.Equal(legacy, Assert.Single((await f.Users.ReadAsync()).ProviderConnections!));
+        Assert.Empty(f.Http.Calls);
+        await f.Service.DisconnectAsync("alice", "legacy", Ct);
+        Assert.Empty((await f.Users.ReadAsync()).ProviderConnections!);
     }
 
     [Theory]
@@ -302,20 +340,21 @@ public sealed class UserConnectionTests
         public required FakeHttp Http { get; init; }
         public required Clock Clock { get; init; }
         public required HttpClient Client { get; init; }
-        public static async Task<Fixture> Create()
+        public required IConfigurationRoot Config { get; init; }
+        public static async Task<Fixture> Create(string? gitHubClientId = "github-client", string? entraClientId = "entra-client")
         {
             var root = Path.Combine(Path.GetTempPath(), "hosty-connections-" + Guid.NewGuid().ToString("N"));
             var paths = new CoreDataPaths(root, Path.Combine(root, "core"), Path.Combine(root, "apps"), Path.Combine(root, "backups"), Path.Combine(root, "sources"), Path.Combine(root, "core", "auth"), Path.Combine(root, "core", "audit.ndjson"));
             var clock = new Clock(); var users = new UserDirectoryStore(paths); var http = new FakeHttp(); var client = new HttpClient(http);
-            var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["ProviderConnections:GitHubClientId"] = "github-client", ["ProviderConnections:EntraClientId"] = "entra-client" }).Build();
+            var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["ProviderConnections:GitHubClientId"] = gitHubClientId, ["ProviderConnections:EntraClientId"] = entraClientId }).Build();
             var runtime = new HostyCoreRuntimeConfig(root, Path.Combine(root, "run"), Path.Combine(root, "control.json"), 7070, "http://localhost:7070", "http://localhost:7070", "localhost", null, false);
             var (_, settings) = CoreOriginTestFactory.Create(runtime, paths);
             var now = clock.UtcNow;
             await users.WriteAsync(new UserDirectoryState(1,
                 [new("alice", "alice@example.test", "Alice", "host.user", false, now, now), new("bob", "bob@example.test", "Bob", "host.user", false, now, now)], [], [],
                 [new("browser", "alice", now, now.AddHours(1), null, now)]));
-            return new() { Paths = paths, Users = users, Http = http, Clock = clock, Client = client,
-                Service = new(users, new(client, config, clock), clock, new(paths), settings) };
+            return new() { Paths = paths, Users = users, Http = http, Clock = clock, Client = client, Config = config,
+                Service = new(users, new([new GitHubSourceProvider(client, config, clock)]), clock, new(paths), settings) };
         }
         public void Dispose() { Client.Dispose(); Directory.Delete(Paths.DataRoot, true); }
     }

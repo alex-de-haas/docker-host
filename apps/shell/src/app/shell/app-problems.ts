@@ -12,6 +12,21 @@ export function appHasMissingRequiredSettings(app: CoreApp) {
   );
 }
 
+export function appReadinessProblem(app: CoreApp): AppProblem | null {
+  if (app.operationStatus === "updating" || app.runtimeState === "starting" || app.runtimeState === "stopping") return null;
+  const afterUpdate = app.lastOperation === "update" && app.updateProgress?.stage === "needs-attention";
+  if (app.health?.status === "healthy") return null;
+  if (!afterUpdate && (app.runtimeState !== "running" || !["degraded", "unhealthy"].includes(app.health?.status ?? ""))) return null;
+  const services = (app.health?.services ?? []).filter(service => service.status !== "running" ||
+    (service.health != null && service.health !== "healthy"));
+  const details = services.map(service => `${service.service}: ${service.health ?? service.status}`).join("; ");
+  return {
+    severity: "warning",
+    title: afterUpdate ? "Update installed, but app is not ready" : "App is running, but not ready",
+    detail: `${afterUpdate ? "Installation finished, but readiness checks did not pass." : "One or more services have not passed readiness checks."}${details ? ` ${details}.` : ""} Open console logs to investigate.${app.updateCheck?.updateAvailable && !app.updateCheck.error ? " The available update is separate from this readiness warning." : ""}`,
+  };
+}
+
 // Every problem derivable from the app record alone. The collapsed row's icons and the panel's alert list
 // both render from this one call, so what the row warns about and what the panel explains can never drift
 // apart — before this they were computed independently in two places.
@@ -36,6 +51,8 @@ export function collectAppProblems(app: CoreApp): AppProblem[] {
   if (app.lastError) {
     problems.push({ severity: "error", title: "Last operation failed", detail: app.lastError });
   }
+  const readiness = appReadinessProblem(app);
+  if (readiness) problems.push(readiness);
 
   const unavailable = (app.endpoints ?? []).filter((endpoint) => endpoint.availability === "unavailable");
   if (unavailable.length > 0) {

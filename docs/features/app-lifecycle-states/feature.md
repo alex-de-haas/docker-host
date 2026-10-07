@@ -1,6 +1,6 @@
 ---
 created: 2026-07-28
-updated: 2026-09-09
+updated: 2026-10-06
 summary: Intermediate starting and stopping runtime states, so every client sees a lifecycle action while it is in flight.
 components: [apps/core, apps/shell]
 ---
@@ -71,8 +71,14 @@ A stop that throws records `unknown`, never `stopping`. Stop needed no failure p
 states existed — a throw simply left the record on its previous value — but a stranded `stopping`
 would be permanent, because no reconciler observes a non-`IsUp` record.
 
-**Cancellation settles too.** A client disconnect or host shutdown after the stamp abandons the verb
-and releases the lock, which would leave the same permanent stamp. All three verbs catch
+**Restart survives its caller.** Lock acquisition and preflight still honor request cancellation.
+Immediately before the `stopping` stamp, a restart switches to Core's shutdown token for both halves
+and completion bookkeeping. Stopping Shell kills the proxy carrying its own restart request; this
+disconnect cannot cancel the subsequent start. Core retains the app lock until the restart completes
+or fails, and persists failures even after the original caller disappears.
+
+**Cancellation settles too.** A client disconnect during start/stop, or host shutdown during restart,
+abandons the verb and releases the lock, which would leave the same permanent stamp. All three verbs catch
 `OperationCanceledException` and settle the record to `unknown` on a token of their own — the
 request's is already cancelled — before rethrowing. A record that is no longer transitional (the verb
 committed just before cancellation landed) is left untouched.
@@ -143,11 +149,16 @@ stays ready there.
 
 ## Clients
 
-- **Shell** — a transitional badge (sky, pulsing dot), and a lifecycle toggle that shows progress
+- **Shell** — compact Dashboard status dots with a sky spinner for transitional states, full status
+  tooltips on hover or keyboard focus, and a lifecycle toggle that shows progress
   instead of an action while `IsBusy`. That toggle was binary before, so a starting app offered a
   **Start** button that would have raced its own start. Restart is disabled for the same window. The
   dashboard counts in-progress apps in their own tile rather than silently as "not running", and the
   missing-required-settings warning is suppressed mid-verb so it does not blink on every start.
+  Self-restart tolerates loss of its own proxy response, waits for the page's origin to answer and
+  reloads without replaying the mutation. This is connection recovery, not a claim that a lost request
+  succeeded. Explicit authorization or lifecycle errors remain visible. While Shell is stopped its
+  Core proxy is unavailable too; an already-open page cannot start it through that proxy.
 - **CLI** — `ConsoleUi.State` already coloured `starting` and `stopping`, so `hosty apps list` needed
   no change. `hosty apps start|stop` are synchronous and print the settled state.
 
@@ -167,6 +178,9 @@ stays ready there.
 - `CoreLifecycleServiceTests`: starting an app whose record already says `running` while it holds its
   own reserved port must not raise `runtime_port_unavailable` — the guard for the exemption being
   captured before the stamp rather than re-read after it.
+- `CoreLifecycleServiceTests`: disconnecting the caller during restart's stop half still starts the
+  app and persists the result; a later start failure persists its error; pre-cancelled requests never
+  stop the app; Core shutdown still cancels and settles the transitional state.
 - Port-preflight coverage stays as the regression guard for the one site that keeps `IsUp`.
 - `apps/shell/test/runtime-states.test.mjs`: each predicate's membership, their mutual exclusivity, and
   explicitly that `isAppIdle` is narrower than the negation of `isAppUp`.

@@ -35,6 +35,15 @@ internal sealed class InstallationApprovalService(
             throw new AppIdentityException("app_permission_required", $"The app has not been granted '{permission}'. Approve its permission change through a reviewed update.");
     }
 
+    private async Task RequireSourceConnectionsAsync(InstallationCaller caller, CancellationToken ct)
+    {
+        if (caller.AppId is null) return;
+        var app = await apps.GetAppAsync(caller.AppId, ct);
+        if (app is null || (!AppManagementAuthorization.HasPermission(app, CoreAppPermissions.Sources) &&
+            !AppManagementAuthorization.HasPermission(app, CoreAppPermissions.SourceConnections)))
+            throw new AppIdentityException("app_permission_required", "Private source selection requires apps.sources or sources.connections.");
+    }
+
     public async Task<InstallationApproval> PrepareAsync(InstallationCaller caller, InstallationPrepare input, CancellationToken ct)
     {
         if (input.HostPathChange is { } change)
@@ -88,7 +97,7 @@ internal sealed class InstallationApprovalService(
         await RequirePermissionAsync(caller, CoreAppPermissions.Install, ct);
         var installed = update ? await apps.GetAppAsync(input.UpdateAppId!, ct) : null;
         var requiresSources = input.SourceConnections is not null || HasPrivateSources(installed?.PrivateSources);
-        if (requiresSources) await RequirePermissionAsync(caller, CoreAppPermissions.Sources, ct);
+        if (requiresSources) await RequireSourceConnectionsAsync(caller, ct);
         RequireSourceOwner(caller.UserId, installed?.PrivateSources);
         var access = installed?.PrivateSources;
         if (input.SourceConnections is { } choice)
@@ -137,7 +146,7 @@ internal sealed class InstallationApprovalService(
             throw new AppLifecycleException("already_installed", "This app is already installed. Use its update flow.");
         // Cached plans may contain a newly selected binding absent from the installed record.
         requiresSources |= HasPrivateSources(plan?.PrivateSources) || HasPrivateSources(updatePlan?.PrivateSources);
-        if (requiresSources) await RequirePermissionAsync(caller, CoreAppPermissions.Sources, ct);
+        if (requiresSources) await RequireSourceConnectionsAsync(caller, ct);
         RequireSourceOwner(caller.UserId, plan?.PrivateSources);
         RequireSourceOwner(caller.UserId, updatePlan?.PrivateSources);
         var entry = approvals.Add(new InstallationApproval
@@ -162,7 +171,7 @@ internal sealed class InstallationApprovalService(
     public async Task RequireRequestPermissionsAsync(InstallationCaller caller, InstallationApproval entry, CancellationToken ct)
     {
         if (entry.Permission is { } permission) await RequirePermissionAsync(caller, permission, ct);
-        if (entry.RequiresSources) await RequirePermissionAsync(caller, CoreAppPermissions.Sources, ct);
+        if (entry.RequiresSources) await RequireSourceConnectionsAsync(caller, ct);
     }
 
     public Task RecordAsync(InstallationApproval entry, string outcome, CancellationToken ct)

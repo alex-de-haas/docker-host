@@ -298,7 +298,7 @@ public sealed class AppManagementHttpTests
     }
 
     [Fact]
-    public async Task SourceConnections_RequireSourcesAndAdmin_AndNeverCrossOwnersOrExportTokens()
+    public async Task SourceConnections_SeparateConsumptionFromManagement_RequireAdmin_AndNeverCrossOwnersOrExportTokens()
     {
         await using var host = await CoreHttpHarness.StartAsync();
         using var client = await CreateAppClient(host, "example.console", [CoreAppPermissions.ManageUsers]);
@@ -318,7 +318,13 @@ public sealed class AppManagementHttpTests
         Assert.True(response.Headers.CacheControl!.NoStore);
         var text = await response.Content.ReadAsStringAsync();
         Assert.Contains("Personal", text); Assert.DoesNotContain("Other account", text);
+        using var profile = JsonDocument.Parse(text);
+        Assert.Equal("github", Assert.Single(profile.RootElement.GetProperty("providers").EnumerateArray()).GetProperty("id").GetString());
         Assert.DoesNotContain("never-export", text); Assert.DoesNotContain("foreign-secret", text);
+        await AssertError(await client.PutAsJsonAsync("/api/source-connections/identity", new { gitIdentity = new { name = "Denied", email = "denied@example.test" } }), HttpStatusCode.Forbidden, "app_permission_required");
+        await AssertError(await client.DeleteAsync("/api/source-connections/own"), HttpStatusCode.Forbidden, "app_permission_required");
+        await SetPermissions(host, "example.console", [CoreAppPermissions.SourceConnections]);
+        (await client.GetAsync("/api/source-connections")).EnsureSuccessStatusCode();
         (await client.PutAsJsonAsync("/api/source-connections/identity", new { userId = "other", displayName = "Must not change", gitIdentity = new { name = "Author", email = "author@example.test" } })).EnsureSuccessStatusCode();
         var state = await users.ReadAsync();
         Assert.Equal("Actor", state.Users.Single(u => u.Id == "actor").DisplayName);
@@ -339,12 +345,12 @@ public sealed class AppManagementHttpTests
     public async Task SourceDeviceAuthorization_BindsInternallyToParentBrowserSession()
     {
         await using var host = await CoreHttpHarness.StartAsync();
-        using var client = await CreateAppClient(host, "example.console", [CoreAppPermissions.Sources]);
+        using var client = await CreateAppClient(host, "example.console", [CoreAppPermissions.SourceConnections]);
         var identities = host.Services.GetRequiredService<AppIdentityService>();
         var grant = client.DefaultRequestHeaders.GetValues(AppManagementAuthorization.IdentityHeader).Single();
         Assert.Equal("operator", await identities.AuthorizingBrowserSessionAsync(grant, "example.console", default));
-        // With a browser grant, validation proceeds to provider configuration (no network).
-        await AssertError(await client.PostAsJsonAsync("/api/source-connections/device", new { label = "GitHub", provider = "github" }), HttpStatusCode.Conflict, "provider_not_configured");
+        // An unsupported provider validates the browser grant without making external calls.
+        await AssertError(await client.PostAsJsonAsync("/api/source-connections/device", new { provider = "azure-devops", organization = "team" }), HttpStatusCode.Conflict, "provider_unsupported");
         var diagnostic = await identities.CreateLaunchTokenAsync("example.console", "actor");
         client.DefaultRequestHeaders.Remove(AppManagementAuthorization.IdentityHeader);
         client.DefaultRequestHeaders.Add(AppManagementAuthorization.IdentityHeader, diagnostic.AccessToken);

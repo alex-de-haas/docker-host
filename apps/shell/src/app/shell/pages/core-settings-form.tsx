@@ -9,8 +9,8 @@ import { InlineError } from "../ui";
 import { settingDurationHint, settingUnitLabel } from "../setting-duration";
 import { CoreSettingsLayout } from "./core-settings-layout";
 
-// The editable form over Core's own settings, shared by the Core and Ingress tabs. Core returns one flat
-// list tagged with a `group`; each tab decides which of those groups it owns, so this component takes a
+// The editable form over Core's settings, shared by General, Security and Ingress. Core returns one flat
+// list tagged with a `group`; each section decides which fields it owns, so this component takes a
 // filter rather than rendering everything it is given. Live-apply: saving PUTs only the changed keys and
 // Core returns the fresh snapshot, which reseeds the draft.
 //

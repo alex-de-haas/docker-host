@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import type { CoreSettingItem } from "../types";
+import { INGRESS_SETTINGS_GROUP } from "../ingress";
+import { cn } from "@/lib/utils";
 
 // Shell owns the layout of known Core settings. Core remains authoritative for values, types,
 // descriptions and defaults. Unknown keys stay editable when Core is newer than this Shell.
@@ -17,8 +19,11 @@ const sections = [
   ] },
   { title: "Maintenance", fields: [
     { key: "HOSTY_UPDATE_CHECK_INTERVAL_MINUTES", label: "Check for app updates every" },
+  ] },
+  { title: "User retention", fields: [
     { key: "HOSTY_USERS_DISABLED_RETENTION_DAYS", label: "Delete disabled users after" },
   ] },
+  { title: "Privileged activity", fields: [{ key: "HOSTY_AUTH_APP_ACTIVITY_HOURS" }] },
   { title: "Connection", fields: [
     { key: "HOSTY_CORE_PORT" },
     { key: "HOSTY_CORE_PUBLIC_ORIGIN" },
@@ -35,7 +40,8 @@ export function CoreSettingsLayout({ items, renderField }: {
   renderField: (item: CoreSettingItem, label?: string) => ReactNode;
 }) {
   const byKey = new Map(items.map((item) => [item.key, item]));
-  const extra = items.filter((item) => !knownKeys.has(item.key));
+  const ingress = items.filter(item => item.group === INGRESS_SETTINGS_GROUP);
+  const extra = items.filter((item) => !knownKeys.has(item.key) && item.group !== INGRESS_SETTINGS_GROUP);
   return (
     <div className="space-y-4">
       {sessions.some((session) => session.keys.some((key) => byKey.has(key))) && (
@@ -59,7 +65,7 @@ export function CoreSettingsLayout({ items, renderField }: {
       <div className="grid gap-4 lg:grid-cols-2">
         {sections.map((section) => (
           section.fields.some((field) => byKey.has(field.key)) && (
-            <section key={section.title} className={`min-w-0 rounded-lg border p-4 ${section.title === "Connection" ? "lg:col-span-2" : ""}`} aria-label={section.title}>
+            <section key={section.title} className={cn("min-w-0 rounded-lg border p-4", section.title === "Connection" && "lg:col-span-2")} aria-label={section.title}>
               <h4 className="mb-3 text-sm font-medium">{section.title}</h4>
               <div className={section.title === "Connection" ? "grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]" : "space-y-3"}>
                 {section.fields.map((field) => {
@@ -71,6 +77,12 @@ export function CoreSettingsLayout({ items, renderField }: {
           )
         ))}
       </div>
+      {ingress.length > 0 && (
+        <section className="rounded-lg border p-4" aria-label="Public ingress">
+          <h4 className="mb-3 text-sm font-medium">Public ingress</h4>
+          <div className="grid gap-4 lg:grid-cols-2">{ingress.map(item => renderField(item))}</div>
+        </section>
+      )}
       {extra.length > 0 && (
         <section className="rounded-lg border p-4" aria-label="Additional settings">
           <h4 className="mb-3 text-sm font-medium">Additional settings</h4>

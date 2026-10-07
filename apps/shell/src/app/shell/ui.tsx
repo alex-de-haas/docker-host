@@ -1,12 +1,13 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Check, CircleAlert, Copy, TriangleAlert } from "lucide-react";
+import { Check, CircleAlert, Copy, LoaderCircle, TriangleAlert } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { AlertSeverity } from "./types";
 
@@ -82,9 +83,9 @@ export function EmptyState({ icon: Icon, title, description, iconClassName }: { 
 // `health` composes the app's health fold onto its lifecycle state the way Aspire's dashboard does —
 // `running · degraded` — with the *health's* tone, since that is the news. Omitted, or `healthy`,
 // and the badge is the lifecycle state alone.
-export function StatusBadge({ value, health }: { value: string; health?: string | null }) {
+export function StatusBadge({ value, health, compact = false }: { value: string; health?: string | null; compact?: boolean }) {
   if (health && health !== "healthy" && health !== "stopped" && health !== "unknown") {
-    return <StatusBadge value={`${value} · ${health}`} />;
+    return <StatusBadge value={`${value} · ${health}`} compact={compact} />;
   }
 
   const normalized = value.toLowerCase();
@@ -100,6 +101,29 @@ export function StatusBadge({ value, health }: { value: string; health?: string 
   // this branch serves the service rows as well as the app row. `running` is tested first because
   // "healthy"/"running" always win when both could match.
   const transitional = !running && (normalized.includes("starting") || normalized.includes("stopping") || normalized.includes("restarting"));
+  if (compact) {
+    return (
+      <TooltipProvider delayDuration={150}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span
+              role="img"
+              aria-label={value}
+              tabIndex={0}
+              className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm align-middle outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {transitional ? (
+                <LoaderCircle aria-hidden className="size-3.5 animate-spin text-sky-500 motion-reduce:animate-none" />
+              ) : (
+                <span aria-hidden className={cn("size-2 rounded-full", running ? "bg-emerald-500" : attention ? "bg-amber-500" : "bg-muted-foreground")} />
+              )}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent sideOffset={4}>{value}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
   return (
     <Badge variant="outline" className={cn("gap-1.5", (running || attention || transitional) && "border-transparent", running && "bg-emerald-500/10 text-emerald-700", attention && "bg-amber-500/10 text-amber-700", transitional && "bg-sky-500/10 text-sky-700 dark:text-sky-300")}>
       <span className={cn("h-2 w-2 rounded-full", running ? "bg-emerald-500" : attention ? "bg-amber-500" : transitional ? "animate-pulse bg-sky-500" : "bg-muted-foreground")} />

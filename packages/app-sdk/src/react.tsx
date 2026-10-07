@@ -221,6 +221,8 @@ export interface AppIdentityBridgeProps {
   appCodePath?: string;
   /** Optional app-owned rendering, including loading and active content. Recovery remains SDK-owned. */
   renderState?: (state: AppIdentityBridgeState) => ReactNode;
+  /** Receives a successful active probe before children mount, so an app can seed its session cache. */
+  onSession?: (body: unknown) => void;
   children?: ReactNode;
 }
 
@@ -236,6 +238,7 @@ export function AppIdentityBridge({
   probePath = "/api/auth/identity",
   appCodePath = "/api/auth/app-code",
   renderState,
+  onSession,
   children,
 }: AppIdentityBridgeProps = {}) {
   const [ui, setUi] = useState<AppIdentityBridgeState>({ kind: "recovering" });
@@ -249,6 +252,8 @@ export function AppIdentityBridge({
   const upgradedAttempt = useRef(false);
   const [activity, setActivity] = useState<{ openUrl: string; appAuthProtocol: AppAuthProtocol; activeUntil?: string | null; activityRequired?: boolean } | null>(null);
   const exchangeRef = useRef<{ path: string; revision: number; response: Promise<Response> } | null>(null);
+  const onSessionRef = useRef(onSession);
+  useEffect(() => { onSessionRef.current = onSession; }, [onSession]);
 
   useEffect(() => {
     let cancelled = false;
@@ -270,6 +275,7 @@ export function AppIdentityBridge({
       let protocol: AppAuthProtocol | null = null;
       let activityMetadata: { activeUntil?: string | null; activityRequired?: boolean } | null = null;
       let rejectionCode: unknown;
+      let sessionBody: unknown = null;
       const revision = appGrantRevision();
       try {
         const response = await appFetch(probePath, {
@@ -279,6 +285,8 @@ export function AppIdentityBridge({
         }, false);
         const body: unknown = await response.json().catch(() => null);
         status = readProbedSessionStatus(body);
+        if (status === "active" && !response.ok) status = null;
+        sessionBody = body;
         const identityError = body as { error?: { code?: unknown }; appSession?: { error?: { code?: unknown } } } | null;
         rejectionCode = identityError?.error?.code ?? identityError?.appSession?.error?.code;
         const recovery = readRecoveryParams(body);
@@ -338,6 +346,7 @@ export function AppIdentityBridge({
 
       switch (action.kind) {
         case "none":
+          onSessionRef.current?.(sessionBody);
           appSessionActive();
           wasActive.current = true;
           setUi({ kind: "active" });

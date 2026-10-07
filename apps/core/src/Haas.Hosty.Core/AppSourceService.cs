@@ -32,7 +32,7 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
         }
 
         ValidateManagedRepository(source.Repository);
-        if (app.PrivateSources?.Git is { } grant && PrivateSourceService.NormalizeRepository(source.Repository) != grant.Repository)
+        if (app.PrivateSources?.Git is { } grant && (privateSources ?? throw PrivateSourceService.Denied()).NormalizeRepository(source.Repository) != grant.Repository)
             throw PrivateSourceService.Denied("The Git source changed. Select and review its connection again.");
         var checkoutPath = ResolveManagedCheckoutPath(app);
         await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken, app.PrivateSources?.Git);
@@ -72,7 +72,7 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
         }
 
         ValidateManagedRepository(source.Repository);
-        if (app.PrivateSources?.Git is { } grant && PrivateSourceService.NormalizeRepository(source.Repository) != grant.Repository)
+        if (app.PrivateSources?.Git is { } grant && (privateSources ?? throw PrivateSourceService.Denied()).NormalizeRepository(source.Repository) != grant.Repository)
             throw PrivateSourceService.Denied("The Git source changed. Select and review its connection again.");
         var checkoutPath = ResolveManagedCheckoutPath(app);
         await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken, app.PrivateSources?.Git);

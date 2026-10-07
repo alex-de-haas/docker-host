@@ -42,7 +42,7 @@ test("only Dashboard and Settings are administrator-only", () => {
 });
 
 test("readHostSettingsTab still collapses anything unknown to Users", () => {
-  assert.equal(readHostSettingsTab("core"), "core");
+  assert.equal(readHostSettingsTab("core"), "general");
   assert.equal(readHostSettingsTab("ingress"), "ingress");
   assert.equal(readHostSettingsTab("mounts"), "mounts");
   assert.equal(readHostSettingsTab(" users "), "users");
@@ -55,7 +55,7 @@ test("the route keeps a settings tab raw, because it may be an app id", () => {
   // An app-settings tab carries the app id in this parameter. Collapsing anything unfamiliar to the
   // default here would send every app tab to Users — the surface rendered and unreachable. Which of
   // the two a value is gets decided against the installed apps, at render, where that list exists.
-  assert.equal(readShellRoute("/settings", params("tab=core")).settingsTab, "core");
+  assert.equal(readShellRoute("/settings", params("tab=core")).settingsTab, "general");
   assert.equal(readShellRoute("/settings", params("tab=com.haas.demo-app")).settingsTab, "com.haas.demo-app");
   assert.equal(readShellRoute("/settings", params()).settingsTab, "users");
   assert.equal(readShellRoute("/settings", params("tab=   ")).settingsTab, "users");
@@ -88,7 +88,7 @@ test("legacy paths render their new surface", () => {
 
 test("legacy paths canonicalize, and a deep link keeps its path", () => {
   assert.equal(readCanonicalRedirect("/installed-apps", params()), "/dashboard");
-  assert.equal(readCanonicalRedirect("/users", params()), "/settings?tab=users");
+  assert.equal(readCanonicalRedirect("/users", params()), "/settings?tab=security&section=users");
   assert.equal(
     readCanonicalRedirect("/system-apps/com.haas.telemetry-ui", params("path=/logs")),
     "/workspace?app=com.haas.telemetry-ui&path=%2Flogs",
@@ -118,7 +118,7 @@ test("percent-encoded app ids survive the deep link", () => {
 test("builders and the parser agree", () => {
   assert.equal(readShellRoute(new URL(getShellViewHref("settings"), "http://x").pathname, params()).view, "settings");
 
-  for (const tab of ["profile", "users", "tokens", "core", "ingress", "mounts"]) {
+  for (const tab of ["profile", "users", "tokens", "general", "agents", "shell", "connections", "policies", "ingress", "mounts"]) {
     const settingsUrl = new URL(getSettingsHref(tab), "http://x");
     assert.equal(readShellRoute(settingsUrl.pathname, settingsUrl.searchParams).settingsTab, tab);
   }
@@ -159,4 +159,26 @@ test("authorization redirects preserve personal tokens and react to settings tab
   assert.equal(getShellAuthorizationRedirect(readShellRoute("/dashboard", params()), true, false), "/apps");
   assert.equal(getShellAuthorizationRedirect(readShellRoute("/apps", params()), true, false), null);
   assert.equal(getShellAuthorizationRedirect(readShellRoute("/workspace", params("app=demo")), true, false), null);
+});
+
+
+test("grouped settings links preserve inner tabs and old bookmarks", () => {
+  for (const [group, child] of [["security", "users"], ["security", "tokens"], ["security", "connections"], ["security", "policies"], ["harness", "agents"], ["harness", "shell"]]) {
+    assert.equal(getSettingsHref(child), `/settings?tab=${group}&section=${child}`);
+    assert.equal(readShellRoute("/settings", params(`tab=${group}&section=${child}`)).settingsTab, child);
+    assert.equal(readShellRoute("/settings", params(`tab=${child}`)).settingsTab, child);
+  }
+  assert.equal(getSettingsHref("core"), "/settings?tab=general");
+  assert.equal(readShellRoute("/settings", params("tab=security&section=unknown")).settingsTab, "users");
+  assert.equal(readShellRoute("/settings", params("tab=harness&section=tokens")).settingsTab, "agents");
+  assert.equal(readShellRoute("/settings", params("tab=hosty.harness&section=tokens")).settingsTab, "hosty.harness");
+});
+
+test("grouped settings URLs keep personal credentials accessible without opening host controls", () => {
+  const tokens = readShellRoute("/settings", params("tab=security&section=tokens"));
+  assert.equal(getShellAuthorizationRedirect(tokens, true, false), null);
+  for (const section of ["users", "connections", "policies", "unknown"]) {
+    const route = readShellRoute("/settings", params(`tab=security&section=${section}`));
+    assert.equal(getShellAuthorizationRedirect(route, true, false), "/apps");
+  }
 });
