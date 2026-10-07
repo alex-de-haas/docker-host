@@ -171,9 +171,11 @@ Verified against `main` at `2562a34b`.
     uncommitted and untracked files included, limited to `docs/`. Each change carries its path, its
     kind (added, modified, deleted), the file's modification time when it exists, and whether the
     tracked branch has also changed that document since the base. The base follows integration
-    however it happens, through Core's `merge` or an agent's own `git merge`, and a change the
-    tracked branch has since merged leaves the list. `SessionFiles` keeps its meaning for Harness
-    and is not used for this.
+    however it happens, through Core's `merge` or an agent's own `git merge`. A change the tracked
+    branch has since merged leaves the list whatever the ancestry: a document whose worktree
+    content equals the tracked branch's current content — both absent counts — is not listed, so
+    work integrated by squash merge or cherry-pick, which leaves the base where it was, drops out
+    too. `SessionFiles` keeps its meaning for Harness and is not used for this.
   - Core builds the session URL from the assistant app's browser origin and the recorded session
     path and refuses a path that would leave that origin, so the app needs neither `apps.read` nor
     its own origin lookup. The URL exists only while the workspace's owning installation — app id
@@ -196,11 +198,12 @@ Verified against `main` at `2562a34b`.
 - **Parsing.** The frontmatter contract is the validator's strict YAML subset: the app parses it
   with a YAML parser restricted to that subset, keeps dates as strings, and treats anything the
   validator rejects as an error. Deliverables follow the validator's rule (`- [ ] D<n>. ` under
-  `## Deliverables`), including its handling of fenced code blocks. Contract tests run the parser
-  over docker-host's own `docs/` and over invalid fixtures — broken frontmatter, an unknown status,
-  a duplicate deliverable ID, a checkbox outside `## Deliverables`, checkboxes inside a fenced code
-  block — and require the app and the validator to accept and reject the same documents, so a format
-  change cannot silently diverge from the validator.
+  `## Deliverables`), including its handling of fenced code blocks, whose lines it ignores.
+  Contract tests run the parser over docker-host's own `docs/`, over invalid fixtures — broken
+  frontmatter, an unknown status, a duplicate deliverable ID, a checkbox outside
+  `## Deliverables` — and over valid edge cases such as checkboxes inside a fenced code block, which
+  are neither deliverables nor errors, and require the app and the validator to accept and reject
+  the same documents, so a format change cannot silently diverge from the validator.
 - **Invalid documents.** A document the parser rejects stays visible as a card with its path and
   the parse error, and its progress is unknown. On the tracked branch this is rare, because CI
   validates it; in a worktree it is normal while an edit is under way.
@@ -287,8 +290,9 @@ app's.
       SHA of the bytes it served and is refused as a conflict once that no longer holds, and no
       arbitrary commit is served; Native AOT serialization and path-guard tests.
 - [ ] D5. The read-only workspace projection: document changes under `docs/` measured from the
-      merge base of the workspace's `HEAD` and the target ref, with change kind, modification time
-      and whether the tracked branch changed the document since; an absolute session URL validated
+      merge base of the workspace's `HEAD` and the target ref, omitting documents whose content
+      already equals the tracked branch's, with change kind, modification time and whether the
+      tracked branch changed the document since; an absolute session URL validated
       against the assistant app's origin, absent with a reason once the owning installation is
       removed or reinstalled; a workspace-derived entry for any active workspace without an
       installed-app entry (an untracked explicit target branch, or an uninstalled source app);
@@ -300,8 +304,8 @@ app's.
       UI, `docker` and `dev` profiles, SDK identity, feed, image workflow, and version sources
       registered in `scripts/check-versions.mjs`.
 - [ ] D7. Frontmatter and deliverable parsing restricted to the validator's subset, with contract
-      tests against docker-host's `docs/` and invalid fixtures on which the app and the validator
-      agree; error cards for rejected documents; the blob-SHA cache keyed by the SHA Core returned,
+      tests against docker-host's `docs/`, invalid fixtures and valid edge cases such as fenced
+      checkboxes, on which the app and the validator agree; error cards for rejected documents; the blob-SHA cache keyed by the SHA Core returned,
       bounded in size, and served only for SHAs Core has just authorized for the acting
       administrator.
 - [ ] D8. Overview: tracked-branch state loaded per repository with bounded concurrency, workspace
@@ -382,16 +386,16 @@ app's.
   removed access. A workspace targeting a branch no app tracks appears under its own entry.
 - Core workspace-change tests: a workspace that integrated an advanced target branch — through
   Core's `merge` and through its own `git merge` — and has no plan changes of its own lists no
-  document changes; a workspace whose own plan change the target has merged no longer lists it; a
-  plan changed both by the workspace and by the target since the base is listed once and flagged as
-  changed on the tracked branch.
+  document changes; a workspace whose own plan change the target has merged — by merge commit, by
+  squash merge and by cherry-pick — no longer lists it; a plan changed both by the workspace and by
+  the target since the base is listed once and flagged as changed on the tracked branch.
 - Core consistency and fetch tests: a tracked-branch read naming a commit after the ref moved and a
   worktree read after the file changed are refused as conflicts; a read naming any other commit —
   including another workspace's — is refused; concurrent reads and a workspace `refresh` of one
   repository and branch run one fetch; a stalled remote delays neither another repository's listing
   nor the observer.
-- App tests: parsing against docker-host's `docs/` and the invalid fixtures with the validator's
-  verdicts, error cards, status counts and progress, component-to-app mapping, workspace markers for
+- App tests: parsing against docker-host's `docs/`, the invalid fixtures and the valid edge cases
+  with the validator's verdicts, error cards, status counts and progress, component-to-app mapping, workspace markers for
   a changed, a new and a deleted plan, completing and removed labels for a deleted plan with and
   without a `feature.md` change, two workspaces changing one plan, search and filters restored from
   the URL, a link that selects a workspace, and the cache keyed by the returned SHA within its bound.
