@@ -43,6 +43,11 @@ when available. A URL can select a workspace. A notice identifies a document als
 tracked branch. Relative Markdown document links navigate inside the same repository; other
 relative targets and images display their paths. Documents are rendered without raw HTML.
 
+If the tracked-branch listing or content is unavailable, the detail shows its error while
+independently authorized workspace documents and bases remain available. A missing tracked document
+has the separate workspace-only presentation. Global identity, role and permission refusals still
+stop the detail read.
+
 Open pages re-read every 20 seconds. Refresh sources requests a fresh target fetch. A workspace
 marker means that the workspace changes the plan; it makes no claim about current agent activity.
 Unavailable workspace observations display their state, observation time and reason.
@@ -134,6 +139,10 @@ the requested document and its reference metadata. Every request still resolves 
 public proof and the target/base version before using cached values. Mutable worktree bytes and
 their reference metadata are read afresh and never enter this immutable cache.
 
+The app's source client allows 75 seconds for fetch, queued transport and local metadata work;
+caller cancellation still interrupts the request. This covers Core's 30-second fetch budget without
+ending an otherwise valid cold read after 15 seconds.
+
 ## Parsing, Cache And MCP
 
 The parser follows the [documentation workflow](../documentation-workflow/feature.md): its strict
@@ -174,7 +183,8 @@ and ReUI license notices.
   cleanup, private workspace reads during provider downtime and removed/reinstalled assistant origins.
 - Parser contract tests compare repository documents and valid/invalid fixtures with the canonical
   validator. Cache tests cover SHA verification, current authorization and eviction limits. App
-  tests cover filters, counts, component mapping, workspace labels, detail links and MCP refusals.
+  tests cover filters, counts, component mapping, workspace labels, detail links, target-outage
+  fallback, cold fetch deadlines, caller cancellation and MCP refusals.
 - Browser checks cover Data Grid sorting, pagination, page size, search and quiet background reads.
 - Live acceptance uses a Core-owned worktree prepared through Harness without a model run. It covers
   uncommitted plan edits, separate tracked/workspace progress, expansion preserved across polling,
@@ -183,3 +193,5 @@ and ReUI license notices.
 - Integration verification uses Core-managed app lifecycle and normal password login in a separate
   data root, including Shell embedding and workspace changes. Core passes its tests and Native AOT
   publish; the app, Shell, Harness and SDK pass affected tests and builds.
+- CI's real-Docker transport smoke prepares its owned networks before Core startup and checks health,
+  unauthenticated app refusal and local-control isolation from default and per-app networks.

@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { SourceDocument } from "./document";
+import { SourceDocument, TrackedDocument } from "./document";
 import { PlanGrid } from "./plan-grid";
 import { Progress } from "./plan-metadata";
 import { parseSourceDocument } from "@/lib/parser";
@@ -11,6 +11,15 @@ const path = "docs/features/example/plan.md";
 const content = "---\nstatus: In Progress\ncreated: 2026-10-06\nupdated: 2026-10-07\nsummary: An example plan.\n---\n# Example\n## Deliverables\n- [ ] D1. Build it\n";
 const repository: SourceRepository = { id: "repo", repository: "https://example.org/repo.git", branch: "main", workspaceDerived: false, apps: [], state: "available", error: null, commit: "commit", fetchedAt: null };
 describe("document and overview rendering", () => {
+  it("keeps target unavailability distinct from a confirmed workspace-only plan", () => {
+    const unavailable = renderToStaticMarkup(createElement(TrackedDocument, { document: null, error: "The source provider is unavailable.", repositoryId: "repo", navigate: vi.fn() }));
+    expect(unavailable).toContain("Tracked branch unavailable");
+    expect(unavailable).toContain("The source provider is unavailable.");
+    expect(unavailable).not.toContain("Workspace only");
+    const absent = renderToStaticMarkup(createElement(TrackedDocument, { document: null, error: null, repositoryId: "repo", navigate: vi.fn() }));
+    expect(absent).toContain("Workspace only");
+    expect(absent).not.toContain("Tracked branch unavailable");
+  });
   it("renders invalid documents as visible grid errors with unknown progress", () => {
     const document = parseSourceDocument(path, content.replace("In Progress", "Cancelled"));
     const card: PlanCard = { repository, path, document, apps: [], workspaces: [] };

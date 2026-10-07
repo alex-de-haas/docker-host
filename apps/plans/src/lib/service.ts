@@ -16,6 +16,9 @@ function message(error: unknown): string { return error instanceof Error ? error
 function requireListing(listing: DocumentListing) {
   if (listing.error || !Array.isArray(listing.documents)) throw new PlansError(listing.error ?? "Repository documents are unavailable.");
 }
+function authorityRefused(failure: unknown): boolean {
+  return failure instanceof PlansError && (failure.status === 401 || failure.status === 403 && failure.code !== "source_document_forbidden");
+}
 export class PlansService {
   constructor(private readonly reader: SourceReader, private readonly cache = getCache()) {}
   async repositories() { return this.reader.repositories(); }
@@ -54,13 +57,13 @@ export class PlansService {
         current = { ...current, documents: [...current.documents, ...currentFeature.documents] };
         base = { ...base, documents: [...base.documents, ...baseFeature.documents] };
       }
-    } catch (failure) { error = message(failure); }
+    } catch (failure) { if (authorityRefused(failure)) throw failure; error = message(failure); }
     return mapBounded(changes, 4, async change => {
       let document: ParsedDocument | null = null, baseDocument: ParsedDocument | null = null;
       let readError = error;
       if (!error && current && base) {
         try { [document, baseDocument] = await Promise.all([this.document(repository.id, current, change.path), this.document(repository.id, base, change.path)]); }
-        catch (failure) { readError = message(failure); }
+        catch (failure) { if (authorityRefused(failure)) throw failure; readError = message(failure); }
       }
       const featurePath = change.path.replace(/plan\.md$/, "feature.md");
       const currentFeature = current?.documents.find(item => item.path === featurePath);
@@ -99,16 +102,27 @@ export class PlansService {
     });
   }
   async detail(repositoryId: string, documentPath: string, refresh = false): Promise<PlanDetail> {
-    const listing = await this.reader.listing(repositoryId, "target", undefined, refresh, documentPath);
-    requireListing(listing);
-    const repository = (await this.reader.repositories()).find(item => item.id === listing.repositoryId);
+    let listing: DocumentListing | null = null;
+    let targetFailure: { cause: unknown; error: string } | null = null;
+    const unavailableTarget = (failure: unknown) => {
+      // Identity, role and permission refusals retain their HTTP refusal semantics. A provider
+      // outage may leave independently authorized local workspace versions available.
+      if (failure instanceof PlansError && (failure.status === 401 || failure.status === 403)) throw failure;
+      return { cause: failure, error: message(failure) };
+    };
+    try { listing = await this.reader.listing(repositoryId, "target", undefined, refresh, documentPath); requireListing(listing); }
+    catch (failure) { targetFailure = unavailableTarget(failure); listing = null; }
+    const repository = (await this.reader.repositories()).find(item => item.id === (listing?.repositoryId ?? repositoryId));
     if (!repository) throw new PlansError("Repository was not found or is no longer accessible.", 404, "repository_not_found");
     const [document, workspaces] = await Promise.all([
-      this.document(repository.id, listing, documentPath),
+      listing ? this.document(repository.id, listing, documentPath).catch(failure => { targetFailure = unavailableTarget(failure); return null; }) : null,
       this.reader.workspaces(repository.id).then(items => mapBounded(items, 3, item => this.workspacePlans(repository, item, documentPath))).then(items => items.flat()),
     ]);
-    if (!document && !workspaces.length) throw new PlansError("The document does not exist in the tracked branch or a changing workspace.", 404, "document_not_found");
-    return { repository, path: documentPath, document, workspaces, error: null };
+    if (!document && !workspaces.length) {
+      if (targetFailure) throw targetFailure.cause;
+      throw new PlansError("The document does not exist in the tracked branch or a changing workspace.", 404, "document_not_found");
+    }
+    return { repository, path: documentPath, document, workspaces, error: targetFailure?.error ?? null };
   }
 }
 function overviewDocument(document: ParsedDocument | null): ParsedDocument | null {

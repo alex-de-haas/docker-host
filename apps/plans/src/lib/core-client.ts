@@ -2,6 +2,9 @@ import { getAppId, getCoreOrigin } from "@hosty-sdk/app/server";
 import { config, PlansError } from "./auth";
 import type { SourceRepository, DocumentListing, DocumentContent, DocumentVersion, Workspace } from "./types";
 
+// Allow Core's 30-second fetch plus bounded local metadata, queue and response work.
+const CORE_SOURCE_TIMEOUT_MS = 75_000;
+
 export interface SourceReader {
   repositories(): Promise<SourceRepository[]>;
   listing(repositoryId: string, version?: DocumentVersion, workspaceId?: string, refresh?: boolean, documentPath?: string): Promise<DocumentListing>;
@@ -18,9 +21,10 @@ export class CoreSourceReader implements SourceReader {
     url.search = query.toString();
     let response: Response;
     try {
+      const deadline = AbortSignal.timeout(CORE_SOURCE_TIMEOUT_MS);
       response = await fetch(url, {
         headers: { Authorization: `Bearer ${service}`, "X-Hosty-User-Token": this.credential },
-        cache: "no-store", redirect: "error", signal: this.signal ? AbortSignal.any([this.signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+        cache: "no-store", redirect: "error", signal: this.signal ? AbortSignal.any([this.signal, deadline]) : deadline,
       });
     } catch { throw new PlansError("Core source access is unavailable. Try again."); }
     if (!response.ok) {

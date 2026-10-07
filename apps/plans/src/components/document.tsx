@@ -5,7 +5,13 @@ import { markdownTarget } from "@/lib/markdown";
 import { planLink } from "@/lib/model";
 import type { ParsedDocument } from "@/lib/types";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+
+export function TrackedDocument({ document, error, repositoryId, navigate }: { document: ParsedDocument | null; error: string | null; repositoryId: string; navigate: (url: string) => void }) {
+  if (error) return <Alert variant="destructive"><AlertTitle>Tracked branch unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>;
+  return document ? <SourceDocument document={document} repositoryId={repositoryId} navigate={navigate} /> : <Empty><EmptyHeader><EmptyTitle>Workspace only</EmptyTitle><EmptyDescription>This plan exists only in a workspace.</EmptyDescription></EmptyHeader></Empty>;
+}
 
 export function SourceDocument({ document, repositoryId, navigate }: { document: ParsedDocument; repositoryId: string; navigate: (url: string) => void }) {
   return <>

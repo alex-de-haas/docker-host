@@ -176,6 +176,85 @@ describe("authorized document reads", () => {
     expect(reader.listing).toHaveBeenCalledTimes(3);
     expect(vi.mocked(reader.content).mock.calls[0][2]).toMatchObject({ version: "worktree", workspaceId: "new", commit: null });
   });
+  it.each(["modified", "added"])("keeps an authorized %s workspace detail when the target provider is unavailable", async kind => {
+    const { reader, listing } = fixture();
+    const current = text.replace("- [ ] D1", "- [x] D1");
+    let offline = false;
+    reader.workspaces = vi.fn(async () => [workspace("private", kind)]);
+    reader.listing = vi.fn(async (_id, version = "target", workspaceId) => {
+      if (version === "target" && offline) throw new PlansError("The source provider is unavailable.", 503, "source_document_unavailable");
+      return { ...listing, version, workspaceId: workspaceId ?? null, commit: version === "base" ? "base-private" : version === "worktree" ? null : "commit", documents: version === "target" ? kind === "added" ? [] : listing.documents : version === "base" ? kind === "added" ? [] : listing.documents : [entry(current)] };
+    });
+    reader.content = vi.fn(async (_id, path, currentListing, sha) => ({ path, sha, content: currentListing.version === "worktree" ? current : text, commit: currentListing.commit, version: currentListing.version, workspaceId: currentListing.workspaceId, referencePaths }));
+    const service = new PlansService(reader, await cache());
+    await service.detail("repo", documentPath);
+    offline = true;
+    vi.mocked(reader.listing).mockClear();
+    vi.mocked(reader.content).mockClear();
+    const detail = await service.detail("repo", documentPath);
+    expect(detail).toMatchObject({ document: null, error: "The source provider is unavailable." });
+    expect(detail.workspaces[0].document?.progress).toEqual({ done: 1, total: 1 });
+    expect(detail.workspaces[0].base?.content ?? null).toBe(kind === "added" ? null : text);
+    expect(detail.workspaces[0].label).toBe(kind === "added" ? "new" : "changed");
+    expect(reader.listing).toHaveBeenCalledWith("repo", "worktree", "private", false, documentPath);
+    expect(reader.listing).toHaveBeenCalledWith("repo", "base", "private", false, documentPath);
+    expect(reader.content).not.toHaveBeenCalled();
+    offline = false;
+    const recovered = await service.detail("repo", documentPath);
+    expect(recovered.error).toBeNull();
+    expect(recovered.document?.content ?? null).toBe(kind === "added" ? null : text);
+  });
+  it("never serves cached workspace bytes when their current listing is denied during a target outage", async () => {
+    const { reader, listing } = fixture();
+    let denied = false;
+    reader.workspaces = vi.fn(async () => [workspace("private")]);
+    reader.listing = vi.fn(async (_id, version = "target", workspaceId) => {
+      if (denied) throw new PlansError(version === "target" ? "The source provider is unavailable." : "The workspace grant was revoked.", version === "target" ? 503 : 403, version === "target" ? "source_document_unavailable" : "source_document_forbidden");
+      return { ...listing, version, workspaceId: workspaceId ?? null };
+    });
+    const shared = await cache();
+    const service = new PlansService(reader, shared);
+    await service.detail("repo", documentPath);
+    denied = true;
+    const cachedRead = vi.spyOn(shared, "readValidated");
+    const detail = await service.detail("repo", documentPath);
+    expect(detail.document).toBeNull();
+    expect(detail.workspaces[0]).toMatchObject({ document: null, base: null, error: "The workspace grant was revoked." });
+    expect(cachedRead).not.toHaveBeenCalled();
+  });
+  it("retains the target failure when no changing workspace can supply the detail", async () => {
+    const { reader } = fixture();
+    reader.listing = vi.fn(async () => { throw new PlansError("The source provider is unavailable.", 503); });
+    await expect(new PlansService(reader, await cache()).detail("repo", documentPath)).rejects.toMatchObject({ status: 503, message: "The source provider is unavailable." });
+  });
+  it.each([{ status: 401, code: "token_invalid" }, { status: 403, code: "admin_required" }, { status: 403, code: "app_permission_required" }])("refuses $code instead of entering workspace fallback", async ({ status, code }) => {
+    const { reader } = fixture();
+    reader.workspaces = vi.fn(async () => [workspace("private")]);
+    const shared = await cache();
+    const service = new PlansService(reader, shared);
+    await service.detail("repo", documentPath);
+    reader.listing = vi.fn(async () => { throw new PlansError("Current source authority is required.", status, code); });
+    vi.mocked(reader.workspaces).mockClear();
+    const cachedRead = vi.spyOn(shared, "readValidated");
+    await expect(service.detail("repo", documentPath)).rejects.toMatchObject({ status, code });
+    expect(reader.workspaces).not.toHaveBeenCalled();
+    expect(cachedRead).not.toHaveBeenCalled();
+  });
+  it.each([{ status: 401, code: "token_invalid" }, { status: 403, code: "admin_required" }, { status: 403, code: "app_permission_required" }])("retains a global $code refusal from the workspace listing during an outage", async ({ status, code }) => {
+    const { reader, listing } = fixture();
+    reader.workspaces = vi.fn(async () => [workspace("private")]);
+    const shared = await cache();
+    const service = new PlansService(reader, shared);
+    await service.detail("repo", documentPath);
+    reader.listing = vi.fn(async (_id, version = "target", workspaceId) => {
+      if (version === "target") throw new PlansError("The source provider is unavailable.", 503);
+      if (version === "worktree") throw new PlansError("Current source authority is required.", status, code);
+      return { ...listing, version, workspaceId: workspaceId ?? null };
+    });
+    const cachedRead = vi.spyOn(shared, "readValidated");
+    await expect(service.detail("repo", documentPath)).rejects.toMatchObject({ status, code });
+    expect(cachedRead).not.toHaveBeenCalled();
+  });
   it("leaves invalid documents visible with unknown progress", async () => {
     const { reader, listing } = fixture();
     const bad = text.replace("In Progress", "Unknown");

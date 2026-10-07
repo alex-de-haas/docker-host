@@ -6,7 +6,7 @@ import { appFetch } from "@hosty-sdk/app/browser-auth";
 import { deliverableChanges, filterPlans, lineDiff, mapBounded, planLink, readFilters, statusCounts, writeFilters, type PlanFilters } from "@/lib/model";
 import { type PlanDetail, type RepositoryPlans, type SourceRepository, type WorkspacePlan } from "@/lib/types";
 import { Progress, VersionBrief, formatTime } from "./plan-metadata";
-import { SourceDocument } from "./document";
+import { SourceDocument, TrackedDocument } from "./document";
 import { LoadingIndicator } from "./loading-indicator";
 import { PlanToolbar } from "./plan-toolbar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -146,7 +146,7 @@ function Detail({ repositoryId, path, workspaceId, epoch, navigate }: { reposito
     {current && <>
       <div className="flex flex-col gap-2"><h1 className="text-2xl font-semibold tracking-tight">{current.document?.title ?? selected?.document?.title ?? path}</h1><p className="break-all text-xs text-muted-foreground">{repoName(current.repository)} / {current.repository.branch} / {path}</p></div>
       <div className="grid min-w-0 items-start gap-6 lg:grid-cols-2"><section className="min-w-0"><Frame><FrameHeader className="gap-2"><FrameTitle><h2>Tracked branch</h2></FrameTitle><div className="flex flex-wrap items-center gap-3"><Badge variant="outline"><GitBranchIcon />{current.repository.branch}</Badge>{current.document && <><Badge variant="secondary">{current.document.status ?? "Document"}</Badge><Progress document={current.document} /></>}</div></FrameHeader><FramePanel>
-        {current.document ? <SourceDocument document={current.document} repositoryId={repositoryId} navigate={navigate} /> : <Empty><EmptyHeader><EmptyTitle>Workspace only</EmptyTitle><EmptyDescription>This plan exists only in a workspace.</EmptyDescription></EmptyHeader></Empty>}
+        <TrackedDocument document={current.document} error={current.error} repositoryId={repositoryId} navigate={navigate} />
       </FramePanel></Frame></section><section className="min-w-0"><Frame><FrameHeader><FrameTitle><h2 className="flex items-center gap-2">Workspace versions<Badge variant="secondary">{current.workspaces.length}</Badge></h2></FrameTitle><FrameDescription>Changes against each workspace’s own base.</FrameDescription></FrameHeader><FramePanel className="flex flex-col gap-4">
         {current.workspaces.length === 0 && <Empty><EmptyHeader><EmptyTitle>No workspace changes</EmptyTitle><EmptyDescription>No workspace changes this document.</EmptyDescription></EmptyHeader></Empty>}
         {current.workspaces.length > 0 && <ToggleGroup type="single" variant="outline" orientation="vertical" spacing={2} value={selected?.workspace.id ?? ""} onValueChange={value => { if (value) navigate(planLink(repositoryId, path, value)); }} aria-label="Workspace version" className="w-full flex-col items-stretch">
