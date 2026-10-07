@@ -21,20 +21,20 @@ public sealed class InstallationApprovalHttpTests
         var path = Path.Combine(harness.Services.GetRequiredService<CoreDataPaths>().DataRoot, "optional-fixture.json");
         await File.WriteAllTextAsync(path, """
             {"schemaVersion":"app.0.1","id":"example.consumer","name":"Consumer","version":"1.0.0",
-             "optionalCorePermissions":["apps.sources"],
+             "optionalCorePermissions":["apps.sources.full"],
              "runtimeProfiles":[{"key":"dev","type":"localCommand","default":true}],"defaultRuntime":"dev",
              "services":[{"key":"app","runtimes":{"dev":{"type":"localCommand","command":"echo unused","workingDirectory":"."}}}]}
             """);
-        using var prepared = await app.PostAsJsonAsync(route, new { manifestPath = path, optionalPermissions = new[] { "apps.sources" } });
+        using var prepared = await app.PostAsJsonAsync(route, new { manifestPath = path, optionalPermissions = new[] { "apps.sources.full" } });
         prepared.EnsureSuccessStatusCode();
         var id = (await prepared.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
         (await app.PostAsJsonAsync($"{route}/{id}/submit", new {
-            optionalPermissions = new[] { "apps.sources" }, selectedOptionalPermissions = new[] { "apps.sources" },
+            optionalPermissions = new[] { "apps.sources.full" }, selectedOptionalPermissions = new[] { "apps.sources.full" },
         })).EnsureSuccessStatusCode();
         using var browser = harness.CreateClient();
         browser.DefaultRequestHeaders.Add("Cookie", "hosty_session=operator");
         var html = await browser.GetStringAsync($"/install/confirm/{id}");
-        Assert.Contains("value=\"apps.sources\"", html);
+        Assert.Contains("value=\"apps.sources.full\"", html);
         Assert.DoesNotContain(" checked", html);
         Assert.Null(harness.Services.GetRequiredService<InstallationApprovalStore>().Get(id).SelectedOptionalPermissions);
         Assert.Null(await harness.Services.GetRequiredService<AppRegistryStore>().GetAppAsync("example.consumer"));

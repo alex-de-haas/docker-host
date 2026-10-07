@@ -1,6 +1,6 @@
 ---
 created: 2026-08-09
-updated: 2026-10-05
+updated: 2026-10-07
 summary: Hosty Harness, the optional administrator assistant app hosting operator chat sessions on a host-resident agent harness.
 components: [apps/harness, apps/shell]
 ---
@@ -60,7 +60,7 @@ procedure are in [Hosty Harness integration](../hosty-harness-rename/feature.md)
 Harness uses the common Core app-code flow and its own app grant, with a current administrator
 check. Core owns login; Shell supplies neither the primary session nor a delegated-token responder.
 Core's Agents settings explicitly grant this assistant access to individual MCP targets. Ordinary
-chat requires no such target grant. Source operations use `apps.sources` with the app's own identity.
+chat requires no such target grant. Source operations use `apps.sources.full` with the app's own identity.
 
 For MCP, Harness presents its app grant and separate service credential to Core's dedicated token
 endpoint. Core checks the assistant-target relationship and user before issuing an MCP-only token.
@@ -157,7 +157,7 @@ See [assistant MCP delegation](../delegated-token-exchange/feature.md).
   receives or forwards Core's primary cookie or the app's grant. Both standalone and embedded
   settings use this transport.
 - **Source providers** manages GitHub/Azure DevOps connections and Git attribution through a narrow
-  Harness server proxy. Core retains saved secrets and enforces `apps.sources`, current administrator
+  Harness server proxy. Core retains saved secrets and enforces `apps.sources.full`, current administrator
   and owner checks. Saved tokens are not returned to the page. See
   [User source connections](../user-profile-connections/feature.md).
 - **System prompt.** Operator text appended to the harness's own instruction sources, capped at 8000

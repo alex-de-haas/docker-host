@@ -1,0 +1,150 @@
+name: Plans Image
+
+on:
+  # Manual trigger: GitHub occasionally fails to deliver push events (observed
+  # 2026-07-19, #245 merge produced zero runs); this keeps image publishing unblockable.
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/plans/**"
+      - "packages/app-sdk/**"
+      # The Dockerfile's deps stage copies both of these and runs `npm ci` against them, so a root
+      # lockfile bump changes what ships in the image even when nothing under apps/plans does.
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/plans-image.yml"
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # Gate publication on behavior tests as well as the Docker compilation check.
+  test:
+    name: Gate on tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Check artifact versions
+        run: node scripts/check-versions.mjs
+
+      - name: Lint Plans
+        run: npm run plans:lint
+
+      - name: Test Plans
+        run: npm run plans:test
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    # Serialize publishes and never cancel: two runs racing to move the `:latest` and version tags can
+    # leave them pointing at the older image, and a half-finished registry push is worse than a queued
+    # one. Only this job is grouped, so the gate tests of a later commit still run in parallel.
+    concurrency:
+      group: ${{ github.workflow }}-publish
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+      # Signed build-provenance attestation for the pushed image.
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Compute image name
+        id: image
+        shell: bash
+        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/hosty-plans" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve app version
+        id: version
+        shell: bash
+        # Tag the image with the plans app's manifest version so the manifest can pin a real
+        # release tag instead of :latest (which the docker adapter freezes at install time).
+        # Bump apps/plans/manifest.json version + the manifest
+        # tag together on release.
+        run: |
+          version=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]+"' apps/plans/manifest.json | head -n1 | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+          if [[ -z "$version" ]]; then
+            echo "Could not resolve version from apps/plans/manifest.json" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Runs inside the concurrency group above, so its answer holds until this job releases the
+      # slot, which also makes the version-tag probe unraceable by a sibling run.
+      - name: Guard mutable tags
+        id: guard
+        uses: ./.github/actions/publish-guard
+        with:
+          image: ${{ steps.image.outputs.name }}
+          version: ${{ steps.version.outputs.version }}
+          registry_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        with:
+          images: ${{ steps.image.outputs.name }}
+          # The version tag is created once and never moved (see the guard). A rebuild that does not
+          # change the manifest version - a Dependabot lockfile bump - still ships through `latest`
+          # and `sha-`. `latest` is gated on the guard rather than {{is_default_branch}}: a stricter
+          # test, since the commit must still *be* main's tip, not merely have been on main when the
+          # run started.
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=${{ steps.version.outputs.version }},enable=${{ steps.guard.outputs.push_version }}
+            type=raw,value=latest,enable=${{ steps.guard.outputs.fresh }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish Plans image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: ./apps/plans/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=plans-image
+          # mode=max caches the dependency and build stages too, not just the thin final layer, so
+          # QEMU arm64 builds don't rebuild from scratch each run.
+          cache-to: type=gha,scope=plans-image,mode=max
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

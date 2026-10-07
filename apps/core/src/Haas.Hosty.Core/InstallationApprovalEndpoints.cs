@@ -41,7 +41,7 @@ internal sealed class InstallationApprovalService(
         var app = await apps.GetAppAsync(caller.AppId, ct);
         if (app is null || (!AppManagementAuthorization.HasPermission(app, CoreAppPermissions.Sources) &&
             !AppManagementAuthorization.HasPermission(app, CoreAppPermissions.SourceConnections)))
-            throw new AppIdentityException("app_permission_required", "Private source selection requires apps.sources or sources.connections.");
+            throw new AppIdentityException("app_permission_required", "Private source selection requires apps.sources.full or sources.connections.");
     }
 
     public async Task<InstallationApproval> PrepareAsync(InstallationCaller caller, InstallationPrepare input, CancellationToken ct)

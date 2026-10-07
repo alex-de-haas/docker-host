@@ -1,6 +1,6 @@
 ---
 created: 2026-09-22
-updated: 2026-10-01
+updated: 2026-10-07
 summary: The development-mode Core row shows branch and changed-file statistics through a read-only Core API.
 components: [apps/core, apps/shell]
 ---
@@ -10,7 +10,7 @@ components: [apps/core, apps/shell]
 ## Dashboard
 
 The development-mode Hosty Core row shows branch and aggregate changed-file statistics.
-Shell does not request source files or diffs: source inspection requires `apps.sources`,
+Shell does not request source files or diffs: source inspection requires `apps.sources.full`,
 which Shell does not declare. The Core inspection API remains read-only and has no discard controls. The Core branch label uses the same monospace size, line height and
 dotted underline as app source labels. Release-mode version presentation is unchanged.
 The Dashboard polls Core development state every 15 seconds while idle and every
@@ -20,7 +20,7 @@ wakes reconciliation without waiting for the idle interval.
 
 ## Scope and API
 
-`GET /api/core/source/status` and `POST /api/core/source/diff` require an administrator; app callers also need `apps.sources` and return `Cache-Control: no-store`. Diff requests use the
+`GET /api/core/source/status` and `POST /api/core/source/diff` require an administrator; app callers also need `apps.sources.full` and return `Cache-Control: no-store`. Diff requests use the
 existing `{ path }` body and require browser CSRF validation. These routes reuse
 the app source status and diff contracts and bounded Git implementation; Core does
 not need an installed runtime app record. Core status marks every file as unavailable

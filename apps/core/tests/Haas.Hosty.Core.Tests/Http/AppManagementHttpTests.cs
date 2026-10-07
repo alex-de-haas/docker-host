@@ -90,6 +90,18 @@ public sealed class AppManagementHttpTests
     }
 
     [Theory]
+    [InlineData("/api/apps/missing/source/status")]
+    [InlineData("/api/apps/missing/source-access")]
+    [InlineData("/api/source-connections")]
+    [InlineData("/api/core/source/status")]
+    public async Task DocumentationReadGrant_DoesNotPermitFullSourceOperations(string route)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        using var client = await CreateAppClient(host, "hosty.plans", [CoreAppPermissions.SourcesRead]);
+        await AssertError(await client.GetAsync(route), HttpStatusCode.Forbidden, "app_permission_required");
+    }
+
+    [Theory]
     [InlineData("POST", "/api/apps/missing/start", "apps.lifecycle")]
     [InlineData("POST", "/api/apps/missing/stop", "apps.lifecycle")]
     [InlineData("POST", "/api/apps/missing/restart", "apps.lifecycle")]
@@ -104,8 +116,8 @@ public sealed class AppManagementHttpTests
     [InlineData("GET", "/api/apps/missing/logs", "apps.logs")]
     [InlineData("GET", "/api/apps/missing/permissions", "apps.read")]
     [InlineData("GET", "/api/apps/missing/source", "apps.lifecycle")]
-    [InlineData("GET", "/api/apps/missing/source/status", "apps.sources")]
-    [InlineData("GET", "/api/apps/missing/source-access", "apps.sources")]
+    [InlineData("GET", "/api/apps/missing/source/status", "apps.sources.full")]
+    [InlineData("GET", "/api/apps/missing/source-access", "apps.sources.full")]
     [InlineData("GET", "/api/core/agents", "core.configure")]
     [InlineData("GET", "/api/core/public-origin", "core.configure")]
     [InlineData("GET", "/api/core/development", "core.read")]

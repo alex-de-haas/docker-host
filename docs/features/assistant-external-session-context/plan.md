@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-09-26
+updated: 2026-10-07
 summary: Let an authenticated local external agent read a Hosty session, work in its registered folders and save a report back.
 components: [apps/harness]
 ---
@@ -16,8 +16,10 @@ The umbrella's common invariants apply; this feature has independent scope and r
 This is lower priority than internal switching and remote clients. Support an authenticated local
 external agent receiving environment + session id (or selecting it), reading shared history and
 registered paths, performing requested work, and explicitly saving an attributed report/summary.
-New external work can create a visible Hosty session and request worktrees through the same registry.
-No server-hosted model needs to be started merely to register that external work.
+Local external worktree registration is owned by
+[external development workspaces](../external-development-workspaces/plan.md). This context-exchange
+feature uses that registry when source is needed; it does not duplicate workspace preparation.
+No server-hosted model needs to be started merely to register external development work.
 
 Hosty independently observes diffs and Git/PR facts. Saving external context must not implicitly
 start an internal turn. Prefer available transcript fragments with source ids when explicitly
@@ -48,7 +50,7 @@ do not turn that observation into a promise about every future version.
 
 ## Deliverables
 
-- [ ] D1. Implement authorized explicit session reads/workspace preparation and attributed report import with
+- [ ] D1. Implement authorized explicit assistant-session reads and attributed report import with
   deduplication.
 - [ ] D2. Package local external-agent instructions and optional CLI/plugin configuration against verified
   capabilities.

@@ -1,0 +1,17 @@
+export const STATUSES = ["In Progress", "Ready", "Blocked", "Draft", "On Hold"] as const;
+export type PlanStatus = typeof STATUSES[number];
+export type SourceApp = { appId: string; name: string; manifestSubpath: string | null; paths: string[] };
+export type SourceRepository = { id: string; repository: string; branch: string; workspaceDerived: boolean; apps: SourceApp[]; state: string; error: string | null; commit: string | null; fetchedAt: string | null };
+export type ReferencePath = { path: string; exists: boolean; isDirectory: boolean };
+export type DocumentEntry = { path: string; sha: string; size: number; modifiedAt?: string | null; referencePaths: ReferencePath[] | null };
+export type DocumentListing = { repositoryId: string; version: DocumentVersion; workspaceId: string | null; commit: string | null; documents: DocumentEntry[]; state: string; error: string | null };
+export type DocumentVersion = "target" | "base" | "worktree";
+export type DocumentContent = { path: string; sha: string; content: string; commit: string | null; version: DocumentVersion; workspaceId: string | null; referencePaths: ReferencePath[] | null };
+export type DocumentChange = { path: string; kind: string; modifiedAt: string | null; targetChanged: boolean; baseSha: string | null; worktreeSha: string | null; targetSha: string | null };
+export type Workspace = { id: string; repositoryId: string; repository: string; targetBranch: string; branch: string; state: string; administratorId: string; assistantAppId: string; sessionId: string; sessionUrl: string | null; sessionUrlError: string | null; observationAt: string | null; observationState: string | null; pullRequests: string[]; baseCommit: string | null; targetCommit: string | null; changes: DocumentChange[] | null; error: string | null };
+export type Deliverable = { id: string; text: string; done: boolean };
+export type ParsedDocument = { path: string; title: string; content: string; body: string; summary: string; status: PlanStatus | null; created: string | null; updated: string | null; components: string[]; deliverables: Deliverable[]; progress: { done: number; total: number } | null; errors: string[] };
+export type WorkspacePlan = { workspace: Workspace; change: DocumentChange; label: "changed" | "new" | "completing" | "removed"; document: ParsedDocument | null; base: ParsedDocument | null; error: string | null };
+export type PlanCard = { repository: SourceRepository; path: string; document: ParsedDocument | null; apps: SourceApp[]; workspaces: WorkspacePlan[] };
+export type RepositoryPlans = { repository: SourceRepository; plans: PlanCard[]; workspaces: Workspace[]; state: string; error: string | null };
+export type PlanDetail = { repository: SourceRepository; path: string; document: ParsedDocument | null; workspaces: WorkspacePlan[]; error: string | null };

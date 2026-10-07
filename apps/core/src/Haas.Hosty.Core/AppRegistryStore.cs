@@ -154,7 +154,7 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
 
     private async Task<AppStateDocument> UpsertAppCoreAsync(AppRecord app, CancellationToken cancellationToken)
     {
-        app = RemoveUnsupportedGrants(app);
+        app = RemoveUnsupportedGrants(NormalizeSourcePermissions(app));
         var now = DateTimeOffset.UtcNow;
         var normalized = app with
         {
@@ -208,6 +208,39 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
         };
     }
 
+    private static AppRecord NormalizeSourcePermissions(AppRecord app)
+    {
+        if (!(app.GrantedCorePermissions ?? []).Concat(app.RequiredCorePermissions ?? [])
+            .Concat(app.OptionalCorePermissions ?? []).Contains(CoreAppPermissions.LegacySources, StringComparer.Ordinal))
+            return app;
+        return app with
+        {
+            GrantedCorePermissions = app.GrantedCorePermissions is null ? null : CoreAppPermissions.Normalize(app.GrantedCorePermissions),
+            RequiredCorePermissions = app.RequiredCorePermissions is null ? null : CoreAppPermissions.Normalize(app.RequiredCorePermissions),
+            OptionalCorePermissions = app.OptionalCorePermissions is null ? null : CoreAppPermissions.Normalize(app.OptionalCorePermissions),
+        };
+    }
+
+    // Persist the equal-authority alias before unknown grants are removed. Read-side normalization
+    // also makes registry summaries safe during startup; inspect the raw document to persist it once.
+    internal async Task MigrateSourcePermissionsAsync(CancellationToken cancellationToken)
+    {
+        foreach (var app in await ListAppRecordsAsync(cancellationToken))
+        {
+            var mutex = GetAppLock(app.Id);
+            await mutex.WaitAsync(cancellationToken);
+            try
+            {
+                var document = await JsonStorage.ReadAsync<AppStateDocument>(GetAppStatePath(app.Id), cancellationToken);
+                if (document?.App is not { } current) continue;
+                var normalized = NormalizeSourcePermissions(current);
+                if (!ReferenceEquals(normalized, current))
+                    await UpsertAppCoreAsync(Migrate(document), cancellationToken);
+            }
+            finally { mutex.Release(); }
+        }
+    }
+
     internal async Task RemoveUnsupportedGrantsAsync(CancellationToken cancellationToken)
     {
         foreach (var app in await ListAppRecordsAsync(cancellationToken))
@@ -251,7 +284,7 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
             app = app with { SourceState = source with { Commit = null, OverrideCommit = source.Commit } };
         }
 
-        return app;
+        return NormalizeSourcePermissions(app);
     }
 
     private static async Task<AppRecord> HydrateAppUiAsync(AppRecord app, string appRoot, CancellationToken cancellationToken)

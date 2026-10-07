@@ -1,6 +1,6 @@
 ---
 created: 2026-09-27
-updated: 2026-10-02
+updated: 2026-10-07
 summary: Core-owned Git worktrees per assistant session, with managed Git operations, observation and cleanup.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -35,12 +35,15 @@ Private source can be supplied through an operator-maintained local repository.
 
 ## Authorization And APIs
 
-Core/CLI 0.117.0 uses the reviewed `apps.sources` permission for workspace and publication operations.
-Harness 0.40.0 requests it; Shell presents the host-wide overview. Update Core before confirming the Harness update.
-An older Core rejects the unknown permission. SDK and manifest schema versions are unchanged.
+Core uses the reviewed `apps.sources.full` permission for workspace and publication operations.
+Harness requests it; Shell discovers apps with this full-source grant and opens their own source UI.
+Core accepts the old `apps.sources` manifest alias and migrates persisted grants without another
+review. Install Core before updating Harness to the canonical name. `apps.sources.read` does not
+authorize workspace operations. The manifest schema version is unchanged.
 
 Assistant requests use `/api/internal/apps/{assistant}/sessions/{session}/workspaces` with the app
-service bearer and `X-Hosty-User-Token`: an app-audience delegated token or app identity credential.
+service bearer and `X-Hosty-User-Token`: a browser app identity bound to a Core-approved assistant
+session. Delegated and read-only MCP credentials do not authorize preparation.
 Core checks the persisted permission and the user's current administrator/access state on every
 request. The interface or assistant role alone grants nothing. Bindings enforce installation, user
 and session ownership. Existing read-only Core MCP credentials confer no workspace mutation rights.
@@ -59,7 +62,7 @@ CSRF. Responses use `Cache-Control: no-store`. Managed requests produce Core aud
 external Git activity does not acquire a fabricated managed-operation audit entry.
 
 Shell's development-workspaces section links to source-capable tools. Shell does not declare
-`apps.sources`, so it no longer reads workspace files or performs workspace Git operations.
+`apps.sources.full`, so it no longer reads workspace files or performs workspace Git operations.
 
 ## Git Operations And Recovery
 
@@ -102,7 +105,7 @@ recreated as an untracked file, without staging the user's files.
 Harness offers `hosty-workspaces` through a loopback, session-key-authenticated MCP endpoint. Core
 credentials stay inside Harness. Its own app grant is held only in memory, separately from any
 cross-app MCP delegation seed, and supplies source operations and activity leases. Core checks the
-current app grant, `apps.sources` and administrator on each operation. The grant is not exchanged
+current app grant, `apps.sources.full` and administrator on each operation. The grant is not exchanged
 for other applications' tokens or persisted with the session. Tools bind to the session and its user; workspace preparation requires
 an attached app. The normal provider approval policy remains in effect. Every initial/resumed message
 instructs the agent to prepare before editing, work only in registered worktrees, avoid original source
@@ -145,7 +148,7 @@ merge verification, CI and PR history belong to [PR lifecycle](../assistant-pr-l
 Selecting a worktree as a runtime app's source requires Core confirmation when requested by an app,
 including Shell. Registered worktrees have no exception to this rule. Direct CLI/Core operators can
 still select them subject to the common source-path restrictions. Harness's workspace API and source
-editing keep their existing `apps.sources` authorization; Shell does not acquire that permission.
+editing keep their existing `apps.sources.full` authorization; Shell does not acquire that permission.
 
 ## Testing Expectations
 
@@ -153,6 +156,8 @@ editing keep their existing `apps.sources` authorization; Shell does not acquire
   latest target versus existing base, fetch failure and registry restart without baseline mutation.
 - Verify service permission, app audience, current administrator role, browser session/CSRF and
   rejection of invalid service bearers across the real HTTP pipeline.
+- Preserve an upgraded Harness full-source grant and its discovery in Shell; documentation-reader
+  apps are not source tools and cannot invoke workspace operations.
 - Test commit attribution/replay, stale HEAD, direct Git observation, full/local diffs, untracked
   recreation, conflict/abort and recovery without repeating unknown mutations.
 - Refuse dirty, unmerged, leased, missing and consumed workspaces; exercise partial cleanup recovery.

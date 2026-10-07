@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-09-30
-updated: 2026-10-05
+updated: 2026-10-07
 summary: Every local browser workflow works without a domain, DNS or configured public origin.
 components: [apps/core, apps/shell, packages/app-sdk, apps/harness]
 ---
@@ -55,16 +55,16 @@ The owner rejected a general Core settings UI. Core retains login, credential is
 consent. Shell edits the current user's ordinary profile through an identity-only API, without
 `users.read/manage`. Those permissions remain administrative user management.
 
-The owner placed GitHub/Azure DevOps connections under `apps.sources` and selected Harness as their
+The owner placed GitHub/Azure DevOps connections under `apps.sources.full` and selected Harness as their
 settings UI, alongside agent providers. Source providers remain built into the current implementation;
 separate provider apps are a direction, not part of this implementation. Core retains credential
-storage and source operations. Shell declares no `apps.sources` and does not list or configure
+storage and source operations. Shell declares no `apps.sources.full` and does not list or configure
 source connections. Source connection access still requires the current owner and administrator role.
 
 Completed:
 
 - Separate basic profile data from source connection summaries, provider availability and Git
-  attribution; gate source connection APIs with `apps.sources`, live app identity and owner checks.
+  attribution; gate source connection APIs with `apps.sources.full`, live app identity and owner checks.
 - Add Harness Source providers settings for GitHub/DevOps, including Git attribution, PAT/device
   authorization, connection checks/rename/disconnect and the app-local server transport.
 - Remove connection forms from Shell; retain self-profile and link to authorized source tools.
@@ -214,7 +214,7 @@ permissions have been implemented or granted to installed applications.
 | `core.logs` | Read Core logs. |
 | `users.read` | Read user-management information within actor policy. |
 | `users.manage` | Manage users and their access within actor policy; includes the reads needed for that management. |
-| `apps.sources` | Access and work with other applications' source code. This broad source-development capability belongs to Harness; Shell must not require or optionally request it. |
+| `apps.sources.full` | Access and work with other applications' source code. This broad source-development capability belongs to Harness; Shell must not require or optionally request it. |
 | `apps.install` | Unified application installation, update and uninstallation capability. Preserve Core-owned confirmation for installation/update and independent actor checks; the permission does not authorize an app to approve its own request. |
 
 This is 13 new capability names plus the broadened `apps.install` capability. The owner chose to
@@ -321,25 +321,32 @@ The unchecked C3 deliverable above owns that remaining work.
 
 Current source work uses `apps.workspaces.manage`; Git publication uses `apps.publications.manage`
 and also checks the workspace grant. Harness declares both today. The selected destination is the
-broader `apps.sources` capability, not a cosmetic rename that preserves exactly the old authority.
+broader `apps.sources.full` capability, not a cosmetic rename that preserves exactly the old authority.
 Inventory and map local source inspection/editing, session workspaces, Git and PR operations into
 this capability. Keep remote account ownership and resource checks: source access does not reveal
 Git-provider credentials or authorize arbitrary operations on unrelated repositories.
 
 Remove retired workspace/publication names through the same catalogue cleanup. Do not maintain
-legacy aliases or infer `apps.sources` from a removed name: Harness declares the new capability
+aliases for `apps.workspaces.manage` or `apps.publications.manage`, or infer `apps.sources.full`
+from those removed names: Harness declares the new capability
 and uses the ordinary declaration-review workflow. Update manifests, SDK/agent contracts and
 revocation checks together. Expansion of an unchanged permission name does not require a separate
 review in this transition, as explicitly accepted by the owner.
 
-Shell must not declare `apps.sources`, even optionally. Harness performs source inspection/editing
+The separate equal-authority rename in [plan tracking](../plan-tracking/feature.md) changes
+`apps.sources` to `apps.sources.full`; its legacy manifest alias and startup migration preserve
+existing reviewed declarations and grants. `apps.sources.read` reads only repository documentation
+and workspace document changes as an administrator and confers none of this mutation authority.
+
+Shell must not declare `apps.sources.full`, even optionally. Harness performs source inspection/editing
 and publication. Runtime selection, including selecting development mode without editing source
 files, belongs to `apps.lifecycle`; do not require a source grant just to use that selection UI.
 
-Private-source app requests require both `apps.install` and `apps.sources`, including updates
-that retain existing private bindings. Core checks the acting connection owner, and rechecks both
+Private-source app requests require `apps.install` plus either `apps.sources.full` or
+`sources.connections`, including updates that retain existing private bindings. Core checks the
+acting connection owner, and rechecks the effective grants
 permissions before submission and execution. Clearing a binding also requires source authority.
-Harness owns the selection/rebinding UI; Shell links to it without gaining `apps.sources`.
+Shell owns installation and selection/rebinding UI without gaining `apps.sources.full`.
 The host-wide telemetry scrape requires `apps.read` plus `core.read`, like the resource snapshot.
 
 ### Sandbox is deferred
@@ -360,7 +367,7 @@ unresolved dependency/runtime design, not this authentication change.
 
 The management matrix below covers removal and data-removal options, mount metadata, notifications,
 runtime/source/feed operations and mixed requests. Resource snapshots and the internal telemetry
-scrape require both `apps.read` and `core.read`. Private-source requests also require `apps.sources`
+scrape require both `apps.read` and `core.read`. Private-source requests also require `apps.sources.full`
 and the connection owner, including cached plans and bindings that the request retains or clears.
 Shell's declarations exclude source authority; Harness requests `apps.install` optionally.
 Completing the mapping does not establish the remaining browser/provider acceptance.
@@ -389,13 +396,13 @@ on every request. Existing user-role/assignment checks still apply. Unmapped rou
 app credentials cannot fall back to a simultaneously supplied full Core cookie.
 
 - `apps.read`: app inventory/state, health, update status and declared display assets. Settings and
-  mount bindings are omitted without `apps.configure`; app source files require `apps.sources`.
+  mount bindings are omitted without `apps.configure`; app source files require `apps.sources.full`.
 - `apps.logs`: application logs. `apps.notifications`: the acting user's app and host notifications
   and read acknowledgements. The combined event stream requires the permissions for every included
   class of events and revalidates while connected.
 - `apps.lifecycle`: start/stop/restart, autostart, reviewed runtime selection, clearing a source
   override and worktree summary metadata. Selecting any source folder through an app, including
-  a registered worktree, requires Core confirmation. Source file diffs/discards require `apps.sources`.
+  a registered worktree, requires Core confirmation. Source file diffs/discards require `apps.sources.full`.
 - `apps.configure`: settings (including sensitive values), port reassignment, app mount bindings and
   backups/restores/deletion. A mixed configure request that also changes autostart requires lifecycle.
 - `apps.install`: reviewed installation/update/removal requests, feed selection and update checks.
@@ -408,7 +415,7 @@ app credentials cannot fall back to a simultaneously supplied full Core cookie.
   registry and ingress. `core.logs`: logs. Mount metadata does not grant filesystem read access.
 - `users.read`: user/assignment/invitation metadata. `users.manage`: invitations, user changes and
   assignment changes, retaining user-role restrictions. Neither grants primary session credentials.
-- `apps.sources`: source status/diffs/discards and existing workspace/publication APIs, preserving
+- `apps.sources.full`: source status/diffs/discards and existing workspace/publication APIs, preserving
   repository/account ownership checks; current-user source-provider connections and installed
   private-source bindings. Private-source installation/update also requires `apps.install`.
   Shell declares no source permission. Ordinary self-profile reads/edits need app identity only.
@@ -450,7 +457,7 @@ Approved behavior:
    autostart, reviewed runtime selection and clearing an override, without extra confirmation.
    Every app-requested source override requires Core confirmation, including registered worktrees.
    This supersedes the earlier workspace exception. CLI/direct Core operators retain direct source
-   selection subject to the shared path restrictions. Shell does not receive `apps.sources`.
+   selection subject to the shared path restrictions. Shell does not receive `apps.sources.full`.
 2. Apply a shared real-path prohibition to every override writer, including CLI, bootstrap and
    Core approval. App storage/source trees and host directories exposed through external/global
    container mounts are not
@@ -472,7 +479,7 @@ Approved behavior:
    Preserve blocked-popup recovery and status polling, and do not claim the override changed while
    approval is pending. Do not add a Shell-specific authorization exemption.
 5. Describe `apps.lifecycle` as ordinary lifecycle/runtime control with source changes requiring Core confirmation, and
-   `apps.sources` as authority to change code Hosty can execute on the host in development mode.
+   `apps.sources.full` as authority to change code Hosty can execute on the host in development mode.
    This is an app API trust boundary, not filesystem isolation or a sandbox for native processes.
 6. Before treating registered global mounts as a confirmation-free choice, make adding/repointing
    their host paths through app credentials require Core confirmation as well. Otherwise
@@ -744,7 +751,7 @@ continues to use an app HttpOnly cookie. Session denial and unavailable Core rem
   static assets. Profile/provider credentials, personal-source choice, device/token management and
   OAuth approval no longer depend on Shell. OAuth optional scopes start unchecked. Shell links to
   these surfaces; another app's permission review goes directly to Core.
-- Shell declares no `apps.sources`; source contents and workspace mutations are no longer requested
+- Shell declares no `apps.sources.full`; source contents and workspace mutations are no longer requested
   from its dashboard. It links to authorized source tools. Its assistant handoff server uses the
   existing optional `providers.assistant` permission and never returns provider tokens to script.
 - Full Core suite after the source page and CORS tests: 2,314 passed, 4 opt-in integrations skipped,
@@ -812,7 +819,7 @@ These are working-tree changes, not a released or accepted feature.
 ### Source-provider settings migration (2026-10-01)
 
 - Basic `/api/profile` now returns ID/email/display name only and edits only display name. Source
-  metadata and Git identity use `/api/source-connections`, requiring `apps.sources`, the current
+  metadata and Git identity use `/api/source-connections`, requiring `apps.sources.full`, the current
   administrator and owner checks. Device authorization resolves the parent browser session inside
   Core; no primary credential or stored provider token is exported.
 - Harness settings has Source providers alongside Agent providers, using its restricted same-origin
@@ -911,7 +918,7 @@ regression remains: server-side transcript storage still contains no app grant o
   The internal telemetry scrape now requires both read grants; telemetry declares both.
 - Harness Source providers includes installation and installed-source rebinding. The restricted
   transport prepares, submits and polls requests; final approval stays on Core. Private-source
-  preparation checks `apps.install`, `apps.sources` and connection ownership even for unchanged
+  preparation checks `apps.install`, `apps.sources.full` and connection ownership even for unchanged
   bindings and cached plans. Submission, polling and execution recheck permissions; clearing a
   private binding does not erase the request's source-authority requirement.
 - Core build and full tests passed after the final runtime fix: 2,349 passed, four opt-in

@@ -70,7 +70,7 @@ Plans: 10 In Progress · 1 Ready · 2 Blocked · 35 Draft · 6 On Hold.
 - [Assistant Attachments](features/assistant-attachments/feature.md) — Files attached in the assistant composer land in the session's working directory and are recorded in the transcript.
 - [Shared Assistant Development Sessions](features/assistant-development-sessions/plan.md) — Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests. · Draft, 0/3, updated 2026-09-29
 - [Assistant Entry Points](features/assistant-entry-points/feature.md) — The assistant docks as a Shell panel reachable from every page, and apps can hand it context without driving it. · [plan](features/assistant-entry-points/plan.md): In Progress, 4/6, updated 2026-09-27
-- [External Agent Session Context](features/assistant-external-session-context/plan.md) — Let an authenticated local external agent read a Hosty session, work in its registered folders and save a report back. · Draft, 0/3, updated 2026-09-26
+- [External Agent Session Context](features/assistant-external-session-context/plan.md) — Let an authenticated local external agent read a Hosty session, work in its registered folders and save a report back. · Draft, 0/3, updated 2026-10-07
 - [Assistant Pull Request Lifecycle](features/assistant-pr-lifecycle/feature.md) — GitHub pull request publication, review, merge and completion for assistant session workspaces.
 - [Azure DevOps Pull Request Lifecycle](features/assistant-pr-lifecycle-azure/plan.md) — Extend the assistant pull request lifecycle to Azure DevOps Services. · Draft, 0/4, updated 2026-09-29
 - [Assistant Provider Permissions](features/assistant-provider-permissions/feature.md) — Apps request the assistant role with provides, and Core records administrator-confirmed roles.
@@ -111,6 +111,7 @@ Plans: 10 In Progress · 1 Ready · 2 Blocked · 35 Draft · 6 On Hold.
 - [Feature: Domain Model](features/domain-model/feature.md) — The shared vocabulary for Core, Shell, the CLI and runtime apps.
 - [Embedded App Chrome](features/embedded-app-chrome/feature.md) — Embedded apps drop the name and navigation their shell already renders, and keep them when opened standalone.
 - [Embedded App Sign-In](features/embedded-app-sign-in/feature.md) — Embedded apps keep their own per-tab sign-in grant and sign in silently through Core without Shell handling their codes.
+- [External Development Workspaces](features/external-development-workspaces/plan.md) — Let local external assistants prepare Core-owned worktrees through authorized MCP and expose their changes in Plans. · Ready, 0/6, updated 2026-10-07
 - [External Host-Path Mounts](features/external-mounts/feature.md) — Apps declare external mount slots and operators bind host folders to them, injected as HOSTY_MOUNT_{KEY} and never backed up or deleted.
 - [Global (Shared) Host-Path Mounts](features/global-mounts/feature.md) — A host-level library of shared host folders that apps attach by reference.
 - [Host Networking](features/host-networking/feature.md) — A docker service can run with network host to share the host network namespace, for peer-to-peer workloads the bridge NAT throttles.
@@ -120,7 +121,7 @@ Plans: 10 In Progress · 1 Ready · 2 Blocked · 35 Draft · 6 On Hold.
 - [Hosty Harness Swift Client](features/hosty-harness-swift/plan.md) — A native Swift client for Hosty Harness sessions, approvals and changes, aimed at phone use. · Draft, 0/8, updated 2026-09-29
 - [Hosty MCP Connector](features/hosty-mcp-connector/feature.md) — hosty mcp, a stdio MCP server in the CLI that presents every app on one host as a single server.
 - [Internal Endpoint Exposure — Keep Machine-Only Routes Off The Published Origin](features/internal-endpoint-exposure/plan.md) — Keep machine-only internal routes off the published ingress origin. · Draft, 0/4, updated 2026-09-06
-- [Local Browser Origins](features/local-browser-origins/feature.md) — Core derives local browser addresses under hosty.localhost without stored public origins or DNS. · [plan](features/local-browser-origins/plan.md): In Progress, 30/39, updated 2026-10-05
+- [Local Browser Origins](features/local-browser-origins/feature.md) — Core derives local browser addresses under hosty.localhost without stored public origins or DNS. · [plan](features/local-browser-origins/plan.md): In Progress, 30/39, updated 2026-10-07
 - [Local Development And Testing](features/local-development/feature.md) — The Core-managed local development and test loops for Core, Shell and runtime apps.
 - [Local Password Login](features/local-password-login/feature.md) — Core-owned email and password setup, recovery, invitations and login.
 - [Manifest-Level App Assets](features/manifest-level-app-assets/feature.md) — An app's icon, screenshots and markdown description live in its own repository and Core serves them for installed apps. · [plan](features/manifest-level-app-assets/plan.md): Draft, 0/3, updated 2026-10-05
@@ -131,7 +132,7 @@ Plans: 10 In Progress · 1 Ready · 2 Blocked · 35 Draft · 6 On Hold.
 - [Notifications](features/notifications/feature.md) — A Core-owned per-user notification inbox with app and Core producers and live delivery to any client. · [plan](features/notifications/plan.md): Draft, 0/5, updated 2026-08-31
 - [OAuth Core Control Scopes](features/oauth-core-control-scopes/feature.md) — OAuth consent can grant Core MCP lifecycle and update scopes in addition to read.
 - [Feature: Observability (telemetry collection, storage, and UI)](features/observability/feature.md) — OpenTelemetry from apps flows to a collector, an SQLite-backed telemetry backend and the telemetry UI app. · [plan](features/observability/plan.md): In Progress, 7/11, updated 2026-09-25
-- [Plan Tracking App](features/plan-tracking/plan.md) — An administrator app that shows every plan across the installed apps' source repositories, with status, progress and the development workspaces changing it. · Ready, 0/12, updated 2026-10-07
+- [Plan Tracking](features/plan-tracking/feature.md) — Administrator plan overview across installed source repositories and unreleased development workspaces, backed by bounded Core document reads.
 - [Private App Sources](features/private-app-sources/feature.md) — Core reads private repository manifests and sources through explicitly selected personal provider connections.
 - [Private Distribution Access](features/private-distribution-access/plan.md) — Authenticate private feeds, release assets and container registries independently of source access. · Draft, 0/4, updated 2026-09-28
 - [Provider Consumption And Speech Recognition](features/provider-consumption/feature.md) — Apps discover and call confirmed speech-to-text and assistant providers with short-lived Core credentials. · [plan](features/provider-consumption/plan.md): Blocked, 0/3, updated 2026-09-29

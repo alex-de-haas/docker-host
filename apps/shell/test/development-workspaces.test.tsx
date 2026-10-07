@@ -16,14 +16,15 @@ it("does not read workspaces with Shell credentials and explains the missing sou
   await act(async () => root.render(<DevelopmentWorkspaces />));
   expect(fetch).not.toHaveBeenCalled(); expect(container.textContent).toContain("No app with source access is available");
 });
-it("opens only a source-capable app through its own Core authorization navigation", async () => {
+it("discovers an upgraded Harness full-source grant without including documentation readers", async () => {
   state.apps = [
-    { id: "tool", displayName: "Source tool", grantedCorePermissions: ["apps.sources"], embeddedUrl: "https://tool.test/" },
+    { id: "hosty.harness", displayName: "Harness", grantedCorePermissions: ["apps.sources.full"], embeddedUrl: "https://tool.test/" },
+    { id: "hosty.plans", displayName: "Plans", grantedCorePermissions: ["apps.sources.read"], embeddedUrl: "https://plans.test/" },
     { id: "other", displayName: "Other", grantedCorePermissions: ["apps.read"], embeddedUrl: "https://other.test/" },
   ];
   await act(async () => root.render(<DevelopmentWorkspaces />));
   const links = container.querySelectorAll("a"); expect(links).toHaveLength(1);
   const target = new URL(links[0].href); expect(target.origin).toBe("https://core.test");
-  expect(target.pathname).toBe("/api/apps/tool/open"); expect(target.searchParams.get("redirectUri")).toBe("https://tool.test/");
+  expect(target.pathname).toBe("/api/apps/hosty.harness/open"); expect(target.searchParams.get("redirectUri")).toBe("https://tool.test/");
   expect(fetch).not.toHaveBeenCalled();
 });

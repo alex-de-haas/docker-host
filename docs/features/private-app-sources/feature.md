@@ -36,7 +36,7 @@ A request cannot both clear and select the same connection. The confirmation dis
 use no personal connection. This also permits recovery after a formerly private source becomes public,
 without requiring the old connection to remain valid. Core derives the owner from the authenticated user and validates
 each resource against the selected provider; clients cannot supply trusted owner/grant records.
-App callers need `apps.install` plus either `apps.sources` or `sources.connections`, including updates that keep existing private
+App callers need `apps.install` plus either `apps.sources.full` or `sources.connections`, including updates that keep existing private
 bindings and requests that remove them. Core derives the connection owner from the current actor,
 checks cached-plan bindings too, and rechecks the permissions on submission, status reads and execution.
 Runtime assignments confer no repository credential access. Shell's manifest-install dialog selects

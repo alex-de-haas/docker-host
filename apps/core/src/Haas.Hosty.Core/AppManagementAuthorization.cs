@@ -60,7 +60,7 @@ internal static class AppManagementAuthorization
             var missing = permissions.Where(p => !HasPermission(app, p) &&
                 !(p == CoreAppPermissions.Sources && connectionSelection && HasPermission(app, CoreAppPermissions.SourceConnections))).ToArray();
             if (missing.Length > 0)
-                return Denied("app_permission_required", $"The calling app requires: {string.Join(", ", missing.Select(p => p == CoreAppPermissions.Sources && connectionSelection ? "sources.connections or apps.sources" : p))}.");
+                return Denied("app_permission_required", $"The calling app requires: {string.Join(", ", missing.Select(p => p == CoreAppPermissions.Sources && connectionSelection ? "sources.connections or apps.sources.full" : p))}.");
             if (permissions.Length > 0)
                 await services.GetRequiredService<AppIdentityService>().RequireActivityAsync(request.Headers[IdentityHeader].ToString(), appId, ct);
             var state = await services.GetRequiredService<UserDirectoryStore>().ReadAsync(ct);
@@ -86,7 +86,7 @@ internal static class AppManagementAuthorization
     {
         if (Caller(request) is not { } caller || (access?.Manifest is null && access?.Git is null)) return null;
         if (!HasPermission(caller.App, CoreAppPermissions.Sources) && !HasPermission(caller.App, CoreAppPermissions.SourceConnections))
-            return CoreJson.Json(new ErrorResponse("app_permission_required", "Source selection requires apps.sources or sources.connections."), 403);
+            return CoreJson.Json(new ErrorResponse("app_permission_required", "Source selection requires apps.sources.full or sources.connections."), 403);
         return new[] { access?.Manifest, access?.Git }.OfType<SourceReadGrant>().Any(g => g.OwnerId != caller.User.Id)
             ? CoreJson.Json(new ErrorResponse("source_access_denied", "Only the source owner can review these private connections."), 403)
             : null;

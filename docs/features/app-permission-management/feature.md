@@ -121,11 +121,16 @@ Shell retains two pre-existing navigation warnings.
 
 ## Mixed operations
 
-Personal account and Git identity management requires `sources.connections`; `apps.sources` permits
+`apps.sources.read` permits repository-document and workspace-document reads as the current
+administrator. `apps.sources.full` retains source operations and is the canonical name of the
+legacy `apps.sources` manifest alias. Startup migrates persisted declarations and grants before
+removing unsupported grants; unchanged source authority does not require a new review.
+
+Personal account and Git identity management requires `sources.connections`; `apps.sources.full` permits
 only selection/use and source operations. Shell declares connection management as optional, so a
 manifest edit cannot silently grant it or make public management unavailable.
 
-Private-source installation/update requests require `apps.install` plus either `apps.sources` or
+Private-source installation/update requests require `apps.install` plus either `apps.sources.full` or
 `sources.connections`, including
 retaining or removing existing private bindings. Current connection ownership and Core confirmation
 still apply. Cached plans cannot bypass these checks; submission and execution recheck both grants.

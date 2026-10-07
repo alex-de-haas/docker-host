@@ -20,6 +20,12 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
 const render = () => act(async () => root.render(<AppPermissions app={{ id: "legacy" } as CoreApp} />));
 const review = () => act(async () => [...container.querySelectorAll("button")].find(b => b.textContent === "Change permissions")!.click());
+it("distinguishes documentation access from full source access", async () => {
+  state = { ...state, required: ["apps.sources.read"], optional: ["apps.sources.full"], missingRequired: [] };
+  await render();
+  expect(container.querySelector('[aria-label="Required permissions"]')?.textContent).toContain("Repository documentation and workspace changes");
+  expect(container.querySelector('[aria-label="Optional permissions"]')?.textContent).toContain("Source code and selected connections");
+});
 it("shows permission grants read-only, including Shell's own optional permissions", async () => {
   state = { ...state, optional: ["providers.speech-to-text", "providers.assistant"],
     acceptedOptional: ["providers.speech-to-text"], granted: ["providers.speech-to-text"] };

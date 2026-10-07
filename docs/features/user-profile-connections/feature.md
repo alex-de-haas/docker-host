@@ -99,7 +99,7 @@ App callers authenticate with their service credential and app user grant, with 
 permission for this self-service API. Direct Core browser mutations retain CSRF protection.
 
 Source-provider endpoints require the current administrator; app callers additionally require
-a live grant issued to that same app. Reads accept `apps.sources` or `sources.connections`; all
+a live grant issued to that same app. Reads accept `apps.sources.full` or `sources.connections`; all
 account/Git-identity mutations require `sources.connections`:
 
 - `GET /api/source-connections` returns sanitized connection summaries, provider descriptors (ID, display name, authentication methods and capabilities) and Git identity.

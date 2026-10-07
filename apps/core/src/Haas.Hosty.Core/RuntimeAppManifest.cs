@@ -3414,8 +3414,8 @@ internal sealed class RuntimeAppManifest
     // and forward-compatible. Additive under app.0.1.
     public IReadOnlyList<string> Provides { get => field ?? []; init; } = [];
     // Requested authority. Approved grants live separately in Core and are never inferred on restart.
-    public IReadOnlyList<string> CorePermissions { get => field ?? []; init; } = [];
-    public IReadOnlyList<string> OptionalCorePermissions { get => field ?? []; init; } = [];
+    public IReadOnlyList<string> CorePermissions { get => field ?? []; init => field = CoreAppPermissions.Normalize(value ?? []); } = [];
+    public IReadOnlyList<string> OptionalCorePermissions { get => field ?? []; init => field = CoreAppPermissions.Normalize(value ?? []); } = [];
     // Platform interfaces this app exposes for other components to discover through the registry,
     // keyed by interface name (e.g. "assistant" tells UI clients an assistant service is installed).
     // Like `provides`, unknown interface names are inert and forward-compatible; declarations are
