@@ -1,6 +1,6 @@
 ---
 created: 2026-06-04
-updated: 2026-10-05
+updated: 2026-10-07
 summary: Reviewed update plans and their apply behavior, including permission changes and routine updates.
 components: [apps/core, apps/shell]
 ---
@@ -102,7 +102,7 @@ and requires review. A later successful check replaces the result and clears the
 
 The `changes` list is a human-review summary of the update plan. Core reports specific contract changes when it can classify them, such as `version`, `runtime`, `role`, `service`, `image`, `command`, `port`, `environment`, `setting`, `endpoint`, `data`, `dependency`, and `capability` changes, plus `artifact:{service}:{current}->{target}` for compiled-image digest movement. When the target manifest digest differs but none of those contract categories changed, Core reports `manifest` as a fallback meaning "manifest content changed." A recheck against the same installed manifest returns an empty `changes` list.
 
-Core-reserved `HOSTY_PORT_*` host-port overrides are never reported as `setting:*:removed`: an update carries them forward, so reporting a removal would promise a change apply does not make — a same-version plan that could never converge.
+Core-owned `HOSTY_PORT_*` host-port overrides and `HOSTY_LOCAL_NAME_*` local browser names are never reported as `setting:*:removed`: an update carries them forward, so reporting a removal would promise a change apply does not make — a same-version plan that could never converge. Both update and runtime-switch plans use the same preservation rule as apply. Removed app settings remain reviewable, including other `HOSTY_*` keys.
 
 ## Classification (`requiresReview`)
 
@@ -188,11 +188,14 @@ Rows render from the app summary's `updateCheck` verdict, so the affordances sur
 - **routine** — a blue update icon applies the cached plan by digest with no dialog; the row's actions menu offers "Review and update" for the curious;
 - **review-required** — an amber update icon opens the plan; there is no silent path;
 - **check failed** — an amber icon carrying the error;
-- **applying** — the current stage beneath the runtime status, matching the Core row, driven by `updateProgress` and `operationStatus`.
+- **applying** — the current stage beneath the versions in the Version cell, driven by `updateProgress` and `operationStatus`.
 
 The update icon and the versions share the **Version** cell, because "an update exists" and "which version" are one statement. The cell stacks the installed version over the version the update resolves to, in the icon's own colour, with the icon after them. The second line names that version even when it equals the installed one: an update that keeps its version is the normal shape for a source app tracking a branch, and the row is answering "which version would I get". The commit that separates the two builds lives in the tooltip. A verdict naming no version at all — an older Core — leaves the installed version alone with the icon. The platform row follows the same rule for Core's own update.
 
 Both version lines are tooltip triggers, marked with a dotted underline rather than an icon, and spell out the exact revisions that version identifies — the reviewed source commit, each service's image digest — in full. The installed line carries its tooltip whether or not an update exists: a version string alone cannot separate two builds of the same version, which is exactly what a source app tracking a branch ships.
+
+The package icon aligns with the installed version. The update activity indicator and message occupy
+a separate line below the versions, starting at the cell's left edge like the changes below a Dev Mode branch.
 
 The header "Check updates" triggers or joins the fleet sweep. "Update all (N)" applies every routine verdict, leaving review-class ones on their rows and counting them in the summary toast; the Shell's own app goes last, because its apply restarts the Shell serving the page.
 
@@ -206,8 +209,11 @@ start and readiness. Docker reports downloading only when it actually pulls an i
 setup reports preparation. Running apps retain `operationStatus: updating` until readiness finishes.
 The terminal status remains `started` for a restarted app and `updated` for an app left stopped,
 maintaining compatibility with existing Shell self-update waiters. `lastOperation` remains `update`.
-Update stages and outcomes appear below the status badge in the Status cell.
-A healthy finish shows Updated for 30 seconds; an unhealthy finish shows Updated · not ready.
+App update stages and outcomes appear below the versions in the Version cell.
+A healthy finish shows Updated for 30 seconds; an unhealthy finish shows Updated · needs attention.
+The warning opens app details with service readiness states and a console-log action. It disappears
+after a healthy observation. Terminal notifications use these same app-state outcomes, rather than
+treating a successful installation request as proof of readiness.
 Failures and interrupted updates remain visible with their error.
 
 Version/check tooltips distinguish never checked, no updates, and a failed attempt, and include the
@@ -257,6 +263,7 @@ Failed updates leave enough state for diagnosis and retry. Runtime state and app
 
 - **Plan and classification** — change detection per contract category, `requiresReview` routine/review split (including `role: system` escalation and a cross-repository `image` move), `updateAvailable` treating `->unknown` as "cannot tell", and plan-digest stability across a rebuild.
 - **Apply** — digest mismatch, expiry, and stale-base rejection; verbatim consumption of the cached plan; `update_in_progress`; the interrupted-apply boot sweep.
+- **Core-owned settings** — host-port overrides and local browser names survive apply and a fresh check after recreating Core reports no phantom update; removal of ordinary app settings still requires review.
 - **Shell self-update wait** — the page stays put through `"updating"` and through the intermediate `"updated"` while the restart is still to report, settles on that restart's `"started"` (and on `"updated"` when no restart is coming), reports a `"failed"` record with its error, treats a failed read as no outcome at all, and gives up on its deadline (and when the app is gone) without reloading.
 - **Fleet check** — availability projected into summaries (target version and revisions alongside the verdict, and nothing named for a probe that did not resolve), live-source apps skipped and an earlier verdict suppressed, per-app failures captured without failing the sweep, an app with no update source reported as an error rather than as up to date (and cleared by a plan from an explicit manifest), per-app timeout recorded as that app's error while the rest of the fleet still completes, shutdown not recorded as timeouts, single-flight joining, and the finish announced only once the run no longer reports running.
 - **Version cell** — the target version shown whether or not it advances, and nothing shown when the verdict names no version; installed revisions read from the app record alone, so the tooltip stands without an update.
@@ -279,3 +286,6 @@ Digest resolution is covered offline against a stub transport — the suite must
   of a retained offer after the installed version or release channel changes.
 - Shell tests cover expiring success feedback, unknown/failed/empty checks, and bulk-update exclusion
   of failed, review-required, expired and already-updating offers.
+- Shell distinguishes installed-but-unready updates from successful readiness: a terminal warning
+  names affected services and opens logs, while persistent details survive page reloads. A separate
+  available update remains visible; healthy recovery clears stale readiness feedback.

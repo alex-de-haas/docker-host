@@ -3,7 +3,7 @@ import { requestCoreApproval } from "./app-removal";
 
 /** Changes requiring review use Core-owned consent; routine updates use the queued endpoint. */
 export function requestAppUpdate(client: InstallationClient, appId: string, planDigest: string,
-  onSubmitted: (request: InstallationRequest) => void): Promise<InstallationRequest> {
+  onSubmitted: (request: InstallationRequest) => void | (() => void)): Promise<InstallationRequest> {
   return requestCoreApproval(client, { updateAppId: appId, planDigest }, onSubmitted, { retryInterruptedStatus: true });
 }
 

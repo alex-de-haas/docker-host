@@ -1,38 +1,37 @@
 using System.Net.Http.Headers;
-using System.Text;
 using System.Text.Json;
 
 namespace Haas.Hosty.Core;
 
 // Only fixed provider authorities receive credentials. Redirects are disabled by the registered client.
-internal sealed class UserConnectionProvider(HttpClient client, IConfiguration config, IClock clock)
+internal sealed partial class GitHubSourceProvider(HttpClient client, IConfiguration config, IClock clock, IPublicationProvider? publication = null) : ISourceProvider
 {
-    internal const string AzureScope = "499b84ac-1321-427f-aa17-267ca6975798/user_impersonation offline_access";
-    public UserConnectionProviders Availability => new(ClientId("github") is not null, ClientId("azure-devops") is not null);
-    public string? ClientId(string provider)
-        => string.IsNullOrWhiteSpace(config[provider == "github" ? "ProviderConnections:GitHubClientId" : "ProviderConnections:EntraClientId"])
-            ? null : config[provider == "github" ? "ProviderConnections:GitHubClientId" : "ProviderConnections:EntraClientId"]!.Trim();
-    internal static string TokenUrl(string provider, string tenant)
-        => provider == "github" ? "https://github.com/login/oauth/access_token" : $"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token";
+    // Public registration identifier for Hosty's device flow; no client secret is distributed.
+    internal const string DefaultGitHubClientId = "Ov23liDBHP5MgRKVV30I";
+    public SourceProviderDescriptor Descriptor => new("github", "GitHub", ["device", "pat"], ["repositories", "private-sources", "pull-requests"]);
+    public IPublicationProvider Publication { get; } = publication ?? new GitHubPublicationProvider(client, clock);
+    public string? ClientId => string.IsNullOrWhiteSpace(config["ProviderConnections:GitHubClientId"])
+        ? DefaultGitHubClientId : config["ProviderConnections:GitHubClientId"]!.Trim();
+    private const string TokenUrl = "https://github.com/login/oauth/access_token";
+    public UserConnectionInput Validate(UserConnectionInput input) => input with { Organization = "", Tenant = "" };
 
     public async Task<ProviderDevice> StartAsync(UserConnectionInput input, string clientId, CancellationToken ct)
     {
-        var url = input.Provider == "github" ? "https://github.com/login/device/code"
-            : $"https://login.microsoftonline.com/{input.Tenant}/oauth2/v2.0/devicecode";
+        const string url = "https://github.com/login/device/code";
         using var json = await SendAsync(HttpMethod.Post, url, new Dictionary<string, string>
         {
             ["client_id"] = clientId,
-            ["scope"] = input.Provider == "github" ? (input.PrivateRepositories ? "repo" : "public_repo") + " user:email offline_access" : AzureScope,
+            ["scope"] = (input.PrivateRepositories ? "repo" : "public_repo") + " user:email offline_access",
         }, ct: ct);
         CheckError(json.RootElement);
         var root = json.RootElement;
         return new(Required(root, "device_code"), Required(root, "user_code"),
-            input.Provider == "github" ? "https://github.com/login/device" : "https://microsoft.com/devicelogin",
+            "https://github.com/login/device",
             Math.Clamp(Number(root, "expires_in", 900), 1, 1800), Math.Max(5, Number(root, "interval", 5)));
     }
-    public async Task<(ProviderToken? Token, string? Pending)> PollAsync(string provider, string tenant, string clientId, string deviceCode, CancellationToken ct)
+    public async Task<(ProviderToken? Token, string? Pending)> PollAsync(string clientId, string deviceCode, CancellationToken ct)
     {
-        using var json = await SendAsync(HttpMethod.Post, TokenUrl(provider, tenant), new Dictionary<string, string>
+        using var json = await SendAsync(HttpMethod.Post, TokenUrl, new Dictionary<string, string>
         {
             ["client_id"] = clientId, ["device_code"] = deviceCode,
             ["grant_type"] = "urn:ietf:params:oauth:grant-type:device_code",
@@ -46,7 +45,7 @@ internal sealed class UserConnectionProvider(HttpClient client, IConfiguration c
     {
         if (connection.RefreshToken is null || connection.ClientId is null)
             throw new UserConnectionException("connection_reconnect_required", "Reconnect this account to renew access.", 409);
-        using var json = await SendAsync(HttpMethod.Post, TokenUrl(connection.Provider, connection.Tenant), new Dictionary<string, string>
+        using var json = await SendAsync(HttpMethod.Post, TokenUrl, new Dictionary<string, string>
         {
             ["client_id"] = connection.ClientId, ["refresh_token"] = connection.RefreshToken, ["grant_type"] = "refresh_token",
         }, ct: ct);
@@ -54,21 +53,11 @@ internal sealed class UserConnectionProvider(HttpClient client, IConfiguration c
         var token = ReadToken(json.RootElement);
         return token with { RefreshToken = token.RefreshToken ?? connection.RefreshToken };
     }
-    public async Task<ProviderIdentity> IdentityAsync(string provider, string organization, string method, string token, CancellationToken ct)
+    public async Task<ProviderIdentity> IdentityAsync(string method, string token, CancellationToken ct)
     {
-        var url = provider == "github" ? "https://api.github.com/user"
-            : $"https://dev.azure.com/{organization}/_apis/connectionData?api-version=7.1-preview.1";
-        var auth = provider == "azure-devops" && method == "pat"
-            ? new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(":" + token)))
-            : new AuthenticationHeaderValue("Bearer", token);
-        using var json = await SendAsync(HttpMethod.Get, url, authorization: auth, ct: ct);
-        var root = json.RootElement;
-        if (provider == "github") return new(Required(root, "id"), Required(root, "login"));
-        if (!root.TryGetProperty("authenticatedUser", out var user) || user.ValueKind != JsonValueKind.Object ||
-            !Guid.TryParse(String(user, "id"), out var id) || id == Guid.Empty ||
-            (user.TryGetProperty("isActive", out var active) && active.ValueKind == JsonValueKind.False))
-            throw new UserConnectionException("provider_identity_invalid", "The provider did not return an active account.", 502);
-        return new(id.ToString(), String(user, "providerDisplayName") ?? String(user, "customDisplayName") ?? id.ToString());
+        using var json = await SendAsync(HttpMethod.Get, "https://api.github.com/user",
+            authorization: new AuthenticationHeaderValue("Bearer", token), ct: ct);
+        return new(Required(json.RootElement, "id"), Required(json.RootElement, "login"));
     }
     private ProviderToken ReadToken(JsonElement root)
         => new(Required(root, "access_token"), String(root, "refresh_token"),

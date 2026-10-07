@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace Haas.Hosty.Core;
 
 internal sealed class PublicationService(CoreDataPaths paths, DevelopmentWorkspaceService workspaces,
-    UserConnectionService connections, IPublicationProvider provider, AppRegistryStore apps,
+    UserConnectionService connections, AppRegistryStore apps,
     UserDirectoryStore users, IClock clock, AuditStore audit)
 {
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -30,7 +30,7 @@ internal sealed class PublicationService(CoreDataPaths paths, DevelopmentWorkspa
     public async Task<PublicationConnections> ConnectionsAsync(WorkspaceOwner owner, CancellationToken ct)
     {
         await RequireOwner(owner, ct);
-        return new((await connections.ProfileAsync(owner.UserId, ct)).Connections.Where(c => c.Provider == "github").ToArray());
+        return new((await connections.ProfileAsync(owner.UserId, ct)).Connections.Where(c => connections.Providers.Contains(c.Provider) && connections.Providers.Resolve(c.Provider).Publication is not null).ToArray());
     }
     public Task<PublicationList> ListAsync(WorkspaceOwner? owner, CancellationToken ct) => Locked(async () =>
     {
@@ -60,6 +60,8 @@ internal sealed class PublicationService(CoreDataPaths paths, DevelopmentWorkspa
             await RequireOwner(r.Owner, ct);
             r = await connections.UseForSourceAsync(r.Owner.UserId, r.ConnectionId, async c =>
             {
+                var provider = Publication(c.Provider);
+                if (r.Provider != c.Provider) throw new PublicationException("provider_mismatch", "The publication belongs to a different provider.");
                 if (r.Number is null)
                 {
                     var found = await provider.FindAsync(c, r, ct);
@@ -75,9 +77,11 @@ internal sealed class PublicationService(CoreDataPaths paths, DevelopmentWorkspa
         }
         await Save(r); return r;
     }
-    private static PublicationRecord Link(PublicationRecord r, PublicationReference p)
+    private IPublicationProvider Publication(string id) => connections.Providers.Resolve(id).Publication
+        ?? throw new PublicationException("provider_unsupported", "This source provider does not support pull requests.");
+    private PublicationRecord Link(PublicationRecord r, PublicationReference p)
     {
-        var expected = $"https://github.com/{r.Repository}/pull/{p.Number}";
+        var expected = Publication(r.Provider).PullRequestUrl(r.Repository, p.Number);
         if (p.Number <= 0 || !string.Equals(p.Url, expected, StringComparison.OrdinalIgnoreCase)) throw new PublicationException("pr_mismatch", "Provider returned an unexpected PR identity.");
         return r with { Number = p.Number, Url = expected };
     }
@@ -150,9 +154,10 @@ internal sealed class PublicationService(CoreDataPaths paths, DevelopmentWorkspa
         if (r?.Operations.Any(o => o.Id != input.RequestId && o.State == "pending") == true) throw new PublicationException("operation_pending", "Recover the previous operation with its original request ID first.");
         if (r is null)
         {
-            if (kind != "configure" || string.IsNullOrWhiteSpace(input.ConnectionId)) throw new PublicationException("connection_required", "Configure a concrete user GitHub connection before publication.");
-            var repository = GitHubPublicationProvider.Repository(w.Repository);
-            r = new PublicationRecord { WorkspaceId = id, Owner = owner, Repository = repository, HeadRepository = repository,
+            if (kind != "configure" || string.IsNullOrWhiteSpace(input.ConnectionId)) throw new PublicationException("connection_required", "Configure a concrete user source connection before publication.");
+            var sourceProvider = connections.Providers.ForUrl(w.Repository);
+            var repository = Publication(sourceProvider.Descriptor.Id).NormalizeRepository(w.Repository);
+            r = new PublicationRecord { Provider = sourceProvider.Descriptor.Id, WorkspaceId = id, Owner = owner, Repository = repository, HeadRepository = repository,
                 ConnectionId = input.ConnectionId, Branch = w.Branch, TargetBranch = w.TargetBranch };
         }
         if (input.ConnectionId is not null && input.ConnectionId != r.ConnectionId) throw new PublicationException("connection_conflict", "This publication is bound to another connection.");
@@ -169,7 +174,8 @@ internal sealed class PublicationService(CoreDataPaths paths, DevelopmentWorkspa
         {
             record = await connections.UseForSourceAsync(owner.UserId, r.ConnectionId, async c =>
             {
-                if (c.Provider != "github") throw new PublicationException("provider_unsupported", "Select a GitHub connection.");
+                if (c.Provider != record.Provider) throw new PublicationException("provider_mismatch", "Choose a connection for this repository provider.");
+                var provider = Publication(c.Provider);
                 var op = previous is null ? new PublicationOperation(input.RequestId, kind, fingerprint, "pending", input) : previous with { State = "pending", Error = null };
                 record = record with { Operations = [.. record.Operations.Where(o => o.Id != op.Id), op] };
                 await Save(record);
@@ -224,7 +230,7 @@ internal sealed class PublicationService(CoreDataPaths paths, DevelopmentWorkspa
                 else if (kind == "link")
                 {
                     if (input.Number is not > 0) throw new PublicationException("pr_required", "A concrete PR number is required.");
-                    var candidate = Link(record, new(input.Number.Value, $"https://github.com/{record.Repository}/pull/{input.Number}", null, null));
+                    var candidate = Link(record, new(input.Number.Value, provider.PullRequestUrl(record.Repository, input.Number.Value), null, null));
                     candidate = candidate with { Observation = await provider.ObserveAsync(c, candidate, ct) };
                     if (candidate.Observation.Head != w.Observation?.Head) throw new PublicationException("head_mismatch", "The linked PR head differs from the workspace HEAD.");
                     record = candidate with { PublishedHead = candidate.Observation.Head };

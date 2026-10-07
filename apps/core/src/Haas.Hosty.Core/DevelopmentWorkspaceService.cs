@@ -78,7 +78,7 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
                 throw Error("source_forbidden", "This app's private source belongs to another user.");
             if (grant is not null) await (privateSources ?? throw PrivateSourceService.Denied()).ValidateAsync(new(Git: grant), ct);
             var source = app.SourceState ?? throw Error("source_missing", "This app has no source repository.");
-            if (grant is not null && (source.Repository is null || PrivateSourceService.NormalizeRepository(source.Repository) != grant.Repository))
+            if (grant is not null && (source.Repository is null || (privateSources ?? throw PrivateSourceService.Denied()).NormalizeRepository(source.Repository) != grant.Repository))
                 throw PrivateSourceService.Denied("The Git source changed. Select and review its connection again.");
             var repository = grant?.Repository ?? await CanonicalRepository(source.Repository, source.LocalOverridePath, ct);
             var repositoryId = Hash(repository);

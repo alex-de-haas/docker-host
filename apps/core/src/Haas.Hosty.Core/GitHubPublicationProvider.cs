@@ -8,6 +8,8 @@ namespace Haas.Hosty.Core;
 
 internal sealed class GitHubPublicationProvider(HttpClient http, IClock clock) : IPublicationProvider
 {
+    public string NormalizeRepository(string url) => Repository(url);
+    public string PullRequestUrl(string repository, int number) => $"https://github.com/{Slug(repository)}/pull/{number}";
     internal static string Repository(string url)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != "https" || uri.Host != "github.com" || !uri.IsDefaultPort ||

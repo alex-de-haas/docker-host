@@ -1,10 +1,15 @@
 "use client";
 
+import { useRouter } from "next/navigation";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { findAssistantGateways } from "../assistant/assistant-client";
 import { CoreRequestError } from "../core-api";
 import {
   DEFAULT_HOST_SETTINGS_TAB,
-  HOST_SETTINGS_SECTIONS,
+  getHostSettingsSection,
+  getSettingsHref,
+  isHostSettingsTab,
+  readSettingsTabParam,
   isNonAdminHostSettingsTab,
 } from "../shell-routes";
 import type {
@@ -20,6 +25,7 @@ import { SettingsIngressSection } from "./settings-ingress-section";
 import { SettingsMountsSection } from "./settings-mounts-section";
 import { SettingsAgentsSection } from "./settings-agents-section";
 import { SettingsTokensSection } from "./settings-tokens-section";
+import { SourceProviders } from "./source-providers";
 import { UserProfilePage } from "./user-profile-page";
 import { UserManagementPanel } from "./user-management-page";
 
@@ -53,8 +59,8 @@ export function SettingsPage({
   onSelectAssistant: (id: string) => void;
   // A host tab id, or the id of an installed app whose settings page fills the tab.
   activeTab: string;
-  // Apps declaring `ui.settings`, in install order. Empty for a non-admin: their tab list is their
-  // own access tokens and nothing else.
+  // Apps declaring `ui.settings`, in install order. Empty for a non-admin, who can access only
+  // their own profile and access tokens.
   appTabs: AppSurfaceTab[];
   appTabProps: Omit<React.ComponentProps<typeof AppSettingsTabPanel>, "tab">;
   coreOrigin: string;
@@ -72,8 +78,8 @@ export function SettingsPage({
 }) {
   // Ordinary users reach their own profile and access tokens, so the rest,
   // which administer the host, are not offered to them.
+  const router = useRouter();
   const assistants = findAssistantGateways(apps);
-  const visibleTabs = canManageApps ? HOST_SETTINGS_SECTIONS : HOST_SETTINGS_SECTIONS.filter((tab) => isNonAdminHostSettingsTab(tab.id));
   // Each app has one sidebar entry; this component resolves its settings surface.
   const visibleAppTabs = canManageApps ? appTabs : [];
   const activeAppTab = resolveSettingsSurface(visibleAppTabs, activeTab);
@@ -82,12 +88,14 @@ export function SettingsPage({
   // The URL may name a tab that is neither a host one nor an installed app — a stale link, or an app
   // since removed. Resolution lives here rather than in the parser, which has no app list to check
   // against; without the fallback such a link renders a page with no section at all.
-  const resolvedTab =
-    visibleTabs.some((tab) => tab.id === activeTab) ? activeTab : DEFAULT_HOST_SETTINGS_TAB;
+  const requestedTab = readSettingsTabParam(activeTab);
+  const resolvedTab = isHostSettingsTab(requestedTab) && (canManageApps || isNonAdminHostSettingsTab(requestedTab))
+    ? requestedTab : canManageApps ? DEFAULT_HOST_SETTINGS_TAB : "tokens";
+  const section = getHostSettingsSection(resolvedTab);
+  const sectionTabs = section?.tabs.filter(tab => canManageApps || isNonAdminHostSettingsTab(tab.id)) ?? [];
 
-  return (
-    <div className="space-y-6">
-      <h1 className="sr-only">Settings</h1>
+  const content = (
+    <>
       {resolvedTab === "profile" && <UserProfilePage coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} onSaved={onRefresh} />}
 
       {canManageApps && resolvedTab === "shell" && <section className="space-y-3 max-w-xl">
@@ -104,6 +112,8 @@ export function SettingsPage({
         {!assistants.length && <p className="text-sm text-muted-foreground">Install and confirm an assistant to use these features.</p>}
       </section>}
 
+      {canManageApps && resolvedTab === "connections" && <SourceProviders coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />}
+
       {canManageApps && resolvedTab === "agents" && <SettingsAgentsSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />}
 
       {resolvedTab === "tokens" && (
@@ -113,11 +123,15 @@ export function SettingsPage({
       {/* Every remaining tab administers the host. Gating them here as well as in the sidebar keeps
           a hand-typed ?tab= from rendering an admin surface for an ordinary user. */}
       {canManageApps && resolvedTab === "users" && (
-        <UserManagementPanel coreOrigin={coreOrigin} activeUser={activeUser} sendCsrfJson={sendCsrfJson} />
+        <div className="flex flex-col gap-6">
+          <UserManagementPanel coreOrigin={coreOrigin} activeUser={activeUser} sendCsrfJson={sendCsrfJson} />
+          <SettingsCoreSection section="users" settings={coreSettings} settingsError={coreSettingsError} onSaveSettings={onSaveCoreSettings} />
+        </div>
       )}
 
-      {canManageApps && resolvedTab === "core" && (
+      {canManageApps && (resolvedTab === "general" || resolvedTab === "policies") && (
         <SettingsCoreSection
+          section={resolvedTab}
           settings={coreSettings}
           settingsError={coreSettingsError}
           onSaveSettings={onSaveCoreSettings}
@@ -151,6 +165,22 @@ export function SettingsPage({
           onDelete={onDeleteMount}
         />
       )}
+    </>
+  );
+
+  return (
+    <div className="flex min-w-0 flex-col gap-6">
+      <h1 className="sr-only">Settings</h1>
+      {section && section.tabs.length > 1 ? (
+        <Tabs value={resolvedTab} onValueChange={tab => router.push(getSettingsHref(tab), { scroll: false })} className="min-w-0 gap-6">
+          <div className="max-w-full overflow-x-auto pb-1">
+            <TabsList variant="line" aria-label={`${section.label} settings`}>
+              {sectionTabs.map(tab => <TabsTrigger key={tab.id} value={tab.id}>{tab.label}</TabsTrigger>)}
+            </TabsList>
+          </div>
+          <TabsContent key={resolvedTab} value={resolvedTab}>{content}</TabsContent>
+        </Tabs>
+      ) : content}
     </div>
   );
 }

@@ -4,16 +4,25 @@ import { InstallationFlow, type InstallationClient, type InstallationRequest, ty
 export async function requestCoreApproval(
   client: InstallationClient,
   source: InstallationSource,
-  onSubmitted: (request: InstallationRequest) => void,
+  onSubmitted: (request: InstallationRequest) => void | (() => void),
   options: { retryInterruptedStatus?: boolean } = {},
 ): Promise<InstallationRequest> {
   const flow = new InstallationFlow(client);
+  let dismissConfirmation: void | (() => void) = undefined;
   try {
     await flow.review(source);
     if (flow.snapshot().error) throw new Error(flow.snapshot().error!);
-    let request = await flow.submit({}, false);
-    if (!request) throw new Error(flow.snapshot().error ?? "Could not submit request for Core confirmation.");
-    onSubmitted(request);
+    const submitted = await flow.submit({}, false);
+    if (!submitted) throw new Error(flow.snapshot().error ?? "Could not submit request for Core confirmation.");
+    let request: InstallationRequest = submitted;
+    dismissConfirmation = onSubmitted(request);
+    const dismissIfDecided = () => {
+      if (request.status !== "pending" && dismissConfirmation) {
+        dismissConfirmation();
+        dismissConfirmation = undefined;
+      }
+    };
+    dismissIfDecided();
     while (request.status === "pending" || request.status === "executing") {
       if (Date.now() >= Date.parse(request.expiresAt))
         throw new Error("Core confirmation expired or is still running. Check Core before preparing another request.");
@@ -26,12 +35,14 @@ export async function requestCoreApproval(
         const status = error instanceof Error && "status" in error ? Number(error.status) : null;
         if (!options.retryInterruptedStatus || !(error instanceof TypeError || (status !== null && status >= 500))) throw error;
       }
+      dismissIfDecided();
     }
     if (request.status === "failed") throw new Error(request.error ?? "Operation failed.");
     if (request.status !== "succeeded" && request.status !== "denied")
       throw new Error("Core returned an unexpected approval status.");
     return request;
   } finally {
+    dismissConfirmation?.();
     flow.dispose();
   }
 }
@@ -39,7 +50,7 @@ export async function requestCoreApproval(
 export function requestAppRemoval(
   client: InstallationClient, appId: string,
   options: NonNullable<InstallationSource["removalOptions"]>,
-  onSubmitted: (request: InstallationRequest) => void,
+  onSubmitted: (request: InstallationRequest) => void | (() => void),
 ): Promise<InstallationRequest> {
   return requestCoreApproval(client, { removeAppId: appId, removalOptions: options }, onSubmitted);
 }

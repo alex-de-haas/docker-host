@@ -18,10 +18,11 @@ internal static class CoreAppPermissions
     public const string ReadUsers = "users.read";
     public const string ManageUsers = "users.manage";
     public const string Sources = "apps.sources";
+    public const string SourceConnections = "sources.connections";
     public const string ReadSkills = "apps.skills.read";
     public const string SpeechProviders = "providers.speech-to-text";
     public const string AssistantProviders = "providers.assistant";
-    public static readonly string[] Known = [Install, ReadApps, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, ReadSkills, SpeechProviders, AssistantProviders];
+    public static readonly string[] Known = [Install, ReadApps, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourceConnections, ReadSkills, SpeechProviders, AssistantProviders];
 
     public static IReadOnlyList<string> ResolveGrants(IReadOnlyList<string> required,
         IReadOnlyList<string> optional, IReadOnlyList<string>? selected, IReadOnlyList<string>? previous = null)
@@ -37,7 +38,8 @@ internal static class CoreAppPermissions
 
     public static string Describe(string permission) => permission switch
     {
-        Sources => "Access and modify application source code, including code Hosty executes on this host in development mode; manage workspaces and source-provider connections",
+        Sources => "Access and modify application source code, including code Hosty executes on this host in development mode; manage workspaces and use selected source-provider connections",
+        SourceConnections => "Manage your own source-provider accounts and Git identity; select connections for reviewed installations",
         ReadApps => "List applications and read their state",
         AppLogs => "Read application logs",
         Notifications => "Read application notifications",

@@ -16,6 +16,7 @@ internal sealed record PublicationOperation(string Id, string Kind, string Finge
     PublicationCommand Input, string? Error = null, PublicationIdentity? Author = null);
 internal sealed record PublicationRecord
 {
+    public string Provider { get; init; } = "github";
     public required string WorkspaceId { get; init; }
     public required WorkspaceOwner Owner { get; init; }
     public required string Repository { get; init; }
@@ -46,6 +47,8 @@ internal sealed class PublicationException(string code, string message) : Except
 }
 internal interface IPublicationProvider
 {
+    string NormalizeRepository(string url);
+    string PullRequestUrl(string repository, int number);
     Task<string> DestinationAsync(UserProviderConnection connection, string repository, bool fork, CancellationToken ct);
     Task PushAsync(UserProviderConnection connection, DevelopmentWorkspace workspace, string destination, string branch, string head, CancellationToken ct);
     Task<PublicationReference?> FindAsync(UserProviderConnection connection, PublicationRecord record, CancellationToken ct);

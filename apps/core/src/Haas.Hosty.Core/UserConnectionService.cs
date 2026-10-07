@@ -1,10 +1,11 @@
 using System.Collections.Concurrent;
-using System.Text.RegularExpressions;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class UserConnectionService(UserDirectoryStore users, UserConnectionProvider provider, IClock clock, AuditStore audit, CoreSettingsService settings)
+internal sealed class UserConnectionService(UserDirectoryStore users, SourceProviderRegistry providers, IClock clock, AuditStore audit, CoreSettingsService settings)
 {
+    internal SourceProviderRegistry Providers => providers;
+
     // Serialize one owner's refresh rotation and disconnect without holding up another user's I/O.
     // Persistence still fences user deletion inside the auth store's atomic mutation.
     private readonly ConcurrentDictionary<string, SemaphoreSlim> userGates = new(StringComparer.Ordinal);
@@ -19,7 +20,7 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
         var state = await users.ReadAsync(ct);
         var user = RequireUser(state, userId);
         return new(user.Id, user.Email, user.DisplayName,
-            (state.ProviderConnections ?? []).Where(c => c.UserId == userId).Select(Summary).ToArray(), provider.Availability, user.GitIdentity);
+            (state.ProviderConnections ?? []).Where(c => c.UserId == userId).Select(Summary).ToArray(), providers.Descriptors, user.GitIdentity);
     }
     public async Task<UserProfileResponse> UpdateProfileAsync(string userId, string name, CancellationToken ct, PublicationIdentity? gitIdentity = null, bool updateGitIdentity = false)
     {
@@ -56,7 +57,7 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
             if (string.IsNullOrWhiteSpace(input.Token) || input.Token.Length > 16384 || input.Token.Any(char.IsControl))
                 throw new UserConnectionException("connection_token_invalid", "Enter a valid provider token.");
             RequireUser(await users.ReadAsync(ct), userId);
-            var identity = await provider.IdentityAsync(input.Provider, input.Organization!, "pat", input.Token.Trim(), ct);
+            var identity = await providers.Resolve(input.Provider).IdentityAsync("pat", input.Token.Trim(), ct);
             var c = NewConnection(userId, input, identity, "pat", new(input.Token.Trim(), null, null), null);
             await SaveNew(c, ct);
             await Audit(userId, "connection.added", c.Id, ct);
@@ -73,12 +74,12 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
                 throw new UserConnectionException("connection_attempt_limit", "Finish or cancel an existing connection attempt first.", 409);
             if ((state.ProviderConnections ?? []).Count(c => c.UserId == userId) >= 32)
                 throw new UserConnectionException("connection_limit", "Remove an unused connection first.", 409);
-            var clientId = provider.ClientId(input.Provider) ?? throw new UserConnectionException("provider_not_configured", "The host operator must configure the provider's OAuth client ID.", 409);
+            var clientId = providers.Resolve(input.Provider).ClientId ?? throw new UserConnectionException("provider_not_configured", "The host operator must configure the provider's OAuth client ID.", 409);
             if (!attemptSlots.Wait(0, ct))
                 throw new UserConnectionException("connection_attempt_limit", "Finish or cancel an existing connection attempt first.", 409);
             try
             {
-                var device = await provider.StartAsync(input, clientId, ct);
+                var device = await providers.Resolve(input.Provider).StartAsync(input, clientId, ct);
                 var p = new Pending(Guid.NewGuid().ToString("N"), userId, sessionId, input, clientId, device,
                     clock.UtcNow.AddSeconds(device.ExpiresIn), clock.UtcNow.AddSeconds(device.Interval), device.Interval);
                 pending[p.Id] = p;
@@ -99,7 +100,7 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
             p = UpdatePending(p, p with { NextPoll = clock.UtcNow.AddSeconds(p.Interval) });
             try
             {
-                var result = await provider.PollAsync(p.Input.Provider, p.Input.Tenant!, p.ClientId, p.Device.DeviceCode, ct);
+                var result = await providers.Resolve(p.Input.Provider).PollAsync(p.ClientId, p.Device.DeviceCode, ct);
                 if (result.Pending is not null)
                 {
                     if (result.Pending == "slow_down") p = UpdatePending(p, p with { Interval = Math.Min(int.MaxValue - 5, p.Interval) + 5, NextPoll = clock.UtcNow.AddSeconds(Math.Min(int.MaxValue - 5, p.Interval) + 5) });
@@ -109,7 +110,7 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
                 // verification or persistence fails; a new explicit authorization is then required.
                 RemovePending(id);
                 var token = result.Token!;
-                var identity = await provider.IdentityAsync(p.Input.Provider, p.Input.Organization!, "oauth", token.AccessToken, ct);
+                var identity = await providers.Resolve(p.Input.Provider).IdentityAsync("oauth", token.AccessToken, ct);
                 var c = NewConnection(userId, p.Input, identity, "oauth", token, p.ClientId);
                 await users.UpdateAsync(s =>
                 {
@@ -157,6 +158,7 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
         => Locked(userId, async () =>
         {
             var c = RequireConnection(await users.ReadAsync(ct), userId, id);
+            var provider = providers.Resolve(c.Provider);
             try
             {
                 if (c.Method == "oauth" && c.ExpiresAt <= clock.UtcNow.AddMinutes(2))
@@ -166,7 +168,7 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
                     // Save token rotation even if the subsequent identity check is interrupted.
                     c = await SaveExisting(c, ct);
                 }
-                var identity = await provider.IdentityAsync(c.Provider, c.Organization, c.Method, c.AccessToken, ct);
+                var identity = await provider.IdentityAsync(c.Method, c.AccessToken, ct);
                 if (identity.Id != c.AccountId)
                     throw new UserConnectionException("provider_account_changed", "The external account changed. Disconnect and reconnect explicitly.", 409);
                 c = await SaveExisting(c with { AccountName = identity.Name, CheckedAt = clock.UtcNow, Status = "connected" }, ct);
@@ -185,6 +187,7 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
         => Locked(userId, async () =>
         {
             var connection = RequireConnection(await users.ReadAsync(ct), userId, id);
+            var provider = providers.Resolve(connection.Provider);
             if (connection.Method == "oauth" && connection.ExpiresAt <= clock.UtcNow.AddMinutes(2))
             {
                 var token = await provider.RefreshAsync(connection, ct);
@@ -214,10 +217,17 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
     private static UserDirectoryState Replace(UserDirectoryState s, UserProviderConnection c)
         => s with { ProviderConnections = (s.ProviderConnections ?? []).Select(item => item.Id == c.Id ? c : item).ToArray() };
     private UserProviderConnection NewConnection(string userId, UserConnectionInput input, ProviderIdentity identity, string method, ProviderToken token, string? clientId)
-        => new(Guid.NewGuid().ToString("N"), userId, input.Label, input.Provider, input.Organization!, input.Tenant!, identity.Id, identity.Name,
+        => new(Guid.NewGuid().ToString("N"), userId, ConnectionLabel(input.Label, identity), input.Provider, input.Organization!, input.Tenant!, identity.Id, identity.Name,
             method, token.AccessToken, token.RefreshToken, token.ExpiresAt, clientId, clock.UtcNow, clock.UtcNow, "connected", Guid.NewGuid().ToString("N"));
-    internal static UserConnectionSummary Summary(UserProviderConnection c)
-        => new(c.Id, c.Label, c.Provider, c.Organization, c.AccountId, c.AccountName, c.Method, c.ExpiresAt, c.CheckedAt, c.Status);
+    private static string ConnectionLabel(string? requested, ProviderIdentity identity)
+    {
+        if (!string.IsNullOrWhiteSpace(requested)) return BoundedName(requested);
+        var name = new string(identity.Name.Where(c => !char.IsControl(c)).ToArray()).Trim();
+        if (name.Length == 0) name = identity.Id;
+        return BoundedName(name.Length > 100 ? name[..100] : name);
+    }
+    internal UserConnectionSummary Summary(UserProviderConnection c)
+        => new(c.Id, c.Label, c.Provider, c.Organization, c.AccountId, c.AccountName, c.Method, c.ExpiresAt, c.CheckedAt, providers.Contains(c.Provider) ? c.Status : "unsupported");
     private UserDeviceResponse DeviceResponse(Pending p)
         => new(p.Id, "pending", p.Device.UserCode, p.Device.VerificationUri, p.ExpiresAt, Math.Max(p.Interval, (int)Math.Ceiling((p.NextPoll - clock.UtcNow).TotalSeconds)));
     private void Prune(UserDirectoryState? state = null, string? userId = null)
@@ -260,18 +270,8 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
             throw new UserConnectionException("name_invalid", "Enter a name between 1 and 100 characters without control characters.");
         return name.Trim();
     }
-    private static UserConnectionInput Validate(UserConnectionInput input)
-    {
-        var provider = input.Provider;
-        if (provider is not ("github" or "azure-devops")) throw new UserConnectionException("provider_invalid", "Choose a supported provider.");
-        var org = input.Organization?.Trim() ?? "";
-        var tenant = input.Tenant?.Trim() ?? "organizations";
-        if (provider == "azure-devops" && !Regex.IsMatch(org, "^[a-zA-Z0-9][a-zA-Z0-9-]{0,49}$", RegexOptions.CultureInvariant))
-            throw new UserConnectionException("organization_invalid", "Enter the Azure DevOps organization name, not a URL.");
-        if (tenant != "organizations" && !Guid.TryParse(tenant, out _))
-            throw new UserConnectionException("tenant_invalid", "Enter the tenant UUID or organizations.");
-        return input with { Label = BoundedName(input.Label), Organization = provider == "github" ? "" : org.ToLowerInvariant(), Tenant = provider == "github" ? "" : tenant.ToLowerInvariant() };
-    }
+    private UserConnectionInput Validate(UserConnectionInput input)
+        => providers.Resolve(input.Provider).Validate(input with { Label = string.IsNullOrWhiteSpace(input.Label) ? "" : BoundedName(input.Label) });
     private Task Audit(string userId, string action, string target, CancellationToken ct)
         => audit.AppendAsync(new AuditRecord("audit_" + Guid.NewGuid().ToString("N"), "auth." + action, "user.connection", target, "succeeded", userId, clock.UtcNow, new Dictionary<string, string>()), ct);
     private async Task<T> Locked<T>(string userId, Func<Task<T>> action, CancellationToken ct)

@@ -151,10 +151,11 @@ Plans: 10 In Progress · 1 Ready · 2 Blocked · 35 Draft · 6 On Hold.
 - [Shell Navigation](features/shell-navigation/feature.md) — Shell's three destinations, Dashboard, Settings and Apps, with the route table and the sidebar.
 - [Shell operation feedback](features/shell-operation-feedback/feature.md) — Shell separates confirmations, transient operation results and persistent diagnostics.
 - [Resizable Shell Panel](features/shell-panel-resize/feature.md) — Shell's right panel is resizable by pointer and keyboard and remembers its width.
+- [Source Providers](features/source-providers/feature.md) — Core owns a typed source-provider registry with built-in GitHub, owner-scoped connections and Shell account management.
 - [Swift Shell](features/swift-shell/feature.md) — A native SwiftUI client for iOS, iPadOS and macOS that manages a host's installed apps.
 - [System App Pages](features/system-app-pages/plan.md) — Reconcile the original administrator-only system-page proposal with current navigation, access and availability behavior. · Draft, 0/5, updated 2026-10-06
 - [Telemetry Over MCP](features/telemetry-mcp/feature.md) — Stored logs, traces and resource metrics exposed as an MCP interface behind a scoped credential.
 - [User Management](features/user-management/feature.md) — Administrators invite, disable, delete and assign app access to Host users from the Shell User Management view.
-- [User Profile And Provider Connections](features/user-profile-connections/feature.md) — A self-service profile API and page for the current user's name and email.
+- [User Profile And Provider Connections](features/user-profile-connections/feature.md) — Shell manages personal GitHub accounts and Git identity through Core-owned connections and narrow app permissions.
 
 <!-- docs-index:end -->

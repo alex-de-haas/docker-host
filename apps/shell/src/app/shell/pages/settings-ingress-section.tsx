@@ -1,12 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { coreSettingsSection } from "../core-settings-sections";
 import {
+  CORE_PUBLIC_ORIGIN_SETTING_KEY,
   INGRESS_PROVIDER_CLOUDFLARE_REMOTE,
   INGRESS_PROVIDER_CLOUDFLARED,
   INGRESS_PROVIDER_NONE,
   INGRESS_PROVIDER_SETTING_KEY,
-  INGRESS_SETTINGS_GROUP,
   isIngressSettingVisible,
 } from "../ingress";
 import type { CoreSettingsState } from "../types";
@@ -39,6 +41,9 @@ export function SettingsIngressSection({
   const savedProvider =
     settings?.settings.find((item) => item.key === INGRESS_PROVIDER_SETTING_KEY)?.value ?? INGRESS_PROVIDER_NONE;
   const provider = draftProvider ?? savedProvider;
+  const [draftOrigin, setDraftOrigin] = useState<string | null>(null);
+  const savedOrigin = settings?.settings.find(item => item.key === CORE_PUBLIC_ORIGIN_SETTING_KEY)?.value ?? null;
+  const originChanged = draftOrigin !== null && savedOrigin !== null && draftOrigin.trim() !== savedOrigin;
 
   return (
     <div className="space-y-4">
@@ -50,16 +55,30 @@ export function SettingsIngressSection({
         </p>
       </div>
 
+      {originChanged && (
+        <Alert>
+          <AlertTitle>Saving the public origin takes effect in two stages</AlertTitle>
+          <AlertDescription>
+            Sign-in and invitation links, and the metadata agent clients read, use the new address as soon as you
+            save. Installed apps were handed the old one when they started and keep using it until they restart.
+          </AlertDescription>
+        </Alert>
+      )}
+
       <CoreSettingsForm
+        layout="core"
         settings={settings}
         error={settingsError}
         onSave={onSaveSettings}
         showGroupHeadings={false}
         visible={(item, draft) =>
-          item.group === INGRESS_SETTINGS_GROUP &&
+          coreSettingsSection(item) === "ingress" &&
           isIngressSettingVisible(item.key, draft[INGRESS_PROVIDER_SETTING_KEY] ?? savedProvider)
         }
-        onDraftChange={(draft) => setDraftProvider(draft[INGRESS_PROVIDER_SETTING_KEY] ?? savedProvider)}
+        onDraftChange={(draft) => {
+          setDraftProvider(draft[INGRESS_PROVIDER_SETTING_KEY] ?? savedProvider);
+          setDraftOrigin(draft[CORE_PUBLIC_ORIGIN_SETTING_KEY] ?? null);
+        }}
       />
 
       <ProviderExplanation provider={provider} />

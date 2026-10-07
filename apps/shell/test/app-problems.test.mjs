@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { collectAppProblems } from "../src/app/shell/app-problems.ts";
+import { matchesAppStateFilter } from "../src/app/shell/runtime-states.ts";
 
 // Minimal shape collectAppProblems reads; everything else on CoreApp is irrelevant to it.
 function app(overrides = {}) {
@@ -21,6 +22,37 @@ function endpoint(key, availability, service) {
 
 test("a healthy app reports nothing", () => {
   assert.deepEqual(collectAppProblems(app({ runtimeState: "running" })), []);
+});
+
+test("an unhealthy running app explains readiness and appears in the attention filter", () => {
+  const record = app({ runtimeState: "running", health: { status: "degraded", services: [
+    { service: "app", status: "running", health: "unhealthy" },
+  ] } });
+  const [problem] = collectAppProblems(record);
+  assert.equal(problem.title, "App is running, but not ready");
+  assert.match(problem.detail, /app: unhealthy/);
+  assert.match(problem.detail, /Open console logs/);
+  assert.equal(matchesAppStateFilter(record, "attention"), true);
+  for (const override of [
+    { operationStatus: "updating" }, { runtimeState: "starting" }, { runtimeState: "stopped" },
+    { health: { status: "healthy", services: [] } },
+  ]) {
+    assert.deepEqual(collectAppProblems({ ...record, ...override }), []);
+    assert.equal(matchesAppStateFilter({ ...record, ...override }, "attention"), false);
+  }
+});
+
+test("an applied update explains failed readiness separately from an available build", () => {
+  const record = app({ runtimeState: "running", lastOperation: "update", operationStatus: "started",
+    updateProgress: { stage: "needs-attention" }, updateCheck: { updateAvailable: true } });
+  const [problem] = collectAppProblems(record);
+  assert.equal(problem.title, "Update installed, but app is not ready");
+  assert.match(problem.detail, /Installation finished, but readiness checks did not pass/);
+  assert.match(problem.detail, /available update is separate/);
+  assert.equal(matchesAppStateFilter(record, "attention"), true);
+  const recovered = { ...record, health: { status: "healthy", services: [] } };
+  assert.deepEqual(collectAppProblems(recovered), []);
+  assert.equal(matchesAppStateFilter(recovered, "attention"), false);
 });
 
 test("lastError is reported as an error carrying the message", () => {

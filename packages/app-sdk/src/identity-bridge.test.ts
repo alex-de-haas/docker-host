@@ -122,6 +122,83 @@ describe("AppIdentityBridge launch exchange", () => {
     cleanup();
   });
 
+  it("hands the active probe to the app before mounting protected content", async () => {
+    window.location.href = "http://app.local/";
+    const session = { status: "active", userId: "user-1", role: "admin", recovery: { appId: "sample" } };
+    const fetcher = vi.fn().mockResolvedValue(Response.json(session));
+    vi.stubGlobal("fetch", fetcher);
+    const onSession = vi.fn(() => expect(hooks.state.kind).toBe("recovering"));
+    AppIdentityBridge({ probePath: "/api/auth/session", onSession });
+    const cleanup = hooks.effect!();
+
+    await vi.waitFor(() => expect(hooks.state.kind).toBe("active"));
+
+    expect(onSession).toHaveBeenCalledExactlyOnceWith(session);
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher.mock.calls[0][0]).toBe("/api/auth/session");
+    cleanup();
+  });
+
+  it.each(["forbidden", "unavailable", "misconfigured", "not-present", "expired"])("does not hand a %s probe to the app cache", async status => {
+    window.location.href = "http://app.local/";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ status, recovery: { appId: "sample" } })));
+    const onSession = vi.fn();
+    AppIdentityBridge({ onSession });
+    const cleanup = hooks.effect!();
+
+    await vi.waitFor(() => expect(hooks.state.kind).not.toBe("recovering"));
+
+    expect(onSession).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("rejects an active body on a failed HTTP response", async () => {
+    window.location.href = "http://app.local/";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ status: "active", recovery: { appId: "sample" } }, { status: 503 })));
+    const onSession = vi.fn();
+    AppIdentityBridge({ onSession });
+    const cleanup = hooks.effect!();
+
+    await vi.waitFor(() => expect(hooks.state.kind).toBe("unavailable"));
+
+    expect(onSession).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("does not cache a probe that completes after unmount", async () => {
+    window.location.href = "http://app.local/";
+    const probe = deferredResponse();
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(probe.promise));
+    const onSession = vi.fn();
+    AppIdentityBridge({ onSession });
+    hooks.effect!()();
+    probe.resolve(Response.json({ status: "active", recovery: { appId: "sample" } }));
+    await probe.promise;
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(onSession).not.toHaveBeenCalled();
+  });
+
+  it("discards a probe for a superseded grant before handing session data to the app", async () => {
+    window.location.href = "http://app.local/";
+    const previous = deferredResponse();
+    const current = { status: "active", userId: "new-user", recovery: { appId: "sample" } };
+    const fetcher = vi.fn().mockReturnValueOnce(previous.promise).mockResolvedValueOnce(Response.json(current));
+    vi.stubGlobal("fetch", fetcher);
+    const onSession = vi.fn();
+    AppIdentityBridge({ onSession });
+    const cleanup = hooks.effect!();
+    try {
+      rememberAppGrant("replacement-grant");
+      previous.resolve(Response.json({ ...current, userId: "old-user" }));
+
+      await vi.waitFor(() => expect(hooks.state.kind).toBe("active"));
+
+      expect(onSession).toHaveBeenCalledExactlyOnceWith(current);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    } finally { cleanup(); forgetAppGrant(); }
+  });
+
 });
 
 describe("AppIdentityBridge embedded sign-in", () => {

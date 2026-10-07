@@ -1,6 +1,6 @@
 {
   "name": "@haas/hosty-shell",
-  "version": "0.94.0",
+  "version": "0.95.2",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",

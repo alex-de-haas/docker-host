@@ -11,8 +11,8 @@ export const INGRESS_PROVIDER_NONE = "none";
 export const INGRESS_PROVIDER_CLOUDFLARE_REMOTE = "cloudflare-remote";
 export const INGRESS_PROVIDER_CLOUDFLARED = "cloudflared";
 
-// The group name Core tags its ingress settings with. The Ingress tab renders exactly this group and
-// the Core tab renders everything else, so the split needs no new field in the settings contract.
+// Core tags provider settings with this group. Shell displays them alongside Core's connection
+// settings in Ingress without changing the server's setting groups.
 export const INGRESS_SETTINGS_GROUP = "Public ingress";
 
 export const INGRESS_PROVIDER_SETTING_KEY = "HOSTY_INGRESS_PROVIDER";

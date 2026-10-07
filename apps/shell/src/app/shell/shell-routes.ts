@@ -45,13 +45,27 @@ export const SHELL_VIEW_LABELS: Record<ShellView, string> = {
 
 const ADMIN_SHELL_VIEWS = new Set<ShellView>(["dashboard", "settings"]);
 
-export const HOST_SETTINGS_SECTIONS: { id: HostSettingsTab; label: string }[] = [
-  { id: "profile", label: "Your profile" },
-  { id: "agents", label: "Agents" },
-  { id: "shell", label: "Shell" }, { id: "users", label: "Users" }, { id: "tokens", label: "Access tokens" },
-  { id: "core", label: "Core" }, { id: "ingress", label: "Ingress" }, { id: "mounts", label: "Shared mounts" },
+export const HOST_SETTINGS_SECTIONS: {
+  id: string;
+  label: string;
+  tabs: { id: HostSettingsTab; label: string }[];
+}[] = [
+  { id: "profile", label: "Your profile", tabs: [{ id: "profile", label: "Your profile" }] },
+  { id: "general", label: "General", tabs: [{ id: "general", label: "General" }] },
+  { id: "harness", label: "Harness", tabs: [{ id: "agents", label: "Agents" }, { id: "shell", label: "Shell" }] },
+  { id: "security", label: "Security", tabs: [
+    { id: "users", label: "Users" }, { id: "tokens", label: "Access tokens" },
+    { id: "connections", label: "Source connections" }, { id: "policies", label: "Policies" },
+  ] },
+  { id: "ingress", label: "Ingress", tabs: [{ id: "ingress", label: "Ingress" }] },
+  { id: "mounts", label: "Shared mounts", tabs: [{ id: "mounts", label: "Shared mounts" }] },
 ];
-const HOST_SETTINGS_TABS = new Set<string>(HOST_SETTINGS_SECTIONS.map(section => section.id));
+const HOST_SETTINGS_TABS = new Set<string>(["core", ...HOST_SETTINGS_SECTIONS.flatMap(section => section.tabs.map(tab => tab.id))]);
+
+export function getHostSettingsSection(tab: string) {
+  const resolved = readSettingsTabParam(tab);
+  return HOST_SETTINGS_SECTIONS.find(section => section.tabs.some(item => item.id === resolved));
+}
 
 // A settings surface the URL does not name resolves to Users rather than erroring — the same
 // principle that makes an unrecognized route fall through instead of blanking the screen. Every
@@ -109,7 +123,7 @@ export function getShellAuthorizationRedirect(
 }
 
 export function readHostSettingsTab(value: string | null | undefined): HostSettingsTab {
-  const tab = value?.trim();
+  const tab = readSettingsTabParam(value);
   return tab && HOST_SETTINGS_TABS.has(tab) ? (tab as HostSettingsTab) : DEFAULT_HOST_SETTINGS_TAB;
 }
 
@@ -152,7 +166,7 @@ export function readShellRoute(pathname: string, searchParams: ShellSearchParams
   // The raw value, not readHostSettingsTab: an app-settings tab carries the app id here, and
   // collapsing anything unknown to the default made every app tab land on Users — the surface was
   // rendered and unreachable.
-  const settingsTab = readSettingsTabParam(searchParams.get("tab"));
+  const settingsTab = readSettingsTabParam(searchParams.get("tab"), searchParams.get("section"));
   const appPath = normalizeAppPath(searchParams.get("path"));
 
   if (path === "/workspace") {
@@ -237,9 +251,12 @@ export function loginContinuation(pathname: string, search: string) {
   return `?returnTo=${encodeURIComponent(`${pathname}${search}`)}`;
 }
 
-export function getSettingsHref(tab: HostSettingsTab) {
+export function getSettingsHref(tab: string) {
+  const resolved = readSettingsTabParam(tab);
+  const section = getHostSettingsSection(resolved);
   const params = new URLSearchParams();
-  params.set("tab", tab);
+  params.set("tab", section?.id ?? resolved);
+  if (section && section.tabs.length > 1) params.set("section", resolved);
   return `/settings?${params.toString()}`;
 }
 
@@ -257,8 +274,11 @@ export function getAppSettingsHref(appId: string) {
 }
 
 /** The raw tab value, before it is resolved against host tabs or the installed apps. */
-export function readSettingsTabParam(value: string | null | undefined): string {
-  return value?.trim() || DEFAULT_HOST_SETTINGS_TAB;
+export function readSettingsTabParam(value: string | null | undefined, child?: string | null): string {
+  const tab = value?.trim() || DEFAULT_HOST_SETTINGS_TAB;
+  if (tab === "core") return "general";
+  const section = HOST_SETTINGS_SECTIONS.find(section => section.id === tab);
+  return section ? section.tabs.find(item => item.id === child)?.id ?? section.tabs[0].id : tab;
 }
 
 export function isHostSettingsTab(value: string): value is HostSettingsTab {

@@ -1,7 +1,4 @@
 using System.Diagnostics;
-using System.Net.Http.Headers;
-using System.Text;
-using Microsoft.AspNetCore.WebUtilities;
 
 namespace Haas.Hosty.Core;
 
@@ -14,7 +11,7 @@ internal sealed record PrivateSourceChoice(string? ManifestConnectionId = null, 
 
 internal sealed class PrivateSourceService(UserConnectionService connections, HttpClient http)
 {
-    internal static AppLifecycleException Denied(string message = "Private source access is unavailable. Reconnect in your profile, then review the app's source connections.")
+    internal static AppLifecycleException Denied(string message = "Private source access is unavailable. Reconnect in Shell Settings → Source connections, then review the app's source connections.")
         => new("source_access_required", message);
 
     public async Task<SourceReadGrant> BindAsync(string owner, string id, string url, bool manifest, CancellationToken ct)
@@ -54,15 +51,12 @@ internal sealed class PrivateSourceService(UserConnectionService connections, Ht
         catch (AppLifecycleException) { return null; }
     }
 
-    private Task<byte[]> ReadContentAsync(SourceReadGrant grant, RepositoryFile file, long limit, CancellationToken ct)
+    private Task<byte[]> ReadContentAsync(SourceReadGrant grant, SourceRepositoryFile file, long limit, CancellationToken ct)
         => UseGrantAsync(grant, async connection =>
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
-            using var request = new HttpRequestMessage(HttpMethod.Get, file.ApiUrl);
-            request.Headers.Authorization = Header(connection, git: false);
-            request.Headers.UserAgent.ParseAdd("Hosty/1.0");
-            request.Headers.Accept.ParseAdd(connection.Provider == "github" ? "application/vnd.github.raw+json" : "application/octet-stream");
+            using var request = connections.Providers.Resolve(connection.Provider).FileRequest(connection, file);
             try
             {
                 using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
@@ -92,7 +86,7 @@ internal sealed class PrivateSourceService(UserConnectionService connections, Ht
         {
             if (directory is not null) await ValidateGitConfigAsync(directory, grant.Repository, ct);
             var start = AppSourceService.CreateGitStartInfo(directory, args);
-            ConfigureGit(start, grant.Repository, Header(connection, git: true).ToString());
+            ConfigureGit(start, grant.Repository, connections.Providers.Resolve(connection.Provider).GitAuthorization(connection).ToString());
             ProcessRunResult result;
             try { result = await ProcessRunner.RunAsync(start, TimeSpan.FromMinutes(10), ct, 256 * 1024); }
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
@@ -159,77 +153,19 @@ internal sealed class PrivateSourceService(UserConnectionService connections, Ht
     private async Task<T> UseAsync<T>(string owner, string id, Func<UserProviderConnection, Task<T>> action, CancellationToken ct)
     {
         try { return await connections.UseForSourceAsync(owner, id, action, ct); }
-        catch (UserConnectionException) { throw Denied(); }
+        catch (UserConnectionException ex) { throw Denied(ex.Code == "provider_unsupported" ? ex.Message : "Private source access is unavailable. Check the selected connection in Shell settings."); }
     }
 
-    private static AuthenticationHeaderValue Header(UserProviderConnection c, bool git)
-        => c.Provider == "azure-devops" && c.Method == "pat" || git && c.Provider == "github"
-            ? new("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes((c.Provider == "github" ? "x-access-token" : "") + ":" + c.AccessToken)))
-            : new("Bearer", c.AccessToken);
-
-    private static void ValidateProvider(UserProviderConnection c, string repository)
+    private void ValidateProvider(UserProviderConnection connection, string repository)
     {
-        var uri = new Uri(repository);
-        if (c.Provider == "github" && uri.Host == "github.com") return;
-        if (c.Provider == "azure-devops" && uri.Host == "dev.azure.com" &&
-            uri.AbsolutePath.Split('/')[1].Equals(c.Organization, StringComparison.OrdinalIgnoreCase)) return;
-        throw Denied("The connection does not belong to this source provider or Azure DevOps organization.");
+        var provider = connections.Providers.Resolve(connection.Provider);
+        if (connections.Providers.ForUrl(repository).Descriptor.Id != provider.Descriptor.Id)
+            throw Denied("The connection does not belong to this source provider.");
+        _ = provider.NormalizeRepository(repository);
     }
 
-    internal static string NormalizeRepository(string value)
-    {
-        var uri = SafeUri(value);
-        var parts = Parts(uri);
-        if (uri.Host == "github.com" && parts.Length == 2)
-            return $"https://github.com/{parts[0].ToLowerInvariant()}/{parts[1].TrimEnd('/').RemoveGitSuffix().ToLowerInvariant()}.git";
-        if (uri.Host == "dev.azure.com" && parts.Length == 4 && parts[2] == "_git")
-            return $"https://dev.azure.com/{parts[0].ToLowerInvariant()}/{Uri.EscapeDataString(parts[1])}/_git/{Uri.EscapeDataString(parts[3])}";
-        throw Denied("Choose a GitHub or Azure DevOps HTTPS repository URL without credentials or query parameters.");
-    }
-
-    internal sealed record RepositoryFile(string Repository, string Path, string Ref, string RefType)
-    {
-        public string ApiUrl
-        {
-            get
-            {
-                var u = new Uri(Repository); var p = Parts(u);
-                if (u.Host == "github.com") return $"https://api.github.com/repos/{p[0]}/{p[1].RemoveGitSuffix()}/contents/{string.Join('/', Path.Split('/').Select(Uri.EscapeDataString))}?ref={Uri.EscapeDataString(Ref)}";
-                return $"https://dev.azure.com/{p[0]}/{Uri.EscapeDataString(p[1])}/_apis/git/repositories/{Uri.EscapeDataString(p[3])}/items?path={Uri.EscapeDataString('/' + Path)}&versionDescriptor.version={Uri.EscapeDataString(Ref)}&versionDescriptor.versionType={RefType}&download=true&api-version=7.1";
-            }
-        }
-    }
-
-    internal static RepositoryFile ParseManifest(string value)
-    {
-        var uri = SafeUri(value, query: true); var p = Parts(uri);
-        if (uri.Host == "raw.githubusercontent.com" && p.Length >= 4 && uri.Query.Length == 0)
-            return new(NormalizeRepository($"https://github.com/{p[0]}/{p[1]}"), string.Join('/', p.Skip(3)), p[2], "branch");
-        if (uri.Host == "github.com" && p.Length >= 5 && p[2] == "blob" && uri.Query.Length == 0)
-            return new(NormalizeRepository($"https://github.com/{p[0]}/{p[1]}"), string.Join('/', p.Skip(4)), p[3], "branch");
-        if (uri.Host == "dev.azure.com" && p.Length == 4 && p[2] == "_git")
-        {
-            var query = QueryHelpers.ParseQuery(uri.Query);
-            if (query.Keys.Any(k => k is not ("path" or "version")) || !query.TryGetValue("path", out var filePath) || filePath.Count != 1 || !query.TryGetValue("version", out var fileVersion) || fileVersion.Count != 1) throw Denied("Azure manifest URLs require path and version (GBbranch, GTtag or GCcommit).");
-            var path = filePath.ToString().TrimStart('/'); var version = fileVersion.ToString();
-            var type = version.Length > 2 ? version[..2] switch { "GB" => "branch", "GT" => "tag", "GC" => "commit", _ => "" } : "";
-            if (type.Length == 0 || string.IsNullOrWhiteSpace(path) || path.Contains('\\') || path.Split('/').Any(s => s is ".." or "." or "")) throw Denied("Invalid Azure manifest file or version.");
-            return new(NormalizeRepository(uri.GetLeftPart(UriPartial.Path)), path, version[2..], type);
-        }
-        throw Denied("Use a GitHub raw/blob file URL, or an Azure repository URL with ?path=/manifest.json&version=GBmain.");
-    }
-
-    private static Uri SafeUri(string value, bool query = false)
-    {
-        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != "https" || !uri.IsDefaultPort || uri.UserInfo.Length != 0 || uri.Fragment.Length != 0 || !query && uri.Query.Length != 0 || value.Contains('\\')) throw Denied("Private source URLs must use HTTPS without embedded credentials.");
-        return uri;
-    }
-    private static string[] Parts(Uri uri)
-    {
-        var parts = uri.AbsolutePath.Trim('/').Split('/').Select(Uri.UnescapeDataString).ToArray();
-        if (parts.Any(p => string.IsNullOrWhiteSpace(p) || p is "." or ".." || p.IndexOfAny(['/', '\\', '?', '#', '\r', '\n']) >= 0)) throw Denied("Invalid source URL path.");
-        return parts;
-    }
+    internal string NormalizeRepository(string value) => connections.Providers.ForUrl(value).NormalizeRepository(value);
+    private SourceRepositoryFile ParseManifest(string value) => connections.Providers.ForUrl(value).ParseManifest(value);
 }
 
 internal static class RepositoryNames

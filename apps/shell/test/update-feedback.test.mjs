@@ -32,7 +32,9 @@ test("never checked, failure without a result, and successful empty checks stay 
 
 test("older Core progress falls back honestly; unhealthy completion is not success", () => {
   assert.equal(updateFeedback({ operationStatus: "updating" }, 0), "Updating");
-  assert.equal(updateFeedback({ lastOperation: "update", operationStatus: "updated", updateProgress: { stage: "needs-attention", changedAt: "2026-09-10" } }, 0), "Updated · not ready");
+  const app = { lastOperation: "update", operationStatus: "updated", updateProgress: { stage: "needs-attention", changedAt: "2026-09-10" } };
+  assert.equal(updateFeedback(app, 0), "Updated · needs attention");
+  assert.equal(updateFeedback({ ...app, health: { status: "healthy" } }, 0), null);
 });
 
 test("bulk update excludes retained offers after failures, review requirements and running operations", async () => {

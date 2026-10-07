@@ -8,13 +8,12 @@ internal sealed record UserProviderConnection(string Id, string UserId, string L
 internal sealed record UserConnectionSummary(string Id, string Label, string Provider, string Organization,
     string AccountId, string AccountName, string Method, DateTimeOffset? ExpiresAt, DateTimeOffset? CheckedAt, string Status);
 internal sealed record UserProfileResponse(string Id, string? Email, string? DisplayName,
-    UserConnectionSummary[] Connections, UserConnectionProviders Providers, PublicationIdentity? GitIdentity = null);
-internal sealed record UserConnectionProviders(bool GitHubDevice, bool AzureDevice);
+    UserConnectionSummary[] Connections, SourceProviderDescriptor[] Providers, PublicationIdentity? GitIdentity = null);
 internal sealed record UserProfileUpdate(string DisplayName);
 internal sealed record BasicUserProfile(string Id, string? Email, string? DisplayName);
-internal sealed record SourceConnectionsResponse(UserConnectionSummary[] Connections, UserConnectionProviders Providers, PublicationIdentity? GitIdentity);
+internal sealed record SourceConnectionsResponse(UserConnectionSummary[] Connections, SourceProviderDescriptor[] Providers, PublicationIdentity? GitIdentity);
 internal sealed record SourceIdentityUpdate(PublicationIdentity? GitIdentity);
-internal sealed record UserConnectionInput(string Label, string Provider, string? Organization = null,
+internal sealed record UserConnectionInput(string? Label, string Provider, string? Organization = null,
     string? Tenant = null, string? Token = null, bool PrivateRepositories = false);
 internal sealed record UserConnectionRename(string Label);
 internal sealed record UserDeviceResponse(string Id, string Status, string? UserCode = null,

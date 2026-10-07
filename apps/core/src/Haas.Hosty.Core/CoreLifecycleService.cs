@@ -31,9 +31,9 @@ internal sealed partial class CoreLifecycleService(
     // allocation; production DI always supplies it. When absent, install skips reservation and ports are
     // resolved at first start as before. See RuntimePortAllocator.
     RuntimePortAllocator? portAllocator = null,
-    // Application lifetime for detaching background update applies from the triggering HTTP request
-    // (a page reload must not abort a half-done apply). Optional only for unit fixtures; production
-    // DI always supplies it. When absent, background applies run unlinked from any token.
+    // Application lifetime for updates and the stop/start portion of restarts. Losing the triggering
+    // request must not strand an app after stopping it. Optional only for unit fixtures; production
+    // DI always supplies it. When absent, these operations run unlinked from any token.
     IHostApplicationLifetime? hostLifetime = null,
     // How long the start half of a stop->start pair waits for the app's own host port to come back before
     // starting anyway. Overridable only so tests can reach the give-up path without a real 15s wait;
@@ -72,7 +72,7 @@ internal sealed partial class CoreLifecycleService(
         if (access.Manifest is { } manifest && manifest.ManifestUrl != selection.ManifestUrl)
             throw PrivateSourceService.Denied("The manifest URL changed. Select and review its connection again.");
         if (access.Git is { } git && (selection.Manifest.Source?.Repository is not { } repository ||
-            PrivateSourceService.NormalizeRepository(repository) != git.Repository))
+            (privateSources ?? throw PrivateSourceService.Denied()).NormalizeRepository(repository) != git.Repository))
             throw PrivateSourceService.Denied("The Git source changed. Select and review its connection again.");
         await (privateSources ?? throw PrivateSourceService.Denied()).ValidateAsync(access, ct);
     }
@@ -1387,6 +1387,11 @@ internal sealed partial class CoreLifecycleService(
             await new HostPathAuthority(paths, apps).AppAsync(context.App, cancellationToken);
             context = await ReserveRuntimePathsAsync(EnsureMountsReadyForStart(context), cancellationToken);
             var appliedConfigurationHash = AppConfigurationFingerprint.Compute(context.App, context.Mounts);
+            // From the first stop onward Core owns completion. A self-restart of Shell disconnects
+            // its proxy request as soon as Stop kills the server carrying that request. Keep caller
+            // cancellation during lock acquisition/preflight, but never let it cancel the start half.
+            cancellationToken.ThrowIfCancellationRequested();
+            cancellationToken = hostLifetime?.ApplicationStopping ?? CancellationToken.None;
             // A restart reports its two halves instead of a single `restarting`: both are IsBusy, so
             // clients behave identically either way, and the operator gets to see which half is slow.
             _ = await apps.UpdateAppAsync(appId, current => current with
@@ -3530,6 +3535,9 @@ internal sealed partial class CoreLifecycleService(
     private static bool IsSystemManifest(RuntimeAppManifest manifest)
         => string.Equals(manifest.Role, "system", StringComparison.Ordinal);
 
+    private static bool IsPreservedCoreSetting(string key)
+        => key.StartsWith("HOSTY_PORT_", StringComparison.Ordinal) || LocalBrowserOrigins.IsNameKey(key);
+
     private AppRecord BuildAppRecord(
         RuntimeAppManifestSelection selection,
         string manifestPath,
@@ -3547,7 +3555,7 @@ internal sealed partial class CoreLifecycleService(
             },
             StringComparer.Ordinal);
 
-        // Carry forward Core-reserved host-port overrides (HOSTY_PORT_<key>) across a rebuild. They are
+        // Carry forward Core-owned host-port overrides and local browser names across a rebuild. They are
         // not manifest-declared settings, so BuildSettingDefinitions omits them; without this a runtime
         // switch or update drops the override and the app's assigned host port reverts to the manifest's
         // localPort — e.g. the Shell (assigned config.ShellPort via the bootstrap) reverting to 3000. An
@@ -3556,7 +3564,7 @@ internal sealed partial class CoreLifecycleService(
         {
             foreach (var (key, value) in existing.Settings)
             {
-                if ((key.StartsWith("HOSTY_PORT_", StringComparison.Ordinal) || LocalBrowserOrigins.IsNameKey(key)) && !settings.ContainsKey(key))
+                if (IsPreservedCoreSetting(key) && !settings.ContainsKey(key))
                 {
                     settings[key] = value;
                 }
@@ -5707,15 +5715,10 @@ internal sealed partial class CoreLifecycleService(
             }
             else if (!hasTarget)
             {
-                // Core-reserved host-port overrides (HOSTY_PORT_<key>) are not manifest settings and
-                // the update deliberately carries them forward (see the BuildAppRecord carry-forward).
-                // Reporting one "removed" here made every plan for such an app carry a phantom
-                // review-class change that apply could never clear — an endless same-version "Review"
-                // loop (seen live on a Shell record still holding its retired HOSTY_PORT_HTTP pin).
-                // The skip is prefix-wide on purpose: the carry-forward is prefix-based too, keeping
-                // any stored HOSTY_PORT_* key the target does not declare — even one a past manifest
-                // declared itself — so this mirrors exactly what apply does.
-                if (!key.StartsWith("HOSTY_PORT_", StringComparison.Ordinal))
+                // Match BuildAppRecord's carry-forward: host ports and local browser names survive
+                // apply, so reporting their removal would produce an update that never converges.
+                // Declared target settings still undergo the normal type/secret checks below.
+                if (!IsPreservedCoreSetting(key))
                 {
                     changes.Add($"setting:{key}:removed");
                 }

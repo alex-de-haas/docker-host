@@ -71,7 +71,7 @@ import {
   resolveAssetSrc,
   shortDigest,
 } from "../app-helpers";
-import { collectAppProblems } from "../app-problems";
+import { appReadinessProblem, collectAppProblems } from "../app-problems";
 import {
   collectInstalledRevisions,
   collectTargetRevisions,
@@ -571,7 +571,7 @@ function CoreSection({
                 </div>
               </TableCell>
               <TableCell role="cell" className="dashboard-status"><div className="space-y-1">
-                <StatusBadge value={status ? status.status : "offline"} />
+                <StatusBadge value={status ? status.status : "offline"} compact />
                 {development.phase && <div role="status" className="text-xs text-muted-foreground">{development.phase}</div>}
                 {!dev && (coreUpdating || coreUpdate?.clientPhase) && <div role="status" className="flex items-center gap-1 text-xs text-muted-foreground">
                   {coreUpdating && <LoaderCircle className="size-3 animate-spin" />}
@@ -667,6 +667,7 @@ function AppServiceDetailsPanel({
   app,
   healthState,
   updateStatusState,
+  onOpenLogs,
 }: {
   app: CoreApp;
   healthState?: RuntimeHealthState;
@@ -674,6 +675,7 @@ function AppServiceDetailsPanel({
   // from the row's actions menu. Expanding a row does not probe: whether an update exists is the
   // row's own Update/Review affordance (the fleet-check verdict), not this panel's job.
   updateStatusState?: UpdateStatusState;
+  onOpenLogs: () => void;
 }) {
   const serviceRows = buildRuntimeServiceRows(app, healthState?.health);
   const copyEndpointUrl = async (url: string) => {
@@ -712,6 +714,11 @@ function AppServiceDetailsPanel({
       {problems.map((problem) => (
         <Alert key={problem.title} severity={problem.severity} title={problem.title} detail={problem.detail} />
       ))}
+      {appReadinessProblem(app) && app.capabilities.includes("logs") && (
+        <Button variant="outline" size="sm" onClick={onOpenLogs}>
+          <Terminal data-icon="inline-start" />Open console logs
+        </Button>
+      )}
       {healthLoading && (
         <div className="flex flex-wrap items-center gap-2 rounded-md bg-muted/30 px-2 py-1.5">
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -1077,6 +1084,7 @@ function InstalledAppsTable({
                         app={app}
                         healthState={healthState}
                         updateStatusState={updateStatusState}
+                        onOpenLogs={() => onOpenPanel(app, "logs")}
                       />
                     </TableCell>
                   </TableRow>
@@ -1226,12 +1234,13 @@ function InstalledAppRow({
           applying={isBusy("update")}
           onApply={() => onUpdateApp(app)}
           onReview={() => onOpenPanel(app, "update")}
+          onShowDetails={() => { if (!expanded) onToggleExpanded(); }}
         />
       </TableCell>
       <TableCell role="cell" className="dashboard-status">
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            <StatusBadge value={app.runtimeState || app.operationStatus} health={isAppUp(app.runtimeState) ? app.health?.status : null} />
+            <StatusBadge value={app.runtimeState || app.operationStatus} health={isAppUp(app.runtimeState) ? app.health?.status : null} compact />
             {/* Autostart had a column of its own, and it read "On" for nearly every row — a column that
                 says the same thing ten times is width spent on nothing. Only the exception is worth a
                 mark, so the icon appears exactly when an app does *not* come up with the host. */}
@@ -1318,7 +1327,7 @@ function InstalledAppRow({
   );
 }
 
-function AppUpdateFeedback({ app }: { app: CoreApp }) {
+function AppUpdateFeedback({ app, onShowDetails }: { app: CoreApp; onShowDetails: () => void }) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     if (app.updateProgress?.stage !== "completed") return;
@@ -1331,7 +1340,16 @@ function AppUpdateFeedback({ app }: { app: CoreApp }) {
   if (!label) return null;
   const success = app.updateProgress?.stage === "completed";
   const busy = app.operationStatus === "updating" && !["failed", "interrupted"].includes(app.updateProgress?.stage ?? "");
-  return <div role="status" title={app.lastError ?? undefined} className={cn("flex min-w-0 items-start gap-1 text-xs leading-4 [&>svg]:mt-0.5 [&>svg]:shrink-0", success ? "text-emerald-600" : busy ? "text-muted-foreground" : "text-amber-600")}>
+  const detail = appReadinessProblem(app)?.detail ?? app.lastError;
+  if (!success && !busy) return <Tooltip>
+    <TooltipTrigger asChild>
+      <Button variant="link" size="sm" className="h-auto justify-start p-0" onClick={onShowDetails} aria-label={`${label} — show details`}>
+        <CircleAlert data-icon="inline-start" />{label}
+      </Button>
+    </TooltipTrigger>
+    <TooltipContent className="max-w-80">{detail ?? "Open the app details to investigate this update."}</TooltipContent>
+  </Tooltip>;
+  return <div role="status" className={cn("flex min-w-0 items-start gap-1 text-xs leading-4 [&>svg]:mt-0.5 [&>svg]:shrink-0", success ? "text-success" : "text-muted-foreground")}>
     {success ? <Check className="size-3" /> : busy ? <LoaderCircle className="size-3 animate-spin" /> : <CircleAlert className="size-3" />}<span className="min-w-0 whitespace-normal wrap-anywhere">{label}</span>
   </div>;
 }
@@ -1395,6 +1413,7 @@ function AppVersionCell({
   applying,
   onApply,
   onReview,
+  onShowDetails,
 }: {
   app: CoreApp;
   verdict: AppUpdateAvailability | null | undefined;
@@ -1403,6 +1422,7 @@ function AppVersionCell({
   applying: boolean;
   onApply: () => void;
   onReview: () => void;
+  onShowDetails: () => void;
 }) {
   const profile = (app.runtimeProfiles ?? []).find((profile) => profile.key === app.selectedRuntime);
   const development = profile?.development;
@@ -1420,56 +1440,58 @@ function AppVersionCell({
 
   return (
     <TooltipProvider delayDuration={150}>
-      <div className="flex items-center gap-1.5" title={updateCheckDescription(verdict)}>
-        <Package aria-hidden="true" className="size-3.5 shrink-0" />
-        <div className="min-w-0 space-y-0.5 leading-tight">
-          <div>
-            <VersionLine
-              value={app.version}
-              title={`Installed ${app.version}`}
-              revisions={installedRevisions}
-              empty="No pinned revision recorded for this build."
-            />
-          </div>
-          {available && (
-            <div>
+      <div className="min-w-0 space-y-0.5 leading-tight" title={updateCheckDescription(verdict)}>
+        <div className="flex items-center gap-1.5">
+          <div className="min-w-0 space-y-0.5 leading-tight">
+            <div className="flex items-center gap-1.5">
+              <Package aria-hidden="true" className="size-3.5 shrink-0" />
               <VersionLine
-                value={available}
-                className={accent}
-                title={available === app.version ? `New build of ${available}` : `Update to ${available}`}
-                revisions={targetRevisions}
-                empty="This update changes the app's manifest, not a compiled artifact."
+                value={app.version}
+                title={`Installed ${app.version}`}
+                revisions={installedRevisions}
+                empty="No pinned revision recorded for this build."
               />
             </div>
-          )}
-          <AppUpdateFeedback key={app.updateProgress?.changedAt ?? "no-update"} app={app} />
+            {available && (
+              <div className="pl-5">
+                <VersionLine
+                  value={available}
+                  className={accent}
+                  title={available === app.version ? `New build of ${available}` : `Update to ${available}`}
+                  revisions={targetRevisions}
+                  empty="This update changes the app's manifest, not a compiled artifact."
+                />
+              </div>
+            )}
+          </div>
+          {updateVisible && (needsReview ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="shrink-0 text-amber-600 hover:bg-amber-500/10 hover:text-amber-600 dark:text-amber-500 dark:hover:text-amber-500"
+              title={verdict?.error ? "Previously found update — check failed; review before applying" : "Update available — review before applying"}
+              aria-label="Update available — review before applying"
+              onClick={onReview}
+            >
+              <ArrowUpCircle className="h-4 w-4" />
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="shrink-0 text-sky-600 hover:bg-sky-500/10 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-400"
+              title="Routine update available — apply it (use the actions menu to review the changes first)"
+              aria-label="Routine update available — apply"
+              disabled={applying}
+              onClick={onApply}
+            >
+              {applying ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUpCircle className="h-4 w-4" />}
+            </Button>
+          ))}
         </div>
-        {updateVisible && (needsReview ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="shrink-0 text-amber-600 hover:bg-amber-500/10 hover:text-amber-600 dark:text-amber-500 dark:hover:text-amber-500"
-            title={verdict?.error ? "Previously found update — check failed; review before applying" : "Update available — review before applying"}
-            aria-label="Update available — review before applying"
-            onClick={onReview}
-          >
-            <ArrowUpCircle className="h-4 w-4" />
-          </Button>
-        ) : (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="shrink-0 text-sky-600 hover:bg-sky-500/10 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-400"
-            title="Routine update available — apply it (use the actions menu to review the changes first)"
-            aria-label="Routine update available — apply"
-            disabled={applying}
-            onClick={onApply}
-          >
-            {applying ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUpCircle className="h-4 w-4" />}
-          </Button>
-        ))}
+        <AppUpdateFeedback key={app.updateProgress?.changedAt ?? "no-update"} app={app} onShowDetails={onShowDetails} />
       </div>
     </TooltipProvider>
   );

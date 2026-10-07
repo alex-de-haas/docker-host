@@ -8,8 +8,8 @@ components: [apps/core, apps/harness]
 # Private App Sources
 
 Core reads private repository manifests and Git sources through explicitly selected
-[personal provider connections](../user-profile-connections/feature.md), configured in Harness
-settings → Source providers. Shell links to authorized source tools and never reads personal connection summaries. Public/local installation remains
+[personal provider connections](../user-profile-connections/feature.md), configured in Shell
+settings → Source connections. Shell reads sanitized summaries and offers explicit account selection. Public/local installation remains
 available without personal connections; selecting a connection does not make it a host default.
 
 ## Supported Resources
@@ -17,20 +17,15 @@ available without personal connections; selecting a connection does not make it 
 | Resource | Input | Authenticated destination |
 | --- | --- | --- |
 | GitHub manifest | `https://raw.githubusercontent.com/OWNER/REPO/REF/path/manifest.json` or `https://github.com/OWNER/REPO/blob/REF/path/manifest.json` | GitHub repository contents API with raw media type |
-| Azure DevOps manifest | `https://dev.azure.com/ORG/PROJECT/_git/REPO?path=/path/manifest.json&version=GBmain` | Azure DevOps Git items API |
 | Git sources | GitHub.com or `dev.azure.com` HTTPS repository URL | That exact repository, through Git |
 
-GitHub URL refs occupy one path segment. Azure version prefixes are `GB` (branch), `GT` (tag) and
-`GC` (commit); branch names with slashes use URL encoding in the query. Azure connections must belong
-to the repository's organization. GitHub Enterprise, Azure Server, SSH URLs, authenticated release
-assets, feeds and container registries are outside this contract. The latter resources have an
-independent [distribution-access plan](../private-distribution-access/plan.md).
+GitHub URL refs occupy one path segment. GitHub Enterprise, Azure DevOps, SSH URLs, authenticated
+release assets and arbitrary HTTP credential destinations are unsupported for private source reads.
+Saved Azure bindings remain intact but fail with an actionable unsupported-provider error.
+Public Git transport does not require a source-provider adapter.
 
-The repository permission requirements remain those of the providers:
-[GitHub contents](https://docs.github.com/en/rest/repos/contents#get-repository-content) and
-[Azure Git items](https://learn.microsoft.com/en-us/rest/api/azure/devops/git/items/get?view=azure-devops-rest-7.1).
-A private manifest can install a public container image. Repository credentials are never reused for
-image pulls or other artifact hosts.
+The repository permission requirements remain those of
+[GitHub repository contents](https://docs.github.com/en/rest/repos/contents).
 
 ## Review And Persistence
 
@@ -41,12 +36,14 @@ A request cannot both clear and select the same connection. The confirmation dis
 use no personal connection. This also permits recovery after a formerly private source becomes public,
 without requiring the old connection to remain valid. Core derives the owner from the authenticated user and validates
 each resource against the selected provider; clients cannot supply trusted owner/grant records.
-App callers need both `apps.install` and `apps.sources`, including updates that keep existing private
+App callers need `apps.install` plus either `apps.sources` or `sources.connections`, including updates that keep existing private
 bindings and requests that remove them. Core derives the connection owner from the current actor,
 checks cached-plan bindings too, and rechecks the permissions on submission, status reads and execution.
-Runtime assignments confer no repository credential access. Shell exposes no connection selectors.
-Harness Source providers includes Application sources: install from a manifest, inspect an installed
-app's bindings, keep/replace/remove each connection, and submit a reviewed request to Core.
+Runtime assignments confer no repository credential access. Shell's manifest-install dialog selects
+manifest/Git accounts independently and retains them when changing runtime during review. Public
+installation omits private choices and remains available without the optional connection permission.
+The installed app's Source tab offers keep/replace/public choices and reviews an update before submission.
+Harness has no duplicate installation form.
 
 The separate Core confirmation page displays the resource, connection label and external account,
 and explains continued access for the app, background updates and source workspaces requested by
@@ -64,7 +61,7 @@ local copies or stop a runtime.
 
 ## Recovery And Source Workspaces
 
-The source owner reconnects in Harness settings → Source providers. Harness and the direct operator API
+The source owner reconnects in Shell settings → Source connections. Shell and the direct operator API
 accept replacement bindings through a reviewed app update. Public / no connection removes a saved
 binding. The source-access response never substitutes a host path for a URL.
 A new connection ID never inherits old grants automatically. Ownership cannot
@@ -81,7 +78,7 @@ Source updates prefetch missing reviewed Git objects before stopping the old run
 therefore preserves the running app and installed version. An installation whose initial start fails
 retains the app record and reviewed bindings for recovery; it does not require a second installation.
 Local control remains trusted operator authority. Personal connection selection and replacement
-are exposed in Harness; Core keeps the confirmation page. No CLI token argument is required or added.
+are exposed in Shell; Core keeps the confirmation page. No CLI token argument is required or added.
 
 ## Credential Handling
 
@@ -100,15 +97,15 @@ cooperative agent boundary.
 
 ## Testing Expectations
 
-- Provider fixtures cover GitHub/Azure account routing, multiple owners/organizations, unsupported
+- Provider fixtures cover GitHub account routing, multiple owners, legacy Azure rejection, unsupported
   URLs, redirects, remote errors, bounded content, asset containment and sanitized errors.
 - HTTP/lifecycle tests cover owner-only selections, Core review text, exact cached manifest binding,
   logout, disconnect/disable/delete, denied workspaces, failed updates preserving the running app,
   and revoked cached installation/update plans.
 - Real Git process tests verify URL-scoped transient configuration and absence of persisted tokens.
-- Harness source-selection DOM tests cover explicit preparation, independent connection selection and the bound
-  review request; HTTP tests cover its session/navigation boundary. Shell tests verify that private
-  source links do not read personal connections or initiate installation implicitly.
+- Shell source-selection tests cover explicit preparation, independent account choices, retained selections
+  on runtime review and public installation without connection-management permission. Harness tests
+  reject account mutations and installations while preserving authorized read-only selection.
 - Core-managed browser verification covers the installation and source settings surfaces.
 - Core/CLI tests, Shell build/tests/lint, Native AOT and documentation/version checks guard integration.
   Live provider clone/refresh tests require disposable external credentials; fixtures do not claim
