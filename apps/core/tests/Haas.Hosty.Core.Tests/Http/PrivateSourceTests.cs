@@ -373,8 +373,8 @@ public sealed class PrivateSourceTests
     }
 
     [Theory]
-    [InlineData("apps.sources", "apps.sources")]
-    [InlineData("apps.sources", "apps.install")]
+    [InlineData("apps.sources.full", "apps.sources.full")]
+    [InlineData("apps.sources.full", "apps.install")]
     [InlineData("sources.connections", "sources.connections")]
     [InlineData("sources.connections", "apps.install")]
     public async Task AppPrivateReview_RechecksBothPermissionsAtSubmitAndExecution(string selectionPermission, string revoked)

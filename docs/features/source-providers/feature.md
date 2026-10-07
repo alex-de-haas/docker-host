@@ -26,7 +26,7 @@ or disconnect them. Bound applications retain their grant references and receive
 Public generic Git transport remains independent of the private-provider registry.
 
 Shell owns **Settings → Security → Source connections** and Git attribution. Its optional `sources.connections`
-permission requires Core review. The existing `apps.sources` permission authorizes source work and
+permission requires Core review. The existing `apps.sources.full` permission authorizes source work and
 sanitized selection, without account-management authority. Both retain current-administrator and
 owner checks. A private installation/source-binding update additionally requires `apps.install`, and
 Core rechecks effective permissions and ownership at prepare, submit, status and execution.

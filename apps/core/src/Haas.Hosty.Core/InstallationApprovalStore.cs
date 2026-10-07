@@ -17,16 +17,28 @@ internal static class CoreAppPermissions
     public const string CoreLogs = "core.logs";
     public const string ReadUsers = "users.read";
     public const string ManageUsers = "users.manage";
-    public const string Sources = "apps.sources";
+    public const string Sources = "apps.sources.full";
+    public const string SourcesRead = "apps.sources.read";
+    public const string LegacySources = "apps.sources";
     public const string SourceConnections = "sources.connections";
     public const string ReadSkills = "apps.skills.read";
     public const string SpeechProviders = "providers.speech-to-text";
     public const string AssistantProviders = "providers.assistant";
-    public static readonly string[] Known = [Install, ReadApps, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourceConnections, ReadSkills, SpeechProviders, AssistantProviders];
+    public static readonly string[] Known = [Install, ReadApps, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, SourceConnections, ReadSkills, SpeechProviders, AssistantProviders];
+
+    // The old name grants exactly the same authority. Other retired permissions remain unsupported.
+    public static string Normalize(string permission) => permission == LegacySources ? Sources : permission;
+
+    public static IReadOnlyList<string> Normalize(IReadOnlyList<string> permissions)
+        => permissions.Any(p => p == LegacySources) ? permissions.Select(Normalize).ToArray() : permissions;
 
     public static IReadOnlyList<string> ResolveGrants(IReadOnlyList<string> required,
         IReadOnlyList<string> optional, IReadOnlyList<string>? selected, IReadOnlyList<string>? previous = null)
     {
+        required = Normalize(required);
+        optional = Normalize(optional);
+        selected = selected is null ? null : Normalize(selected);
+        previous = previous is null ? null : Normalize(previous);
         var unsupported = required.Concat(selected ?? []).Where(p => !Known.Contains(p, StringComparer.Ordinal)).ToArray();
         if (unsupported.Length > 0)
             throw new AppLifecycleException("app_permissions_unsupported", $"Unsupported permission declarations: {string.Join(", ", unsupported)}. Update the app manifest before approving permissions.");
@@ -39,6 +51,7 @@ internal static class CoreAppPermissions
     public static string Describe(string permission) => permission switch
     {
         Sources => "Access and modify application source code, including code Hosty executes on this host in development mode; manage workspaces and use selected source-provider connections",
+        SourcesRead => "Read repository documentation and development workspace document changes as the current administrator; no source edits or workspace mutations",
         SourceConnections => "Manage your own source-provider accounts and Git identity; select connections for reviewed installations",
         ReadApps => "List applications and read their state",
         AppLogs => "Read application logs",

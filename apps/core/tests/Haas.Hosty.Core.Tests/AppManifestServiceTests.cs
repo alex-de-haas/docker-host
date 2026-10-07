@@ -6,6 +6,24 @@ namespace Haas.Hosty.Core.Tests;
 public sealed class AppManifestServiceTests
 {
     [Theory]
+    [InlineData("corePermissions")]
+    [InlineData("optionalCorePermissions")]
+    public async Task LoadAsync_NormalizesLegacySourcesAlias(string property)
+    {
+        var path = await WriteManifestAsync("hosty.harness", role: $$""", "{{property}}": ["apps.sources"] """);
+        var manifest = (await new AppManifestService().LoadAsync(path)).Manifest;
+        Assert.Equal([CoreAppPermissions.Sources], property == "corePermissions" ? manifest.CorePermissions : manifest.OptionalCorePermissions);
+    }
+
+    [Fact]
+    public async Task LoadAsync_RejectsAliasAndCanonicalNameAsDuplicateAuthority()
+    {
+        var path = await WriteManifestAsync("hosty.harness", role: """, "corePermissions": ["apps.sources", "apps.sources.full"] """);
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(path));
+        Assert.Contains(error.Errors, e => e.Code == "app_manifest_core_permission_duplicate");
+    }
+
+    [Theory]
     [InlineData("..")]
     [InlineData(".")]
     [InlineData("../escape")]

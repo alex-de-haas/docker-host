@@ -6,6 +6,59 @@ namespace Haas.Hosty.Core.Tests;
 public sealed class AppRegistryStoreTests
 {
     [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task PermissionMigration_RenamesSourcesBeforeRemovingUnsupportedGrants(bool unsupported, bool optionalSource)
+    {
+        var paths = CreatePaths(await CreateTempRootAsync());
+        var app = CreateApp("hosty.harness") with
+        {
+            GrantedCorePermissions = unsupported ? ["apps.sources", "retired.permission"] : ["apps.sources"],
+            RequiredCorePermissions = optionalSource ? [] : ["apps.sources"],
+            OptionalCorePermissions = optionalSource ? ["apps.sources", CoreAppPermissions.SourceConnections] : [CoreAppPermissions.SourceConnections],
+            PermissionRevision = "reviewed",
+        };
+        var path = Path.Combine(paths.AppsRoot, app.Id, "state.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new AppStateDocument(2, app), CoreJson.TypeInfo<AppStateDocument>()));
+        var store = new AppRegistryStore(paths);
+        await new AppPermissionMigration(store).StartAsync(default);
+
+        var migrated = (await store.GetAppAsync(app.Id))!;
+        Assert.Equal([CoreAppPermissions.Sources], migrated.GrantedCorePermissions);
+        Assert.Equal(optionalSource ? [] : [CoreAppPermissions.Sources], migrated.RequiredCorePermissions);
+        Assert.Equal(optionalSource ? [CoreAppPermissions.Sources, CoreAppPermissions.SourceConnections] : [CoreAppPermissions.SourceConnections], migrated.OptionalCorePermissions);
+        Assert.Equal([CoreAppPermissions.Sources], Assert.Single(await store.ListAppsAsync()).GrantedCorePermissions);
+        if (unsupported) Assert.NotEqual("reviewed", migrated.PermissionRevision);
+        else Assert.Equal("reviewed", migrated.PermissionRevision);
+        var saved = await File.ReadAllTextAsync(path);
+        Assert.DoesNotContain("\"apps.sources\"", saved);
+        await new AppPermissionMigration(store).StartAsync(default);
+        Assert.Equal(saved, await File.ReadAllTextAsync(path));
+    }
+
+    [Fact]
+    public async Task PermissionMigration_SourceAliasPreservesVersionOneSourceMeaning()
+    {
+        var paths = CreatePaths(await CreateTempRootAsync());
+        var app = CreateApp("hosty.harness") with
+        {
+            GrantedCorePermissions = ["apps.sources"],
+            SourceState = new AppSourceState(null, "https://example.test/repo", null, "unreviewed", null, "/local/source", null),
+        };
+        var path = Path.Combine(paths.AppsRoot, app.Id, "state.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new AppStateDocument(1, app), CoreJson.TypeInfo<AppStateDocument>()));
+        var store = new AppRegistryStore(paths);
+        await new AppPermissionMigration(store).StartAsync(default);
+        var source = (await new AppRegistryStore(paths).GetAppAsync(app.Id))!.SourceState!;
+        Assert.Null(source.Commit);
+        Assert.Equal("unreviewed", source.OverrideCommit);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task PermissionCleanup_PreservesDeclarationsAndIsIdempotent(bool legacy)

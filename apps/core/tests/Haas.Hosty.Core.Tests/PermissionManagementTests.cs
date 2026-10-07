@@ -5,6 +5,27 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed partial class CoreLifecycleServiceTests
 {
+    [Fact]
+    public async Task SourcesAlias_UpgradedHostRetainsGrantWithoutNewReview()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var path = await WritePermissionManifest(fixture, ["apps.sources"], []);
+        await fixture.Service.InstallAsync(new(path, Autostart: false));
+        var app = (await fixture.Apps.GetAppAsync("example.permissions"))!;
+        var statePath = Path.Combine(fixture.Paths.AppsRoot, app.Id, "state.json");
+        await File.WriteAllTextAsync(statePath, System.Text.Json.JsonSerializer.Serialize(new AppStateDocument(2, app with
+        {
+            RequiredCorePermissions = ["apps.sources"], GrantedCorePermissions = ["apps.sources"],
+        }), CoreJson.TypeInfo<AppStateDocument>()));
+        await new AppPermissionMigration(fixture.Apps).StartAsync(default);
+        var observation = await fixture.Service.ObservePermissionsAsync(app.Id, true, default);
+        Assert.Equal([CoreAppPermissions.Sources], observation.Granted);
+        Assert.Empty(observation.MissingRequired);
+        Assert.False(observation.ReviewRequired);
+        await WritePermissionManifest(fixture, [CoreAppPermissions.Sources], []);
+        Assert.False((await fixture.Service.ObservePermissionsAsync(app.Id, true, default, forceRead: true)).ReviewRequired);
+    }
+
     [Theory]
     [InlineData("apps.update")]
     [InlineData("apps.workspaces.manage")]

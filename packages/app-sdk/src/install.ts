@@ -26,7 +26,7 @@ export interface InstallationSource {
     | { kind: "source-override"; appId: string; source: { path: string; commit?: string } }
     | { kind: "app-mounts"; appId: string; mounts: { mounts: { key: string; label?: string | null; hostPath?: string | null; globalMountName?: string | null }[] } }
     | { kind: "global-mount"; globalMount: { name: string; hostPath: string; mode?: string; description?: string | null } };
-  /** Personal source selection requires apps.install plus apps.sources or sources.connections and Core review. */
+  /** Personal source selection requires apps.install plus apps.sources.full or sources.connections and Core review. */
   sourceConnections?: { manifestConnectionId?: string; gitConnectionId?: string; clearManifestConnection?: boolean; clearGitConnection?: boolean };
 }
 export interface InstallationRequest {

@@ -58,7 +58,7 @@ interface LiveSession {
    * session keeps working with its host tools and simply loses app MCP until the operator speaks.
    */
   credential: string | null;
-  /** This app's identity for its own apps.sources operations; never exchanged for another app. */
+  /** This app's identity for its own apps.sources.full operations; never exchanged for another app. */
   workspaceCredential: string | null;
   refreshTimer: NodeJS.Timeout | null;
   /**
@@ -930,7 +930,7 @@ export class SessionManager {
     session.autoAllowed.clear();
     this.proxy?.unregister(session.record.id);
     // Independent app authority survives an expired cross-app delegation. Core revalidates the
-    // app grant, apps.sources and the current user on every workspace operation.
+    // app grant, apps.sources.full and the current user on every workspace operation.
     const ownServers = this.development?.available && this.proxyBaseUrl && session.workspaceCredential
       ? this.developmentMcp.config(session.record.id, this.proxyBaseUrl) : {};
     if (!session.workspaceCredential) this.developmentMcp.unregister(session.record.id);

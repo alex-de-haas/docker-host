@@ -208,15 +208,21 @@ An assistant declares `"provides": ["assistant"]`, an `assistant` interface and 
 or panel. The role is inert until administrator confirmation at installation or reviewed update.
 `"corePermissions": ["apps.skills.read"]` requests permission to read installed apps' agent skills;
 `apps.install` covers installation and update requests with Core confirmation.
-Core 0.117.0 replaces `apps.update` with `apps.install`, and replaces `apps.workspaces.manage` /
-`apps.publications.manage` with `apps.sources`. The source capability covers session-owned worktrees,
-local Git operations, source-provider connection settings and GitHub publication, review and merge
-using the acting administrator's selected connection. Harness owns the built-in source-provider
-settings UI; Shell must not request this permission just to edit the current user's display name. Every operation retains user and resource checks; the external read-only
-facade gains no mutation authority. Update Core before installing a manifest that uses new names.
+`apps.update`, `apps.workspaces.manage` and `apps.publications.manage` are retired. The full-source
+capability `apps.sources.full` covers session-owned worktrees, local Git operations, selected
+source-provider connections and publication, review and merge using the acting administrator's
+connection. Core accepts `apps.sources` as a legacy alias and migrates stored declarations/grants
+before unsupported-grant cleanup, without re-reviewing unchanged authority. Install Core before
+updating Harness to the canonical name.
 
-Required permissions are launch preconditions: unsupported names or missing grants block launch,
-and a running app that loses required authority is stopped. Optional permissions remain optional.
+`apps.sources.read` grants administrator-only repository documentation and workspace document
+changes. It grants no source mutations, Git operations or connection selection. Personal source
+account settings use the separate `sources.connections` permission, and Shell owns that UI.
+Every operation retains user and resource checks; the external read-only facade gains no mutation
+authority. Shell must not request full-source authority for profile or connection settings.
+
+Missing or unsupported required grants do not prevent launch; per-call checks refuse operations
+without effective authority. Optional permissions remain optional.
 Retired grants are removed without erasing manifest requirements. A blocked Shell can be reviewed
 on Core at `/install/permissions/hosty.shell`; approval still requires the Core confirmation page.
 

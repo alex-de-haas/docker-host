@@ -1,6 +1,6 @@
 ---
 created: 2026-05-13
-updated: 2026-10-05
+updated: 2026-10-07
 summary: Core's browser and control APIs and the serialization rules every endpoint must follow.
 components: [apps/core]
 ---
@@ -25,7 +25,7 @@ Mutating browser endpoints are CSRF-protected: `GET /api/auth/csrf` sets the dou
 - `GET /api/auth/session` - inspect the caller's existing session. POST is not supported; knowing a user ID cannot create a session.
 - `GET /api/apps` - apps visible to the active Host session, including the selected runtime and available `runtimeProfiles`.
 - `GET /api/profile` / `PUT /api/profile` - current-user ID/email/display-name read and display-name edit. App identity is sufficient; no `users.read/manage`. These routes expose no source-provider metadata or Git identity.
-- `/api/source-connections` - current administrator's source-provider summaries, Git attribution, PAT/device connection setup and connection management. App callers require `apps.sources`; credentials stay in Core. See [profile and source connections](../user-profile-connections/feature.md).
+- `/api/source-connections` - current administrator's source-provider summaries, Git attribution, PAT/device connection setup and connection management. App reads accept `apps.sources.full` or `sources.connections`; connection mutations require `sources.connections`. Credentials stay in Core. See [profile and source connections](../user-profile-connections/feature.md).
 - `GET /api/users` - admin user directory state.
 - `POST /api/auth/bootstrap` - consume a setup token, create the first administrator, store the submitted password credential, and create a Core session.
 - `POST /api/auth/recovery` - consume a recovery token, create or restore an administrator, replace the submitted password credential, and create a Core session.
@@ -86,6 +86,28 @@ Core exposes no catalog or Marketplace proxy endpoints. The optional `hosty.mark
 `/api/core/status` reports effective public origins. If `HOSTY_CORE_PUBLIC_ORIGIN` or `HOSTY_SHELL_PUBLIC_ORIGIN` is unset, Core falls back to `http://localhost:<core-port>` and `http://localhost:<shell-port>`.
 
 Native in-place activity renewal additionally sets `interactiveRenewal: true` only after fresh normal Core login. This flag requires a live primary-session bearer; device, delegated, app-service and scoped credentials receive `native_session_required`. Generic launch remains identity-only.
+
+## Source Document Reads
+
+The bounded read endpoints under `/api/internal/apps/{appId}/source-documents` require the calling
+app's service bearer, `apps.sources.read`, and a current administrator credential in
+`X-Hosty-User-Token`. Accepted user credentials are the app's current session, an assistant MCP
+invocation credential addressed to this app, and an app-scoped access token with `mcp:read`.
+Discovery-only MCP credentials and mixed Core session cookies are refused. MCP credentials do not
+authorize other Core APIs.
+
+- `GET /repositories` lists installed source repository/branch entries and workspace-derived entries.
+- `GET /repositories/{repositoryId}/documents` lists `docs/**/*.md` for `version=target`, `base` or
+  `worktree`, with `workspaceId` for workspace versions and `refresh=true` for a target fetch.
+  Optional `path` returns a focused listing for one guarded document instead of reading all blobs.
+- `GET /repositories/{repositoryId}/content` reads `path` using the listed target/base `commit` or
+  worktree `expectedSha`; stale versions and arbitrary commits are conflicts.
+- `GET /workspaces?repositoryId=...` projects unreleased workspace states and their own document changes.
+
+Responses are no-store. Content is restricted to regular Markdown documents under `docs/`, at most
+one MiB per file. Component and link validation receives only existence/directory metadata for
+paths mentioned by a document. The contract and grant/fetch rules are documented in
+[Plan Tracking](../plan-tracking/feature.md).
 
 ## Control APIs
 

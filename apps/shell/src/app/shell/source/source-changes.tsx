@@ -106,7 +106,7 @@ export function SourceChangesButton({ app }: { app: CoreApp }) {
 export function SourceToolsLink({ context = "source code" }: { context?: string }) {
   const { state } = useShellState();
   const { coreOrigin } = useShellActions();
-  const tools = state.apps.filter(app => app.grantedCorePermissions?.includes("apps.sources") && app.embeddedUrl);
+  const tools = state.apps.filter(app => app.grantedCorePermissions?.includes("apps.sources.full") && app.embeddedUrl);
   return <div className="space-y-2 text-sm text-muted-foreground">
     <p>Inspect and edit {context} in your source tools.</p>
     {tools.map(app => <a className="block underline" key={app.id} target="_blank" rel="noopener noreferrer"

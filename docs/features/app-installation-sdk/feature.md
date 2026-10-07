@@ -1,6 +1,6 @@
 ---
 created: 2026-09-18
-updated: 2026-10-05
+updated: 2026-10-07
 summary: A shared install dialog for Marketplace and Shell, with final authorization on a separate Core-origin confirmation page.
 components: [packages/app-sdk, apps/marketplace, apps/shell, apps/core]
 ---
@@ -45,7 +45,8 @@ checks as other apps. Custom app clients use the SDK server adapter.
 | --- | --- |
 | `apps.skills.read` | Read agent skills published by installed apps |
 | `apps.install` | Apply routine updates; prepare other installation/update/removal requests for Core confirmation |
-| `apps.sources` | Session worktrees, local Git operations and session pull requests with the acting administrator's Git account |
+| `apps.sources.full` | Session worktrees, local Git operations and session pull requests with the acting administrator's Git account |
+| `apps.sources.read` | Repository documentation and workspace document changes, with current administrator and private-source ownership checks |
 | `providers.speech-to-text` | List and use all confirmed speech providers |
 | `providers.assistant` | List and make user-attributed requests to all confirmed assistant providers |
 
@@ -54,6 +55,10 @@ sets are disjoint. Core stores both reviewed declarations plus effective grants 
 changes use the same confirmation page and reject stale reviews; Shell exposes the review in app settings.
 Removed declarations revoke grants, unchanged accepted optional choices survive updates, and moving an
 optional declaration to required needs review. See [Provider consumption](../provider-consumption/feature.md).
+
+The legacy manifest name `apps.sources` aliases `apps.sources.full`. Core normalizes declarations and
+grants before unsupported-grant cleanup at startup, preserving accepted authority without a new review.
+The read permission conveys no workspace mutation, connection selection or source-file authority.
 
 New installs and updates reject unknown and duplicate entries. Installed manifests retain unsupported
 names for compatibility diagnostics. Core removes unsupported persisted grants at startup and on
@@ -208,8 +213,10 @@ and completion is reported only after Core returns `succeeded`.
 - Test cache recovery after abandoned reviews and decision audit failures without stuck execution.
 - Test that only persisted installation grants enable unsandboxed popups across Shell surfaces.
 - Test permission additions on updates and that source adoption cannot silently grant rights.
-- Test required-permission launch refusal, running-app stop, unsupported-name cleanup and direct
-  Core recovery, including a blocked Shell and optional-only revocation.
+- Test required-permission per-call refusal, runtime preservation on lost grants, unsupported-name
+  cleanup and direct Core review, including optional-only revocation.
+- Test `apps.sources` manifest normalization and startup migration before unsupported-grant removal,
+  preserving accepted declarations, grants and review state for unchanged source authority.
 - Test client races, duplicate submits, lost responses, API errors and the server adapter boundary.
 - Build and test Core, SDK, Shell and Marketplace; check package exports and artifact versions.
 - Complete the remaining managed-runtime/browser verification in [plan.md](plan.md), including

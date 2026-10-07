@@ -156,13 +156,21 @@ Profile and provider-connection UI belongs to apps. Core `/api/profile` accepts 
 plus an app grant for current-user profile reads and edits; no `users.read/manage` grant is
 required for this self-service API. It returns ID/email/display name and edits only display name;
 never use it to expose provider connections, Git identity, roles or assignments. Ownership follows
-the acting user, never a supplied ID. Shell uses its same-origin BFF and has no `apps.sources`.
-Harness settings owns source-provider UI. `/api/source-connections` reads/mutations require
-`apps.sources`, the current administrator and connection ownership; stored tokens never leave Core.
+the acting user, never a supplied ID. Shell uses its same-origin BFF and has no `apps.sources.full`.
+Shell owns source-provider settings. `/api/source-connections` reads accept `apps.sources.full` or
+`sources.connections`; account mutations require `sources.connections`. Each requires the current
+administrator and connection ownership; stored tokens never leave Core.
 Device authorization binds internally to the app grant's live parent browser session. Private-source
-installation/binding requires both `apps.install` and `apps.sources`, connection ownership and final
-Core confirmation. Harness owns the selection/rebinding UI; configuring a connection alone does not
+installation/binding requires `apps.install` plus either `apps.sources.full` or `sources.connections`,
+connection ownership and final Core confirmation. Shell owns installation and rebinding UI;
+configuring a connection alone does not
 authorize installation or MCP delegation. Core retains credential issuance
 (`/account/tokens`) and OAuth consent; it serves no profile/source-settings pages. The JavaScript SDK supports app-owned popup recovery. Assistant-to-target MCP grants and the remaining
 acceptance matrix are tracked in `docs/features/local-browser-origins/plan.md`; app login does not
 authorize cross-app tools.
+
+`apps.sources` remains a manifest alias for `apps.sources.full`; startup migration preserves existing
+reviewed grants. `apps.sources.read` grants only administrator repository-document and workspace
+document reads. These read endpoints accept an MCP credential addressed to the calling app as the
+acting user only after Core validates the current relationship, installations, parent grant and user;
+other management APIs retain their ordinary app-session credential requirement.

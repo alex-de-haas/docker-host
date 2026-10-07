@@ -9,7 +9,7 @@ internal sealed class WorkspaceAuthorization(AppServiceTokenService serviceToken
             throw new AppIdentityException("token_invalid", "An app service token is required.");
         var caller = await apps.GetAppAsync(appId, ct) ?? throw new AppIdentityException("app_access_denied", "Assistant is not installed.");
         if (caller.GrantedCorePermissions?.Contains(CoreAppPermissions.Sources, StringComparer.Ordinal) != true)
-            throw new AppIdentityException("app_permission_required", "The assistant needs the reviewed apps.sources permission.");
+            throw new AppIdentityException("app_permission_required", "The assistant needs the reviewed apps.sources.full permission.");
         var credential = request.Headers["X-Hosty-User-Token"].ToString();
         if (!credential.StartsWith("hostyg_", StringComparison.Ordinal))
             throw new AppIdentityException("reauth_required", "Workspace access requires a browser app identity and Core-approved assistant session.");
@@ -101,7 +101,7 @@ internal sealed class DevelopmentWorkspaceObserver(DevelopmentWorkspaceService w
             {
                 foreach (var workspace in (await workspaces.ListAsync(null, false, stoppingToken)).Workspaces)
                 {
-                    try { await workspaces.ObserveAsync(workspace.Id, null, stoppingToken); }
+                    try { await workspaces.ObserveAvailableAsync(workspace.Id, stoppingToken); }
                     catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Cannot observe workspace {WorkspaceId}", workspace.Id); }
                 }
             }

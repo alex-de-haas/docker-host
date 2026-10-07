@@ -1,6 +1,6 @@
 ---
 created: 2026-06-03
-updated: 2026-10-05
+updated: 2026-10-07
 summary: Source checkouts, local overrides and runtime switching for installed apps, with Git inspection.
 components: [apps/core, apps/shell]
 ---
@@ -76,7 +76,7 @@ The administrator-only Dashboard version cell shows branch, HEAD, scope, observa
 aggregate changed-file/line counts. This summary is available under `apps.lifecycle`; it contains
 no file list, patches or image bytes. Shell links to a running source-capable app instead of
 reading or discarding files itself. Core's source status/diff/discard APIs remain available to the
-direct administrator interface and to apps with `apps.sources` plus administrator user authority.
+direct administrator interface and to apps with `apps.sources.full` plus administrator user authority.
 A clean observation describes files on disk, not a process's loaded code or successful hot reload.
 
 
@@ -228,7 +228,7 @@ path. Source selection/clear share the lifecycle operation lock, and source/moun
 a cross-app path lock. A background Git resolution preserves the current override rather than
 restoring its earlier snapshot.
 
-`apps.sources` permits modifying code that Hosty can execute on the host in development mode.
+`apps.sources.full` permits modifying code that Hosty can execute on the host in development mode.
 This API policy does not sandbox native agents with direct filesystem access. Clearing an override,
 runtime switches and normal lifecycle operations keep their existing authorization.
 
@@ -272,7 +272,7 @@ runtime switches and normal lifecycle operations keep their existing authorizati
   summary routes enforce administrator/control-secret authorization. Verify a large list in the
   Core-managed dialog while Dashboard continues to request summary metadata only.
 - Verify Shell's source summaries contain no file contents and source actions link to an authorized
-  source tool. Browser and API tests must preserve the `apps.lifecycle` / `apps.sources` boundary.
+  source tool. Browser and API tests must preserve the `apps.lifecycle` / `apps.sources.full` boundary.
 
 - Verify source/mount approval, protected paths and symlinks, stale snapshots and caller revocation;
   require confirmation for app-selected workspaces and preserve operator authority and intentional Docker source mounts.

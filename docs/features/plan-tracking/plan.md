@@ -1,9 +1,9 @@
 ---
-status: Ready
+status: In Progress
 created: 2026-10-06
 updated: 2026-10-07
 summary: An administrator app that shows every plan across the installed apps' source repositories, with status, progress and the development workspaces changing it.
-components: [apps/core, apps/harness, apps/shell, packages/app-sdk]
+components: [apps/core, apps/plans, apps/harness, apps/shell, packages/app-sdk]
 ---
 
 # Plan Tracking App
@@ -23,6 +23,12 @@ defines and validates in every repository: YAML frontmatter (`status`, `created`
 
 - Markdown in Git stays the single source of truth. External trackers and a plan database were
   considered and rejected; the app is a read-only view, and anything it stores is a derived cache.
+- The interface uses a sortable Data Grid for its overview, using the approved free ReUI, ShadCN
+  and Tailwind stack (2026-10-07). It remains a read-only view of Markdown.
+- The grid names the tracked branch explicitly and keeps its status/progress separate from
+  expandable workspace-version rows. Each workspace shows its own verified progress (2026-10-07).
+- Initial loads and explicit Refresh show a compact indicator. Automatic background reads are
+  quiet and pause while the document is hidden (2026-10-07).
 - A separate runtime app, `hosty.plans` in `apps/plans` of docker-host — not part of Harness and
   not a Core module.
 - Administrators only.
@@ -52,14 +58,18 @@ defines and validates in every repository: YAML frontmatter (`status`, `created`
   that is removing it. No `Cancelled` status is added to the documentation workflow. On the tracked
   branch a deleted plan simply leaves the overview.
 - Freshness relies on what Core already maintains for development workspaces — the shared
-  repositories, their target refs and the twenty-second worktree observer — rather than a separate
-  polling mechanism.
+  repositories, their target refs and the twenty-second worktree observer. Plans reads Core's
+  projection; it does not maintain a competing filesystem observer. Full repeated snapshot
+  reconstruction is addressed by D13 below.
 - The read permission is `apps.sources.read`. The existing `apps.sources` is renamed
   `apps.sources.full` so the two names describe what they grant.
 - Translation, summarization and other AI functions are out of scope; the general app-to-agent
   interface they depend on is parked.
 - Approved for implementation on 2026-10-06; the refinements dated 2026-10-07 were approved on
   2026-10-07.
+- Referenced-path existence metadata was approved on 2026-10-07: Core may report whether paths
+  mentioned in a document's components or relative links exist, without returning content outside
+  `docs/` or providing an arbitrary repository-path listing.
 
 ## Current Behavior
 
@@ -158,6 +168,10 @@ Verified against `main` at `2562a34b`.
   including its uncommitted changes, Core lists `docs/**/*.md` with path and blob SHA, and returns
   one document's content. Nothing outside `docs/`, nothing but Markdown, no symbolic links, and a
   size cap per file.
+- **Reference validation.** Listings provide bounded existence metadata for paths explicitly
+  referenced by document components or relative links, so the app can validate the same document
+  contract as the repository validator. Content reads remain restricted to `docs/**/*.md`;
+  this metadata does not expose arbitrary repository paths or follow symbolic links.
 - **One version per read.** A listing and the content read after it belong to one version. Every
   content read names what it expects — the commit a tracked-branch or base listing reported, or the
   blob SHA of a worktree file — and Core serves it only while that still holds: after the ref moves,
@@ -210,14 +224,14 @@ Verified against `main` at `2562a34b`.
   `## Deliverables` — and over valid edge cases such as checkboxes inside a fenced code block, which
   are neither deliverables nor errors, and require the app and the validator to accept and reject
   the same documents, so a format change cannot silently diverge from the validator.
-- **Invalid documents.** A document the parser rejects stays visible as a card with its path and
+- **Invalid documents.** A document the parser rejects stays visible as a grid row with its path and
   the parse error, and its progress is unknown. On the tracked branch this is rare, because CI
   validates it; in a worktree it is normal while an edit is under way.
 - **Overview.** Every plan across repositories as it stands on the tracked branch — status,
   progress (`done/total`), `updated` date, repository and apps — with counts per status, a text
-  search over titles and summaries, and filters by repository, app, status and age; search and
-  filters live in the URL, so a filtered view can be linked. Repositories load independently with
-  bounded concurrency: each repository's plans appear when its listing arrives, and a slow or
+  search over titles and summaries, and filters by repository, app and status in the Data Grid header;
+  search and filters live in the URL, so a filtered view can be linked. Repositories load independently
+  with bounded concurrency: each repository's plans appear when its listing arrives, and a slow or
   unavailable repository shows its own state without holding back the others.
   - A plan that workspaces change carries a marker — changed in N workspaces — with each
     workspace's version in brief, such as `In Progress · 5/9`, and when the plan last changed there.
@@ -271,31 +285,31 @@ app's.
 
 ### Phase 1 — Core
 
-- [ ] D1. `apps.sources.read`: catalogue entry, review description, endpoint mapping and the
+- [x] D1. `apps.sources.read`: catalogue entry, review description, endpoint mapping and the
       per-request administrator check; the document and workspace endpoints also accept an MCP
       credential addressed to the calling app as the acting-user credential, validated like MCP
       introspection. HTTP tests for refusal without the grant, for a non-administrator user, for an
       app-mediated call, for an MCP credential of an administrator and of a non-administrator, and
       for an MCP credential presented to any other Core API.
-- [ ] D2. Rename `apps.sources` to `apps.sources.full`: startup migration of persisted declarations
+- [x] D2. Rename `apps.sources` to `apps.sources.full`: startup migration of persisted declarations
       and grants ahead of unsupported-grant removal, the legacy name accepted as an alias in
       manifests, the checks that accept `apps.sources` or `sources.connections` accepting the new
       name with `sources.connections` unchanged, Harness's manifest and code, Shell's source-tool
       gate with its test fixtures, Shell's permission texts and SDK references updated, with tests
       for an upgraded host that keeps Harness's grant and still lists it as a source tool in Shell.
-- [ ] D3. Repository listing from installed apps' `source` declarations, deduplicated by canonical
+- [x] D3. Repository listing from installed apps' `source` declarations, deduplicated by canonical
       identity and tracked branch, reading the workspace target refs with interval-limited fetches
       on read, an explicit refresh, and private access through an installed app's persisted Git
       grant or the matching unreleased-workspace fallback defined above, with ownership and current
       connection checks; fetches shared per repository and branch with workspace preparation,
       `refresh` and `merge`, and a read that never waits behind a workspace operation or another
       repository's fetch.
-- [ ] D4. Document listing and content for the tracked branch, a workspace's base and a workspace's
+- [x] D4. Document listing and content for the tracked branch, a workspace's base and a workspace's
       worktree (uncommitted changes included), restricted to `docs/**/*.md` with size caps and
       symlink refusal; every content read names the listed commit or expected blob SHA, returns the
       SHA of the bytes it served and is refused as a conflict once that no longer holds, and no
       arbitrary commit is served; Native AOT serialization and path-guard tests.
-- [ ] D5. The read-only workspace projection of every workspace not yet released, with its state
+- [x] D5. The read-only workspace projection of every workspace not yet released, with its state
       and reason when unreadable: document changes under `docs/` measured from the merge base of
       the workspace's `HEAD` and the target ref, omitting documents whose content
       already equals the tracked branch's, with change kind, modification time and whether the
@@ -307,12 +321,13 @@ app's.
 
 ### Phase 2 — App
 
-- [ ] D6. `apps/plans` scaffold: `hosty.plans` manifest with `apps.sources.read`, administrator-only
-      UI, `docker` and `dev` profiles, SDK identity, feed, image workflow, and version sources
-      registered in `scripts/check-versions.mjs`.
-- [ ] D7. Frontmatter and deliverable parsing restricted to the validator's subset, with contract
+- [x] D6. `apps/plans` scaffold: `hosty.plans` manifest with `apps.sources.read`, administrator-only
+      UI built with free ReUI components, ShadCN and Tailwind following Shell's design system,
+      `docker` and `dev` profiles, SDK identity, feed, image workflow, and version sources registered
+      in `scripts/check-versions.mjs`.
+- [x] D7. Frontmatter and deliverable parsing restricted to the validator's subset, with contract
       tests against docker-host's `docs/`, invalid fixtures and valid edge cases such as fenced
-      checkboxes, on which the app and the validator agree; error cards for rejected documents; the blob-SHA cache keyed by the SHA Core returned,
+  checkboxes, on which the app and the validator agree; visible errors for rejected documents; the blob-SHA cache keyed by the SHA Core returned,
       bounded in size, and served only for SHAs Core has just authorized for the acting
       administrator.
 - [ ] D8. Overview: tracked-branch state loaded per repository with bounded concurrency, workspace
@@ -327,9 +342,9 @@ app's.
 
 ### Phase 3 — Integration
 
-- [ ] D10. Read-only MCP tools returning tracked-branch state with workspace versions and detail
+- [x] D10. Read-only MCP tools returning tracked-branch state with workspace versions and detail
       links, calling Core with the tool call's MCP credential, and an agent skill file.
-- [ ] D11. Media Server's manifest declares `source`, in a Media Server PR, verified to leave its
+- [x] D11. Media Server's manifest declares `source`, in a Media Server PR, verified to leave its
       `docker` runtime unchanged and to let a feed installation switch to `dev`.
 - [ ] D12. `feature.md` for this feature; the Core API document; every document that names
       `apps.sources` updated to `apps.sources.full` or `apps.sources.read` as appropriate —
@@ -341,6 +356,7 @@ app's.
       [app-auth-and-users.md](../../../skills/hosty-app-skill/references/app-auth-and-users.md) and
       [app-manifest.md](../../../skills/hosty-app-skill/references/app-manifest.md); this plan deleted
       and the index regenerated.
+- [x] D13. Reduce repeated snapshot cost with bounded immutable repository/commit metadata caches and batched Git blob reads, single-document detail access and lightweight revalidation of unchanged overviews; preserve current access/public-proof checks and fresh mutable-worktree consistency.
 
 ## Versioning
 
@@ -403,7 +419,7 @@ app's.
   repository and branch run one fetch; a stalled remote delays neither another repository's listing
   nor the observer.
 - App tests: parsing against docker-host's `docs/`, the invalid fixtures and the valid edge cases
-  with the validator's verdicts, error cards, status counts and progress, component-to-app mapping, workspace markers for
+  with the validator's verdicts, visible grid errors, status counts and progress, component-to-app mapping, workspace markers for
   a changed, a new and a deleted plan, completing and removed labels for a deleted plan with and
   without a `feature.md` change, two workspaces changing one plan, search and filters restored from
   the URL, a link that selects a workspace, and the cache keyed by the returned SHA within its bound.
