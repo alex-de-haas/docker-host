@@ -72,6 +72,10 @@ the workspace fallback for the matching baseline and their own workspace. Anothe
 cannot inherit that fallback. Reviewed clearing, rebinding and revoked connections invalidate the
 old access. Credentials remain in Core.
 
+Private workspace base and worktree reads use the authorized local repository and target ref;
+provider downtime does not prevent reading local changes while the reviewed grant remains valid.
+Tracked-branch reads retain their target-fetch freshness checks.
+
 Serving public documents requires a recent successful anonymous fetch of that target commit.
 Credentialed fetches invalidate that proof; their cache or in-flight transport cannot establish
 public access after a grant is cleared. Anonymous Git transport suppresses inherited credentials
@@ -167,7 +171,7 @@ and ReUI license notices.
   shared in-flight fetches, stale commits/SHAs, path and size guards, symlinks and UTF-8 bytes.
 - Workspace tests cover integrated target changes, merge/squash/cherry-pick equality, concurrent
   target edits, new/deleted documents, private fallback, clearing/rebinding/revocation, interrupted
-  cleanup and removed/reinstalled assistant origins.
+  cleanup, private workspace reads during provider downtime and removed/reinstalled assistant origins.
 - Parser contract tests compare repository documents and valid/invalid fixtures with the canonical
   validator. Cache tests cover SHA verification, current authorization and eviction limits. App
   tests cover filters, counts, component mapping, workspace labels, detail links and MCP refusals.

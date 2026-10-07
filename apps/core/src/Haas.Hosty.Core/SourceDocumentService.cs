@@ -253,7 +253,10 @@ internal sealed partial class SourceDocumentService(AppRegistryStore apps,
         RequirePath(input.Path);
         var binding = await RequireBindingAsync(repositoryId, ct);
         if (binding.Entry.State != "available") throw Error("unavailable", binding.Entry.Error ?? "Repository is unavailable.");
-        binding = await EnsureTargetAsync(binding, userId, false, ct);
+        // Workspace versions stay readable through their current private grant even when the
+        // remote is unavailable. Public access still requires anonymous proof before local reads.
+        if (input.Version == "target" || await GrantAsync(binding, userId, ct) is null)
+            binding = await EnsureTargetAsync(binding, userId, false, ct);
         var root = workspaces.RepositoryPath(binding.Entry.Repository);
         string? commit;
         byte[] bytes;
