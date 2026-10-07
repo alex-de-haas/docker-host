@@ -78,8 +78,10 @@ Verified against `main` at `2562a34b`.
   repository's object store, so one repository holds the commits of all its workspaces.
 - **Development workspaces.** Each record names its owner (assistant app, administrator, session
   id), repository, branch `hosty/session/<id>`, original base, integration base, session UI path and
-  pull request references. Its state stays `active` until the workspace is released and says nothing
-  about whether an agent is working. Core's observer refreshes every twenty seconds; its observation
+  pull request references. Its state moves from `preparing` to `active`, then to `releasing` while
+  cleanup runs — an interrupted cleanup stays there until it is retried — and ends at `released`;
+  none of these says whether an agent is working. Core's workspace listing returns every workspace
+  not yet `released`. Core's observer refreshes every twenty seconds; its observation
   includes `SessionFiles`, the files changed against the original base, uncommitted and untracked
   files included. Because that base never moves, after the workspace integrates the target branch
   `SessionFiles` also lists the files the target changed, and a file the workspace changed stays
@@ -141,8 +143,8 @@ Verified against `main` at `2562a34b`.
 - **Private repositories.** No new connection selection exists. A fetch uses the Git grant already
   persisted on an installed app of that repository, and only when the grant's owner is the acting
   administrator — the rule development workspaces apply. When no such installed-app grant is
-  available, an active workspace for the same canonical repository and target branch may supply its
-  effective Git grant, whether the workspace belongs to an installed-app entry or a
+  available, an unreleased workspace for the same canonical repository and target branch may
+  supply its effective Git grant, whether the workspace belongs to an installed-app entry or a
   workspace-derived entry. Core resolves it by the existing workspace rules, including reviewed
   rebinding or clearing and current connection-validity checks; both the workspace's administrator
   and the grant's owner must be the acting administrator. This fallback authorizes the entry's
@@ -163,9 +165,13 @@ Verified against `main` at `2562a34b`.
   The response carries the blob SHA of the bytes it returned. Core never serves an arbitrary commit,
   only the entry's current commit or a workspace's current base, because the shared repository also
   holds every other workspace's commits.
-- **Workspaces.** A read-only projection of active development workspaces: workspace id, repository,
-  target branch, assistant app, session id, an absolute session URL, administrator, branch,
-  observation time, pull request references, and the workspace's document changes.
+- **Workspaces.** A read-only projection of every development workspace not yet `released` — the
+  set Core's own workspace listing returns: workspace id, state (`preparing`, `active` or
+  `releasing`), repository, target branch, assistant app, session id, an absolute session URL,
+  administrator, branch, observation time and state, pull request references, and the workspace's
+  document changes. A workspace whose worktree cannot be read — still preparing, mid-cleanup or
+  unavailable — stays listed with its state and reason and with its document changes unknown,
+  rather than dropping out while a cleanup waits to be retried.
   - Document changes are measured from the workspace's base — the merge base of its `HEAD` and the
     tracked branch's target ref, computed when the projection is read — to its worktree,
     uncommitted and untracked files included, limited to `docs/`. Each change carries its path, its
@@ -183,10 +189,10 @@ Verified against `main` at `2562a34b`.
     workspace stays in the projection, because its worktree changes remain, with no URL and the
     reason, and is never linked to a different installation.
   - A workspace belongs to the entry with the same repository and tracked branch as its target. Any
-    active workspace without such an entry — its explicit target branch is one no installed app
+    unreleased workspace without such an entry — its explicit target branch is one no installed app
     tracks, or the app it was prepared for has since been uninstalled — adds a workspace-derived
     entry for its repository and target branch, marked as such, whose baseline is the target ref the
-    workspace already fetched; the entry exists only while an active workspace needs it, so no
+    workspace already fetched; the entry exists only while an unreleased workspace needs it, so no
     workspace disappears; for a private repository its documents follow the private rule above.
   - No Git operation is reachable.
 
@@ -280,7 +286,7 @@ app's.
 - [ ] D3. Repository listing from installed apps' `source` declarations, deduplicated by canonical
       identity and tracked branch, reading the workspace target refs with interval-limited fetches
       on read, an explicit refresh, and private access through an installed app's persisted Git
-      grant or the matching active-workspace fallback defined above, with ownership and current
+      grant or the matching unreleased-workspace fallback defined above, with ownership and current
       connection checks; fetches shared per repository and branch with workspace preparation,
       `refresh` and `merge`, and a read that never waits behind a workspace operation or another
       repository's fetch.
@@ -289,12 +295,13 @@ app's.
       symlink refusal; every content read names the listed commit or expected blob SHA, returns the
       SHA of the bytes it served and is refused as a conflict once that no longer holds, and no
       arbitrary commit is served; Native AOT serialization and path-guard tests.
-- [ ] D5. The read-only workspace projection: document changes under `docs/` measured from the
-      merge base of the workspace's `HEAD` and the target ref, omitting documents whose content
+- [ ] D5. The read-only workspace projection of every workspace not yet released, with its state
+      and reason when unreadable: document changes under `docs/` measured from the merge base of
+      the workspace's `HEAD` and the target ref, omitting documents whose content
       already equals the tracked branch's, with change kind, modification time and whether the
       tracked branch changed the document since; an absolute session URL validated
       against the assistant app's origin, absent with a reason once the owning installation is
-      removed or reinstalled; a workspace-derived entry for any active workspace without an
+      removed or reinstalled; a workspace-derived entry for any unreleased workspace without an
       installed-app entry (an untracked explicit target branch, or an uninstalled source app);
       matching workspaces in either entry kind use the private-grant rules above.
 
@@ -383,7 +390,8 @@ app's.
   reads the shared entry's baseline and their workspace changes through the workspace grant; another
   administrator cannot inherit that fallback or use it to read the original administrator's
   worktree). Cover reviewed grant clearing and revoked connections so the fallback cannot restore
-  removed access. A workspace targeting a branch no app tracks appears under its own entry.
+  removed access. A workspace targeting a branch no app tracks appears under its own entry, and a
+  workspace whose cleanup was interrupted stays listed as `releasing`, keeping its entry.
 - Core workspace-change tests: a workspace that integrated an advanced target branch — through
   Core's `merge` and through its own `git merge` — and has no plan changes of its own lists no
   document changes; a workspace whose own plan change the target has merged — by merge commit, by
