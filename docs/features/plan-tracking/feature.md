@@ -171,8 +171,11 @@ and ReUI license notices.
 - Parser contract tests compare repository documents and valid/invalid fixtures with the canonical
   validator. Cache tests cover SHA verification, current authorization and eviction limits. App
   tests cover filters, counts, component mapping, workspace labels, detail links and MCP refusals.
-- Browser checks cover Data Grid sorting, pagination, page size, search, quiet background reads and
-  workspace expansion that persists across polling, with separate tracked and workspace progress.
+- Browser checks cover Data Grid sorting, pagination, page size, search and quiet background reads.
+- Live acceptance uses a Core-owned worktree prepared through Harness without a model run. It covers
+  uncommitted plan edits, separate tracked/workspace progress, expansion preserved across polling,
+  workspace-only plans, completing/removed deletions, workspace URLs, base diffs, deliverable changes,
+  automatic detail re-reads and safe relative-document navigation.
 - Integration verification uses Core-managed app lifecycle and normal password login in a separate
   data root, including Shell embedding and workspace changes. Core passes its tests and Native AOT
   publish; the app, Shell, Harness and SDK pass affected tests and builds.
