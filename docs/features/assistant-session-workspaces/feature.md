@@ -21,6 +21,13 @@ and manifest subpaths remain separate bindings. Different sessions get separate 
 an assistant does not inherit earlier bindings. Released sessions cannot reallocate the same binding.
 Core retains a relative assistant session UI path but does not own conversations.
 
+[External development workspaces](../external-development-workspaces/feature.md) reuse this storage
+and observer with a typed external owner: current administrator, durable directly authorized MCP
+principal and opaque task ID. These records have no assistant installation or session UI path.
+Installed-assistant owner serialization and allocation identities remain unchanged. OAuth access-token
+refresh preserves external bindings; another grant does not inherit them. Native edits remain visible
+without importing the external application's conversation.
+
 Preparation is explicit. Attaching app context or sending an ordinary message allocates no source.
 Core fetches an explicit development branch, otherwise the manifest source branch, otherwise the
 repository's default branch. It records the exact fetched commit as the immutable original base.

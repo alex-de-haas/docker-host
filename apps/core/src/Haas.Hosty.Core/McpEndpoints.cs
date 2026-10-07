@@ -49,8 +49,8 @@ internal static class McpEndpoints
 
             // A credential scoped to `hosty:core` is checked first, because the session path refuses
             // outright — falling through would answer "not a session" to a credential minted for
-            // exactly this endpoint. Every tool here declares `readOnlyHint: true`, so `mcp:read` is
-            // the whole of what this surface offers, and a scoped credential without it is refused
+            // exactly this endpoint. Every credential needs `mcp:read`; additional authorities
+            // are checked by their tools. A scoped credential without read access is refused
             // by name rather than told it is not an administrator, which it never claimed to be.
             var bearer = CoreSessionAuthorization.ReadBearerToken(http.Request);
             if (bearer is not null)

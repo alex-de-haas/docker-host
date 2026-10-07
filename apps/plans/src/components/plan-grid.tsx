@@ -38,6 +38,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Progress, VersionBrief, formatTime } from "@/components/plan-metadata";
+import { WorkspaceOwner, WorkspaceSessionLink } from "@/components/workspace-owner";
 import { documentForCard, planLink } from "@/lib/model";
 import type { PlanCard, WorkspacePlan } from "@/lib/types";
 
@@ -251,7 +252,7 @@ export function PlanGrid({ plans, navigate, loadingMessage, toolbar, emptyMessag
   </Frame>;
 }
 
-function WorkspaceVersionRow({ card, version, navigate }: { card: PlanCard; version: WorkspacePlan; navigate: (url: string) => void }) {
+export function WorkspaceVersionRow({ card, version, navigate }: { card: PlanCard; version: WorkspacePlan; navigate: (url: string) => void }) {
   const { workspace, document, change } = version;
   const error = version.error ?? document?.errors[0] ?? workspace.error;
   const deleted = change.kind === "deleted";
@@ -259,7 +260,7 @@ function WorkspaceVersionRow({ card, version, navigate }: { card: PlanCard; vers
   const variant = ["Unavailable", "Document error", "Blocked"].includes(status) ? "destructive" : status === "In Progress" ? "default" : "secondary";
   const url = planLink(card.repository.id, card.path, workspace.id);
   return <TableRow>
-    <TableCell className="min-w-48 whitespace-normal"><a className="break-all underline underline-offset-4 focus-visible:outline-ring" href={url} onClick={event => followLink(event, url, navigate)}>{workspace.branch}</a></TableCell>
+    <TableCell className="min-w-48 whitespace-normal"><div className="flex flex-col items-start gap-2"><a className="break-all underline underline-offset-4 focus-visible:outline-ring" href={url} onClick={event => followLink(event, url, navigate)}>{workspace.branch}</a><WorkspaceOwner workspace={workspace} /></div></TableCell>
     <TableCell className="min-w-48 whitespace-normal"><div className="flex flex-col items-start gap-2"><Badge variant={variant}>{status}</Badge>
       {version.label === "new" && <span className="text-xs text-muted-foreground">New plan in this workspace</span>}
       {(version.label === "completing" || version.label === "removed") && <span className="text-xs text-muted-foreground"><VersionBrief version={version} /></span>}
@@ -269,7 +270,7 @@ function WorkspaceVersionRow({ card, version, navigate }: { card: PlanCard; vers
     <TableCell className="whitespace-normal text-xs">{formatTime(change.modifiedAt)}</TableCell>
     <TableCell className="min-w-48 whitespace-normal"><div className="flex flex-col items-start gap-2"><Badge variant="outline">{workspace.state}</Badge><span className="text-xs text-muted-foreground">Observed {formatTime(workspace.observationAt)}{workspace.observationState ? ` (${workspace.observationState})` : ""}</span>{error && <p className="text-xs text-destructive">{error}</p>}</div></TableCell>
     <TableCell className="min-w-48 whitespace-normal"><div className="flex flex-col items-start gap-2 text-xs"><a className="underline underline-offset-4 focus-visible:outline-ring" href={url} onClick={event => followLink(event, url, navigate)}>View workspace document</a>
-      {workspace.sessionUrl ? <a className="underline underline-offset-4 focus-visible:outline-ring" href={workspace.sessionUrl} target="_blank" rel="noopener noreferrer">Open assistant session</a> : <span className="text-muted-foreground">Session link unavailable: {workspace.sessionUrlError ?? "the assistant installation is unavailable"}.</span>}
+      <WorkspaceSessionLink workspace={workspace} />
     </div></TableCell>
   </TableRow>;
 }

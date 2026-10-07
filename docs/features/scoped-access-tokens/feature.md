@@ -1,6 +1,6 @@
 ---
 created: 2026-08-24
-updated: 2026-08-25
+updated: 2026-10-07
 summary: Access tokens can be bound to one audience and a set of scopes, validated against live state on every call.
 components: [apps/core]
 ---
@@ -107,9 +107,16 @@ exist, or for a live credential belonging to someone else.
 
 ## Scopes
 
-`mcp:read` — may call MCP tools that declare `annotations.readOnlyHint: true`. That is the whole
-vocabulary ([AuthLifetimes.cs](../../../apps/core/src/Haas.Hosty.Core/AuthLifetimes.cs)); mutation
-scopes belong to the feature that introduces mutations.
+`mcp:read` permits ordinary MCP tools that declare `annotations.readOnlyHint: true`; it is the only
+scope for app and facade audiences. Core's `hosty:core` audience additionally accepts explicitly
+selected `mcp:lifecycle`, `mcp:update`, `mcp:core-restart` and `mcp:workspaces`, each requiring read
+alongside it ([AuthLifetimes.cs](../../../apps/core/src/Haas.Hosty.Core/AuthLifetimes.cs)).
+
+Read-only annotations describe tool effects, not all authority needed to read sensitive data.
+[External workspace tools](../external-development-workspaces/feature.md) require `mcp:workspaces`
+for their owner-scoped observations, source-byte and diff reads as well as their managed operations.
+Ordinary read credentials and delegated facade callers do not gain workspace access. The workspace
+scope grants no app lifecycle, update, Core restart or publication authority.
 
 An unknown scope is **refused at issuance**, never dropped. A typo silently becoming a narrower
 credential is a credential that mysteriously does not work, with nothing on screen to explain it.
@@ -129,10 +136,12 @@ what keeps this validation from producing the exact failure it exists to prevent
 audience an installed app could occupy, and the one-audience guarantee would have quietly stopped
 holding for exactly the credential that reaches the control plane.
 
-Every Core MCP tool declares `readOnlyHint: true`, so
-`mcp:read` is the whole of what that surface offers, and such a credential carrying it is
-accepted by the endpoint filter ([McpEndpoints.cs](../../../apps/core/src/Haas.Hosty.Core/McpEndpoints.cs))
-ahead of the admin-session path — which would otherwise refuse it for not being a session.
+A Core-audience credential carrying `mcp:read` is accepted by the endpoint filter
+([McpEndpoints.cs](../../../apps/core/src/Haas.Hosty.Core/McpEndpoints.cs)) ahead of the admin-session
+path, which would otherwise refuse it for not being a session. Individual tools recheck their
+additional authority: the direct, explicitly reviewed workspace scope is required even for workspace
+read tools. A delegated credential cannot become an external workspace principal through the actor's
+administrator role.
 
 **A scope narrows what a credential does; it never widens who may hold one.** Core MCP is an
 administrator surface, so the actor behind that credential must still be a `host.admin` — checked

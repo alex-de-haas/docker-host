@@ -8,6 +8,7 @@ import { type PlanDetail, type RepositoryPlans, type SourceRepository, type Work
 import { Progress, VersionBrief, formatTime } from "./plan-metadata";
 import { SourceDocument, TrackedDocument } from "./document";
 import { LoadingIndicator } from "./loading-indicator";
+import { WorkspaceOwner, WorkspaceSessionLink } from "./workspace-owner";
 import { PlanToolbar } from "./plan-toolbar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +18,7 @@ import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
-import { ArrowLeftIcon, ExternalLinkIcon, FileTextIcon, GitBranchIcon, RefreshCwIcon } from "lucide-react";
+import { ArrowLeftIcon, FileTextIcon, GitBranchIcon, RefreshCwIcon } from "lucide-react";
 
 const PlanGrid = dynamic(() => import("./plan-grid").then(module => module.PlanGrid));
 
@@ -107,7 +108,7 @@ function Overview({ query, epoch, navigate, onRefresh }: { query: URLSearchParam
       if (!result || (!result.error && !unknownWorkspaces.length)) return null;
       return <section key={repository.id} aria-label={repoName(repository)} className="flex flex-col gap-3">
         {result.error && <Alert variant="destructive"><AlertTitle>{repoName(repository)}</AlertTitle><AlertDescription>{result.error}</AlertDescription></Alert>}
-        {unknownWorkspaces.map(workspace => <Alert key={workspace.id}><AlertTitle>{repoName(repository)} / {workspace.branch}</AlertTitle><AlertDescription><p>{workspace.state}; document changes unknown. {workspace.error}</p><p>Observed {formatTime(workspace.observationAt)}</p></AlertDescription></Alert>)}
+        {unknownWorkspaces.map(workspace => <Alert key={workspace.id}><AlertTitle>{repoName(repository)} / {workspace.branch}</AlertTitle><AlertDescription><WorkspaceOwner workspace={workspace} /><p>{workspace.state}; document changes unknown. {workspace.error}</p><p>Observed {formatTime(workspace.observationAt)}</p></AlertDescription></Alert>)}
       </section>;
     })}
   </>;
@@ -150,7 +151,7 @@ function Detail({ repositoryId, path, workspaceId, epoch, navigate }: { reposito
       </FramePanel></Frame></section><section className="min-w-0"><Frame><FrameHeader><FrameTitle><h2 className="flex items-center gap-2">Workspace versions<Badge variant="secondary">{current.workspaces.length}</Badge></h2></FrameTitle><FrameDescription>Changes against each workspace’s own base.</FrameDescription></FrameHeader><FramePanel className="flex flex-col gap-4">
         {current.workspaces.length === 0 && <Empty><EmptyHeader><EmptyTitle>No workspace changes</EmptyTitle><EmptyDescription>No workspace changes this document.</EmptyDescription></EmptyHeader></Empty>}
         {current.workspaces.length > 0 && <ToggleGroup type="single" variant="outline" orientation="vertical" spacing={2} value={selected?.workspace.id ?? ""} onValueChange={value => { if (value) navigate(planLink(repositoryId, path, value)); }} aria-label="Workspace version" className="w-full flex-col items-stretch">
-          {current.workspaces.map(version => <ToggleGroupItem key={version.workspace.id} value={version.workspace.id} asChild className="h-auto flex-col items-start gap-1 py-3 whitespace-normal"><a href={planLink(repositoryId, path, version.workspace.id)} onClick={event => { event.preventDefault(); navigate(planLink(repositoryId, path, version.workspace.id)); }} onKeyDown={event => { if (event.key === " ") { event.preventDefault(); event.currentTarget.click(); } }}><strong className="max-w-full truncate">{version.workspace.branch}</strong><VersionBrief version={version} /><span className="text-xs text-muted-foreground">Last change {formatTime(version.change.modifiedAt)}</span></a></ToggleGroupItem>)}
+          {current.workspaces.map(version => <ToggleGroupItem key={version.workspace.id} value={version.workspace.id} asChild className="h-auto flex-col items-start gap-1 py-3 whitespace-normal"><a href={planLink(repositoryId, path, version.workspace.id)} onClick={event => { event.preventDefault(); navigate(planLink(repositoryId, path, version.workspace.id)); }} onKeyDown={event => { if (event.key === " ") { event.preventDefault(); event.currentTarget.click(); } }}><strong className="max-w-full truncate">{version.workspace.branch}</strong><WorkspaceOwner workspace={version.workspace} /><VersionBrief version={version} /><span className="text-xs text-muted-foreground">Last change {formatTime(version.change.modifiedAt)}</span></a></ToggleGroupItem>)}
         </ToggleGroup>}
         {workspaceId && !selected && <Alert><AlertDescription>The selected workspace no longer changes this document.</AlertDescription></Alert>}
         {selected && <WorkspaceDocument key={`${selected.workspace.id}:${selected.document?.updated}`} version={selected} repositoryId={repositoryId} navigate={navigate} />}
@@ -158,12 +159,12 @@ function Detail({ repositoryId, path, workspaceId, epoch, navigate }: { reposito
     </>}
   </>;
 }
-function WorkspaceDocument({ version, repositoryId, navigate }: { version: WorkspacePlan; repositoryId: string; navigate: (url: string) => void }) {
+export function WorkspaceDocument({ version, repositoryId, navigate }: { version: WorkspacePlan; repositoryId: string; navigate: (url: string) => void }) {
   const [view, setView] = useState<"document" | "diff">("diff");
   const changes = useMemo(() => deliverableChanges(version.base, version.document), [version.base, version.document]);
   const diff = useMemo(() => lineDiff(version.base?.content ?? "", version.document?.content ?? ""), [version.base, version.document]);
-  return <div className="flex min-w-0 flex-col gap-4"><Separator /><div className="flex flex-col items-start gap-3"><p className="text-xs text-muted-foreground">Workspace {version.workspace.state}. Observed {formatTime(version.workspace.observationAt)}{version.workspace.observationState ? ` (${version.workspace.observationState})` : ""}.</p><p className="text-xs text-muted-foreground">Document updated {version.document?.updated ?? "unknown"}. Last change {formatTime(version.change.modifiedAt)}.</p>
-    {version.workspace.sessionUrl ? <Button variant="outline" size="sm" asChild><a href={version.workspace.sessionUrl} target="_blank" rel="noopener noreferrer">Open assistant session<ExternalLinkIcon data-icon="inline-end" /></a></Button> : <p className="text-xs text-muted-foreground">Session link unavailable: {version.workspace.sessionUrlError ?? "the assistant installation is unavailable"}.</p>}
+  return <div className="flex min-w-0 flex-col gap-4"><Separator /><div className="flex flex-col items-start gap-3"><WorkspaceOwner workspace={version.workspace} /><p className="text-xs text-muted-foreground">Workspace {version.workspace.state}. Observed {formatTime(version.workspace.observationAt)}{version.workspace.observationState ? ` (${version.workspace.observationState})` : ""}.</p><p className="text-xs text-muted-foreground">Document updated {version.document?.updated ?? "unknown"}. Last change {formatTime(version.change.modifiedAt)}.</p>
+    <WorkspaceSessionLink workspace={version.workspace} button />
     {version.change.targetChanged && <Alert><AlertTitle>Tracked branch changed</AlertTitle><AlertDescription>The tracked branch also changed this document since the workspace base. The diff below shows this workspace’s own changes.</AlertDescription></Alert>}
   </div>
     <div className="flex flex-col gap-1 text-xs text-muted-foreground"><p>Base: {version.base?.status ?? "absent or unknown"}{version.base?.progress ? `, ${version.base.progress.done}/${version.base.progress.total} deliverables` : ""}</p><p>Workspace: {version.document?.status ?? (version.change.kind === "deleted" ? "plan deleted" : "unknown")}{version.document?.progress ? `, ${version.document.progress.done}/${version.document.progress.total} deliverables` : ""}</p></div>
