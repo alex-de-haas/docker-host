@@ -16,7 +16,8 @@ internal sealed record SourceDocumentContent(string Path, string Sha, string Con
 internal sealed record SourceDocumentChange(string Path, string Kind, DateTimeOffset? ModifiedAt,
     bool TargetChanged, string? BaseSha, string? WorktreeSha, string? TargetSha);
 internal sealed record SourceWorkspace(string Id, string RepositoryId, string Repository, string TargetBranch,
-    string Branch, string State, string AdministratorId, string AssistantAppId, string SessionId,
+    string Branch, string State, string AdministratorId, string? AssistantAppId, string SessionId,
     string? SessionUrl, string? SessionUrlError, DateTimeOffset? ObservationAt, string? ObservationState,
-    string[] PullRequests, string? BaseCommit, string? TargetCommit, SourceDocumentChange[]? Changes, string? Error = null);
+    string[] PullRequests, string? BaseCommit, string? TargetCommit, SourceDocumentChange[]? Changes, string? Error = null,
+    string OwnerKind = "assistant", string? OwnerLabel = null);
 internal sealed record SourceWorkspaceList(SourceWorkspace[] Workspaces);

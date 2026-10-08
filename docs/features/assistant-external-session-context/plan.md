@@ -17,7 +17,7 @@ This is lower priority than internal switching and remote clients. Support an au
 external agent receiving environment + session id (or selecting it), reading shared history and
 registered paths, performing requested work, and explicitly saving an attributed report/summary.
 Local external worktree registration is owned by
-[external development workspaces](../external-development-workspaces/plan.md). This context-exchange
+[external development workspaces](../external-development-workspaces/feature.md). This context-exchange
 feature uses that registry when source is needed; it does not duplicate workspace preparation.
 No server-hosted model needs to be started merely to register external development work.
 

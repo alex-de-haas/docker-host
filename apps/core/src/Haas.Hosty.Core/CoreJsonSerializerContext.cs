@@ -38,6 +38,7 @@ internal static class CoreJson
 // One-click Cloudflare ingress (phase 1): API response envelopes, the at-rest credential, and its masked
 // summary projection.
 [JsonSerializable(typeof(WorkspaceOwner))]
+[JsonSerializable(typeof(ExternalWorkspacePrincipal))]
 [JsonSerializable(typeof(WorkspacePrepare))]
 [JsonSerializable(typeof(WorkspaceCommand))]
 [JsonSerializable(typeof(WorkspaceDiffRequest))]

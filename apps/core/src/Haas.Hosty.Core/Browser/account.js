@@ -107,7 +107,7 @@ async function tokensPage() {
   const access = select(create, 'Access', choices);
   const scopes = element('div', undefined, create);
   element('p', 'Core MCP always includes read access. Select additional operations explicitly.', scopes);
-  const scopeInputs = [['mcp:lifecycle', 'Start, stop and restart apps'], ['mcp:update', 'Update apps and Core'], ['mcp:core-restart', 'Restart Core']]
+  const scopeInputs = [['mcp:lifecycle', 'Start, stop and restart apps'], ['mcp:update', 'Update apps and Core'], ['mcp:core-restart', 'Restart Core'], ['mcp:workspaces', 'Create, read and manage your external development workspaces']]
     .map(([scope, label]) => input(scopes, label, scope, 'checkbox'));
   access.onchange = () => { scopes.hidden = access.value !== 'hosty:core'; }; access.onchange();
   submit(create, 'Create token');
@@ -158,7 +158,7 @@ async function consentPage() {
   element('p', `Acting as ${view.actingUser}. Access to ${view.audienceDisplayName} (${view.audience}).`, panel);
   element('p', `This request expires in ${view.expiresInSeconds} seconds.`, panel);
   const scopes = view.scopes.map(scope => {
-    const labels = { 'mcp:read': 'Read MCP information', 'mcp:lifecycle': 'Start, stop and restart applications', 'mcp:update': 'Update applications and Core', 'mcp:core-restart': 'Restart Core' };
+    const labels = { 'mcp:read': 'Read MCP information', 'mcp:lifecycle': 'Start, stop and restart applications', 'mcp:update': 'Update applications and Core', 'mcp:core-restart': 'Restart Core', 'mcp:workspaces': 'Create, read and manage your external development workspaces (source files and Git operations)' };
     const node = input(panel, labels[scope] || scope, scope, 'checkbox'); node.checked = scope === 'mcp:read';
     if (scope === 'mcp:read') node.disabled = true; return node;
   });

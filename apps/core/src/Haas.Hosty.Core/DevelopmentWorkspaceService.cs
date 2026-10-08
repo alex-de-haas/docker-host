@@ -23,6 +23,10 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
     private string RecordPath(string id) => System.IO.Path.Combine(Records, id + ".json");
     internal static AppLifecycleException Error(string code, string message) => new("workspace_" + code, message);
     internal static string Hash(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+    internal static string OwnerIdentity(WorkspaceOwner owner)
+        => owner.External is { } external
+            ? "external\n" + Hash(owner.UserId) + "\n" + Hash(external.PrincipalId) + "\n" + Hash(owner.SessionId)
+            : CoreJson.Text(owner);
 
     private static void Id(string id)
     {
@@ -43,9 +47,11 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
     {
         Id(id);
         var w = await JsonStorage.ReadAsync<DevelopmentWorkspace>(RecordPath(id), ct) ?? throw Error("not_found", "Workspace not found.");
-        if (owner is not null && w.Owner != owner) throw Error("forbidden", "This workspace belongs to another assistant installation, user or session.");
+        if (owner is not null && !w.Owner.SameIdentity(owner))
+            throw Error("forbidden", "This workspace belongs to another assistant installation, external grant, user or task.");
         if (w.Path != WorkPath(id) || w.RepositoryId != Hash(w.Repository) || w.Branch != "hosty/session/" + id)
             throw Error("ownership_invalid", "Workspace ownership metadata is inconsistent.");
+        if (owner?.IsExternal == true) await RequireExternalSourceAsync(w, ct);
         return w;
     }
     public Task<WorkspaceList> ListAsync(WorkspaceOwner? owner, bool includeReleased, CancellationToken ct)
@@ -59,7 +65,11 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
                 try
                 {
                     var w = await Read(System.IO.Path.GetFileNameWithoutExtension(file), null, ct);
-                    if ((owner is null || w.Owner == owner) && (includeReleased || w.State != "released")) found.Add(w);
+                    if ((owner is null || w.Owner.SameIdentity(owner)) && (includeReleased || w.State != "released"))
+                    {
+                        if (owner?.IsExternal == true) await RequireExternalSourceAsync(w, ct);
+                        found.Add(w);
+                    }
                 }
                 catch (Exception ex) when (ex is JsonException or AppLifecycleException or IOException)
                 {
@@ -71,13 +81,32 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
         }
 
     public Task<DevelopmentWorkspace> PrepareAsync(WorkspaceOwner owner, WorkspacePrepare input, CancellationToken ct)
-        => Locked(Hash(CoreJson.Text(owner)), async () =>
+        => Locked(Hash(OwnerIdentity(owner)), async () =>
         {
             RequestId(input.RequestId);
             if (owner.SessionId != input.SessionId || string.IsNullOrWhiteSpace(input.SessionId) || input.SessionId.Length > 200)
                 throw Error("session_invalid", "A bounded nonempty session ID is required.");
-            if (string.IsNullOrWhiteSpace(input.AppId) || string.IsNullOrWhiteSpace(input.SessionPath) || input.SessionPath.Length > 2048 || !input.SessionPath.StartsWith('/') || input.SessionPath.StartsWith("//") || input.SessionPath.Contains('\\') || input.SessionPath.Any(char.IsControl))
+            if (owner.External is { } external)
+            {
+                if (owner.AppId.Length != 0 || owner.Installation != DateTimeOffset.UnixEpoch ||
+                    string.IsNullOrWhiteSpace(owner.UserId) || string.IsNullOrWhiteSpace(external.PrincipalId) ||
+                    external.PrincipalId.Length > 200 || external.PrincipalId.Any(char.IsControl) ||
+                    input.SessionId.Any(char.IsControl) || input.SessionId != input.SessionId.Trim())
+                    throw Error("owner_invalid", "A current external grant and bounded task ID are required.");
+                if (input.SessionPath is not null)
+                    throw Error("session_path_invalid", "External workspaces do not declare an assistant session path.");
+                if (string.IsNullOrWhiteSpace(external.Label) || external.Label.Length > 80 ||
+                    external.Label != external.Label.Trim() || external.Label.Any(char.IsControl) ||
+                    input.ExternalLabel is not null && input.ExternalLabel != external.Label)
+                    throw Error("label_invalid", "The external display label must be plain text no longer than 80 characters.");
+                if (input.LeaseId is null || !Guid.TryParse(input.LeaseId, out _))
+                    throw Error("lease_invalid", "External preparation requires an explicit activity lease UUID.");
+            }
+            else if (string.IsNullOrWhiteSpace(input.SessionPath) || input.SessionPath.Length > 2048 ||
+                !input.SessionPath.StartsWith('/') || input.SessionPath.StartsWith("//") || input.SessionPath.Contains('\\') ||
+                input.SessionPath.Any(char.IsControl) || input.ExternalLabel is not null)
                 throw Error("session_path_invalid", "Session path must be relative to the assistant origin.");
+            if (string.IsNullOrWhiteSpace(input.AppId)) throw Error("app_missing", "An installed source app is required.");
             var app = await apps.GetAppAsync(input.AppId, ct) ?? throw Error("app_missing", "The source app is no longer installed.");
             var grant = app.PrivateSources?.Git;
             if (grant is not null && grant.OwnerId != owner.UserId)
@@ -88,7 +117,7 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
                 throw PrivateSourceService.Denied("The Git source changed. Select and review its connection again.");
             var repository = await CanonicalRepository(source.Repository, source.LocalOverridePath, ct);
             var repositoryId = Hash(repository);
-            var id = Hash(CoreJson.Text(owner) + "\n" + repositoryId);
+            var id = Hash(OwnerIdentity(owner) + "\n" + repositoryId);
             var existing = await JsonStorage.ReadAsync<DevelopmentWorkspace>(RecordPath(id), ct);
             if (existing is not null)
             {
@@ -104,6 +133,7 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
                 existing = existing with { SourceGrant = existing.SourceGrant ?? grant };
                 existing = await Materialize(existing, ct);
                 if (prior is not null) { await Save(existing); return await Observe(existing, ct); }
+                if (owner.IsExternal) existing = existing with { Owner = owner };
                 existing = Attach(existing, app, input.LeaseId);
                 existing = existing with { Operations = [.. existing.Operations, new(input.RequestId, "prepare", Hash(CoreJson.Text(input)), "succeeded", ResultHead: existing.OriginalBase)] };
                 await Save(existing);
@@ -174,12 +204,12 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
     public async Task<DevelopmentWorkspace> ObserveAsync(string id, WorkspaceOwner? owner, CancellationToken ct)
     {
         var workspace = await Read(id, owner, ct);
-        return await Locked(Hash(CoreJson.Text(workspace.Owner)), async () => await Observe(await Read(id, owner, ct), ct), ct);
+        return await Locked(Hash(OwnerIdentity(workspace.Owner)), async () => await Observe(await Read(id, owner, ct), ct), ct);
     }
     internal async Task ObserveAvailableAsync(string id, CancellationToken ct)
     {
         var workspace = await Read(id, null, ct);
-        var gate = gates.GetOrAdd(Hash(CoreJson.Text(workspace.Owner)), _ => new(1, 1));
+        var gate = gates.GetOrAdd(Hash(OwnerIdentity(workspace.Owner)), _ => new(1, 1));
         if (!await gate.WaitAsync(0, ct)) return;
         try { await Observe(await Read(id, null, ct), ct); }
         finally { gate.Release(); }
@@ -210,7 +240,7 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
     public async Task<AppSourceDiff> DiffAsync(string id, WorkspaceOwner? owner, WorkspaceDiffRequest input, CancellationToken ct)
     {
         var workspace = await Read(id, owner, ct);
-        return await Locked(Hash(CoreJson.Text(workspace.Owner)), async () =>
+        return await Locked(Hash(OwnerIdentity(workspace.Owner)), async () =>
         {
             var w = await Observe(await Read(id, owner, ct), ct);
             if (w.State != "active" || w.Observation is not { State: "ok", Local: { } local }) throw Error("unavailable", "Workspace is unavailable.");
@@ -238,7 +268,7 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
     public async Task<DevelopmentWorkspace> CommandAsync(string id, WorkspaceOwner? owner, string kind, WorkspaceCommand input, CancellationToken ct)
     {
         var workspace = await Read(id, owner, ct);
-        return await Locked(Hash(CoreJson.Text(workspace.Owner)), async () =>
+        return await Locked(Hash(OwnerIdentity(workspace.Owner)), async () =>
         {
             RequestId(input.RequestId);
             var w = await Read(id, owner, ct);
@@ -338,7 +368,7 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
         }, ct);
     }
     internal Task<T> WithPublicationAsync<T>(string id, WorkspaceOwner owner, string head, Func<DevelopmentWorkspace, Task<T>> action, CancellationToken ct)
-        => Locked(Hash(CoreJson.Text(owner)), async () =>
+        => Locked(Hash(OwnerIdentity(owner)), async () =>
         {
             var w = await Observe(await Read(id, owner, ct), ct);
             if (w.State != "active" || w.Observation is not { State: "ok", Conflict: false, Local: { Files.Count: 0, Truncated: false } } || w.Observation.Head != head)
@@ -346,14 +376,14 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
             return await action(w);
         }, ct);
     internal Task<bool> AddPublicationReferenceAsync(string id, WorkspaceOwner owner, string url, CancellationToken ct)
-        => Locked(Hash(CoreJson.Text(owner)), async () =>
+        => Locked(Hash(OwnerIdentity(owner)), async () =>
         {
             var w = await Read(id, owner, ct);
             await Save(w with { PullRequests = w.PullRequests.Append(url).Distinct().ToArray() }); return true;
         }, ct);
     // Only PublicationService calls this after persisting and revalidating the chosen completion outcome.
     internal Task<DevelopmentWorkspace> ReleasePublishedAsync(string id, WorkspaceOwner owner, string publishedHead, CancellationToken ct)
-        => Locked(Hash(CoreJson.Text(owner)), async () =>
+        => Locked(Hash(OwnerIdentity(owner)), async () =>
         {
             var w = await Read(id, owner, ct);
             if (w.State == "released") return w;
@@ -558,6 +588,27 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
         }
         var local = MountPathPolicy.ResolveRealPath(repository);
         return (await Git(local, ["rev-parse", "--path-format=absolute", "--git-common-dir"], ct)).StandardOutput.Trim();
+    }
+
+    internal async Task RequireExternalSourceAsync(DevelopmentWorkspace workspace, CancellationToken ct)
+    {
+        if (!workspace.Owner.IsExternal) return;
+        if (workspace.SourceGrant is not null)
+        {
+            var effective = await WorkspaceGrantAsync(workspace, ct);
+            if (effective is null || effective.OwnerId != workspace.Owner.UserId ||
+                effective.Repository != LogicalRepositoryIdentity(workspace.Repository))
+                throw PrivateSourceService.Denied("This workspace's reviewed Git source grant is no longer available.");
+        }
+        foreach (var binding in workspace.Apps)
+        {
+            var app = await apps.GetAppAsync(binding.AppId, ct);
+            if (app?.InstalledAt != binding.Installation) continue;
+            if (app.PrivateSources?.Git is not { } grant) continue;
+            if (grant.OwnerId != workspace.Owner.UserId || grant.Repository != LogicalRepositoryIdentity(workspace.Repository))
+                throw PrivateSourceService.Denied("This workspace's source belongs to another administrator or repository.");
+            await (privateSources ?? throw PrivateSourceService.Denied()).ValidateAsync(new(Git: grant), ct);
+        }
     }
 
     internal async Task<SourceReadGrant?> WorkspaceGrantAsync(DevelopmentWorkspace workspace, CancellationToken ct)

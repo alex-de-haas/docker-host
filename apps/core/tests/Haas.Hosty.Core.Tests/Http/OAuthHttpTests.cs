@@ -655,7 +655,7 @@ public sealed class OAuthHttpTests
         Assert.True(resourceResponse.Headers.CacheControl?.NoStore);
         var resource = await ReadJsonAsync(resourceResponse);
         Assert.Equal("http://core.hosty.localhost:7070/api/mcp", resource.GetProperty("resource").GetString());
-        Assert.Equal("mcp:read", Assert.Single(resource.GetProperty("scopes_supported").EnumerateArray()).GetString());
+        Assert.Equal(AccessTokenScopes.Known, resource.GetProperty("scopes_supported").EnumerateArray().Select(scope => scope.GetString()));
         Assert.Equal("http://core.hosty.localhost:7070", resource.GetProperty("authorization_servers").EnumerateArray().Single().GetString());
 
         // A 401 from Core MCP names where the metadata lives — the thread a stock client pulls to

@@ -81,7 +81,7 @@ internal static class OAuthEndpoints
             return CoreJson.Json(new OAuthProtectedResourceMetadata(
                 Resource: $"{origin}/api/mcp",
                 AuthorizationServers: [origin],
-                ScopesSupported: [AccessTokenScopes.McpRead],
+                ScopesSupported: AccessTokenScopes.Known,
                 BearerMethodsSupported: ["header"]));
         });
     }

@@ -39,7 +39,8 @@ its label is `removed`. The label identifies the evidence and does not introduce
 
 The detail view displays the tracked-branch document and selectable workspace versions, status and
 progress, deliverable changes, a diff against the workspace's base, and an assistant-session link
-when available. A URL can select a workspace. A notice identifies a document also changed on the
+when available. External owners display their agent label and retain the conversation in that
+external application; their missing session link is expected. A URL can select a workspace. A notice identifies a document also changed on the
 tracked branch. Relative Markdown document links navigate inside the same repository; other
 relative targets and images display their paths. Documents are rendered without raw HTML.
 
@@ -170,7 +171,7 @@ standalone Next.js server as the cache mount's unprivileged owner. The image wor
 publication on version checks, lint and tests and follows the repository's immutable version-tag
 policy. It builds Linux amd64 and arm64 images with provenance attestations, carrying the repository
 and ReUI license notices.
-`manifest.json`, `package.json` and the Docker image tag share the independent app version `0.1.0`.
+`manifest.json`, `package.json` and the Docker image tag share the independent app version `0.2.0`.
 
 ## Testing Expectations
 

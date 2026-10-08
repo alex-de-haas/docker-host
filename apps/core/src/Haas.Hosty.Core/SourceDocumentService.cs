@@ -534,8 +534,10 @@ internal sealed partial class SourceDocumentService(AppRegistryStore apps,
                 }
                 catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException) { error = ex.Message; }
                 result.Add(new(workspace.Id, binding.Entry.Id, workspace.Repository, workspace.TargetBranch, workspace.Branch,
-                    workspace.State, workspace.Owner.UserId, workspace.Owner.AppId, workspace.Owner.SessionId, url, urlError,
-                    workspace.Observation?.At, workspace.Observation?.State, workspace.PullRequests, baseCommit, target, changes, error));
+                    workspace.State, workspace.Owner.UserId, workspace.Owner.IsExternal ? null : workspace.Owner.AppId,
+                    workspace.Owner.SessionId, url, urlError, workspace.Observation?.At, workspace.Observation?.State,
+                    workspace.PullRequests, baseCommit, target, changes, error,
+                    workspace.Owner.IsExternal ? "external" : "assistant", workspace.Owner.External?.Label));
             }
         }
         return new(result.ToArray());
@@ -562,6 +564,7 @@ internal sealed partial class SourceDocumentService(AppRegistryStore apps,
 
     private async Task<(string? Url, string? Error)> SessionUrlAsync(DevelopmentWorkspace workspace, CancellationToken ct)
     {
+        if (workspace.Owner.IsExternal) return (null, null);
         var assistant = await apps.GetAppAsync(workspace.Owner.AppId, ct);
         if (assistant is null || assistant.InstalledAt != workspace.Owner.Installation)
             return (null, "The owning assistant installation was removed or replaced.");
@@ -571,7 +574,7 @@ internal sealed partial class SourceDocumentService(AppRegistryStore apps,
         if (origin is null || !Uri.TryCreate(origin, UriKind.Absolute, out var baseUrl) || baseUrl.Scheme is not ("http" or "https")
             || !string.IsNullOrEmpty(baseUrl.UserInfo)) return (null, "The assistant browser origin is unavailable.");
         var path = workspace.SessionPath;
-        if (!path.StartsWith('/') || path.StartsWith("//") || path.Contains('\\') || path.Any(char.IsControl)
+        if (path is null || !path.StartsWith('/') || path.StartsWith("//") || path.Contains('\\') || path.Any(char.IsControl)
             || !Uri.TryCreate(baseUrl, path, out var url) || url.Scheme != baseUrl.Scheme || url.Host != baseUrl.Host
             || url.Port != baseUrl.Port || !string.IsNullOrEmpty(url.UserInfo)) return (null, "Session path does not stay on the assistant's browser origin.");
         return (url.AbsoluteUri, null);

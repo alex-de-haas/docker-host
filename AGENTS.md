@@ -217,3 +217,12 @@ there first.
   curl -H "X-Docker-Host-Identity: $TOKEN" http://127.0.0.1:3100/api/auth/identity
   ```
 - Treat `hosty apps identity` as a diagnostic helper for direct endpoint probes only. Gateway and Shell integration still need to be checked through Core/Shell URLs and `hosty apps open`.
+
+## External Local Development
+
+For an authorized local external-agent workflow, follow
+[External development workspaces](docs/features/external-development-workspaces/feature.md).
+Connect directly to the intended local Core with reviewed workspace authority, prepare before source
+edits, and use the returned directory. Keep verified plan progress current; task IDs do not isolate
+grants. Preserve replay IDs and leases, and follow explicit user/repository authority for commits,
+publication and cleanup.

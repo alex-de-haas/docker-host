@@ -1,6 +1,6 @@
 ---
 created: 2026-08-25
-updated: 2026-10-01
+updated: 2026-10-07
 summary: Core acts as an OAuth 2.1 authorization server so MCP clients obtain and rotate scoped tokens themselves.
 components: [apps/core]
 ---
@@ -55,6 +55,11 @@ audience-bound, introspected per call — with one difference: a **one-hour abso
 spec-shaped client behavior). Every other `/api` surface refuses it exactly as it refuses a manually
 minted scoped credential.
 
+An external workspace principal uses the durable grant ID, not the hourly access token. Refresh
+preserves its workspace bindings; a new authorization creates a separate principal even for the same
+client and administrator. A task ID distinguishes allocations within that principal without isolating
+their authority.
+
 The **grant** (the refresh chain) is the durable thing, in
 [OAuthStore.cs](../../../apps/core/src/Haas.Hosty.Core/OAuthStore.cs) with the refresh token stored
 as a SHA-256 hash, the way invitation tokens already are. Its lifetime rides the access-token idle
@@ -68,14 +73,18 @@ the same bar manual issuance sets), an app's declared `mcp` interface URL → th
 facade of an app declaring the `assistant` interface → that app. **A request without a resource,
 or naming anything else, is refused — never defaulted to something broad.** A resource repeated at
 code redemption must be the one consent was given for. App and facade audiences accept only
-`mcp:read`. Core accepts `mcp:read`, optionally with `mcp:lifecycle` and/or `mcp:update`;
-all combinations require read. Unknown scopes and control scopes on other resources are refused.
+`mcp:read`. Core accepts `mcp:read`, optionally with `mcp:lifecycle`, `mcp:update`, `mcp:core-restart`
+and/or `mcp:workspaces`; all combinations require read. Unknown scopes and Core-only scopes on
+other resources are refused. The separately selected workspace scope authorizes only the current
+external principal's source/workspace operations, including source and diff reads; it does not grant
+app lifecycle, update, restart or publication authority. See
+[external development workspaces](../external-development-workspaces/feature.md).
 
-The AS metadata advertises all three scopes; Core's protected-resource metadata advertises only
-read. An omitted authorization scope defaults to read. Consent requires a browser session and CSRF;
-Core consent also requires an administrator. Read is required, while requested lifecycle/update
-permissions initially appear unchecked. The decision endpoint validates the selected subset against
-the parked request and stores only approved scopes in the code, grant and access token. OAuth never
+The AS metadata and Core's protected-resource metadata advertise the current Core scope catalog;
+app and facade protected-resource metadata advertise only read. An omitted authorization scope
+defaults to read. Consent requires a browser session and CSRF; Core consent also requires an
+administrator. Read is required, while requested Core-only permissions initially appear unchecked.
+The decision endpoint validates the selected subset against the parked request and stores only approved scopes in the code, grant and access token. OAuth never
 issues a full-role credential.
 
 Refresh validates an explicitly supplied scope before rotating: it must be a nonempty valid subset
@@ -181,7 +190,8 @@ validated locally until its TTL runs out.
   missing.
 
 - Selectable consent cannot add unrequested scopes; refresh subset validation runs before rotation
-  and preserves grant authority. AS scope catalog and read-only PRM are distinct.
+  and preserves grant authority. AS and Core protected-resource metadata advertise the current Core catalog; app and facade metadata
+  advertise only read.
 - Client deletion isolates exact ids, invalidates pending codes/consent, races safely with code
   redemption and refresh, and closes associated streams. Recovery failure prevents startup;
   repeated recovery completes after storage recovers.
