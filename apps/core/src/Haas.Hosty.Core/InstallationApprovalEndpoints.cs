@@ -536,6 +536,8 @@ internal static class InstallationApprovalEndpoints
         var source = entry.FeedsUrl ?? entry.InstallPlan?.ManifestPath ?? entry.UpdatePlan?.ManifestPath;
         var warning = entry.InstallPlan?.TargetRuntimeType is "localCommand" or "mixed"
             ? "<p class=warning>This app runs commands directly on your host, outside a container. Only install code you trust.</p>" : "";
+        if (entry.InstallPlan is { System: true })
+            warning += "<p class=warning><strong>System app.</strong> Administrators have access; other users need an explicit assignment. App permissions still apply.</p>";
         var access = entry.InstallPlan?.PrivateSources ?? entry.UpdatePlan?.PrivateSources;
         var grants = string.Join("", new[] { access?.Manifest, access?.Git }.OfType<SourceReadGrant>().Select(g =>
             $"<li>{E(g.ManifestUrl is null ? "Git source" : "Manifest and display assets")}: {E(g.ManifestUrl ?? g.Repository)} — {E(g.Label)} ({E(g.AccountName)})</li>"));
@@ -545,8 +547,12 @@ internal static class InstallationApprovalEndpoints
         var accessReview = grants.Length == 0 ? "" : $"<h2>Private source access</h2><ul>{grants}</ul><p>Allow Core to read these resources for this app, its background updates and source workspaces you request using your connections, including after you sign out. Disconnecting a connection or disabling your account blocks new reads; the installed app keeps running. Other app users do not receive your credentials.</p>";
         var version = entry.RemovalPlan?.Version ?? entry.InstallPlan?.TargetVersion ?? entry.UpdatePlan?.TargetVersion;
         var nameLine = $"<p><strong>{E(name)}</strong>{(version is null ? "" : " · " + E(version))}</p>";
-        var sourceAndRoles = entry.PermissionPlan is not null ? "" :
-            (string.IsNullOrWhiteSpace(source) ? "" : $"<p class=source>Source: {E(source)}</p>")
+        var sourceReview = string.IsNullOrWhiteSpace(source) ? "" : $"<p class=source>Source: {E(source)}</p>";
+        if (entry.InstallPlan is { } feedInstall && !string.IsNullOrWhiteSpace(entry.FeedsUrl))
+            sourceReview = $"<p class=source>Feed: {E(entry.FeedsUrl)}</p>"
+                + (string.IsNullOrWhiteSpace(entry.FeedId) ? "" : $"<p class=source>Selected feed: {E(entry.FeedId)}</p>")
+                + $"<p class=source>Manifest: {E(feedInstall.ManifestPath)}</p>";
+        var sourceAndRoles = entry.PermissionPlan is not null ? "" : sourceReview
             + (roles.Count == 0 && previousRoles.Count == 0 ? "" : $"<h2>Provider roles</h2><ul>{roleItems}</ul>");
         var review = entry.AssistantAccessPlan is not null ? "" : entry.HostPathPlan is { } pathPlan ? "<ul>" + string.Join("", pathPlan.Details.Select(d => $"<li>{E(d)}</li>")) + "</ul>" : entry.RemovalPlan is { } removal ? RenderRemoval(removal, entry.CallerAppId)
             : $"{sourceAndRoles}{(permissions.Count == 0 && !removed.Any() ? "" : $"<h2>Core permissions</h2><ul>{rights}{string.Join("", removed)}</ul>")}{warning}{accessReview}";

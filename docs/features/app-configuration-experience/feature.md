@@ -11,8 +11,11 @@ components: [apps/core, apps/shell, apps/marketplace, packages/app-sdk]
 
 Shell and Marketplace choose the source before opening one Core confirmation. Marketplace uses the
 feed's declared default when the user has not selected a channel; it does not assume stable. Core
-reviews the exact selected manifest. The confirmation offers supported runtime, automatic startup
-and permissions only. It contains no feed, settings, source or mount editor. Runtime changes renew
+reviews the exact selected manifest. Its read-only source summary identifies the selected feed,
+feed URL and frozen manifest reference so channels remain distinguishable. A system-app warning
+explains administrator access, explicit assignments for other users and continued app permission
+checks. The confirmation offers supported runtime, automatic startup and permissions only.
+It contains no feed, settings, source or mount editor. Runtime changes renew
 the review and nonce against frozen manifest bytes, without following a moving publisher head.
 An unavailable default remains explicit until the operator selects an available alternative.
 
@@ -96,7 +99,9 @@ generic controls remain their authors' choices.
   skipping and supervision without retry loops.
 - Core HTTP tests cover exact runtime/autostart/permission decisions, omitted/default/retained and
   explicit automatic-start choices through confirmation and apply, runtime re-review, frozen channel manifests,
-  unavailable runtime choices, actor/nonce/Origin protections and escaped diagnostics.
+  unavailable runtime choices, actor/nonce/Origin protections and escaped diagnostics. System access
+  warnings appear only for system installs; frozen feed identity and manifest references remain escaped
+  read-only text across default channel selection and runtime re-review.
 - SDK, Shell and Marketplace tests cover direct default preparation, synchronous popup reservation,
   blocked popups, declared channel defaults, uncertain same-ID status recovery and custom clients.
 - Browser acceptance uses normal-password authentication and Core-managed apps to verify the

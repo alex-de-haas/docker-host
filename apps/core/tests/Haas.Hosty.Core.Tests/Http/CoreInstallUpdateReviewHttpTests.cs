@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,6 +9,124 @@ namespace Haas.Hosty.Core.Tests.Http;
 
 public sealed class CoreInstallUpdateReviewHttpTests
 {
+    private const string EscapingFeedId = "beta\"><img src=x onerror=alert(1)>";
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InstallConfirmationShowsFrozenSystemAccessWarningOnlyForSystemApps(bool system)
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var session = await SeedAdmin(harness);
+        var path = Path.Combine(harness.Services.GetRequiredService<CoreDataPaths>().DataRoot, "system-review.json");
+        var manifest = Fixture("example.system-review", "1.0.0", "[]", "[]")
+            .Replace("\"name\":\"Review fixture\"", "\"name\":\"<img src=x onerror=alert(1)>\"");
+        if (system) manifest = manifest.Replace("\"version\":\"1.0.0\"", "\"version\":\"1.0.0\",\"role\":\"system\"");
+        await File.WriteAllTextAsync(path, manifest);
+        using var api = harness.CreateClient();
+        api.DefaultRequestHeaders.Authorization = new("Bearer", session);
+        using var prepared = await api.PostAsJsonAsync("/api/installations", new { manifestPath = path });
+        prepared.EnsureSuccessStatusCode();
+        var draft = await prepared.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(system, draft.GetProperty("plan").GetProperty("system").GetBoolean());
+        var id = draft.GetProperty("id").GetString()!;
+        using var submitted = await api.PostAsJsonAsync($"/api/installations/{id}/submit", new { });
+        submitted.EnsureSuccessStatusCode();
+        using var browser = Browser(harness, session);
+        var html = await browser.GetStringAsync($"/install/confirm/{id}");
+        const string warning = "<strong>System app.</strong> Administrators have access; other users need an explicit assignment. App permissions still apply.";
+        Assert.Equal(system, html.Contains(warning, StringComparison.Ordinal));
+        Assert.Contains("&lt;img src=x onerror=alert(1)&gt;", html);
+        Assert.DoesNotContain("<img src=x", html);
+        Assert.DoesNotContain("name=system", html);
+        Assert.Contains("name=runtime", html);
+        // A publisher changing the source role cannot change the already reviewed warning.
+        await File.WriteAllTextAsync(path, Fixture("example.system-review", "9.0.0", "[]", "[]"));
+        using var selection = await Decide(browser, id, Nonce(html), "runtime", "second", false);
+        selection.EnsureSuccessStatusCode();
+        var renewed = await selection.Content.ReadAsStringAsync();
+        Assert.Equal(system, renewed.Contains(warning, StringComparison.Ordinal));
+        var frozen = harness.Services.GetRequiredService<InstallationApprovalStore>().Get(id).InstallPlan!;
+        Assert.Equal(system, frozen.System);
+        Assert.Equal("1.0.0", frozen.TargetVersion);
+        Assert.Equal("second", frozen.TargetRuntime);
+        Assert.Null(await harness.Services.GetRequiredService<AppRegistryStore>().GetAppAsync("example.system-review"));
+    }
+
+    [Theory]
+    [InlineData("stable", "1.0.0")]
+    [InlineData("beta", "2.0.0")]
+    [InlineData(EscapingFeedId, "2.0.0")]
+    public async Task FeedInstallConfirmationShowsExactFrozenSelectionAndReferenceWithoutFeedControls(string feedId, string version)
+    {
+        const string appId = "example.feed-review";
+        const string feedsUrl = "https://apps.example.test/review/feeds.json?catalog=one&view=install";
+        const string stableRef = "https://apps.example.test/review/stable/manifest.json?channel=stable&review=one";
+        const string betaRef = "https://apps.example.test/review/beta/manifest.json?channel=beta&review=one";
+        const string movedRef = "https://apps.example.test/review/moved/manifest.json";
+        var betaId = feedId == EscapingFeedId ? EscapingFeedId : "beta";
+        using var publisher = new FeedReviewDocuments();
+        string FeedDocument(string stable, string beta) => JsonSerializer.Serialize(new
+        {
+            schemaVersion = "app-feeds.0.1", appId,
+            feeds = new[] { new { id = "stable", manifestRef = stable, @default = true }, new { id = betaId, manifestRef = beta, @default = false } },
+        });
+        publisher.Documents[feedsUrl] = FeedDocument(stableRef, betaRef);
+        publisher.Documents[stableRef] = Fixture(appId, "1.0.0", "[]", "[]");
+        publisher.Documents[betaRef] = Fixture(appId, "2.0.0", "[]", "[]");
+        await using var harness = await CoreHttpHarness.StartAsync(configure: services =>
+        {
+            services.AddSingleton(new AppManifestService(new HttpClient(publisher, disposeHandler: false)));
+            services.AddSingleton(new AppFeedService(new HttpClient(publisher, disposeHandler: false)));
+        });
+        var session = await SeedAdmin(harness);
+        using var api = harness.CreateClient();
+        api.DefaultRequestHeaders.Authorization = new("Bearer", session);
+        using var prepared = await api.PostAsJsonAsync("/api/installations", new { feedsUrl, feedId });
+        prepared.EnsureSuccessStatusCode();
+        var draft = await prepared.Content.ReadFromJsonAsync<JsonElement>();
+        var id = draft.GetProperty("id").GetString()!;
+        Assert.Equal(version, draft.GetProperty("plan").GetProperty("targetVersion").GetString());
+        using var submitted = await api.PostAsJsonAsync($"/api/installations/{id}/submit", new { });
+        submitted.EnsureSuccessStatusCode();
+        var entry = harness.Services.GetRequiredService<InstallationApprovalStore>().Get(id);
+        var selectedRef = feedId == "stable" ? stableRef : betaRef;
+        var otherRef = feedId == "stable" ? betaRef : stableRef;
+        Assert.Equal(feedsUrl, entry.FeedsUrl);
+        Assert.Equal(feedId, entry.FeedId);
+        Assert.Equal(selectedRef, entry.InstallPlan!.ManifestPath);
+        var requestsBeforeReview = publisher.Requests.Count;
+        using var browser = Browser(harness, session);
+        var html = await browser.GetStringAsync($"/install/confirm/{id}");
+        void AssertFrozenSource(string page)
+        {
+            Assert.Contains("<p class=source>Feed: " + WebUtility.HtmlEncode(feedsUrl) + "</p>", page);
+            Assert.Contains("<p class=source>Selected feed: " + WebUtility.HtmlEncode(feedId) + "</p>", page);
+            Assert.Contains("<p class=source>Manifest: " + WebUtility.HtmlEncode(selectedRef) + "</p>", page);
+            Assert.DoesNotContain(WebUtility.HtmlEncode(otherRef), page);
+            Assert.DoesNotContain(movedRef, page);
+            Assert.DoesNotContain("name=feed", page);
+            Assert.DoesNotContain("name=\"feed", page);
+            Assert.DoesNotContain("<img src=x", page);
+            Assert.Contains("name=runtime", page);
+            Assert.Contains("name=autostart", page);
+        }
+        AssertFrozenSource(html);
+        publisher.Documents[feedsUrl] = FeedDocument(movedRef, movedRef);
+        publisher.Documents[selectedRef] = Fixture(appId, "9.0.0", "[\"apps.install\"]", "[]");
+        publisher.Documents[movedRef] = Fixture(appId, "9.0.0", "[]", "[]");
+        using var selection = await Decide(browser, id, Nonce(html), "runtime", "second", false);
+        selection.EnsureSuccessStatusCode();
+        AssertFrozenSource(await selection.Content.ReadAsStringAsync());
+        Assert.Equal(requestsBeforeReview, publisher.Requests.Count);
+        Assert.Equal(feedId, entry.FeedId);
+        Assert.Equal(selectedRef, entry.InstallPlan.ManifestPath);
+        Assert.Equal(version, entry.InstallPlan.TargetVersion);
+        Assert.Equal("second", entry.InstallPlan.TargetRuntime);
+        Assert.Empty(Assert.IsAssignableFrom<IReadOnlyList<string>>(entry.InstallPlan.CorePermissions));
+        Assert.Null(await harness.Services.GetRequiredService<AppRegistryStore>().GetAppAsync(appId));
+    }
+
     [Theory]
     [InlineData(null, null, true)]
     [InlineData(false, null, false)]
@@ -362,4 +481,18 @@ public sealed class CoreInstallUpdateReviewHttpTests
            "first":{"type":"localCommand","command":"echo first","workingDirectory":"."},
            "second":{"type":"localCommand","command":"echo second","workingDirectory":"."}}}]}
         """;
+
+    private sealed class FeedReviewDocuments : HttpMessageHandler
+    {
+        internal Dictionary<string, string> Documents { get; } = new(StringComparer.Ordinal);
+        internal List<string> Requests { get; } = [];
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var url = request.RequestUri!.AbsoluteUri;
+            Requests.Add(url);
+            return Task.FromResult(Documents.TryGetValue(url, out var document)
+                ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(document, Encoding.UTF8, "application/json") }
+                : new HttpResponseMessage(HttpStatusCode.NotFound));
+        }
+    }
 }
