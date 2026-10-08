@@ -38,7 +38,8 @@ describe("discussion version selection", () => {
     const both = { ...detail, workspaces: [workspaceVersion] };
     expect(discussionVersion(both, null)?.document).toBe(document);
     expect(discussionVersion(both, "workspace")?.document.content).toBe("workspace content");
-    expect(discussionVersion({ ...both, document: null }, null)?.workspaceId).toBe("workspace");
+    expect(discussionVersion({ ...both, document: null }, null)).toBeNull();
+    expect(discussionVersion({ ...both, document: null }, "workspace")?.workspaceId).toBe("workspace");
   });
   it("never substitutes a different version for a removed or failed selection", () => {
     expect(discussionVersion(detail, "missing")).toBeNull();

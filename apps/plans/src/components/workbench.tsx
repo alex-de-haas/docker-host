@@ -15,7 +15,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
-import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
@@ -140,7 +140,7 @@ function Detail({ repositoryId, path, workspaceId, epoch, navigate, onRefresh }:
     return () => { controller.abort(); clearInterval(interval); document.removeEventListener("visibilitychange", refreshVisible); };
   }, [repositoryId, path, epoch]);
   const current = detail?.path === path ? detail : null;
-  const selected = current?.workspaces.find(item => item.workspace.id === workspaceId) ?? (!workspaceId ? current?.workspaces[0] : undefined);
+  const selected = current?.workspaces.find(item => item.workspace.id === workspaceId);
   return <>
     <DiscussPlan key={`${repositoryId}:${path}:${workspaceId ?? "target"}`} detail={current} workspaceId={workspaceId}
       back={<Button variant="ghost" className="min-w-0 shrink" asChild><a href={`/?${new URLSearchParams({ repository: repositoryId })}`} title="All plans in this repository" onClick={event => { event.preventDefault(); navigate(`/?${new URLSearchParams({ repository: repositoryId })}`); }}><ArrowLeftIcon data-icon="inline-start" /><span className="truncate">All plans in this repository</span></a></Button>}
@@ -150,24 +150,42 @@ function Detail({ repositoryId, path, workspaceId, epoch, navigate, onRefresh }:
     {!current && !error && <LoadingIndicator message="Loading document versions…" />}
     {current && <>
       <div className="flex flex-col gap-2"><h1 className="text-2xl font-semibold tracking-tight">{current.document?.title ?? selected?.document?.title ?? path}</h1><p className="break-all text-xs text-muted-foreground">{repoName(current.repository)} / {current.repository.branch} / {path}</p></div>
-      <div className="grid min-w-0 items-start gap-6 lg:grid-cols-2"><section className="min-w-0"><Frame><FrameHeader className="gap-2"><FrameTitle><h2>Tracked branch</h2></FrameTitle><div className="flex flex-wrap items-center gap-3"><Badge variant="outline"><GitBranchIcon />{current.repository.branch}</Badge>{current.document && <><Badge variant="secondary">{current.document.status ?? "Document"}</Badge><Progress document={current.document} /></>}</div></FrameHeader><FramePanel>
-        <TrackedDocument document={current.document} error={current.error} repositoryId={repositoryId} navigate={navigate} />
-      </FramePanel></Frame></section><section className="min-w-0"><Frame><FrameHeader><FrameTitle><h2 className="flex items-center gap-2">Workspace versions<Badge variant="secondary">{current.workspaces.length}</Badge></h2></FrameTitle><FrameDescription>Changes against each workspace’s own base.</FrameDescription></FrameHeader><FramePanel className="flex flex-col gap-4">
-        {current.workspaces.length === 0 && <Empty><EmptyHeader><EmptyTitle>No workspace changes</EmptyTitle><EmptyDescription>No workspace changes this document.</EmptyDescription></EmptyHeader></Empty>}
-        {current.workspaces.length > 0 && <ToggleGroup type="single" variant="outline" orientation="vertical" spacing={2} value={selected?.workspace.id ?? ""} onValueChange={value => { if (value) navigate(planLink(repositoryId, path, value)); }} aria-label="Workspace version" className="w-full flex-col items-stretch">
-          {current.workspaces.map(version => <ToggleGroupItem key={version.workspace.id} value={version.workspace.id} asChild className="h-auto flex-col items-start gap-1 py-3 whitespace-normal"><a href={planLink(repositoryId, path, version.workspace.id)} onClick={event => { event.preventDefault(); navigate(planLink(repositoryId, path, version.workspace.id)); }} onKeyDown={event => { if (event.key === " ") { event.preventDefault(); event.currentTarget.click(); } }}><strong className="max-w-full truncate">{version.workspace.branch}</strong><WorkspaceOwner workspace={version.workspace} /><VersionBrief version={version} /><span className="text-xs text-muted-foreground">Last change {formatTime(version.change.modifiedAt)}</span></a></ToggleGroupItem>)}
-        </ToggleGroup>}
-        {workspaceId && !selected && <Alert><AlertDescription>The selected workspace no longer changes this document.</AlertDescription></Alert>}
-        {selected && <WorkspaceDocument key={`${selected.workspace.id}:${selected.document?.updated}`} version={selected} repositoryId={repositoryId} navigate={navigate} />}
-      </FramePanel></Frame></section></div>
+      <PlanVersions detail={current} workspaceId={workspaceId} navigate={navigate} />
     </>}
   </>;
+}
+export function PlanVersions({ detail, workspaceId, navigate }: { detail: PlanDetail; workspaceId: string | null; navigate: (url: string) => void }) {
+  const selected = detail.workspaces.find(version => version.workspace.id === workspaceId);
+  const unavailable = workspaceId !== null && !selected;
+  const repositoryId = detail.repository.id;
+  return <Tabs value={workspaceId ?? "tracked"} onValueChange={value => navigate(planLink(repositoryId, detail.path, value === "tracked" ? undefined : value))} className="min-w-0 gap-4">
+    <div className="min-w-0 overflow-x-auto border-b pb-1">
+      <TabsList variant="line" aria-label="Document versions">
+        <TabsTrigger value="tracked" className="shrink-0"><GitBranchIcon />Tracked branch<span className="max-w-40 truncate text-muted-foreground" title={detail.repository.branch}>{detail.repository.branch}</span></TabsTrigger>
+        {detail.workspaces.map(({ workspace }) => <TabsTrigger key={workspace.id} value={workspace.id} className="shrink-0" title={workspace.branch}>
+          <GitBranchIcon /><span className="max-w-48 truncate">{workspace.ownerLabel?.trim() || "Workspace"}</span><span className="text-xs text-muted-foreground">{workspace.id.slice(0, 8)}</span>
+        </TabsTrigger>)}
+        {unavailable && <TabsTrigger value={workspaceId} className="shrink-0">Unavailable workspace</TabsTrigger>}
+      </TabsList>
+    </div>
+    <TabsContent value="tracked" className="min-w-0">
+      <Frame><FrameHeader className="gap-2"><FrameTitle><h2>Tracked branch</h2></FrameTitle><div className="flex flex-wrap items-center gap-3"><Badge variant="outline"><GitBranchIcon />{detail.repository.branch}</Badge>{detail.document && <><Badge variant="secondary">{detail.document.status ?? "Document"}</Badge><Progress document={detail.document} /></>}</div></FrameHeader><FramePanel>
+        <TrackedDocument document={detail.document} error={detail.error} repositoryId={repositoryId} navigate={navigate} />
+      </FramePanel></Frame>
+    </TabsContent>
+    {detail.workspaces.map(version => <TabsContent key={version.workspace.id} value={version.workspace.id} className="min-w-0">
+      <Frame><FrameHeader className="gap-2"><FrameTitle><h2 className="break-all">{version.workspace.branch}</h2></FrameTitle><VersionBrief version={version} /><FrameDescription>Changes against this workspace’s own base.</FrameDescription></FrameHeader><FramePanel>
+        <WorkspaceDocument version={version} repositoryId={repositoryId} navigate={navigate} />
+      </FramePanel></Frame>
+    </TabsContent>)}
+    {unavailable && <TabsContent value={workspaceId}><Alert><AlertTitle>Workspace version unavailable</AlertTitle><AlertDescription>The selected workspace no longer changes this document. Select the tracked branch or another workspace.</AlertDescription></Alert></TabsContent>}
+  </Tabs>;
 }
 export function WorkspaceDocument({ version, repositoryId, navigate }: { version: WorkspacePlan; repositoryId: string; navigate: (url: string) => void }) {
   const [view, setView] = useState<"document" | "diff">("diff");
   const changes = useMemo(() => deliverableChanges(version.base, version.document), [version.base, version.document]);
   const diff = useMemo(() => lineDiff(version.base?.content ?? "", version.document?.content ?? ""), [version.base, version.document]);
-  return <div className="flex min-w-0 flex-col gap-4"><Separator /><div className="flex flex-col items-start gap-3"><WorkspaceOwner workspace={version.workspace} /><p className="text-xs text-muted-foreground">Workspace {version.workspace.state}. Observed {formatTime(version.workspace.observationAt)}{version.workspace.observationState ? ` (${version.workspace.observationState})` : ""}.</p><p className="text-xs text-muted-foreground">Document updated {version.document?.updated ?? "unknown"}. Last change {formatTime(version.change.modifiedAt)}.</p>
+  return <div className="flex min-w-0 flex-col gap-4"><div className="flex flex-col items-start gap-3"><WorkspaceOwner workspace={version.workspace} /><p className="text-xs text-muted-foreground">Workspace {version.workspace.state}. Observed {formatTime(version.workspace.observationAt)}{version.workspace.observationState ? ` (${version.workspace.observationState})` : ""}.</p><p className="text-xs text-muted-foreground">Document updated {version.document?.updated ?? "unknown"}. Last change {formatTime(version.change.modifiedAt)}.</p>
     <WorkspaceSessionLink workspace={version.workspace} button />
     {version.change.targetChanged && <Alert><AlertTitle>Tracked branch changed</AlertTitle><AlertDescription>The tracked branch also changed this document since the workspace base. The diff below shows this workspace’s own changes.</AlertDescription></Alert>}
   </div>
