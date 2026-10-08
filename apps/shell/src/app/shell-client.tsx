@@ -1,7 +1,5 @@
 "use client";
 
-import { ShellActivityBridge } from "./shell/activity-bridge";
-import { MissingPermissionsNotice } from "@hosty-sdk/app/react";
 
 import { fetchCore } from "./shell/core-transport.js";
 
@@ -2110,8 +2108,6 @@ export function ShellClient({
     <ShellActionsContext.Provider value={shellActionsContextValue}>
       <ShellStateContext.Provider value={shellStateContextValue}>
       <div className="flex h-dvh flex-col overflow-hidden bg-sidebar">
-        <ShellActivityBridge coreOrigin={coreOrigin} appId={shellAppId} />
-        <MissingPermissionsNotice />
         <ShellTopStrip
           title={stripTitle}
           subtitle={stripSubtitle}

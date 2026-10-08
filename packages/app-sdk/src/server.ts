@@ -1,6 +1,7 @@
 // Server slice: Next route-handler factories and Core revalidation. Never reaches a client
 // bundle — the service token lives here.
 import "server-only";
+import { createHostySessionResponse } from "./session-server";
 import { resolveAppAuthProtocol, appAuthProtocolMinimum, isValidCodeVerifier, type AppAuthProtocol } from "./app-code";
 export { isValidCodeVerifier } from "./app-code";
 
@@ -64,6 +65,16 @@ export type AppSessionResolution =
 
 export function getAppId(config: HostyAppConfig): string {
   return process.env.HOSTY_APP_ID?.trim() || config.appIdFallback;
+}
+
+/** Standard root-overlay identity and required-setup endpoint, with app-owned access policy. */
+export function createHostySessionRouteHandler(config: HostyAppConfig, options: { administratorOnly?: boolean } = {}) {
+  return async (request: Request): Promise<Response> => {
+    const [session, recovery] = await Promise.all([
+      resolveAppSession(readAppIdentityToken(request.headers, config), config), getRecoveryParams(config),
+    ]);
+    return createHostySessionResponse(session, recovery, { ...options, signal: request.signal });
+  };
 }
 
 export function getCoreOrigin(): string | null {

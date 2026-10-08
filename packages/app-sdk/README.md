@@ -11,36 +11,74 @@ npm install @hosty-sdk/app
 | --- | --- | --- |
 | `@hosty-sdk/app` | anywhere | status taxonomy, recovery decision, `hosty:auth-required` and `hosty:request-delegated-token` schemas, URL/env helpers |
 | `@hosty-sdk/app/server` | server only | Core revalidation with caching, cookie helpers, the app-code route factory, the app secrets client |
-| `@hosty-sdk/app/react` | client | `<AppIdentityBridge />` — probe, Core popup/navigation recovery, content gate |
+| `@hosty-sdk/app/react` | client | `<HostyOverlay />` — shared loading, identity, required setup and recovery UI; legacy bridges remain available |
+| `@hosty-sdk/app/session/server` | server | Framework-neutral session response adapter for authenticated Node servers |
 | `@hosty-sdk/app/embedder` | client | theme sender and legacy embedder message parsers; Shell no longer mints app credentials |
 | `@hosty-sdk/app/browser-auth` | client | `appFetch` for app-local API requests and bound Core popup sign-in |
 | `@hosty-sdk/app/providers` | anywhere | permission state, provider descriptors, speech contract types |
 | `@hosty-sdk/app/providers/server` | server only | `ProviderClient`: discovery, speech recognition, assistant handoffs and live credential validation |
 | `@hosty-sdk/app/theme` | anywhere | the shell→app theme protocol: constants, `resolveTheme`, `applyTheme`, `parseShellThemeMessage`, `themeBootstrapScript` / `createThemeBootstrapScript` |
 
-Minimal Next.js wiring:
+Minimal Next.js wiring (the configuration object stays server-side):
 
 ```tsx
-// app/layout.tsx
-import { AppIdentityBridge } from "@hosty-sdk/app/react";
-// wrap protected client content: <AppIdentityBridge>{children}</AppIdentityBridge>
+// app/layout.tsx — inside the body and the existing theme/launch providers
+import { HostyOverlay } from "@hosty-sdk/app/react";
+// <HostyOverlay>{children}</HostyOverlay>
 
-// Reuse an active probe that already returns the app's session fields:
-// <AppIdentityBridge probePath="/api/auth/session" onSession={seedSessionCache}>
-//   {children}
-// </AppIdentityBridge>
-// seedSessionCache receives unknown JSON; validate app-specific fields before caching.
-// The callback runs before children mount, only for a successful active probe.
+// lib/hosty.ts
+export const hostyConfig = {
+  appIdFallback: "com.example.my-app",
+  identityCookieName: "my_app_hosty_identity",
+};
+
+// app/api/hosty/session/route.ts
+import { createHostySessionRouteHandler } from "@hosty-sdk/app/server";
+import { hostyConfig } from "@/lib/hosty";
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+export const GET = createHostySessionRouteHandler(hostyConfig);
+// Administrator-only app: pass { administratorOnly: true } as the second argument.
 
 // app/api/auth/app-code/route.ts
 import { createAppCodeRouteHandler } from "@hosty-sdk/app/server";
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
-export const POST = createAppCodeRouteHandler({
-  appIdFallback: "com.example.my-app",
-  identityCookieName: "my_app_hosty_identity",
-});
+import { hostyConfig } from "@/lib/hosty";
+export const POST = createAppCodeRouteHandler(hostyConfig);
 ```
+
+Replace the protected scope's `AppIdentityBridge`, `AppActivityBridge`, custom sign-in rendering
+and `MissingPermissionsNotice` with one `HostyOverlay`. Keep public routes outside that scope.
+Existing launch/theme bridges and bootstrap scripts stay in place. The only optional overlay props
+are `probePath` and `appCodePath` for existing route names; it has no visual customization API.
+API routes and server-rendered data still enforce their own authorization. The overlay delays
+protected client mounting; it is not a server data-access boundary.
+
+The session adapter resolves identity and checks the app's declared required permissions together.
+Only an administrator receives permission details and a Core review action; a regular user sees an
+administrator-setup explanation without buttons. Optional permissions do not block the app.
+A missing setup capability on Core displays a compatibility state instead of exposing content.
+Keep service credentials on the server and use `appFetch` for app-local browser requests.
+
+For a plain Node server, call `createHostySessionResponse(validatedSession, recovery, options)` from
+`@hosty-sdk/app/session/server` and forward its response. Pass a server-validated session, never an
+identity supplied by the request body. Harness is the in-repository example. Shell retains its
+HttpOnly-only code exchange; the shared coordinator also accepts a successful exchange without a
+browser-readable token.
+
+After first mount, blocked content and app portals become hidden and inert while the component tree
+remains mounted. Same-user renewal restores it. A different stable user ID reloads the app document
+and refuses to replay old pending requests. `APP_SESSION_RESTORED` from `/browser-auth` is an optional
+DOM notification with `detail.userId`; it contains no credential. There is no generic draft persistence
+across reloads or cache-clearing framework. Existing identity idle/absolute lifetimes and fixed
+privileged activity windows still apply.
+
+Compatible SDK updates change standard presentation and recovery after a dependency update and
+rebuild, without editing this wiring. New mandatory Core capabilities can require upgrading Core.
+`node packages/app-sdk/scripts/check-overlay-upgrade.mjs` checks the published export layout using
+identical consumer source before and after a dependency-only presentation revision (run SDK build first).
+
+Legacy `AppIdentityBridge` exports, `renderState` and `onSession` remain compatible for consumers
+that have not migrated. See [Hosty Overlay](../../docs/features/hosty-overlay/feature.md) for behavior.
 
 Following the shell's theme — the launch parameters decide the theme a document loads with, the
 `hosty:shell-theme` post covers changes while the frame is up, and the bootstrap keeps the first

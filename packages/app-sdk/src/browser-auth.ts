@@ -225,6 +225,11 @@ export async function appFetch(input: string | URL, init: RequestInit = {}, reco
   const url = new URL(input, window.location.href);
   if (url.origin !== window.location.origin || url.username || url.password)
     throw new Error("App API requests must stay on this app's origin.");
+  // Mounted app effects can still run behind the overlay. Do not send their requests with
+  // the newly exchanged credential until the coordinator has checked the actor and setup.
+  // SDK identity/protocol probes use recover=false so that validation itself can proceed.
+  if (recover && renewal && activityConfig?.validateSession && !await waitForActivity(init.signal))
+    return Response.json({ code: "reauth_required", message: "Hosty access has not been restored." }, { status: 401 });
   const current = grant?.origin === url.origin ? grant : null;
   const headers = new Headers(init.headers);
   if (current) headers.set("authorization", `Bearer ${current.token}`);
@@ -408,6 +413,8 @@ function openNativeAppSignIn(attempt: AppAuthAttempt, signal?: AbortSignal): Pro
 }
 
 export const APP_ACTIVITY_RENEWED = "hosty:app-activity-renewed";
+/** Validated restoration of the same actor, before the app resumes protected work. */
+export const APP_SESSION_RESTORED = "hosty:app-session-restored";
 export type AppActivityConfig = {
   openUrl: string;
   appAuthProtocol: AppAuthProtocol;
@@ -416,6 +423,8 @@ export type AppActivityConfig = {
   activeUntil?: string | null;
   activityRequired?: boolean;
   exchangeCode: (result: AppSignInResult) => Promise<{ accessToken?: string; activeUntil?: string | null }>;
+  /** The root coordinator verifies actor and setup before any waiting request can retry. */
+  validateSession?: () => Promise<boolean>;
 };
 let activityConfig: AppActivityConfig | null = null;
 let renewal: Promise<void> | null = null;
@@ -454,6 +463,10 @@ export function renewAppActivity(): Promise<void> {
       throw new Error("Sign-in was cancelled.");
     if (result.accessToken) rememberAppGrant(result.accessToken);
     config.activeUntil = result.activeUntil;
+    if (config.validateSession && !await config.validateSession())
+      throw new Error("Access has not been restored. Complete the Hosty setup before continuing.");
+    if (controller.signal.aborted || activityConfig !== config)
+      throw new Error("Sign-in was cancelled.");
     recoveryPending = false;
     for (const done of [...waiting]) done(true);
     window.dispatchEvent(new Event(APP_ACTIVITY_RENEWED));
