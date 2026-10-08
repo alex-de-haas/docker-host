@@ -72,6 +72,7 @@ between separate identity and permission responses. Unknown or failed readiness 
 | Optional permission missing | No general warning or gate |
 | Access denied | Explanation without repeated automatic sign-in |
 | Core unavailable | Retry while retaining the mounted application state |
+| Activity required but compatible renewal metadata unavailable | Retry while retaining the mounted application state; protected content stays blocked |
 | Ready | Reveal protected content |
 
 Review remains Core-owned and uses the existing verified embedder message where available. Focus and
@@ -89,8 +90,12 @@ data authorization.
 ## Recovery And State
 
 Initial content mounts only after readiness. Later interruption retains the mounted tree in memory.
-The known privileged activity deadline blocks the page even before an API request receives a 401.
-Successful renewal validates the stable user ID and required setup before pending SDK requests retry.
+The privileged activity requirement and deadline are retained independently of renewal protocol
+discovery. Missing or incompatible recovery metadata blocks activity-gated content even before its
+deadline and offers Retry. A previously accepted protocol does not override a failed fresh discovery.
+The known deadline still expires without an API request receiving a 401. Successful renewal validates
+the stable user ID, required setup, activity deadline and compatible recovery metadata before pending
+SDK requests retry.
 New SDK requests also wait during credential exchange and validation. If renewal succeeds but setup
 is incomplete, the page stays blocked; later setup completion restores it without replaying the
 previously rejected writes.
@@ -112,8 +117,9 @@ Element picking, screenshots and assistant evidence belong to
 
 - SDK tests cover combined readiness, administrator/member setup, unsupported and optional grants,
   transport errors, delayed or superseded probes and compatibility failures.
-- Recovery tests retain a mounted input and hide sibling portals, enforce known expiry, preserve
-  state after outages, and verify actor identity before retrying pending mutations.
+- Recovery tests retain a mounted input and hide sibling portals, enforce known expiry independently
+  of protocol discovery, block missing/incompatible renewal metadata on initial load and refresh,
+  restore on Retry, and verify actor identity and complete readiness before retrying pending mutations.
 - `npm run build --workspace @hosty-sdk/app` followed by
   `node packages/app-sdk/scripts/check-overlay-upgrade.mjs` verifies published exports and identical
   consumer source across a dependency-only presentation change.

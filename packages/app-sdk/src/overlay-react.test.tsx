@@ -80,6 +80,61 @@ describe("HostyOverlay", () => {
     expect(node.querySelector("input")).toBeNull();
     expect(document.body.textContent).toContain("Renew access to continue");
   });
+  it.each(["future", "expired", "invalid"])("blocks activity-gated content without a renewal protocol (%s deadline)", async deadline => {
+    const activeUntil = deadline === "future" ? new Date(Date.now() + 3600000).toISOString()
+      : deadline === "expired" ? new Date(0).toISOString() : "invalid";
+    let protocol: number | null = null;
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...active(), activityRequired: true, activeUntil,
+      recovery: { ...recovery, appAuthProtocol: protocol } })));
+    await render();
+    expect(node.querySelector("input")).toBeNull();
+    expect(document.body.textContent).toContain("Cannot verify access renewal");
+    expect(document.querySelector("dialog button")?.textContent).toBe("Retry");
+    await act(async () => window.dispatchEvent(new Event(APP_SESSION_ENDED)));
+    expect(node.querySelector("[data-hosty-content]")?.hasAttribute("hidden")).toBe(true);
+    protocol = 2;
+    await act(async () => document.querySelector<HTMLButtonElement>("dialog button")!.click());
+    if (deadline === "future") {
+      expect(node.querySelector("input")?.value).toBe("Unsaved work");
+      expect(document.querySelector("dialog")).toBeNull();
+    } else {
+      expect(node.querySelector("input")).toBeNull();
+      expect(document.body.textContent).toContain("Renew access to continue");
+    }
+  });
+  it("does not require renewal metadata for an activity-ungated session", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...active(),
+      recovery: { ...recovery, appAuthProtocol: null } })));
+    await render();
+    expect(node.querySelector("input")?.value).toBe("Unsaved work");
+    expect(document.querySelector("dialog")).toBeNull();
+  });
+  it("tracks the privileged deadline while renewal discovery is unavailable", async () => {
+    const activeUntil = new Date(Date.now() + 100).toISOString();
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...active(), activityRequired: true, activeUntil,
+      recovery: { ...recovery, appAuthProtocol: null } })));
+    const ended = vi.fn(); window.addEventListener(APP_SESSION_ENDED, ended);
+    try {
+      await render();
+      await act(async () => { await new Promise(done => setTimeout(done, 130)); });
+      expect(ended).toHaveBeenCalledTimes(1);
+      expect(node.querySelector("input")).toBeNull();
+    } finally { window.removeEventListener(APP_SESSION_ENDED, ended); }
+  });
+  it.each([null, 1, 3])("hides retained content when a fresh probe loses compatible renewal metadata (%s)", async missingProtocol => {
+    let protocol: number | null = 2;
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...active(), activityRequired: true,
+      recovery: { ...recovery, appAuthProtocol: protocol } })));
+    await render(); const draft = node.querySelector("input"); expect(draft).not.toBeNull();
+    protocol = missingProtocol;
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(node.querySelector("input")).toBe(draft);
+    expect(node.querySelector("[data-hosty-content]")?.hasAttribute("hidden")).toBe(true);
+    expect(document.body.textContent).toContain("Cannot verify access renewal");
+    protocol = 2;
+    await act(async () => document.querySelector<HTMLButtonElement>("dialog button")!.click());
+    expect(document.querySelector("dialog")).toBeNull(); expect(node.querySelector("input")).toBe(draft);
+  });
   it("blocks a known activity deadline even without a failed app request", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...active(), activityRequired: true, activeUntil: new Date(Date.now() + 100).toISOString() })));
     await render(); const draft = node.querySelector("input"); expect(draft).not.toBeNull();
@@ -111,11 +166,12 @@ describe("HostyOverlay", () => {
     expect(portal.inert).toBeFalsy(); portal.remove();
   });
   it.each([
-    { changed: false, cookieOnly: false, awaitingSetup: false },
-    { changed: true, cookieOnly: false, awaitingSetup: false },
-    { changed: false, cookieOnly: true, awaitingSetup: false },
-    { changed: false, cookieOnly: false, awaitingSetup: true },
-  ])("validates actor and setup before retrying mutations ($changed, cookieOnly=$cookieOnly, awaitingSetup=$awaitingSetup)", async ({ changed, cookieOnly, awaitingSetup }) => {
+    { changed: false, cookieOnly: false, awaitingSetup: false, awaitingRecovery: false },
+    { changed: true, cookieOnly: false, awaitingSetup: false, awaitingRecovery: false },
+    { changed: false, cookieOnly: true, awaitingSetup: false, awaitingRecovery: false },
+    { changed: false, cookieOnly: false, awaitingSetup: true, awaitingRecovery: false },
+    { changed: false, cookieOnly: false, awaitingSetup: false, awaitingRecovery: true },
+  ])("validates actor, setup and renewal metadata before retrying mutations ($changed, cookieOnly=$cookieOnly, awaitingSetup=$awaitingSetup, awaitingRecovery=$awaitingRecovery)", async ({ changed, cookieOnly, awaitingSetup, awaitingRecovery }) => {
     const actualWindow = window;
     const reload = vi.fn();
     const location = Object.assign(new URL(actualWindow.location.href), { reload });
@@ -128,9 +184,12 @@ describe("HostyOverlay", () => {
     vi.spyOn(actualWindow, "open").mockReturnValue(popup as unknown as Window);
     const forms: HTMLFormElement[] = [];
     vi.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(function () { forms.push(this.cloneNode(true) as HTMLFormElement); });
-    let renewed = false; let writes = 0; let setupReady = !awaitingSetup;
+    let renewed = false; let writes = 0; let setupReady = !awaitingSetup; let recoveryReady = !awaitingRecovery;
     const fetcher = vi.fn(async (input: unknown) => {
-      if (input === "/api/hosty/session") return Response.json(active(renewed && !setupReady ? "missing" : "ready", renewed && changed ? "bob" : "alice"));
+      if (input === "/api/hosty/session") return Response.json({
+        ...active(renewed && !setupReady ? "missing" : "ready", renewed && changed ? "bob" : "alice"),
+        activityRequired: true, recovery: { ...recovery, appAuthProtocol: renewed && !recoveryReady ? null : 2 },
+      });
       if (input === "/api/auth/app-code") { renewed = true; return Response.json({ ...(!cookieOnly ? { accessToken: "hostyg_renewed" } : {}), activeUntil: new Date(Date.now() + 3600000).toISOString() }); }
       if (input === "/api/write") { writes++; return renewed ? Response.json({ ok: true }) : Response.json({ code: "reauth_required" }, { status: 401 }); }
       throw new Error(String(input));
@@ -147,19 +206,19 @@ describe("HostyOverlay", () => {
     await act(async () => {
       actualWindow.dispatchEvent(new MessageEvent("message", { origin: core, source: popup as unknown as Window,
         data: { type: "hosty:app-auth-code", state, code: "renewed" } }));
-      expect((await response).status).toBe(changed || awaitingSetup ? 401 : 200);
-      expect((await backgroundWrite).status).toBe(changed || awaitingSetup ? 401 : 200);
+      expect((await response).status).toBe(changed || awaitingSetup || awaitingRecovery ? 401 : 200);
+      expect((await backgroundWrite).status).toBe(changed || awaitingSetup || awaitingRecovery ? 401 : 200);
     });
-    expect(writes).toBe(changed || awaitingSetup ? 1 : 3);
+    expect(writes).toBe(changed || awaitingSetup || awaitingRecovery ? 1 : 3);
     expect(reload).toHaveBeenCalledTimes(changed ? 1 : 0);
-    expect(restored).toHaveBeenCalledTimes(changed || awaitingSetup ? 0 : 1);
-    if (awaitingSetup) {
-      expect(document.body.textContent).toContain("configuration by an administrator");
+    expect(restored).toHaveBeenCalledTimes(changed || awaitingSetup || awaitingRecovery ? 0 : 1);
+    if (awaitingSetup || awaitingRecovery) {
+      expect(document.body.textContent).toContain(awaitingRecovery ? "Cannot verify access renewal" : "configuration by an administrator");
       expect(node.querySelector("[data-hosty-content]")?.hasAttribute("hidden")).toBe(true);
-      setupReady = true;
+      setupReady = true; recoveryReady = true;
       await act(async () => actualWindow.dispatchEvent(new Event("focus")));
       expect(restored).toHaveBeenCalledTimes(1);
-      expect(writes).toBe(1); // Failed mutations are not silently replayed by a later permission review.
+      expect(writes).toBe(1); // Failed mutations are not silently replayed by a later readiness refresh.
     }
     if (!changed) { expect(draft.isConnected).toBe(true); expect(node.querySelector("input")).toBe(draft); expect(draft.value).toBe("Unsaved work"); expect(document.querySelector("dialog")).toBeNull(); }
     actualWindow.removeEventListener(APP_SESSION_RESTORED, restored);

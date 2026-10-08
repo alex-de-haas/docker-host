@@ -4,17 +4,34 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { createPortal } from "react-dom";
 import { useAppIdentity } from "./react";
 import { useAppActivity } from "./activity-react";
-import { APP_SESSION_ENDED, APP_SESSION_RESTORED, APP_ACTIVITY_RENEWED } from "./browser-auth";
+import { APP_SESSION_ENDED, APP_SESSION_RESTORED, APP_ACTIVITY_RENEWED, acceptAppAuthProtocol } from "./browser-auth";
+import { buildCoreOpenUrl, readRecoveryParams } from "./index";
 import { permissionReviewUrl, requestPermissionReview, type PermissionNoticeState } from "./permissions";
 
 type Setup = "ready" | "missing" | "unsupported" | "unavailable" | "incompatible";
-type Snapshot = { userId: string; setup: Setup; notice?: PermissionNoticeState };
+type Snapshot = {
+  userId: string; setup: Setup; notice?: PermissionNoticeState;
+  activityRequired: boolean; activeUntil: string | null; recoveryReady: boolean;
+};
 function snapshot(body: unknown): Snapshot | null {
-  const value = body as { status?: unknown; userId?: unknown; hosty?: { version?: unknown; setup?: unknown; notice?: PermissionNoticeState } } | null;
+  const value = body as { status?: unknown; userId?: unknown; activityRequired?: unknown; activeUntil?: unknown; hosty?: { version?: unknown; setup?: unknown; notice?: PermissionNoticeState } } | null;
   if (value?.status !== "active" || typeof value.userId !== "string" || !value.userId) return null;
   const setup = value.hosty?.version === 1 && ["ready", "missing", "unsupported", "unavailable", "incompatible"].includes(String(value.hosty.setup))
     ? value.hosty.setup as Setup : "incompatible";
-  return { userId: value.userId, setup, notice: value.hosty?.notice };
+  const recovery = readRecoveryParams(body);
+  const openUrl = recovery.appId ? buildCoreOpenUrl(recovery.corePublicOrigin, recovery.appId, window.location) : null;
+  // The activity policy remains authoritative even when renewal discovery fails.
+  return { userId: value.userId, setup, notice: value.hosty?.notice,
+    activityRequired: value.activityRequired === true,
+    activeUntil: typeof value.activeUntil === "string" ? value.activeUntil : null,
+    recoveryReady: !!openUrl && !!acceptAppAuthProtocol(new URL(openUrl).origin, recovery.appAuthProtocol) };
+}
+function activityExpired(session: Snapshot | null): boolean {
+  const deadline = Date.parse(session?.activeUntil ?? "");
+  return !!session?.activityRequired && (!Number.isFinite(deadline) || deadline <= Date.now());
+}
+function sessionReady(session: Snapshot | null): boolean {
+  return session?.setup === "ready" && (!session.activityRequired || session.recoveryReady) && !activityExpired(session);
 }
 
 /** Mount once around protected content. Presentation and recovery belong to Hosty. */
@@ -25,7 +42,7 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
   const changingActor = useRef(false);
   const [session, setSession] = useState<Snapshot | null>(null);
   const [reviewing, setReviewing] = useState(false);
-  const renewedAwaitingSetup = useRef(false);
+  const renewedAwaitingReadiness = useRef(false);
   const accept = (body: unknown) => {
     const next = snapshot(body);
     if (next && actor.current && actor.current !== next.userId) {
@@ -40,8 +57,8 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
   refreshRef.current = async () => {
     const body = await identity.refresh();
     const next = snapshot(body);
-    if (renewedAwaitingSetup.current && next?.setup === "ready" && next.userId === actor.current && !changingActor.current) {
-      renewedAwaitingSetup.current = false;
+    if (renewedAwaitingReadiness.current && next && sessionReady(next) && next.userId === actor.current && !changingActor.current) {
+      renewedAwaitingReadiness.current = false;
       window.dispatchEvent(new CustomEvent(APP_SESSION_RESTORED, { detail: { userId: next.userId } }));
       window.dispatchEvent(new Event(APP_ACTIVITY_RENEWED));
     }
@@ -50,15 +67,15 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
   const validate = useRef(async () => {
     const next = snapshot(await refreshRef.current());
     if (!next || changingActor.current || next.userId !== actor.current) return false;
-    renewedAwaitingSetup.current = next.setup !== "ready";
-    if (renewedAwaitingSetup.current) return false;
+    renewedAwaitingReadiness.current = !sessionReady(next);
+    if (renewedAwaitingReadiness.current) return false;
     window.dispatchEvent(new CustomEvent(APP_SESSION_RESTORED, { detail: { userId: next.userId } }));
     return true;
   }).current;
   const activity = useAppActivity(identity.activity ? { ...identity.activity, probePath, appCodePath, validateSession: validate } : null);
-  const deadline = Date.parse(identity.activity?.activeUntil ?? "");
-  const expired = identity.activity?.activityRequired && (!Number.isFinite(deadline) || deadline <= Date.now());
-  const ready = identity.ui.kind === "active" && session?.setup === "ready" && !expired && !activity.needed && !activity.pending && !changingActor.current;
+  const expired = activityExpired(session);
+  const recoveryUnavailable = session?.activityRequired && !session.recoveryReady;
+  const ready = identity.ui.kind === "active" && sessionReady(session) && !activity.needed && !activity.pending && !changingActor.current;
   const mounted = useRef(false);
   if (ready) mounted.current = true;
 
@@ -69,7 +86,7 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
     // No keepalive polling. Focus and a pending Core review are the only readiness refreshes.
     let loading = false;
     const refresh = () => {
-      if (loading || !actor.current || activity.pending || (activity.needed && !renewedAwaitingSetup.current)) return;
+      if (loading || !actor.current || activity.pending || (activity.needed && !renewedAwaitingReadiness.current)) return;
       loading = true;
       void refreshRef.current().finally(() => { loading = false; });
     };
@@ -78,7 +95,7 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
     return () => { window.removeEventListener("focus", refresh); window.clearInterval(timer); };
   }, [reviewing, activity.pending, activity.needed]);
   useEffect(() => {
-    const metadata = identity.activity;
+    const metadata = session;
     if (!metadata?.activityRequired || !metadata.activeUntil) return;
     const remaining = Date.parse(metadata.activeUntil) - Date.now();
     if (!Number.isFinite(remaining)) return;
@@ -86,7 +103,7 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
     if (remaining > 2147483647) return;
     const timer = window.setTimeout(() => window.dispatchEvent(new Event(APP_SESSION_ENDED)), Math.max(0, remaining));
     return () => window.clearTimeout(timer);
-  }, [identity.activity?.activeUntil, identity.activity?.activityRequired]);
+  }, [session?.activeUntil, session?.activityRequired]);
 
   let title = "Connecting to Hosty";
   let message = "Checking your access…";
@@ -120,6 +137,10 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
         if (reviewing) reviewUrl = permissionReviewUrl(notice.corePublicOrigin, notice.appId);
       }
     }
+  } else if (identity.ui.kind === "active" && recoveryUnavailable) {
+    title = "Cannot verify access renewal";
+    message = "Hosty could not verify how to renew this app’s access. Try again.";
+    action = () => { void refreshRef.current(); };
   } else if (expired || activity.needed || activity.pending) {
     title = activity.pending ? "Connecting to Hosty" : "Renew access to continue";
     message = activity.error || (activity.pending ? "Complete the confirmation in Core." : "Confirm your access through Hosty Core.");
