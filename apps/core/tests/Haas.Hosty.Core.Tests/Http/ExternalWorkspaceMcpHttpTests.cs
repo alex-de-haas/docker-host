@@ -108,6 +108,98 @@ public sealed class ExternalWorkspaceMcpHttpTests
         Assert.Equal("No owned workspace has that ID.", diffRefused.GetProperty("error").GetString());
     }
 
+    [Theory]
+    [InlineData("revoked", false)]
+    [InlineData("revoked", true)]
+    [InlineData("cleared", false)]
+    [InlineData("cleared", true)]
+    [InlineData("rebound", false)]
+    [InlineData("rebound", true)]
+    public async Task WorkspaceListing_IsolatesInvalidPrivateSourceRecordsWithoutReturningCachedMetadata(string transition, bool released)
+    {
+        await using var host = await CoreHttpHarness.StartAsync(configure: services =>
+            services.AddSingleton(new SourceProviderRegistry([new WorkspaceListingSourceProvider()])));
+        await SeedAdminAsync(host);
+        await SeedSourceAsync(host);
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var publicApp = (await apps.GetAppAsync(SourceApp))!;
+        const string privateAppId = "com.example.private-source";
+        await apps.UpsertAppAsync(publicApp with { Id = privateAppId });
+        using var client = host.CreateClient();
+        var token = await IssueAsync(host, WorkspaceScopes);
+        var healthyRequest = new { requestId = Guid.NewGuid().ToString(), taskId = "healthy-task", appId = SourceApp,
+            leaseId = Guid.NewGuid().ToString(), targetBranch = "main" };
+        var healthy = await ToolAsync(client, token, "prepare_workspace", healthyRequest);
+        var privateRequest = new { requestId = Guid.NewGuid().ToString(), taskId = "private-task", appId = privateAppId,
+            leaseId = Guid.NewGuid().ToString(), targetBranch = "main" };
+        var prepared = await ToolAsync(client, token, "prepare_workspace", privateRequest);
+        var workspace = JsonSerializer.Deserialize(prepared.GetRawText(), CoreJson.TypeInfo<DevelopmentWorkspace>())!;
+        if (released)
+        {
+            // Release through the actual managed workflow before attaching the fixture provider's
+            // private grant. Private Git transport is HTTPS-only; this test uses local Git solely
+            // to exercise catalog validation, not to change that transport boundary.
+            await ToolAsync(client, token, "release_workspace_lease", new { workspaceId = workspace.Id,
+                requestId = Guid.NewGuid().ToString(), privateRequest.leaseId });
+            var cleaned = await ToolAsync(client, token, "cleanup_workspace", new { workspaceId = workspace.Id,
+                requestId = Guid.NewGuid().ToString(), expectedHead = workspace.OriginalBase });
+            Assert.True(cleaned.TryGetProperty("state", out var releasedState), cleaned.GetRawText());
+            Assert.Equal("released", releasedState.GetString());
+            Assert.False(Directory.Exists(workspace.Path));
+            workspace = JsonSerializer.Deserialize(cleaned.GetRawText(), CoreJson.TypeInfo<DevelopmentWorkspace>())!;
+        }
+        var users = host.Services.GetRequiredService<UserDirectoryStore>();
+        var now = host.Services.GetRequiredService<IClock>().UtcNow;
+        await users.UpdateAsync(state => state with { ProviderConnections =
+            [new("private-connection", "admin", "Private source", "fixture", "", "", "admin", "Admin", "pat", "fixture", null, null, null,
+                now, now, "connected", "1")] });
+        var access = host.Services.GetRequiredService<PrivateSourceService>();
+        var grant = await access.BindAsync("admin", "private-connection", workspace.Repository, false, default);
+        await apps.UpdateAppAsync(privateAppId, app => app with { PrivateSources = new(Git: grant) });
+        workspace = workspace with { SourceGrant = grant };
+        var paths = host.Services.GetRequiredService<CoreDataPaths>();
+        await JsonStorage.WriteAsync(Path.Combine(paths.CoreRoot, "development/workspaces", workspace.Id + ".json"), workspace);
+        if (!released)
+        {
+            await File.WriteAllTextAsync(Path.Combine(workspace.Path, "README.md"), "private cached change\n");
+            var observedPrivate = await ToolAsync(client, token, "get_workspace", new { workspaceId = workspace.Id });
+            Assert.Contains("README.md", observedPrivate.GetProperty("observation").GetProperty("sessionFiles").EnumerateArray().Select(item => item.GetString()));
+        }
+        // Both active private source state and released grant/operation metadata are initially
+        // authorized; the default catalog includes the released record before the transition.
+        Assert.Equal(2, (await ToolAsync(client, token, "list_workspaces", new { })).GetProperty("workspaces").GetArrayLength());
+        if (transition == "revoked")
+            await users.UpdateAsync(state => state with { ProviderConnections = [] });
+        else
+            await apps.UpdateAppAsync(privateAppId, app => app with { PrivateSources = transition == "cleared"
+                ? null : new(Git: grant with { OwnerId = "another-administrator" }) });
+
+        var listed = await ToolAsync(client, token, "list_workspaces", new { });
+        var retained = Assert.Single(listed.GetProperty("workspaces").EnumerateArray());
+        Assert.Equal(healthy.GetProperty("id").GetString(), retained.GetProperty("id").GetString());
+        Assert.Contains(healthyRequest.leaseId, retained.GetProperty("leases").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains(healthyRequest.requestId, retained.GetProperty("operations").EnumerateArray().Select(item => item.GetProperty("id").GetString()));
+        Assert.DoesNotContain(workspace.Id, listed.GetRawText());
+        Assert.DoesNotContain(privateRequest.requestId, listed.GetRawText());
+        Assert.DoesNotContain("private-connection", listed.GetRawText());
+        Assert.DoesNotContain("private cached change", listed.GetRawText());
+        var filtered = await ToolAsync(client, token, "list_workspaces", new { taskId = privateRequest.taskId });
+        Assert.Empty(filtered.GetProperty("workspaces").EnumerateArray());
+        foreach (var (name, arguments) in new (string, object)[]
+        {
+            ("get_workspace", new { workspaceId = workspace.Id }),
+            ("get_workspace_diff", new { workspaceId = workspace.Id, path = "README.md" }),
+            ("refresh_workspace", new { workspaceId = workspace.Id, requestId = Guid.NewGuid().ToString() }),
+        })
+        {
+            var denied = await ToolAsync(client, token, name, arguments);
+            Assert.True(denied.TryGetProperty("error", out _));
+            Assert.False(denied.TryGetProperty("observation", out _));
+            Assert.DoesNotContain("private cached change", denied.GetRawText());
+        }
+        Assert.True(Directory.Exists(healthy.GetProperty("path").GetString()));
+    }
+
     [Fact]
     public async Task WorkspaceMcp_SeesNativeChangesAndRetainsLeasesUntilExplicitRelease()
     {
@@ -247,6 +339,29 @@ public sealed class ExternalWorkspaceMcpHttpTests
             var names = tool.GetProperty("inputSchema").GetProperty("properties").EnumerateObject().Select(property => property.Name).ToArray();
             Assert.DoesNotContain(names, name => name is "userId" or "principalId" or "owner" or "installation" or "command" or "repository");
         }
+    }
+
+    // Exercise real grant validation/revocation using isolated local Git, with no provider secret
+    // or network. Private-source reads use the production connection and ownership services.
+    private sealed class WorkspaceListingSourceProvider : ISourceProvider
+    {
+        public SourceProviderDescriptor Descriptor => new("fixture", "Fixture", ["pat"], ["private-sources"]);
+        public string? ClientId => null;
+        public IPublicationProvider? Publication => null;
+        public UserConnectionInput Validate(UserConnectionInput input) => input;
+        public bool Owns(Uri uri) => uri.IsFile;
+        public string NormalizeRepository(string value)
+        {
+            var local = value.StartsWith("file:", StringComparison.Ordinal) ? new Uri(value).LocalPath : value;
+            return MountPathPolicy.ResolveRealPath(Directory.Exists(Path.Combine(local, ".git")) ? Path.Combine(local, ".git") : local);
+        }
+        public AuthenticationHeaderValue GitAuthorization(UserProviderConnection connection) => new("Bearer", "fixture");
+        public SourceRepositoryFile ParseManifest(string url) => throw new NotSupportedException();
+        public HttpRequestMessage FileRequest(UserProviderConnection connection, SourceRepositoryFile file) => throw new NotSupportedException();
+        public Task<ProviderDevice> StartAsync(UserConnectionInput input, string clientId, CancellationToken ct) => throw new NotSupportedException();
+        public Task<(ProviderToken? Token, string? Pending)> PollAsync(string clientId, string deviceCode, CancellationToken ct) => throw new NotSupportedException();
+        public Task<ProviderToken> RefreshAsync(UserProviderConnection connection, CancellationToken ct) => throw new NotSupportedException();
+        public Task<ProviderIdentity> IdentityAsync(string method, string token, CancellationToken ct) => throw new NotSupportedException();
     }
 
     private static async Task SeedAdminAsync(CoreHttpHarness host)

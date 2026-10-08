@@ -1,6 +1,6 @@
 ---
 created: 2026-10-07
-updated: 2026-10-07
+updated: 2026-10-08
 summary: Local external agents prepare authorized Core-owned Git worktrees through direct MCP, with separate workspace progress in Plans.
 components: [apps/core, apps/plans]
 ---
@@ -26,6 +26,12 @@ The direct Core MCP workspace tools require both `mcp:read` and the separately r
 the current credential, administrator, OAuth grant/client and source grant. Browser-only, device,
 app and delegated credentials do not establish this external authority. Other Core operation scopes
 remain independent. Existing Harness session tools keep their installed-app authorization.
+
+Listing omits individual records that fail current source-access revalidation or cannot be read,
+including released records with revoked private-source grants. Other authorized workspaces remain
+discoverable with their operation IDs and activity leases; records with validated access and an
+explicit unavailable observation remain visible. Omitted records expose no cached source or change
+metadata. Direct reads and operations still require current source authority.
 
 Preparation selects an installed app's declared repository and optional target branch. It returns
 a Core-owned absolute directory, registered branch, target branch and original base. External
@@ -201,6 +207,8 @@ after checking that its native consumer stopped. Released metadata remains avail
 - Exercise real OAuth consent and PKCE redemption, token refresh, same-grant tasks, independent grants,
   manual credentials, expiry/revocation, client deletion, current administrator role and Core-only scopes.
   Read-only, browser, device, app and delegated credentials cannot call workspace tools or read diffs.
+- Keep healthy workspace listings available when another owned active or released record loses its
+  private-source authority; omit failed records and refuse direct reads and operations on them.
 - Check same-request replay, conflicting arguments, owner isolation, native commits and uncommitted
   plan edits, effective private-source ownership, clearing/rebinding/revocation and interrupted recovery.
 - Keep activity leases through disconnect/restart; refuse dirty, conflicted, unmerged, unavailable,

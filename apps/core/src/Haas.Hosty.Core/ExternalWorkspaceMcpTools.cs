@@ -36,7 +36,15 @@ internal sealed class ExternalWorkspaceMcpTools
             // change metadata. A revoked private source must not leak through a catalog shortcut.
             var observed = new List<DevelopmentWorkspace>();
             foreach (var workspace in owned)
-                observed.Add(await workspaces.ObserveAsync(workspace.Id, workspace.Owner, cancellationToken));
+            {
+                try { observed.Add(await workspaces.ObserveAsync(workspace.Id, workspace.Owner, cancellationToken)); }
+                catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException)
+                {
+                    // Revoked source access and unavailable records must not hide unrelated owned
+                    // workspaces. Omit this record rather than exposing its cached private metadata.
+                    // Credential authorization stays outside the loop; cancellation propagates.
+                }
+            }
             return CoreJson.Text(new WorkspaceList(observed.ToArray()));
         }, authorization, accessor, cancellationToken);
 
