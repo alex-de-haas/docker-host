@@ -251,6 +251,7 @@ export type CoreNavigationItem = {
 };
 
 export type CoreApp = {
+  configurationReadiness?: { required: boolean; missingSettings: string[]; mounts: { key: string; label?: string | null; reason: string }[]; error?: string | null } | null;
   id: string;
   grantedCorePermissions?: string[] | null;
   requiredCorePermissions?: string[] | null;
@@ -647,6 +648,7 @@ export type UpdateStatusState = {
 };
 
 export type CoreUpdatePlan = {
+  error?: string | null;
   currentCorePermissions?: string[];
   targetCorePermissions?: string[];
   currentConfirmedRoles?: string[];

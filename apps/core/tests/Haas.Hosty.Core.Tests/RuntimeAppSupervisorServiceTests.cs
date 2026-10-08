@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Haas.Hosty.Core.Tests;
 
-public sealed class RuntimeAppSupervisorServiceTests : IDisposable
+public sealed partial class RuntimeAppSupervisorServiceTests : IDisposable
 {
     private readonly string root = Path.Combine(Path.GetTempPath(), $"hosty-supervisor-tests-{Guid.NewGuid():N}");
 

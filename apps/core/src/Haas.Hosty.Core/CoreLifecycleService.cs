@@ -300,21 +300,66 @@ internal sealed partial class CoreLifecycleService(
             CorePermissions: selection.Manifest.CorePermissions.ToArray(),
             RequestedRoles: PlatformCapabilities.RequestedRoles(selection.Manifest.Provides),
             PrivateSources: selection.PrivateSources,
-            OptionalCorePermissions: selection.Manifest.OptionalCorePermissions.ToArray());
+            OptionalCorePermissions: selection.Manifest.OptionalCorePermissions.ToArray())
+        {
+            RuntimeChoices = BuildInstallRuntimeChoices(selection),
+            ConfigurationReadiness = await GetCandidateConfigurationReadinessAsync(selection, existing, null, cancellationToken),
+        };
+    }
+
+    private IReadOnlyList<AppInstallRuntimeChoice> BuildInstallRuntimeChoices(RuntimeAppManifestSelection selection)
+        => BuildRuntimeProfileSummaries(selection.Manifest).Select(profile =>
+        {
+            var choice = manifests.Select(selection.Manifest, selection.ManifestPath, selection.ManifestDigest,
+                profile.Key, selection.ManifestJson, selection.ManifestUrl, validateAllProfiles: false);
+            var supported = choice.Services.All(service => adapters.Any(adapter => adapter.Type == service.Runtime.Type));
+            return new AppInstallRuntimeChoice(profile.Key, profile.Type, profile.Default, supported,
+                supported ? null : "This runtime is not available on this Core.");
+        }).ToArray();
+
+    // Runtime choices are selected from the same reviewed bytes. No publisher or feed is contacted,
+    // and a changed runtime receives a fresh page review before any installation can be approved.
+    internal async Task<AppInstallPlan> SelectReviewedInstallRuntimeAsync(AppInstallPlan plan, string runtime,
+        IReadOnlyDictionary<string, string?>? settings, CancellationToken cancellationToken)
+    {
+        if (plan.PlanId is null || !reviewedInstallPlans.TryGetValue(plan.PlanId, out var reviewed)
+            || clock.UtcNow - reviewed.CreatedAt > ReviewedInstallPlanTtl)
+            throw new AppLifecycleException("install_plan_expired", "The reviewed installation expired. Prepare a new request.");
+        var choice = reviewed.Plan.RuntimeChoices.FirstOrDefault(choice => choice.Key == runtime);
+        if (choice is null || !choice.Available)
+            throw new AppLifecycleException("runtime_adapter_missing", "Choose a supported runtime shown in this review.");
+        var selection = manifests.Select(reviewed.Selection.Manifest, reviewed.Selection.ManifestPath,
+            reviewed.Selection.ManifestDigest, runtime, reviewed.Selection.ManifestJson, reviewed.Selection.ManifestUrl,
+            validateAllProfiles: false) with { PrivateSources = reviewed.Selection.PrivateSources };
+        var probes = await ProbeServiceArtifactsAsync(selection.Manifest.Id!, null, selection, cancellationToken);
+        var changed = plan with
+        {
+            PlanId = $"instp_{Guid.NewGuid():N}", TargetRuntime = selection.RuntimeProfile.Key,
+            TargetRuntimeType = selection.RuntimeProfile.Type, ArtifactDigests = probes,
+            ConfigurationReadiness = await GetCandidateConfigurationReadinessAsync(selection,
+                await apps.GetAppAsync(plan.AppId, cancellationToken), settings, cancellationToken),
+        };
+        CacheReviewedInstallPlan(changed, selection, probes);
+        return changed;
+    }
+
+    internal async Task<AppInstallPlan> GetReviewedInstallReadinessAsync(AppInstallPlan plan,
+        IReadOnlyDictionary<string, string?>? settings, CancellationToken cancellationToken)
+    {
+        if (plan.PlanId is null || !reviewedInstallPlans.TryGetValue(plan.PlanId, out var reviewed)
+            || clock.UtcNow - reviewed.CreatedAt > ReviewedInstallPlanTtl)
+            throw new AppLifecycleException("install_plan_expired", "The reviewed installation expired. Prepare a new request.");
+        return plan with
+        {
+            ConfigurationReadiness = await GetCandidateConfigurationReadinessAsync(reviewed.Selection,
+                await apps.GetAppAsync(plan.AppId, cancellationToken), settings, cancellationToken),
+        };
     }
 
     internal async Task<AppUpdatePlan> GetReviewedUpdatePlanAsync(string appId, string digest)
     {
         var reviewed = await ResolveConfirmedUpdatePlan(appId, digest);
-        var app = await RequireAppAsync(appId, CancellationToken.None);
-        return reviewed.Plan with
-        {
-            CurrentCorePermissions = app.GrantedCorePermissions ?? [],
-            TargetCorePermissions = reviewed.Selection.Manifest.CorePermissions.ToArray(),
-            TargetOptionalCorePermissions = reviewed.Selection.Manifest.OptionalCorePermissions.ToArray(),
-            CurrentConfirmedRoles = app.ConfirmedRoles ?? [],
-            TargetRoles = PlatformCapabilities.RequestedRoles(reviewed.Selection.Manifest.Provides),
-        };
+        return reviewed.Plan;
     }
 
     // Freeze the exact feed selection in the existing single-use install-plan cache. Approval must
@@ -551,11 +596,12 @@ internal sealed partial class CoreLifecycleService(
         // intent ("this app should be running") instead of leaving it stopped until the next Core restart —
         // the only other time Autostart is honored (StartAutostartAppsAsync at boot). We already hold this
         // app's operation lock, so we call the unlocked StartCoreAsync directly (see the operationLocks note).
-        // Best-effort: a recordable start failure (missing required setting, runtime unavailable) is already
-        // recorded on the app by StartCoreAsync and leaves it stopped, but the install itself still succeeds.
+        // Missing launch configuration is an installed, stopped app, not a failed start. Leave the
+        // saved autostart preference intact so a later configured boot can honor it.
         if (request.StartOnInstall == true &&
             string.Equals(installed.Kind, "runtime", StringComparison.Ordinal) &&
-            (installed.Autostart ?? true))
+            (installed.Autostart ?? true) &&
+            !(await GetConfigurationReadinessAsync(installed, cancellationToken)).Required)
         {
             try
             {
@@ -1382,6 +1428,7 @@ internal sealed partial class CoreLifecycleService(
                 app = await ReconcileLiveContractAsync(app, load, cancellationToken);
             }
 
+            await EnsureRequiredSettingsConfiguredAsync(app, cancellationToken);
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
             await new HostPathAuthority(paths, apps).AppAsync(context.App, cancellationToken);
@@ -1672,6 +1719,14 @@ internal sealed partial class CoreLifecycleService(
         // A followed feed is an external source in its own right, whatever its manifestRef looks like.
         var sourceConfigured = feedResolution is not null || HasExternalUpdateSource(app, request.ManifestPath);
         var changes = BuildUpdateChanges(app, currentSelection, selection).ToList();
+        var settingChanges = BuildReviewSettingChanges(currentSelection.Manifest.Settings, selection.Manifest.Settings);
+        foreach (var change in settingChanges)
+        {
+            var token = $"setting:{change.Key}:{change.Change}";
+            if (!changes.Any(existing => existing == token || existing.StartsWith(token + ":", StringComparison.Ordinal))) changes.Add(token);
+        }
+        var readiness = await GetCandidateConfigurationReadinessAsync(selection, app, null, cancellationToken);
+        if (readiness.Required) changes.Add("configuration:required");
         if (selection.PrivateSources != app.PrivateSources)
             changes.Add("source-access:" + System.Text.Json.JsonSerializer.Serialize(selection.PrivateSources, CoreJsonSerializerContext.Default.PrivateSourceAccess));
         foreach (var permission in selection.Manifest.CorePermissions.Except(app.RequiredCorePermissions ?? app.GrantedCorePermissions ?? [], StringComparer.Ordinal))
@@ -1724,7 +1779,9 @@ internal sealed partial class CoreLifecycleService(
             feedResolution?.Feed.Id,
             feedResolution?.DocumentDigest,
             willCreateBackup,
-            changes);
+            changes,
+            app.RequiredCorePermissions, app.OptionalCorePermissions, app.GrantedCorePermissions,
+            app.ConfirmedRoles, settingChanges, readiness);
         var digest = HashPlanSeed(seed);
         var plan = new AppUpdatePlan(
             AppId: appId,
@@ -1740,12 +1797,20 @@ internal sealed partial class CoreLifecycleService(
             SourceConfigured: sourceConfigured,
             RequiresReview: PlanRequiresReview(changes))
         {
-            CurrentCorePermissions = app.GrantedCorePermissions ?? [],
+            DisplayName = app.DisplayName,
+            CurrentCorePermissions = (app.GrantedCorePermissions ?? []).ToArray(),
+            PreviousRequiredCorePermissions = app.RequiredCorePermissions?.ToArray(),
+            PreviousOptionalCorePermissions = app.OptionalCorePermissions?.ToArray(),
             TargetCorePermissions = selection.Manifest.CorePermissions.ToArray(),
             TargetOptionalCorePermissions = selection.Manifest.OptionalCorePermissions.ToArray(),
-            CurrentConfirmedRoles = app.ConfirmedRoles ?? [],
+            CurrentConfirmedRoles = (app.ConfirmedRoles ?? []).ToArray(),
             TargetRoles = PlatformCapabilities.RequestedRoles(selection.Manifest.Provides),
             PrivateSources = selection.PrivateSources,
+            FeedsUrl = feedResolution?.FeedsUrl ?? app.FeedsUrl,
+            FeedId = feedResolution?.Feed.Id ?? app.FollowedFeedId,
+            TargetRuntimeType = selection.RuntimeProfile.Type,
+            SettingChanges = settingChanges,
+            ConfigurationReadiness = readiness,
         };
 
         // Retain the fully-resolved plan so apply can use exactly what the operator confirmed instead of
@@ -1879,10 +1944,10 @@ internal sealed partial class CoreLifecycleService(
         // moved since it was reviewed.
         var confirmed = await ResolveConfirmedUpdatePlan(appId, request.PlanDigest);
         var app = await RequireAppAsync(appId, cancellationToken);
-        ValidateUnapprovedUpdate(app, confirmed.Selection.Manifest, request);
+        var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
+        ValidateUnapprovedUpdate(app, confirmed.Selection.Manifest, request, currentSelection.Manifest);
         if (requireRoutine && confirmed.Plan.RequiresReview)
             throw new AppLifecycleException("approval_required", "This update changes the app configuration or authority. Review it in Core.");
-        var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
         if (app.PermissionRevision != confirmed.PreviousPermissionRevision ||
             !string.Equals(app.Version, confirmed.Plan.CurrentVersion, StringComparison.Ordinal) ||
             !string.Equals(app.SelectedRuntime, confirmed.Plan.CurrentRuntime, StringComparison.Ordinal) ||
@@ -1928,8 +1993,14 @@ internal sealed partial class CoreLifecycleService(
         return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "updating");
     }
 
-    private static void ValidateUnapprovedUpdate(AppRecord app, RuntimeAppManifest manifest, AppUpdateApplyRequest request)
+    private static void ValidateUnapprovedUpdate(AppRecord app, RuntimeAppManifest manifest, AppUpdateApplyRequest request,
+        RuntimeAppManifest previousManifest)
     {
+        // Recompute this from the actual installed/candidate declarations, including under the
+        // apply lock. Older persisted plans may predate mount classification, and their routine
+        // hint cannot authorize changing access to an existing operator-bound host folder.
+        if (BuildExternalMountChanges(previousManifest.ExternalMounts, manifest.ExternalMounts).Count > 0)
+            throw new AppLifecycleException("approval_required", "External mount declaration changes require confirmation in Core.");
         if (request.OptionalPermissions is not null || manifest.OptionalCorePermissions.Except(app.OptionalCorePermissions ?? [], StringComparer.Ordinal).Any()
             || manifest.CorePermissions.Except(app.RequiredCorePermissions ?? app.GrantedCorePermissions ?? [], StringComparer.Ordinal).Any()
             || PlatformCapabilities.RequestedRoles(manifest.Provides).Except(app.ConfirmedRoles ?? [], StringComparer.Ordinal).Any())
@@ -2245,7 +2316,7 @@ internal sealed partial class CoreLifecycleService(
 
         await SetUpdateProgressAsync(appId, "preparing", null, cancellationToken);
         var selection = confirmed.Selection;
-        if (preserveGrants) ValidateUnapprovedUpdate(app, selection.Manifest, request);
+        if (preserveGrants) ValidateUnapprovedUpdate(app, selection.Manifest, request, currentSelection.Manifest);
         if (requireRoutine && plan.RequiresReview)
             throw new AppLifecycleException("approval_required", "This update requires Core review.");
         var grantedPermissions = preserveGrants
@@ -2331,7 +2402,7 @@ internal sealed partial class CoreLifecycleService(
             next = next with { ArtifactLocks = reviewedLocks };
         }
 
-        var document = await PersistRuntimePortsAsync(next, selection, cancellationToken);
+        var document = await PersistRuntimePortsAsync(next, selection, cancellationToken, allowIncompleteConfiguration: true);
         // An endpoint the new manifest dropped (or made private) can never serve its hostname again, so the
         // route and DNS record go with it. Best-effort, and only for endpoints that are actually gone.
         await CleanUpOrphanedPublicationsAsync(appId, next, cancellationToken);
@@ -2340,7 +2411,9 @@ internal sealed partial class CoreLifecycleService(
         await updateSnapshots.ChangeAsync(appId, current => current?.Plan is null || current.Plan.CacheId == confirmed.CacheId
             ? null : current);
         events?.PublishAppEvent(CoreEventHub.AppUpdateCheckChanged, appId);
-        if (wasRunning)
+        var configurationRequired = (await GetConfigurationReadinessAsync(document.App, cancellationToken)).Required;
+        var shouldRestart = wasRunning && !configurationRequired;
+        if (shouldRestart)
         {
             await SetUpdateProgressAsync(appId, "preparing", null, cancellationToken);
             _ = await StartCoreAsync(appId, afterOwnStop: wasRunning, cancellationToken);
@@ -2349,18 +2422,36 @@ internal sealed partial class CoreLifecycleService(
         var finished = await apps.UpdateAppAsync(appId, current => current with
         {
             // Keep the terminal status older Shell self-update waiters recognize.
-            OperationStatus = wasRunning ? "started" : "updated", LastOperation = "update", LastError = null,
-            UpdateProgress = new AppUpdateProgress(wasRunning && current.Health?.Status != "healthy" ? "needs-attention" : "completed", clock.UtcNow),
+            OperationStatus = shouldRestart ? "started" : "updated", LastOperation = "update", LastError = null,
+            UpdateProgress = new AppUpdateProgress(shouldRestart && current.Health?.Status != "healthy" ? "needs-attention" : "completed", clock.UtcNow),
         }, cancellationToken);
         return new AppLifecycleResponse(await BuildAppSummaryAsync(finished.App, cancellationToken), backup, "updated");
     }
 
-    private async Task<AppStateDocument> PersistRuntimePortsAsync(AppRecord record, RuntimeAppManifestSelection selection, CancellationToken cancellationToken)
+    private async Task<AppStateDocument> PersistRuntimePortsAsync(AppRecord record, RuntimeAppManifestSelection selection,
+        CancellationToken cancellationToken, bool allowIncompleteConfiguration = false)
     {
         await apps.HostPathMutationLock.WaitAsync(cancellationToken);
         try
         {
-            await new HostPathAuthority(paths, apps).AppAsync(record, cancellationToken);
+            var authorityRecord = record;
+            if (allowIncompleteConfiguration && record.RuntimeState == AppRuntimeStates.Stopped)
+            {
+                var readiness = await GetConfigurationReadinessAsync(record, cancellationToken);
+                if (readiness.Required)
+                {
+                    // Preserve the operator's bindings on the stopped target, but do not reserve or
+                    // use unready mounts while applying its metadata. Source authority and every
+                    // remaining valid mount still validate; actual Start validates the full record.
+                    authorityRecord = record with
+                    {
+                        Mounts = readiness.Error is not null ? [] : (record.Mounts ?? []).Where(binding =>
+                            !readiness.Mounts.Any(issue => issue.Key == binding.Key &&
+                                (issue.Label is null || issue.Label == binding.Label || issue.Label == binding.GlobalMountName))).ToArray(),
+                    };
+                }
+            }
+            await new HostPathAuthority(paths, apps).AppAsync(authorityRecord, cancellationToken);
             return portAllocator is null ? await apps.UpsertAppAsync(record, cancellationToken)
                 : await portAllocator.AssignAndPersistAsync(record, selection, apps.ListAppRecordsAsync, apps.UpsertAppAsync, cancellationToken);
         }
@@ -3425,6 +3516,11 @@ internal sealed partial class CoreLifecycleService(
                 foreach (var app in tier.OrderByDescending(app => app.System).ThenBy(app => app.Id, StringComparer.Ordinal))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    if ((await GetConfigurationReadinessAsync(app, cancellationToken)).Required)
+                    {
+                        results.Add(new(app.Id, "autostart", Succeeded: true, ErrorCode: null, Message: "configuration-required"));
+                        continue;
+                    }
                     if (active.Count == MaxConcurrentAutostarts)
                     {
                         var completed = await Task.WhenAny(active).WaitAsync(cancellationToken);
@@ -3766,6 +3862,7 @@ internal sealed partial class CoreLifecycleService(
         var profiles = await ResolveRuntimeProfilesAsync(app, cancellationToken);
         var liveSourcePath = ResolveLiveSourcePath(app, profiles);
         var summary = AppSummary.From(app, profiles, liveSourcePath is not null, liveSourcePath);
+        var configuration = await ReadConfigurationSnapshotAsync(app, cancellationToken, installed);
         // Last-known update verdict (plan-first updates): null until a check has run for this app.
         // Suppressed for a live-source runtime — it has no reviewed-update path, so a verdict from
         // before the app went live must not keep offering an update the plan flow would refuse
@@ -3773,12 +3870,13 @@ internal sealed partial class CoreLifecycleService(
         return summary with
         {
             RestartRequired = AppRuntimeStates.IsUp(app.RuntimeState) && (
-                AppConfigurationFingerprint.RequiresRestart(app, await globalMounts.ReadAsync(cancellationToken)) ||
+                configuration.Library is null || AppConfigurationFingerprint.RequiresRestart(app, configuration.Library) ||
                 (coreOrigins is not null && !string.Equals(app.AppliedBrowserOrigin, coreOrigins.Effective, StringComparison.Ordinal))),
             PermissionState = CachedPermissions(app),
             UpdateProgress = app.UpdateProgress,
             UpdateCheck = (await ReadUpdateSnapshotAsync(app, cancellationToken, summary.Live))?.Verdict,
             Dependencies = await ResolveDependencySummariesAsync(app, installed, cancellationToken),
+            ConfigurationReadiness = configuration.Readiness,
         };
     }
 
@@ -4531,6 +4629,7 @@ internal sealed partial class CoreLifecycleService(
 
     private RuntimeLifecycleContext EnsureMountsReadyForStart(RuntimeLifecycleContext context)
     {
+        EnsureMountMultiplicityForStart(context);
         // Required check runs over the resolved mounts (context.Mounts): a global binding whose
         // library entry was deleted is already dropped there, so a required slot left with only such
         // a ref correctly counts as unconfigured.
@@ -5187,6 +5286,7 @@ internal sealed partial class CoreLifecycleService(
 
         AddUpdateServiceChanges(changes, currentSelection, targetSelection);
         AddSettingChanges(changes, app.Settings, BuildSettingDefinitions(targetSelection));
+        changes.AddRange(BuildExternalMountChanges(currentSelection.Manifest.ExternalMounts, targetSelection.Manifest.ExternalMounts));
         AddDependencyChanges(changes, app.Dependencies, targetSelection.Manifest.Dependencies);
         AddEndpointChanges(changes, app.Endpoints, BuildEndpointContracts(targetSelection));
         AddUpdateDataTargetChanges(changes, app, targetSelection);
@@ -5697,6 +5797,55 @@ internal sealed partial class CoreLifecycleService(
         {
             changes.Add($"container:{serviceKey}:removed:{containerName}");
         }
+    }
+
+    private static IReadOnlyList<string> BuildExternalMountChanges(
+        IReadOnlyDictionary<string, RuntimeAppExternalMountManifest> previous,
+        IReadOnlyDictionary<string, RuntimeAppExternalMountManifest> target)
+    {
+        var changes = new List<string>();
+        static string B(bool value) => value ? "true" : "false";
+        static string Service(string? service) => service ?? "all services";
+        static string Contract(RuntimeAppExternalMountManifest mount)
+            => $"{mount.Kind}, {mount.Mode}, {(mount.Multiple ? "multiple bindings" : "single binding")}, {(mount.Required ? "required" : "optional")}, service={Service(mount.Service)}";
+        foreach (var key in previous.Keys.Concat(target.Keys).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+        {
+            if (!previous.TryGetValue(key, out var old)) changes.Add($"mount:{key}:added:{Contract(target[key])}");
+            else if (!target.TryGetValue(key, out var next)) changes.Add($"mount:{key}:removed:{Contract(old)}");
+            else
+            {
+                if (old.Kind != next.Kind) changes.Add($"mount:{key}:kind:{old.Kind}->{next.Kind}");
+                if (old.Mode != next.Mode) changes.Add($"mount:{key}:mode:{old.Mode}->{next.Mode}");
+                if (old.Service != next.Service) changes.Add($"mount:{key}:service:{Service(old.Service)}->{Service(next.Service)}");
+                if (old.Multiple != next.Multiple) changes.Add($"mount:{key}:multiple:{B(old.Multiple)}->{B(next.Multiple)}");
+                if (old.Required != next.Required) changes.Add($"mount:{key}:required:{B(old.Required)}->{B(next.Required)}");
+            }
+        }
+        return changes;
+    }
+
+    private static string DescribeSettingSchema(RuntimeAppSettingManifest setting)
+        => $"Type: {setting.Type}; {(setting.Secret ? "sensitive value" : "plain value")}; {(setting.Required ? "required at launch" : "optional at launch")}; {(string.IsNullOrWhiteSpace(setting.Default) ? "no usable default" : "default provided")}";
+
+    private static IReadOnlyList<AppUpdateSettingChange> BuildReviewSettingChanges(
+        IReadOnlyList<RuntimeAppSettingManifest> previous, IReadOnlyList<RuntimeAppSettingManifest> target)
+    {
+        var before = previous.ToDictionary(setting => setting.Key, StringComparer.Ordinal);
+        var after = target.ToDictionary(setting => setting.Key, StringComparer.Ordinal);
+        var result = new List<AppUpdateSettingChange>();
+        foreach (var key in before.Keys.Concat(after.Keys).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+        {
+            if (!before.TryGetValue(key, out var old)) result.Add(new(key, after[key].Label, "added", DescribeSettingSchema(after[key])));
+            else if (!after.TryGetValue(key, out var next)) result.Add(new(key, old.Label, "removed", DescribeSettingSchema(old)));
+            else
+            {
+                if (old.Type != next.Type) result.Add(new(key, next.Label, "type", $"{old.Type} → {next.Type}"));
+                if (old.Secret != next.Secret) result.Add(new(key, next.Label, "secret", next.Secret ? "Sensitive value" : "Plain value"));
+                if (old.Required != next.Required) result.Add(new(key, next.Label, "required", next.Required ? "Required at launch" : "Optional at launch"));
+                if (old.Default != next.Default) result.Add(new(key, next.Label, "default", "Default changed; stored values are retained"));
+            }
+        }
+        return result;
     }
 
     private static void AddSettingChanges(
@@ -6445,7 +6594,13 @@ internal sealed record AppUpdatePlanDigestSeed(
     string? FeedId,
     string? FeedDocumentDigest,
     bool WillCreateBackup,
-    IReadOnlyList<string> Changes);
+    IReadOnlyList<string> Changes,
+    IReadOnlyList<string>? PreviousRequiredCorePermissions = null,
+    IReadOnlyList<string>? PreviousOptionalCorePermissions = null,
+    IReadOnlyList<string>? CurrentCorePermissions = null,
+    IReadOnlyList<string>? CurrentConfirmedRoles = null,
+    IReadOnlyList<AppUpdateSettingChange>? SettingChanges = null,
+    AppConfigurationReadiness? ConfigurationReadiness = null);
 
 internal sealed record AppRuntimeSwitchDigestSeed(
     string AppId,
@@ -6701,6 +6856,8 @@ internal sealed record AppInstallPlan(
     PrivateSourceAccess? PrivateSources = null,
     IReadOnlyList<string>? OptionalCorePermissions = null)
 {
+    public IReadOnlyList<AppInstallRuntimeChoice> RuntimeChoices { get; init; } = [];
+    public AppConfigurationReadiness? ConfigurationReadiness { get; init; }
     public IReadOnlyDictionary<string, string> PermissionDescriptions => (CorePermissions ?? []).Concat(OptionalCorePermissions ?? []).ToDictionary(value => value, CoreAppPermissions.Describe, StringComparer.Ordinal);
     public IReadOnlyDictionary<string, string> RoleDescriptions => (RequestedRoles ?? []).ToDictionary(value => value, PlatformCapabilities.DescribeRole, StringComparer.Ordinal);
 }
@@ -6725,6 +6882,9 @@ internal sealed record AppFeedInstallPlanDigestSeed(
     string TargetManifestDigest,
     string TargetRuntime,
     bool Autostart);
+
+internal sealed record AppInstallRuntimeChoice(string Key, string Type, bool Default, bool Available, string? Error = null);
+internal sealed record AppUpdateSettingChange(string Key, string? Label, string Change, string? Detail = null);
 
 internal sealed record AppInstallSetting(string Key, string Type, string? DefaultValue, bool Secret, bool Required = false, string? Label = null, string? Description = null);
 
@@ -6752,12 +6912,21 @@ internal sealed record AppUpdatePlan(
     // Advisory from this check, excluded from the reviewed target digest. An empty change list
     // with an error is not evidence that the app is up to date.
     public string? Error { get; init; }
+    public string? DisplayName { get; init; }
+    // Null is a legacy unknown baseline, not an empty declaration list or a grant list.
+    public IReadOnlyList<string>? PreviousRequiredCorePermissions { get; init; }
+    public IReadOnlyList<string>? PreviousOptionalCorePermissions { get; init; }
     public IReadOnlyList<string> CurrentCorePermissions { get; init; } = [];
     public IReadOnlyList<string> TargetCorePermissions { get; init; } = [];
     public IReadOnlyList<string> TargetOptionalCorePermissions { get; init; } = [];
     public IReadOnlyList<string> CurrentConfirmedRoles { get; init; } = [];
     public IReadOnlyList<string> TargetRoles { get; init; } = [];
     public PrivateSourceAccess? PrivateSources { get; init; }
+    public string? FeedsUrl { get; init; }
+    public string? FeedId { get; init; }
+    public string? TargetRuntimeType { get; init; }
+    public IReadOnlyList<AppUpdateSettingChange> SettingChanges { get; init; } = [];
+    public AppConfigurationReadiness? ConfigurationReadiness { get; init; }
 }
 
 // Pending reviewed-update plan read (see GetPendingUpdatePlanAsync). A null plan means nothing is

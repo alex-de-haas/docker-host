@@ -18,12 +18,12 @@ import { toast, AssistantFeedbackContext, errorReportText, type ErrorReport } fr
 import { useConfirmation } from "@/components/reui/confirmation";
 import { Toaster } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
-import { findAppPageLink, getAppPageLinks } from "./shell/app-helpers";
+import { appSupportsReviewedUpdate, findAppPageLink, getAppPageLinks } from "./shell/app-helpers";
 import { CoreRequestError, isAuthRequiredRedirectError, readCoreError, readCoreErrorDetail, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
 import { appendThemeLaunchParams, createReissueRateLimiter } from "@hosty-sdk/app/embedder";
 import { CoreEventNames, subscribeToCoreEvents } from "./shell/events/core-event-stream";
 import { resolveLaunchGate } from "./shell/surfaces/app-surface-tabs";
-import { enqueueRoutineUpdate, requestAppUpdate, reviewUpdatesInOrder } from "./shell/app-updates";
+import { enqueueRoutineUpdate, isStaleUpdatePreparation, prepareAppUpdate, requestAppUpdate, reviewUpdatesInOrder } from "./shell/app-updates";
 import { requestAppRemoval, requestCoreApproval } from "./shell/app-removal";
 import { readCoreStatus, reconcileCoreUpdate } from "./shell/core-status";
 import { reconcileAppList } from "./shell/app-list-snapshot";
@@ -195,10 +195,13 @@ export function ShellClient({
   useAppUpdateNotifications(state.apps, openUpdateLogs);
   const [detailPanel, setDetailPanel] = useState<DetailPanelState>(emptyDetailPanelState);
   const [installOpen, setInstallOpen] = useState(false);
+  const [installConfirmationWindow, setInstallConfirmationWindow] = useState<Window | null>(null);
   const [installInitialManifest, setInstallInitialManifest] = useState<string | null>(null);
   // Bumped on every openInstallDialog and folded into the dialog's key, so each open remounts a fresh
   // instance. The manifest alone is not enough: reopening the same manifestRef would keep the key,
   // skip the mount-only auto-review, and (with the panel state wiped on open) render an empty dialog.
+  const updateActivations = useRef(new Set<string>());
+  const installActivation = useRef(false);
   const [installNonce, setInstallNonce] = useState(0);
   const [globalMounts, setGlobalMounts] = useState<CoreGlobalMount[]>([]);
   const [coreSettings, setCoreSettings] = useState<CoreSettingsState | null>(null);
@@ -898,46 +901,149 @@ export function ShellClient({
     [appEndpoint, coreOrigin],
   );
 
-  const loadUpdatePlan = useCallback(
-    async (app: CoreApp, manifestPath?: string, options?: { rebuild?: boolean }) => {
-      const requestToken = ++detailRequestRef.current;
-      setActivePanel({ appId: app.id, view: "update" });
-      setDetailPanel({ loading: true, error: null, backups: null, backupCleanupPlan: null, updatePlan: null });
+  const installationClient = useMemo(() => createInstallationClient({
+    baseUrl: `${coreOrigin}/api/installations`, request: sendCsrfJson,
+  }), [coreOrigin, sendCsrfJson]);
+
+  const getUpdatePlan = useCallback(async (app: CoreApp, forceRefresh = false) => prepareAppUpdate(
+    async () => {
+      const response = await fetchCore(appEndpoint(app, "/update/plan"), { credentials: "include" });
+      redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+      if (!response.ok) throw new Error(await readCoreError(response));
+      return ((await response.json()) as AppPendingUpdatePlanResponse).plan;
+    },
+    async () => {
+      const response = await sendCsrfJson(appEndpoint(app, "/update/plan"), {});
+      return (await response.json()) as CoreUpdatePlan;
+    }, forceRefresh,
+  ), [appEndpoint, coreOrigin, sendCsrfJson]);
+
+  const enqueueUpdate = useCallback(
+    async (app: CoreApp, planDigest: string, popup = openInstallationConfirmation()) => {
+      const actionKey = `${app.id}:update`;
+      setBusyAction(actionKey);
+      let submitted = false;
       try {
-        const source = manifestPath?.trim();
-        let payload: CoreUpdatePlan | null = null;
-        // The fleet check (or an earlier dialog open) usually left a fresh plan cached on Core —
-        // render it instantly instead of rebuilding. An explicit source, or a caller that knows the
-        // cached plan is stale (a feed change), skips the cache and rebuilds.
-        if (!source && !options?.rebuild) {
-          const pending = await fetchCore(appEndpoint(app, "/update/plan"), { credentials: "include" });
-          redirectToCoreLoginIfAuthRequired(pending, coreOrigin);
-          if (pending.ok) {
-            payload = ((await pending.json()) as AppPendingUpdatePlanResponse).plan;
+        const result = await requestAppUpdate(installationClient, app.id, planDigest, pending => {
+          submitted = true;
+          const dismissConfirmation = showCoreConfirmation(popup, pending);
+          setActivePanel(current => current?.appId === app.id ? null : current);
+          return dismissConfirmation;
+        });
+        if (result.status === "denied") {
+          toast.info("Update cancelled", { description: app.displayName });
+          return false;
+        }
+        // Core reports success after the apply and restart complete. A pending confirmation
+        // must never trigger the old Shell's origin probe or reload.
+        if (app.id === shellAppId) {
+          const response = await fetchCore(`${coreOrigin}/api/apps`, { credentials: "include", cache: "no-store" });
+          redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+          if (!response.ok) throw new Error(await readCoreError(response));
+          const target = ((await response.json()) as AppsResponse).apps.find(item => item.id === app.id);
+          if (target?.configurationReadiness?.required && target.runtimeState === "stopped") {
+            toast.warning("Shell updated; configuration required", { description: "Configure it through local Core control before starting Shell again." });
+            return true;
           }
+          if (await waitForOwnOrigin()) window.location.reload();
+          else toast.warning("Shell is not answering yet", {
+            description: "Keep this tab open and reload manually once the Shell is reachable again.",
+          });
+          return true;
         }
-
-        if (!payload) {
-          // Plan routes require the CSRF header like their apply twins (C-M9); sendCsrfJson attaches it.
-          const response = await sendCsrfJson(appEndpoint(app, "/update/plan"), { manifestPath: source ? source : null });
-          payload = (await response.json()) as CoreUpdatePlan;
-        }
-
-        if (requestToken !== detailRequestRef.current) {
-          return;
-        }
-
-        setDetailPanel({ loading: false, error: null, backups: null, backupCleanupPlan: null, updatePlan: payload });
+        await refresh();
+        return true;
       } catch (error) {
-        if (isAuthRequiredRedirectError(error) || requestToken !== detailRequestRef.current) {
-          return;
+        if (!submitted && isStaleUpdatePreparation(error)) throw error;
+        if (!submitted) popup?.close();
+        if (!isAuthRequiredRedirectError(error)) {
+          toast.error("Update not completed", {
+            id: actionKey,
+            appId: app.id,
+            description: error instanceof Error ? error.message : "Check the update status in Core.",
+          });
+          void refresh();
         }
-
-        setDetailPanel({ loading: false, error: error instanceof Error ? error.message : "Update plan is unavailable.", backups: null, backupCleanupPlan: null, updatePlan: null });
+        return false;
+      } finally {
+        setBusyAction(current => current === actionKey ? null : current);
       }
     },
-    [appEndpoint, coreOrigin, sendCsrfJson],
+    [coreOrigin, refresh, shellAppId, installationClient],
   );
+
+  const enqueueRoutine = useCallback(async (app: CoreApp, planDigest: string) => {
+    const actionKey = `${app.id}:update`;
+    setBusyAction(actionKey);
+    try {
+      await enqueueRoutineUpdate(sendCsrfJson, coreOrigin, app.id, planDigest);
+      setActivePanel(current => current?.appId === app.id ? null : current);
+      toast.info("Update started", { id: actionKey, description: app.displayName });
+      void refresh();
+      if (app.id === shellAppId) {
+        const outcome = await waitForShellUpdateToSettle({
+          coreOrigin, shellAppId, expectRestart: isAppUp(app.runtimeState),
+          subscribe: onSync => {
+            const unsubscribe = subscribeToCoreEvents(coreOrigin, {
+              names: [CoreEventNames.appChanged, CoreEventNames.appRemoved], onSync,
+            });
+            // Shell's proxy may restart too; a missed hint must not strand this wait.
+            const timer = setInterval(() => void onSync(), 5000);
+            void onSync();
+            return () => { clearInterval(timer); unsubscribe(); };
+          },
+        });
+        if (outcome.kind === "failed") throw new Error(outcome.message);
+        if (outcome.kind === "configuration-required") {
+          toast.warning("Shell updated; configuration required", { description: "Configure it through local Core control before starting Shell again." });
+          return true;
+        }
+        if (outcome.kind === "settled" && await waitForOwnOrigin()) window.location.reload();
+        else toast.warning("Shell update is still settling", { description: "Check its status before reloading this page." });
+      }
+      return true;
+    } catch (error) {
+      if (!isAuthRequiredRedirectError(error)) {
+        toast.error("Update not completed", { id: actionKey, appId: app.id,
+          description: error instanceof Error ? error.message : "Check the update status in Core." });
+        void refresh();
+      }
+      return false;
+    } finally {
+      setBusyAction(current => current === actionKey ? null : current);
+    }
+  }, [coreOrigin, refresh, sendCsrfJson, shellAppId]);
+
+  const applyUpdateFromRow = useCallback(async (app: CoreApp) => {
+    if (updateActivations.current.has(app.id)) return;
+    updateActivations.current.add(app.id);
+    // Reserve the window in the click gesture. A fresh routine verdict needs no window;
+    // if its refresh discovers a review, Core's explicit confirmation link is available.
+    const reserve = app.updateCheck?.requiresReview || app.updateCheck?.error || !app.updateCheck?.planDigest;
+    const popup = reserve ? openInstallationConfirmation() : null;
+    const actionKey = `${app.id}:update`;
+    setBusyAction(actionKey);
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const plan = await getUpdatePlan(app, attempt > 0 || Boolean(app.updateCheck?.error));
+        if (plan.error) throw new Error(plan.error);
+        if (plan.sourceConfigured === false) throw new Error("Configure an update source in app Settings before updating.");
+        if (!plan.changes.length) { popup?.close(); toast.info("No update available", { description: app.displayName }); return; }
+        try {
+          if (plan.requiresReview !== false) await enqueueUpdate(app, plan.planDigest, popup);
+          else { popup?.close(); await enqueueRoutine(app, plan.planDigest); }
+          return;
+        } catch (error) {
+          if (attempt === 1 || !isStaleUpdatePreparation(error)) throw error;
+        }
+      }
+    } catch (error) {
+      popup?.close();
+      if (!isAuthRequiredRedirectError(error)) toast.error("Update could not be prepared", {
+        description: error instanceof Error ? error.message : "Check the update source and try again.",
+      });
+    } finally { updateActivations.current.delete(app.id); setBusyAction(current => current === actionKey ? null : current); }
+  }, [enqueueRoutine, enqueueUpdate, getUpdatePlan]);
 
   // Points an installed app at one of its app-owned feeds. Core resolves the stored FeedsUrl and
   // re-points ManifestUrl at the feed head, so the update plan is rebuilt against the new selection.
@@ -951,7 +1057,14 @@ export function ShellClient({
           description: feedId.length > 0 ? `Now following '${feedId}'.` : "No longer following a feed.",
         });
         // The cached pending plan was built against the previous feed — force a rebuild.
-        void loadUpdatePlan(app, undefined, { rebuild: true });
+        if (appSupportsReviewedUpdate(app)) {
+          try { await getUpdatePlan(app, true); }
+          catch (error) {
+            if (isAuthRequiredRedirectError(error)) return;
+            toast.warning("Feed saved; update check failed", { description: error instanceof Error ? error.message : "Check the new source before updating." });
+          }
+          await refresh();
+        }
       } catch (error) {
         if (isAuthRequiredRedirectError(error)) {
           return;
@@ -963,7 +1076,7 @@ export function ShellClient({
         setBusyAction((current) => (current === `${app.id}:feed` ? null : current));
       }
     },
-    [appEndpoint, loadUpdatePlan, refresh, sendCsrfJson],
+    [appEndpoint, getUpdatePlan, refresh, sendCsrfJson],
   );
 
   const openAppPanel = useCallback(
@@ -973,14 +1086,14 @@ export function ShellClient({
         return;
       }
       if (view === "update") {
-        void loadUpdatePlan(app);
+        void applyUpdateFromRow(app);
         return;
       }
       detailRequestRef.current += 1;
       setActivePanel({ appId: app.id, view, settingsTab: options?.settingsTab });
       setDetailPanel(emptyDetailPanelState());
     },
-    [loadAppBackups, loadUpdatePlan],
+    [applyUpdateFromRow, loadAppBackups],
   );
 
   const closeAppPanel = useCallback(() => {
@@ -1191,9 +1304,7 @@ export function ShellClient({
     [appEndpoint, refresh, sendCsrfJson],
   );
 
-  const installationClient = useMemo(() => createInstallationClient({
-    baseUrl: `${coreOrigin}/api/installations`, request: sendCsrfJson,
-  }), [coreOrigin, sendCsrfJson]);
+
 
   const changeHostPath = useCallback(async (url: string, body: unknown, change: NonNullable<InstallationSource["hostPathChange"]>) => {
     const popup = openInstallationConfirmation();
@@ -1358,110 +1469,6 @@ export function ShellClient({
   );
 
   // Significant manifest changes and new permissions still use Core confirmation.
-  const enqueueUpdate = useCallback(
-    async (app: CoreApp, planDigest: string, popup = openInstallationConfirmation()) => {
-      const actionKey = `${app.id}:update`;
-      setBusyAction(actionKey);
-      let submitted = false;
-      try {
-        const result = await requestAppUpdate(installationClient, app.id, planDigest, pending => {
-          submitted = true;
-          const dismissConfirmation = showCoreConfirmation(popup, pending);
-          setActivePanel(current => current?.appId === app.id ? null : current);
-          return dismissConfirmation;
-        });
-        if (result.status === "denied") {
-          toast.info("Update cancelled", { description: app.displayName });
-          return false;
-        }
-        // Core reports success after the apply and restart complete. A pending confirmation
-        // must never trigger the old Shell's origin probe or reload.
-        if (app.id === shellAppId) {
-          if (await waitForOwnOrigin()) window.location.reload();
-          else toast.warning("Shell is not answering yet", {
-            description: "Keep this tab open and reload manually once the Shell is reachable again.",
-          });
-          return true;
-        }
-        await refresh();
-        return true;
-      } catch (error) {
-        if (!submitted) popup?.close();
-        if (!isAuthRequiredRedirectError(error)) {
-          toast.error("Update not completed", {
-            id: actionKey,
-            appId: app.id,
-            description: error instanceof Error ? error.message : "Check the update status in Core.",
-          });
-          void refresh();
-        }
-        return false;
-      } finally {
-        setBusyAction(current => current === actionKey ? null : current);
-      }
-    },
-    [refresh, shellAppId, installationClient],
-  );
-
-  const enqueueRoutine = useCallback(async (app: CoreApp, planDigest: string) => {
-    const actionKey = `${app.id}:update`;
-    setBusyAction(actionKey);
-    try {
-      await enqueueRoutineUpdate(sendCsrfJson, coreOrigin, app.id, planDigest);
-      setActivePanel(current => current?.appId === app.id ? null : current);
-      toast.info("Update started", { id: actionKey, description: app.displayName });
-      void refresh();
-      if (app.id === shellAppId) {
-        const outcome = await waitForShellUpdateToSettle({
-          coreOrigin, shellAppId, expectRestart: isAppUp(app.runtimeState),
-          subscribe: onSync => {
-            const unsubscribe = subscribeToCoreEvents(coreOrigin, {
-              names: [CoreEventNames.appChanged, CoreEventNames.appRemoved], onSync,
-            });
-            // Shell's proxy may restart too; a missed hint must not strand this wait.
-            const timer = setInterval(() => void onSync(), 5000);
-            void onSync();
-            return () => { clearInterval(timer); unsubscribe(); };
-          },
-        });
-        if (outcome.kind === "failed") throw new Error(outcome.message);
-        if (outcome.kind === "settled" && await waitForOwnOrigin()) window.location.reload();
-        else toast.warning("Shell update is still settling", { description: "Check its status before reloading this page." });
-      }
-      return true;
-    } catch (error) {
-      if (!isAuthRequiredRedirectError(error)) {
-        toast.error("Update not completed", { id: actionKey, appId: app.id,
-          description: error instanceof Error ? error.message : "Check the update status in Core." });
-        void refresh();
-      }
-      return false;
-    } finally {
-      setBusyAction(current => current === actionKey ? null : current);
-    }
-  }, [coreOrigin, refresh, sendCsrfJson, shellAppId]);
-
-  const applyUpdate = useCallback(
-    async (app: CoreApp, plan: CoreUpdatePlan) => {
-      if (plan.requiresReview) await enqueueUpdate(app, plan.planDigest);
-      else await enqueueRoutine(app, plan.planDigest);
-    },
-    [enqueueUpdate, enqueueRoutine],
-  );
-
-  // Routine verdicts apply the cached plan without opening a confirmation window.
-  const applyUpdateFromRow = useCallback(
-    async (app: CoreApp) => {
-      const planDigest = app.updateCheck?.planDigest;
-      if (!planDigest) {
-        return;
-      }
-
-      await enqueueRoutine(app, planDigest);
-    },
-    [enqueueRoutine],
-  );
-
   // Starts (or joins) the Core fleet update check; progress is server state on the apps list, so the
   // spinner survives reloads and shows for every admin, not just the one who clicked.
   const startUpdateCheck = useCallback(async () => {
@@ -1779,6 +1786,9 @@ export function ShellClient({
   }
 
   const openInstallDialog = useCallback((manifestPath?: string) => {
+    if (installActivation.current) return;
+    installActivation.current = true;
+    setInstallConfirmationWindow(typeof manifestPath === "string" ? openInstallationConfirmation() : null);
     setInstallInitialManifest(typeof manifestPath === "string" ? manifestPath : null);
     setInstallNonce((nonce) => nonce + 1);
     setInstallOpen(true);
@@ -1793,6 +1803,7 @@ export function ShellClient({
   const handleDelegatedTokenRequest = undefined;
 
   const closeInstallDialog = useCallback(() => {
+    installActivation.current = false;
     setInstallOpen(false);
   }, []);
 
@@ -2260,8 +2271,10 @@ export function ShellClient({
           coreOrigin={coreOrigin}
           sendCsrfJson={sendCsrfJson}
           source={installInitialManifest ? { manifestPath: installInitialManifest } : undefined}
+          confirmationWindow={installConfirmationWindow}
           onClose={closeInstallDialog}
           onInstalled={() => {
+            installActivation.current = false;
             setInstallOpen(false);
             toast.success("App installed");
             void refresh();
@@ -2290,7 +2303,6 @@ export function ShellClient({
             onConfigureMounts={configureMounts}
             onConfigureSource={configureAppSource}
             onClearSource={clearAppSource}
-            onApplyUpdate={applyUpdate}
             onSetFeed={setAppFeed}
             onRemove={removeApp}
             onLoadRemovalImpact={loadRemovalImpact}

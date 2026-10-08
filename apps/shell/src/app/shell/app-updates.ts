@@ -1,5 +1,6 @@
-import type { InstallationClient, InstallationRequest } from "@hosty-sdk/app/install";
+import { InstallationError, type InstallationClient, type InstallationRequest } from "@hosty-sdk/app/install";
 import { requestCoreApproval } from "./app-removal";
+import { CoreRequestError } from "./core-api";
 
 /** Changes requiring review use Core-owned consent; routine updates use the queued endpoint. */
 export function requestAppUpdate(client: InstallationClient, appId: string, planDigest: string,
@@ -19,4 +20,18 @@ export function enqueueRoutineUpdate(
   request: (url: string, body: unknown) => Promise<Response>, coreOrigin: string, appId: string, planDigest: string,
 ): Promise<Response> {
   return request(`${coreOrigin}/api/apps/${encodeURIComponent(appId)}/update`, { planDigest });
+}
+
+/** Read Core's still-valid snapshot or rebuild once, before any submission. */
+export async function prepareAppUpdate<T extends { planDigest: string }>(
+  cached: () => Promise<T | null>, rebuild: () => Promise<T>, forceRefresh = false,
+): Promise<T> {
+  const plan = forceRefresh ? null : await cached();
+  return plan ?? await rebuild();
+}
+
+/** Retry only a definite refusal during preparation, before submit can be reached. */
+export function isStaleUpdatePreparation(error: unknown) {
+  return (error instanceof InstallationError || error instanceof CoreRequestError) && error.status === 409 &&
+    ["update_plan_expired", "update_plan_stale", "update_plan_digest_mismatch"].includes(error.code ?? "");
 }

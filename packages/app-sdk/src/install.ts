@@ -5,6 +5,11 @@ export interface InstallSetting {
   required?: boolean; label?: string | null; description?: string | null;
   options?: { value: string; label: string }[] | null;
 }
+export interface InstallationConfigurationReadiness {
+  required: boolean; missingSettings: string[];
+  mounts: { key: string; label?: string | null; reason: string }[];
+  error?: string | null;
+}
 export interface InstallPlan {
   appId: string; displayName: string; description?: string | null; action: string;
   planId?: string | null; targetVersion: string; targetRuntime: string; targetRuntimeType: string;
@@ -13,6 +18,8 @@ export interface InstallPlan {
   permissionDescriptions?: Record<string, string>; roleDescriptions?: Record<string, string>;
   runtimeProfiles?: { key: string; type: string; default: boolean; development?: boolean }[];
   settings: InstallSetting[];
+  runtimeChoices?: { key: string; type: string; default: boolean; available: boolean; error?: string | null }[];
+  configurationReadiness?: InstallationConfigurationReadiness | null;
 }
 export interface InstallationSource {
   manifestPath?: string; feedsUrl?: string; feedId?: string; selectedRuntime?: string;
@@ -32,7 +39,13 @@ export interface InstallationSource {
 export interface InstallationRequest {
   id: string; status: "draft" | "pending" | "executing" | "succeeded" | "denied" | "failed";
   plan: InstallPlan | null;
-  updatePlan?: { appId: string; displayName: string; targetVersion: string; targetRuntime: string; changes: string[] } | null;
+  updatePlan?: {
+    appId: string; displayName?: string | null; targetVersion: string; targetRuntime: string; changes: string[];
+    previousRequiredCorePermissions?: string[] | null; previousOptionalCorePermissions?: string[] | null;
+    feedsUrl?: string | null; feedId?: string | null; targetRuntimeType?: string | null;
+    settingChanges?: { key: string; label?: string | null; change: string; detail?: string | null }[];
+    configurationReadiness?: InstallationConfigurationReadiness | null;
+  } | null;
   permissionPlan?: { appId: string; displayName: string; required: string[]; optional: string[]; granted: string[]; acceptedRequired?: string[]; acceptedOptional?: string[] } | null;
   removalPlan?: { appId: string; displayName: string; version: string; options: NonNullable<InstallationSource["removalOptions"]> } | null;
   hostPathPlan?: { change: InstallationSource["hostPathChange"]; displayName: string; details: string[] } | null;
@@ -40,7 +53,7 @@ export interface InstallationRequest {
 }
 export interface InstallationClient {
   prepare(source: InstallationSource): Promise<InstallationRequest>;
-  submit(id: string, settings: Record<string, string | null>, autostart: boolean): Promise<InstallationRequest>;
+  submit(id: string, settings?: Record<string, string | null>, autostart?: boolean): Promise<InstallationRequest>;
   status(id: string): Promise<InstallationRequest>;
 }
 export class InstallationError extends Error {
@@ -74,13 +87,17 @@ export function createInstallationClient(options: {
 
 export interface InstallationState {
   request: InstallationRequest | null; busy: boolean; error: string | null;
+  /** A submit may have succeeded; resolve the existing identity before another mutation. */
+  uncertainSubmit: boolean;
 }
 /** Reusable state flow for custom UIs, independent of React. Never automatically retries a mutation. */
 export class InstallationFlow {
-  private state: InstallationState = { request: null, busy: false, error: null };
+  private state: InstallationState = { request: null, busy: false, error: null, uncertainSubmit: false };
   private listeners = new Set<() => void>();
   private generation = 0;
   private disposed = false;
+  private submitting = false;
+  private refreshing = false;
   constructor(private readonly client: InstallationClient) {}
   snapshot = (): InstallationState => this.state;
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
@@ -90,57 +107,66 @@ export class InstallationFlow {
     for (const listener of this.listeners) listener();
   }
   clearReview() {
-    if (this.state.request && this.state.request.status !== "draft") return;
+    const status = this.state.request?.status;
+    if (this.submitting || this.state.uncertainSubmit || (status && !["draft", "succeeded", "denied", "failed"].includes(status))) return;
     this.generation++;
-    this.set({ request: null, busy: false, error: null });
+    this.set({ request: null, busy: false, error: null, uncertainSubmit: false });
   }
   cancelPending() { this.generation++; }
   dispose() { this.disposed = true; this.generation++; this.listeners.clear(); }
   async review(source: InstallationSource): Promise<void> {
-    if (this.state.request && this.state.request.status !== "draft") return;
+    if (this.submitting || this.state.uncertainSubmit || (this.state.request && this.state.request.status !== "draft")) return;
     const generation = ++this.generation;
-    this.set({ request: null, busy: true, error: null });
+    this.set({ request: null, busy: true, error: null, uncertainSubmit: false });
     try {
       const request = await this.client.prepare(source);
-      if (generation === this.generation) this.set({ request, busy: false, error: null });
+      if (generation === this.generation) this.set({ request, busy: false, error: null, uncertainSubmit: false });
     } catch (error) {
-      if (generation === this.generation) this.set({ request: null, busy: false, error: message(error) });
+      if (generation === this.generation) this.set({ request: null, busy: false, error: message(error), uncertainSubmit: false });
     }
   }
-  async submit(settings: Record<string, string | null>, autostart: boolean): Promise<InstallationRequest | null> {
-    if (this.state.busy || this.state.request?.status !== "draft") return null;
+  async submit(settings?: Record<string, string | null>, autostart?: boolean): Promise<InstallationRequest | null> {
+    if (this.state.busy || this.state.uncertainSubmit || this.state.request?.status !== "draft") return null;
     const id = this.state.request.id;
     const generation = this.generation;
+    this.submitting = true;
     this.set({ ...this.state, busy: true, error: null });
     try {
       const request = await this.client.submit(id, settings, autostart);
       if (generation !== this.generation) return null;
-      this.set({ request, busy: false, error: null });
+      this.set({ request, busy: false, error: null, uncertainSubmit: false });
       return request;
     } catch (error) {
+      if (error instanceof InstallationError && error.status >= 400 && error.status < 500) {
+        if (generation === this.generation) this.set({ ...this.state, busy: false, error: message(error), uncertainSubmit: false });
+        return null;
+      }
       // A lost response may mean the request was already frozen. Recover by reading its status,
       // not by sending another submit or creating a second installation.
       try {
         const request = await this.client.status(id);
         if (generation !== this.generation) return null;
-        this.set({ request, busy: false, error: request.status === "draft" ? message(error) : null });
+        this.set({ request, busy: false, error: request.status === "draft" ? message(error) : null, uncertainSubmit: false });
         return request.status === "draft" ? null : request;
       } catch {
-        if (generation === this.generation) this.set({ ...this.state, busy: false, error: message(error) });
+        if (generation === this.generation) this.set({ ...this.state, busy: false, error: message(error), uncertainSubmit: true });
         return null;
       }
-    }
+    } finally { this.submitting = false; }
   }
   async refresh(): Promise<void> {
-    if (!this.state.request || this.state.busy) return;
+    if (!this.state.request || this.state.busy || this.refreshing) return;
+    this.refreshing = true;
     const id = this.state.request.id;
     const generation = this.generation;
     try {
       const request = await this.client.status(id);
-      if (generation === this.generation) this.set({ request, busy: false, error: request.error ?? null });
+      if (generation === this.generation) this.set({ request, busy: false,
+        error: request.error ?? (this.state.uncertainSubmit && request.status === "draft" ? "Core has not received the submission. Retry this request." : null),
+        uncertainSubmit: false });
     } catch (error) {
       if (generation === this.generation) this.set({ ...this.state, error: message(error) });
-    }
+    } finally { this.refreshing = false; }
   }
 }
 function message(error: unknown) { return error instanceof Error ? error.message : "Installation request failed."; }

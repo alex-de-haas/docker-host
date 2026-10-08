@@ -10,7 +10,7 @@ import type {
   CatalogAppsResponse,
   CatalogDiagnostic,
 } from "@/lib/catalog-types";
-import { createInstallationClient, type InstallationSource } from "@hosty-sdk/app/install";
+import { createInstallationClient, openInstallationConfirmation, type InstallationSource } from "@hosty-sdk/app/install";
 import { InstallDialog } from "@hosty-sdk/app/install/react";
 
 import { fetchAppUpdateAvailable, fetchCatalogApp, fetchCatalogApps, fetchInstalledAppIds, MarketplaceApiError } from "@/lib/marketplace-api";
@@ -23,6 +23,10 @@ import { cn } from "@/lib/utils";
 
 const installationClient = createInstallationClient();
 
+function getDefaultFeed(feeds: CatalogAppFeed[]): CatalogAppFeed | null {
+  return feeds.find(feed => feed.default) ?? (feeds.length === 1 ? feeds[0] : null);
+}
+
 const initialCatalog: CatalogAppsResponse = {
   apps: [],
   source: { url: null, name: "Marketplace", description: null },
@@ -30,7 +34,10 @@ const initialCatalog: CatalogAppsResponse = {
 };
 
 export function Storefront() {
-  const [installSource, setInstallSource] = useState<InstallationSource | null>(null);
+  const [installation, setInstallation] = useState<{ source: InstallationSource; popup: Window | null } | null>(null);
+  const installationBusy = useRef(false);
+  const lookupPopup = useRef<Window | null>(null);
+  const mounted = useRef(true);
   const [catalog, setCatalog] = useState(initialCatalog);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -80,11 +87,12 @@ export function Storefront() {
   }, []);
 
   useEffect(() => {
+    mounted.current = true;
     const controller = new AbortController();
     requestRef.current = controller;
     void loadCatalog(false, controller.signal);
     loadInstalledAppIds(controller.signal);
-    return () => controller.abort();
+    return () => { controller.abort(); mounted.current = false; lookupPopup.current?.close(); };
   }, [loadCatalog, loadInstalledAppIds]);
 
   const refresh = () => {
@@ -130,38 +138,59 @@ export function Storefront() {
   // Card install always uses the default feed. Summaries carry no feeds, so resolve them on click;
   // feed selection lives in the details dialog, where the feed list is loaded.
   const installDefault = async (appId: string) => {
+    if (installationBusy.current) return;
+    installationBusy.current = true;
+    // Reserve the popup during this click, before the catalog request loses browser activation.
+    const popup = openInstallationConfirmation();
+    lookupPopup.current = popup;
     setInstallLoading(appId);
     setNotice(null);
     try {
       const detail = await fetchCatalogApp(appId, false);
-      const feed = detail.feeds.find(candidate => candidate.default) ?? detail.feeds[0] ?? null;
+      if (!mounted.current) return;
+      lookupPopup.current = null;
+      const feed = getDefaultFeed(detail.feeds);
       if (feed && detail.feedsUrl) {
-        requestInstall(detail.feedsUrl, feed);
+        setSelected(null);
+        setInstallation({ source: { feedsUrl: detail.feedsUrl, feedId: feed.id }, popup });
       } else {
         // Nothing installable — open details so the user sees the feed diagnostic.
+        popup?.close();
+        installationBusy.current = false;
         setSelected(detail);
         if (!feed) {
-          setNotice(detail.feedDiagnostic?.message ?? "No installable feed found.");
+          setNotice(detail.feeds.length ? "Choose a release feed before installing." : detail.feedDiagnostic?.message ?? "No installable feed found.");
         }
       }
     } catch (installError) {
+      if (!mounted.current) return;
+      lookupPopup.current = null;
+      popup?.close();
+      installationBusy.current = false;
       setNotice(installError instanceof Error ? installError.message : "App details could not be loaded.");
     } finally {
-      setInstallLoading(null);
+      if (mounted.current) setInstallLoading(null);
     }
   };
 
   const requestInstall = (feedsUrl: string, feed: CatalogAppFeed) => {
+    if (installationBusy.current) return;
+    installationBusy.current = true;
+    const popup = openInstallationConfirmation();
     setSelected(null);
     setNotice(null);
-    setInstallSource({ feedsUrl, feedId: feed.id });
+    setInstallation({ source: { feedsUrl, feedId: feed.id }, popup });
+  };
+  const closeInstallation = () => {
+    installationBusy.current = false;
+    setInstallation(null);
   };
 
   return (
     <main className="mx-auto w-full max-w-6xl space-y-6 px-4 py-6 sm:px-6">
-      {installSource && <InstallDialog client={installationClient} source={installSource}
-        onClose={() => setInstallSource(null)}
-        onInstalled={() => { setInstallSource(null); loadInstalledAppIds(); }} />}
+      {installation && <InstallDialog client={installationClient} source={installation.source} confirmationWindow={installation.popup}
+        onClose={closeInstallation}
+        onInstalled={() => { closeInstallation(); loadInstalledAppIds(); }} />}
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         {/* Shell already renders the app name; Refresh acts on the catalog below. */}
         <div className={cn("min-w-0 space-y-1", SHELL_DUPLICATED_CHROME_CLASS)}>
@@ -315,7 +344,7 @@ function FeedInstallButton({ feeds, label = "Install", disabled = false, onInsta
   feeds: CatalogAppFeed[];
   label?: string;
   disabled?: boolean;
-  onInstallDefault: () => void;
+  onInstallDefault?: () => void;
   onInstallFeed: (feed: CatalogAppFeed) => void;
   placement?: "bottom" | "top";
 }) {
@@ -347,7 +376,8 @@ function FeedInstallButton({ feeds, label = "Install", disabled = false, onInsta
 
   return (
     <div ref={rootRef} className="relative inline-flex">
-      <Button type="button" size="sm" className={cn(multiple && "rounded-r-none")} disabled={disabled} onClick={onInstallDefault}>
+      <Button type="button" size="sm" className={cn(multiple && "rounded-r-none")} disabled={disabled} aria-haspopup={onInstallDefault ? undefined : true} aria-expanded={onInstallDefault ? undefined : open}
+        onClick={() => { if (onInstallDefault) onInstallDefault(); else setOpen(true); }}>
         <Download className="h-4 w-4" />
         {label}
       </Button>
@@ -408,8 +438,8 @@ function AppDetailDialog({ app, installed, onClose, onInstall }: {
   onClose: () => void;
   onInstall: (feed: CatalogAppFeed) => void;
 }) {
-  const defaultFeed = app.feeds.find(feed => feed.default) ?? app.feeds[0] ?? null;
-  const canInstall = Boolean(defaultFeed && app.feedsUrl);
+  const defaultFeed = getDefaultFeed(app.feeds);
+  const canInstall = Boolean(app.feeds.length && app.feedsUrl);
   // For an installed app, ask Core whether the feed has a newer manifest than what's installed, so
   // the footer offers "Update" only when there's actually something to update.
   const [updateState, setUpdateState] = useState<"checking" | "available" | "current">(installed ? "checking" : "current");
@@ -516,7 +546,7 @@ function AppDetailDialog({ app, installed, onClose, onInstall }: {
               label={updateState === "available" ? "Update" : "Install"}
               disabled={!canInstall}
               placement="top"
-              onInstallDefault={() => defaultFeed && onInstall(defaultFeed)}
+              onInstallDefault={defaultFeed ? () => onInstall(defaultFeed) : undefined}
               onInstallFeed={onInstall}
             />
           )}

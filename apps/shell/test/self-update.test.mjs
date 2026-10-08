@@ -158,3 +158,15 @@ test("gives up on the deadline without reloading, and unsubscribes", async () =>
     stub.restore();
   }
 });
+
+test("a successful incomplete Shell update stops waiting without probing its offline origin", async () => {
+  const stub = stubFetch([{ apps: [shell({ operationStatus: "updated", runtimeState: "stopped",
+    configurationReadiness: { required: true, missingSettings: ["TOKEN"], mounts: [] } })] }]);
+  const stream = fakeStream();
+  try {
+    const result = waitForShellUpdateToSettle({ coreOrigin: CORE_ORIGIN, shellAppId: SHELL_ID, subscribe: stream.subscribe, expectRestart: true });
+    await stream.connected();
+    assert.deepEqual(await result, { kind: "configuration-required" });
+    assert.equal(stream.unsubscribes(), 1);
+  } finally { stub.restore(); }
+});

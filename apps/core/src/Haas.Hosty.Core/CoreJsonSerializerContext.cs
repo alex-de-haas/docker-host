@@ -299,6 +299,8 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppFeedInstallPlanDigestSeed))]
 [JsonSerializable(typeof(AppFeedsResponse))]
 [JsonSerializable(typeof(AppLifecycleResponse))]
+[JsonSerializable(typeof(AppConfigurationReadiness))]
+[JsonSerializable(typeof(AppConfigurationMountIssue))]
 [JsonSerializable(typeof(AppRemovalImpact))]
 [JsonSerializable(typeof(AppSettingValueResponse))]
 [JsonSerializable(typeof(GlobalMountListResponse))]

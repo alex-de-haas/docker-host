@@ -34,8 +34,7 @@ export function isAppAutostartEnabled(app: CoreApp) {
 // grants: Core authorizes it on the admin session and refuses it for exactly one reason — a live
 // source runtime, whose manifest is adopted on restart rather than advanced through a plan
 // (CreateUpdatePlanAsync -> update_live_source_runtime). That single check is all this is, which
-// mirrors the UpdatePanel's own gate (`canManageApps` alone, see app-details-dialog.tsx) — an entry
-// point must never be stricter than the panel it opens.
+// keeps every dashboard and legacy update entry point on the same Core-owned classification.
 //
 // Deliberately NOT gated on the manifest `capabilities` list: that list is a client action hint that
 // Core never enforces for lifecycle operations, so gating on it trapped any app installed before its

@@ -275,7 +275,8 @@ internal sealed class HostyCoreTools
             app.SelectedRuntime,
             app.LastError,
             endpoints,
-            interfaces));
+            interfaces,
+            app.ConfigurationReadiness));
     }
 
     [McpServerTool(Name = "get_host_status", ReadOnly = true)]
@@ -754,7 +755,8 @@ internal sealed record McpAppDetail(
     string? SelectedRuntime,
     string? LastError,
     IReadOnlyList<McpAppEndpoint> Endpoints,
-    IReadOnlyList<McpAppInterface> Interfaces);
+    IReadOnlyList<McpAppInterface> Interfaces,
+    AppConfigurationReadiness? ConfigurationReadiness = null);
 
 internal sealed record McpAppEndpoint(string Key, string? Url, string? Availability);
 

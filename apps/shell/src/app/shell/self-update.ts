@@ -9,6 +9,7 @@ import type { AppsResponse } from "./types";
 /** How Core's record settled the Shell apply this page is waiting on. */
 export type ShellUpdateOutcome =
   | { kind: "settled" }
+  | { kind: "configuration-required" }
   | { kind: "failed"; message: string }
   | { kind: "unresolved" };
 
@@ -91,6 +92,11 @@ export function waitForShellUpdateToSettle(options: {
 
         if (shellApp.operationStatus === "failed") {
           finish({ kind: "failed", message: shellApp.lastError || "The Shell update failed on the host." });
+          return;
+        }
+
+        if (shellApp.operationStatus === "updated" && shellApp.runtimeState === "stopped" && shellApp.configurationReadiness?.required) {
+          finish({ kind: "configuration-required" });
           return;
         }
 

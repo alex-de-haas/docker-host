@@ -35,7 +35,7 @@ public sealed class InstallationApprovalHttpTests
         browser.DefaultRequestHeaders.Add("Cookie", "hosty_session=operator");
         var html = await browser.GetStringAsync($"/install/confirm/{id}");
         Assert.Contains("value=\"apps.sources.full\"", html);
-        Assert.DoesNotContain(" checked", html);
+        Assert.DoesNotContain("value=\"apps.sources.full\" checked", html);
         Assert.Null(harness.Services.GetRequiredService<InstallationApprovalStore>().Get(id).SelectedOptionalPermissions);
         Assert.Null(await harness.Services.GetRequiredService<AppRegistryStore>().GetAppAsync("example.consumer"));
     }

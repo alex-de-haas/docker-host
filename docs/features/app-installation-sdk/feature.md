@@ -1,6 +1,6 @@
 ---
 created: 2026-09-18
-updated: 2026-10-07
+updated: 2026-10-08
 summary: A shared install dialog for Marketplace and Shell, with final authorization on a separate Core-origin confirmation page.
 components: [packages/app-sdk, apps/marketplace, apps/shell, apps/core]
 ---
@@ -11,8 +11,10 @@ components: [packages/app-sdk, apps/marketplace, apps/shell, apps/core]
 
 Marketplace and Shell mount the same `InstallDialog` from `@hosty-sdk/app/install/react`.
 Marketplace supplies a feed source; Shell accepts a manifest, directory or URL. Neither uses a
-Marketplace-to-Shell installation message. The dialog prepares settings and a runtime selection;
-final authorization belongs to a separate Core-origin page.
+Marketplace-to-Shell installation message. The default dialog prepares the selected source and submits defaults immediately. Runtime,
+automatic startup and permissions are chosen on the separate Core-origin confirmation page;
+app settings, source/channel and mount editors are absent from that page. Custom authorized
+clients retain configuration inputs.
 
 The SDK provides three independent entry points:
 
@@ -125,10 +127,16 @@ Shell's removal panel opens Core confirmation and waits for successful execution
 removal; denial leaves the target intact. Trusted operator sessions and the local CLI control-secret
 route retain direct removal, including cleanup of retained data for an already absent application.
 
-A request starts as `draft`. Submit freezes settings and autostart, then changes it to `pending`.
-The SDK opens `/install/confirm/{id}` in a top-level window; a visible link is available when a
+A request starts as `draft`. Submit freezes caller-supplied settings and an optional autostart
+preference, then changes it to `pending`. Omitting both uses defaults and retained configuration.
+Core confirmation offers the frozen manifest's supported runtimes and automatic startup. Changing
+runtime renews the review and nonce from cached manifest bytes, without re-fetching the feed.
+Callers reserve a confirmation window synchronously in the Install gesture and pass
+`confirmationWindow` to the default dialog. The SDK opens `/install/confirm/{id}` in a top-level window; a visible link is available when a
 popup is blocked. The page displays the target, version, source, requester, provider roles and Core permissions.
-Role and permission additions and removals are marked on updates. Direct host-command installs carry a warning.
+Update review includes version/runtime changes, backup outcome, safe settings schema deltas and
+actual manifest changes. Permission badges compare previous declarations, separately from
+missing effective grants; older baselines are explicitly unavailable. Secret values are absent. Direct host-command installs carry a warning.
 
 Shell allows confirmation popups to escape the iframe sandbox only when Core's app summary
 reports a persisted `apps.install` grant. Workspace, settings and panel surfaces
@@ -170,8 +178,8 @@ need a fresh login. Core login preserves the confirmation continuation without r
 
 The [local browser origin policy](../local-browser-origins/feature.md) supplies a dedicated Core
 hostname by default. Browser compatibility is tracked there. Shell and Marketplace server transports
-use app-scoped credentials and have no dependency on cross-origin Core cookies. Confirmation still
-requires Core's own host-only browser cookie; merely moving Core to another port does not isolate it.
+use app-scoped credentials and have no dependency on cross-origin Core cookies. Confirmation requires Core's exact-origin browser session, using the dedicated named-localhost
+transport where applicable; merely moving Core to another port does not isolate it.
 
 New trusted distribution installs record their declared permissions. Existing Marketplace/Shell
 installations acquire declarations through a reviewed update, without silent ID-based grants.
