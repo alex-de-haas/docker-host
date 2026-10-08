@@ -176,7 +176,7 @@ Set `publicOrigin` to the Core-injected public origin for your UI endpoint when 
 exposes an internal request URL. The adapter checks browser `Origin` against this configured
 value, or against the request URL when it is omitted; forwarded-host headers are never trusted.
 
-The default dialog includes runtime selection, settings and a link to Core confirmation:
+The default dialog prepares installation and links to Core confirmation:
 
 ```tsx
 "use client";

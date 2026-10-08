@@ -178,8 +178,10 @@ need a fresh login. Core login preserves the confirmation continuation without r
 
 The [local browser origin policy](../local-browser-origins/feature.md) supplies a dedicated Core
 hostname by default. Browser compatibility is tracked there. Shell and Marketplace server transports
-use app-scoped credentials and have no dependency on cross-origin Core cookies. Confirmation requires Core's exact-origin browser session, using the dedicated named-localhost
-transport where applicable; merely moving Core to another port does not isolate it.
+use app-scoped credentials and have no dependency on cross-origin Core cookies. Confirmation uses
+Core's own host-only browser session cookie, issued on the exact confirmation origin. HTTP
+named-localhost sign-in additionally validates a Core-origin storage proof. Moving Core to another
+port does not isolate its cookies.
 
 New trusted distribution installs record their declared permissions. Existing Marketplace/Shell
 installations acquire declarations through a reviewed update, without silent ID-based grants.
