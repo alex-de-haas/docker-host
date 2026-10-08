@@ -100,6 +100,7 @@ internal static class AppSignInIntentEndpoints
             if (request.Query.Count != 1 || request.Query["requestId"].Count != 1 || id.Length != 64 || !id.All(Uri.IsHexDigit))
                 return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
             Dictionary<string, string>? browserProofs = null;
+            string? failureCode = null;
             string? nonce;
             if (storage)
             {
@@ -124,10 +125,18 @@ internal static class AppSignInIntentEndpoints
                 }
                 catch (InvalidDataException)
                 { return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted); }
-                if (form is null || form.Count != 2 || form.Any(field => field.Value.Count != 1 || field.Key is not ("nonce" or "browserProofs")) ||
-                    !IsCanonicalNonce(form["nonce"].ToString()) || !TryReadBrowserProofs(form["browserProofs"].ToString(), out browserProofs))
+                if (form is null || form.Count != 2 || form.Any(field => field.Value.Count != 1 || field.Key is not ("nonce" or "browserProofs" or "failureCode")) ||
+                    !IsCanonicalNonce(form["nonce"].ToString()))
                     return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
                 nonce = form["nonce"].ToString();
+                if (form.ContainsKey("failureCode"))
+                {
+                    failureCode = form["failureCode"].ToString();
+                    if (failureCode is not ("sign_in_storage_unavailable" or "sign_in_intent_capacity"))
+                        return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
+                }
+                else if (!TryReadBrowserProofs(form["browserProofs"].ToString(), out browserProofs))
+                    return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
             }
             else nonce = request.Cookies[CookieName(request, id)];
             var intent = intents.Find(appId, id, nonce);
@@ -149,6 +158,22 @@ internal static class AppSignInIntentEndpoints
             }
             if (!IsNavigation(request, intent.Mode))
                 return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
+            if (failureCode is not null)
+            {
+                // A browser storage failure must release the newly admitted intent without needing
+                // storage again. Nonce ownership and the exact Core Origin authorize cancellation only.
+                if (!intents.TryClaim(intent)) return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
+                await RecordRefusalAsync(auditAppId, failureCode, audit, clock, context.RequestAborted);
+                if (intent.Mode == AppSignInMode.Silent)
+                    return StorageErrorRedirect(context.Response, intent, "login_required");
+                if (intent.Mode == AppSignInMode.Popup)
+                    return AppSignInStorageResponse.RenderPopup(context.Response, intent, "error", failureCode, close: false);
+                return AppSignInStorageResponse.RenderRefusal(context.Response, intent,
+                    failureCode == "sign_in_intent_capacity"
+                        ? "Too many pending sign-in attempts in this browser. Complete an existing attempt or wait five minutes."
+                        : "This browser cannot store the sign-in attempt. Return to the app and start sign-in again after storage becomes available.",
+                    failureCode == "sign_in_intent_capacity" ? StatusCodes.Status429TooManyRequests : StatusCodes.Status503ServiceUnavailable);
+            }
             // A cross-site form POST may omit Lax cookies. Recheck when this Core navigation
             // can see them, without evicting any other live browser attempt.
             if (!intents.WithinBrowserCapacity(intent, other => storage

@@ -410,6 +410,312 @@ public sealed class AppSignInIntentHttpTests
         Assert.Equal(2, (await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes.Count);
     }
 
+    [Fact]
+    public async Task NamedHttp_StorageFailuresReleaseSourceAdmissionImmediatelyWithoutIssuingCodes()
+    {
+        await using var host = await HostAsync(coreOrigin: NamedCore);
+        using var browser = Browser(host, NamedCore);
+        var store = host.Services.GetRequiredService<AppSignInIntentStore>();
+        var attempts = new List<StorageAttempt>();
+        var failureCount = OAuthAuthorizationStore.MaxPendingPerSource * 2;
+        for (var index = 0; index < failureCount; index++)
+        {
+            using var started = await IntentAsync(browser);
+            Assert.Equal(HttpStatusCode.OK, started.StatusCode);
+            var attempt = await StorageAttemptAsync(started);
+            attempts.Add(attempt);
+            using var failed = await StorageFailureAsync(browser, attempt, "sign_in_storage_unavailable", cookies: "");
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, failed.StatusCode);
+            Assert.False(store.Contains(attempt.Id));
+            Assert.False(failed.Headers.Contains("Set-Cookie"));
+        }
+
+        using var next = await IntentAsync(browser);
+        Assert.Equal(HttpStatusCode.OK, next.StatusCode);
+        var nextAttempt = await StorageAttemptAsync(next);
+        Assert.NotNull(store.Find(AppId, nextAttempt.Id, nextAttempt.Nonce));
+        Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        var auditRecords = await host.Services.GetRequiredService<AuditStore>().ReadRecentAsync();
+        Assert.Equal(failureCount, auditRecords.Count(record => record.Outcome == "sign_in_storage_unavailable"));
+        var audit = await File.ReadAllTextAsync(host.Services.GetRequiredService<CoreDataPaths>().AuditLogPath);
+        foreach (var secret in attempts.Select(attempt => attempt.Nonce).Append(nextAttempt.Nonce)
+            .Concat([AuthCodeProof.Verifier, AuthCodeProof.Challenge, State, SessionId]))
+            Assert.DoesNotContain(secret, audit);
+    }
+
+    [Fact]
+    public async Task NamedHttp_ClientReportedCapacityRetiresOnlyItsAttemptWithoutNeedingOtherProofs()
+    {
+        await using var host = await HostAsync(coreOrigin: NamedCore);
+        var store = host.Services.GetRequiredService<AppSignInIntentStore>();
+        var earlier = Enumerable.Range(0, AppSignInIntentStore.MaxPerBrowser).Select(index => store.Create(AppId,
+            AppOrigin + "/callback", State, AuthCodeProof.Challenge, AppSignInMode.Standalone, index.ToString(), 0)!).ToArray();
+        using var browser = Browser(host, NamedCore);
+        using var started = await IntentAsync(browser);
+        var attempt = await StorageAttemptAsync(started);
+        using var failed = await StorageFailureAsync(browser, attempt, "sign_in_intent_capacity");
+        Assert.Equal(HttpStatusCode.TooManyRequests, failed.StatusCode);
+        var html = await failed.Content.ReadAsStringAsync();
+        Assert.Contains("Too many pending sign-in attempts", html);
+        Assert.Contains("hosty.core.signin." + attempt.Id, html);
+        Assert.False(store.Contains(attempt.Id));
+        foreach (var value in earlier)
+        {
+            Assert.Same(value.Intent, store.Find(AppId, value.Intent.Id, value.Nonce));
+            Assert.DoesNotContain("hosty.core.signin." + value.Intent.Id, html);
+        }
+        Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        using var rightful = await StorageOpenAsync(browser, new(earlier[0].Intent.Id, earlier[0].Nonce));
+        Assert.Equal(HttpStatusCode.OK, rightful.StatusCode);
+        Assert.Single((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        using var next = await IntentAsync(browser);
+        Assert.Equal(HttpStatusCode.OK, next.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("sign_in_storage_unavailable", 503)]
+    [InlineData("sign_in_intent_capacity", 429)]
+    public async Task NamedHttp_ConcurrentFailureReportsClaimOnceAndReplayCannotAffectAnotherAttempt(string failureCode, int terminalStatus)
+    {
+        await using var host = await HostAsync(coreOrigin: NamedCore);
+        using var browser = Browser(host, NamedCore);
+        using var started = await IntentAsync(browser);
+        var attempt = await StorageAttemptAsync(started);
+        using var otherStarted = await IntentAsync(browser);
+        var other = await StorageAttemptAsync(otherStarted);
+        var responses = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => StorageFailureAsync(browser, attempt, failureCode)));
+        try
+        {
+            Assert.Single(responses, response => (int)response.StatusCode == terminalStatus);
+            Assert.Equal(7, responses.Count(response => response.StatusCode == HttpStatusCode.Forbidden));
+            Assert.All(responses, response => Assert.False(response.Headers.Contains("Set-Cookie")));
+        }
+        finally { foreach (var response in responses) response.Dispose(); }
+
+        using var replay = await StorageFailureAsync(browser, attempt, failureCode);
+        Assert.Equal(HttpStatusCode.Forbidden, replay.StatusCode);
+        Assert.Equal("sign_in_intent_invalid", await ErrorAsync(replay));
+        var store = host.Services.GetRequiredService<AppSignInIntentStore>();
+        Assert.False(store.Contains(attempt.Id));
+        Assert.NotNull(store.Find(AppId, other.Id, other.Nonce));
+        Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        Assert.Single(await host.Services.GetRequiredService<AuditStore>().ReadRecentAsync(), record => record.Outcome == failureCode);
+    }
+
+    [Theory]
+    [InlineData("standalone", "sign_in_storage_unavailable", 503)]
+    [InlineData("standalone", "sign_in_intent_capacity", 429)]
+    [InlineData("silent", "sign_in_storage_unavailable", 200)]
+    [InlineData("silent", "sign_in_intent_capacity", 200)]
+    [InlineData("popup", "sign_in_storage_unavailable", 200)]
+    [InlineData("popup", "sign_in_intent_capacity", 200)]
+    public async Task NamedHttp_StorageFailureReturnsOnlyTheModeSpecificTerminalError(string mode, string failureCode, int expectedStatus)
+    {
+        await using var host = await HostAsync(coreOrigin: NamedCore);
+        using var browser = Browser(host, NamedCore);
+        using var started = await IntentAsync(browser, mode: mode);
+        var attempt = await StorageAttemptAsync(started);
+        using var failed = await StorageFailureAsync(browser, attempt, failureCode,
+            destination: mode == "silent" ? "iframe" : "document");
+        Assert.Equal(expectedStatus, (int)failed.StatusCode);
+        Assert.Equal("text/html", failed.Content.Headers.ContentType!.MediaType);
+        Assert.Null(failed.Headers.Location);
+        Assert.False(failed.Headers.Contains("Set-Cookie"));
+        Assert.Equal("no-store", failed.Headers.CacheControl!.ToString());
+        var html = await failed.Content.ReadAsStringAsync();
+        Assert.Contains("sessionStorage.removeItem", html);
+        Assert.Contains("hosty.core.signin." + attempt.Id, html);
+        Assert.DoesNotContain(attempt.Nonce, html);
+        Assert.DoesNotContain(AuthCodeProof.Challenge, html);
+        Assert.DoesNotContain("/login?returnTo=", html);
+        if (mode == "silent")
+        {
+            var destination = JsonSerializer.Deserialize<string>(Regex.Match(html, "const destination = (\"[^\"]+\");").Groups[1].Value)!;
+            var callback = new Uri(destination);
+            Assert.Equal(AppOrigin + "/callback", callback.GetLeftPart(UriPartial.Path));
+            var query = QueryHelpers.ParseQuery(callback.Query);
+            Assert.Equal("login_required", query["error"].ToString());
+            Assert.Equal(State, query["state"].ToString());
+            Assert.False(query.ContainsKey("code"));
+            Assert.Equal(2, query.Count);
+            Assert.False(failed.Headers.Contains("X-Frame-Options"));
+        }
+        else if (mode == "popup")
+        {
+            Assert.Contains("postMessage({type:\"hosty:app-auth-code\",state:\"" + State + "\",[\"error\"]:\"" + failureCode + "\"},\"" + AppOrigin + "\")", html);
+            Assert.DoesNotContain("[\"code\"]", html);
+            Assert.DoesNotContain("window.close()", html);
+        }
+        else Assert.DoesNotContain("location.replace", html);
+        Assert.False(host.Services.GetRequiredService<AppSignInIntentStore>().Contains(attempt.Id));
+        Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+    }
+
+    [Theory]
+    [InlineData("missing-nonce")]
+    [InlineData("duplicate-nonce")]
+    [InlineData("short-nonce")]
+    [InlineData("uppercase-nonce")]
+    [InlineData("wrong-nonce")]
+    [InlineData("missing-failure")]
+    [InlineData("duplicate-failure")]
+    [InlineData("unknown-failure")]
+    [InlineData("uppercase-failure")]
+    [InlineData("empty-failure")]
+    [InlineData("proofs-and-failure")]
+    [InlineData("extra-field")]
+    [InlineData("duplicate-query")]
+    [InlineData("extra-query")]
+    [InlineData("missing-origin")]
+    [InlineData("null-origin")]
+    [InlineData("app-origin")]
+    [InlineData("other-port")]
+    [InlineData("duplicate-origin")]
+    [InlineData("wrong-mode")]
+    [InlineData("wrong-destination")]
+    [InlineData("cross-site")]
+    public async Task NamedHttp_InvalidFailureReportsDoNotConsumeTheLegitimateAttempt(string mutation)
+    {
+        await using var host = await HostAsync(coreOrigin: NamedCore);
+        using var browser = Browser(host, NamedCore);
+        using var started = await IntentAsync(browser);
+        var attempt = await StorageAttemptAsync(started);
+        var nonce = mutation switch
+        {
+            "short-nonce" => "short",
+            "uppercase-nonce" => new string('A', 64),
+            "wrong-nonce" => new string('g', 64),
+            _ => attempt.Nonce,
+        };
+        if (mutation == "wrong-nonce") nonce = attempt.Nonce[0] == '0' ? "1" + attempt.Nonce[1..] : "0" + attempt.Nonce[1..];
+        var failureCode = mutation switch
+        {
+            "unknown-failure" => "login_required",
+            "uppercase-failure" => "SIGN_IN_STORAGE_UNAVAILABLE",
+            "empty-failure" => "",
+            _ => "sign_in_storage_unavailable",
+        };
+        var fields = new List<KeyValuePair<string, string>> { new("nonce", nonce), new("failureCode", failureCode) };
+        if (mutation == "missing-nonce") fields.RemoveAt(0);
+        if (mutation == "duplicate-nonce") fields.Add(new("nonce", attempt.Nonce));
+        if (mutation == "missing-failure") fields.RemoveAt(1);
+        if (mutation == "duplicate-failure") fields.Add(new("failureCode", failureCode));
+        if (mutation == "proofs-and-failure") fields.Add(new("browserProofs", "{}"));
+        if (mutation == "extra-field") fields.Add(new("state", State));
+        var location = attempt.Location.OriginalString + (mutation == "duplicate-query" ? "&requestId=" + attempt.Id
+            : mutation == "extra-query" ? "&nonce=" + attempt.Nonce : "");
+        using var request = new HttpRequestMessage(HttpMethod.Post, location) { Content = new FormUrlEncodedContent(fields) };
+        if (mutation != "missing-origin")
+            request.Headers.Add("Origin", mutation switch
+            {
+                "null-origin" => "null",
+                "app-origin" => AppOrigin,
+                "other-port" => "http://core.hosty.localhost:7171",
+                _ => NamedCore,
+            });
+        if (mutation == "duplicate-origin") request.Headers.Add("Origin", NamedCore);
+        request.Headers.Add("Cookie", "hosty_session=" + SessionId + "; hosty_signin_" + attempt.Id + "=" + attempt.Nonce);
+        request.Headers.Add("Sec-Fetch-Mode", mutation == "wrong-mode" ? "cors" : "navigate");
+        request.Headers.Add("Sec-Fetch-Dest", mutation == "wrong-destination" ? "iframe" : "document");
+        if (mutation == "cross-site") request.Headers.Add("Sec-Fetch-Site", "cross-site");
+        using var refused = await browser.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        Assert.Equal("sign_in_intent_invalid", await ErrorAsync(refused));
+        Assert.False(refused.Headers.Contains("Set-Cookie"));
+        Assert.NotNull(host.Services.GetRequiredService<AppSignInIntentStore>().Find(AppId, attempt.Id, attempt.Nonce));
+        Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        using var rightful = await StorageOpenAsync(browser, attempt);
+        Assert.Equal(HttpStatusCode.OK, rightful.StatusCode);
+        Assert.Single((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+    }
+
+    [Theory]
+    [InlineData("content-length-oversized")]
+    [InlineData("chunked-oversized")]
+    [InlineData("multipart")]
+    [InlineData("json")]
+    [InlineData("missing-content-type")]
+    public async Task NamedHttp_FailureReportsRequireBoundedUrlEncodedContentWithoutConsuming(string mutation)
+    {
+        await using var host = await HostAsync(coreOrigin: NamedCore);
+        using var browser = Browser(host, NamedCore);
+        using var started = await IntentAsync(browser);
+        var attempt = await StorageAttemptAsync(started);
+        var body = "nonce=" + attempt.Nonce + "&failureCode=sign_in_storage_unavailable";
+        using var request = new HttpRequestMessage(HttpMethod.Post, attempt.Location);
+        if (mutation == "multipart")
+        {
+            var content = new MultipartFormDataContent();
+            content.Add(new StringContent(attempt.Nonce), "nonce");
+            content.Add(new StringContent("sign_in_storage_unavailable"), "failureCode");
+            request.Content = content;
+        }
+        else if (mutation == "chunked-oversized")
+        {
+            request.Content = new UnknownLengthContent(body + new string('x', 8193 - body.Length));
+            request.Headers.TransferEncodingChunked = true;
+        }
+        else
+        {
+            request.Content = new StringContent(mutation == "content-length-oversized"
+                ? body + new string('x', 8193 - body.Length) : body);
+            request.Content.Headers.ContentType = mutation == "missing-content-type" ? null
+                : new(mutation == "json" ? "application/json" : "application/x-www-form-urlencoded");
+        }
+        request.Headers.Add("Origin", NamedCore);
+        request.Headers.Add("Sec-Fetch-Mode", "navigate");
+        request.Headers.Add("Sec-Fetch-Dest", "document");
+        using var refused = await browser.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        Assert.Equal("sign_in_intent_invalid", await ErrorAsync(refused));
+        Assert.NotNull(host.Services.GetRequiredService<AppSignInIntentStore>().Find(AppId, attempt.Id, attempt.Nonce));
+        using var rightful = await StorageFailureAsync(browser, attempt, "sign_in_storage_unavailable");
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, rightful.StatusCode);
+        Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+    }
+
+    [Fact]
+    public async Task NamedHttp_ValidChunkedFailureReportRetiresTheAttempt()
+    {
+        await using var host = await HostAsync(coreOrigin: NamedCore);
+        using var browser = Browser(host, NamedCore);
+        using var started = await IntentAsync(browser);
+        var attempt = await StorageAttemptAsync(started);
+        using var request = new HttpRequestMessage(HttpMethod.Post, attempt.Location)
+        { Content = new UnknownLengthContent("nonce=" + attempt.Nonce + "&failureCode=sign_in_storage_unavailable") };
+        request.Headers.TransferEncodingChunked = true;
+        request.Headers.Add("Origin", NamedCore);
+        request.Headers.Add("Sec-Fetch-Mode", "navigate");
+        request.Headers.Add("Sec-Fetch-Dest", "document");
+        using var result = await browser.SendAsync(request);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, result.StatusCode);
+        Assert.False(host.Services.GetRequiredService<AppSignInIntentStore>().Contains(attempt.Id));
+        Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+    }
+
+    [Theory]
+    [InlineData("http://127.0.0.1:7070")]
+    [InlineData("https://core.hosty.localhost:7070")]
+    public async Task CookieHosts_FailureReportsCannotConsumeTheCookieBoundIntent(string core)
+    {
+        await using var host = await HostAsync(coreOrigin: core);
+        using var browser = Browser(host, core);
+        using var started = await IntentAsync(browser);
+        var cookie = Cookie(started);
+        var id = QueryHelpers.ParseQuery(started.Headers.Location!.OriginalString.Split('?')[1])["requestId"].ToString();
+        var attempt = new StorageAttempt(id, cookie.Split('=')[1]);
+        using var refused = await StorageFailureAsync(browser, attempt, "sign_in_storage_unavailable",
+            origin: core, cookies: cookie + "; hosty_session=" + SessionId);
+        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        Assert.Equal("sign_in_intent_invalid", await ErrorAsync(refused));
+        Assert.False(refused.Headers.Contains("Set-Cookie"));
+        Assert.NotNull(host.Services.GetRequiredService<AppSignInIntentStore>().Find(AppId, id, attempt.Nonce));
+        Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        using var rightful = await OpenAsync(browser, started.Headers.Location, cookie + "; hosty_session=" + SessionId);
+        Assert.Equal(HttpStatusCode.Redirect, rightful.StatusCode);
+        Assert.Single((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+    }
+
     [Theory]
     [InlineData("ws://CORE.HOSTY.LOCALHOST.:9000")]
     [InlineData("wss://core.hosty.localhost:9000")]
@@ -949,6 +1255,20 @@ public sealed class AppSignInIntentHttpTests
         {
             Content = new FormUrlEncodedContent(new Dictionary<string, string>
             { ["nonce"] = nonce ?? attempt.Nonce, ["browserProofs"] = proofs }),
+        };
+        if (origin is not null) request.Headers.Add("Origin", origin);
+        if (cookies.Length > 0) request.Headers.Add("Cookie", cookies);
+        request.Headers.Add("Sec-Fetch-Mode", "navigate");
+        request.Headers.Add("Sec-Fetch-Dest", destination);
+        return await client.SendAsync(request);
+    }
+    private static async Task<HttpResponseMessage> StorageFailureAsync(HttpClient client, StorageAttempt attempt, string failureCode,
+        string? origin = NamedCore, string cookies = "hosty_session=" + SessionId, string destination = "document")
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, attempt.Location)
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            { ["nonce"] = attempt.Nonce, ["failureCode"] = failureCode }),
         };
         if (origin is not null) request.Headers.Add("Origin", origin);
         if (cookies.Length > 0) request.Headers.Add("Cookie", cookies);
