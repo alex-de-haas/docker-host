@@ -37,7 +37,25 @@ internal static class AppSignInStorageResponse
               const initialNonce = {{(initialNonce is null ? "null" : Js(initialNonce))}};
               const key = prefix + requestId;
               const mode = {{Js(intent.Mode.ToString().ToLowerInvariant())}};
+              let failureNonce = initialNonce;
+              function submit(fields) {
+                const form = document.createElement("form");
+                form.method = "post";
+                form.action = {{Js(action)}};
+                for (const [name, value] of Object.entries(fields)) {
+                  const input = document.createElement("input");
+                  input.type = "hidden"; input.name = name; input.value = value;
+                  form.appendChild(input);
+                }
+                document.body.appendChild(form);
+                form.submit();
+              }
               function fail(code) {
+                // Bootstrap owns this nonce even when browser storage cannot be read or written.
+                // Retire only this attempt through the bounded Core-origin navigation form.
+                if (failureNonce !== null && (code === "sign_in_storage_unavailable" || code === "sign_in_intent_capacity")) {
+                  try { submit({nonce:failureNonce,failureCode:code}); return; } catch {}
+                }
                 document.getElementById("status").textContent = code === "sign_in_intent_capacity"
                   ? "Too many pending sign-in attempts. Complete an existing attempt or wait five minutes."
                   : "This browser cannot continue the sign-in attempt. Return to the app and start sign-in again.";
@@ -70,19 +88,11 @@ internal static class AppSignInStorageResponse
                   proofs[requestId] = initialNonce;
                 }
                 if (!proofs[requestId]) { fail("sign_in_intent_invalid"); return; }
+                failureNonce = proofs[requestId];
                 if (Object.keys(proofs).length > {{AppSignInIntentStore.MaxPerBrowser}}) {
                   fail("sign_in_intent_capacity"); return;
                 }
-                const form = document.createElement("form");
-                form.method = "post";
-                form.action = {{Js(action)}};
-                for (const [name, value] of Object.entries({nonce:proofs[requestId],browserProofs:JSON.stringify(proofs)})) {
-                  const input = document.createElement("input");
-                  input.type = "hidden"; input.name = name; input.value = value;
-                  form.appendChild(input);
-                }
-                document.body.appendChild(form);
-                form.submit();
+                submit({nonce:proofs[requestId],browserProofs:JSON.stringify(proofs)});
               } catch { fail("sign_in_storage_unavailable"); }
             })();
             </script></html>

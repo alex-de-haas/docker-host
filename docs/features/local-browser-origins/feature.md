@@ -38,7 +38,9 @@ host, including private/raw WebSocket endpoints. HTTP supports canonical `localh
 `.localhost` names through a Core-origin sessionStorage nonce and an exact-Origin continuation POST.
 Only validated app-origin initiation initializes the proof; continuation URLs and parent-Domain
 cookies cannot initialize it. Blocked storage fails closed, with credential-free silent recovery
-and an explicit popup path. HTTPS and literal-IP HTTP retain their isolated nonce cookies; other
+and an explicit popup path. If bootstrap storage access or writing fails, or local browser capacity
+is exhausted, a bounded exact-Origin form cancels only the nonce-owned server intent. This releases
+the pending quota immediately and preserves other attempts; cancellation never issues credentials. HTTPS and literal-IP HTTP retain their isolated nonce cookies; other
 HTTP DNS names remain refused. Hosts are canonicalized without DNS resolution. Source development's
 explicit `http://[::1]:3001` origin also remains supported, with app endpoints on other hosts and
 popup fallback for its cross-site silent path. See [app code exchange](../app-code-exchange/feature.md).
