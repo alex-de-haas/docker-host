@@ -251,9 +251,15 @@ The frame does not navigate its parent or ask Shell for a user token.
 
 The app creates a private proof before opening its popup and submits the public challenge with
 `responseMode=web_message` through an app-owned form. Core validates Origin/navigation and binds
-its continuation to a separate browser nonce cookie before login. The SDK accepts only the
-original popup's message at the configured Core origin with matching state. The proof remains
-in the opener app, and the native coordinator receives only public challenge fields.
+its continuation to a separate browser nonce before login. HTTPS and HTTP literal-IP Core origins
+use an isolated nonce cookie. HTTP on canonical `localhost` or `.localhost` Core hosts uses
+Core-origin HTML to store the nonce in that context's `sessionStorage`, then sends it in the body
+of a navigation POST requiring the exact Core Origin and the frozen intent's navigation mode.
+A named-HTTP GET only returns reader HTML for existing stored proof; other HTTP DNS hosts are
+refused. Unavailable Core nonce storage fails closed and popup recovery reports an actionable error
+without credentials, with no plain-cookie fallback. The SDK accepts only the original popup's
+message at the configured Core origin with matching state. The private verifier remains in the
+opener app, and the native coordinator receives only public challenge fields.
 
 The app's own server exchanges the code and validates the result with its service credential before
 returning its app grant and setting its host-only HttpOnly cookie. Where iframe cookie access is

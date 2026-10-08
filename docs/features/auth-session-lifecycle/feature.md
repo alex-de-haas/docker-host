@@ -1,6 +1,6 @@
 ---
 created: 2026-07-13
-updated: 2026-10-05
+updated: 2026-10-08
 summary: The identity error contract, opaque app session grants, sliding lifetimes and session recovery through Core login.
 components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -167,14 +167,20 @@ get their own, longer idle window because a credential in a keychain is not a br
 A top-level app creates a fresh verifier and independent state, persists its five-minute attempt on
 its own origin and verifies storage before replacing its document with the Core intent form. The
 form sends only redirect/state/public S256 challenge. Core validates exact Origin and navigation,
-stores an immutable intent and sets a unique isolated HttpOnly nonce cookie. A 303 continues in the
-same browser to `/api/apps/{appId}/open?requestId=...`.
+stores an immutable intent and binds it to a separate browser nonce. HTTPS and HTTP literal-IP
+Core origins use a unique isolated HttpOnly nonce cookie and a 303 to
+`/api/apps/{appId}/open?requestId=...`. HTTP on canonical `localhost` or `.localhost` Core hosts
+returns Core-origin HTML that stores the nonce in that context's `sessionStorage` and submits a
+navigation POST with the nonce and bounded browser proofs in its body.
 
 The continuation checks its nonce before login. Normal login retains this exact request ID; access
 checks precede an atomic one-time claim and code issuance. A copied request ID in another browser
 cannot mint a code. Bare validated `/open?redirectUri=...` links only bootstrap the app without a
-code, and direct proof-bearing GETs are refused. HTTPS uses `__Host-` nonce cookies; HTTP requires
-an isolated literal-IP Core host different from every installed app origin.
+code, and direct proof-bearing GETs are refused. For named HTTP hosts, GET only returns reader HTML
+for an existing stored nonce; it never creates proof or issues a code. The body-proof POST requires
+the exact Core Origin and the intent's immutable navigation mode. HTTPS uses `__Host-` nonce cookies;
+HTTP accepts literal-IP or canonical localhost hosts and refuses other DNS hosts. Every accepted
+Core host must remain distinct from all registered app cookie hosts.
 
 ```mermaid
 sequenceDiagram
@@ -183,11 +189,16 @@ sequenceDiagram
   participant C as Core
   B->>B: Persist private verifier and independent state
   B->>C: App-origin POST intent (public S256 challenge)
-  C-->>B: HttpOnly nonce cookie + 303 /open?requestId
-  B->>C: GET immutable continuation with nonce
+  alt HTTPS or HTTP literal IP
+    C-->>B: HttpOnly nonce cookie + 303 /open?requestId
+    B->>C: GET immutable continuation with nonce cookie
+  else HTTP localhost or .localhost
+    C-->>B: Core-origin HTML stores nonce in sessionStorage
+    B->>C: Exact Core-origin POST /open (nonce and proofs in body)
+  end
   opt Core session missing
     C-->>B: Normal Core password login
-    B->>C: Resume same continuation with nonce
+    B->>C: Resume same intent with cookie or storage proof
   end
   C-->>B: One bound code + state
   B->>A: POST app-code (code + private verifier)
@@ -196,7 +207,10 @@ sequenceDiagram
   A-->>B: App cookie + own-app browser grant
 ```
 
-Storage refusal skips automatic full-document navigation and offers the app-owned popup action.
+App-origin proof storage refusal skips automatic full-document navigation and offers the app-owned
+popup action. Unavailable Core nonce storage on named HTTP hosts fails closed: silent recovery
+returns state-bound `login_required`, while popup recovery reports an actionable error without
+credentials. There is no plain-cookie fallback for this flow.
 Automatic recovery remains guarded once per tab; terminal denial and transient failures keep their
 existing classification. Callback correlation takes only locally generated proof and removes code
 and state from the URL before exchange. The private verifier never enters a URL or popup message.

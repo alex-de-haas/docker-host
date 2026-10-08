@@ -1,6 +1,6 @@
 ---
 created: 2026-10-05
-updated: 2026-10-06
+updated: 2026-10-08
 summary: Authorization codes require target-app service identity and private S256 proof, with browser-origin and nonce-bound sign-in attempts.
 components: [apps/core, apps/cli, packages/app-sdk, apps/shell, apps/harness, apps/shell-swift]
 ---
@@ -18,8 +18,9 @@ An app creates independent random state and a 32-byte private verifier. Its publ
 base64url SHA-256 of that verifier. An app-owned form navigates to
 `POST /api/apps/{appId}/sign-in-intent` with the approved callback, state, S256 challenge and mode.
 Core requires an exact non-null Origin matching the installed app's callback origin and appropriate
-navigation metadata. It freezes a five-minute intent and sets a unique HttpOnly browser nonce;
-only the nonce hash is stored. A 303 continues to `/open?requestId=...` in the same context.
+navigation metadata. It freezes a five-minute intent and creates a unique browser nonce;
+only the nonce hash is stored on the server. HTTPS and literal-IP HTTP use an HttpOnly cookie
+and a 303 to `/open?requestId=...` in the same context.
 
 The continuation verifies the matching nonce before login or issuance. Caller-supplied overrides
 and direct proof-bearing GET issuance are refused. A narrowly validated protocol-1 navigation
@@ -33,10 +34,21 @@ another valid attempt. Unknown, expired and replayed attempts fail closed.
 HTTPS uses unique `__Host-` nonce cookies with Secure, HttpOnly, Path=/, no Domain, SameSite=Lax and
 five-minute lifetime. Both HTTPS and HTTP require separation from every configured runtime endpoint
 cookie hostname, including internal, generated, public-override, private and non-HTTP origins.
-HTTP additionally requires a literal-IP Core public hostname. Canonical comparison
-covers IPv4 aliases, IPv6, IDN, case and trailing dots; unsafe topology returns actionable refusal.
-There are at most 16 browser intents and 4096 global intents, alongside authentication rate limits.
+HTTP permits literal IPs and canonical `localhost` or `.localhost` names. Other HTTP DNS hosts are
+refused. Canonical comparison covers IPv4 aliases, IPv6, IDN, case and trailing dots; unsafe topology
+returns actionable refusal. There are at most 16 intents per browser cookie jar or named-localhost
+storage context, and 4096 global intents, alongside authentication rate limits.
 Capacity refusal preserves existing attempts.
+
+Named HTTP localhost uses Core-origin sessionStorage because Safari does not accept the Secure
+host-prefix cookie on that transport. Only the validated app-origin initiation POST initializes
+the per-intent proof. A GET continuation reads existing proof and cannot initialize or issue it.
+The Core document submits the nonce and bounded live-proof map in a same-Core-Origin form POST;
+Core validates exact Origin, navigation mode and nonce before login or issuance. Neither a copied
+request URL nor a sibling app's parent-Domain cookie supplies this proof. Bodies are bounded to
+8 KiB, multipart is refused, and terminal outcomes clear only their own storage entry. Expired
+entries are pruned without evicting other live attempts. JavaScript and working Core-origin
+sessionStorage are required; there is no nonce-cookie fallback for this transport.
 
 Silent initiation requires an iframe and establishes identity without privileged activity. Missing
 Core session returns a state-bound login-required callback. A known same-app silent intent whose
@@ -137,7 +149,8 @@ remain tracked in [the plan](plan.md); isolated QA deployment is not production 
   preserve valid redemption after wrong caller/proof, and cover replay, expiry, concurrency,
   unbound records, access/auth revisions, parent sessions, silent activity and audit confidentiality.
 - Browser intent tests cover exact/null/foreign Origin, navigation modes, immutable continuation,
-  nonce-before-login, login preservation, one claim, cookie prefixes, canonical all-endpoint cookie
+  nonce-before-login, login preservation, one claim, cookie prefixes, named-localhost storage
+  initialization/continuation, bounded form bodies, terminal cleanup, canonical all-endpoint cookie
   host isolation, rate/capacity limits and independent simultaneous attempts.
 - SDK/server tests cover RFC challenge vectors, independent randomness, bounded local correlation,
   storage refusal, bootstrap field injection, redirect rejection, stale/duplicate completion,

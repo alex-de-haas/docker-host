@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.AspNetCore.Cors;
+using System.Text.Json;
+using MediaTypeHeaderValue = Microsoft.Net.Http.Headers.MediaTypeHeaderValue;
 
 namespace Haas.Hosty.Core;
 
@@ -19,6 +21,9 @@ internal static class AppSignInIntentEndpoints
             AppRegistryStore apps, AppSignInIntentStore intents, AuditStore audit, IClock clock)
             => await CreateAsync(appId, context, identity, apps, intents, audit, clock)).WithMetadata(new DisableCorsAttribute());
         app.MapGet("/api/apps/{appId}/open", async (string appId, HttpContext context, AppIdentityService identity,
+            AppRegistryStore apps, AppSignInIntentStore intents, UserDirectoryStore users, AuditStore audit, IClock clock)
+            => await OpenAsync(appId, context, identity, apps, intents, users, audit, clock)).WithMetadata(new DisableCorsAttribute());
+        app.MapPost("/api/apps/{appId}/open", async (string appId, HttpContext context, AppIdentityService identity,
             AppRegistryStore apps, AppSignInIntentStore intents, UserDirectoryStore users, AuditStore audit, IClock clock)
             => await OpenAsync(appId, context, identity, apps, intents, users, audit, clock)).WithMetadata(new DisableCorsAttribute());
     }
@@ -50,12 +55,14 @@ internal static class AppSignInIntentEndpoints
             if (!IsNavigation(request, mode))
                 return await RefuseAsync(auditAppId, "sign_in_intent_invalid", "Sign-in requires its browser navigation context.", 403, audit, clock, context.RequestAborted);
             if (!await AppSignInCookieHost.IsSafeAsync(request, apps, context.RequestAborted))
-                return await RefuseAsync(auditAppId, "sign_in_cookie_host_unsafe", "Use an HTTPS Core hostname separate from every app, or a separate literal IP host over HTTP.", 409, audit, clock, context.RequestAborted);
+                return await RefuseAsync(auditAppId, "sign_in_cookie_host_unsafe", "Use a Core hostname separate from every app: HTTPS, localhost over HTTP, or a literal IP host over HTTP.", 409, audit, clock, context.RequestAborted);
+            var storage = AppSignInCookieHost.UsesBrowserStorage(request);
             var created = intents.Create(appId, redirect, form["state"].ToString(), form["codeChallenge"].ToString(), mode,
                 request.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-                request.Cookies.Keys.Count(name => name.StartsWith(SecurePrefix, StringComparison.Ordinal) || name.StartsWith(LocalPrefix, StringComparison.Ordinal)));
+                storage ? 0 : request.Cookies.Keys.Count(name => name.StartsWith(SecurePrefix, StringComparison.Ordinal) || name.StartsWith(LocalPrefix, StringComparison.Ordinal)));
             if (created is null)
                 return await RefuseAsync(auditAppId, "sign_in_intent_capacity", "Too many pending sign-in attempts. Complete an existing attempt or wait five minutes.", 429, audit, clock, context.RequestAborted);
+            if (storage) return AppSignInStorageResponse.RenderBootstrap(context.Response, created);
             context.Response.Cookies.Append(CookieName(request, created.Intent.Id), created.Nonce, CookieOptions(request, expires: false));
             context.Response.Headers.Location = $"/api/apps/{Uri.EscapeDataString(appId)}/open?requestId={created.Intent.Id}";
             return Results.StatusCode(StatusCodes.Status303SeeOther);
@@ -72,10 +79,15 @@ internal static class AppSignInIntentEndpoints
         var request = context.Request;
         Protect(context.Response);
         var auditAppId = (await apps.GetAppAsync(appId, context.RequestAborted))?.Id;
+        AppSignInIntent? claimedStorageIntent = null;
         try
         {
+            var storage = AppSignInCookieHost.UsesBrowserStorage(request);
+            var post = HttpMethods.IsPost(request.Method);
+            if (post && !storage) return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
             if (!request.Query.ContainsKey("requestId"))
             {
+                if (post) return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
                 if (request.Query.Keys.Any(key => key != "redirectUri"))
                     return await RefuseLegacyAttemptAsync(appId, context, identity, auditAppId, audit, clock);
                 var redirect = request.Query["redirectUri"].ToString();
@@ -87,7 +99,47 @@ internal static class AppSignInIntentEndpoints
             var id = request.Query["requestId"].ToString();
             if (request.Query.Count != 1 || request.Query["requestId"].Count != 1 || id.Length != 64 || !id.All(Uri.IsHexDigit))
                 return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
-            var intent = intents.Find(appId, id, request.Cookies[CookieName(request, id)]);
+            Dictionary<string, string>? browserProofs = null;
+            string? failureCode = null;
+            string? nonce;
+            if (storage)
+            {
+                var pending = intents.FindCallback(appId, id);
+                if (pending is null || !IsNavigation(request, pending.Mode))
+                    return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
+                if (!post)
+                {
+                    if (!await AppSignInCookieHost.IsSafeAsync(request, apps, context.RequestAborted))
+                        return await RefuseAsync(auditAppId, "sign_in_cookie_host_unsafe", "Core's browser host is no longer isolated from apps.", 409, audit, clock, context.RequestAborted);
+                    // A relayed public URL can read only this browser context's existing nonce.
+                    // It never initializes storage or authorizes an issuance by itself.
+                    return AppSignInStorageResponse.RenderContinuation(context.Response, pending);
+                }
+                if (request.Headers.Origin.Count != 1 || !InstallationApprovalEndpoints.IsSameOriginDecision(request) ||
+                    request.ContentLength > 8192)
+                    return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
+                IFormCollection? form;
+                try
+                {
+                    form = await ReadStorageFormAsync(request, context.RequestAborted);
+                }
+                catch (InvalidDataException)
+                { return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted); }
+                if (form is null || form.Count != 2 || form.Any(field => field.Value.Count != 1 || field.Key is not ("nonce" or "browserProofs" or "failureCode")) ||
+                    !IsCanonicalNonce(form["nonce"].ToString()))
+                    return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
+                nonce = form["nonce"].ToString();
+                if (form.ContainsKey("failureCode"))
+                {
+                    failureCode = form["failureCode"].ToString();
+                    if (failureCode is not ("sign_in_storage_unavailable" or "sign_in_intent_capacity"))
+                        return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
+                }
+                else if (!TryReadBrowserProofs(form["browserProofs"].ToString(), out browserProofs))
+                    return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
+            }
+            else nonce = request.Cookies[CookieName(request, id)];
+            var intent = intents.Find(appId, id, nonce);
             if (intent is null)
             {
                 // Third-party cookie policy can reject a silent frame's nonce cookie. Return only
@@ -98,25 +150,54 @@ internal static class AppSignInIntentEndpoints
                 {
                     await identity.RequireAllowedRedirectUriAsync(appId, callback.RedirectUri, context.RequestAborted);
                     await RecordRefusalAsync(auditAppId, "sign_in_intent_invalid", audit, clock, context.RequestAborted);
-                    return AppErrorRedirect(callback, "login_required");
+                    return storage ? StorageErrorRedirect(context.Response, callback, "login_required", terminal: false)
+                        : AppErrorRedirect(callback, "login_required");
                 }
-                if (!intents.Contains(id)) ClearCookie(context, id);
+                if (!storage && !intents.Contains(id)) ClearCookie(context, id);
                 return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
             }
             if (!IsNavigation(request, intent.Mode))
                 return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
+            if (failureCode is not null)
+            {
+                // A browser storage failure must release the newly admitted intent without needing
+                // storage again. Nonce ownership and the exact Core Origin authorize cancellation only.
+                if (!intents.TryClaim(intent)) return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
+                await RecordTerminalStorageRefusalAsync(context, auditAppId, failureCode, audit, clock);
+                if (intent.Mode == AppSignInMode.Silent)
+                    return StorageErrorRedirect(context.Response, intent, "login_required");
+                if (intent.Mode == AppSignInMode.Popup)
+                    return AppSignInStorageResponse.RenderPopup(context.Response, intent, "error", failureCode, close: false);
+                return AppSignInStorageResponse.RenderRefusal(context.Response, intent,
+                    failureCode == "sign_in_intent_capacity"
+                        ? "Too many pending sign-in attempts in this browser. Complete an existing attempt or wait five minutes."
+                        : "This browser cannot store the sign-in attempt. Return to the app and start sign-in again after storage becomes available.",
+                    failureCode == "sign_in_intent_capacity" ? StatusCodes.Status429TooManyRequests : StatusCodes.Status503ServiceUnavailable);
+            }
             // A cross-site form POST may omit Lax cookies. Recheck when this Core navigation
             // can see them, without evicting any other live browser attempt.
-            if (!intents.WithinBrowserCapacity(intent, other => request.Cookies[CookieName(request, other.Id)]))
+            if (!intents.WithinBrowserCapacity(intent, other => storage
+                ? browserProofs!.GetValueOrDefault(other.Id) : request.Cookies[CookieName(request, other.Id)]))
             {
                 intents.TryClaim(intent);
-                ClearCookie(context, id);
+                if (!storage) ClearCookie(context, id);
+                if (storage)
+                {
+                    await RecordTerminalStorageRefusalAsync(context, auditAppId, "sign_in_intent_capacity", audit, clock);
+                    return AppSignInStorageResponse.RenderRefusal(context.Response, intent,
+                        "Too many pending sign-in attempts in this browser. Complete an existing attempt or wait five minutes.", 429);
+                }
                 return await RefuseAsync(auditAppId, "sign_in_intent_capacity", "Too many pending sign-in attempts in this browser. Complete an existing attempt or wait five minutes.", 429, audit, clock, context.RequestAborted);
             }
             if (!await AppSignInCookieHost.IsSafeAsync(request, apps, context.RequestAborted))
             {
                 intents.TryClaim(intent);
-                ClearCookie(context, id);
+                if (!storage) ClearCookie(context, id);
+                if (storage)
+                {
+                    await RecordTerminalStorageRefusalAsync(context, auditAppId, "sign_in_cookie_host_unsafe", audit, clock);
+                    return AppSignInStorageResponse.RenderRefusal(context.Response, intent, "Core's browser host is no longer isolated from apps.", 409);
+                }
                 return await RefuseAsync(auditAppId, "sign_in_cookie_host_unsafe", "Core's browser cookie host is no longer isolated from apps.", 409, audit, clock, context.RequestAborted);
             }
 
@@ -127,19 +208,25 @@ internal static class AppSignInIntentEndpoints
                 if (intent.Mode == AppSignInMode.Silent)
                 {
                     intents.TryClaim(intent);
-                    ClearCookie(context, id);
+                    if (!storage) ClearCookie(context, id);
                     var reason = navigation.Denied is null ? "login_required" : "access_denied";
-                    await RecordRefusalAsync(auditAppId, reason, audit, clock, context.RequestAborted);
-                    return AppErrorRedirect(intent, reason);
+                    if (storage) await RecordTerminalStorageRefusalAsync(context, auditAppId, reason, audit, clock);
+                    else await RecordRefusalAsync(auditAppId, reason, audit, clock, context.RequestAborted);
+                    return storage ? StorageErrorRedirect(context.Response, intent, reason) : AppErrorRedirect(intent, reason);
                 }
                 if (navigation.Denied is not null)
                 {
                     intents.TryClaim(intent);
-                    ClearCookie(context, id);
-                    await RecordRefusalAsync(auditAppId, "access_denied", audit, clock, context.RequestAborted);
+                    if (!storage) ClearCookie(context, id);
+                    if (storage) await RecordTerminalStorageRefusalAsync(context, auditAppId, "access_denied", audit, clock);
+                    else await RecordRefusalAsync(auditAppId, "access_denied", audit, clock, context.RequestAborted);
+                    if (storage)
+                        return AppSignInStorageResponse.RenderRefusal(context.Response, intent, "This Core session cannot authorize app sign-in.",
+                            (navigation.Denied as IStatusCodeHttpResult)?.StatusCode ?? 403);
                     return navigation.Denied;
                 }
-                return Results.Redirect($"/login?returnTo={Uri.EscapeDataString(request.Path + request.QueryString)}");
+                var login = $"/login?returnTo={Uri.EscapeDataString(request.Path + request.QueryString)}";
+                return storage ? AppSignInStorageResponse.RenderRedirect(context.Response, intent, login, terminal: false) : Results.Redirect(login);
             }
             // Recheck access before claim. A successful claim is terminal even if persistence fails:
             // a lost response requires a fresh attempt, never a second issuance from this intent.
@@ -147,29 +234,123 @@ internal static class AppSignInIntentEndpoints
             catch (AppIdentityException exception)
             {
                 intents.TryClaim(intent);
-                ClearCookie(context, id);
+                if (!storage) ClearCookie(context, id);
                 if (intent.Mode == AppSignInMode.Silent && exception.Code is "user_not_found" or "user_disabled" or "app_access_denied" or "system_app_admin_required")
                 {
-                    await RecordRefusalAsync(auditAppId, exception.Code, audit, clock, context.RequestAborted);
-                    return AppErrorRedirect(intent, "access_denied");
+                    if (storage) await RecordTerminalStorageRefusalAsync(context, auditAppId, exception.Code, audit, clock);
+                    else await RecordRefusalAsync(auditAppId, exception.Code, audit, clock, context.RequestAborted);
+                    return storage ? StorageErrorRedirect(context.Response, intent, "access_denied") : AppErrorRedirect(intent, "access_denied");
+                }
+                if (storage)
+                {
+                    await RecordTerminalStorageRefusalAsync(context, auditAppId, exception.Code, audit, clock);
+                    return AppSignInStorageResponse.RenderRefusal(context.Response, intent, exception.Message, AuthEndpoints.MapIdentityErrorStatus(exception.Code));
                 }
                 throw;
             }
             if (!intents.TryClaim(intent)) return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
-            ClearCookie(context, id);
+            if (!storage) ClearCookie(context, id);
+            else claimedStorageIntent = intent;
             var authorization = await identity.CreateAuthorizationCodeAsync(appId, navigation.User.Id, intent.RedirectUri,
                 intent.CodeChallenge, "S256", CoreSessionAuthorization.ReadSessionId(request), context.RequestAborted,
                 activityAuthorized: intent.Mode != AppSignInMode.Silent && InstallationApprovalEndpoints.IsPageNavigation(request)
                     && await InstallationApprovalEndpoints.BrowserActorAsync(request, users, clock, context.RequestAborted) is not null);
             if (intent.Mode == AppSignInMode.Popup)
-                return AppPopupResponse.Render(context.Response, intent.RedirectUri, intent.State, authorization.Code);
-            return Results.Redirect(QueryHelpers.ParseQuery(new Uri(authorization.RedirectUri).Query).ContainsKey("state")
-                ? authorization.RedirectUri : QueryHelpers.AddQueryString(authorization.RedirectUri, "state", intent.State));
+                return storage ? AppSignInStorageResponse.RenderPopup(context.Response, intent, "code", authorization.Code, close: true)
+                    : AppPopupResponse.Render(context.Response, intent.RedirectUri, intent.State, authorization.Code);
+            var destination = QueryHelpers.ParseQuery(new Uri(authorization.RedirectUri).Query).ContainsKey("state")
+                ? authorization.RedirectUri : QueryHelpers.AddQueryString(authorization.RedirectUri, "state", intent.State);
+            return storage ? AppSignInStorageResponse.RenderRedirect(context.Response, intent, destination, terminal: true) : Results.Redirect(destination);
         }
         catch (AppIdentityException exception)
         {
+            if (claimedStorageIntent is not null)
+            {
+                await RecordTerminalStorageRefusalAsync(context, auditAppId, exception.Code, audit, clock);
+                return AppSignInStorageResponse.RenderRefusal(context.Response, claimedStorageIntent, exception.Message, AuthEndpoints.MapIdentityErrorStatus(exception.Code));
+            }
             return await RefuseAsync(auditAppId, exception.Code, exception.Message, AuthEndpoints.MapIdentityErrorStatus(exception.Code), audit, clock, context.RequestAborted);
         }
+        catch (Exception exception) when (claimedStorageIntent is not null && exception is not OperationCanceledException)
+        {
+            // Claim is terminal even when Core cannot persist the code. Clear the browser's proof
+            // without exposing persistence details or allowing this intent to issue a second code.
+            context.RequestServices.GetRequiredService<ILogger<AppIdentityService>>()
+                .LogWarning("App sign-in failed after intent claim ({FailureType}).", exception.GetType().Name);
+            await RecordTerminalStorageRefusalAsync(context, auditAppId, "sign_in_authorization_failed", audit, clock);
+            return AppSignInStorageResponse.RenderRefusal(context.Response, claimedStorageIntent,
+                "Unable to complete sign-in. Return to the app and start a new attempt after Core storage becomes available.",
+                StatusCodes.Status503ServiceUnavailable);
+        }
+    }
+
+    private static async Task RecordTerminalStorageRefusalAsync(HttpContext context, string? appId, string reason, AuditStore audit, IClock clock)
+    {
+        try
+        {
+            await RecordRefusalAsync(appId, reason, audit, clock, context.RequestAborted);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // A full or inaccessible volume can block audit as well as code persistence. The
+            // claimed intent remains denied, and terminal browser cleanup must still be returned.
+            context.RequestServices.GetRequiredService<ILogger<AppIdentityService>>()
+                .LogWarning("Could not persist the terminal app sign-in refusal.");
+        }
+    }
+
+    private static bool IsCanonicalNonce(string value)
+        => value.Length == 64 && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
+
+    private static async Task<IFormCollection?> ReadStorageFormAsync(HttpRequest request, CancellationToken ct)
+    {
+        if (!MediaTypeHeaderValue.TryParse(request.ContentType, out var type) ||
+            !string.Equals(type.MediaType.Value, "application/x-www-form-urlencoded", StringComparison.OrdinalIgnoreCase)) return null;
+        // Bound actual bytes before decoding: chunked requests have no Content-Length and multipart
+        // sections can exceed value limits. Only the generated URL-encoded Core form is accepted.
+        var bytes = new byte[8193];
+        var length = 0;
+        while (length < bytes.Length)
+        {
+            var read = await request.Body.ReadAsync(bytes.AsMemory(length), ct);
+            if (read == 0) break;
+            length += read;
+        }
+        if (length > 8192) return null;
+        using var body = new MemoryStream(bytes, 0, length, writable: false);
+        // FormReader also counts percent-encoded characters. Apply the smaller decoded nonce/proof
+        // limits after parsing so a valid 16-proof object still fits the URL-encoded form.
+        using var reader = new FormReader(body) { ValueCountLimit = 2, KeyLengthLimit = 16, ValueLengthLimit = 8192 };
+        return new FormCollection(await reader.ReadFormAsync(ct));
+    }
+
+    private static bool TryReadBrowserProofs(string value, out Dictionary<string, string>? proofs)
+    {
+        proofs = null;
+        if (value.Length > 2300) return false;
+        try
+        {
+            using var json = JsonDocument.Parse(value, new JsonDocumentOptions { MaxDepth = 2 });
+            if (json.RootElement.ValueKind != JsonValueKind.Object) return false;
+            var result = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var property in json.RootElement.EnumerateObject())
+            {
+                if (result.Count >= AppSignInIntentStore.MaxPerBrowser || !IsCanonicalNonce(property.Name) ||
+                    property.Value.ValueKind != JsonValueKind.String || !IsCanonicalNonce(property.Value.GetString()!) ||
+                    !result.TryAdd(property.Name, property.Value.GetString()!)) return false;
+            }
+            proofs = result;
+            return true;
+        }
+        catch (JsonException) { return false; }
+    }
+
+    private static IResult StorageErrorRedirect(HttpResponse response, AppSignInIntent intent, string error, bool terminal = true)
+    {
+        var destination = QueryHelpers.AddQueryString(intent.RedirectUri, "error", error);
+        if (!QueryHelpers.ParseQuery(new Uri(intent.RedirectUri).Query).ContainsKey("state"))
+            destination = QueryHelpers.AddQueryString(destination, "state", intent.State);
+        return AppSignInStorageResponse.RenderRedirect(response, intent, destination, terminal);
     }
 
     private static AppSignInMode ReadMode(string prompt, string responseMode, string state)

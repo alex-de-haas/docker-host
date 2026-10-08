@@ -1,6 +1,6 @@
 ---
 created: 2026-05-13
-updated: 2026-10-07
+updated: 2026-10-08
 summary: Core's browser and control APIs and the serialization rules every endpoint must follow.
 components: [apps/core]
 ---
@@ -34,11 +34,22 @@ Mutating browser endpoints are CSRF-protected: `GET /api/auth/csrf` sets the dou
   require a canonical `codeChallenge` and `codeChallengeMethod=S256` alongside the validated redirect.
 - `POST /api/apps/{appId}/sign-in-intent` - app-origin browser form initiation, with state, redirect,
   public S256 challenge and optional silent/popup mode. Exact Origin/navigation checks precede the
-  isolated nonce cookie and 303 immutable continuation.
-- `GET /api/apps/{appId}/open?requestId=...` - nonce-bound one-time browser continuation. It checks
-  the nonce before login, then claims and issues once after normal access checks. Silent frames never
-  receive login HTML; popups post only code/state to the validated app origin. Bare validated redirect
-  links bootstrap the app without a code; direct proof-bearing GETs are refused.
+  isolated nonce cookie and 303 immutable continuation for HTTPS and HTTP literal-IP Core origins.
+  HTTP on canonical `localhost` or `.localhost` instead returns Core-origin HTML that stores the
+  nonce in the current context's `sessionStorage` and submits a body-proof continuation POST.
+- `GET /api/apps/{appId}/open?requestId=...` - cookie-bound one-time browser continuation for HTTPS
+  and HTTP literal-IP origins. It checks the nonce before login, then claims and issues once after
+  normal access checks. On named HTTP localhost hosts it only returns a reader for existing stored
+  proof, without creating a nonce or issuing a code. Successful popups post only code/state to the
+  validated app origin. Bare validated redirect links bootstrap the app without a code; direct
+  proof-bearing GETs are refused.
+- `POST /api/apps/{appId}/open?requestId=...` - named-HTTP continuation requiring the exact Core
+  Origin and the frozen intent's navigation mode. Its URL-encoded body is bounded to 8 KiB and
+  contains the nonce plus at most sixteen browser nonce proofs; the nonce never enters a URL.
+  Current session and access checks precede atomic claim and issuance. Silent frames never receive
+  login HTML; unavailable nonce storage returns state-bound `login_required`, while popup recovery
+  reports an actionable error without credentials. Named HTTP has no plain-cookie fallback.
+  Other HTTP DNS hosts and Core/app cookie-host collisions are refused.
 - `POST /api/auth/apps/token` - exchange `{ code, codeVerifier }` using the target app service-token
   bearer. App match and constant-time S256 proof validation precede consumption. See
   [App Code Exchange](../app-code-exchange/feature.md).

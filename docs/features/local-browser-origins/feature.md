@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-10-05
+updated: 2026-10-08
 summary: Core derives local browser addresses under hosty.localhost without stored public origins or DNS.
 components: [apps/core, apps/shell, packages/app-sdk]
 ---
@@ -33,13 +33,23 @@ and preserves an explicit setting or environment origin exactly, including a lit
 implicit plain-HTTP loopback listen address projects to the separate managed Core browser hostname.
 HTTPS, LAN and external origins retain their configured hostnames.
 
-App code initiation additionally requires an isolated nonce cookie host. HTTP DNS Core names do
-not meet that contract: use HTTPS or a literal-IP Core browser host different from every configured
-app endpoint cookie host, including private/raw WebSocket endpoints. Cookie hosts are canonicalized
-without DNS resolution. Source development listens on `localhost` (IPv4 and IPv6) and explicitly
-advertises `http://[::1]:3001`, with app endpoints on other hosts; its cross-site silent path uses
-popup fallback. IPv6 form-action browser compatibility remains tracked in
-[app code exchange](../app-code-exchange/plan.md). A refused topology never enables unbound issuance.
+App code initiation requires a Core hostname different from every configured app endpoint cookie
+host, including private/raw WebSocket endpoints. HTTP supports canonical `localhost` and
+`.localhost` names through a Core-origin sessionStorage nonce and an exact-Origin continuation POST.
+Only validated app-origin initiation initializes the proof; continuation URLs and parent-Domain
+cookies cannot initialize it. Blocked storage fails closed, with credential-free silent recovery
+and an explicit popup path. If bootstrap storage access or writing fails, or local browser capacity
+is exhausted, a bounded exact-Origin form cancels only the nonce-owned server intent. This releases
+the pending quota immediately and preserves other attempts; cancellation never issues credentials.
+Post-claim code-persistence failures return terminal proof-cleanup HTML with a generic unavailable
+message. Every terminal named-localhost denial also cleans up only its claimed proof: browser capacity,
+changed host isolation, missing or denied sessions, and denied app access retain their existing error
+results even when audit storage is unavailable. Request cancellation still propagates, and consumed
+intents cannot replay. HTTPS and literal-IP HTTP retain their isolated nonce cookies; other
+HTTP DNS names remain refused. Hosts are canonicalized without DNS resolution. Source development's
+explicit `http://[::1]:3001` origin also remains supported, with app endpoints on other hosts and
+popup fallback for its cross-site silent path. See [app code exchange](../app-code-exchange/feature.md).
+A refused topology never enables unbound issuance.
 
 Endpoint summaries expose `browserOrigin` separately from transport `url` and explicit
 `publicOrigin`. Navigation, app identity redirect validation and runtime
@@ -80,6 +90,12 @@ preserves the last applied origin/configuration rather than claiming the new env
 Configured app origins and existing port assignments are preserved.
 
 ## Verified behavior and current limitation
+
+On 2026-10-08, a fresh source Core instance passes normal password login and the authenticated
+Shell dashboard on generated HTTP `.localhost` names in Chromium and native Safari. Its Core-managed
+Demo App passes explicit popup authorization and frame recreation in both browsers; Safari uses the
+existing fallback when the Core session is unavailable in the frame. The nonce uses Core-origin
+storage and an exact-Origin POST, without relying on Safari accepting Secure cookies over HTTP.
 
 On 2026-09-30 a separate Core-managed localCommand Shell instance passed the Chromium browser
 entry, Core login, authenticated dashboard and required-permission review-page flow without public
@@ -179,9 +195,12 @@ for the launch authority audit and notice behavior.
 
 - Keep generated names injective, label lengths bounded and instance identity stable.
 - Preserve explicit origins exactly, internal transport and publication ownership; clearing settings
-  restores defaults. Test literal-IP HTTP and HTTPS nonce topology against every endpoint cookie
-  host, including private/non-HTTP schemes, while unsafe HTTP DNS configurations fail closed.
+  restores defaults. Test named-localhost storage proof, literal-IP HTTP and HTTPS nonce topology
+  against every endpoint cookie host, including private/non-HTTP schemes, while other HTTP DNS
+  configurations fail closed.
 - Exercise real login and approval/denial, host-only session cookies, origin binding and shared-host rejection.
+- Block audit persistence in HTTP tests for every claimed named-localhost denial; verify current-proof
+  cleanup, preserved neighboring attempts, credential-free errors, replay refusal and cancellation propagation.
 - Verify legacy GET navigation without forwarding credentials, callback codes or POST bodies.
 - Verify runtime environment and restart-required migration for both localCommand and Docker.
 - Run `python3 scripts/check-docker-core-transport.py <built-core-dll-or-executable>` for changes to
