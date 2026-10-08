@@ -8,6 +8,73 @@ namespace Haas.Hosty.Core.Tests.Http;
 
 public sealed class CoreInstallUpdateReviewHttpTests
 {
+    [Theory]
+    [InlineData(null, null, true)]
+    [InlineData(false, null, false)]
+    [InlineData(true, null, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(null, false, false)]
+    public async Task DefaultsSubmissionPreservesEffectiveAutostartThroughPlanConfirmationAndApply(
+        bool? retainedAutostart, bool? submittedAutostart, bool expectedAutostart)
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var session = await SeedAdmin(harness);
+        var paths = harness.Services.GetRequiredService<CoreDataPaths>();
+        var apps = harness.Services.GetRequiredService<AppRegistryStore>();
+        var lifecycle = harness.Services.GetRequiredService<CoreLifecycleService>();
+        const string appId = "example.autostart-defaults";
+        var manifestPath = Path.Combine(paths.DataRoot, "autostart-defaults.json");
+        // Incomplete configuration makes preference persistence independent of a real process launch.
+        await File.WriteAllTextAsync(manifestPath, Fixture(appId, "1.0.0", "[]",
+            """[{"key":"APP_TOKEN","type":"string","required":true}]"""));
+        if (retainedAutostart is { } retained)
+        {
+            await lifecycle.InstallAsync(new(manifestPath, Autostart: retained));
+            await lifecycle.RemoveAsync(appId, new(DeleteData: false, DeleteSource: false));
+            Assert.Null(await apps.GetAppAsync(appId));
+        }
+        using var api = harness.CreateClient();
+        api.DefaultRequestHeaders.Authorization = new("Bearer", session);
+        using var prepared = await api.PostAsJsonAsync("/api/installations", new { manifestPath });
+        prepared.EnsureSuccessStatusCode();
+        var draft = await prepared.Content.ReadFromJsonAsync<JsonElement>();
+        var id = draft.GetProperty("id").GetString()!;
+        Assert.Equal(retainedAutostart ?? true, draft.GetProperty("plan").GetProperty("defaultAutostart").GetBoolean());
+        object submit = submittedAutostart is { } selected ? new { autostart = selected } : new { };
+        // This exercises the SDK default flow's actual empty JSON body through Core's source-generated model.
+        using var submitted = await api.PostAsJsonAsync($"/api/installations/{id}/submit", submit);
+        submitted.EnsureSuccessStatusCode();
+        var store = harness.Services.GetRequiredService<InstallationApprovalStore>();
+        Assert.Equal(expectedAutostart, store.Get(id).Autostart);
+        using var browser = Browser(harness, session);
+        var html = await browser.GetStringAsync($"/install/confirm/{id}");
+        Assert.Equal(expectedAutostart, html.Contains("name=autostart value=true checked", StringComparison.Ordinal));
+        var runtime = "first";
+        if (retainedAutostart == false && submittedAutostart is null)
+        {
+            // A runtime change renews the review, not the retained automatic-start preference.
+            runtime = "second";
+            using var changed = await Decide(browser, id, Nonce(html), "runtime", runtime, expectedAutostart);
+            changed.EnsureSuccessStatusCode();
+            html = await changed.Content.ReadAsStringAsync();
+            Assert.Equal("pending", store.Get(id).Status);
+            Assert.False(store.Get(id).Autostart);
+            Assert.False(store.Get(id).InstallPlan!.DefaultAutostart);
+            Assert.DoesNotContain("name=autostart value=true checked", html);
+        }
+        using var accepted = await Decide(browser, id, Nonce(html), "approve", runtime, expectedAutostart);
+        accepted.EnsureSuccessStatusCode();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (store.Get(id).Status == "executing") await Task.Delay(10, timeout.Token);
+        Assert.Equal("succeeded", store.Get(id).Status);
+        var installed = (await apps.GetAppAsync(appId))!;
+        Assert.Equal(expectedAutostart, installed.Autostart);
+        Assert.Equal(runtime, installed.SelectedRuntime);
+        Assert.Equal("stopped", installed.RuntimeState);
+        Assert.True(Assert.Single(await lifecycle.ListAppsAsync()).ConfigurationReadiness!.Required);
+    }
+
     [Fact]
     public async Task RuntimeSelectionReviewsFrozenManifestAndAutostart_BeforeClaimingConsent()
     {

@@ -24,8 +24,11 @@ CLI/API/SDK clients retain authorized installation configuration inputs.
 Effective configuration uses generated Core values, manifest defaults and retained data. Retained
 values override defaults, explicit caller values override retained values, and explicit empty strings
 remain empty. Automatic startup defaults to enabled; an explicit preference overrides retained
-configuration and otherwise the retained preference survives. The preference controls install-time
-launch and Core boot, and is preserved while configuration is incomplete.
+configuration and otherwise the retained preference survives. The reviewed plan and Core confirmation
+preselect that retained preference on reinstall. An omitted or null automatic-start submission keeps
+that reviewed default; an explicit client or confirmation-checkbox choice overrides it. Changing
+runtime renews the review without resetting the selected preference. The preference controls
+install-time launch and Core boot, and is preserved while configuration is incomplete.
 
 ## Configuration Readiness
 
@@ -91,7 +94,8 @@ generic controls remain their authors' choices.
 - Core covers defaults, retained values and explicit empty overrides, masked secret presence,
   required, invalid and over-cardinality mount bindings, stopped successful apply, later configuration/Start, boot
   skipping and supervision without retry loops.
-- Core HTTP tests cover exact runtime/autostart/permission decisions, frozen channel manifests,
+- Core HTTP tests cover exact runtime/autostart/permission decisions, omitted/default/retained and
+  explicit automatic-start choices through confirmation and apply, runtime re-review, frozen channel manifests,
   unavailable runtime choices, actor/nonce/Origin protections and escaped diagnostics.
 - SDK, Shell and Marketplace tests cover direct default preparation, synchronous popup reservation,
   blocked popups, declared channel defaults, uncertain same-ID status recovery and custom clients.

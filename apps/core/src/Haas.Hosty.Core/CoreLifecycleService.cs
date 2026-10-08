@@ -275,6 +275,9 @@ internal sealed partial class CoreLifecycleService(
             }
         }
 
+        var defaultAutostart = request.Autostart ?? existing?.Autostart
+            ?? (await TryReadRetainedConfigAsync(selection.Manifest.Id!, cancellationToken))?.Autostart ?? true;
+
         return new AppInstallPlan(
             AppId: selection.Manifest.Id!,
             DisplayName: selection.Manifest.Name!,
@@ -290,7 +293,7 @@ internal sealed partial class CoreLifecycleService(
             ManifestPath: selection.ManifestPath,
             CurrentManifestDigest: currentManifestDigest,
             TargetManifestDigest: selection.ManifestDigest,
-            DefaultAutostart: request.Autostart ?? true,
+            DefaultAutostart: defaultAutostart,
             System: request.System || IsSystemManifest(selection.Manifest),
             RuntimeProfiles: BuildRuntimeProfileSummaries(selection.Manifest),
             Settings: selection.Manifest.Settings

@@ -114,7 +114,7 @@ internal sealed class InstallationApprovalStore(IClock clock)
                 throw new AppLifecycleException("approval_frozen", "This request has already been submitted.");
             if (reviewedInstall is not null) entry.InstallPlan = reviewedInstall;
             entry.Settings = input.Settings is null ? new Dictionary<string, string?>() : new Dictionary<string, string?>(input.Settings, StringComparer.Ordinal);
-            entry.Autostart = input.Autostart;
+            entry.Autostart = input.Autostart ?? entry.InstallPlan?.DefaultAutostart ?? true;
             entry.Status = "pending";
         }
     }
@@ -242,7 +242,7 @@ internal sealed class InstallationApproval
 internal sealed record InstallationPrepare(string? ManifestPath = null, string? FeedsUrl = null,
     string? FeedId = null, string? SelectedRuntime = null, string? UpdateAppId = null, string? PlanDigest = null, PrivateSourceChoice? SourceConnections = null, string? PermissionsAppId = null,
     string? RemoveAppId = null, AppRemoveRequest? RemovalOptions = null, HostPathChange? HostPathChange = null);
-internal sealed record InstallationSubmit(IReadOnlyDictionary<string, string?>? Settings = null, bool Autostart = true);
+internal sealed record InstallationSubmit(IReadOnlyDictionary<string, string?>? Settings = null, bool? Autostart = null);
 internal sealed record InstallationRequestView(string Id, string Status, AppInstallPlan? Plan, AppUpdatePlan? UpdatePlan,
     string ApprovalUrl, DateTimeOffset ExpiresAt, string? Error, AppPermissionPlan? PermissionPlan = null, AppRemovalPlan? RemovalPlan = null, HostPathApprovalPlan? HostPathPlan = null);
 
