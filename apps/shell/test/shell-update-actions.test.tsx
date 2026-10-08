@@ -84,10 +84,10 @@ function overrideRequests(override: (path: string, init?: RequestInit) => Respon
   fixture.read.mockImplementation(async (url: string, init?: RequestInit) => override(new URL(url).pathname, init) ?? fallback(url, init));
 }
 
-it.each(["update_plan_expired", "update_plan_stale", "update_plan_digest_mismatch"])(
-  "refreshes the actual row transport's %s refusal once and queues the new digest", async code => {
+it.each([400, 409].flatMap(status => ["update_plan_expired", "update_plan_stale", "update_plan_digest_mismatch"].map(code => [status, code] as const)))(
+  "refreshes the actual row transport's HTTP %i %s refusal once and queues the new digest", async (status, code) => {
     let attempts = 0;
-    overrideRequests(path => path.endsWith("/update") && ++attempts === 1 ? refusal(code) : undefined);
+    overrideRequests(path => path.endsWith("/update") && ++attempts === 1 ? refusal(code, status) : undefined);
     await mount();
     await act(async () => actions.applyUpdateFromRow(target));
     expect(callsTo("/api/apps/routine.app/update").map(([, init]) => JSON.parse(init.body))).toEqual([
@@ -103,7 +103,7 @@ it("reclassifies a refreshed routine candidate and opens Core review instead of 
   let attempts = 0;
   const approval = { id: "review", status: "draft", approvalUrl: "https://core.test/install/confirm/review", expiresAt: "2099-01-01T00:00:00Z" };
   overrideRequests((path, init) => {
-    if (path.endsWith("/update")) { attempts++; return refusal(); }
+    if (path.endsWith("/update")) { attempts++; return refusal("update_plan_stale", 400); }
     if (path.endsWith("/update/plan") && init?.method === "POST") return Response.json(plan("review-digest", true));
     if (path === "/api/installations") return Response.json(approval);
     if (path === "/api/installations/review/submit") return Response.json({ ...approval, status: "pending" });
@@ -122,18 +122,18 @@ it("reclassifies a refreshed routine candidate and opens Core review instead of 
 });
 
 it("stops after the second definite stale refusal", async () => {
-  overrideRequests(path => path.endsWith("/update") ? refusal() : undefined);
+  overrideRequests(path => path.endsWith("/update") ? refusal("update_plan_stale", 400) : undefined);
   await mount(); await act(async () => actions.applyUpdateFromRow(target));
   expect(callsTo("/api/apps/routine.app/update")).toHaveLength(2);
   expect(callsTo("/api/apps/routine.app/update/plan")).toHaveLength(1);
   expect(fixture.toast.error).toHaveBeenCalledExactlyOnceWith("Update could not be prepared", expect.objectContaining({ description: "Candidate changed" }));
 });
 
-it.each(["transport", "server", "authorization", "other-conflict"])("does not replay a %s routine failure", async kind => {
+it.each(["transport", "server", "authorization", "other-bad-request", "other-conflict"])("does not replay a %s routine failure", async kind => {
   overrideRequests(path => {
     if (!path.endsWith("/update")) return;
     if (kind === "transport") throw new TypeError("Response lost after queueing");
-    return kind === "server" ? refusal("update_plan_stale", 503) : kind === "authorization" ? refusal("update_plan_stale", 403) : refusal("operation_failed");
+    return kind === "server" ? refusal("update_plan_stale", 503) : kind === "authorization" ? refusal("update_plan_stale", 403) : refusal("operation_failed", kind === "other-bad-request" ? 400 : 409);
   });
   await mount(); await act(async () => actions.applyUpdateFromRow(target));
   expect(callsTo("/api/apps/routine.app/update")).toHaveLength(1);
@@ -142,10 +142,10 @@ it.each(["transport", "server", "authorization", "other-conflict"])("does not re
   expect(fixture.toast.error).toHaveBeenCalledTimes(1);
 });
 
-it("never retries a stale-shaped error after Shell's routine update was accepted", async () => {
+it.each([400, 409])("never retries an HTTP %i stale-shaped error after Shell's routine update was accepted", async status => {
   const shell = { ...target, id: "hosty.shell", displayName: "Shell" };
   apps = [shell];
-  fixture.settle.mockRejectedValue(new CoreRequestError("Status changed after acceptance", "update_plan_stale", 409, null));
+  fixture.settle.mockRejectedValue(new CoreRequestError("Status changed after acceptance", "update_plan_stale", status, null));
   await mount(); await act(async () => actions.applyUpdateFromRow(shell));
   expect(callsTo("/api/apps/hosty.shell/update")).toHaveLength(1);
   expect(callsTo("/api/apps/hosty.shell/update/plan")).toHaveLength(0);

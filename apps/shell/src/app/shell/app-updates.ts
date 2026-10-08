@@ -30,8 +30,8 @@ export async function prepareAppUpdate<T extends { planDigest: string }>(
   return plan ?? await rebuild();
 }
 
-/** Retry only a definite refusal during preparation, before submit can be reached. */
+/** Retry only a definite stale refusal before the mutation is accepted. */
 export function isStaleUpdatePreparation(error: unknown) {
-  return (error instanceof InstallationError || error instanceof CoreRequestError) && error.status === 409 &&
+  return (error instanceof InstallationError || error instanceof CoreRequestError) && (error.status === 400 || error.status === 409) &&
     ["update_plan_expired", "update_plan_stale", "update_plan_digest_mismatch"].includes(error.code ?? "");
 }

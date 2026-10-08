@@ -117,16 +117,23 @@ it("recovers a lost update submission and unavailable status transport with the 
 });
 
 it("only explicit pre-submit stale refusals authorize refreshing the candidate", () => {
-  for (const code of ["update_plan_expired", "update_plan_stale", "update_plan_digest_mismatch"]) {
-    expect(isStaleUpdatePreparation(new InstallationError("Stale", 409, code))).toBe(true);
-    expect(isStaleUpdatePreparation(new CoreRequestError("Stale", code, 409, null))).toBe(true);
+  for (const status of [400, 409]) {
+    for (const code of ["update_plan_expired", "update_plan_stale", "update_plan_digest_mismatch"]) {
+      expect(isStaleUpdatePreparation(new InstallationError("Stale", status, code))).toBe(true);
+      expect(isStaleUpdatePreparation(new CoreRequestError("Stale", code, status, null))).toBe(true);
+    }
   }
   for (const error of [new TypeError("Network lost"), new InstallationError("Busy", 503, "update_plan_stale"),
     new InstallationError("Forbidden", 403), new InstallationError("Failed", 409, "operation_failed"),
     new CoreRequestError("Transport uncertain", "update_plan_stale", 503, null),
     new CoreRequestError("Access revoked", "update_plan_stale", 403, null),
+    new InstallationError("Invalid input", 400, "operation_failed"),
+    new CoreRequestError("Invalid input", "operation_failed", 400, null),
     new CoreRequestError("Execution failed", "operation_failed", 409, null),
-    new CoreRequestError("Unclassified conflict", null, 409, null)])
+    new CoreRequestError("Unclassified bad request", null, 400, null),
+    new CoreRequestError("Unclassified conflict", null, 409, null),
+    new CoreRequestError("Unexpected client status", "update_plan_stale", 422, null),
+    { code: "update_plan_stale", status: 400 }, { code: "update_plan_stale", status: 409 }])
     expect(isStaleUpdatePreparation(error)).toBe(false);
 });
 
