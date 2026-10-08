@@ -858,6 +858,116 @@ public sealed class AppSignInIntentHttpTests
     }
 
     [Theory]
+    [InlineData("browser-capacity", 429, null)]
+    [InlineData("host-unsafe", 409, null)]
+    [InlineData("silent-no-session", 200, "login_required")]
+    [InlineData("silent-denied-session", 200, "access_denied")]
+    [InlineData("denied-session", 403, null)]
+    [InlineData("silent-access-denied", 200, "access_denied")]
+    [InlineData("access-denied", 403, null)]
+    public async Task NamedHttp_TerminalDenialsClearOnlyTheirClaimedProofDespiteAuditFailure(
+        string reason, int expectedStatus, string? callbackError)
+    {
+        await using var host = await HostAsync(coreOrigin: NamedCore);
+        using var browser = Browser(host, NamedCore);
+        var store = host.Services.GetRequiredService<AppSignInIntentStore>();
+        var users = host.Services.GetRequiredService<UserDirectoryStore>();
+        var originalUsers = await users.ReadAsync();
+        AppSignInIntentCreated[] earlier = reason == "browser-capacity"
+            ? Enumerable.Range(0, AppSignInIntentStore.MaxPerBrowser).Select(index => store.Create(AppId,
+                AppOrigin + "/callback", State, AuthCodeProof.Challenge, AppSignInMode.Standalone, index.ToString(), 0)!).ToArray()
+            : [];
+        var mode = reason.StartsWith("silent-", StringComparison.Ordinal) ? "silent" : "standalone";
+        var destination = mode == "silent" ? "iframe" : "document";
+        using var started = await IntentAsync(browser, mode: mode);
+        var attempt = await StorageAttemptAsync(started);
+        using var otherStarted = await IntentAsync(browser);
+        var other = await StorageAttemptAsync(otherStarted);
+        if (reason == "host-unsafe") await AddAppAsync(host, "unsafe.app", "ws://core.hosty.localhost:9000");
+        if (reason is "silent-denied-session" or "denied-session")
+            await users.UpdateAsync(state => state with { Users = state.Users.Select(user => user with { Disabled = true }).ToArray() });
+        if (reason is "silent-access-denied" or "access-denied")
+            await users.UpdateAsync(state => state with { Assignments = [] });
+        var paths = host.Services.GetRequiredService<CoreDataPaths>();
+        Directory.CreateDirectory(paths.AuditLogPath);
+        try
+        {
+            var proofs = JsonSerializer.Serialize(earlier.ToDictionary(value => value.Intent.Id, value => value.Nonce));
+            using var denied = await StorageOpenAsync(browser, attempt, proofs: proofs,
+                cookies: reason == "silent-no-session" ? "" : "hosty_session=" + SessionId, destination: destination);
+            Assert.Equal(expectedStatus, (int)denied.StatusCode);
+            Assert.Equal("text/html", denied.Content.Headers.ContentType!.MediaType);
+            Assert.False(denied.Headers.Contains("Set-Cookie"));
+            Assert.Null(denied.Headers.Location);
+            var html = await denied.Content.ReadAsStringAsync();
+            Assert.Contains("sessionStorage.removeItem", html);
+            Assert.Contains("hosty.core.signin." + attempt.Id, html);
+            Assert.DoesNotContain("hosty.core.signin." + other.Id, html);
+            foreach (var sensitive in new[] { attempt.Nonce, other.Nonce, AuthCodeProof.Challenge,
+                AuthCodeProof.Verifier, SessionId, paths.AuditLogPath, paths.AuthRoot,
+                "IOException", "UnauthorizedAccessException", "Access to the path" })
+                Assert.DoesNotContain(sensitive, html);
+            if (callbackError is not null)
+            {
+                var match = Regex.Match(html, "const destination = (\"[^\"]+\");");
+                Assert.True(match.Success, html);
+                var callback = new Uri(JsonSerializer.Deserialize<string>(match.Groups[1].Value)!);
+                Assert.Equal(AppOrigin + "/callback", callback.GetLeftPart(UriPartial.Path));
+                var query = QueryHelpers.ParseQuery(callback.Query);
+                Assert.Equal(callbackError, query["error"].ToString());
+                Assert.Equal(State, query["state"].ToString());
+                Assert.False(query.ContainsKey("code"));
+                Assert.Equal(2, query.Count);
+            }
+            else Assert.DoesNotContain("location.replace", html);
+            Assert.False(store.Contains(attempt.Id));
+            Assert.NotNull(store.Find(AppId, other.Id, other.Nonce));
+            foreach (var prior in earlier)
+            {
+                Assert.Same(prior.Intent, store.Find(AppId, prior.Intent.Id, prior.Nonce));
+                Assert.DoesNotContain("hosty.core.signin." + prior.Intent.Id, html);
+            }
+            Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        }
+        finally { Directory.Delete(paths.AuditLogPath); }
+
+        await users.WriteAsync(originalUsers);
+        if (reason == "host-unsafe") await host.Services.GetRequiredService<AppRegistryStore>().RemoveAppAsync("unsafe.app");
+        using var replay = await StorageOpenAsync(browser, attempt, destination: destination);
+        Assert.Equal(HttpStatusCode.Forbidden, replay.StatusCode);
+        Assert.Equal("sign_in_intent_invalid", await ErrorAsync(replay));
+        Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        using var rightful = await StorageOpenAsync(browser, other);
+        Assert.Equal(HttpStatusCode.OK, rightful.StatusCode);
+        Assert.Single((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+    }
+
+    [Fact]
+    public async Task NamedHttp_NonterminalLoginRetainsItsProofWhenAuditIsUnavailable()
+    {
+        await using var host = await HostAsync(coreOrigin: NamedCore);
+        using var browser = Browser(host, NamedCore);
+        using var started = await IntentAsync(browser);
+        var attempt = await StorageAttemptAsync(started);
+        var paths = host.Services.GetRequiredService<CoreDataPaths>();
+        Directory.CreateDirectory(paths.AuditLogPath);
+        try
+        {
+            using var login = await StorageOpenAsync(browser, attempt, cookies: "");
+            Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+            var html = await login.Content.ReadAsStringAsync();
+            Assert.Contains("/login?returnTo=", html);
+            Assert.DoesNotContain("sessionStorage.removeItem", html);
+            Assert.NotNull(host.Services.GetRequiredService<AppSignInIntentStore>().Find(AppId, attempt.Id, attempt.Nonce));
+            Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        }
+        finally { Directory.Delete(paths.AuditLogPath); }
+        using var completed = await StorageOpenAsync(browser, attempt);
+        Assert.Equal(HttpStatusCode.OK, completed.StatusCode);
+        Assert.Single((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+    }
+
+    [Theory]
     [InlineData("standalone", false)]
     [InlineData("silent", false)]
     [InlineData("popup", false)]
@@ -928,13 +1038,15 @@ public sealed class AppSignInIntentHttpTests
         Assert.NotNull(host.Services.GetRequiredService<AppSignInIntentStore>().Find(AppId, other.Id, other.Nonce));
     }
 
-    [Fact]
-    public async Task NamedHttp_RequestCancellationAfterClaimIsNotReportedAsAuthorizationFailure()
+    [Theory]
+    [InlineData("standalone", true)]
+    [InlineData("silent", false)]
+    public async Task NamedHttp_RequestCancellationAfterClaimIsNotReportedAsAuthorizationFailure(string mode, bool signedIn)
     {
         var clock = new CallbackClock();
         await using var host = await HostAsync(clock, coreOrigin: NamedCore);
         using var browser = Browser(host, NamedCore);
-        using var started = await IntentAsync(browser);
+        using var started = await IntentAsync(browser, mode: mode);
         var attempt = await StorageAttemptAsync(started);
         var store = host.Services.GetRequiredService<AppSignInIntentStore>();
         using var cancellation = new CancellationTokenSource();
@@ -955,9 +1067,9 @@ public sealed class AppSignInIntentHttpTests
             context.Request.Path = $"/api/apps/{AppId}/open";
             context.Request.QueryString = new QueryString("?requestId=" + attempt.Id);
             context.Request.Headers.Origin = NamedCore;
-            context.Request.Headers.Cookie = "hosty_session=" + SessionId;
+            if (signedIn) context.Request.Headers.Cookie = "hosty_session=" + SessionId;
             context.Request.Headers["Sec-Fetch-Mode"] = "navigate";
-            context.Request.Headers["Sec-Fetch-Dest"] = "document";
+            context.Request.Headers["Sec-Fetch-Dest"] = mode == "silent" ? "iframe" : "document";
             context.Request.ContentType = "application/x-www-form-urlencoded";
             context.Request.ContentLength = bytes.Length;
             context.Request.Body = new MemoryStream(bytes);
