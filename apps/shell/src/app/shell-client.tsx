@@ -972,11 +972,13 @@ export function ShellClient({
     [coreOrigin, refresh, shellAppId, installationClient],
   );
 
-  const enqueueRoutine = useCallback(async (app: CoreApp, planDigest: string) => {
+  const enqueueRoutine = useCallback(async (app: CoreApp, planDigest: string, propagateStale = false) => {
     const actionKey = `${app.id}:update`;
     setBusyAction(actionKey);
+    let queued = false;
     try {
       await enqueueRoutineUpdate(sendCsrfJson, coreOrigin, app.id, planDigest);
+      queued = true;
       setActivePanel(current => current?.appId === app.id ? null : current);
       toast.info("Update started", { id: actionKey, description: app.displayName });
       void refresh();
@@ -1003,6 +1005,9 @@ export function ShellClient({
       }
       return true;
     } catch (error) {
+      // Only the row's preparation loop refreshes a definite refusal. Once queued, even a
+      // later stale-shaped status error cannot authorize another mutation; bulk keeps going.
+      if (!queued && propagateStale && isStaleUpdatePreparation(error)) throw error;
       if (!isAuthRequiredRedirectError(error)) {
         toast.error("Update not completed", { id: actionKey, appId: app.id,
           description: error instanceof Error ? error.message : "Check the update status in Core." });
@@ -1031,7 +1036,7 @@ export function ShellClient({
         if (!plan.changes.length) { popup?.close(); toast.info("No update available", { description: app.displayName }); return; }
         try {
           if (plan.requiresReview !== false) await enqueueUpdate(app, plan.planDigest, popup);
-          else { popup?.close(); await enqueueRoutine(app, plan.planDigest); }
+          else { popup?.close(); await enqueueRoutine(app, plan.planDigest, true); }
           return;
         } catch (error) {
           if (attempt === 1 || !isStaleUpdatePreparation(error)) throw error;

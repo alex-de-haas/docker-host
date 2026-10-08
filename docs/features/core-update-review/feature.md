@@ -11,8 +11,10 @@ Shell's ordinary update action reads Core's valid cached snapshot or rebuilds on
 expired or following a failed check. Routine updates go directly to the queued apply endpoint;
 review-required updates open Core confirmation without a preliminary Shell plan dialog. Failed
 checks and missing digests trigger preparation or an actionable error, rather than inventing new
-permissions. The menu's Update app action follows the same rule. Update all includes only eligible
-routine offers and queues Shell last. No scheduled automatic apply is introduced.
+permissions. A definite stale-plan refusal before queue acceptance triggers one refresh and a new
+routine/review classification. Transport failures and errors after acceptance never replay the
+mutation. The menu's Update app action follows the same rule. Update all includes only eligible
+routine offers, continues past individual stale refusals and queues Shell last. No scheduled automatic apply is introduced.
 
 Core review renders the frozen current/target versions and runtimes, source, backup outcome,
 actual manifest changes and safe settings schema deltas. It omits empty change sections and secret
@@ -50,7 +52,8 @@ manual reload guidance.
   and secret-safe HTML escaping. Mount-only changes and legacy routine snapshots cannot bypass review.
 - HTTP tests cover current administrator/caller authority, nonce/Origin, stale snapshots and atomic
   one-time execution, including channel/runtime changes before consent.
-- Shell tests cover bounded preparation, routine and bulk routing, blocked popup fallback,
+- Shell tests cover bounded stale preparation through the real row transport, reclassification,
+  accepted/uncertain mutation guards, bulk continuation, routine routing and blocked popup fallback,
   cancellation, uncertain status recovery and self-update reconnect.
 - Browser acceptance checks a review-required update opens exactly one Core review, a routine
   update opens none, feed changes do not apply automatically and incomplete apply remains stopped.

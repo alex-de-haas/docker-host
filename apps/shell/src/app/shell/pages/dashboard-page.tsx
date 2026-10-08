@@ -1158,8 +1158,8 @@ function InstalledAppRow({
   const updating = app.operationStatus === "updating";
   const verdict = canUpdate && !updating ? app.updateCheck : null;
   const updateVisible = Boolean(verdict?.updateAvailable);
-  // A verdict with no cached plan digest cannot be applied in one click (the plan expired or was
-  // consumed), so it takes the review path too — the dialog rebuilds the plan.
+  // A missing cached digest makes the click rebuild the plan and classify the fresh candidate.
+  // Only its review-required verdict opens Core confirmation; routine updates queue directly.
   const needsReview = verdict?.requiresReview === true;
   const configurationRequired = app.configurationReadiness?.required === true;
   // Removal, like start/stop/restart/update, is an inherent Core operation: the endpoint authorizes on
