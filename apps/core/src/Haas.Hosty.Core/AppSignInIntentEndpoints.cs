@@ -163,7 +163,7 @@ internal static class AppSignInIntentEndpoints
                 // A browser storage failure must release the newly admitted intent without needing
                 // storage again. Nonce ownership and the exact Core Origin authorize cancellation only.
                 if (!intents.TryClaim(intent)) return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
-                await RecordRefusalAsync(auditAppId, failureCode, audit, clock, context.RequestAborted);
+                await RecordTerminalStorageRefusalAsync(context, auditAppId, failureCode, audit, clock);
                 if (intent.Mode == AppSignInMode.Silent)
                     return StorageErrorRedirect(context.Response, intent, "login_required");
                 if (intent.Mode == AppSignInMode.Popup)
@@ -263,10 +263,36 @@ internal static class AppSignInIntentEndpoints
         {
             if (claimedStorageIntent is not null)
             {
-                await RecordRefusalAsync(auditAppId, exception.Code, audit, clock, context.RequestAborted);
+                await RecordTerminalStorageRefusalAsync(context, auditAppId, exception.Code, audit, clock);
                 return AppSignInStorageResponse.RenderRefusal(context.Response, claimedStorageIntent, exception.Message, AuthEndpoints.MapIdentityErrorStatus(exception.Code));
             }
             return await RefuseAsync(auditAppId, exception.Code, exception.Message, AuthEndpoints.MapIdentityErrorStatus(exception.Code), audit, clock, context.RequestAborted);
+        }
+        catch (Exception exception) when (claimedStorageIntent is not null && exception is not OperationCanceledException)
+        {
+            // Claim is terminal even when Core cannot persist the code. Clear the browser's proof
+            // without exposing persistence details or allowing this intent to issue a second code.
+            context.RequestServices.GetRequiredService<ILogger<AppIdentityService>>()
+                .LogWarning("App sign-in failed after intent claim ({FailureType}).", exception.GetType().Name);
+            await RecordTerminalStorageRefusalAsync(context, auditAppId, "sign_in_authorization_failed", audit, clock);
+            return AppSignInStorageResponse.RenderRefusal(context.Response, claimedStorageIntent,
+                "Unable to complete sign-in. Return to the app and start a new attempt after Core storage becomes available.",
+                StatusCodes.Status503ServiceUnavailable);
+        }
+    }
+
+    private static async Task RecordTerminalStorageRefusalAsync(HttpContext context, string? appId, string reason, AuditStore audit, IClock clock)
+    {
+        try
+        {
+            await RecordRefusalAsync(appId, reason, audit, clock, context.RequestAborted);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // A full or inaccessible volume can block audit as well as code persistence. The
+            // claimed intent remains denied, and terminal browser cleanup must still be returned.
+            context.RequestServices.GetRequiredService<ILogger<AppIdentityService>>()
+                .LogWarning("Could not persist the terminal app sign-in refusal.");
         }
     }
 

@@ -40,7 +40,9 @@ Only validated app-origin initiation initializes the proof; continuation URLs an
 cookies cannot initialize it. Blocked storage fails closed, with credential-free silent recovery
 and an explicit popup path. If bootstrap storage access or writing fails, or local browser capacity
 is exhausted, a bounded exact-Origin form cancels only the nonce-owned server intent. This releases
-the pending quota immediately and preserves other attempts; cancellation never issues credentials. HTTPS and literal-IP HTTP retain their isolated nonce cookies; other
+the pending quota immediately and preserves other attempts; cancellation never issues credentials.
+Post-claim code-persistence failures return terminal proof-cleanup HTML with a generic unavailable
+message. Audit-storage failure does not prevent that cleanup, and the consumed intent cannot replay. HTTPS and literal-IP HTTP retain their isolated nonce cookies; other
 HTTP DNS names remain refused. Hosts are canonicalized without DNS resolution. Source development's
 explicit `http://[::1]:3001` origin also remains supported, with app endpoints on other hosts and
 popup fallback for its cross-site silent path. See [app code exchange](../app-code-exchange/feature.md).

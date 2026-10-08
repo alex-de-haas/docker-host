@@ -2,7 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -855,6 +857,178 @@ public sealed class AppSignInIntentHttpTests
         Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
     }
 
+    [Theory]
+    [InlineData("standalone", false)]
+    [InlineData("silent", false)]
+    [InlineData("popup", false)]
+    [InlineData("standalone", true)]
+    public async Task NamedHttp_PostClaimPersistenceFailureClearsOnlyItsProofAndCannotIssueOnReplay(string mode, bool blockAudit)
+    {
+        await using var host = await HostAsync(coreOrigin: NamedCore);
+        using var browser = Browser(host, NamedCore);
+        using var started = await IntentAsync(browser, mode: mode);
+        var attempt = await StorageAttemptAsync(started);
+        using var otherStarted = await IntentAsync(browser);
+        var other = await StorageAttemptAsync(otherStarted);
+        var paths = host.Services.GetRequiredService<CoreDataPaths>();
+        var statePath = Path.Combine(paths.AuthRoot, "app-auth-codes.json");
+        // A directory at this exact state-file path blocks persistence on every OS, even as root.
+        // The valid navigation and nonce pass first; the store failure occurs after intent claim.
+        Directory.CreateDirectory(statePath);
+        if (blockAudit) Directory.CreateDirectory(paths.AuditLogPath);
+        try
+        {
+            using var failed = await StorageOpenAsync(browser, attempt, destination: mode == "silent" ? "iframe" : "document");
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, failed.StatusCode);
+            Assert.Equal("text/html", failed.Content.Headers.ContentType!.MediaType);
+            Assert.False(failed.Headers.Contains("Set-Cookie"));
+            Assert.Null(failed.Headers.Location);
+            var html = await failed.Content.ReadAsStringAsync();
+            Assert.Contains("sessionStorage.removeItem", html);
+            Assert.Contains("hosty.core.signin." + attempt.Id, html);
+            Assert.DoesNotContain("hosty.core.signin." + other.Id, html);
+            Assert.DoesNotContain("location.replace", html);
+            Assert.DoesNotContain("postMessage", html);
+            foreach (var sensitive in new[] { attempt.Nonce, other.Nonce, AuthCodeProof.Challenge,
+                AuthCodeProof.Verifier, SessionId, statePath, paths.AuthRoot, paths.AuditLogPath,
+                "IOException", "UnauthorizedAccessException", "Access to the path" })
+                Assert.DoesNotContain(sensitive, html);
+            Assert.False(host.Services.GetRequiredService<AppSignInIntentStore>().Contains(attempt.Id));
+            Assert.NotNull(host.Services.GetRequiredService<AppSignInIntentStore>().Find(AppId, other.Id, other.Nonce));
+            if (!blockAudit)
+            {
+                var record = Assert.Single(await host.Services.GetRequiredService<AuditStore>().ReadRecentAsync(),
+                    value => value.Outcome == "sign_in_authorization_failed");
+                Assert.Equal("auth.app-sign-in", record.Action);
+                Assert.Equal("sign_in_authorization_failed", Assert.Single(record.Details).Value);
+                var audit = await File.ReadAllTextAsync(paths.AuditLogPath);
+                foreach (var sensitive in new[] { attempt.Nonce, other.Nonce, AuthCodeProof.Challenge,
+                    AuthCodeProof.Verifier, SessionId, statePath, paths.AuthRoot,
+                    "IOException", "UnauthorizedAccessException", "Access to the path" })
+                    Assert.DoesNotContain(sensitive, audit);
+            }
+        }
+        finally
+        {
+            Directory.Delete(statePath);
+            if (blockAudit) Directory.Delete(paths.AuditLogPath);
+        }
+
+        Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        using var replay = await StorageOpenAsync(browser, attempt, destination: mode == "silent" ? "iframe" : "document");
+        Assert.Equal(HttpStatusCode.Forbidden, replay.StatusCode);
+        Assert.Equal("sign_in_intent_invalid", await ErrorAsync(replay));
+        Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        using var nextStarted = await IntentAsync(browser, mode: mode);
+        Assert.Equal(HttpStatusCode.OK, nextStarted.StatusCode);
+        var next = await StorageAttemptAsync(nextStarted);
+        using var completed = await StorageOpenAsync(browser, next, destination: mode == "silent" ? "iframe" : "document");
+        Assert.Equal(HttpStatusCode.OK, completed.StatusCode);
+        Assert.Single((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        Assert.NotNull(host.Services.GetRequiredService<AppSignInIntentStore>().Find(AppId, other.Id, other.Nonce));
+    }
+
+    [Fact]
+    public async Task NamedHttp_RequestCancellationAfterClaimIsNotReportedAsAuthorizationFailure()
+    {
+        var clock = new CallbackClock();
+        await using var host = await HostAsync(clock, coreOrigin: NamedCore);
+        using var browser = Browser(host, NamedCore);
+        using var started = await IntentAsync(browser);
+        var attempt = await StorageAttemptAsync(started);
+        var store = host.Services.GetRequiredService<AppSignInIntentStore>();
+        using var cancellation = new CancellationTokenSource();
+        // Cancel at the first clock read after the claim, before authorization-code persistence.
+        clock.OnRead = () =>
+        {
+            if (!store.Contains(attempt.Id)) cancellation.Cancel();
+        };
+        var server = Assert.IsType<TestServer>(host.Services.GetRequiredService<IServer>());
+        using var form = new FormUrlEncodedContent(new Dictionary<string, string>
+        { ["nonce"] = attempt.Nonce, ["browserProofs"] = "{}" });
+        var bytes = await form.ReadAsByteArrayAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => server.SendAsync(context =>
+        {
+            context.Request.Method = "POST";
+            context.Request.Scheme = "http";
+            context.Request.Host = new HostString("core.hosty.localhost", 7070);
+            context.Request.Path = $"/api/apps/{AppId}/open";
+            context.Request.QueryString = new QueryString("?requestId=" + attempt.Id);
+            context.Request.Headers.Origin = NamedCore;
+            context.Request.Headers.Cookie = "hosty_session=" + SessionId;
+            context.Request.Headers["Sec-Fetch-Mode"] = "navigate";
+            context.Request.Headers["Sec-Fetch-Dest"] = "document";
+            context.Request.ContentType = "application/x-www-form-urlencoded";
+            context.Request.ContentLength = bytes.Length;
+            context.Request.Body = new MemoryStream(bytes);
+            context.RequestAborted = cancellation.Token;
+        }));
+        clock.OnRead = null;
+        Assert.True(cancellation.IsCancellationRequested);
+        Assert.False(store.Contains(attempt.Id));
+        Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        Assert.DoesNotContain(await host.Services.GetRequiredService<AuditStore>().ReadRecentAsync(),
+            record => record.Outcome == "sign_in_authorization_failed");
+    }
+
+    [Fact]
+    public async Task NamedHttp_PostClaimIdentityFailureStillClearsItsProofWhenAuditIsUnavailable()
+    {
+        var clock = new CallbackClock();
+        await using var host = await HostAsync(clock, coreOrigin: NamedCore);
+        using var browser = Browser(host, NamedCore);
+        using var started = await IntentAsync(browser);
+        var attempt = await StorageAttemptAsync(started);
+        using var otherStarted = await IntentAsync(browser);
+        var other = await StorageAttemptAsync(otherStarted);
+        var store = host.Services.GetRequiredService<AppSignInIntentStore>();
+        var paths = host.Services.GetRequiredService<CoreDataPaths>();
+        Directory.CreateDirectory(paths.AuditLogPath);
+        // Inject an access-policy exception only after nonce ownership has claimed this intent.
+        clock.OnRead = () =>
+        {
+            if (store.Contains(attempt.Id)) return;
+            clock.OnRead = null;
+            throw new AppIdentityException("app_access_denied", "This app is no longer accessible.");
+        };
+        try
+        {
+            using var failed = await StorageOpenAsync(browser, attempt);
+            Assert.Equal(HttpStatusCode.Forbidden, failed.StatusCode);
+            Assert.Equal("text/html", failed.Content.Headers.ContentType!.MediaType);
+            Assert.False(failed.Headers.Contains("Set-Cookie"));
+            Assert.Null(failed.Headers.Location);
+            var html = await failed.Content.ReadAsStringAsync();
+            Assert.Contains("This app is no longer accessible.", html);
+            Assert.Contains("sessionStorage.removeItem", html);
+            Assert.Contains("hosty.core.signin." + attempt.Id, html);
+            Assert.DoesNotContain("hosty.core.signin." + other.Id, html);
+            foreach (var sensitive in new[] { attempt.Nonce, other.Nonce, AuthCodeProof.Challenge,
+                AuthCodeProof.Verifier, SessionId, paths.AuditLogPath, paths.AuthRoot,
+                "IOException", "UnauthorizedAccessException", "Access to the path" })
+                Assert.DoesNotContain(sensitive, html);
+            Assert.False(store.Contains(attempt.Id));
+            Assert.NotNull(store.Find(AppId, other.Id, other.Nonce));
+            Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        }
+        finally
+        {
+            clock.OnRead = null;
+            Directory.Delete(paths.AuditLogPath);
+        }
+
+        using var replay = await StorageOpenAsync(browser, attempt);
+        Assert.Equal(HttpStatusCode.Forbidden, replay.StatusCode);
+        Assert.Equal("sign_in_intent_invalid", await ErrorAsync(replay));
+        Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        using var nextStarted = await IntentAsync(browser);
+        var next = await StorageAttemptAsync(nextStarted);
+        using var completed = await StorageOpenAsync(browser, next);
+        Assert.Equal(HttpStatusCode.OK, completed.StatusCode);
+        Assert.Single((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        Assert.NotNull(store.Find(AppId, other.Id, other.Nonce));
+    }
+
     [Fact]
     public async Task Intent_ChecksEveryInstalledAppHost_AndRefusesCapacityWithoutEviction()
     {
@@ -1297,4 +1471,21 @@ public sealed class AppSignInIntentHttpTests
             [new("web", "http", origin, true)], now, now));
     }
     private sealed class Clock : IClock { public DateTimeOffset UtcNow { get; set; } = DateTimeOffset.UtcNow; }
+    private sealed class CallbackClock : IClock
+    {
+        private readonly DateTimeOffset utcNow = DateTimeOffset.UtcNow;
+        private bool invokingCallback;
+        internal Action? OnRead { get; set; }
+        public DateTimeOffset UtcNow
+        {
+            get
+            {
+                if (invokingCallback) return utcNow;
+                invokingCallback = true;
+                try { OnRead?.Invoke(); }
+                finally { invokingCallback = false; }
+                return utcNow;
+            }
+        }
+    }
 }
