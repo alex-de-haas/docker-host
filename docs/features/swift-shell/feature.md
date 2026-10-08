@@ -1,6 +1,6 @@
 ---
 created: 2026-07-29
-updated: 2026-10-06
+updated: 2026-10-08
 summary: A native SwiftUI client for iOS, iPadOS and macOS that manages a host's installed apps.
 components: [apps/shell-swift]
 ---
@@ -474,9 +474,11 @@ another client started is visible here too.
 
 Applying is plan-first. `POST /api/apps/{id}/update/plan` builds a plan and returns a `planDigest`, and the
 apply must echo that digest back, so an apply can never act on a plan that changed after a person saw it.
-The change list is **always** shown; `requiresReview` raises the emphasis but does not decide whether the
-operator is told. The apply is asynchronous — the record reports `operationStatus: "updating"` while it
-runs.
+The change list is **always** shown. A routine plan has a native Apply update action; its asynchronous
+apply reports `operationStatus: "updating"` on the record. A plan with `requiresReview: true` instead
+shows instructions to open Hosty Shell for this host, find the app, choose Update and confirm the
+changes on Core's review page. Its native sheet has no Apply action and never submits the plan to
+the routine-only queued endpoint.
 
 Core writes its changes as machine tokens — `artifact:backend:sha256:f05e…->sha256:1df5…`,
 `setting:apiKey:type:string->secret`. Each is parsed into the thing that changed and the values it
@@ -602,6 +604,8 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
   healthy host is running, so a dimmed tile and its corner dot cannot be seen against one without
   stopping something real. The fixture reaches the other states by round-tripping an `AppSummary`
   through its own wire format, which keeps HostyKit from needing a public initializer for a preview.
+- The update sheet offers native Apply only for routine plans. Review-class plans show the Hosty Shell
+  → app Update → Core confirmation instructions, and the apply function refuses them before any request.
 - The routine-update filter is pinned on `AppSummary` rather than in a view: each clause is a refusal
   (review-class, no digest, already updating), and routine and needs-review are asserted exclusive, so
   the count an operator confirms cannot drift from the set that is sent.

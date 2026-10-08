@@ -26,7 +26,7 @@ export type AppStateFilter = "all" | "running" | "transitioning" | "attention" |
 
 /** Shared by Dashboard counts and visible rows so each count describes its own result set. */
 export function matchesAppStateFilter(
-  app: { permissionState?: { status: string; missingRequired: string[]; error?: string | null } | null; runtimeState?: string | null; operationStatus?: string | null; lastError?: string | null; restartRequired?: boolean; updateCheck?: { updateAvailable?: boolean; error?: string | null } | null; health?: { status: string } | null; lastOperation?: string | null; updateProgress?: { stage: string } | null },
+  app: { configurationReadiness?: { required: boolean } | null; permissionState?: { status: string; missingRequired: string[]; error?: string | null } | null; runtimeState?: string | null; operationStatus?: string | null; lastError?: string | null; restartRequired?: boolean; updateCheck?: { updateAvailable?: boolean; error?: string | null } | null; health?: { status: string } | null; lastOperation?: string | null; updateProgress?: { stage: string } | null },
   filter: AppStateFilter,
 ): boolean {
   switch (filter) {
@@ -34,7 +34,7 @@ export function matchesAppStateFilter(
     case "running": return isAppUp(app.runtimeState);
     case "transitioning": return isAppBusy(app.runtimeState);
     case "updates": return Boolean(app.updateCheck?.updateAvailable);
-    case "attention": return Boolean(app.permissionState?.error || (app.permissionState?.status === "known" && app.permissionState.missingRequired.length > 0) || app.restartRequired || app.updateCheck?.error || app.lastError || app.operationStatus === "failed" || app.runtimeState === "unknown" ||
+    case "attention": return Boolean(app.configurationReadiness?.required || app.permissionState?.error || (app.permissionState?.status === "known" && app.permissionState.missingRequired.length > 0) || app.restartRequired || app.updateCheck?.error || app.lastError || app.operationStatus === "failed" || app.runtimeState === "unknown" ||
       (app.operationStatus !== "updating" && !isAppBusy(app.runtimeState) && app.health?.status !== "healthy" &&
         ((isAppUp(app.runtimeState) && ["degraded", "unhealthy"].includes(app.health?.status ?? "")) ||
           (app.lastOperation === "update" && app.updateProgress?.stage === "needs-attention"))));

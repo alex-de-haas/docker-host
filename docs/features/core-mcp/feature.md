@@ -1,6 +1,6 @@
 ---
 created: 2026-08-09
-updated: 2026-09-18
+updated: 2026-10-08
 summary: An embedded MCP endpoint on Core with typed tools for apps, their state and their logs.
 components: [apps/core]
 ---
@@ -103,6 +103,12 @@ lifecycle authority — and the tools consult it:
 | `hosty:core` token with `mcp:read` | yes | refused, naming the scope |
 | `hosty:core` token with `mcp:lifecycle` | yes | yes |
 | delegated token (the facade's path, and the assistant panel's) | yes | **never** |
+
+Cookie-authenticated administrator calls to `apply_app_update` accept only routine cached plans;
+review-required changes use Core confirmation. The filter derives this policy from the credential
+actually authenticated, so an extra unscoped bearer header or tool argument cannot override a cookie session.
+Scoped `mcp:update` bearer credentials retain their standing update authority and existing permission,
+mount and source guards.
 
 The last row is deliberate and role does not override it: a delegated token carries sub, role and
 audience — never the scopes of the credential it descends from — so it cannot *prove* a standing
@@ -207,6 +213,8 @@ selects release. See [Core development mode](../core-dev-target/feature.md).
   to the `hosty:core` audience and requiring `mcp:read` beside it; and a broken audit store leaving
   the tool's answer untouched rather than falsifying it into a failure.
 - The auth gate in all three shapes it can be reached: anonymous, invalid bearer, valid non-admin.
+- Update HTTP tests pair cookie-authenticated review refusal with routine acceptance and scoped
+  `mcp:update` bearer acceptance, including a cookie presented beside an unscoped bearer header.
 - The log-line clamp asserted at both ends of the range through the budget the tool reports back.
 - Route visibility in the live `EndpointDataSource`, so the platform-wide anonymous-caller sweep
   provably covers this route.

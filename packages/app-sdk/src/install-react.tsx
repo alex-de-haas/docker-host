@@ -19,35 +19,85 @@ export function useInstallation(client: InstallationClient) {
   return { ...state, flow };
 }
 
+const popupOwners = new WeakMap<Window, object>();
+
 export interface InstallDialogProps {
   client: InstallationClient;
+  /** Choose the source/channel before opening. Core freezes that selection during preparation. */
   source?: InstallationSource;
+  /** Open synchronously in the Install click handler, before mounting or fetching a source. */
+  confirmationWindow?: Window | null;
   onClose: () => void;
+  /** Return to the caller's source/connection picker after a known pre-confirmation error. */
+  onChooseSource?: () => void;
   onInstalled?: (request: InstallationRequest) => void;
 }
 
-/** Mount when opened; unmount on close. Styling is self-contained and has no Next/Tailwind dependency. */
-export function InstallDialog({ client, source, onClose, onInstalled }: InstallDialogProps) {
-  const { request, busy, error, flow } = useInstallation(client);
+/** One Core confirmation, with app-local preparation/progress only. No installation questionnaire. */
+export function InstallDialog(props: InstallDialogProps) {
+  // A changed source is a new review. Never apply an earlier channel's confirmation to it.
+  return <InstallationSession key={JSON.stringify(props.source ?? null)} {...props} />;
+}
+
+function InstallationSession({ client, source, confirmationWindow, onClose, onChooseSource, onInstalled }: InstallDialogProps) {
+  const { request, busy, error, uncertainSubmit, flow } = useInstallation(client);
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
-  const [manifestPath, setManifestPath] = useState(source?.manifestPath ?? "");
-  const [settings, setSettings] = useState<Record<string, string>>({});
-  const [autostart, setAutostart] = useState(true);
-  const [draftPlanId, setDraftPlanId] = useState<string | null>(null);
+  const [manifestPath, setManifestPath] = useState("");
+  const [presentationError, setPresentationError] = useState<string | null>(null);
   const notified = useRef<string | null>(null);
-  const plan = request?.plan ?? null;
-  if (plan && request?.id !== draftPlanId) {
-    setDraftPlanId(request!.id);
-    setSettings(Object.fromEntries(plan.settings.map(setting => [setting.key, setting.secret ? "" : setting.defaultValue ?? ""])));
-    setAutostart(plan.defaultAutostart ?? true);
-  }
-  const initialManifest = source?.manifestPath;
-  const initialFeed = source?.feedsUrl;
-  const initialFeedId = source?.feedId;
+  const [initialSource] = useState(source);
+  const activePopup = useRef(confirmationWindow ?? null);
+  const popupOwner = useRef({});
+  const popupShown = useRef(false);
+  const mountLease = useRef(0);
+  const hasSource = Boolean(initialSource?.manifestPath || initialSource?.feedsUrl);
+  const frozen = uncertainSubmit || (request !== null && request.status !== "draft");
+
+  const claimPopup = (popup: Window | null) => {
+    activePopup.current = popup;
+    popupShown.current = false;
+    if (popup) popupOwners.set(popup, popupOwner.current);
+  };
+  const closeUnusedPopup = (popup = activePopup.current) => {
+    if (!popup || popupShown.current || popupOwners.get(popup) !== popupOwner.current) return;
+    popupOwners.delete(popup);
+    popup.close();
+  };
+  const showConfirmation = (popup: Window | null, submitted: InstallationRequest | null) => {
+    // A newer source session may now own the caller's preopened window.
+    if (popup && popupOwners.get(popup) !== popupOwner.current) return;
+    if (!submitted || submitted.status !== "pending") { closeUnusedPopup(popup); return; }
+    try {
+      showInstallationConfirmation(popup, submitted);
+      popupShown.current = Boolean(popup && !popup.closed);
+    } catch (cause) {
+      closeUnusedPopup(popup);
+      setPresentationError(cause instanceof Error ? cause.message : "Core confirmation could not be opened.");
+    }
+  };
+
   useEffect(() => {
-    if (initialManifest || initialFeed) void flow.review({ manifestPath: initialManifest, feedsUrl: initialFeed, feedId: initialFeedId });
-  }, [flow, initialManifest, initialFeed, initialFeedId]);
+    const lease = ++mountLease.current;
+    claimPopup(activePopup.current);
+    return () => {
+      // StrictMode immediately replays setup. Defer cleanup so that replay, or a new source
+      // session adopting the same window, can retain the reservation.
+      queueMicrotask(() => { if (mountLease.current === lease) closeUnusedPopup(); });
+    };
+  }, [flow]);
+  useEffect(() => {
+    if (!initialSource?.manifestPath && !initialSource?.feedsUrl) return;
+    let cancelled = false;
+    void (async () => {
+      await flow.review(initialSource);
+      if (cancelled) return;
+      if (flow.snapshot().request?.status !== "draft") { closeUnusedPopup(); return; }
+      const submitted = await flow.submit();
+      if (!cancelled) showConfirmation(activePopup.current, submitted);
+    })();
+    return () => { cancelled = true; };
+  }, [flow, initialSource]);
   useEffect(() => {
     const element = dialog.current;
     element?.showModal();
@@ -60,69 +110,63 @@ export function InstallDialog({ client, source, onClose, onInstalled }: InstallD
     }
   }, [request, onInstalled]);
 
-  const frozen = request !== null && request.status !== "draft";
-  const review = (runtime?: string) => flow.review({
-    ...(source?.feedsUrl ? { feedsUrl: source.feedsUrl, feedId: source.feedId } : { manifestPath: manifestPath.trim() }),
-    selectedRuntime: runtime,
-  });
-  const submit = async () => {
+  const install = async () => {
+    if (busy || frozen) return;
+    // The browser gesture is still active here, before any async preparation.
     const popup = openInstallationConfirmation();
-    const values = Object.fromEntries((plan?.settings ?? []).filter(setting => !setting.secret || settings[setting.key])
-      .map(setting => [setting.key, settings[setting.key] ?? ""]));
-    const submitted = await flow.submit(values, autostart);
-    if (submitted) showInstallationConfirmation(popup, submitted);
-    else popup?.close();
+    claimPopup(popup);
+    setPresentationError(null);
+    await flow.review({ manifestPath: manifestPath.trim() });
+    if (flow.snapshot().request?.status !== "draft") { closeUnusedPopup(popup); return; }
+    showConfirmation(popup, await flow.submit());
   };
+  const retry = async () => {
+    setPresentationError(null);
+    if (uncertainSubmit) { await flow.refresh(); return; }
+    const popup = openInstallationConfirmation();
+    claimPopup(popup);
+    // A known draft submit failure retries its existing identity, without resolving the feed again.
+    if (!request) await flow.review(initialSource ?? { manifestPath: manifestPath.trim() });
+    if (flow.snapshot().request?.status !== "draft") { closeUnusedPopup(popup); return; }
+    showConfirmation(popup, await flow.submit());
+  };
+  const close = () => {
+    closeUnusedPopup();
+    onClose();
+  };
+  const confirmationUrl = (() => {
+    if (request?.status !== "pending") return null;
+    try {
+      const url = new URL(request.approvalUrl);
+      return ["http:", "https:"].includes(url.protocol) ? url.href : null;
+    } catch { return null; }
+  })();
 
   return <dialog ref={dialog} className="hosty-install" aria-labelledby={titleId}
-    onCancel={event => { event.preventDefault(); onClose(); }}>
+    onCancel={event => { event.preventDefault(); close(); }}>
     <style>{styles}</style>
-    <header><h2 id={titleId}>Install app</h2><button type="button" onClick={onClose} aria-label="Close installation">×</button></header>
-    <p>Prepare the installation here, then confirm it securely in Hosty Core.</p>
-    {!source?.feedsUrl && !source?.manifestPath && <form onSubmit={event => { event.preventDefault(); void review(); }}>
-      <label>Manifest, app directory, or URL<input value={manifestPath} onChange={event => { setManifestPath(event.target.value); flow.clearReview(); }} required disabled={busy || frozen} /></label>
-      <button disabled={busy || frozen || !manifestPath.trim()}>Review</button>
+    <header><h2 id={titleId}>Install app</h2><button type="button" onClick={close} aria-label="Close installation">×</button></header>
+    {!hasSource && !request && <form onSubmit={event => { event.preventDefault(); void install(); }}>
+      <label>Manifest, app directory, or URL<input value={manifestPath} onChange={event => setManifestPath(event.target.value)} required disabled={busy} /></label>
+      <button className="primary" disabled={busy || !manifestPath.trim()}>Install</button>
     </form>}
-    {busy && <p role="status">Preparing installation…</p>}
-    {error && <div role="alert"><p>{error}</p>{!frozen && <button type="button" disabled={busy} onClick={() => void review()}>Retry review</button>}</div>}
-    {plan && <form onSubmit={event => { event.preventDefault(); void submit(); }}>
-      <h3>{plan.displayName} <small>{plan.targetVersion}</small></h3>
-      {plan.description && <p>{plan.description}</p>}
-      <label>Runtime<select value={plan.targetRuntime} disabled={busy || frozen} onChange={event => void review(event.target.value)}>
-        {(plan.runtimeProfiles ?? [{ key: plan.targetRuntime, type: plan.targetRuntimeType }]).map(runtime =>
-          <option key={runtime.key} value={runtime.key}>{runtime.key} ({runtime.type})</option>)}
-      </select></label>
-      {plan.targetRuntimeType === "localCommand" && <p className="warning">This runtime runs commands directly on your host, outside a container. Only install code you trust.</p>}
-      {plan.system && <p className="warning">This is a system app. User access is controlled by Hosty assignments.</p>}
-      {!!plan.requestedRoles?.length && <section><h3>Requested provider roles</h3><ul>{plan.requestedRoles.map(role => <li key={role}>{plan.roleDescriptions?.[role] ?? role}</li>)}</ul></section>}
-      {!!plan.corePermissions?.length && <section><h3>Requested Core permissions</h3><ul>{plan.corePermissions.map(permission => <li key={permission}>{plan.permissionDescriptions?.[permission] ?? permission}</li>)}</ul></section>}
-      {plan.settings.map(setting => <label key={setting.key}>
-        {setting.label || setting.key}{setting.required ? " (required)" : ""}
-        {setting.type === "boolean" && !setting.secret
-          ? <input type="checkbox" checked={["true", "1", "yes", "on", "enabled"].includes((settings[setting.key] ?? "").toLowerCase())}
-            disabled={busy || frozen} onChange={event => setSettings(current => ({ ...current, [setting.key]: String(event.target.checked) }))} />
-          : setting.type === "select" && setting.options?.length && !setting.secret
-            ? <select value={settings[setting.key] ?? ""} disabled={busy || frozen} onChange={event => setSettings(current => ({ ...current, [setting.key]: event.target.value }))}>
-              <option value="">Select a value</option>{setting.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-            : <input type={setting.secret ? "password" : setting.type === "number" ? "number" : setting.type === "url" ? "url" : "text"}
-              step={setting.type === "number" ? "any" : undefined} autoComplete={setting.secret ? "new-password" : "off"}
-              required={setting.required && !setting.secret} disabled={busy || frozen} value={settings[setting.key] ?? ""}
-              onChange={event => setSettings(current => ({ ...current, [setting.key]: event.target.value }))} />}
-        {setting.description && <small>{setting.description}</small>}
-      </label>)}
-      <label className="check"><input type="checkbox" checked={autostart} disabled={busy || frozen} onChange={event => setAutostart(event.target.checked)} /> Start automatically (now and on Core startup)</label>
-      {!frozen && <footer><button className="primary" disabled={busy}>Continue to Core confirmation</button></footer>}
-    </form>}
-    {frozen && <section role="status">
-      <p>{request.status === "pending" ? "Waiting for your confirmation in Hosty Core." : request.status === "executing" ? "Core is applying your confirmed request…" : request.status === "succeeded" ? "App installed." : request.status === "denied" ? "Installation cancelled." : "Installation failed. Close this dialog and review a new plan to retry."}</p>
-      {request.status === "pending" && <a href={request.approvalUrl} target="_blank" rel="noopener noreferrer">Open Core confirmation</a>}
+    {busy && <p role="status">Preparing Core confirmation…</p>}
+    {(error || presentationError) && <div role="alert"><p>{error || presentationError}</p>
+      {(!frozen || uncertainSubmit) && <button type="button" disabled={busy} onClick={() => void retry()}>
+        {uncertainSubmit ? "Check request status" : "Retry"}
+      </button>}
+      {!frozen && onChooseSource && <button type="button" disabled={busy} onClick={() => { closeUnusedPopup(); onChooseSource(); }}>Change source</button>}
+    </div>}
+    {uncertainSubmit && <p role="status">Core may have received this request. Check its status before continuing.</p>}
+    {request && request.status !== "draft" && <section role="status">
+      <p>{request.status === "pending" ? "Confirm runtime, automatic startup and permissions in Hosty Core." : request.status === "executing" ? "Core is installing your app…" : request.status === "succeeded" ? "App installed." : request.status === "denied" ? "Installation cancelled." : "Installation failed. Close this dialog to begin a new request."}</p>
+      {confirmationUrl && <a href={confirmationUrl} target="_blank" rel="noopener noreferrer">Open Core confirmation</a>}
       <p><small>Closing this dialog does not cancel an operation already confirmed in Core.</small></p>
     </section>}
   </dialog>;
 }
 
 const styles = `
-.hosty-install{box-sizing:border-box;width:min(640px,calc(100vw - 32px));max-height:calc(100dvh - 32px);padding:24px;border:1px solid var(--border,#aaa);border-radius:12px;background:var(--background,Canvas);color:var(--foreground,CanvasText);font:inherit;overflow:auto;margin:auto}
-.hosty-install::backdrop{background:#0008}.hosty-install header{display:flex;align-items:center;justify-content:space-between;gap:16px}.hosty-install h2{font-size:1.25rem;margin:0}.hosty-install h3{font-size:1rem;margin:20px 0 8px}.hosty-install p{margin:12px 0;font-size:.9rem}.hosty-install small{font-size:.8rem;opacity:.75}.hosty-install label{display:flex;flex-direction:column;gap:6px;margin:16px 0;font-size:.9rem}.hosty-install input:not([type=checkbox]),.hosty-install select{box-sizing:border-box;width:100%;border:1px solid var(--border,#aaa);border-radius:6px;padding:8px 10px;background:transparent;color:inherit;font:inherit}.hosty-install .check{flex-direction:row;align-items:center;gap:10px}.hosty-install input[type=checkbox]{width:16px;height:16px;accent-color:#2563eb}.hosty-install button{border:1px solid var(--border,#aaa);border-radius:6px;padding:8px 12px;font:inherit;background:transparent;color:inherit;cursor:pointer}.hosty-install button:disabled{opacity:.5;cursor:default}.hosty-install .primary{background:#2563eb;color:white;border-color:#2563eb}.hosty-install footer{display:flex;justify-content:flex-end;margin-top:24px}.hosty-install .warning{padding:12px;border:1px solid #b7791f;border-radius:6px}.hosty-install [role=alert]{color:#d33}.hosty-install a{color:#2563eb;text-decoration:underline}.hosty-install :focus-visible{outline:2px solid #60a5fa;outline-offset:3px}
+.hosty-install{box-sizing:border-box;width:min(480px,calc(100vw - 32px));max-height:calc(100dvh - 32px);padding:24px;border:1px solid var(--border,#aaa);border-radius:12px;background:var(--background,Canvas);color:var(--foreground,CanvasText);font:inherit;overflow:auto;margin:auto}
+.hosty-install::backdrop{background:#0008}.hosty-install header{display:flex;align-items:center;justify-content:space-between;gap:16px}.hosty-install h2{font-size:1.25rem;margin:0}.hosty-install p{margin:12px 0;font-size:.9rem}.hosty-install small{font-size:.8rem;opacity:.75}.hosty-install label{display:flex;flex-direction:column;gap:6px;margin:16px 0;font-size:.9rem}.hosty-install input{box-sizing:border-box;width:100%;border:1px solid var(--border,#aaa);border-radius:6px;padding:8px 10px;background:transparent;color:inherit;font:inherit}.hosty-install button{border:1px solid var(--border,#aaa);border-radius:6px;padding:8px 12px;font:inherit;background:transparent;color:inherit;cursor:pointer}.hosty-install button:disabled{opacity:.5;cursor:default}.hosty-install .primary{background:#2563eb;color:white;border-color:#2563eb}.hosty-install [role=alert]{color:#d33}.hosty-install a{color:#2563eb;text-decoration:underline}.hosty-install :focus-visible{outline:2px solid #60a5fa;outline-offset:3px}
 `;

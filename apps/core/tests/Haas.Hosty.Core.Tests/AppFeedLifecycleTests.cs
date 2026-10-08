@@ -37,6 +37,51 @@ public sealed class AppFeedLifecycleTests
     }
 
     [Fact]
+    public async Task ApprovalFeedRuntimeChoicePreservesExactSelectedChannel_AndDoesNotReplaceUnavailableDefault()
+    {
+        using var fixture = CreateFixture();
+        fixture.Set(FeedsUrl, FeedDocument(MainManifestUrl, BetaManifestUrl));
+        fixture.Set(MainManifestUrl, Manifest("1.0.0"));
+        const string beta = """
+            {"schemaVersion":"app.0.1","id":"com.example.notes","name":"Notes beta","version":"2.0.0",
+             "corePermissions":["apps.read"],"defaultRuntime":"dev",
+             "runtimeProfiles":[{"key":"dev","type":"localCommand","default":true},{"key":"docker","type":"docker"}],
+             "services":[{"key":"app","runtimes":{
+                "dev":{"type":"localCommand","command":"echo reviewed","workingDirectory":"."},
+                "docker":{"type":"docker","image":"ghcr.io/example/notes:2.0.0"}}}]}
+            """;
+        fixture.Set(BetaManifestUrl, beta);
+        var reviewed = await fixture.Lifecycle.CreateApprovalFeedPlanAsync(new(FeedsUrl, "beta"), default);
+        Assert.Equal("beta", reviewed.FeedId);
+        Assert.Equal("dev", reviewed.Install.TargetRuntime);
+        Assert.False(reviewed.Install.RuntimeChoices.Single(choice => choice.Key == "dev").Available);
+        Assert.True(reviewed.Install.RuntimeChoices.Single(choice => choice.Key == "docker").Available);
+        var entry = new InstallationApproval
+        {
+            UserId = "admin", CallerName = "Store", ExpiresAt = fixture.Clock.UtcNow.AddMinutes(15),
+            InstallPlan = reviewed.Install, Status = "pending",
+        };
+        var html = InstallationApprovalEndpoints.Render(entry, "nonce");
+        Assert.Contains("This runtime is not available", html);
+        Assert.Contains("name=decision value=approve disabled", html);
+        Assert.DoesNotContain("name=feed", html);
+        fixture.Set(FeedsUrl, FeedDocument(NextManifestUrl, NextManifestUrl));
+        fixture.Set(BetaManifestUrl, beta.Replace("2.0.0", "3.0.0").Replace("apps.read", "apps.install"));
+        fixture.Set(NextManifestUrl, Manifest("9.0.0"));
+        var selected = await fixture.Lifecycle.SelectReviewedInstallRuntimeAsync(reviewed.Install, "docker", null, default);
+        Assert.Equal("2.0.0", selected.TargetVersion);
+        Assert.Equal([CoreAppPermissions.ReadApps], selected.CorePermissions);
+        await fixture.Lifecycle.InstallAsync(new(selected.ManifestPath, PlanId: selected.PlanId, Autostart: false,
+            StartOnInstall: false, FeedsUrl: reviewed.FeedsUrl, FeedId: reviewed.FeedId));
+        var installed = (await fixture.Apps.GetAppAsync("com.example.notes"))!;
+        Assert.Equal("2.0.0", installed.Version);
+        Assert.Equal("beta", installed.FollowedFeedId);
+        Assert.Equal(BetaManifestUrl, installed.ManifestUrl);
+        Assert.Equal("docker", installed.SelectedRuntime);
+        Assert.Equal([CoreAppPermissions.ReadApps], installed.GrantedCorePermissions);
+    }
+
+    [Fact]
     public async Task FeedInstallPlanAndApply_UsesSoleDefaultAndPersistsFeedState()
     {
         using var fixture = CreateFixture();

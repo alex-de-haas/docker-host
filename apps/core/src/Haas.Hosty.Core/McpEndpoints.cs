@@ -192,7 +192,10 @@ internal static class McpEndpoints
                     // An administrator's session is the full-role credential; lifecycle and update
                     // come with the role, exactly as they do on every /api route the same person
                     // could call directly. The scopes narrow *tokens*, never the role itself.
-                    sessionGrants = new McpCallerGrants(Lifecycle: true, Update: true, user.Id, CoreRestart: true);
+                    // Cookie-authenticated updates still require per-action Core review; provenance
+                    // comes from session resolution, never tool arguments or mere header presence.
+                    sessionGrants = new McpCallerGrants(Lifecycle: true, Update: true, user.Id, CoreRestart: true,
+                        RequireRoutineUpdates: CoreSessionAuthorization.ReadSessionCredential(http.Request).Source == SessionCredentialSource.Cookie);
                     return Task.FromResult<IResult>(Results.Empty);
                 },
                 requireCsrf: true,
@@ -275,7 +278,8 @@ internal sealed class HostyCoreTools
             app.SelectedRuntime,
             app.LastError,
             endpoints,
-            interfaces));
+            interfaces,
+            app.ConfigurationReadiness));
     }
 
     [McpServerTool(Name = "get_host_status", ReadOnly = true)]
@@ -558,7 +562,8 @@ internal sealed class HostyCoreTools
         string outcome;
         try
         {
-            var result = await lifecycle.EnqueueUpdateAsync(target, new AppUpdateApplyRequest(digest), cancellationToken);
+            var result = await lifecycle.EnqueueUpdateAsync(target, new AppUpdateApplyRequest(digest), cancellationToken,
+                requireRoutine: grants.RequireRoutineUpdates);
 
             // **Accepted, not succeeded.** The apply runs detached — EnqueueUpdateAsync returns
             // "updating" the moment the work is queued — so calling this a success would report an
@@ -714,7 +719,8 @@ internal sealed class HostyCoreTools
 /// <c>mcp:lifecycle</c> scope. A delegated token never carries it, because it does not carry the
 /// scopes of the credential it descends from — role alone must not stand in for the grant.
 /// </remarks>
-internal sealed record McpCallerGrants(bool Lifecycle, bool Update, string ActorUserId, bool CoreRestart = false)
+internal sealed record McpCallerGrants(bool Lifecycle, bool Update, string ActorUserId, bool CoreRestart = false,
+    bool RequireRoutineUpdates = false)
 {
     /// <summary>The <c>HttpContext.Items</c> slot the filter writes and the tools read.</summary>
     public const string Key = "hosty:mcp-caller-grants";
@@ -754,7 +760,8 @@ internal sealed record McpAppDetail(
     string? SelectedRuntime,
     string? LastError,
     IReadOnlyList<McpAppEndpoint> Endpoints,
-    IReadOnlyList<McpAppInterface> Interfaces);
+    IReadOnlyList<McpAppInterface> Interfaces,
+    AppConfigurationReadiness? ConfigurationReadiness = null);
 
 internal sealed record McpAppEndpoint(string Key, string? Url, string? Availability);
 

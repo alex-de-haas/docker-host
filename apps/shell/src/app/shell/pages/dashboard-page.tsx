@@ -1153,15 +1153,15 @@ function InstalledAppRow({
   const canUpdate = canManageApps && appSupportsReviewedUpdate(app);
   // The row's update affordance renders from the fleet-check verdict on the app summary (plan-first
   // updates), as one icon among the other row actions: blue applies the cached plan straight away,
-  // amber means the plan must be read first and opens the review dialog. Either way the actions menu
-  // offers "Review and update" for the full plan. Progress is the record's operationStatus — server
+  // amber opens Core confirmation for changes requiring consent. Progress is operationStatus — server
   // state, so it survives reloads and shows for every admin.
   const updating = app.operationStatus === "updating";
   const verdict = canUpdate && !updating ? app.updateCheck : null;
   const updateVisible = Boolean(verdict?.updateAvailable);
-  // A verdict with no cached plan digest cannot be applied in one click (the plan expired or was
-  // consumed), so it takes the review path too — the dialog rebuilds the plan.
-  const needsReview = Boolean(verdict?.error || verdict?.requiresReview || !verdict?.planDigest);
+  // A missing cached digest makes the click rebuild the plan and classify the fresh candidate.
+  // Only its review-required verdict opens Core confirmation; routine updates queue directly.
+  const needsReview = verdict?.requiresReview === true;
+  const configurationRequired = app.configurationReadiness?.required === true;
   // Removal, like start/stop/restart/update, is an inherent Core operation: the endpoint authorizes on
   // the admin session, never on the manifest `capabilities` list, so an app cannot decline to be
   // uninstalled by omitting a token. System apps are removable too; the remove panel explains
@@ -1204,7 +1204,14 @@ function InstalledAppRow({
               <AppProblemIcons problems={problems} onPermissions={() => onOpenPanel(app, "settings", { settingsTab: "permissions" })} />
             </div>
             <div className="truncate text-xs text-muted-foreground">{app.id}</div>
-            {app.restartRequired && (
+            {configurationRequired && (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-amber-700 dark:text-amber-400">
+                <span>Configuration required</span>
+                {canConfigure && <Button variant="link" size="sm" className="h-auto p-0 text-xs text-inherit"
+                  onClick={() => onOpenPanel(app, "settings", { settingsTab: app.configurationReadiness?.mounts.length && !app.configurationReadiness?.missingSettings.length ? "mounts" : "app" })}>Configure</Button>}
+              </div>
+            )}
+            {app.restartRequired && !configurationRequired && (
               <div className="flex flex-wrap items-center gap-2 text-xs text-amber-700 dark:text-amber-400">
                 <span title="Settings or mounts changed since this app started.">Restart required</span>
                 {canControl && (
@@ -1278,12 +1285,12 @@ function InstalledAppRow({
                 {isBusy("stop") ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
               </IconButton>
             ) : (
-              <IconButton title="Start app" disabled={isBusy("start")} onClick={() => onAction(app, "start")}>
+              <IconButton title={configurationRequired ? "Configure the app before starting" : "Start app"} disabled={configurationRequired || isBusy("start")} onClick={() => onAction(app, "start")}>
                 {isBusy("start") ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
               </IconButton>
             ))}
             {canControl && (
-              <IconButton title="Restart app" disabled={transitioning || isBusy("restart")} onClick={() => onAction(app, "restart")}>
+              <IconButton title={configurationRequired ? "Configure the app before restarting" : "Restart app"} disabled={configurationRequired || transitioning || isBusy("restart")} onClick={() => onAction(app, "restart")}>
                 {transitioning || isBusy("restart") ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
               </IconButton>
             )}
@@ -1470,7 +1477,8 @@ function AppVersionCell({
               variant="ghost"
               size="icon-sm"
               className="shrink-0 text-amber-600 hover:bg-amber-500/10 hover:text-amber-600 dark:text-amber-500 dark:hover:text-amber-500"
-              title={verdict?.error ? "Previously found update — check failed; review before applying" : "Update available — review before applying"}
+              title="Update available — confirm changes in Core"
+              disabled={applying}
               aria-label="Update available — review before applying"
               onClick={onReview}
             >
@@ -1482,7 +1490,7 @@ function AppVersionCell({
               variant="ghost"
               size="icon-sm"
               className="shrink-0 text-sky-600 hover:bg-sky-500/10 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-400"
-              title="Routine update available — apply it (use the actions menu to review the changes first)"
+              title={verdict?.error || !verdict?.planDigest ? "Refresh the update before applying" : "Routine update available — apply it"}
               aria-label="Routine update available — apply"
               disabled={applying}
               onClick={onApply}
@@ -1788,12 +1796,12 @@ function InstalledAppActionsMenu({
                 Stop app
               </DropdownMenuItem>
             ) : (
-              <DropdownMenuItem disabled={transitioning || startBusy} onClick={() => onLifecycleAction("start")}>
+              <DropdownMenuItem disabled={app.configurationReadiness?.required || transitioning || startBusy} onClick={() => onLifecycleAction("start")}>
                 <Play className="h-4 w-4" />
                 Start app
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem disabled={transitioning || restartBusy} onClick={() => onLifecycleAction("restart")}>
+            <DropdownMenuItem disabled={app.configurationReadiness?.required || transitioning || restartBusy} onClick={() => onLifecycleAction("restart")}>
               <RotateCcw className="h-4 w-4" />
               Restart app
             </DropdownMenuItem>
@@ -1803,7 +1811,7 @@ function InstalledAppActionsMenu({
         {canReviewUpdate && (
           <DropdownMenuItem onClick={onReviewUpdate}>
             <ArrowUpCircle className="h-4 w-4" />
-            Review and update
+            Update app
           </DropdownMenuItem>
         )}
         {canCheckUpdate && (

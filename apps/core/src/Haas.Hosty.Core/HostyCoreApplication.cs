@@ -1280,9 +1280,14 @@ internal sealed class RuntimeAppSupervisorService(
     // Restarts an app the supervisor observed to have crashed, honoring its restart policy and a
     // per-app exponential-backoff crash-loop gate. Observing the app healthy clears the gate so a
     // future crash starts from a fresh budget.
-    private async Task ApplyRestartPolicyAsync(AppHealthObservation observation, CancellationToken cancellationToken)
+    internal async Task ApplyRestartPolicyAsync(AppHealthObservation observation, CancellationToken cancellationToken)
     {
         if ((await apps.GetAppAsync(observation.AppId, cancellationToken))?.OperationStatus == "blocked")
+        {
+            restartGates.Remove(observation.AppId);
+            return;
+        }
+        if (await lifecycle.RequiresConfigurationAsync(observation.AppId, cancellationToken))
         {
             restartGates.Remove(observation.AppId);
             return;

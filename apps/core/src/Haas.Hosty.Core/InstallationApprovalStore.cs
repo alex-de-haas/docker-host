@@ -105,15 +105,16 @@ internal sealed class InstallationApprovalStore(IClock clock)
         }
     }
 
-    public void Submit(InstallationApproval entry, InstallationSubmit input)
+    public void Submit(InstallationApproval entry, InstallationSubmit input, AppInstallPlan? reviewedInstall = null)
     {
         lock (gate)
         {
             _ = Get(entry.Id);
             if (entry.Status != "draft")
                 throw new AppLifecycleException("approval_frozen", "This request has already been submitted.");
+            if (reviewedInstall is not null) entry.InstallPlan = reviewedInstall;
             entry.Settings = input.Settings is null ? new Dictionary<string, string?>() : new Dictionary<string, string?>(input.Settings, StringComparer.Ordinal);
-            entry.Autostart = input.Autostart;
+            entry.Autostart = input.Autostart ?? entry.InstallPlan?.DefaultAutostart ?? true;
             entry.Status = "pending";
         }
     }
@@ -130,7 +131,7 @@ internal sealed class InstallationApprovalStore(IClock clock)
         }
     }
 
-    public void Decide(InstallationApproval entry, string nonce, string sessionId, bool approve, IReadOnlyList<string>? optionalPermissions = null, bool agentEnabled = false, IReadOnlyList<string>? agentSkills = null)
+    public void RequireDecisionNonce(InstallationApproval entry, string nonce, string sessionId)
     {
         lock (gate)
         {
@@ -139,6 +140,31 @@ internal sealed class InstallationApprovalStore(IClock clock)
                 !string.Equals(entry.DecisionSession, sessionId, StringComparison.Ordinal) ||
                 !CryptographicOperations.FixedTimeEquals(System.Text.Encoding.UTF8.GetBytes(entry.DecisionNonce), System.Text.Encoding.UTF8.GetBytes(nonce)))
                 throw new AppLifecycleException("approval_invalid", "The confirmation is invalid or has already been used.");
+        }
+    }
+
+    public void ChangeInstallRuntime(InstallationApproval entry, string nonce, string sessionId,
+        AppInstallPlan plan, bool? autostart)
+    {
+        lock (gate)
+        {
+            RequireDecisionNonce(entry, nonce, sessionId);
+            if (entry.InstallPlan is null || entry.InstallPlan.AppId != plan.AppId ||
+                entry.InstallPlan.TargetManifestDigest != plan.TargetManifestDigest)
+                throw new AppLifecycleException("approval_invalid", "The reviewed installation changed. Prepare a new request.");
+            entry.InstallPlan = plan;
+            if (autostart is not null) entry.Autostart = autostart.Value;
+            entry.DecisionNonce = null;
+            entry.DecisionSession = null;
+        }
+    }
+
+    public void Decide(InstallationApproval entry, string nonce, string sessionId, bool approve, IReadOnlyList<string>? optionalPermissions = null, bool agentEnabled = false, IReadOnlyList<string>? agentSkills = null,
+        bool? autostart = null)
+    {
+        lock (gate)
+        {
+            RequireDecisionNonce(entry, nonce, sessionId);
             if (approve)
             {
                 if (entry.AssistantAccessPlan is { } agent)
@@ -152,7 +178,11 @@ internal sealed class InstallationApprovalStore(IClock clock)
                 var declared = entry.PermissionPlan?.Optional ?? entry.InstallPlan?.OptionalCorePermissions ?? entry.UpdatePlan?.TargetOptionalCorePermissions ?? [];
                 var selected = optionalPermissions ?? [];
                 _ = CoreAppPermissions.ResolveGrants([], declared, selected);
+                if (entry.InstallPlan is { RuntimeChoices.Count: > 0 } install &&
+                    !install.RuntimeChoices.Any(choice => choice.Key == install.TargetRuntime && choice.Available))
+                    throw new AppLifecycleException("runtime_adapter_missing", "Choose an available runtime and review it before installing.");
                 entry.SelectedOptionalPermissions = selected.Distinct(StringComparer.Ordinal).ToArray();
+                if (entry.InstallPlan is not null && autostart is not null) entry.Autostart = autostart.Value;
             }
             entry.DecisionNonce = null;
             entry.DecisionSession = null;
@@ -188,7 +218,7 @@ internal sealed class InstallationApproval
     public string? IdentityToken { get; set; }
     public required string CallerName { get; init; }
     public required DateTimeOffset ExpiresAt { get; init; }
-    public AppInstallPlan? InstallPlan { get; init; }
+    public AppInstallPlan? InstallPlan { get; set; }
     public AppUpdatePlan? UpdatePlan { get; init; }
     public AppPermissionPlan? PermissionPlan { get; init; }
     public AssistantAccessPlan? AssistantAccessPlan { get; init; }
@@ -212,7 +242,7 @@ internal sealed class InstallationApproval
 internal sealed record InstallationPrepare(string? ManifestPath = null, string? FeedsUrl = null,
     string? FeedId = null, string? SelectedRuntime = null, string? UpdateAppId = null, string? PlanDigest = null, PrivateSourceChoice? SourceConnections = null, string? PermissionsAppId = null,
     string? RemoveAppId = null, AppRemoveRequest? RemovalOptions = null, HostPathChange? HostPathChange = null);
-internal sealed record InstallationSubmit(IReadOnlyDictionary<string, string?>? Settings = null, bool Autostart = true);
+internal sealed record InstallationSubmit(IReadOnlyDictionary<string, string?>? Settings = null, bool? Autostart = null);
 internal sealed record InstallationRequestView(string Id, string Status, AppInstallPlan? Plan, AppUpdatePlan? UpdatePlan,
     string ApprovalUrl, DateTimeOffset ExpiresAt, string? Error, AppPermissionPlan? PermissionPlan = null, AppRemovalPlan? RemovalPlan = null, HostPathApprovalPlan? HostPathPlan = null);
 

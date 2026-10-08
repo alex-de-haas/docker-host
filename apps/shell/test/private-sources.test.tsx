@@ -14,10 +14,11 @@ beforeEach(() => {
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", { configurable: true, value: vi.fn() });
   Object.defineProperty(HTMLDialogElement.prototype, "close", { configurable: true, value: vi.fn() });
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+  vi.spyOn(window, "open").mockReturnValue(null);
   send.mockReset(); read.mockReset();
   read.mockImplementation(async (url: string) => Response.json(url.endsWith("source-access") ? { status: "available", hasGitSource: true, access: { git: { connectionId: account.id } } } : { connections: [account] }));
 });
-afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const button = (text: string) => [...document.querySelectorAll("button")].find(b => b.textContent === text)!;
 async function choose(label: string, optionText: string) {
   const trigger = document.querySelector(`[aria-label="${label}"]`)!;
@@ -39,10 +40,16 @@ it("keeps public installation available when account selection lacks permission"
   read.mockResolvedValue(Response.json({ code: "app_permission_required", message: "Permission required" }, { status: 403 }));
   send.mockResolvedValue(Response.json({ message: "Review fixture" }, { status: 409 }));
   const client = createInstallationClient({ baseUrl: "https://core.test/api/installations", request: send });
-  await act(async () => root.render(<SourceInstallDialog client={client} source={{ manifestPath: "https://example.test/manifest.json" }} coreOrigin="https://core.test" sendCsrfJson={send} onClose={() => {}} onInstalled={() => {}} />));
+  await act(async () => root.render(<SourceInstallDialog client={client} coreOrigin="https://core.test" sendCsrfJson={send} onClose={() => {}} onInstalled={() => {}} />));
   expect(document.body.textContent).toContain("Public installation is still available.");
   expect(document.querySelector('a[href="https://core.test/install/permissions/hosty.shell"]')).not.toBeNull();
-  await act(async () => button("Review installation").click());
+  const input = document.querySelector("input")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "https://example.test/manifest.json");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => document.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  expect(window.open).toHaveBeenCalledTimes(1);
   expect(send.mock.calls[0][1]).toMatchObject({ manifestPath: "https://example.test/manifest.json" });
   expect(send.mock.calls[0][1]).not.toHaveProperty("sourceConnections");
 });
@@ -53,4 +60,13 @@ it("retains private account selection when a runtime change triggers another rev
   await client.prepare({ manifestPath: "https://example.test/manifest.json" });
   await client.prepare({ manifestPath: "https://example.test/manifest.json", selectedRuntime: "dev" });
   expect(send.mock.calls[1][1]).toEqual({ manifestPath: "https://example.test/manifest.json", selectedRuntime: "dev", sourceConnections: { manifestConnectionId: account.id } });
+});
+
+it("a selected manifest starts Core preparation directly without a Shell questionnaire", async () => {
+  send.mockResolvedValue(Response.json({ message: "Review fixture" }, { status: 409 }));
+  const client = createInstallationClient({ baseUrl: "https://core.test/api/installations", request: send });
+  await act(async () => root.render(<SourceInstallDialog client={client} source={{ manifestPath: "https://example.test/manifest.json" }} confirmationWindow={null} coreOrigin="https://core.test" sendCsrfJson={send} onClose={() => {}} onInstalled={() => {}} />));
+  expect(send.mock.calls[0][1]).toMatchObject({ manifestPath: "https://example.test/manifest.json" });
+  expect(document.body.textContent).not.toContain("Manifest connection");
+  expect(window.open).not.toHaveBeenCalled();
 });

@@ -47,6 +47,11 @@ internal sealed class HostPathAuthority(CoreDataPaths paths, AppRegistryStore ap
     {
         _ = new MountPathPolicy(paths).EnsureAllowed(path);
         var records = await apps.ListAppRecordsAsync(ct);
+        EnsureMountDoesNotExposeSources(path, records, candidate);
+    }
+
+    internal static void EnsureMountDoesNotExposeSources(string path, IReadOnlyList<AppRecord> records, AppRecord? candidate = null)
+    {
         if (candidate is not null) records = records.Where(a => a.Id != candidate.Id).Append(candidate).ToArray();
         foreach (var app in records)
         {
@@ -78,7 +83,8 @@ internal sealed class HostPathAuthority(CoreDataPaths paths, AppRegistryStore ap
     internal async Task AppAsync(AppRecord app, CancellationToken ct)
     {
         if (app.SourceState?.LocalOverridePath is { Length: > 0 } source) _ = await OverrideAsync(app, source, ct);
-        var registry = await globals.ReadAsync(ct);
+        var registry = app.Mounts?.Any(binding => binding.GlobalMountName is not null) == true
+            ? await globals.ReadAsync(ct) : new GlobalMountState(1, []);
         foreach (var binding in app.Mounts ?? [])
         {
             var path = binding.GlobalMountName is { } name ? registry.Mounts.FirstOrDefault(m => m.Name == name)?.HostPath : binding.HostPath;

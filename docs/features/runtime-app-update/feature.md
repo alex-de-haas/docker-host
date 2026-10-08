@@ -1,6 +1,6 @@
 ---
 created: 2026-06-04
-updated: 2026-10-07
+updated: 2026-10-08
 summary: Reviewed update plans and their apply behavior, including permission changes and routine updates.
 components: [apps/core, apps/shell]
 ---
@@ -10,8 +10,8 @@ components: [apps/core, apps/shell]
 Update plans also display `corePermissions` additions/removals. New permissions require
 [Core-owned confirmation](../app-installation-sdk/feature.md); the queued HTTP/MCP apply path
 refuses additions with `approval_required`. Confirmed application records the reviewed grant set.
-App callers with `apps.install` and an active administrator grant can apply routine cached plans
-through `POST /api/apps/{appId}/update` without Core confirmation. Non-routine plans still require
+App callers with `apps.install` and an active administrator grant, and direct Core administrator
+sessions, can apply routine cached plans through `POST /api/apps/{appId}/update` without Core confirmation. Non-routine plans still require
 Core review; the browser cannot override the server's classification. The queued path rechecks
 permission and role additions under the app lock and preserves only already granted permissions
 still declared by the target. It never restores a revoked required permission. Explicit operator
@@ -34,6 +34,9 @@ Update checking is **plan-first**: a check does not run a lighter probe than the
 6. Core applies runtime changes and records the final lifecycle state.
 
 The browser surface runs step 4 in the background (see [Background Apply](#background-apply)); the CLI control plane applies synchronously.
+
+The browser uses a [single Core review](../core-update-review/feature.md) for changes requiring
+consent. Routine updates apply directly. Feed selection is in app Settings → Source.
 
 ## Digest Semantics
 
@@ -167,7 +170,7 @@ This is what makes the flow reload-safe. The request-scoped cancellation token u
 
 Progress and outcome live on the app record, not in a client:
 
-- `operationStatus: "updating"` is persisted for the duration — every client renders progress from it, and it survives reloads, second browsers, and the Shell restarting itself. It is the **only** in-progress marker: a successful apply of a *running* app ends at `started` (the post-update restart), not `updated`.
+- `operationStatus: "updating"` is persisted for the duration — every client renders progress from it, and it survives reloads, second browsers, and the Shell restarting itself. It is the **only** in-progress marker: a successful apply of a *running* app ends at `started` when the post-update restart completes. A target with incomplete required configuration stays stopped and ends at `updated` with a completed outcome.
 - Completion flips the record (`updated`/`started`, or `failed` with `lastError`), so a reloaded page still learns the outcome. A post-apply single-app re-plan settles the app's verdict against its new base immediately instead of waiting for the next sweep.
 - A record still marked `"updating"` at startup means Core stopped mid-apply: the boot sweep flips it to `failed` with an actionable "interrupted by a Core restart" error. It runs before autostart reconciliation, and skips any app whose apply is genuinely in flight.
 - No update outcome is published to the notification inbox. An apply is always something the operator just asked for, and the record already carries the result onto the app row — a second copy in the bell was noise. Core purges any `app-update-applied:` / `app-update-failed:` advisories left by earlier versions on boot.

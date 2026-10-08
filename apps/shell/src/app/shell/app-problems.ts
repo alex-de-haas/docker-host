@@ -3,17 +3,8 @@ import type { AppProblem, CoreApp, CoreAppDependency } from "./types";
 // Kept a leaf module — types only, no runtime imports — so it stays directly testable under
 // `node --test`, which cannot resolve the extensionless specifiers app-helpers reaches for.
 
-// Whether the app has a required setting we can see is unset. Non-secret only: the API never surfaces
-// secret values, so a required secret can't be judged here — Core is the authoritative gate that refuses
-// the start (app_required_settings_missing).
-export function appHasMissingRequiredSettings(app: CoreApp) {
-  return (app.settings ?? []).some(
-    (setting) => setting.required && !setting.secret && (setting.value ?? "").trim().length === 0,
-  );
-}
-
 export function appReadinessProblem(app: CoreApp): AppProblem | null {
-  if (app.operationStatus === "updating" || app.runtimeState === "starting" || app.runtimeState === "stopping") return null;
+  if (app.configurationReadiness?.required || app.operationStatus === "updating" || app.runtimeState === "starting" || app.runtimeState === "stopping") return null;
   const afterUpdate = app.lastOperation === "update" && app.updateProgress?.stage === "needs-attention";
   if (app.health?.status === "healthy") return null;
   if (!afterUpdate && (app.runtimeState !== "running" || !["degraded", "unhealthy"].includes(app.health?.status ?? ""))) return null;
@@ -64,19 +55,13 @@ export function collectAppProblems(app: CoreApp): AppProblem[] {
     });
   }
 
-  // Only worth raising while the app is genuinely idle: a running app already got past this gate, and
-  // an app mid-start is being validated by Core right now — flagging it there would blink a warning on
-  // and off for every start. Deliberately `isIdle`, not `!== "running"`, which is what it used to be.
-  //
-  // Inlined rather than imported from ./runtime-states because this module is kept free of runtime
-  // imports so it stays directly testable under `node --test`, which cannot resolve extensionless
-  // relative specifiers. Keep the two in step.
-  if (app.runtimeState === "stopped" && appHasMissingRequiredSettings(app)) {
-    problems.push({
-      severity: "warning",
-      title: "Required settings have no value",
-      detail: "This app cannot start until every required setting is filled in.",
-    });
+  if (app.configurationReadiness?.required) {
+    const readiness = app.configurationReadiness;
+    const details = [readiness.missingSettings.length ? `Required settings: ${readiness.missingSettings.join(", ")}.` : "",
+      readiness.mounts.length ? `Mounts to configure: ${readiness.mounts.map(mount => mount.label || mount.key).join(", ")}.` : "",
+      readiness.error ? "Core could not verify the configuration." : ""].filter(Boolean).join(" ");
+    problems.push({ severity: "warning", title: "Configuration required",
+      detail: `${details} Open Settings to configure the app, then start it explicitly.` });
   }
 
   if (app.manifestError) {

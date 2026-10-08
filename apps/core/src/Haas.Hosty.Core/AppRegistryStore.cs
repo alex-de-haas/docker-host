@@ -1090,7 +1090,10 @@ internal sealed record AppSummary(
     string? EntryEndpoint = null,
     IReadOnlyList<string>? RequiredCorePermissions = null,
     IReadOnlyList<string>? OptionalCorePermissions = null,
-    AppPermissionObservation? PermissionState = null)
+    AppPermissionObservation? PermissionState = null,
+    // Effective launch requirements, derived by Core from the installed contract and current
+    // values/shared mounts. Presence only; secret values and host paths never appear here.
+    AppConfigurationReadiness? ConfigurationReadiness = null)
 {
     public static AppSummary From(
         AppRecord app,

@@ -176,22 +176,33 @@ Set `publicOrigin` to the Core-injected public origin for your UI endpoint when 
 exposes an internal request URL. The adapter checks browser `Origin` against this configured
 value, or against the request URL when it is omitted; forwarded-host headers are never trusted.
 
-The default dialog includes runtime selection, settings and a link to Core confirmation:
+The default dialog prepares installation and links to Core confirmation:
 
 ```tsx
 "use client";
 import { createInstallationClient } from "@hosty-sdk/app/install";
 import { InstallDialog } from "@hosty-sdk/app/install/react";
+import { openInstallationConfirmation } from "@hosty-sdk/app/install";
 const client = createInstallationClient();
 
+// In the Install click handler, before awaiting source preparation:
+const confirmationWindow = openInstallationConfirmation();
 // Render conditionally while open; unmount it when closed.
 <InstallDialog
   client={client}
+  confirmationWindow={confirmationWindow}
   source={{ feedsUrl: "https://example.com/feeds.json", feedId: "stable" }}
   onClose={() => setOpen(false)}
   onInstalled={() => { setOpen(false); refreshInstalledApps(); }}
 />;
 ```
+
+The default dialog immediately prepares the selected source and submits defaults. Core alone
+asks for runtime, automatic startup and permissions. Choose the channel before opening the
+dialog; changing the source creates a new request. Missing required configuration does not
+prevent installation: configure the stopped app afterwards. The dialog shows preparation,
+errors, status and an explicit confirmation link when the popup is blocked. An uncertain
+submission retains its ID and offers status-only recovery.
 
 For a custom UI, use `useInstallation(client)` or the framework-independent `InstallationFlow`.
 For direct API use, the same client provides the full request sequence:

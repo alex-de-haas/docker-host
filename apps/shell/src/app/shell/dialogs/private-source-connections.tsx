@@ -5,7 +5,7 @@ import { createInstallationClient, openInstallationConfirmation, type Installati
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useShellActions } from "../shell-context";
 import { createSourceConnectionsApi, type SourceConnection, type SourceProfile, type SourceSend } from "../source/source-connections";
 import { SourcePermissionHelp, isSourcePermissionError } from "../source/source-permission-help";
@@ -20,11 +20,11 @@ function ConnectionSelect({ label, value, onChange, connections, current, disabl
   return <div className="space-y-1 text-sm"><span>{label}</span>
     <Select value={value} onValueChange={onChange} disabled={disabled}>
       <SelectTrigger aria-label={label} className="w-full"><SelectValue /></SelectTrigger>
-      <SelectContent position="popper">
+      <SelectContent position="popper"><SelectGroup>
         {current !== undefined && <SelectItem value="keep">Keep current ({current})</SelectItem>}
         <SelectItem value="public">Public / no connection</SelectItem>
         {connections.filter(c => c.status !== "unsupported").map(c => <SelectItem key={c.id} value={c.id}>{c.label}{c.status !== "connected" ? " — reconnect required" : ""}</SelectItem>)}
-      </SelectContent>
+      </SelectGroup></SelectContent>
     </Select>
   </div>;
 }
@@ -34,13 +34,14 @@ export function withSourceConnections(client: InstallationClient, sourceConnecti
   return { ...client, prepare: source => client.prepare({ ...source, ...(sourceConnections ? { sourceConnections } : {}) }) };
 }
 
-export function SourceInstallDialog({ client, source, onClose, onInstalled, coreOrigin, sendCsrfJson }: {
-  client: InstallationClient; source?: InstallationSource; coreOrigin: string; sendCsrfJson: SourceSend;
+export function SourceInstallDialog({ client, source, onClose, onInstalled, coreOrigin, sendCsrfJson, confirmationWindow }: {
+  client: InstallationClient; source?: InstallationSource; confirmationWindow?: Window | null; coreOrigin: string; sendCsrfJson: SourceSend;
   onClose: () => void; onInstalled: () => void;
 }) {
   const api = useMemo(() => createSourceConnectionsApi(coreOrigin, sendCsrfJson), [coreOrigin, sendCsrfJson]);
   const [manifest, setManifest] = useState(source?.manifestPath ?? "");
-  const [reviewing, setReviewing] = useState(false);
+  const [reviewing, setReviewing] = useState(Boolean(source));
+  const [popup, setPopup] = useState<Window | null>(confirmationWindow ?? null);
   const [connections, setConnections] = useState<SourceConnection[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [manifestConnection, setManifestConnection] = useState(source?.sourceConnections?.manifestConnectionId ?? "public");
@@ -57,16 +58,16 @@ export function SourceInstallDialog({ client, source, onClose, onInstalled, core
       ...(gitConnection === "public" ? {} : { gitConnectionId: gitConnection }),
     }), [client, manifestConnection, gitConnection]);
   if (reviewing) return <InstallDialog client={selectedClient}
-    source={{ ...source, manifestPath: manifest.trim() }} onClose={() => setReviewing(false)} onInstalled={onInstalled} />;
+    source={{ ...source, manifestPath: manifest.trim() }} confirmationWindow={popup} onChooseSource={() => setReviewing(false)} onClose={onClose} onInstalled={onInstalled} />;
   return <Dialog open onOpenChange={open => { if (!open) onClose(); }}><DialogContent>
     <DialogHeader><DialogTitle>Install app</DialogTitle><DialogDescription>Choose a manifest and, for private sources, one of your connected accounts. Core reviews the installation.</DialogDescription></DialogHeader>
-    <form className="space-y-4" onSubmit={event => { event.preventDefault(); setReviewing(true); }}>
+    <form className="space-y-4" onSubmit={event => { event.preventDefault(); setPopup(openInstallationConfirmation()); setReviewing(true); }}>
       <label className="block space-y-1 text-sm">Manifest path or URL<Input required value={manifest} onChange={event => setManifest(event.target.value)} /></label>
       <ConnectionSelect label="Manifest connection" value={manifestConnection} onChange={setManifestConnection} connections={connections} />
       <ConnectionSelect label="Git source connection" value={gitConnection} onChange={setGitConnection} connections={connections} />
       {error ? <div className="space-y-2"><p className="text-sm text-muted-foreground">Private connections unavailable: {message(error)} Public installation is still available.</p>{isSourcePermissionError(error) && <SourcePermissionHelp coreOrigin={coreOrigin} />}</div>
         : <p className="text-sm text-muted-foreground">Manage accounts in Settings → Source connections.</p>}
-      <DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button disabled={!manifest.trim()}>Review installation</Button></DialogFooter>
+      <DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button disabled={!manifest.trim()}>Install</Button></DialogFooter>
     </form>
   </DialogContent></Dialog>;
 }
@@ -75,13 +76,14 @@ export function PrivateSourceConnections({ appId }: { appId: string }) {
   const { coreOrigin, sendCsrfJson } = useShellActions();
   const api = useMemo(() => createSourceConnectionsApi(coreOrigin, sendCsrfJson), [coreOrigin, sendCsrfJson]);
   const client = useMemo(() => createInstallationClient({ baseUrl: `${coreOrigin}/api/installations`, request: sendCsrfJson }), [coreOrigin, sendCsrfJson]);
-  const { flow, request, busy, error } = useInstallation(client);
+  const { flow, request, busy, error, uncertainSubmit } = useInstallation(client);
   const [connections, setConnections] = useState<SourceConnection[]>([]);
   const [access, setAccess] = useState<SourceAccess | null>(null);
   const [loadError, setLoadError] = useState<Error | null>(null);
   const [manifestConnection, setManifestConnection] = useState("keep");
   const [gitConnection, setGitConnection] = useState("keep");
   const dismiss = useRef<(() => void) | undefined>(undefined);
+  const unusedPopup = useRef<Window | null>(null);
   const load = useCallback(async (signal?: AbortSignal) => {
     const [profile, source] = await Promise.all([
       api.call("/source-connections", { signal }).then(r => r.json()) as Promise<SourceProfile>,
@@ -92,19 +94,23 @@ export function PrivateSourceConnections({ appId }: { appId: string }) {
   useEffect(() => {
     const controller = new AbortController();
     void load(controller.signal).then(({ profile, source }) => { if (!controller.signal.aborted) { setConnections(profile.connections); setAccess(source); setLoadError(null); } }).catch(cause => { if (!controller.signal.aborted) setLoadError(cause instanceof Error ? cause : new Error(String(cause))); });
-    return () => { controller.abort(); dismiss.current?.(); };
+    return () => { controller.abort(); dismiss.current?.(); unusedPopup.current?.close(); unusedPopup.current = null; };
   }, [load]);
   useEffect(() => { if (request?.status !== "pending") { dismiss.current?.(); dismiss.current = undefined; } }, [request?.status]);
-  const frozen = !!request && request.status !== "draft";
+  const frozen = uncertainSubmit || (!!request && request.status !== "draft");
   const current = (id?: string) => id ? connections.find(c => c.id === id)?.label ?? "saved account unavailable" : "public";
-  const review = () => flow.review({ updateAppId: appId, sourceConnections: {
-    ...(manifestConnection === "keep" ? {} : manifestConnection === "public" ? { clearManifestConnection: true } : { manifestConnectionId: manifestConnection }),
-    ...(gitConnection === "keep" || !access?.hasGitSource ? {} : gitConnection === "public" ? { clearGitConnection: true } : { gitConnectionId: gitConnection }),
-  } });
-  const confirm = async () => {
+  const review = async () => {
+    if (flow.snapshot().busy || flow.snapshot().uncertainSubmit) return;
     const popup = openInstallationConfirmation();
+    unusedPopup.current = popup;
+    await flow.review({ updateAppId: appId, sourceConnections: {
+      ...(manifestConnection === "keep" ? {} : manifestConnection === "public" ? { clearManifestConnection: true } : { manifestConnectionId: manifestConnection }),
+      ...(gitConnection === "keep" || !access?.hasGitSource ? {} : gitConnection === "public" ? { clearGitConnection: true } : { gitConnectionId: gitConnection }),
+    } });
+    if (flow.snapshot().request?.status !== "draft") { popup?.close(); return; }
     const submitted = await flow.submit({}, false);
-    if (submitted) dismiss.current = showCoreConfirmation(popup, submitted); else popup?.close();
+    if (submitted) { dismiss.current = showCoreConfirmation(popup, submitted); unusedPopup.current = null; }
+    else { popup?.close(); unusedPopup.current = null; }
   };
   return <section className="space-y-3 border-t p-4" aria-label="Source connections">
     <h3 className="font-medium">Source connections</h3>
@@ -118,8 +124,9 @@ export function PrivateSourceConnections({ appId }: { appId: string }) {
       {!frozen && <Button variant="outline" disabled={busy || (manifestConnection === "keep" && gitConnection === "keep")} onClick={() => void review()}>Review source update</Button>}
     </>}
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-    {request?.updatePlan && !frozen && <div className="space-y-2 text-sm"><p>{request.updatePlan.displayName} · {request.updatePlan.targetVersion} · {request.updatePlan.targetRuntime}</p><Button disabled={busy} onClick={() => void confirm()}>Continue to Core confirmation</Button></div>}
-    {frozen && <div className="space-y-2 text-sm" role="status">
+    {uncertainSubmit && <Button variant="outline" disabled={busy} onClick={() => void flow.refresh()}>Check request status</Button>}
+    {frozen && request && <div className="space-y-2 text-sm" role="status">
+      {request.status === "pending" && <Button variant="outline" onClick={() => { dismiss.current = showCoreConfirmation(openInstallationConfirmation(), request); }}>Open Core confirmation</Button>}
       <p>{request.status === "pending" ? "Waiting for confirmation in Core." : request.status === "executing" ? "Applying source update…" : request.status === "succeeded" ? "Source update completed." : request.status === "denied" ? "Source update cancelled." : "Source update failed."}</p>
       {["succeeded", "denied", "failed"].includes(request.status) && <Button variant="outline" disabled={busy} onClick={() => { flow.clearReview(); setManifestConnection("keep"); setGitConnection("keep"); void load().then(({ profile, source }) => { setConnections(profile.connections); setAccess(source); setLoadError(null); }).catch(cause => setLoadError(cause instanceof Error ? cause : new Error(String(cause)))); }}>Refresh connections</Button>}
     </div>}

@@ -225,8 +225,9 @@ public actor CoreClient {
         return response.plan
     }
 
-    /// Applies a plan the operator has seen. Core requires the reviewed digest, and returns as soon as the
-    /// apply is enqueued — progress shows up as `operationStatus: "updating"` on the app record.
+    /// Applies only a routine plan. Core requires its digest and refuses review-class plans, which need
+    /// Core-owned confirmation through Hosty Shell. Returns when the apply is enqueued; the app record
+    /// reports its progress as `operationStatus: "updating"`.
     public func applyUpdate(appID: String, planDigest: String) async throws {
         var request = makeRequest(.post, "/api/apps/\(escape(appID))/update")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

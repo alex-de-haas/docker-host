@@ -59,11 +59,14 @@ public sealed partial class CoreLifecycleServiceTests
             UpdatePlan = new AppUpdatePlan("example.assistant", "1", "2", "dev", "dev", "manifest", "digest", "plan", false, [])
             {
                 TargetRoles = [PlatformCapabilities.Assistant], TargetCorePermissions = [CoreAppPermissions.ReadSkills],
+                PreviousRequiredCorePermissions = [], PreviousOptionalCorePermissions = [],
             },
         };
         var html = InstallationApprovalEndpoints.Render(entry, "nonce");
         Assert.Contains("Provide an assistant", html);
         Assert.Contains("Read agent skills", html);
-        Assert.Equal(2, html.Split("(new)").Length - 1);
+        Assert.Equal(1, html.Split("(new)").Length - 1);
+        Assert.Contains("(new declaration)", html);
+        Assert.Contains("currently not granted", html);
     }
 }

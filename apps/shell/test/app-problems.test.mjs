@@ -90,21 +90,27 @@ test("available and assigned endpoints raise nothing", () => {
   assert.deepEqual(problems, []);
 });
 
-test("missing required settings warn only while the app is stopped", () => {
-  const settings = [{ key: "TOKEN", required: true, secret: false, value: "" }];
-  assert.equal(collectAppProblems(app({ settings })).length, 1);
-  assert.equal(collectAppProblems(app({ settings }))[0].severity, "warning");
-  // A running app already got past this gate, so repeating it would be noise.
-  assert.deepEqual(collectAppProblems(app({ runtimeState: "running", settings })), []);
-  // And an app mid-verb is being validated by Core right now: warning there would blink the icon on
-  // and off on every single start. The gate is isIdle, not "!== running".
-  assert.deepEqual(collectAppProblems(app({ runtimeState: "starting", settings })), []);
-  assert.deepEqual(collectAppProblems(app({ runtimeState: "stopping", settings })), []);
+test("Core readiness includes required secrets and mounts without guessing masked values", () => {
+  const settings = [{ key: "TOKEN", required: true, secret: true, value: null }];
+  assert.deepEqual(collectAppProblems(app({ settings })), []);
+  assert.deepEqual(collectAppProblems(app({ settings, configurationReadiness: { required: false, missingSettings: [], mounts: [] } })), []);
+  const record = app({ settings, configurationReadiness: { required: true, missingSettings: ["TOKEN"], mounts: [{ key: "media", label: "Media", reason: "required" }] } });
+  const [problem] = collectAppProblems(record);
+  assert.equal(problem.title, "Configuration required");
+  assert.equal(problem.severity, "warning");
+  assert.match(problem.detail, /TOKEN/);
+  assert.match(problem.detail, /Media/);
+  assert.equal(matchesAppStateFilter(record, "attention"), true);
+  assert.equal(matchesAppStateFilter({ ...record, configurationReadiness: null }, "attention"), false);
 });
 
-test("a required secret is not judged, since its value is never sent to the client", () => {
-  const settings = [{ key: "TOKEN", required: true, secret: true, value: "" }];
-  assert.deepEqual(collectAppProblems(app({ settings })), []);
+test("an incomplete successful update is configuration required, not failed readiness", () => {
+  const record = app({ lastOperation: "update", updateProgress: { stage: "completed" },
+    configurationReadiness: { required: true, missingSettings: [], mounts: [], error: "mounts_unavailable" } });
+  const [problem] = collectAppProblems(record);
+  assert.equal(problem.title, "Configuration required");
+  assert.match(problem.detail, /could not verify/);
+  assert.equal(collectAppProblems(record).length, 1);
 });
 
 test("a rejected live manifest warns and keeps the reason", () => {

@@ -82,9 +82,13 @@ Use explicit `localPort` only when a fixed local port is a real requirement. If 
 
 ## Settings
 
-Manifest settings are app-owned configuration. Each entry supports `key`, `type`, `default`, `secret`, `required`, and the optional presentation fields `label` and `description`. Settings marked `required: true` are highlighted in the Shell and surface a configuration warning until the operator provides a value. Do not define settings with the `HOSTY_PUBLIC_ORIGIN_` prefix. That prefix is reserved for Hosty-managed public endpoint origin settings, and Core ignores manifest-provided entries with that prefix so apps cannot pre-seed redirect origins.
+Manifest settings are app-owned configuration. Each entry supports `key`, `type`, `default`, `secret`, `required`, and the optional presentation fields `label` and `description`.
 
-`label` and `description` are presentation-only hints for the Shell settings and install-review UI: `label` replaces the raw env-var `key` as the field's friendly name (the `key` stays visible on hover), and `description` surfaces as an info-icon tooltip next to the label (shown on hover or focus). Both are optional — omit them and the Shell falls back to showing the `key`. Core never validates or acts on either.
+Settings marked `required: true` must have a usable effective value before launch. Browser installation does not ask for settings: it uses defaults and retained configuration. An incomplete app is installed stopped with a Configuration required warning and can be configured afterwards in Shell. Do not define settings with the `HOSTY_PUBLIC_ORIGIN_` prefix. That prefix is reserved for Hosty-managed public endpoint origin settings, and Core ignores manifest-provided entries with that prefix so apps cannot pre-seed redirect origins.
+
+**Author recommendations (not schema requirements).** Prefer defaults so the app installs without a questionnaire. Keep installation-wide, infrequently changed inputs such as service credentials and bootstrap paths in manifest settings. Put dynamic or user-specific preferences in the app's own Settings UI when it has one; prefer live application/reinitialization where practical. Headless apps retain manifest settings and do not need a UI or public origin. Keep one authoritative owner for each setting rather than duplicating values across Core and app storage. Existing applications need no forced migration or new restart-notification protocol. Runtime, automatic startup and permissions are the only Core installation choices; choose the feed beforehand.
+
+`label` and `description` are presentation-only hints for the Shell settings UI: `label` replaces the raw env-var `key` as the field's friendly name (the `key` stays visible on hover), and `description` surfaces as an info-icon tooltip next to the label (shown on hover or focus). Both are optional — omit them and the Shell falls back to showing the `key`. Core never validates or acts on either.
 
 ```jsonc
 "settings": [

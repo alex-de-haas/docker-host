@@ -407,7 +407,7 @@ internal static class LifecycleEndpoints
                         return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code == "app_not_found" ? 404 : 400);
                     }
                     return await HandleLifecycleError(() => lifecycle.EnqueueUpdateAsync(appId, input, cancellationToken,
-                        requireRoutine: AppManagementAuthorization.Caller(request) is not null));
+                        requireRoutine: true));
                 },
                 requireCsrf: true,
                 cancellationToken: cancellationToken));

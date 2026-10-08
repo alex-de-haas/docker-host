@@ -15,7 +15,7 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, Dia
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { detailTitle, formatBytes, formatUpdateChange, isAppAutostartEnabled } from "../app-helpers";
+import { detailTitle, formatBytes, isAppAutostartEnabled } from "../app-helpers";
 import { getAppFeeds, isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
 import {
   buildPublicOriginGroups,
@@ -33,7 +33,6 @@ import type {
   CoreGlobalMount,
   CoreMountSlot,
   CoreRemovalImpact,
-  CoreUpdatePlan,
   DetailPanelState,
   DetailView,
   LogsResponse,
@@ -42,7 +41,7 @@ import type {
   RemoveOptions,
   SettingsTab,
 } from "../types";
-import { CheckboxRow, EmptyState, FactCard, IconButton, InlineError } from "../ui";
+import { CheckboxRow, EmptyState, IconButton, InlineError } from "../ui";
 import { isAppIdle, isAppUp } from "../runtime-states";
 import type { ManagedPublicOriginReason } from "../use-managed-public-origins";
 import { useManagedPublicOrigins } from "../use-managed-public-origins";
@@ -68,7 +67,6 @@ export function AppDetailsDialog({
   onConfigureMounts,
   onConfigureSource,
   onClearSource,
-  onApplyUpdate,
   onSetFeed,
   onRemove,
   onLoadRemovalImpact,
@@ -97,7 +95,6 @@ export function AppDetailsDialog({
   onConfigureMounts: (app: CoreApp, mounts: MountBindingInput[]) => void;
   onConfigureSource: (app: CoreApp, path: string) => void;
   onClearSource: (app: CoreApp) => void;
-  onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => void;
   onSetFeed: (app: CoreApp, feedId: string) => void;
   onRemove: (app: CoreApp, options: RemoveOptions) => void;
   // Advisory "what does this affect" preview, loaded when the remove view opens.
@@ -112,7 +109,6 @@ export function AppDetailsDialog({
   // an app, never whether it can be uninstalled. The remove panel explains the consequences instead.
   const canRemoveApp = canManageApps;
   const canConfigureApp = canManageApps;
-  const canUpdateApp = canManageApps;
 
   const SurfaceDialog = view === "remove" ? AlertDialog : Dialog;
   const SurfaceDialogContent = view === "remove" ? AlertDialogContent : DialogContent;
@@ -156,6 +152,8 @@ export function AppDetailsDialog({
             canManageApps={canConfigureApp}
             globalMounts={globalMounts}
             initialTab={settingsTab}
+            coreOrigin={coreOrigin}
+            onSetFeed={onSetFeed}
             onConfigure={onConfigure}
             onConfigureMounts={onConfigureMounts}
             onConfigureSource={onConfigureSource}
@@ -164,11 +162,6 @@ export function AppDetailsDialog({
           />
         ) : (
           <InlineError message="You do not have permission to manage app settings." />
-        ))}
-        {view === "update" && (canUpdateApp ? (
-          <UpdatePanel app={app} detail={detail} coreOrigin={coreOrigin} canManageApps={canUpdateApp} isShell={isShell} busyAction={busyAction} onApplyUpdate={onApplyUpdate} onSetFeed={onSetFeed} />
-        ) : (
-          <InlineError message="You do not have permission to update apps." />
         ))}
         {view === "remove" && (
           <RemovePanel
@@ -399,6 +392,8 @@ function SettingsDialog({
   canManageApps,
   globalMounts,
   initialTab,
+  coreOrigin,
+  onSetFeed,
   onConfigure,
   onConfigureMounts,
   onConfigureSource,
@@ -410,6 +405,8 @@ function SettingsDialog({
   canManageApps: boolean;
   globalMounts: CoreGlobalMount[];
   initialTab?: SettingsTab;
+  coreOrigin: string;
+  onSetFeed: (app: CoreApp, feedId: string) => void;
   onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void;
   onConfigureMounts: (app: CoreApp, mounts: MountBindingInput[]) => void;
   onConfigureSource: (app: CoreApp, path: string) => void;
@@ -489,6 +486,7 @@ function SettingsDialog({
       )}
       {hasSource && (
         <div className={cn("flex min-h-0 flex-1 flex-col", active !== "source" && "hidden")}>
+          {active === "source" && <FeedSection app={app} coreOrigin={coreOrigin} busyAction={busyAction} canManageApps={canManageApps} onSetFeed={onSetFeed} />}
           {app.supportsSource && <SourceForm
             app={app}
             busyAction={busyAction}
@@ -952,117 +950,6 @@ function SourceForm({
   );
 }
 
-function UpdatePanel({
-  app,
-  detail,
-  coreOrigin,
-  canManageApps,
-  isShell,
-  busyAction,
-  onApplyUpdate,
-  onSetFeed,
-}: {
-  app: CoreApp;
-  detail: DetailPanelState;
-  coreOrigin: string;
-  canManageApps: boolean;
-  isShell: boolean;
-  busyAction: string | null;
-  onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => void;
-  onSetFeed: (app: CoreApp, feedId: string) => void;
-}) {
-  const plan = detail.updatePlan;
-
-  // A live source runtime adopts its manifest on restart and has no reviewed-update path; the Update
-  // affordance is normally hidden, but a deep link can still open this view, so explain rather than
-  // running a plan that Core would refuse (see CoreApp.live and runtime-app-update.md).
-  if (app.live) {
-    return (
-      <DialogBody>
-        <div className="flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm">
-          <Radio className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-          <div className="space-y-1">
-            <p className="font-medium text-emerald-700 dark:text-emerald-300">This runtime is live</p>
-            <p className="text-muted-foreground">Core runs this app from your source folder and adopts manifest edits on restart, so there is no reviewed update. Switch to a compiled runtime to use reviewed updates.</p>
-          </div>
-        </div>
-      </DialogBody>
-    );
-  }
-
-  // sourceConfigured is optional; only treat an explicit `false` from Core as "not configured".
-  const sourceMissing = plan?.sourceConfigured === false;
-  // The plan never switches the runtime — that is the Runtime switcher's job — so this stays hidden in
-  // the normal flow. Show the card only when Core reports a current runtime that actually differs from
-  // the target (a defensive off-chance); a missing currentRuntime (older Core) is treated as "no
-  // change", not as "none", so it never falsely lights the card.
-  const runtimeChanges = plan?.currentRuntime != null && plan.currentRuntime !== plan.targetRuntime;
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <DialogBody className="space-y-4">
-        <FeedSection app={app} coreOrigin={coreOrigin} canManageApps={canManageApps} busyAction={busyAction} onSetFeed={onSetFeed} />
-        {isShell && (
-          <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
-            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>
-              This is the Shell serving this page. Applying the update briefly restarts it — keep this tab open; the page
-              reloads automatically once the new Shell is up. If the new build fails to start, recover from a terminal with{" "}
-              <code className="rounded bg-muted px-1">hosty apps start hosty.shell</code>.
-            </span>
-          </div>
-        )}
-        {sourceMissing && (
-          <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
-            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>
-              Core has no update source for this app, so this plan compares it with its own installed copy and cannot find newer
-              versions. Plan the update from a manifest URL or folder with{" "}
-              <code className="rounded bg-muted px-1">hosty apps update-plan {app.id} --manifest &lt;url-or-path&gt;</code>; applying
-              an update from a URL records it for later checks. A source runtime can also use a source override in Settings &rarr; Source.
-            </span>
-          </div>
-        )}
-        {detail.loading ? (
-          <EmptyState icon={LoaderCircle} title="Loading update plan" iconClassName="animate-spin" />
-        ) : plan ? (
-          <>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <FactCard label="Version" value={`${plan.currentVersion} to ${plan.targetVersion}`} />
-              <FactCard label="Backup" value={plan.willCreatePreUpdateBackup ? "pre-update" : "none"} />
-              {runtimeChanges && (
-                <FactCard label="Runtime" value={`${plan.currentRuntime} to ${plan.targetRuntime}`} />
-              )}
-            </div>
-            <div className="rounded-md border p-4">
-              <h3 className="mb-2 text-sm font-medium">Changes</h3>
-              {plan.changes.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No changes reported.</p>
-              ) : (
-                <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-                  {plan.changes.map((change) => <li key={change}>{formatUpdateChange(change)}</li>)}
-                </ul>
-              )}
-            </div>
-          </>
-        ) : (
-          <EmptyState icon={Upload} title="No update plan" />
-        )}
-      </DialogBody>
-      {!detail.loading && plan && (
-        <DialogFooter className="sm:items-center">
-          <Button onClick={() => onApplyUpdate(app, plan)} disabled={plan.changes.length === 0 || busyAction === `${app.id}:update`}>
-            {busyAction === `${app.id}:update` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-            Apply update
-          </Button>
-        </DialogFooter>
-      )}
-    </div>
-  );
-}
-
-// The followed-feed selector reads the app-owned feed document through Core. Marketplace is not part
-// of this lifecycle path: Core resolves the installed app's FeedsUrl and owns validation/selection.
 function FeedSection({
   app,
   coreOrigin,
