@@ -70,8 +70,10 @@ Stopped, incompatible, attachment-less or UI-less providers cannot receive a dis
 The API is `GET /api/assistant` for administrator-authenticated choices and `POST /api/assistant` for
 the same-origin, user-attributed handoff. Core supplies declared assistant browser surfaces; Plans
 validates the result against them and opens it through Core's app-open route with standalone mode.
-API and UI origins can differ. The browser reserves the tab in the click gesture; a blocked or closed
-tab leaves an **Open discussion** link. Pending actions disable duplicate activation. Actor, provider,
+API and UI origins can differ. The browser reserves the tab in the click gesture, retains its opener
+until navigation starts and detaches it in the same synchronous task before the destination runs.
+This allows the sandboxed Shell frame to navigate its own popup without changing iframe permissions.
+A blocked or closed tab leaves an **Open discussion** link. Pending actions disable duplicate activation. Actor, provider,
 document version and content fingerprint scope a retained request identity across retries and page
 reloads. Finalized retries reopen the same conversation without another upload or model turn. An
 expired or closed handoff requires the explicit **Start a new discussion** action to get a new identity.
@@ -208,16 +210,23 @@ Document discussions require Core 0.125.0's assistant UI projection and the SDK 
 Older Core remains usable for reading sources and presents an actionable refusal for discussions.
 
 On 2026-10-08, automated handoff/authorization/retry coverage, the Plans and SDK builds, Core provider
-HTTP tests and the exact Core build pass. The live Core-managed Plans page displays the action and
-its permission-review link. The installed release Core and Plans' missing optional grant prevent
-live attachment/conversation acceptance; the operator instance has not been restarted or granted
-new access as part of this verification.
+HTTP tests and the exact Core build pass. The owner grants Plans' optional assistant permission,
+and the live Core reports the development project at the PR's implementation commit. Standalone
+Plans opens the selected document in a new Assistant tab with its repository, branch, path and
+SHA-256 in an editable prompt and the 41.8 KB Markdown attachment marked uploaded and ready to send.
+The conversation remains idle with no submitted message or per-conversation approval banner.
+The owner's Shell check reproduces the premature-opener-detachment navigation refusal. After the
+fix, the owner confirms that the original action opens the attached draft without using the fallback
+link; independent inspection confirms the resulting Assistant tab and uploaded attachment. The
+retry reuses the conversation created by the earlier attempt. Plans' 96 tests, lint and isolated
+production build pass, including a popup regression that fails before the fix.
 
 ## Testing Expectations
 
 - Discussion tests cover administrator/source refusals, same-origin POST, exact UTF-8 attachment
   bytes, selected workspace and deleted/stale versions, incompatible providers, separate API/UI
-  destinations, finalized replay, duplicate activation, persisted retry identities, blocked tabs
+  destinations, finalized replay, duplicate activation, persisted retry identities, blocked tabs,
+  sandboxed popup navigation before opener detachment
   and optional-permission recovery. Core projects only confirmed providers and declared browser UI.
 - HTTP authorization covers absent/read/full grants, current administrator role, app sessions,
   app-addressed assistant MCP and scoped credentials, mixed cookies, audience mismatch and revocation.

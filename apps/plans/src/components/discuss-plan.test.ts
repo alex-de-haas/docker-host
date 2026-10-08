@@ -86,6 +86,20 @@ describe("discuss document action", () => {
     expect(fetch.mock.calls.filter(call => call[1]?.method === "POST").map(call => call[0])).toEqual(["/api/assistant"]);
     expect(tab.close).not.toHaveBeenCalled();
   });
+  it("keeps the sandboxed popup's opener until navigation starts, then detaches it", async () => {
+    const tab = { opener: window as Window | null, document: { title: "", body: { textContent: "" } }, closed: false, location: { replace: vi.fn() }, close: vi.fn() };
+    tab.location.replace.mockImplementation(() => {
+      // A sandboxed iframe cannot navigate an auxiliary window it has already disowned.
+      if (tab.opener === null) throw new DOMException("The current window does not have permission to navigate the target frame.", "SecurityError");
+    });
+    vi.mocked(window.open).mockReturnValue(tab as unknown as Window);
+    await render(); await act(async () => button().click());
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(tab.location.replace).toHaveBeenCalledWith("https://core.example/open-discussion");
+    expect(tab.opener).toBeNull();
+    expect(tab.close).not.toHaveBeenCalled();
+    expect(fetch.mock.calls.filter(call => call[1]?.method === "POST")).toHaveLength(1);
+  });
   it("starts a new request only after an explicit action when a handoff is closed", async () => {
     fetch.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === "POST"
       ? response({ message: "This handoff expired.", code: "handoff_closed" }, false) : response(options));

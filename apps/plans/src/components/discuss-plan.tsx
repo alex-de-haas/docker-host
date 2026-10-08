@@ -55,7 +55,7 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
     let tab: Window | null = null;
     try {
       tab = window.open("about:blank", "_blank");
-      if (tab) { tab.opener = null; tab.document.title = "Opening Assistant"; tab.document.body.textContent = "Attaching the document to Assistant…"; }
+      if (tab) { tab.document.title = "Opening Assistant"; tab.document.body.textContent = "Attaching the document to Assistant…"; }
       // Named HTTP localhost origins do not expose Web Crypto in every supported browser.
       const contentHash = Array.from(sha256(new TextEncoder().encode(version.document.content)), value => value.toString(16).padStart(2, "0")).join("");
       const input = { repositoryId: detail.repository.id, path: detail.path, workspaceId: version.workspaceId,
@@ -70,7 +70,12 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
       const result = await appFetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
         .then(responseBody<{ url: string }>);
       setOpenUrl(result.url);
-      if (tab && !tab.closed) tab.location.replace(result.url);
+      if (tab && !tab.closed) {
+        // Sandboxed frames may navigate their own popup only while the opener relationship exists.
+        // Detach in this same task, before the destination document can run.
+        tab.location.replace(result.url);
+        tab.opener = null;
+      }
     } catch (cause) {
       tab?.close(); setError(failure(cause));
     } finally { running.current = false; setPending(false); }
