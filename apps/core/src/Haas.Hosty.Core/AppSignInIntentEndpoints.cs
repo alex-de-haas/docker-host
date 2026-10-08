@@ -183,7 +183,7 @@ internal static class AppSignInIntentEndpoints
                 if (!storage) ClearCookie(context, id);
                 if (storage)
                 {
-                    await RecordRefusalAsync(auditAppId, "sign_in_intent_capacity", audit, clock, context.RequestAborted);
+                    await RecordTerminalStorageRefusalAsync(context, auditAppId, "sign_in_intent_capacity", audit, clock);
                     return AppSignInStorageResponse.RenderRefusal(context.Response, intent,
                         "Too many pending sign-in attempts in this browser. Complete an existing attempt or wait five minutes.", 429);
                 }
@@ -195,7 +195,7 @@ internal static class AppSignInIntentEndpoints
                 if (!storage) ClearCookie(context, id);
                 if (storage)
                 {
-                    await RecordRefusalAsync(auditAppId, "sign_in_cookie_host_unsafe", audit, clock, context.RequestAborted);
+                    await RecordTerminalStorageRefusalAsync(context, auditAppId, "sign_in_cookie_host_unsafe", audit, clock);
                     return AppSignInStorageResponse.RenderRefusal(context.Response, intent, "Core's browser host is no longer isolated from apps.", 409);
                 }
                 return await RefuseAsync(auditAppId, "sign_in_cookie_host_unsafe", "Core's browser cookie host is no longer isolated from apps.", 409, audit, clock, context.RequestAborted);
@@ -210,14 +210,16 @@ internal static class AppSignInIntentEndpoints
                     intents.TryClaim(intent);
                     if (!storage) ClearCookie(context, id);
                     var reason = navigation.Denied is null ? "login_required" : "access_denied";
-                    await RecordRefusalAsync(auditAppId, reason, audit, clock, context.RequestAborted);
+                    if (storage) await RecordTerminalStorageRefusalAsync(context, auditAppId, reason, audit, clock);
+                    else await RecordRefusalAsync(auditAppId, reason, audit, clock, context.RequestAborted);
                     return storage ? StorageErrorRedirect(context.Response, intent, reason) : AppErrorRedirect(intent, reason);
                 }
                 if (navigation.Denied is not null)
                 {
                     intents.TryClaim(intent);
                     if (!storage) ClearCookie(context, id);
-                    await RecordRefusalAsync(auditAppId, "access_denied", audit, clock, context.RequestAborted);
+                    if (storage) await RecordTerminalStorageRefusalAsync(context, auditAppId, "access_denied", audit, clock);
+                    else await RecordRefusalAsync(auditAppId, "access_denied", audit, clock, context.RequestAborted);
                     if (storage)
                         return AppSignInStorageResponse.RenderRefusal(context.Response, intent, "This Core session cannot authorize app sign-in.",
                             (navigation.Denied as IStatusCodeHttpResult)?.StatusCode ?? 403);
@@ -235,12 +237,13 @@ internal static class AppSignInIntentEndpoints
                 if (!storage) ClearCookie(context, id);
                 if (intent.Mode == AppSignInMode.Silent && exception.Code is "user_not_found" or "user_disabled" or "app_access_denied" or "system_app_admin_required")
                 {
-                    await RecordRefusalAsync(auditAppId, exception.Code, audit, clock, context.RequestAborted);
+                    if (storage) await RecordTerminalStorageRefusalAsync(context, auditAppId, exception.Code, audit, clock);
+                    else await RecordRefusalAsync(auditAppId, exception.Code, audit, clock, context.RequestAborted);
                     return storage ? StorageErrorRedirect(context.Response, intent, "access_denied") : AppErrorRedirect(intent, "access_denied");
                 }
                 if (storage)
                 {
-                    await RecordRefusalAsync(auditAppId, exception.Code, audit, clock, context.RequestAborted);
+                    await RecordTerminalStorageRefusalAsync(context, auditAppId, exception.Code, audit, clock);
                     return AppSignInStorageResponse.RenderRefusal(context.Response, intent, exception.Message, AuthEndpoints.MapIdentityErrorStatus(exception.Code));
                 }
                 throw;

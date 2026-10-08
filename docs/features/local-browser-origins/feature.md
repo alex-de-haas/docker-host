@@ -42,7 +42,10 @@ and an explicit popup path. If bootstrap storage access or writing fails, or loc
 is exhausted, a bounded exact-Origin form cancels only the nonce-owned server intent. This releases
 the pending quota immediately and preserves other attempts; cancellation never issues credentials.
 Post-claim code-persistence failures return terminal proof-cleanup HTML with a generic unavailable
-message. Audit-storage failure does not prevent that cleanup, and the consumed intent cannot replay. HTTPS and literal-IP HTTP retain their isolated nonce cookies; other
+message. Every terminal named-localhost denial also cleans up only its claimed proof: browser capacity,
+changed host isolation, missing or denied sessions, and denied app access retain their existing error
+results even when audit storage is unavailable. Request cancellation still propagates, and consumed
+intents cannot replay. HTTPS and literal-IP HTTP retain their isolated nonce cookies; other
 HTTP DNS names remain refused. Hosts are canonicalized without DNS resolution. Source development's
 explicit `http://[::1]:3001` origin also remains supported, with app endpoints on other hosts and
 popup fallback for its cross-site silent path. See [app code exchange](../app-code-exchange/feature.md).
@@ -196,6 +199,8 @@ for the launch authority audit and notice behavior.
   against every endpoint cookie host, including private/non-HTTP schemes, while other HTTP DNS
   configurations fail closed.
 - Exercise real login and approval/denial, host-only session cookies, origin binding and shared-host rejection.
+- Block audit persistence in HTTP tests for every claimed named-localhost denial; verify current-proof
+  cleanup, preserved neighboring attempts, credential-free errors, replay refusal and cancellation propagation.
 - Verify legacy GET navigation without forwarding credentials, callback codes or POST bodies.
 - Verify runtime environment and restart-required migration for both localCommand and Docker.
 - Run `python3 scripts/check-docker-core-transport.py <built-core-dll-or-executable>` for changes to
