@@ -131,7 +131,7 @@ the capability spike and acceptance checks:
 
 ### SDK Overlay Integration Boundary
 
-Owner direction, 2026-10-08: [Hosty Overlay](../hosty-overlay/plan.md) owns the agreed root SDK
+Owner direction, 2026-10-08: [Hosty Overlay](../hosty-overlay/feature.md) owns the agreed root SDK
 integration, standard authentication/setup UI, simple session restoration and fixed light/dark
 Hosty design. Its plan records the detailed decisions; this plan does not duplicate those deliverables.
 The overlay is a candidate host for the picker, region selection and a keyboard entry point, while

@@ -120,4 +120,14 @@ Element picking, screenshots and assistant evidence belong to
 - Build and test all six consumers after SDK changes. Use an isolated Core-managed environment and
   normal password login for embedded/standalone, review-return and cookie-only Shell browser checks.
 - Browser acceptance includes light/dark, focus, keyboard interaction, delayed loading and app
-  portals. Unverified acceptance cases stay in the remaining plan until exercised.
+  portals, ordinary-user setup guidance and a different-user reset.
+
+Core-managed browser acceptance on 2026-10-08 uses ordinary password login and isolated
+administrator/member accounts. The member assigned to Demo App sees required-setup guidance with
+zero buttons or links. A Project Manager candidate using this SDK verifies a real shortened
+activity deadline: its open project dialog is hidden and inert, then renewal as the second
+administrator reloads the page and discards the unsaved dialog without creating a project.
+The candidate also passes standalone and Shell-embedded sign-in, as does Media Server. The earlier
+six-consumer checks cover same-user restoration, cookie-only Shell exchange, review cancellation/
+approval, outage/retry, themes and keyboard interaction. The isolated Core and apps are stopped
+after verification.

@@ -16,7 +16,7 @@ project-manager, the three in-tree Next apps, and Shell, after the media-server 
 the original shortlist guesswork with evidence, and the argument is the same one auth won on: the drift
 examples are already real. Ordering is by payoff.
 
-Owner-approved scope split, 2026-10-08: [Hosty Overlay](../hosty-overlay/plan.md) owns the shared
+Owner-approved scope split, 2026-10-08: [Hosty Overlay](../hosty-overlay/feature.md) owns the shared
 browser session coordinator, standard identity/session route adapters and uniform root UI.
 Its D1 replaces those portions of D1 below. Overlay presentation has no app customization; the
 remaining SDK extraction and adoption debts retain their scope here.
