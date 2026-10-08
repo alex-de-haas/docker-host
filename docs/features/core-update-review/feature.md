@@ -29,6 +29,9 @@ included in the plan digest and never re-fetched from a moving feed during conse
 
 Candidate configuration readiness is shown before approval. Apply rechecks under the app lock
 and leaves an incomplete target successfully installed and stopped, preserving automatic startup.
+A confirmed runtime stop releases its active source/mount path reservations before constructing the
+target record. Desired bindings, source selection and app data remain. An unconfirmed or failed stop
+retains those reservations and refuses to replace the installed version.
 The shared [configuration experience](../app-configuration-experience/feature.md) provides the
 Configuration required warning and Configure action. This does not add a lifecycle state.
 An incomplete Shell update leaves Shell itself offline. Its Core review explains recovery through
@@ -55,5 +58,7 @@ manual reload guidance.
 - Shell tests cover bounded stale preparation through the real row transport, reclassification,
   accepted/uncertain mutation guards, bulk continuation, routine routing and blocked popup fallback,
   cancellation, uncertain status recovery and self-update reconnect.
+- Lifecycle tests verify an incomplete update releases obsolete runtime reservations only after
+  confirmed stop, permits legitimate path operations and retains desired configuration and failed-stop authority.
 - Browser acceptance checks a review-required update opens exactly one Core review, a routine
   update opens none, feed changes do not apply automatically and incomplete apply remains stopped.

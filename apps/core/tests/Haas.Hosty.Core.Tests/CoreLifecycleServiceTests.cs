@@ -7626,6 +7626,8 @@ public sealed partial class CoreLifecycleServiceTests
 
         public int? FailOnStopCount { get; set; }
 
+        public string StopRuntimeState { get; set; } = AppRuntimeStates.Stopped;
+
         public async Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
         {
             var attempt = Interlocked.Increment(ref startCount);
@@ -7677,7 +7679,7 @@ public sealed partial class CoreLifecycleServiceTests
                 throw new AppLifecycleException("runtime_stop_failed", "Runtime failed to stop.");
             }
 
-            return new AppRuntimeOperationResult("stopped");
+            return new AppRuntimeOperationResult(StopRuntimeState);
         }
 
         public Task<AppRuntimeOperationResult> RemoveAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)

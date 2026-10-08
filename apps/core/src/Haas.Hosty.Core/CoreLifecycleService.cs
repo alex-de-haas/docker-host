@@ -2351,8 +2351,17 @@ internal sealed partial class CoreLifecycleService(
         if (wasRunning)
         {
             await SetUpdateProgressAsync(appId, "stopping", null, cancellationToken);
-            _ = await adapter.StopAsync(await CreateRuntimeContextAsync(app, currentSelection, cancellationToken), cancellationToken);
-            _ = await apps.UpdateAppAsync(appId, current => current with { RuntimeState = "stopped" }, cancellationToken);
+            var stopped = await adapter.StopAsync(await CreateRuntimeContextAsync(app, currentSelection, cancellationToken), cancellationToken);
+            if (stopped.RuntimeState != AppRuntimeStates.Stopped)
+                throw new AppLifecycleException("runtime_stop_failed", "Runtime did not confirm that the app stopped. Update was not applied.");
+            // The old process no longer owns these paths. Carry this stopped snapshot into the target
+            // record as well, including when incomplete configuration intentionally prevents restart.
+            app = (await apps.UpdateAppAsync(appId, current => current with
+            {
+                RuntimeState = AppRuntimeStates.Stopped,
+                ActiveMountPaths = null,
+                ActiveSourcePaths = null,
+            }, cancellationToken)).App;
         }
 
         if (plan.WillCreatePreUpdateBackup) await SetUpdateProgressAsync(appId, "backing-up", null, cancellationToken);
