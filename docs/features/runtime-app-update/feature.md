@@ -10,8 +10,8 @@ components: [apps/core, apps/shell]
 Update plans also display `corePermissions` additions/removals. New permissions require
 [Core-owned confirmation](../app-installation-sdk/feature.md); the queued HTTP/MCP apply path
 refuses additions with `approval_required`. Confirmed application records the reviewed grant set.
-App callers with `apps.install` and an active administrator grant can apply routine cached plans
-through `POST /api/apps/{appId}/update` without Core confirmation. Non-routine plans still require
+App callers with `apps.install` and an active administrator grant, and direct Core administrator
+sessions, can apply routine cached plans through `POST /api/apps/{appId}/update` without Core confirmation. Non-routine plans still require
 Core review; the browser cannot override the server's classification. The queued path rechecks
 permission and role additions under the app lock and preserves only already granted permissions
 still declared by the target. It never restores a revoked required permission. Explicit operator

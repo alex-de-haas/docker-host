@@ -4,10 +4,9 @@ import SwiftUI
 /// Reviewing and applying one app's update.
 ///
 /// Updates are plan-first by design: `POST /update/plan` builds a plan and returns a `planDigest`, and the
-/// apply must echo that digest back. So an apply can never act on a plan that changed after a person
-/// looked at it — and this screen is what makes the looking real. The change list is always shown, never
-/// only when `requiresReview` says so; the flag raises the emphasis, it does not decide whether the
-/// operator is told.
+/// routine apply must echo that digest back. The change list is always shown. Plans requiring review
+/// direct the operator to Hosty Shell for Core-owned confirmation rather than submitting them to the
+/// routine-only queued endpoint.
 struct UpdateReviewSheet: View {
     let app: AppSummary
     let model: AppsModel
@@ -71,24 +70,31 @@ struct UpdateReviewSheet: View {
 
             changesSection(plan)
 
-            Section {
-                Button {
-                    Task { await apply(plan) }
-                } label: {
-                    if applying {
-                        HStack {
-                            ProgressView().controlSize(.small)
-                            Text("Applying…")
-                        }
-                    } else {
-                        Text("Apply update")
-                    }
+            if plan.mustBeReviewed {
+                Section {
+                    Label("Core confirmation required", systemImage: "checkmark.shield")
+                        .font(.headline)
+                    Text("Open Hosty Shell for this host, find \(app.displayName), choose Update, and confirm the changes on Core's review page.")
                 }
-                .disabled(applying)
-            } footer: {
-                // The apply is enqueued and runs detached — the request returns as soon as Core accepts
-                // it, and progress shows up as the app's operation status.
-                Text("The host applies this in the background. The app list will show its progress.")
+            } else {
+                Section {
+                    Button {
+                        Task { await apply(plan) }
+                    } label: {
+                        if applying {
+                            HStack {
+                                ProgressView().controlSize(.small)
+                                Text("Applying…")
+                            }
+                        } else {
+                            Text("Apply update")
+                        }
+                    }
+                    .disabled(applying)
+                } footer: {
+                    // Routine apply runs detached; Core returns as soon as it accepts the operation.
+                    Text("The host applies this in the background. The app list will show its progress.")
+                }
             }
 
             if let error {
@@ -131,7 +137,7 @@ struct UpdateReviewSheet: View {
             }
         } footer: {
             if plan.mustBeReviewed {
-                Text("This plan changes more than the version and artifacts. Read it before applying.")
+                Text("Core must confirm these changes before the update can be applied.")
             }
         }
     }
@@ -148,6 +154,7 @@ struct UpdateReviewSheet: View {
     }
 
     private func apply(_ plan: AppUpdatePlan) async {
+        guard !plan.mustBeReviewed else { return }
         applying = true
         defer { applying = false }
 

@@ -16,6 +16,13 @@ queue acceptance triggers one refresh and a new routine/review classification. O
 transport failures and errors after acceptance never replay the mutation. The menu's Update app action follows the same rule. Update all includes only eligible
 routine offers, continues past individual stale refusals and queues Shell last. No scheduled automatic apply is introduced.
 
+The queued HTTP update endpoint enforces Core's routine classification for every caller, including
+direct administrator sessions. A review-required snapshot receives `approval_required` before queue
+acceptance or installed-state changes. Core-confirmed execution and the authenticated synchronous
+CLI control plane retain their separate reviewed apply paths.
+Cookie-authenticated Core MCP update calls enforce the same routine gate, derived from authenticated
+credential provenance. Scoped `mcp:update` bearer credentials retain their explicit standing authority.
+
 Core review renders the frozen current/target versions and runtimes, source, backup outcome,
 actual manifest changes and safe settings schema deltas. It omits empty change sections and secret
 values. Added and removed settings show type, sensitivity, required-at-launch and default-presence
@@ -54,7 +61,8 @@ manual reload guidance.
   metadata, safe settings details, mount declaration deltas, exact source/runtime/backup information
   and secret-safe HTML escaping. Mount-only changes and legacy routine snapshots cannot bypass review.
 - HTTP tests cover current administrator/caller authority, nonce/Origin, stale snapshots and atomic
-  one-time execution, including channel/runtime changes before consent.
+  one-time execution, including channel/runtime changes before consent. Direct Core-session queued
+  requests cannot bypass any review-required change category; routine apply and confirmed execution remain available.
 - Shell tests cover HTTP 400/409 stale refusals and bounded preparation through the real row transport, reclassification,
   accepted/uncertain mutation guards, bulk continuation, routine routing and blocked popup fallback,
   cancellation, uncertain status recovery and self-update reconnect.

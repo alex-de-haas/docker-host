@@ -106,6 +106,77 @@ public sealed class McpLifecycleHttpTests
         Assert.Equal("restart", result.GetProperty("action").GetString());
     }
 
+    [Theory]
+    [InlineData("cookie", true, false)]
+    [InlineData("cookie", false, true)]
+    [InlineData("cookie-with-bearer", true, false)]
+    [InlineData("scoped-bearer", true, true)]
+    public async Task CookieUpdateCallsRequireRoutineConsentWhileScopedBearerKeepsStandingAuthority(
+        string credentialKind, bool commandChanged, bool accepted)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var admin = await SeedSessionAsync(host, "host.admin");
+        using var client = host.CreateClient();
+        var credential = credentialKind == "scoped-bearer"
+            ? await CreateCredentialAsync(client, admin, "reviewed updater", ["mcp:read", "mcp:update"])
+            : admin;
+        var lifecycle = host.Services.GetRequiredService<CoreLifecycleService>();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var path = Path.Combine(host.Services.GetRequiredService<CoreDataPaths>().DataRoot, "mcp-update-consent.json");
+        const string initial = """
+            {"schemaVersion":"app.0.1","id":"example.mcp-update","name":"MCP update","version":"1.0.0",
+             "runtimeProfiles":[{"key":"local","type":"localCommand","default":true}],"defaultRuntime":"local",
+             "services":[{"key":"app","runtimes":{"local":{"type":"localCommand","command":"echo original","workingDirectory":"."}}}]}
+            """;
+        await File.WriteAllTextAsync(path, initial);
+        await lifecycle.InstallAsync(new(path, Autostart: false));
+        var target = initial.Replace("1.0.0", "1.0.1");
+        if (commandChanged) target = target.Replace("echo original", "echo reviewed");
+        await File.WriteAllTextAsync(path, target);
+        var plan = await lifecycle.CreateUpdatePlanAsync("example.mcp-update", new(path));
+        Assert.Equal(commandChanged, plan.RequiresReview);
+        var before = CoreJson.Text((await apps.GetAppAsync(plan.AppId))!);
+        var payload = JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0", id = 2, method = "tools/call",
+            @params = new { name = "apply_app_update", arguments = new { appId = plan.AppId, planDigest = plan.PlanDigest } },
+        });
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/mcp")
+        { Content = new StringContent(payload, Encoding.UTF8, "application/json") };
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+        if (credentialKind != "cookie") request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential);
+        if (credentialKind != "scoped-bearer")
+        {
+            request.Headers.Add("Cookie", $"hosty_session={admin}; hosty_csrf=mcp-review-csrf");
+            request.Headers.Add(CoreSessionAuthorization.CsrfHeaderName, "mcp-review-csrf");
+        }
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        var json = body.TrimStart().StartsWith('{') ? body
+            : body.Split('\n').Select(line => line.Trim()).First(line => line.StartsWith("data:", StringComparison.Ordinal))["data:".Length..];
+        var envelope = JsonDocument.Parse(json).RootElement;
+        Assert.False(envelope.TryGetProperty("error", out var protocolError), protocolError.ToString());
+        var result = JsonDocument.Parse(envelope.GetProperty("result").GetProperty("content")[0].GetProperty("text").GetString()!).RootElement;
+        if (!accepted)
+        {
+            Assert.Contains("Review it in Core", result.GetProperty("error").GetString());
+            Assert.Equal(before, CoreJson.Text((await apps.GetAppAsync(plan.AppId))!));
+            Assert.Null(lifecycle.TryGetRunningBackgroundUpdate(plan.AppId));
+            Assert.Equal(plan.PlanDigest, (await lifecycle.GetReviewedUpdatePlanAsync(plan.AppId, plan.PlanDigest)).PlanDigest);
+        }
+        else
+        {
+            Assert.Equal("updating", result.GetProperty("runtimeState").GetString());
+            if (lifecycle.TryGetRunningBackgroundUpdate(plan.AppId) is { } run) await run;
+            var updated = (await apps.GetAppAsync(plan.AppId))!;
+            Assert.Equal("1.0.1", updated.Version);
+            Assert.Null(updated.LastError);
+            Assert.Empty(updated.GrantedCorePermissions!);
+        }
+    }
+
     [Fact]
     public async Task ADelegatedTokenNeverCarriesLifecycle_BecauseItNeverCarriesTheScopes()
     {
