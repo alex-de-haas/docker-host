@@ -83,11 +83,11 @@ internal sealed record AppSessionGrantRecord(
 
 ## Assistant Tool Grants
 
-[Assistant session authority](../assistant-session-autonomy/feature.md#core-tool-authority) has an
-additional explicit Core review: one hour or until the approving browser session ends. The latter
-uses the browser's absolute expiry and continues checking its idle/revoked state. This privileged
-authority cannot outlive the Core sign-in even when an ordinary app identity grant remains valid.
-The assistant's native approval mode does not grant or renew Core authority.
+[Assistant activity authorization](../app-activity-window/feature.md#assistant-activity-authorization)
+uses the same browser-established app activity as other privileged app operations. Chats require no
+separate approval. Tool access ends when app activity or its authorizing Core session expires or is
+revoked, even while identity-only app access remains valid. Normal browser recovery supplies the new
+credential to an existing conversation. Native approval mode does not grant or renew Core authority.
 
 ## Account Recovery Revocation
 

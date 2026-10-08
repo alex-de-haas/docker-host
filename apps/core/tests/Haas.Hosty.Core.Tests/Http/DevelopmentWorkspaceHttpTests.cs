@@ -31,7 +31,6 @@ public sealed class DevelopmentWorkspaceHttpTests
         await apps.UpsertAppAsync(app with { GrantedCorePermissions = [CoreAppPermissions.Sources] });
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync(Root)).StatusCode);
         var browserGrant = await BrowserAuthorityFixture.Grant(host, app.Id, "admin");
-        await BrowserAuthorityFixture.Approve(host, app.Id, "admin");
         client.DefaultRequestHeaders.Remove("X-Hosty-User-Token");
         client.DefaultRequestHeaders.Add("X-Hosty-User-Token", browserGrant.AccessToken);
         var success = await client.GetAsync(Root);

@@ -164,8 +164,8 @@ export class SessionManager {
     }
   }
 
-  /** Update credentials only after the browser has renewed identity; Core still owns the lease. */
-  async refreshSessionAuthority(id: string, userId: string, credential: string): Promise<void> {
+  /** Update the owned conversation after app recovery; Core still checks app activity on every tool call. */
+  async refreshSessionCredentials(id: string, userId: string, credential: string): Promise<void> {
     await this.serialize(id, async () => {
       const session = await this.requireLive(id);
       if (session.record.createdBy !== userId) throw new AppContextError(403, "session_forbidden", "This session belongs to another user.");

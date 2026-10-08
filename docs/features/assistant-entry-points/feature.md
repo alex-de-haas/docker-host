@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-09-16
+updated: 2026-10-08
 summary: The assistant docks as a Shell panel reachable from every page, and apps can hand it context without driving it.
 components: [apps/shell, apps/harness, packages/app-sdk]
 ---
@@ -25,6 +25,13 @@ way back to a previous conversation, and there was no way back at all.
 `Ctrl`/`Cmd`+`Shift`+`A` toggles it: already looking at the assistant puts the panel away, anything
 else brings it here — including an open rail showing another app's panel. A shortcut that could only
 open would make the rail a trap on a small screen.
+
+The right rail includes **Open Assistant in a new tab** when an assistant panel is selected and
+its surface is reachable. It opens that chat surface through Core's ordinary app-open route with
+explicit standalone mode and the current theme. The link remains available when the panel body is
+collapsed, and opening it leaves the embedded conversation and draft mounted. The app owns identity
+recovery and conversation selection in the new tab; this action sends no prompt or handoff. Stopped,
+transitioning or still-starting surfaces do not offer the link.
 
 **The tab carries an attention badge**, and it is the count
 [agent-background-sessions](../agent-background-sessions/feature.md) publishes rather than a poll of

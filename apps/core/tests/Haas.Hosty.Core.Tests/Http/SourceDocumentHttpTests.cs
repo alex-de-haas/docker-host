@@ -119,7 +119,6 @@ public sealed class SourceDocumentHttpTests
         await users.WriteAsync(new(1, [new("user", "user@example.test", "User", role, false, now, now)], [],
             [new(assistant.Id, "user", now), new(AppId, "user", now)], []));
         var parent = await BrowserAuthorityFixture.Grant(host, assistant.Id, "user");
-        await BrowserAuthorityFixture.Approve(host, assistant.Id, "user");
         await host.Services.GetRequiredService<AgentPolicyStore>().ChangeAsync(AppId, new(target.InstalledAt, true,
             new Dictionary<string, string>(), new Dictionary<string, AssistantTargetGrant> { [assistant.Id] = new(now, "reviewed") }));
         var serviceTokens = host.Services.GetRequiredService<AppServiceTokenService>();

@@ -1,8 +1,8 @@
 ---
 created: 2026-10-05
-updated: 2026-10-05
+updated: 2026-10-08
 summary: A per-chat Normal or Autonomous mode that controls whether native commands and file changes ask for approval.
-components: [apps/harness]
+components: [apps/core, apps/harness]
 ---
 
 # Assistant Session Autonomy
@@ -38,17 +38,12 @@ have detached from the provider. Restoring Normal does not undo completed change
 
 ## Core Tool Authority
 
-Native approval mode and Core tool authority are separate. Core's protected review at
-`/activity/assistants/{appId}/{sessionId}` offers **Allow for one hour** and **Allow until sign-in
-session ends**, plus revoke/cancel. Only a same-origin browser form with a fresh one-use nonce may
-write this grant; an app service token cannot extend it. The long duration is bounded by the
-approving Core browser session's absolute expiry and checked against its current idle/revoked state
-on every authorization. It ends on sign-out, recovery, expiry or explicit revocation. It does not
-extend the Core session. Existing hourly grants keep their lifetime.
-
-Harness displays the selected duration accurately and refreshes after Core review. Permissions,
-installation identity and user access still apply. The grant contains no permission to share the
-user's Core cookie or other applications' tokens with Shell.
+Native approval mode and Core authorization are separate. MCP and workspace calls use the
+assistant app's [active authorization](../app-activity-window/feature.md#assistant-activity-authorization),
+with no additional approval for each conversation. Core checks the live authorizing sign-in, app
+activity deadline, user access, installation identity and existing grants. Normal and Autonomous
+neither add permissions nor extend this activity window. Standard app recovery updates the selected
+conversation's credentials while preserving its run and draft.
 
 ## Testing Expectations
 
@@ -61,5 +56,5 @@ user's Core cookie or other applications' tokens with Shell.
   revocation between authorization and dispatch.
 - Component tests cover the selector, process-access description, running states, save failures and
   composer blocking during persistence.
-- Core tests cover both protected form decisions, service-token refusal, nonce replay, hourly expiry,
-  session-duration grants beyond an hour, explicit revocation and browser-session expiry/revocation.
+- Core tests cover shared activity across chats, app expiry, normal renewal, browser-session
+  expiry/idle/revocation and preserved permission/installation checks.

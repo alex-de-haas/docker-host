@@ -3,6 +3,8 @@ export type ProviderKind = "speech-to-text" | "assistant";
 export type ProviderDescriptor = {
   appId: string; displayName: string; kind: ProviderKind; key: string;
   version: number | null; capabilities: string[]; url: string | null; available: boolean;
+  /** Declared browser surfaces for resolving assistant handoffs; absent on older Core versions. */
+  uiSurfaces?: Array<{ endpoint: string | null; path: string; url: string | null }> | null;
 };
 export type AppPermissionState = { required: string[]; optional: string[]; granted: string[]; reviewAvailable?: boolean; unsupportedRequired?: string[]; status?: string };
 export type ProviderInvocation = { callerAppId: string; callerInstallation: string; userId: string | null; hostRole: string | null; kind: ProviderKind; key: string };

@@ -1,7 +1,7 @@
 namespace Haas.Hosty.Core;
 
 internal sealed class WorkspaceAuthorization(AppServiceTokenService serviceTokens, AppRegistryStore apps,
-    AppIdentityService identity, AssistantSessionAuthority authority)
+    AssistantSessionAuthority authority)
 {
     public async Task<WorkspaceOwner> RequireAsync(HttpRequest request, string appId, string sessionId, CancellationToken ct)
     {
@@ -12,11 +12,10 @@ internal sealed class WorkspaceAuthorization(AppServiceTokenService serviceToken
             throw new AppIdentityException("app_permission_required", "The assistant needs the reviewed apps.sources.full permission.");
         var credential = request.Headers["X-Hosty-User-Token"].ToString();
         if (!credential.StartsWith("hostyg_", StringComparison.Ordinal))
-            throw new AppIdentityException("reauth_required", "Workspace access requires a browser app identity and Core-approved assistant session.");
-        var lease = await authority.RequireAsync(appId, sessionId, AppIdentityService.HashToken(credential), ct);
-        var actor = await identity.RevalidateAsync(credential, appId, ct);
+            throw new AppIdentityException("reauth_required", "Workspace access requires active browser app authorization.");
+        var actor = await authority.RequireAsync(appId, sessionId, AppIdentityService.HashToken(credential), ct);
         if (actor.HostRole != "host.admin") throw new AppIdentityException("admin_required", "Workspace operations require an administrator.");
-        var userId = lease.UserId;
+        var userId = actor.UserId;
         return new(appId, caller.InstalledAt, userId, sessionId);
     }
 }

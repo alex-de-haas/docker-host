@@ -11,11 +11,14 @@ export class PlansError extends Error {
   constructor(message: string, public status = 503, public code = "plans_unavailable") { super(message); }
 }
 export async function requireAdministrator(headers: Headers): Promise<string> {
+  return (await requireAdministratorIdentity(headers)).token;
+}
+export async function requireAdministratorIdentity(headers: Headers): Promise<{ token: string; userId: string }> {
   const token = readAppIdentityToken(headers, config);
   const session = await resolveAppSession(token, config);
   if (session.status === "active") {
     if (session.identity.hostRole !== "host.admin") throw new PlansError("Plans is available only to Hosty administrators.", 403, "administrator_required");
-    return token!;
+    return { token: token!, userId: session.identity.userId };
   }
   if (session.status === "not-present" || session.status === "expired") throw new PlansError("Sign in through Hosty to read plans.", 401, "app_identity_required");
   if (session.status === "forbidden") throw new PlansError(session.error?.message ?? "This app session is not allowed.", 403, session.error?.code);

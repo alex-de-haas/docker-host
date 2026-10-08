@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useRef, useState } from "react";
-import { LoaderCircle, PanelsTopLeft, Play } from "lucide-react";
+import { ExternalLink, LoaderCircle, PanelsTopLeft, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AppIcon } from "../app-icon";
@@ -17,6 +17,7 @@ export function ShellRightPanel({
   tabs,
   expanded,
   activeTab,
+  standaloneHref,
   theme,
   themePreference,
   onSelectTab,
@@ -33,6 +34,7 @@ export function ShellRightPanel({
   tabs: AppSurfaceTab[];
   expanded: boolean;
   activeTab: AppSurfaceTab | null;
+  standaloneHref?: string | null;
   theme: HostyResolvedTheme;
   themePreference: HostyThemePreference;
   onSelectTab: (key: string) => void;
@@ -106,8 +108,8 @@ export function ShellRightPanel({
         </div>
       </section>
       <TooltipProvider delayDuration={350}>
-        <div role="toolbar" aria-label="Panels" aria-orientation="vertical"
-          className={cn("flex min-h-0 w-12 max-w-full shrink-0 flex-col items-center gap-1 overflow-y-auto overflow-x-hidden overscroll-contain bg-background py-2", expanded && "border-l")}>
+        <div className={cn("flex min-h-0 w-12 max-w-full shrink-0 flex-col items-center gap-1 overflow-y-auto overflow-x-hidden overscroll-contain bg-background py-2", expanded && "border-l")}>
+          <div role="toolbar" aria-label="Panels" aria-orientation="vertical" className="flex flex-col items-center gap-1">
           {tabs.map((tab, index) => {
             const selected = expanded && tab.key === activeTab?.key;
             const unavailable = !tab.embeddedUrl;
@@ -141,6 +143,21 @@ export function ShellRightPanel({
               </Tooltip>
             );
           })}
+          </div>
+          {standaloneHref && activeTab && (
+            <div className="mt-1 border-t pt-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon" className="size-9 rounded-lg text-muted-foreground hover:text-foreground" asChild>
+                    <a href={standaloneHref} target="_blank" rel="noopener noreferrer" aria-label={`Open ${activeTab.label} in a new tab`}>
+                      <ExternalLink aria-hidden="true" className="size-4" />
+                    </a>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="left" sideOffset={10}>Open {activeTab.label} in a new tab</TooltipContent>
+              </Tooltip>
+            </div>
+          )}
         </div>
       </TooltipProvider>
     </aside>

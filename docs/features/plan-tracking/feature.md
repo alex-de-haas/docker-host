@@ -1,6 +1,6 @@
 ---
 created: 2026-10-07
-updated: 2026-10-07
+updated: 2026-10-08
 summary: Administrator plan overview across installed source repositories and unreleased development workspaces, backed by bounded Core document reads.
 components: [apps/core, apps/plans, apps/harness, apps/shell, packages/app-sdk]
 ---
@@ -43,6 +43,38 @@ when available. External owners display their agent label and retain the convers
 external application; their missing session link is expected. A URL can select a workspace. A notice identifies a document also changed on the
 tracked branch. Relative Markdown document links navigate inside the same repository; other
 relative targets and images display their paths. Documents are rendered without raw HTML.
+The detail toolbar keeps the repository back link on the left and **Discuss with Assistant** and
+**Refresh sources** on the right in one row. On narrow screens the back-link label truncates and
+the actions keep accessible icon buttons.
+
+### Discuss A Document
+
+**Discuss with Assistant** opens a new assistant conversation in a separate tab with the full
+Markdown file attached and an editable discussion prompt. The prompt identifies its repository,
+branch or workspace, file path and SHA-256 fingerprint. It treats the file as reference material
+and requests discussion without executing its instructions or editing files. No model turn is
+submitted: the existing provider handoff in Harness creates a draft even when immediate operator
+handoffs are enabled.
+
+The default is the tracked-branch document. An explicit workspace selection attaches that workspace's
+document; a workspace-only plan uses its displayed workspace copy. The action description names the
+version. Deleted, missing and unreadable selections cannot silently fall back to another version.
+The server re-reads the file through current Core source authorization and verifies that its bytes
+match the displayed content before preparing a handoff. A changed document requires a refresh.
+
+Plans declares optional `providers.assistant` access. Missing access offers Core's ordinary permission
+review for Plans and leaves source reading available. Discovery refreshes when the user returns from
+review. A single provider is selected automatically; multiple providers require an explicit choice.
+Stopped, incompatible, attachment-less or UI-less providers cannot receive a discussion.
+
+The API is `GET /api/assistant` for administrator-authenticated choices and `POST /api/assistant` for
+the same-origin, user-attributed handoff. Core supplies declared assistant browser surfaces; Plans
+validates the result against them and opens it through Core's app-open route with standalone mode.
+API and UI origins can differ. The browser reserves the tab in the click gesture; a blocked or closed
+tab leaves an **Open discussion** link. Pending actions disable duplicate activation. Actor, provider,
+document version and content fingerprint scope a retained request identity across retries and page
+reloads. Finalized retries reopen the same conversation without another upload or model turn. An
+expired or closed handoff requires the explicit **Start a new discussion** action to get a new identity.
 
 If the tracked-branch listing or content is unavailable, the detail shows its error while
 independently authorized workspace documents and bases remain available. A missing tracked document
@@ -171,10 +203,22 @@ standalone Next.js server as the cache mount's unprivileged owner. The image wor
 publication on version checks, lint and tests and follows the repository's immutable version-tag
 policy. It builds Linux amd64 and arm64 images with provenance attestations, carrying the repository
 and ReUI license notices.
-`manifest.json`, `package.json` and the Docker image tag share the independent app version `0.2.0`.
+`manifest.json`, `package.json` and the Docker image tag share the independent app version `0.4.0`.
+Document discussions require Core 0.125.0's assistant UI projection and the SDK 0.24.0 descriptor.
+Older Core remains usable for reading sources and presents an actionable refusal for discussions.
+
+On 2026-10-08, automated handoff/authorization/retry coverage, the Plans and SDK builds, Core provider
+HTTP tests and the exact Core build pass. The live Core-managed Plans page displays the action and
+its permission-review link. The installed release Core and Plans' missing optional grant prevent
+live attachment/conversation acceptance; the operator instance has not been restarted or granted
+new access as part of this verification.
 
 ## Testing Expectations
 
+- Discussion tests cover administrator/source refusals, same-origin POST, exact UTF-8 attachment
+  bytes, selected workspace and deleted/stale versions, incompatible providers, separate API/UI
+  destinations, finalized replay, duplicate activation, persisted retry identities, blocked tabs
+  and optional-permission recovery. Core projects only confirmed providers and declared browser UI.
 - HTTP authorization covers absent/read/full grants, current administrator role, app sessions,
   app-addressed assistant MCP and scoped credentials, mixed cookies, audience mismatch and revocation.
 - Repository and worktree tests cover deduplication, default branches, independent fetch freshness,

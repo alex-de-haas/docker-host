@@ -2,7 +2,7 @@
 created: 2026-10-02
 updated: 2026-10-08
 summary: App grants keep identity after their privileged activity window expires, and activity never adds a permission.
-components: [apps/core, packages/app-sdk]
+components: [apps/core, apps/harness, apps/shell, packages/app-sdk]
 ---
 
 # App Activity Window
@@ -44,7 +44,7 @@ permissions, assistant-provider issuance, workspace/publication operations and a
 issuance enforce the boundary. Identity-only profile/session routes and installation requests retain
 their separate existing authorization and Core confirmation. Delegated tokens without browser
 provenance cannot substitute for this authority. Provider child-token introspection checks current
-activity again; assistant MCP tokens carry a session lease revision and recheck it on use.
+activity again; assistant MCP tokens bind the app grant and recheck its activity on use.
 The SDK therefore retains the embedded grant in `sessionStorage` on `reauth_required`; successful
 popup renewal replaces it. Identity rejection clears it. Expiry while mounted never starts a silent
 redirect or discards the app's draft.
@@ -87,29 +87,49 @@ HTTP status and machine-readable error codes in `HostyProviderException`; server
 401 `reauth_required` to their UI rather than retrying in a background loop. Its identity validator
 remains identity-only. No .NET SDK code or version change is needed for this feature.
 
-## Assistant session authority
+## Assistant activity authorization
 
-Harness tool authority is an explicit Core-owned lease, keyed by assistant installation, user and
-assistant session ID. `/activity/assistants/{appId}/{sessionId}` displays the decision to the signed-in
-administrator on Core's isolated origin. Its same-origin form uses a short-lived, single-use nonce
-bound to that browser session and installation. Core stores approved leases under its auth root.
-App service credentials cannot create, renew or revoke a lease.
+Harness conversations share the assistant app's browser-established activity window. Creating or
+opening a chat requires no separate Core tool approval. MCP issuance and introspection and assistant
+workspace/publication operations check current app activity, a live authorizing Core sign-in,
+assistant installation and the acting user's current access. Existing assistant-target assignments
+and operation permissions remain required; an active session never adds a grant.
 
-Each approval grants one hour; renewal and revocation are manual. The lease replaces the ordinary
-app activity deadline for that conversation's MCP and workspace/publication calls, while both its
-approving Core session and the app grant's parent session must remain live. Ordinary browser
-activity cannot substitute for this lease. A renewed lease invalidates child tokens from its previous
-revision. MCP tokens expire no later than the lease and are rechecked online before use.
+The session ID still identifies tool context and workspace ownership. It cannot create or extend
+activity. App service credentials, diagnostic grants and silent identity-only sign-in cannot establish
+activity. Expiry uses the ordinary SDK recovery flow, and normal browser renewal supports all chats
+using the renewed app credential. Calls and background revalidation do not extend the deadline.
 
-Harness shows a per-conversation **Allow tools in Core** / **Renew or revoke in Core** control.
-Embedded reviews ask Shell to open the page; Shell derives the assistant app ID from the sending
-frame and validates its origin and session-ID syntax. After a decision, polling/focus refresh updates
-session credentials and available tools without replacing the run or transcript. Parent-session
-expiry returns 401 from the status endpoint so browser identity can recover before lease approval.
-Expiry refuses new tool authority; it does not stop the agent run. Sending messages does not extend
-the lease. Tool-catalog refresh in settings requires selecting an owned, authorized conversation.
+Harness synchronizes the selected conversation's in-memory credentials on mount, focus and
+`APP_ACTIVITY_RENEWED`, including an existing run. Recovery preserves the transcript and draft and
+requires no new message. The refresh endpoint requires the authenticated app user to own the chat
+and a same-origin request; Core still independently checks every privileged call. Other conversations
+pick up the current credential when opened or sent a message. Native Normal/Autonomous rules remain
+independent, and activity expiry does not stop the agent's native run.
+
+The retired per-conversation review/status endpoints and Shell popup handling are removed. The SDK's
+legacy message parser remains inert for compatibility. Old `assistant-session-authority.json` files
+are unused and confer no access; no migration or operator-data deletion is required. Previously
+issued MCP tokens carrying a lease revision are refused and reminted through normal issuance.
+Deploy Core 0.125.0 before Harness 0.46.0; older Core still requires the retired conversation lease.
 
 ## Verification
+
+On 2026-10-08, removal of per-chat consent passed the 32 focused Core activity/MCP/workspace/source
+HTTP tests and the full Core suite (2,961 passed, four existing opt-in integration skips). The exact
+Core project builds with isolated output under `build/chat-activity-artifacts`; tests also use this
+directory because repository-contract fixtures locate manifests relative to their assembly.
+Harness passed 511 tests, including same-origin/ownership credential refresh, recovery during an
+in-flight update and draft preservation. Shell passed 182 Node and 187 component tests.
+Harness type checking/lint and Harness/Shell webpack production builds passed. Shell lint has no
+errors and two existing warnings. Version consistency and the generated documentation index pass.
+
+The verification commands are `dotnet test` for `Haas.Hosty.Core.Tests.csproj` and `dotnet build` for
+`Haas.Hosty.Core.csproj`, both with the isolated artifacts path; `npm run harness:test`,
+`npm run shell:test`, `npm run harness:lint`, `npm run shell:lint`, and each web workspace's
+`npm run build -- --webpack`. No live operator Core/app restart, grant change or paid model call was
+performed. Browser acceptance of the new release is not claimed; the running installation was not
+replaced. The HTTP fixtures verify the actual Core endpoint pipeline with isolated in-process users.
 
 On 2026-10-02, the complete Core suite passed 2,427 tests with four existing skips. The additional
 Core-owned form/nonce regression passed in the seven-test activity suite. SDK tests passed (156),
@@ -146,9 +166,12 @@ change. The operator's running Core and apps were not restarted.
   login in Swift; device/delegated/service credentials are refused and a timer cannot reuse authority.
 - Expiry, revoked/expired parent sessions and alternate credential representations deny privileged
   calls while valid identity-only calls continue; browser renewal restores access.
-- Provider and MCP child tokens cannot outlive revoked authority, installations or lease revisions.
-- Assistant leases enforce user/session/installation binding, nonce replay refusal, same-origin
-  confirmation, fixed expiry, renewal and revocation without terminating a run.
+- Provider and MCP child tokens cannot outlive revoked authority, installations or assistant-target grant revisions.
+- Multiple assistant chats work with one active app grant and no chat approval. App activity expiry,
+  parent expiry/idle/revocation, wrong audience, missing permissions and changed installations refuse
+  MCP and workspace operations; normal browser recovery restores authorized access.
+- Credential refresh enforces chat ownership and same-origin app authentication, handles renewal
+  during an in-flight refresh, and preserves the run and draft without opening another review.
 - SDK popup renewal preserves mounted input and retries once; no permission declarations means no
   proactive activity prompt. Shell cookie renewal and event resynchronization preserve page state.
-- Embedded authority requests cannot forge the app identity, and Core parent expiry remains recoverable.
+- Core parent expiry remains recoverable through standard app authentication.

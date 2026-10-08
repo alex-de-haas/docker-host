@@ -286,8 +286,6 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppSourceDiscardApplyRequest))]
 [JsonSerializable(typeof(AppSourceResponse))]
 [JsonSerializable(typeof(AppAuthorizeResult))]
-[JsonSerializable(typeof(AssistantSessionLeaseState))]
-[JsonSerializable(typeof(AssistantSessionAuthorityStatus))]
 [JsonSerializable(typeof(AppIdentityTokenResult))]
 [JsonSerializable(typeof(AppSessionValidationResult))]
 [JsonSerializable(typeof(AppPrivateSourceResponse))]

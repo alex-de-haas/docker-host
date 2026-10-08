@@ -1,6 +1,6 @@
 ---
 created: 2026-09-25
-updated: 2026-10-07
+updated: 2026-10-08
 summary: Shell separates confirmations, transient operation results and persistent diagnostics.
 components: [apps/shell]
 ---
@@ -22,6 +22,19 @@ the start of execution, or when polling fails or expires. Closing an opened popu
 reminder and does not authorize or cancel work already accepted by Core.
 
 ## Notifications
+
+Dashboard lifecycle actions show inline progress beside the app name immediately after activation
+(after confirmation for Shell itself), including time spent waiting in Shell's serialized CSRF
+request queue or Core preflight. The row displays Restarting, Starting or Stopping with a spinner;
+Core's starting/stopping state takes precedence once available. Progress replaces the Restart
+required shortcut until the operation settles. Configuration required still opens app settings.
+
+Pending actions are tracked per app, so activating another app or an unrelated action cannot erase
+the first app's progress. A synchronous per-app guard rejects duplicate lifecycle activations before
+confirmation or queueing; row and menu lifecycle controls are disabled while a local action, server
+transition or update is in flight. Cancellation and failure release the local guard, and failures
+retain the existing error toast and refreshed diagnostics. Server transitions also show progress for
+operations initiated by other clients. Local pending state does not survive a page reload.
 
 The shared Sonner surface appears at the top center, 56px below the window edge (16px on mobile), with a desktop width of 420px and responsive mobile gutters. Success, information, warning and error states have distinct icons and semantic theme colors. Ordinary notifications retain Sonner's actions and dismissal behavior.
 
@@ -56,6 +69,8 @@ Shell configures `@reui` as `https://reui.io/r/radix-vega/{name}.json`. The shar
 
 ## Testing Expectations
 
+- Verify immediate lifecycle progress before server state changes, duplicate activation suppression,
+  two apps waiting in the CSRF queue, server-driven stages, failure/retry and confirmation cancellation.
 - Confirm cancellation, Escape, initial/restored focus, overlapping prompts, and unmount cancellation. Never trigger a real destructive action merely to smoke-test a dialog.
 - Verify copy includes full diagnostics; clipboard rejection leaves the error visible. Verify absent/stopped Gateway and concurrent/retried handoff behavior.
 - Verify app-context capability negotiation and identical idempotency keys across uncertain session-creation retries.

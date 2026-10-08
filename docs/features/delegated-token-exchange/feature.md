@@ -1,6 +1,6 @@
 ---
 created: 2026-08-15
-updated: 2026-10-05
+updated: 2026-10-08
 summary: Core grants individual assistants access to selected MCP targets through administrator-configured delegation.
 components: [apps/core, apps/harness]
 ---
@@ -16,9 +16,9 @@ The [agent directory](../agent-mcp-directory/feature.md) exposes and edits these
 
 `POST /api/internal/apps/{appId}/mcp/token` authenticates the assistant with its service bearer and
 the acting user with `X-Hosty-User-Token`, an app grant issued to that same assistant. The body names
-`targetAppId` and a Core-authorized `sessionId`. Core checks the current assistant session lease,
-app grant, confirmed assistant role/interface, explicit target relationship, both installation
-identities, global offer and user access to the target. Core MCP
+`targetAppId` and a conversation `sessionId`. Core checks current browser-established app activity
+and the live authorizing Core sign-in, app grant, confirmed assistant role/interface, explicit target
+relationship, both installation identities, global offer and user access to the target. Core MCP
 also requires the current user to be an administrator.
 
 The five-minute `hosty_mcp.1` credential is signed and distinct from app sessions and legacy delegated
@@ -39,8 +39,8 @@ legacy delegated-token validators also reject the separate token format. Applica
 the MCP-specific helper only on their MCP surface and must not cache introspection. Applications
 using only the old local delegated validator need an SDK/handler update before accepting this format.
 
-Introspection rechecks the relationship, installations, global offer, parent app grant and current
-user access on every call. Revoking the relationship, explicit logout revoking the parent grant,
+Introspection rechecks app activity, the live Core sign-in, relationship, installations, global offer,
+parent app grant and current user access on every call. Revoking the relationship, explicit logout revoking the parent grant,
 removing a user assignment or disabling the user refuses subsequent calls. Regranting a relationship
 does not revive a token carrying its old revision. Core outages refuse validation; already-dispatched
 operations are not rolled back.
@@ -56,14 +56,15 @@ Harness keeps the user's app credential in memory and requests target-specific M
 Core with its service credential. The local session proxy forwards only the target credential.
 Native agent processes receive a session-local proxy key, never the Core cookie or app grant.
 Source/workspace operations retain their own app-credential path. Session transcripts persist no
-credentials. Harness's Ask / Run unprompted / Disabled rules are an additional execution policy.
+credentials. Normal app recovery refreshes the selected chat without a per-chat consent screen.
+Harness's Ask / Run unprompted / Disabled rules are an additional execution policy.
 
 ## Settings Catalog Discovery
 
 `POST /api/internal/apps/{appId}/mcp/catalog/{targetId}` accepts only a target identifier. It requires
 the assistant's service bearer, an active app grant belonging to a current administrator, and the same
 confirmed assistant, target relationship, installation and user-access checks as normal issuance.
-It does not require an assistant conversation lease and does not create one.
+It requires no conversation and cannot invoke tools.
 
 Core resolves the registered target endpoint and performs a bounded MCP initialize/tools-list
 exchange. It pins the initialize handshake to protocol `2025-06-18`, disables HTTP redirects and
@@ -73,8 +74,8 @@ No caller-supplied upstream URL, RPC method, tool name or arguments are forwarde
 The internal discovery credential expires after 30 seconds, binds the parent grant and relationship,
 and revalidates current administrator activity on introspection. It has only `mcp:read`; introspection
 with any tool name is inactive, and Core MCP rejects tool calls and other arbitrary RPC methods.
-The ordinary `/mcp/token` request cannot select discovery mode. Normal execution still requires an
-approved conversation and the assistant's granted Core permissions for Core tools.
+The ordinary `/mcp/token` request cannot select discovery mode. Normal execution retains conversation
+context, current app activity and the assistant's granted Core permissions for Core tools.
 
 ## Legacy Compatibility
 

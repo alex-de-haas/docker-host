@@ -7,7 +7,6 @@ import { ASK_ASSISTANT_TYPE, DELEGATED_TOKEN_TYPE } from "@hosty-sdk/app";
 import { createShellThemeMessage } from "@hosty-sdk/app/theme";
 import {
   parseActiveFramePermissionReview,
-  parseActiveFrameAssistantReview,
   parseActiveFrameAskAssistant,
   parseActiveFrameAttention,
   parseActiveFrameDelegatedTokenRequest,
@@ -111,10 +110,9 @@ export function EmbeddedAppFrame({
   useEffect(() => {
     const review = (event: MessageEvent) => {
       const trustedApp = parseActiveFramePermissionReview(event, iframeRef.current?.contentWindow, src, appId);
-      const assistant = parseActiveFrameAssistantReview(event, iframeRef.current?.contentWindow, src, appId);
       const mcp = mcpReviewRequest(event, iframeRef.current?.contentWindow, src, appId);
-      if (!trustedApp && !assistant && !mcp) return;
-      const url = mcp ? new URL(`/install/agents/${encodeURIComponent(mcp.appId)}/${encodeURIComponent(mcp.targetAppId)}`, coreOrigin).href : assistant ? new URL(`/activity/assistants/${encodeURIComponent(assistant.appId)}/${encodeURIComponent(assistant.sessionId)}`, coreOrigin).href : permissionReviewUrl(coreOrigin, trustedApp!);
+      if (!trustedApp && !mcp) return;
+      const url = mcp ? new URL(`/install/agents/${encodeURIComponent(mcp.appId)}/${encodeURIComponent(mcp.targetAppId)}`, coreOrigin).href : permissionReviewUrl(coreOrigin, trustedApp!);
       // Some browsers do not carry user activation across postMessage; keep a clickable fallback.
       setReviewUrl(url);
       window.open(url, "_blank", "noopener,noreferrer");

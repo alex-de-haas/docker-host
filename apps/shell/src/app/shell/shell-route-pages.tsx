@@ -44,6 +44,7 @@ export function ShellDashboardRoute() {
         canManageApps={shell.canManageApps}
         loading={shell.state.loading}
         busyAction={shell.busyAction}
+        pendingAppActions={shell.pendingAppActions}
         updateCheck={shell.state.updateCheck ?? null}
         updateStatusInvalidations={shell.updateStatusInvalidations}
         onRefresh={() => void shellActions.refresh()}

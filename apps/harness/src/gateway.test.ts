@@ -919,6 +919,35 @@ describe("gateway", () => {
     } finally { await new Promise(resolve => core.close(resolve)); }
   });
 
+  it("refreshes owned chat credentials through ordinary app authentication and rejects other callers", async () => {
+    const core = createServer((request, response) => {
+      request.resume();
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" }));
+    });
+    await new Promise<void>(resolve => core.listen(0, resolve));
+    process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+    process.env.HOSTY_APP_SERVICE_TOKEN = "chat-service";
+    const refresh = vi.spyOn(manager, "refreshSessionCredentials");
+    try {
+      const own = await manager.createSession({ createdBy: "user_admin" });
+      const foreign = await manager.createSession({ createdBy: "another_user" });
+      const route = (id: string) => `/api/sessions/${id}/credentials`;
+      const headers = { authorization: "Bearer hostyg_browser", "content-type": "application/json" };
+      expect((await call(route(own.id), { method: "POST", body: "{}" }, null)).status).toBe(401);
+      expect((await call(route(own.id), { method: "POST", body: "{}" })).status).toBe(401);
+      expect((await fetch(origin + route(own.id), { method: "POST", headers, body: "{}" })).status).toBe(403);
+      expect(refresh).not.toHaveBeenCalled();
+      expect((await fetch(origin + route(foreign.id), { method: "POST", headers: { ...headers, origin }, body: "{}" })).status).toBe(403);
+      const result = await fetch(origin + route(own.id), { method: "POST", headers: { ...headers, origin }, body: "{}" });
+      expect(result.status).toBe(200);
+      expect(result.headers.get("cache-control")).toBe("no-store");
+      expect(await result.json()).toEqual({ updated: true });
+      expect(refresh).toHaveBeenLastCalledWith(own.id, "user_admin", "hostyg_browser");
+      expect(JSON.stringify(await store.readEvents(own.id, 0))).not.toContain("hostyg_browser");
+    } finally { refresh.mockRestore(); await new Promise(resolve => core.close(resolve)); }
+  });
+
   it("source selection requires an app session and Core permission; management routes are absent", async () => {
     const forwarded: { path: string; headers: import("node:http").IncomingHttpHeaders; body: unknown }[] = [];
     const core = createServer(async (request, response) => {

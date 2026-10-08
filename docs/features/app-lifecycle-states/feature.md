@@ -1,6 +1,6 @@
 ---
 created: 2026-07-28
-updated: 2026-10-06
+updated: 2026-10-08
 summary: Intermediate starting and stopping runtime states, so every client sees a lifecycle action while it is in flight.
 components: [apps/core, apps/shell]
 ---
@@ -151,7 +151,12 @@ stays ready there.
 
 - **Shell** — compact Dashboard status dots with a sky spinner for transitional states, full status
   tooltips on hover or keyboard focus, and a lifecycle toggle that shows progress
-  instead of an action while `IsBusy`. That toggle was binary before, so a starting app offered a
+  instead of an action while `IsBusy` or a local lifecycle request is pending. Per-app local progress
+  appears beside the app name before Core reports a transition, including CSRF queue and preflight
+  time; the server stage takes precedence when available. Duplicate activations are suppressed before
+  queueing, and lifecycle controls stay disabled until the operation settles. See
+  [Shell operation feedback](../shell-operation-feedback/feature.md).
+  That toggle was binary before, so a starting app offered a
   **Start** button that would have raced its own start. Restart is disabled for the same window. The
   dashboard counts in-progress apps in their own tile rather than silently as "not running", and the
   missing-required-settings warning is suppressed mid-verb so it does not blink on every start.

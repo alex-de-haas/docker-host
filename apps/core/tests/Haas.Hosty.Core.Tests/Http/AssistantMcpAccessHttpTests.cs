@@ -30,7 +30,6 @@ public sealed class AssistantMcpAccessHttpTests
         await apps.UpsertAppAsync(caller); await apps.UpsertAppAsync(target);
         await users.WriteAsync(new(1, [new("user", "user@example.test", "User", "host.member", false, now, now)], [], [new(caller.Id, "user", now), new(target.Id, "user", now)], []));
         var parent = await BrowserAuthorityFixture.Grant(host, caller.Id, "user");
-        await BrowserAuthorityFixture.Approve(host, caller.Id, "user");
         using var client = host.CreateClient();
         async Task<HttpResponseMessage> Issue(string serviceApp, string userToken)
         {
@@ -110,7 +109,6 @@ public sealed class AssistantMcpAccessHttpTests
         var users = host.Services.GetRequiredService<UserDirectoryStore>();
         await users.WriteAsync(new(1, [new("admin", "admin@example.test", "Admin", "host.admin", false, now, now)], [], [], []));
         var userToken = await BrowserAuthorityFixture.Grant(host, caller.Id, "admin");
-        await BrowserAuthorityFixture.Approve(host, caller.Id, "admin");
         await host.Services.GetRequiredService<AgentPolicyStore>().ChangeAsync("hosty:core", new(null, true, new Dictionary<string, string>(),
             new Dictionary<string, AssistantTargetGrant> { [caller.Id] = new(now, "grant") }));
         var access = host.Services.GetRequiredService<AssistantMcpAccess>();
