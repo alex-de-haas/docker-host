@@ -1,6 +1,6 @@
 ---
 created: 2026-10-05
-updated: 2026-10-05
+updated: 2026-10-08
 summary: Embedded apps keep their own per-tab sign-in grant and sign in silently through Core without Shell handling their codes.
 components: [apps/core, apps/shell, packages/app-sdk]
 ---
@@ -74,7 +74,9 @@ the frame URL or broker app credentials.
 ## Deployment
 
 Core's session cookie remains host-only and `SameSite=Lax`. The silent path succeeds when the
-browser sends both its session and the matching intent nonce to Core from the frame. Hosty uses one flow and no browser detection.
+browser sends its session and supplies the matching intent nonce to Core from the frame. Named
+HTTP localhost supplies the nonce through Core-origin storage and POST; HTTPS/IP use cookies.
+Hosty chooses the proof transport from the Core origin and uses no browser detection.
 Where the cookie is unavailable, Core returns `login_required` and the existing popup remains the
 sign-in path; the successful grant is then kept for the tab.
 
@@ -84,9 +86,9 @@ suffix, including a shared dynamic-DNS zone, does not satisfy this rule. Configu
 through [Public Origins](../public-origins/feature.md) and, where used,
 [Cloudflare ingress](../cloudflare-ingress/feature.md).
 
-Generated HTTP DNS Core origins now require an isolated literal-IP Core origin or HTTPS before
-creating an intent. Source development uses a `[::1]` public Core origin with app hosts elsewhere;
-its cross-site arrangement uses the popup fallback. A cookie
+Generated HTTP `.localhost` Core origins use an origin-isolated sessionStorage nonce and exact-Core
+Origin POST continuation. HTTPS and literal-IP HTTP retain their cookie proof. Source development's
+`[::1]` public Core origin with app hosts elsewhere remains supported through popup fallback. A cookie
 probe on 2026-10-05 showed Chromium sending Core's Lax cookie from Shell's frame and Safari treating
 the same origins as cross-site without sending it. This is evidence of deployment behavior, not a
 browser-specific policy in the product.

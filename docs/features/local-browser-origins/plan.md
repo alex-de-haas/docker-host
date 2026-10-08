@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-09-30
-updated: 2026-10-07
+updated: 2026-10-08
 summary: Every local browser workflow works without a domain, DNS or configured public origin.
 components: [apps/core, apps/shell, packages/app-sdk, apps/harness]
 ---
@@ -25,6 +25,15 @@ The owner approved implementation on 2026-09-30, including custom public origins
 `none`. Local defaults require no DNS configuration or hosts-file changes. Target modern Chromium,
 Firefox and Safari on macOS 26 or newer; older system resolvers are not an automatic fallback.
 Unexecuted browser/platform acceptance remains tracked below.
+
+On 2026-10-08 the owner requested restoring named localhost Core sign-in over HTTP after protocol
+2's literal-IP restriction made generated Core defaults unusable. Chromium accepts Secure host-prefix
+cookies on HTTP localhost, but a real Safari probe rejects them. This implementation uses a Core-origin
+sessionStorage nonce initialized only by the validated app-origin POST. A continuation GET cannot
+initialize proof or issue a code; a same-Core-origin navigation POST submits existing proof in its
+body. Preserve nonce/S256 binding, atomic claims, bounded attempts and every app endpoint host check.
+HTTPS and literal-IP cookie flows remain unchanged; other HTTP DNS remains unsupported. Missing or
+blocked storage fails closed, with the existing credential-free silent fallback.
 
 App names use an injective DNS-safe encoding of the full app ID (hyphen, dot and underscore escaped),
 split into bounded labels, under `hosty.localhost`. Core uses the reserved `core` label. Non-default
@@ -570,6 +579,7 @@ browser login QA was performed for this revision; browser acceptance remains tra
   and regenerate the index. All touched owning documents already use feature folders.
 - [ ] D29. Finish acceptance, update the final reality document and delete this plan only when every remaining
   deliverable is complete.
+- [x] D40. Restore HTTP sign-in on canonical localhost names with a Core-origin storage-bound nonce, exact-origin POST continuation and no cookie fallback; verify real Chromium/Safari login plus relay, parent-domain injection, replay, capacity and existing HTTPS/IP regressions, then update the owning reality documents.
 
 ### Remaining client migration details
 
@@ -1315,3 +1325,42 @@ checklist stays open.
   tests pass. An additional `tsc --noEmit` over all SDK test sources reports existing mock/narrowing
   errors in `install.test.ts`, `scoped-token.test.ts`, `sdk.test.ts` and `theme.test.ts`; those files
   were not changed for Part C. No errors were reported in the new permission tests.
+
+### HTTP named-localhost verification (2026-10-08)
+
+- Platform version is 0.123.2 (patch), with the product channel CLI version aligned.
+  The exact Core project builds after the final source edits.
+- `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj
+  --artifacts-path /private/tmp/hosty-named-localhost-signin-tests
+  --filter FullyQualifiedName~AppSignInIntentHttpTests --no-restore`: 130 passed, zero failures.
+  Coverage includes foreign/null Origin, copied intents, ignored parent-Domain nonce cookies,
+  immutable mode, nonce-before-login, replay/concurrency/expiry, capacity, access restrictions,
+  actual chunked-body bounds, multipart refusal and terminal storage cleanup.
+- `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj
+  --artifacts-path apps/core/tests/Haas.Hosty.Core.Tests/bin/named-localhost-verification
+  --verbosity minimal`: 2,823 passed, four opt-in integrations skipped, zero failures.
+  Separate artifacts under the ignored test `bin` directory let existing manifest tests find
+  the repository. The earlier `/private/tmp` full run had six repository-path discovery failures;
+  the corrected run passes without changing production or test harness behavior.
+- `dotnet publish apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj -c Release -r osx-arm64
+  --artifacts-path /private/tmp/hosty-named-localhost-aot` passes and emits a Mach-O arm64 executable.
+  The build has four existing CS9113/CA1416 warnings and no new trim/AOT warnings.
+- A fresh isolated Core-managed localCommand Shell and Demo use generated origins and normal
+  setup/password authentication, without public-origin overrides or seeded test sessions.
+  Chromium and native Safari pass Core password login and the authenticated Shell dashboard.
+  Chrome passes Demo's explicit activity popup; Safari's unavailable framed Core session shows
+  sign-in recovery, and its gesture popup restores the embedded app. Both retain the app grant
+  after leaving and reopening its Shell page. Chrome also displays the standalone app with its
+  app-origin cookie. These checks do not establish the broader provider/platform acceptance.
+- The operator Core restarts from the same primary source project with `--keep-apps --foreground`.
+  Its process identity changes from 90244 to 7525; public status reports 0.123.2, generated
+  `http://core.hosty.localhost:7070` accepts a validated intent with storage bootstrap and no
+  nonce cookie, and all 13 installed apps remain running.
+- Real Chrome relay acceptance uses two attacker-owned intents while the browser retains its
+  normally authenticated Core session. A copied GET fails because its Core-origin proof is absent.
+  Chrome accepts an exact legacy nonce in a parent-Domain cookie, but the second copied GET still
+  fails. Isolated store inspection confirms zero issued codes for both attempts.
+- Final restored source passes its exact Core build and all 130 focused intent tests again.
+  `node scripts/docs-index.mjs --check`, `node scripts/check-versions.mjs` and `git diff --check`
+  pass. The isolated QA Core, Shell, Demo and both fixture listeners are stopped, and only
+  agent-created browser tabs/windows are closed. The operator Core remains running.

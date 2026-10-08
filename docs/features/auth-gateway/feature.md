@@ -1,6 +1,6 @@
 ---
 created: 2026-05-13
-updated: 2026-10-06
+updated: 2026-10-08
 summary: Core owns user authentication, app assignments, identity issuance and scoped directory access, while apps own their sessions.
 components: [apps/core, packages/app-sdk]
 ---
@@ -38,16 +38,23 @@ sequenceDiagram
 The app creates independent 256-bit state and a private verifier from 32 random bytes. Its app-owned form submits
 an approved callback and public S256 challenge to `POST /api/apps/{appId}/sign-in-intent`. Core
 requires an exact non-null app Origin and the appropriate browser navigation context. It freezes a
-five-minute intent, stores only the nonce hash, sets a unique HttpOnly browser nonce and returns a
-303 to `/api/apps/{appId}/open?requestId=...`. The immutable continuation verifies the nonce before
-login or issuance and claims the intent once after normal account and access checks.
+five-minute intent and stores only the nonce hash. HTTPS and HTTP literal-IP origins set a unique
+HttpOnly browser nonce cookie and return a 303 to `/api/apps/{appId}/open?requestId=...`. HTTP on
+canonical `localhost` or `.localhost` Core hosts returns Core-origin HTML that stores the nonce in
+that context's `sessionStorage` and submits it in the body of a navigation POST to the same
+continuation. This POST requires the exact Core Origin and the intent's frozen navigation mode.
+The immutable continuation verifies the nonce before login or issuance and claims the intent once
+after normal account and access checks. A named-HTTP GET only returns reader HTML for an existing
+stored proof; it cannot create a nonce or issue a code.
 
 Core delivers the five-minute single-use code directly to the app's validated origin. Popup
 responses carry only code and state; the app checks the original response window, Core origin and
 initiation state. Silent initial sign-in requires an iframe and establishes identity only. A missing
 Core session or unavailable nonce on a known same-app silent intent returns the frozen callback's
 state-bound `login_required` error; denied access returns `access_denied`. Core never frames its
-password login. Other missing-nonce contexts fail closed.
+password login. Unavailable Core nonce storage also fails closed: popup recovery returns an
+actionable error without credentials, and no plain-cookie fallback exists for named HTTP hosts.
+Other missing-nonce contexts fail closed.
 
 The app server exchanges JSON `{ code, codeVerifier }` at `/api/auth/apps/token` with
 `Authorization: Bearer <HOSTY_APP_SERVICE_TOKEN>`. Under one store lock, Core checks the calling app
@@ -185,9 +192,12 @@ hostnames, including a non-default instance suffix. [Explicit public origins](..
 retain their configured hostnames. Browser intents require Core's cookie hostname to be distinct from
 all configured runtime endpoints, including internal, generated, public, private and non-HTTP origins.
 HTTPS uses unique `__Host-` nonce cookies with Secure, HttpOnly, Path=/, no Domain, SameSite=Lax and a
-five-minute lifetime. HTTP additionally requires an isolated literal-IP Core public hostname. The
-source development profile uses Core `[::1]` and app `localhost` names. Unsafe topology receives an
-actionable refusal; canonical checks cover IPv4 aliases, IPv6, IDN, case and trailing dots.
+five-minute lifetime. HTTP literal-IP Core hosts retain the isolated cookie flow; canonical
+`localhost` and `.localhost` Core hosts use the Core-origin nonce storage and body-proof POST flow.
+Other HTTP DNS hosts are refused. All accepted hosts still require isolation from registered app
+cookie hosts. The source development profile uses Core `[::1]` and app `localhost` names. Unsafe
+topology receives an actionable refusal; canonical checks cover IPv4 aliases, IPv6, IDN, case and
+trailing dots.
 
 App cookies use `SameSite=None; Secure` over HTTPS and `SameSite=Lax` over plain HTTP. The SDK's
 own-origin bearer transport covers embedded documents where app cookies are unavailable. A shared

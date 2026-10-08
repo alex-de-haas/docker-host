@@ -25,10 +25,16 @@ internal static class AppSignInCookieHost
         catch (ArgumentException) { return null; }
     }
 
+    internal static bool UsesBrowserStorage(HttpRequest request)
+        => !request.IsHttps && IsLocalhost(CanonicalHost(request.Host.Host));
+
+    private static bool IsLocalhost(string? host)
+        => host == "localhost" || (host?.EndsWith(".localhost", StringComparison.Ordinal) ?? false);
+
     internal static async Task<bool> IsSafeAsync(HttpRequest request, AppRegistryStore apps, CancellationToken ct)
     {
         var coreHost = CanonicalHost(request.Host.Host);
-        if (coreHost is null || (!request.IsHttps && !IPAddress.TryParse(coreHost, out _))) return false;
+        if (coreHost is null || (!request.IsHttps && !IPAddress.TryParse(coreHost, out _) && !IsLocalhost(coreHost))) return false;
         foreach (var app in await apps.ListAppRecordsAsync(ct))
         {
             foreach (var endpoint in app.Endpoints)

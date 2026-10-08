@@ -1,7 +1,7 @@
 ---
 status: Blocked
 created: 2026-10-05
-updated: 2026-10-06
+updated: 2026-10-08
 summary: Complete proof-bound app authorization rollout and native live acceptance while retaining verified browser and registry results.
 components: [apps/core, apps/cli, packages/app-sdk, apps/shell, apps/harness, apps/shell-swift]
 ---
@@ -129,9 +129,13 @@ On HTTPS use a unique `__Host-` cookie name, `Secure`,
 `HttpOnly`, `Path=/`, no Domain, `SameSite=Lax`, and Max-Age 300. The existing exact-host app/Core
 separation check applies to every configured endpoint origin on both HTTPS and HTTP, including
 internal, generated, public-override, private and non-HTTP endpoints. A sibling app must not be
-able to shadow the nonce using a parent Domain cookie. Plain HTTP additionally requires a
-literal-IP Core public host; this preserves an isolated local/LAN setup without a
-parent-domain cookie bypass. Compare canonical browser cookie hosts, not raw strings or DNS
+able to shadow the nonce using a parent Domain cookie. Plain HTTP literal-IP Core hosts retain the
+existing nonce cookie. The 2026-10-08 named-localhost amendment uses an isolated Core-origin
+sessionStorage nonce: only validated app-origin initiation POST initializes it, GET never initializes
+or issues, and a same-Core Origin continuation POST submits proof in its body. This avoids relying
+on Secure-cookie exceptions unavailable in Safari. Named localhost has no plain-cookie fallback;
+other HTTP DNS hosts remain refused. Implementation and acceptance belong to
+[local browser origins D40](../local-browser-origins/plan.md). Compare canonical browser cookie hosts, not raw strings or DNS
 resolution: normalize IP representations, IDN, case and trailing dots, and reject ambiguous forms
 that cannot be safely compared. An unsafe configuration returns an actionable refusal, never an
 unbound fallback. Tests cover IPv4 aliases, IPv6, same-host ports and sibling-domain shadowing.
@@ -314,6 +318,9 @@ The owner explicitly approved this bounded change to the agreed CSP defense on 2
    preserving the exact form target and all other origin/nonce/proof/CSP protections.
 6. 2026-10-06: authorize source integration and merge of PR #547 after conflict resolution; retain
    native live acceptance and production client deployment as unchecked work in this plan.
+7. 2026-10-08: request named-localhost HTTP support with necessary checks, retaining browser initiation
+   binding and the rest of the code-exchange protection. The local-browser-origins D40 amendment
+   supplies origin-isolated storage proof; the remaining native/production rollout work stays here.
 
 ## Deliverables
 

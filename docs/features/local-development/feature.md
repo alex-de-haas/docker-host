@@ -1,6 +1,6 @@
 ---
 created: 2026-05-13
-updated: 2026-10-06
+updated: 2026-10-08
 summary: The Core-managed local development and test loops for Core, Shell and runtime apps.
 components: [apps/core, apps/cli]
 ---
@@ -86,7 +86,7 @@ npm run core:dev
 npm run shell:dev
 ```
 
-Use `HOSTY_CORE_PUBLIC_ORIGIN` when Core is reached through a public origin that differs from its listen URL. Use `HOSTY_SHELL_PUBLIC_ORIGIN` when Shell runs on a different origin, and make the browser URL match exactly. For example, use `http://localhost:3000` consistently for Shell and `http://[::1]:3001` for Core. Browser authorization over plain HTTP requires a literal-IP Core host and a different hostname for every app. HTTPS uses isolated host-only nonce cookies and still requires distinct Core/app hosts; changing only the port does not isolate cookies. See [app code exchange](../app-code-exchange/plan.md).
+Use `HOSTY_CORE_PUBLIC_ORIGIN` when Core is reached through a public origin that differs from its listen URL. Use `HOSTY_SHELL_PUBLIC_ORIGIN` when Shell runs on a different origin, and make the browser URL match exactly. For example, use `http://localhost:3000` consistently for Shell and `http://[::1]:3001` for Core. Browser authorization over plain HTTP accepts an isolated literal-IP Core host with the existing nonce cookie flow, or a canonical `localhost`/`.localhost` Core host with a Core-origin `sessionStorage` nonce bootstrap and a navigation POST carrying proof in its body. That POST requires the exact Core Origin and the intent's frozen navigation mode; GET only returns reader HTML for existing stored proof. Other HTTP DNS hosts are refused, and unavailable nonce storage fails closed with a credential-free popup error. HTTPS retains isolated host-only nonce cookies. All accepted Core hosts must differ from registered app cookie hosts; changing only the port does not isolate cookies. See [app code exchange](../app-code-exchange/plan.md).
 
 Use `HOSTY_SHELL_AUTOSTART=false npm run core:dev` when Shell is running as a separate Next.js dev process and Core should keep the installed `hosty.shell` app autostart setting disabled. To have that Core process register and run Shell from the manifest's local-command runtime, set `HOSTY_SHELL_BOOTSTRAP_RUNTIME=dev` and `HOSTY_SHELL_SOURCE_OVERRIDE_PATH=<repo-root>` — both are ambient dev/fork overrides Core reads directly (no longer `hosty config` launch settings; the `npm run dev` orchestrator sets them for you). Use Core-managed Shell when validating Shell runtime lifecycle behavior.
 
@@ -129,7 +129,7 @@ The `dev` runtime profile in `apps/demo-app/manifest.json` starts local command 
 - frontend on a Core-assigned public app UI port;
 - backend on a Core-assigned internal API port.
 
-Shell opens the Demo App without credentials. The app creates its own state and verifier, then submits the public S256 challenge to Core from its own origin. Core binds the continuation to that browser with an isolated nonce cookie and issues a one-time code after normal login. The Demo App exchanges the code and verifier through `HOSTY_CORE_ORIGIN` using its service token, creates its own app-origin cookie, and reports revalidation status on `/api/auth/identity`.
+Shell opens the Demo App without credentials. The app creates its own state and verifier, then submits the public S256 challenge to Core from its own origin. Core binds the continuation to a separate browser nonce, using an isolated cookie for HTTPS or HTTP literal-IP origins and Core-origin `sessionStorage` with an exact-Origin body-proof POST for HTTP localhost hosts. It issues a one-time code after normal login. The Demo App exchanges the code and verifier through `HOSTY_CORE_ORIGIN` using its service token, creates its own app-origin cookie, and reports revalidation status on `/api/auth/identity`.
 
 Use normal app lifecycle commands while iterating:
 
