@@ -514,20 +514,13 @@ async function route(
     const body = await readJson(request);
     sendJson(response, 200, await manager.setAutonomy(sessionId, body.autonomy, actor.userId)); return;
   }
-  if (rest === "/authority" && (method === "GET" || method === "POST")) {
-    const record = await manager.getSession(sessionId);
-    if (!record || record.createdBy !== actor.userId) throw new AppContextError(403, "session_forbidden", "This session belongs to another user.");
+  if (rest === "/credentials" && method === "POST") {
     const credential = readAppCredential(request);
-    const origin = process.env.HOSTY_CORE_ORIGIN;
-    const service = process.env.HOSTY_APP_SERVICE_TOKEN;
-    if (!credential) throw new AppContextError(401, "reauth_required", "Sign in through Core to manage session authority.");
-    if (!origin || !service) throw new AppContextError(503, "core_unavailable", "Session authority requires Core.");
-    const result = await fetch(new URL(`/api/internal/apps/${encodeURIComponent(process.env.HOSTY_APP_ID ?? "hosty.harness")}/sessions/${encodeURIComponent(sessionId)}/authority`, origin), {
-      headers: { authorization: `Bearer ${service}`, "X-Hosty-User-Token": credential }, signal: AbortSignal.timeout(5000),
-    });
-    const state = await result.json() as { active?: boolean };
-    if (result.ok && method === "POST" && state.active) await manager.refreshSessionAuthority(sessionId, actor.userId, credential);
-    response.setHeader("Cache-Control", "no-store"); sendJson(response, result.status, state); return;
+    if (actor.via !== "app-session" || !credential)
+      throw new AppContextError(401, "reauth_required", "Sign in through Core to refresh this conversation.");
+    await manager.refreshSessionCredentials(sessionId, actor.userId, credential);
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, 200, { updated: true }); return;
   }
 
 

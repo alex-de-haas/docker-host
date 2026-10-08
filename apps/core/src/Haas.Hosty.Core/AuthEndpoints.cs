@@ -401,7 +401,6 @@ internal static class AuthEndpoints
             (path is "/account/tokens" or "/oauth/consent" ||
              (path.StartsWith("/api/apps/", StringComparison.Ordinal) &&
               path.EndsWith("/open", StringComparison.Ordinal)) ||
-             (path.StartsWith("/activity/assistants/", StringComparison.Ordinal) && path.Length < 256) ||
              (path.StartsWith("/install/permissions/", StringComparison.Ordinal) && path.Length is > 21 and <= 84 &&
               path[21..].IndexOfAnyExcept("abcdefghijklmnopqrstuvwxyz0123456789._-") < 0) ||
              (path.StartsWith("/install/confirm/", StringComparison.Ordinal) && path.Length == 65 &&

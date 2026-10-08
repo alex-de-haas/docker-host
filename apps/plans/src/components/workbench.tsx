@@ -10,6 +10,7 @@ import { SourceDocument, TrackedDocument } from "./document";
 import { LoadingIndicator } from "./loading-indicator";
 import { WorkspaceOwner, WorkspaceSessionLink } from "./workspace-owner";
 import { PlanToolbar } from "./plan-toolbar";
+import { DiscussPlan } from "./discuss-plan";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,7 +37,7 @@ export function PlansWorkbench() {
   function navigate(url: string) { window.history.pushState(null, "", url); window.scrollTo({ top: 0 }); }
   function refresh() { setEpoch(value => value + 1); }
   return <main className="mx-auto flex max-w-[1500px] flex-col gap-4 px-4 py-4 text-sm sm:px-6 lg:px-8"><header className="hosty-shell-chrome"><h1 className="text-2xl font-semibold tracking-tight">Hosty Plans</h1><p className="mt-1 text-muted-foreground">Plans in Git, across your apps.</p></header>
-    {documentPath && repositoryId ? <><div className="flex justify-end"><Button variant="outline" onClick={refresh}><RefreshCwIcon data-icon="inline-start" />Refresh sources</Button></div><Detail key={`${repositoryId}:${documentPath}`} repositoryId={repositoryId} path={documentPath} workspaceId={workspaceId} epoch={epoch} navigate={navigate} /></> : <Overview query={new URLSearchParams(query.toString())} epoch={epoch} navigate={navigate} onRefresh={refresh} />}
+    {documentPath && repositoryId ? <Detail key={`${repositoryId}:${documentPath}`} repositoryId={repositoryId} path={documentPath} workspaceId={workspaceId} epoch={epoch} navigate={navigate} onRefresh={refresh} /> : <Overview query={new URLSearchParams(query.toString())} epoch={epoch} navigate={navigate} onRefresh={refresh} />}
   </main>;
 }
 function Overview({ query, epoch, navigate, onRefresh }: { query: URLSearchParams; epoch: number; navigate: (url: string) => void; onRefresh: () => void }) {
@@ -113,7 +114,7 @@ function Overview({ query, epoch, navigate, onRefresh }: { query: URLSearchParam
     })}
   </>;
 }
-function Detail({ repositoryId, path, workspaceId, epoch, navigate }: { repositoryId: string; path: string; workspaceId: string | null; epoch: number; navigate: (url: string) => void }) {
+function Detail({ repositoryId, path, workspaceId, epoch, navigate, onRefresh }: { repositoryId: string; path: string; workspaceId: string | null; epoch: number; navigate: (url: string) => void; onRefresh: () => void }) {
   const [detail, setDetail] = useState<PlanDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const firstEpoch = useRef(epoch);
@@ -141,7 +142,10 @@ function Detail({ repositoryId, path, workspaceId, epoch, navigate }: { reposito
   const current = detail?.path === path ? detail : null;
   const selected = current?.workspaces.find(item => item.workspace.id === workspaceId) ?? (!workspaceId ? current?.workspaces[0] : undefined);
   return <>
-    <div><Button variant="ghost" asChild><a href={`/?${new URLSearchParams({ repository: repositoryId })}`} onClick={event => { event.preventDefault(); navigate(`/?${new URLSearchParams({ repository: repositoryId })}`); }}><ArrowLeftIcon data-icon="inline-start" />All plans in this repository</a></Button></div>
+    <DiscussPlan key={`${repositoryId}:${path}:${workspaceId ?? "target"}`} detail={current} workspaceId={workspaceId}
+      back={<Button variant="ghost" className="min-w-0 shrink" asChild><a href={`/?${new URLSearchParams({ repository: repositoryId })}`} title="All plans in this repository" onClick={event => { event.preventDefault(); navigate(`/?${new URLSearchParams({ repository: repositoryId })}`); }}><ArrowLeftIcon data-icon="inline-start" /><span className="truncate">All plans in this repository</span></a></Button>}
+      refresh={<Button variant="outline" className="shrink-0" aria-label="Refresh sources" title="Refresh sources" onClick={onRefresh}><RefreshCwIcon data-icon="inline-start" /><span className="hidden sm:inline">Refresh sources</span></Button>}
+    />
     {error && <Alert variant="destructive"><AlertTitle>Document unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
     {!current && !error && <LoadingIndicator message="Loading document versions…" />}
     {current && <>

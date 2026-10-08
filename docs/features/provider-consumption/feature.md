@@ -1,6 +1,6 @@
 ---
 created: 2026-09-29
-updated: 2026-10-02
+updated: 2026-10-08
 summary: Apps discover and call confirmed speech-to-text and assistant providers with short-lived Core credentials.
 components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/whisper, apps/harness]
 ---
@@ -44,6 +44,11 @@ Server-side SDK clients use the calling app's `HOSTY_APP_ID`, `HOSTY_CORE_ORIGIN
 | `POST /provider/introspect` | Provider validates `{ token, kind, key }` on every request |
 
 Descriptors contain app ID, name, category, interface key/version, capabilities, URL and availability.
+Core 0.125.0 also includes `uiSurfaces` for assistants: declared panel, navigation and entrypoint
+endpoint identities, paths and resolved browser URLs. Consumers validate handoff destinations
+against these surfaces without an additional `apps.read` grant or an assumption that API and UI
+share an origin. SDK 0.24.0 exposes this additive field; older Core omits it. Plans 0.4.0 uses it
+for [document discussions](../plan-tracking/feature.md#discuss-a-document).
 Stopped providers remain discoverable but cannot receive a new credential. A running speech process
 can still be loading its model; its capabilities response distinguishes inference readiness.
 
@@ -150,8 +155,8 @@ an unavailable provider and a message being sent. Discovery failures do not impl
 
 Assistant-provider issuance requires the consumer's current browser-established
 [activity window](../app-activity-window/feature.md) and live parent Core session. Provider token
-validation rechecks that activity; a delegated credential cannot replace it. Separately, Harness
-uses a Core-owned per-conversation lease for MCP and workspace/publication tool calls.
+validation rechecks that activity; a delegated credential cannot replace it. Harness also uses its own app activity and live Core sign-in for MCP and workspace/publication tool
+calls; conversations require no additional consent.
 
 ## Testing Expectations
 

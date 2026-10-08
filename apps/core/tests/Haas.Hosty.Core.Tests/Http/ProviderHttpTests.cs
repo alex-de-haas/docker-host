@@ -10,6 +10,37 @@ namespace Haas.Hosty.Core.Tests.Http;
 public sealed class ProviderHttpTests
 {
     [Fact]
+    public async Task AssistantDiscoveryProjectsDeclaredBrowserSurfacesWithIndependentEndpoints()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var tokens = host.Services.GetRequiredService<AppServiceTokenService>();
+        await apps.UpsertAppAsync(Record("example.consumer") with { GrantedCorePermissions = [CoreAppPermissions.AssistantProviders] });
+        var target = Speech("example.assistant") with {
+            ConfirmedRoles = ["assistant"],
+            Endpoints = [new("api", "http", "http://127.0.0.1:3456", true),
+                new("web", "http", "http://127.0.0.1:4567", true, PublicOrigin: "https://assistant.example.test")],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["assistant"] = [new("default", "api", "/api/assistant/v1", 1, ["attachments"])] },
+            Ui = new(null, null, "web", "/settings", [], Panels: [new("/assistant", "web", "Assistant")]),
+        };
+        await apps.UpsertAppAsync(target);
+        await apps.UpsertAppAsync(target with { Id = "example.unconfirmed", ConfirmedRoles = [] });
+        using var client = host.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", tokens.CreateToken("example.consumer"));
+        using var response = await client.GetAsync("/api/internal/apps/example.consumer/providers/assistant");
+        response.EnsureSuccessStatusCode();
+        var provider = Assert.Single((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("providers").EnumerateArray());
+        Assert.Equal("example.assistant", provider.GetProperty("appId").GetString());
+        var panel = provider.GetProperty("uiSurfaces").EnumerateArray().Single(surface => surface.GetProperty("path").GetString() == "/assistant");
+        Assert.Equal("web", panel.GetProperty("endpoint").GetString());
+        var browser = new Uri(panel.GetProperty("url").GetString()!);
+        Assert.EndsWith(".hosty.localhost", browser.Host);
+        Assert.Equal(4567, browser.Port);
+        Assert.Equal("/assistant", browser.AbsolutePath);
+        Assert.NotEqual(new Uri(provider.GetProperty("url").GetString()!).Authority, new Uri(panel.GetProperty("url").GetString()!).Authority);
+    }
+
+    [Fact]
     public async Task OwnPermissionStateNeedsNoGrant_ReportsUnsupportedNames_AndRejectsForeignApp()
     {
         await using var host = await CoreHttpHarness.StartAsync();

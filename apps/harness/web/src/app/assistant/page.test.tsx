@@ -11,6 +11,7 @@ vi.mock("@/lib/assistant-api", async original => ({
   listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(),
 }));
 vi.mock("@/components/speech-input", () => ({ SpeechInput: () => null }));
+vi.mock("@/components/session-credentials", () => ({ SessionCredentials: () => null }));
 vi.mock("@/components/app-context-picker", () => ({ AppContextPicker: () => <button aria-label="Select app context" /> }));
 vi.mock("@/components/ui/message-scroller", () => {
   const Wrap = ({ children }: { children: ReactNode }) => <div>{children}</div>;

@@ -26,6 +26,7 @@ export type ShellContextValue = {
   activeUser: SessionResponse["user"] | null;
   canManageApps: boolean;
   busyAction: string | null;
+  pendingAppActions: Record<string, AppAction>;
   // Per-app counter bumped whenever a mutation resets an app's artifact locks (apply update, switch
   // runtime), which makes any cached "update available" verdict stale. Dashboard watches it to
   // re-probe the affected app so the row Update icon does not linger after the update lands.

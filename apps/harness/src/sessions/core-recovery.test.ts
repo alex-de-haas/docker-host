@@ -43,8 +43,8 @@ describe("active harness during Core reconnect", () => {
       expect(await manager.mintAppToken(record.id, "hosty:core")).toBeNull();
       expect(stop).not.toHaveBeenCalled();
       expect(start).toHaveBeenCalledTimes(1);
-      await expect(manager.refreshSessionAuthority(record.id, "another-user", "hostyg_fresh")).rejects.toThrow("another user");
-      await manager.refreshSessionAuthority(record.id, "admin", "hostyg_fresh");
+      await expect(manager.refreshSessionCredentials(record.id, "another-user", "hostyg_fresh")).rejects.toThrow("another user");
+      await manager.refreshSessionCredentials(record.id, "admin", "hostyg_fresh");
       expect(start).toHaveBeenCalledTimes(1);
       expect(stop).not.toHaveBeenCalled();
     } finally { await manager.shutdown(); rmSync(directory, { recursive: true, force: true }); }

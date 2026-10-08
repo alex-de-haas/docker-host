@@ -5,7 +5,7 @@ import { fetchCore } from "./shell/core-transport.js";
 
 
 import { waitForShellUpdateToSettle } from "./shell/self-update";
-import { isAppUp } from "./shell/runtime-states";
+import { isAppBusy, isAppUp } from "./shell/runtime-states";
 import { isRoutineUpdate } from "./shell/update-feedback";
 import { useAppUpdateNotifications } from "./shell/update-notifications";
 
@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { appSupportsReviewedUpdate, findAppPageLink, getAppPageLinks } from "./shell/app-helpers";
 import { CoreRequestError, isAuthRequiredRedirectError, readCoreError, readCoreErrorDetail, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
 import { appendThemeLaunchParams, createReissueRateLimiter } from "@hosty-sdk/app/embedder";
+import { LAUNCH_MODE_PARAM } from "@hosty-sdk/app";
 import { CoreEventNames, subscribeToCoreEvents } from "./shell/events/core-event-stream";
 import { resolveLaunchGate } from "./shell/surfaces/app-surface-tabs";
 import { enqueueRoutineUpdate, isStaleUpdatePreparation, prepareAppUpdate, requestAppUpdate, reviewUpdatesInOrder } from "./shell/app-updates";
@@ -190,6 +191,8 @@ export function ShellClient({
     lastWarnings.current = warnings;
   }, [state.status?.warnings]);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [pendingAppActions, setPendingAppActions] = useState<Record<string, AppAction>>({});
+  const appActionActivations = useRef(new Set<string>());
   const [activePanel, setActivePanel] = useState<ActivePanel | null>(null);
   const openUpdateLogs = useCallback((app: CoreApp) => setActivePanel({ appId: app.id, view: "logs" }), []);
   useAppUpdateNotifications(state.apps, openUpdateLogs);
@@ -769,24 +772,30 @@ export function ShellClient({
 
   const runAppAction = useCallback(
     async (app: CoreApp, action: AppAction) => {
-      // Stopping or restarting Shell also takes down the Core proxy serving this UI.
-      if (app.id === shellAppId && (action === "stop" || action === "restart")) {
-        const confirmed = await confirm({
-          title: action === "stop" ? "Stop the Shell?" : "Restart the Shell?",
-          action: action === "stop" ? "Stop Shell" : "Restart Shell", destructive: action === "stop",
-          description: action === "stop"
-            ? "Stop the Shell? This UI and its Core connection will be unavailable until Shell is started again with `hosty apps start hosty.shell` or through Core."
-            : "Restart the Shell? This page reloads once the Shell answers again.",
-        });
-        if (!confirmed) {
-          return;
-        }
-      }
-
+      // Claim synchronously, before confirmation or the CSRF queue yields. A single busyAction
+      // can be overwritten by another app and cannot prevent duplicate queued lifecycle requests.
+      const currentApp = state.apps.find(candidate => candidate.id === app.id) ?? app;
+      if (appActionActivations.current.has(app.id) || isAppBusy(currentApp.runtimeState) || currentApp.operationStatus === "updating") return;
+      appActionActivations.current.add(app.id);
       const actionKey = `${app.id}:${action}`;
-      setBusyAction(actionKey);
-      setState((current) => ({ ...current, error: null }));
       try {
+        // Stopping or restarting Shell also takes down the Core proxy serving this UI.
+        if (app.id === shellAppId && (action === "stop" || action === "restart")) {
+          const confirmed = await confirm({
+            title: action === "stop" ? "Stop the Shell?" : "Restart the Shell?",
+            action: action === "stop" ? "Stop Shell" : "Restart Shell", destructive: action === "stop",
+            description: action === "stop"
+              ? "Stop the Shell? This UI and its Core connection will be unavailable until Shell is started again with `hosty apps start hosty.shell` or through Core."
+              : "Restart the Shell? This page reloads once the Shell answers again.",
+          });
+          if (!confirmed) {
+            return;
+          }
+        }
+
+        setPendingAppActions(current => ({ ...current, [app.id]: action }));
+        setBusyAction(actionKey);
+        setState((current) => ({ ...current, error: null }));
         const endpoint = action === "backup" ? appEndpoint(app, "/backups") : appEndpoint(app, `/${action}`);
         let restartResponseLost = false;
         try {
@@ -826,10 +835,16 @@ export function ShellClient({
         toast.error("App action failed", { description: message, appId: app.id });
         void refreshApps();
       } finally {
+        appActionActivations.current.delete(app.id);
+        setPendingAppActions(current => {
+          const next = { ...current };
+          delete next[app.id];
+          return next;
+        });
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [confirm, appEndpoint, refresh, refreshApps, sendCsrfJson, shellAppId],
+    [confirm, appEndpoint, refresh, refreshApps, sendCsrfJson, shellAppId, state.apps],
   );
 
   const switchAppRuntime = useCallback(
@@ -1973,6 +1988,17 @@ export function ShellClient({
     () => resolveActiveSurfaceTab(appPanelTabs, activePanelKey),
     [appPanelTabs, activePanelKey],
   );
+  const assistantStandaloneHref = useMemo(() => {
+    if (!activePanelTab?.embeddedUrl || activePanelTab.transitioning || activePanelTab.readiness === "starting"
+      || !assistantIds.includes(activePanelTab.appId)) return null;
+    const app = state.apps.find(candidate => candidate.id === activePanelTab.appId);
+    if (!app) return null;
+    // Open the assistant surface, not the app entrypoint (Harness uses its settings page).
+    // Explicit standalone mode also overrides a previously remembered embedded launch mode.
+    const redirect = new URL(activePanelTab.embeddedUrl);
+    redirect.searchParams.set(LAUNCH_MODE_PARAM, "standalone");
+    return getStandaloneAppHref(app, { label: activePanelTab.label, path: redirect.pathname, redirectUri: redirect.toString() });
+  }, [activePanelTab, assistantIds, state.apps, getStandaloneAppHref]);
 
   // What the strip names: the app whose page fills the content area, or the Shell page itself.
   const stripTitle = workspace?.title ?? SHELL_VIEW_LABELS[effectiveView] ?? "Hosty";
@@ -2024,6 +2050,7 @@ export function ShellClient({
       activeUser,
       canManageApps: Boolean(canManageApps),
       busyAction,
+      pendingAppActions,
       updateStatusInvalidations,
       settingsTab: shellRoute.settingsTab,
       appSettingsTabs,
@@ -2041,6 +2068,7 @@ export function ShellClient({
       assistantSelection,
       appSettingsTabs,
       busyAction,
+      pendingAppActions,
       canManageApps,
       shellResolvedTheme,
       shellThemePreference,
@@ -2209,6 +2237,7 @@ export function ShellClient({
               tabs={appPanelTabs}
               expanded={rightPanelOpen}
               activeTab={activePanelTab}
+              standaloneHref={assistantStandaloneHref}
               theme={shellResolvedTheme}
               themePreference={shellThemePreference}
               onSelectTab={(key) => {

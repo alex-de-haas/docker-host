@@ -119,6 +119,7 @@ export function DashboardPage({
   canManageApps,
   loading,
   busyAction,
+  pendingAppActions,
   updateCheck,
   updateStatusInvalidations,
   onRefresh,
@@ -142,6 +143,7 @@ export function DashboardPage({
   canManageApps: boolean;
   loading: boolean;
   busyAction: string | null;
+  pendingAppActions: Record<string, AppAction>;
   // Server-side fleet-check status: drives the header "Check updates" spinner from server state.
   updateCheck: AppUpdateCheckStatus | null;
   // Per-app counter (owned by ShellClient) that advances when a mutation resets an app's artifact
@@ -409,6 +411,7 @@ export function DashboardPage({
               shellAppId={shellAppId}
               canManageApps={canManageApps}
               busyAction={busyAction}
+              pendingAppActions={pendingAppActions}
               updateStatusByApp={updateStatusByApp}
               onAction={onAction}
               onSwitchRuntime={onSwitchRuntime}
@@ -953,6 +956,7 @@ function InstalledAppsTable({
   shellAppId,
   canManageApps,
   busyAction,
+  pendingAppActions,
   updateStatusByApp,
   onAction,
   onSwitchRuntime,
@@ -965,6 +969,7 @@ function InstalledAppsTable({
   shellAppId: string;
   canManageApps: boolean;
   busyAction: string | null;
+  pendingAppActions: Record<string, AppAction>;
   // Per-service digest detail for expanded rows, owned by the page; the section only reads it.
   updateStatusByApp: Record<string, UpdateStatusState>;
   onAction: (app: CoreApp, action: AppAction) => void;
@@ -1069,6 +1074,7 @@ function InstalledAppsTable({
                   healthLoading={healthState?.loading ?? false}
                   canManageApps={canManageApps}
                   busyAction={busyAction}
+                  pendingAction={pendingAppActions[app.id]}
                   checkingUpdate={updateStatusState?.loading ?? false}
                   onToggleExpanded={() => toggleAppExpanded(app)}
                   onAction={onAction}
@@ -1106,6 +1112,7 @@ function InstalledAppRow({
   healthLoading,
   canManageApps,
   busyAction,
+  pendingAction,
   checkingUpdate,
   onToggleExpanded,
   onAction,
@@ -1121,6 +1128,7 @@ function InstalledAppRow({
   healthLoading: boolean;
   canManageApps: boolean;
   busyAction: string | null;
+  pendingAction?: AppAction;
   checkingUpdate: boolean;
   onToggleExpanded: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
@@ -1133,6 +1141,13 @@ function InstalledAppRow({
   // A verb is mid-flight on the server. Distinct from `busyAction`, which is only true in the tab
   // that clicked: this one is true for every admin, in every tab, and survives a page reload.
   const transitioning = isAppBusy(app.runtimeState);
+  const lifecyclePending = pendingAction === "start" || pendingAction === "stop" || pendingAction === "restart";
+  const lifecycleLabel = app.runtimeState === "stopping" ? "Stopping…"
+    : app.runtimeState === "starting" ? "Starting…"
+    : pendingAction === "restart" ? "Restarting…"
+    : pendingAction === "stop" ? "Stopping…"
+    : pendingAction === "start" ? "Starting…" : null;
+  const lifecycleDisabled = transitioning || lifecyclePending || app.operationStatus === "updating";
   // Lifecycle (start/stop/restart) is not system-gated: Core's endpoints never were, reviewed updates
   // already cycle system apps, and a stopped one recovers from this page or the CLI. Stopping or
   // restarting the Shell itself takes this UI down with it, so the action handler confirms that case.
@@ -1211,7 +1226,12 @@ function InstalledAppRow({
                   onClick={() => onOpenPanel(app, "settings", { settingsTab: app.configurationReadiness?.mounts.length && !app.configurationReadiness?.missingSettings.length ? "mounts" : "app" })}>Configure</Button>}
               </div>
             )}
-            {app.restartRequired && !configurationRequired && (
+            {lifecycleLabel ? (
+              <div role="status" className="flex items-center gap-2 text-xs text-sky-700 dark:text-sky-400">
+                <LoaderCircle aria-hidden="true" className="size-3 animate-spin" />
+                <span>{lifecycleLabel}</span>
+              </div>
+            ) : app.restartRequired && !configurationRequired && (
               <div className="flex flex-wrap items-center gap-2 text-xs text-amber-700 dark:text-amber-400">
                 <span title="Settings or mounts changed since this app started.">Restart required</span>
                 {canControl && (
@@ -1269,29 +1289,29 @@ function InstalledAppRow({
       <TableCell role="cell" className="dashboard-actions">
         <div className="flex items-center justify-end gap-1">
           <div className="dashboard-action-shortcuts flex items-center gap-1">
-            {canControl && (transitioning ? (
+            {canControl && (lifecycleLabel ? (
               // Neither Start nor Stop is the right offer while the server is mid-verb: this toggle was
               // binary before intermediate states existed, so a starting app showed a Start button that
               // would race its own start. Report progress instead, and let the state settle.
               <IconButton
-                title={app.runtimeState === "stopping" ? "Stopping…" : "Starting…"}
+                title={lifecycleLabel}
                 disabled
                 onClick={() => undefined}
               >
                 <LoaderCircle className="h-4 w-4 animate-spin" />
               </IconButton>
             ) : running ? (
-              <IconButton title="Stop app" disabled={isBusy("stop")} onClick={() => onAction(app, "stop")}>
+              <IconButton title="Stop app" disabled={lifecycleDisabled || isBusy("stop")} onClick={() => onAction(app, "stop")}>
                 {isBusy("stop") ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
               </IconButton>
             ) : (
-              <IconButton title={configurationRequired ? "Configure the app before starting" : "Start app"} disabled={configurationRequired || isBusy("start")} onClick={() => onAction(app, "start")}>
+              <IconButton title={configurationRequired ? "Configure the app before starting" : "Start app"} disabled={configurationRequired || lifecycleDisabled || isBusy("start")} onClick={() => onAction(app, "start")}>
                 {isBusy("start") ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
               </IconButton>
             ))}
             {canControl && (
-              <IconButton title={configurationRequired ? "Configure the app before restarting" : "Restart app"} disabled={configurationRequired || transitioning || isBusy("restart")} onClick={() => onAction(app, "restart")}>
-                {transitioning || isBusy("restart") ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+              <IconButton title={configurationRequired ? "Configure the app before restarting" : "Restart app"} disabled={configurationRequired || lifecycleDisabled || isBusy("restart")} onClick={() => onAction(app, "restart")}>
+                {transitioning || lifecyclePending || isBusy("restart") ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
               </IconButton>
             )}
             {/* Logs and Settings are the two panels an operator reaches for between lifecycle verbs, so
@@ -1312,7 +1332,7 @@ function InstalledAppRow({
             app={app}
             canControl={canControl}
             running={running}
-            transitioning={transitioning}
+            transitioning={lifecycleDisabled}
             startBusy={isBusy("start")}
             stopBusy={isBusy("stop")}
             restartBusy={isBusy("restart")}

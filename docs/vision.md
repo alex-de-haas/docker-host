@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-07
+updated: 2026-10-08
 ---
 
 # Hosty Platform Vision
@@ -286,6 +286,12 @@ Decisions 1–5: 2026-08-19.
     [embedded app sign-in feature](features/embedded-app-sign-in/feature.md) implements direct Core
     sign-in to the target app's frame without giving its credentials to Shell. Additional native
     isolation and prefix rules remain in the [approval rules plan](features/assistant-approval-rules/plan.md).
+
+    Follow-up on 2026-10-08: the owner explicitly removed mandatory tool confirmation for each
+    conversation. Already granted permissions and the assistant app's active authorization govern
+    tool use; current-user, expiry and revocation checks remain. The
+    [app activity feature](features/app-activity-window/feature.md#assistant-activity-authorization)
+    owns this behavior.
 
 20. **Source providers belong to the platform (2026-10-07).** GitHub is the built-in Core source
     provider behind a typed internal contract, without a separate process. Shell owns personal

@@ -18,10 +18,4 @@ internal static class BrowserAuthorityFixture
             "http://app.test/callback", now, now.AddMinutes(5), null, browserId, ActivityAuthorized: true, CodeChallenge: AuthCodeProof.Challenge), now);
         return await host.Services.GetRequiredService<AppIdentityService>().ExchangeCodeAsync(code, appId, AuthCodeProof.Verifier);
     }
-    internal static async Task Approve(CoreHttpHarness host, string appId, string userId, string sessionId = "session-one", string browserId = "browser-session")
-    {
-        var authority = host.Services.GetRequiredService<AssistantSessionAuthority>();
-        var nonce = await authority.CreateDecisionAsync(appId, sessionId, userId, browserId, default);
-        await authority.DecideAsync(nonce, appId, sessionId, userId, browserId, "approve", default);
-    }
 }

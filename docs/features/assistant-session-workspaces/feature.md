@@ -1,6 +1,6 @@
 ---
 created: 2026-09-27
-updated: 2026-10-07
+updated: 2026-10-08
 summary: Core-owned Git worktrees per assistant session, with managed Git operations, observation and cleanup.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -49,8 +49,9 @@ review. Install Core before updating Harness to the canonical name. `apps.source
 authorize workspace operations. The manifest schema version is unchanged.
 
 Assistant requests use `/api/internal/apps/{assistant}/sessions/{session}/workspaces` with the app
-service bearer and `X-Hosty-User-Token`: a browser app identity bound to a Core-approved assistant
-session. Delegated and read-only MCP credentials do not authorize preparation.
+service bearer and `X-Hosty-User-Token`: a browser app identity with current app activity and a live
+authorizing Core sign-in. The conversation ID scopes ownership; it requires no separate approval.
+Delegated and read-only MCP credentials do not authorize preparation.
 Core checks the persisted permission and the user's current administrator/access state on every
 request. The interface or assistant role alone grants nothing. Bindings enforce installation, user
 and session ownership. Existing read-only Core MCP credentials confer no workspace mutation rights.
