@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-10-07
+updated: 2026-10-08
 summary: The Permissions tab where administrators review an app's declared, accepted and effective Core permissions.
 components: [apps/shell, apps/core]
 ---
@@ -140,11 +140,15 @@ Core's host-wide telemetry scrape requires `apps.read` and `core.read` even for 
 
 The SDK provides `readOwnPermissionNotice` on the server, `permissionNotice` and
 `requestPermissionReview` for framework-neutral clients, and `MissingPermissionsNotice`
-for React. Shell, Harness, Marketplace and Telemetry UI expose an authenticated own-state
-endpoint and use the shared component. The app service credential stays server-side.
+for legacy React consumers. [HostyOverlay](../hosty-overlay/feature.md) combines identity and
+required-setup readiness in Shell, Harness, Marketplace, Plans, Demo App and Telemetry UI. It blocks
+missing required setup for ordinary users with an administrator-configuration explanation and no
+action buttons; only administrators receive details and the Core review action. Existing notice
+endpoints remain compatible. The app service credential stays server-side.
 Only administrators see actionable notices. Missing known required names open Core review;
 unsupported required names explain that the app or Core needs updating without an approval
-button. Optional-only declarations never trigger a notice. Dismissal lasts until reload.
+button. Optional-only declarations never trigger a notice. Legacy notice dismissal lasts until reload;
+the root overlay remains blocked until required setup succeeds.
 
 Standalone review opens directly from a click. Embedded apps ask Shell with
 `hosty:request-permission-review`; Shell checks the sending window and origin and derives

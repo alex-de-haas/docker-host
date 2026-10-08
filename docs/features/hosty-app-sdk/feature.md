@@ -1,6 +1,6 @@
 ---
 created: 2026-07-15
-updated: 2026-10-06
+updated: 2026-10-08
 summary: The shared app-side Host integration published as an npm package and a NuGet package.
 components: [packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -31,8 +31,9 @@ contract; none depends on the default Shell or its embedding messages.
 ```text
 @hosty-sdk/app                 # npmjs — types, constants, state machine, launch mode, message schema
 @hosty-sdk/app/server          # import "server-only": Core revalidation, code exchange, app secrets
+@hosty-sdk/app/session/server  # framework-neutral validated-session and required-setup response
 @hosty-sdk/app/delegated       # local ECDSA validation of Core-issued delegated tokens
-@hosty-sdk/app/react           # 'use client': AppIdentityBridge, HostLaunchBridge, HostThemeBridge, useLaunchMode
+@hosty-sdk/app/react           # 'use client': HostyOverlay, legacy bridges, launch/theme helpers
 @hosty-sdk/app/embedder        # theme sender and legacy message parsers
 @hosty-sdk/app/browser-auth    # app-local proof attempts, grant persistence, appFetch and popup sign-in
 @hosty-sdk/app/app-code        # pure: strict Core protocol discovery and code-verifier validation
@@ -72,8 +73,9 @@ What each slice holds:
   Core), `exchangeAppCode`, `createAppCodeRouteHandler`, identity-token reading, cookie attribute
   building, and the app secrets client (`getAppSecret` / `setAppSecret` / `deleteAppSecret` /
   `listAppSecretKeys`).
-- **`react`:** `AppIdentityBridge` (renders the state machine and drives recovery), `HostLaunchBridge`,
-  `HostThemeBridge`, `useLaunchMode`, and `readProbedSessionStatus`.
+- **`react`:** `HostyOverlay`, the shared `useAppIdentity` coordinator, legacy `AppIdentityBridge`
+  and `AppActivityBridge`, `HostLaunchBridge`, `HostThemeBridge`, `useLaunchMode`, and
+  `readProbedSessionStatus`.
 - **`embedder`:** `parseActiveFrameAuthRequired`, `parseActiveFrameDelegatedTokenRequest`,
   `createReissueRateLimiter`, and `appendThemeLaunchParams`.
 - **`theme`:** the protocol constants (`hosty:shell-theme`, the `hosty_theme` /
@@ -296,11 +298,12 @@ browser acceptance are tracked in [local browser origins](../local-browser-origi
 
 | App | Status |
 | --- | --- |
-| shell | consumes the `embedder` slice (#245), the launch/event helpers, and the theme sender half |
-| marketplace | full — server + react + app-code factory (#241, #248) + the theme slice |
-| telemetry-ui | full (#241, #248) + the theme slice |
-| ai-gateway | consumes the SDK for its app auth; its web workspace declares the SDK too and takes the theme slice |
-| demo-app | partial — `AppIdentityBridge`, the launch and theme bootstraps, `HostThemeBridge`, the app-code factory, and `delegated` for its MCP route; its 545-line `host-auth.ts` still hand-rolls session resolution |
+| shell | HostyOverlay and the standard session adapter, preserving cookie-only exchange; embedder, launch/event and theme sender helpers |
+| marketplace | HostyOverlay, standard administrator-only session adapter, server/app-code factories and theme slice |
+| telemetry-ui | HostyOverlay, standard administrator-only session adapter, server/app-code factories and theme slice |
+| harness | HostyOverlay, framework-neutral session adapter over its existing Node authentication, standard code-route alias and theme slice |
+| plans | HostyOverlay and the standard administrator-only session adapter, replacing its custom sign-in rendering |
+| demo-app | HostyOverlay and standard session adapter, launch/theme bootstraps, app-code factory and delegated MCP validation; domain-specific identity/session helpers remain |
 | media-server web | full (media-server #63/#64), theme slice included (media-server #253) |
 | media-server .NET | full — `HostySdk.App` (media-server #65); a Core timeout fails closed as 401 |
 | project-manager | adopted (PM #27), with a pre-SDK wrapper layer still duplicating SDK exports; theme slice included (PM #77), keeping a thin next-themes hand-off |
@@ -310,7 +313,7 @@ The remaining adoption debts and the second-wave extraction inventory are in [pl
 
 ## Boundaries
 
-- The SDK owns the auth contract and logic, not each app's visual design — the gate UI is overridable.
+- The SDK owns the auth contract and the fixed HostyOverlay presentation. Application UI stays app-owned; the legacy AppIdentityBridge retains its rendering override for compatibility.
 - It never signs or verifies browser app tokens locally; their revalidation stays online against Core,
   per the token rule in [ai-agent-bridge](../ai-agent-bridge/feature.md#token-mechanics). Delegated
   agent-bridge tokens are that rule's other half, and `delegated.ts` verifies those locally against the
@@ -352,7 +355,15 @@ helpers omit that purpose and reject assistant MCP-only credentials. App identit
 validators also reject their distinct format. Applications keep MCP validation out of general API
 authentication and enforce their domain user permissions after validation.
 
-## Required-permission setup notice
+## Root Overlay And Legacy Setup Notice
+
+[Hosty Overlay](../hosty-overlay/feature.md) is the standard integration for first-party React apps.
+It shares the identity/activity coordinators with the legacy bridges, blocks required setup for all
+roles and preserves same-user state during recovery. `createHostySessionRouteHandler` from `/server`
+and `createHostySessionResponse` from `/session/server` own the combined readiness response.
+The older notice exports below remain available for consumers that have not migrated.
+
+### Legacy Notice
 
 `@hosty-sdk/app/permissions/server` exports `readOwnPermissionNotice` for an
 app-authenticated server route. Pass the authenticated viewer's host role. The helper

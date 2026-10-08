@@ -234,14 +234,14 @@ export interface AppIdentityBridgeProps {
  * redirect through Core `/open` when standalone, and cards only in fallback/terminal states
  * — never a login UI while recovery is still running.
  */
-export function AppIdentityBridge({
+export function useAppIdentity({
   probePath = "/api/auth/identity",
   appCodePath = "/api/auth/app-code",
-  renderState,
   onSession,
-  children,
-}: AppIdentityBridgeProps = {}) {
+}: Pick<AppIdentityBridgeProps, "probePath" | "appCodePath" | "onSession"> = {}) {
   const [ui, setUi] = useState<AppIdentityBridgeState>({ kind: "recovering" });
+  const [session, setSession] = useState<unknown>(null);
+  const refreshRef = useRef<() => Promise<unknown>>(async () => null);
   // A launch code is single-use. Strict Mode replays the effect after the URL is cleaned;
   // keep its exchange alive and let the replacement effect await the same response.
   const wasActive = useRef(false);
@@ -257,10 +257,12 @@ export function AppIdentityBridge({
 
   useEffect(() => {
     let cancelled = false;
+    let probeSequence = 0;
     const controller = new AbortController();
     if (initialGrantPresent.current === null) initialGrantPresent.current = restoreAppGrant();
 
-    async function probeAndRecover() {
+    async function probeAndRecover(): Promise<unknown> {
+      const sequence = ++probeSequence;
       // Dedicated controller + setTimeout instead of AbortSignal.any/timeout, which are not
       // available in every browser (a synchronous throw here would stop the bridge from
       // ever rendering). Aborts on effect teardown or when the probe times out.
@@ -301,13 +303,12 @@ export function AppIdentityBridge({
         window.clearTimeout(probeTimeout);
         controller.signal.removeEventListener("abort", abortProbe);
       }
-      if (cancelled) {
-        return;
+      if (cancelled || sequence !== probeSequence) {
+        return null;
       }
       if (revision !== appGrantRevision()) {
         initialGrantPresent.current ||= restoreAppGrant();
-        void probeAndRecover();
-        return;
+        return probeAndRecover();
       }
       forgetRejectedAppGrant(rejectionCode, revision);
       if (openUrl && protocol) setActivity({ openUrl, appAuthProtocol: protocol,
@@ -346,16 +347,18 @@ export function AppIdentityBridge({
 
       switch (action.kind) {
         case "none":
+          setSession(sessionBody);
           onSessionRef.current?.(sessionBody);
           appSessionActive();
           wasActive.current = true;
           setUi({ kind: "active" });
-          return;
+          return sessionBody;
         case "post-auth-required": {
           showSignIn();
           return;
         }
         case "redirect":
+          if (wasActive.current) { showSignIn(); return null; }
           if (appId && protocol && beginNavigationSignIn(action.openUrl, appId, protocol, mode === "native" ? "native" : "standalone", shouldUpgrade)) return;
           showSignIn("Allow app storage, or sign in with a popup.");
           return;
@@ -377,11 +380,11 @@ export function AppIdentityBridge({
                   body: JSON.stringify(proof),
                 }, false);
                 const body = await response.json();
-                if (!response.ok || typeof body.accessToken !== "string" || !body.accessToken)
+                if (!response.ok)
                   throw new Error("Hosty could not establish this app session.");
                 if (cancelled) return;
                 if (revision !== appGrantRevision()) { await probeAndRecover(); return; }
-                rememberAppGrant(body.accessToken);
+                if (typeof body.accessToken === "string" && body.accessToken) rememberAppGrant(body.accessToken);
                 silentError.current = null;
                 writeGuard(false);
                 await probeAndRecover();
@@ -390,6 +393,7 @@ export function AppIdentityBridge({
       }
     }
 
+    refreshRef.current = probeAndRecover;
     const recover = () => { if (!cancelled && !wasActive.current) { setUi({ kind: "recovering" }); void probeAndRecover(); } };
     window.addEventListener(APP_SESSION_ENDED, recover);
     const url = new URL(window.location.href);
@@ -452,12 +456,19 @@ export function AppIdentityBridge({
 
     return () => {
       cancelled = true;
+      refreshRef.current = async () => null;
       controller.abort();
       window.removeEventListener(APP_SESSION_ENDED, recover);
     };
   }, [probePath, appCodePath]);
 
-  if (wasActive.current) return <>
+  return { ui, session, activity, hasBeenActive: wasActive.current, refresh: () => refreshRef.current() };
+}
+
+export function AppIdentityBridge({ renderState, children, ...options }: AppIdentityBridgeProps = {}) {
+  const { ui, activity, hasBeenActive } = useAppIdentity(options);
+  const { appCodePath = "/api/auth/app-code", probePath = "/api/auth/identity" } = options;
+  if (hasBeenActive) return <>
     {activity && <AppActivityBridge {...activity} appCodePath={appCodePath} probePath={probePath} />}
     {renderState ? renderState({ kind: "active" }) : children}
   </>;
@@ -623,3 +634,4 @@ export function HostThemeBridge({ followSystem = true, onTheme }: HostThemeBridg
 export { MissingPermissionsNotice } from "./permissions-react";
 
 export { AppActivityBridge } from "./activity-react";
+export { HostyOverlay } from "./overlay-react";

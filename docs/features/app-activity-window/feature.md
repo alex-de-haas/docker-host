@@ -1,6 +1,6 @@
 ---
 created: 2026-10-02
-updated: 2026-10-05
+updated: 2026-10-08
 summary: App grants keep identity after their privileged activity window expires, and activity never adds a permission.
 components: [apps/core, packages/app-sdk]
 ---
@@ -50,6 +50,12 @@ popup renewal replaces it. Identity rejection clears it. Expiry while mounted ne
 redirect or discards the app's draft.
 
 ## Recovery without losing work
+
+[HostyOverlay](../hosty-overlay/feature.md) is the standard root UI in the six repository React
+consumers. It shares the existing coordinators, hides mounted content at the known activity deadline,
+and validates user identity and required setup before waiting SDK requests resume. Same-user recovery
+preserves the component tree; a changed user reloads only the app document and cancels old work.
+The lower-level bridges described below remain compatible for existing consumers.
 
 The JavaScript SDK exposes `configureAppActivity`, `renewAppActivity`, `appActivityNeedsRenewal`,
 `appFetch` and `AppActivityBridge`. `AppIdentityBridge` installs recovery after its identity probe

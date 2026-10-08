@@ -7,10 +7,15 @@ import { acceptAppAuthProtocol, refreshAppAuthProtocol } from "./browser-auth";
 import type { AppAuthProtocol } from "./app-code";
 
 /** Keep mounted beside app content so expiry never discards drafts or component state. */
-export function AppActivityBridge({ openUrl, appCodePath, activeUntil, activityRequired = false, appAuthProtocol, probePath = "/api/auth/identity", native }: {
+export type AppActivityOptions = {
   openUrl: string; appCodePath: string; activeUntil?: string | null; activityRequired?: boolean;
   appAuthProtocol?: AppAuthProtocol | null; probePath?: string; native?: boolean;
-}) {
+  validateSession?: () => Promise<boolean>;
+};
+
+export function useAppActivity(options: AppActivityOptions | null) {
+  const { openUrl, appCodePath = "/api/auth/app-code", activeUntil, activityRequired = false,
+    appAuthProtocol, probePath = "/api/auth/identity", native, validateSession } = options ?? {};
   const [needed, setNeeded] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -20,6 +25,7 @@ export function AppActivityBridge({ openUrl, appCodePath, activeUntil, activityR
     void operation.catch(e => { setNeeded(true); setError(String(e.message ?? e)); }).finally(() => setPending(false));
   };
   useEffect(() => {
+    if (!openUrl) return;
     let cancelled = false;
     let cleanup: (() => void) | undefined;
     const controller = new AbortController();
@@ -30,7 +36,7 @@ export function AppActivityBridge({ openUrl, appCodePath, activeUntil, activityR
       const mode = normalizeLaunchMode(document.documentElement.getAttribute(LAUNCH_MODE_ATTRIBUTE)) ?? resolveLaunchMode({
         param: new URL(window.location.href).searchParams.get(LAUNCH_MODE_PARAM), stored, heuristic: detectLaunchMode(window),
       }).mode;
-      cleanup = configureAppActivity({ openUrl, appAuthProtocol: protocol, probePath, native: native ?? mode === "native", activeUntil, activityRequired, exchangeCode: async proof => {
+      cleanup = configureAppActivity({ openUrl, appAuthProtocol: protocol, probePath, native: native ?? mode === "native", activeUntil, activityRequired, validateSession, exchangeCode: async proof => {
       const response = await fetch(appCodePath, { method: "POST", credentials: "same-origin", redirect: "error",
         headers: { "Content-Type": "application/json" }, body: JSON.stringify(proof) });
       const body = await response.json();
@@ -55,12 +61,17 @@ export function AppActivityBridge({ openUrl, appCodePath, activeUntil, activityR
     window.addEventListener(APP_ACTIVITY_RENEWED, renewed);
     document.addEventListener("click", click, true);
     return () => { cancelled = true; controller.abort(); cleanup?.(); window.removeEventListener(APP_SESSION_ENDED, expired); window.removeEventListener(APP_ACTIVITY_RENEWED, renewed); document.removeEventListener("click", click, true); };
-  }, [openUrl, appCodePath, appAuthProtocol, probePath, native]);
+  }, [openUrl, appCodePath, appAuthProtocol, probePath, native, validateSession]);
   useEffect(() => { updateAppActivity(activeUntil, activityRequired); }, [activeUntil, activityRequired, openUrl, appCodePath]);
+  return { needed, pending, error, renew, cancel: () => { cancelActivityRenewal(); setNeeded(false); } };
+}
+
+export function AppActivityBridge(options: AppActivityOptions) {
+  const { needed, pending, error, renew, cancel } = useAppActivity(options);
   if (!needed) return null;
   return <AuthNotice>
     <span>{error || "Renew access through Core to continue. Your work stays on this page."}</span>
     <AuthNoticeButton disabled={pending} onClick={renew}>{pending ? "Waiting for Core…" : "Renew access"}</AuthNoticeButton>
-    <AuthNoticeButton secondary onClick={() => { cancelActivityRenewal(); setNeeded(false); }}>Later</AuthNoticeButton>
+    <AuthNoticeButton secondary onClick={cancel}>Later</AuthNoticeButton>
   </AuthNotice>;
 }

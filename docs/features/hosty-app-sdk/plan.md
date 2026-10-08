@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-07-15
-updated: 2026-09-18
+updated: 2026-10-08
 summary: The SDK's second wave, extracting the remaining platform glue every app still hand-writes.
 components: [packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -16,18 +16,21 @@ project-manager, the three in-tree Next apps, and Shell, after the media-server 
 the original shortlist guesswork with evidence, and the argument is the same one auth won on: the drift
 examples are already real. Ordering is by payoff.
 
+Owner-approved scope split, 2026-10-08: [Hosty Overlay](../hosty-overlay/plan.md) owns the shared
+browser session coordinator, standard identity/session route adapters and uniform root UI.
+Its D1 replaces those portions of D1 below. Overlay presentation has no app customization; the
+remaining SDK extraction and adoption debts retain their scope here.
+
 ## Deliverables
 
 - [ ] D1. **Finish the auth slice — adoption plus the missing factories, not new extraction.**
-  - Route-handler factories for `/api/auth/identity`, `/api/auth/session`, and optional `/logout`.
-    Every app hand-writes them today, and media-server maps status↔HTTP twice (once in its session
-    route, back again in `app-shell.tsx`). Only `createAppCodeRouteHandler` ships so far.
+  - The optional `/logout` route-handler factory. Standard identity/session route adapters are
+    owned by Hosty Overlay D1 rather than duplicated here.
   - The middleware/proxy factory: public paths, launch-code pass-through, header stripping,
     trusted-identity injection. project-manager's `proxy.ts` is the live reference.
   - The scoped app-directory client (`/api/internal/apps/{id}/directory/users`) — three parallel
     implementations exist (demo-app `host-auth.ts`, project-manager `host-directory.ts`, media-server
     .NET `HostyCoreClient`).
-  - The headless `useHostSession()` under the default, overridable gate UI.
   - The adoption debts: demo-app's server slice (its 545-line `host-auth.ts` is the last hand-rolled
     revalidation copy in-tree, and migrating it frees the app-directory client for extraction);
     project-manager's pre-SDK wrapper layer (`module-runtime.ts`, `host-app-code.ts`,

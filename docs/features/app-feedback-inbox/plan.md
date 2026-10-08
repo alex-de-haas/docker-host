@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-09-26
+updated: 2026-10-08
 summary: An inbox where users submit app observations and administrators send reviewed batches to assistant sessions.
 components: [apps/shell, apps/harness, packages/app-sdk]
 ---
@@ -33,6 +33,12 @@ element information as reproduction evidence, not a guaranteed permanent selecto
 location. A moved/deleted element must not make the report unreadable. Preview the included context;
 allow cropping/removal of evidence and avoid capturing credentials, hidden inputs or unrelated pages.
 Do not require a full DOM dump or diagnostic-log collection for ordinary feedback.
+
+Owner clarification, 2026-10-08: element selection plus a comment is useful without an image.
+A screenshot adds spatial context for requests such as moving a control above its neighbour or
+aligning two elements; when available, let the reporter include enough surrounding content to
+explain that relationship. An unavailable screenshot must not prevent submitting the selected
+element's context and comment.
 
 ### Submit Without Agent Access
 
@@ -97,6 +103,44 @@ universal DOM/image capture API; validate browser permissions/platform availabil
 text/context fallback. Native capture belongs in the relevant client scope rather than assuming
 the first Harness Swift version embeds every app.
 
+### Element Selection And Image Capture
+
+The browser APIs establish a feasible direction, not completed Hosty browser verification. D2 owns
+the capability spike and acceptance checks:
+
+- An SDK picker inside the app document can identify a DOM element under the pointer with
+  [`elementFromPoint`](https://developer.mozilla.org/en-US/docs/Web/API/Document/elementFromPoint)
+  and draw a highlight from its
+  [`getBoundingClientRect`](https://developer.mozilla.org/en-US/docs/Web/API/Element/getBoundingClientRect).
+  Inputs, buttons and containers can be selected without app-specific React instrumentation.
+  Keep the picker chrome out of hit testing and update the highlight when scrolling or resizing.
+- This identifies rendered DOM elements. React component names, source files and line numbers are
+  not a promised result. Inaccessible shadow roots and nested cross-origin frames need a fallback
+  or cooperation from their contents; a canvas does not expose its drawn controls as DOM elements.
+  Running the picker inside an app's frame gives it access to that app's document, without giving
+  Shell access to the frame's DOM.
+- DOM image renderers such as [html2canvas](https://html2canvas.hertzen.com/documentation)
+  reconstruct an image and can differ from the displayed page. Unsupported CSS, cross-origin assets
+  and tainted canvases need explicit compatibility checks; do not promise a pixel-exact screenshot.
+- Browser display capture through
+  [`getDisplayMedia`](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getDisplayMedia)
+  requires a user gesture and a browser source-selection/permission prompt on each capture request.
+  Check browser and embedded-frame policy support before offering it. Native capture is a separate
+  client capability. Keep element/context-only reporting available when capture is declined or
+  unsupported, and preview any image before submission.
+
+### SDK Overlay Integration Boundary
+
+Owner direction, 2026-10-08: [Hosty Overlay](../hosty-overlay/plan.md) owns the agreed root SDK
+integration, standard authentication/setup UI, simple session restoration and fixed light/dark
+Hosty design. Its plan records the detailed decisions; this plan does not duplicate those deliverables.
+The overlay is a candidate host for the picker, region selection and a keyboard entry point, while
+capture remains a separate feature under D2 here. Reuse the shared surface when available without
+making capture dependent on completing the broader overlay implementation. The overlay's first
+release includes no element picker or screenshots, and this feedback plan remains Draft.
+
+### Reporter Updates
+
 Reuse [Core notifications](../notifications/feature.md) for safe reporter receipt/outcome messages;
 any reporter detail view still needs an authorized record endpoint. Do not expose private session
 content through a status link. Administrator triage and batch dispatch require access to the
@@ -110,7 +154,7 @@ plan's scope; this feature hands reviewed evidence to assistant sessions only.
 ## Deliverables
 
 - [ ] D1. Implement narrow authenticated intake and durable evidence in the selected Core/separate-app location.
-- [ ] D2. Validate and implement supported screenshot/element capture paths with text/context fallback.
+- [ ] D2. Validate and implement in-app DOM element/region selection and supported image capture paths, with element/comment and text/context fallbacks and evidence preview.
 - [ ] D3. Implement administrator triage, reviewed batch and direct-send paths with idempotent session delivery.
 - [ ] D4. Implement per-item outcomes, authorized reporter notifications and evidence retention/access.
 
@@ -138,7 +182,8 @@ After this plan is approved as Ready, implement these phases on one feature bran
   batch retry and per-item outcome transitions work?
 - Which capture mechanism works for embedded apps, cross-origin frames, inaccessible DOM elements and
   broken pages? What SDK/host cooperation is needed, what is the fallback, and what are the final
-  entry-point/inbox/direct-send UI and separate-feature boundaries?
+  entry-point/inbox/direct-send UI and separate-feature boundaries? Choose an initial capture host
+  without requiring completion of the separate SDK overlay feature.
 
 ## Verification
 
@@ -154,6 +199,13 @@ After this plan is approved as Ready, implement these phases on one feature bran
 - An administrator can capture and send directly to a session. A failed capture/broken page supports
   text/context fallback; a stale selector keeps the screenshot/comment usable. Cancelling capture
   or batch review creates no submitted report or agent work.
+
+- Select an input, button and container inside a Shell-embedded app; verify highlight position after
+  scrolling/resizing, selection without activating the underlying control, and dismissal of the
+  picker. Verify the standalone path and fallbacks at inaccessible nested-frame/shadow boundaries.
+  Submit an element/comment report without an image, including after display-capture refusal. For
+  an image-supported path, preview a crop with neighbouring elements and verify that a layout-change
+  request retains enough spatial context. Record tested capture/browser limitations.
 
 - Update a report after dispatch, delete an unrelated session, and complete only some items in a
   batch. The accepted evidence remains attributable and available, pending items stay pending and

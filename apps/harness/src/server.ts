@@ -1,3 +1,4 @@
+import { createHostySessionResponse } from "@hosty-sdk/app/session/server";
 import { readOwnPermissionNotice } from "@hosty-sdk/app/permissions/server";
 import { delegationCredential } from "./session-delegation.js";
 import { speechRoute } from "./speech.js";
@@ -140,6 +141,16 @@ async function route(
     return;
   }
 
+  if (method === "GET" && url.pathname === "/api/hosty/session") {
+    const [session, recovery] = await Promise.all([
+      resolveAppSession(readAppCredential(request)), getAppRecoveryParams(),
+    ]);
+    const result = await createHostySessionResponse(session, recovery, { administratorOnly: true });
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, result.status, await result.json());
+    return;
+  }
+
   if (method === "GET" && url.pathname === "/api/hosty/permissions") {
     const session = await resolveAppSession(readAppCredential(request));
     response.setHeader("Cache-Control", "no-store");
@@ -162,7 +173,7 @@ async function route(
   // The static page fetches its protected data through the admin-gated app API. Core delivers the
   // one-time code to this app's navigation or its own popup; Shell does not carry the code. This
   // endpoint exchanges it and revalidates the grant for Harness before setting the app cookie.
-  if (method === "POST" && url.pathname === "/api/app-code") {
+  if (method === "POST" && (url.pathname === "/api/app-code" || url.pathname === "/api/auth/app-code")) {
     response.setHeader("Cache-Control", "no-store");
     if (!isSameOriginRequest(request)) {
       // The page calls this with a relative URL, so a legitimate exchange is always same-origin.

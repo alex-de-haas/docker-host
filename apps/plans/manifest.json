@@ -3,7 +3,7 @@
   "id": "hosty.plans",
   "name": "Hosty Plans",
   "description": "Administrator overview of repository plans and the development workspaces changing them.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "role": "system",
   "source": { "type": "git", "repository": "https://github.com/alex-de-haas/docker-host.git", "branch": "main", "paths": ["apps/plans"] },
   "runtimeProfiles": [
@@ -16,7 +16,7 @@
     "runtimes": {
       "docker": {
         "type": "docker",
-        "image": { "repository": "ghcr.io/alex-de-haas/hosty-plans", "tag": "0.2.0" },
+        "image": { "repository": "ghcr.io/alex-de-haas/hosty-plans", "tag": "0.3.0" },
         "environment": { "PORT": "3000", "HOSTNAME": "0.0.0.0", "HOSTY_APP_CACHE_DIR": "/var/cache/hosty-plans" },
         "ports": [{ "key": "http", "containerPort": 3000, "protocol": "http", "public": true }],
         "healthcheck": { "type": "exec", "command": "node -e \"fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"", "intervalSeconds": 30, "timeoutSeconds": 5, "retries": 3, "gracePeriodSeconds": 10 }

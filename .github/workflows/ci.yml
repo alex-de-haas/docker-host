@@ -307,6 +307,11 @@ jobs:
       - name: Test App SDK
         run: npm run sdk:test
 
+      - name: Verify SDK build and overlay upgrade contract
+        run: |
+          npm run build --workspace @hosty-sdk/app
+          node packages/app-sdk/scripts/check-overlay-upgrade.mjs
+
   app-sdk-dotnet:
     name: App SDK (.NET)
     runs-on: ubuntu-latest
