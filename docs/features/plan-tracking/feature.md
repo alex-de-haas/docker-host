@@ -15,7 +15,7 @@ workspaces; its disk cache contains derived document bytes, with validated parsi
 separately in memory.
 
 The interface uses free ReUI components, ShadCN primitives and Tailwind 4 with the same semantic
-theme tokens as Shell and Harness. ReUI frames hold the document comparison panes; shared inputs,
+theme tokens as Shell and Harness. ReUI frames hold the active document version; shared tabs, inputs,
 selects, toggle groups, badges, progress, alerts and empty states provide the workbench controls.
 
 The overview shows plans across repositories and branches, status counts and deliverable progress,
@@ -37,9 +37,12 @@ Plans new in a workspace appear beside tracked-branch plans. A deleted plan has 
 `completing` only when the same workspace creates or changes that folder's `feature.md`; otherwise
 its label is `removed`. The label identifies the evidence and does not introduce a plan status.
 
-The detail view displays the tracked-branch document and selectable workspace versions, status and
-progress, deliverable changes, a diff against the workspace's base, and an assistant-session link
-when available. External owners display their agent label and retain the conversation in that
+The detail view uses a full-width tab panel. The first tab shows the tracked branch and opens by
+default; each workspace changing this document has its own tab. Workspace panels display status,
+progress, deliverable changes, a diff against the workspace's base, a full-document toggle and an
+assistant-session link when available. Tab selection is stored in the URL and follows browser
+Back/Forward navigation. An unavailable workspace link retains an explicit unavailable panel.
+Tabs support keyboard navigation and horizontal scrolling on narrow screens. External owners display their agent label and retain the conversation in that
 external application; their missing session link is expected. A URL can select a workspace. A notice identifies a document also changed on the
 tracked branch. Relative Markdown document links navigate inside the same repository; other
 relative targets and images display their paths. Documents are rendered without raw HTML.
@@ -57,7 +60,7 @@ submitted: the existing provider handoff in Harness creates a draft even when im
 handoffs are enabled.
 
 The default is the tracked-branch document. An explicit workspace selection attaches that workspace's
-document; a workspace-only plan uses its displayed workspace copy. The action description names the
+document. A workspace-only plan requires selecting its workspace tab first. The action description names the
 version. Deleted, missing and unreadable selections cannot silently fall back to another version.
 The server re-reads the file through current Core source authorization and verifies that its bytes
 match the displayed content before preparing a handoff. A changed document requires a refresh.
@@ -205,7 +208,7 @@ standalone Next.js server as the cache mount's unprivileged owner. The image wor
 publication on version checks, lint and tests and follows the repository's immutable version-tag
 policy. It builds Linux amd64 and arm64 images with provenance attestations, carrying the repository
 and ReUI license notices.
-`manifest.json`, `package.json` and the Docker image tag share the independent app version `0.4.0`.
+`manifest.json`, `package.json` and the Docker image tag share the independent app version `0.4.1`.
 Document discussions require Core 0.125.0's assistant UI projection and the SDK 0.24.0 descriptor.
 Older Core remains usable for reading sources and presents an actionable refusal for discussions.
 
@@ -240,6 +243,9 @@ production build pass, including a popup regression that fails before the fix.
   tests cover filters, counts, component mapping, workspace labels, detail links, target-outage
   fallback, cold fetch deadlines, caller cancellation and MCP refusals.
 - Browser checks cover Data Grid sorting, pagination, page size, search and quiet background reads.
+- Detail tests cover tracked-branch defaults, workspace deep links, independent base diffs,
+  unavailable selections and workspace-only plans. Browser checks cover tab keyboard navigation,
+  narrow-screen overflow, polling and Back/Forward navigation. Discussion uses only the active tab.
 - Live acceptance uses a Core-owned worktree prepared through Harness without a model run. It covers
   uncommitted plan edits, separate tracked/workspace progress, expansion preserved across polling,
   workspace-only plans, completing/removed deletions, workspace URLs, base diffs, deliverable changes,

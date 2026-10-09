@@ -8,9 +8,11 @@ export type DiscussionInput = {
 };
 
 export function discussionVersion(detail: PlanDetail, workspaceId: string | null) {
-  if (!workspaceId && detail.document && !detail.error)
-    return { document: detail.document, workspaceId: null, label: `Tracked branch: ${detail.repository.branch}` };
-  const version = workspaceId ? detail.workspaces.find(item => item.workspace.id === workspaceId) : detail.workspaces[0];
-  if (!version?.document || version.error || (!workspaceId && detail.error)) return null;
+  if (!workspaceId)
+    return detail.document && !detail.error
+      ? { document: detail.document, workspaceId: null, label: `Tracked branch: ${detail.repository.branch}` }
+      : null;
+  const version = detail.workspaces.find(item => item.workspace.id === workspaceId);
+  if (!version?.document || version.error) return null;
   return { document: version.document, workspaceId: version.workspace.id, label: `Workspace: ${version.workspace.branch}` };
 }
