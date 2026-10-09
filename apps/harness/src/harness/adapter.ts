@@ -53,6 +53,7 @@ export interface HarnessQuestion {
 }
 
 export type HarnessEvent =
+  | { type: "activity"; activity: import("./activity.js").HarnessActivity }
   /** The harness-native session id became known; persisted for resume-after-restart. */
   | { type: "harness_session"; harnessSessionId: string }
   | { type: "assistant_delta"; text: string }

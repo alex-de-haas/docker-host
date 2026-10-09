@@ -152,7 +152,10 @@ it("resynchronizes a missed live-only idle transition even when the replay curso
   await finishTurn(record.id);
   const current = (await manager.getSession(record.id))!;
   const subscription = await manager.subscribe(record.id, current.lastEventSeq, () => {});
-  expect(subscription.replay).toEqual([expect.objectContaining({ type: "session_status", status: "idle", seq: current.lastEventSeq })]);
+  expect(subscription.replay).toEqual([
+    expect.objectContaining({ type: "session_activity", seq: -1, activity: null }),
+    expect.objectContaining({ type: "session_status", status: "idle", seq: current.lastEventSeq }),
+  ]);
   subscription.unsubscribe();
   await manager.postMessage(record.id, "next turn");
   const active = (await manager.getSession(record.id))!;

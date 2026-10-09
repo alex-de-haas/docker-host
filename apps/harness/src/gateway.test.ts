@@ -558,7 +558,7 @@ describe("gateway", () => {
     const seen: number[] = [];
     const { replay, unsubscribe } = await manager.subscribe(record.id, 1, (event) => seen.push(event.seq));
     expect(replay.length).toBeGreaterThan(0);
-    expect(replay.every((event) => event.seq > 1)).toBe(true);
+    expect(replay.filter(event => event.type !== "session_activity").every((event) => event.seq > 1)).toBe(true);
     unsubscribe();
   });
 

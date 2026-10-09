@@ -22,6 +22,7 @@ let root: Root;
 let container: HTMLDivElement;
 let record: api.AssistantSession;
 let emit: (event: api.AssistantEvent) => void;
+let connection: (state: api.StreamConnection) => void;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
@@ -33,7 +34,9 @@ beforeEach(() => {
   vi.mocked(api.getSession).mockImplementation(async () => ({ ...record }));
   vi.mocked(api.createSession).mockResolvedValue(record);
   vi.mocked(api.listAppNames).mockResolvedValue({});
-  vi.mocked(api.streamEvents).mockImplementation(async (_id, listener) => { emit = listener; });
+  vi.mocked(api.streamEvents).mockImplementation(async (_id, listener, _signal, onConnection) => {
+    emit = listener; connection = onConnection!; connection("connected");
+  });
   vi.mocked(api.postMessage).mockResolvedValue(undefined);
   vi.mocked(api.stopSession).mockResolvedValue(undefined);
   container = document.createElement("div"); document.body.append(container);
@@ -229,4 +232,77 @@ it("places session context in the chat header outside the composer", async () =>
   const picker = button("Select app context");
   expect(picker?.closest("header")).not.toBeNull();
   expect(picker?.closest("form")).toBeNull();
+});
+
+const activityRow = () => container.querySelector('[data-slot="assistant-activity"]');
+const activityEvent = (revision: number, activity: unknown) => ({
+  type: "session_activity", seq: -1, ts: "", epoch: "instance", revision, activity,
+});
+
+it("keeps current activity below commentary and streamed text, reconciles revisions, and hides it when finished", async () => {
+  record.status = "running";
+  await render();
+  expect(activityRow()?.textContent).toBe("Working…");
+  await act(async () => {
+    emit({ type: "assistant_text", text: "I will inspect the logs", seq: 1, ts: "" });
+    emit(activityEvent(2, { phase: "working", tool: { toolName: "Command" }, toolCount: 2 }));
+    emit(activityEvent(1, { phase: "thinking", tool: null, toolCount: 0 }));
+  });
+  expect(activityRow()?.textContent).toBe("Running command… (+1 active)");
+  expect(container.textContent).toContain("I will inspect the logs");
+  await status("awaiting_approval");
+  expect(activityRow()?.textContent).toBe("Waiting for approval…");
+  expect(activityRow()?.querySelector('.motion-safe\\:animate-spin')).toBeNull();
+  await status("awaiting_question");
+  expect(activityRow()?.textContent).toBe("Waiting for your answer…");
+  await status("running");
+  await act(async () => {
+    emit(activityEvent(3, { phase: "responding", tool: null, toolCount: 0 }));
+    emit({ type: "assistant_delta", text: "Here are the results", seq: 2, ts: "" });
+  });
+  expect(activityRow()?.textContent).toBe("Writing response…");
+  expect(activityRow()?.getAttribute("aria-atomic")).toBe("true");
+  await status("idle");
+  expect(activityRow()).toBeNull();
+  await status("running");
+  expect(activityRow()?.textContent).toBe("Working…");
+});
+
+it("replaces stale tools on disconnect, accepts a restarted server snapshot, and hides execution after access failure", async () => {
+  record.status = "running";
+  await render();
+  await act(async () => emit(activityEvent(9, { phase: "working", tool: { toolName: "Read", detail: "/file" }, toolCount: 1 })));
+  await act(async () => connection("reconnecting"));
+  expect(activityRow()?.textContent).toBe("Reconnecting…");
+  expect(activityRow()?.textContent).not.toContain("/file");
+  await act(async () => {
+    emit({ ...activityEvent(0, { phase: "thinking", tool: null, toolCount: 0 }), epoch: "new-instance" });
+    connection("connected");
+  });
+  expect(activityRow()?.textContent).toBe("Thinking…");
+  await act(async () => connection("disconnected"));
+  expect(activityRow()).toBeNull();
+});
+
+it("shows stopping while cancellation is pending and restores observed activity after a failed stop", async () => {
+  record.status = "running";
+  let reject!: (error: Error) => void;
+  vi.mocked(api.stopSession).mockImplementation(() => new Promise((_resolve, rejectPromise) => { reject = rejectPromise; }));
+  await render();
+  await act(async () => emit(activityEvent(1, { phase: "thinking", tool: null, toolCount: 0 })));
+  await act(async () => button("Stop")!.click());
+  expect(activityRow()?.textContent).toBe("Stopping…");
+  await act(async () => reject(new Error("Stop failed")));
+  expect(activityRow()?.textContent).toBe("Thinking…");
+});
+
+it("clears the previous activity when opening a different session", async () => {
+  record.status = "running";
+  await render();
+  await act(async () => emit(activityEvent(2, { phase: "working", tool: { toolName: "Command" }, toolCount: 1 })));
+  const previousEmit = emit;
+  vi.mocked(api.createSession).mockResolvedValue({ ...record, id: "new-session", status: "idle" });
+  await act(async () => button("New session")!.click());
+  await act(async () => previousEmit(activityEvent(3, { phase: "thinking", tool: null, toolCount: 0 })));
+  expect(activityRow()).toBeNull();
 });

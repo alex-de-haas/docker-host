@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { ActivityTracker, activeTool, type ActiveTool } from "./activity.js";
 import type {
   HarnessAdapter,
   HarnessAvailability,
@@ -108,6 +109,12 @@ class ClaudeRun implements HarnessRun {
     toggleMcpServer?(name: string, enabled: boolean): Promise<void>;
   } | null = null;
   private stopped = false;
+  private turnActive = false;
+  private readonly proposedTools = new Map<string, ActiveTool>();
+  private readonly completedTools = new Set<string>();
+  private readonly activity = new ActivityTracker(activity => {
+    if (this.turnActive && !this.stopped) this.options.onEvent({ type: "activity", activity });
+  });
   private serverNames: Set<string>;
   private readonly disabledServers = new Set<string>();
 
@@ -117,6 +124,9 @@ class ClaudeRun implements HarnessRun {
   }
 
   send(text: string): void {
+    this.turnActive = true;
+    this.proposedTools.clear();
+    this.activity.reset();
     this.input.push({ type: "user", message: { role: "user", content: text } });
   }
 
@@ -297,7 +307,30 @@ class ClaudeRun implements HarnessRun {
   }
 
   private dispatch(message: Record<string, unknown>): void {
+    if (this.stopped) return;
     const type = message.type;
+    if (type === "tool_progress" && this.turnActive && typeof message.tool_use_id === "string") {
+      if (this.completedTools.has(message.tool_use_id)) return;
+      if (message.tool_name !== ASK_USER_QUESTION) {
+        this.activity.start(message.tool_use_id, this.proposedTools.get(message.tool_use_id)
+          ?? activeTool(String(message.tool_name ?? "Tool")));
+      }
+      return;
+    }
+    // User tool-result blocks, unlike assistant tool-use proposals, establish completion.
+    if (type === "user") {
+      const content = (message.message as { content?: unknown } | undefined)?.content;
+      if (Array.isArray(content)) for (const block of content) {
+        if (block.type === "tool_result" && typeof block.tool_use_id === "string") {
+          this.activity.finish(block.tool_use_id);
+          this.proposedTools.delete(block.tool_use_id);
+          this.completedTools.add(block.tool_use_id);
+          // A late heartbeat must not revive a just-completed call, including on the next turn.
+          if (this.completedTools.size > 2048) this.completedTools.delete(this.completedTools.values().next().value!);
+        }
+      }
+      return;
+    }
     if (type === "system" && message.subtype === "init" && typeof message.session_id === "string") {
       this.options.onEvent({ type: "harness_session", harnessSessionId: message.session_id });
       return;
@@ -306,6 +339,14 @@ class ClaudeRun implements HarnessRun {
     if (type === "stream_event") {
       const event = message.event as Record<string, unknown> | undefined;
       const delta = event?.delta as Record<string, unknown> | undefined;
+      const block = event?.content_block as Record<string, unknown> | undefined;
+      const activityId = `${String(message.parent_tool_use_id ?? "main")}:${String(event?.index ?? 0)}`;
+      if (this.turnActive) {
+        if ((event?.type === "content_block_start" && ["thinking", "redacted_thinking"].includes(String(block?.type))) || delta?.type === "thinking_delta") {
+          this.activity.phase(activityId, "thinking");
+        } else if (delta?.type === "text_delta") this.activity.phase(activityId, "responding");
+        else if (event?.type === "content_block_stop") this.activity.finish(activityId);
+      }
       if (event?.type === "content_block_delta" && delta?.type === "text_delta") {
         this.options.onEvent({ type: "assistant_delta", text: String(delta.text ?? "") });
       }
@@ -319,6 +360,7 @@ class ClaudeRun implements HarnessRun {
           if (block.type === "text" && typeof block.text === "string" && block.text) {
             this.options.onEvent({ type: "assistant_text", text: block.text });
           } else if (block.type === "tool_use") {
+            if (typeof block.id === "string") this.proposedTools.set(block.id, activeTool(String(block.name ?? "Tool"), block.input));
             // The question card is already the transcript record for an ask, so the raw tool_use
             // block would render a second, redundant entry carrying the same options as JSON.
             if (block.name === ASK_USER_QUESTION) {
@@ -336,6 +378,9 @@ class ClaudeRun implements HarnessRun {
     }
 
     if (type === "result") {
+      this.activity.reset();
+      this.turnActive = false;
+      this.proposedTools.clear();
       const usage = message.usage as Record<string, unknown> | undefined;
       if (typeof message.session_id === "string") {
         this.options.onEvent({ type: "harness_session", harnessSessionId: message.session_id });
