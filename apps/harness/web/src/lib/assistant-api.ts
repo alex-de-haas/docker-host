@@ -185,12 +185,16 @@ export async function cancelSession(sessionId: string): Promise<void> {
  * left off, which is what makes the hourly bound the gateway puts on a cookie-authenticated stream
  * invisible to the operator. A torn frame is dropped for the same reason — the cursor heals it.
  */
+export type StreamConnection = "connecting" | "connected" | "reconnecting" | "disconnected";
+
 export async function streamEvents(
   sessionId: string,
   onEvent: (event: AssistantEvent) => void,
   signal: AbortSignal,
+  onConnection?: (state: StreamConnection) => void,
 ): Promise<void> {
   let lastSeq = 0;
+  onConnection?.("connecting");
   // A long conversation outlives a short-TTL token, so a 401 here is far more likely to be an aged
   // token than a revoked role. Refreshed once before the refusal is believed, exactly as `call`
   // does — treating the first 401 as terminal would end a live stream on a routine expiry.
@@ -204,6 +208,7 @@ export async function streamEvents(
         },
       );
       if (TERMINAL_STREAM_STATUSES.has(response.status)) {
+        onConnection?.("disconnected");
         // Reported rather than retried, and with a negative seq so it can never collide with a
         // stored event. A silent retry loop would leave the panel stuck with no explanation.
         onEvent({
@@ -249,10 +254,14 @@ export async function streamEvents(
               lastSeq = event.seq;
             }
             onEvent(event);
+            // The server ends replay with its authoritative status. Until then, stale replay
+            // must not be presented as a live observation of the last tool.
+            if (event.type === "session_status") onConnection?.("connected");
             // Terminal, unlike every other end of this stream: the session is gone, so the EOF that
             // follows is not a dropped connection to retry. Reconnecting would fetch a 404 and put
             // an error in a transcript the operator has already deleted.
             if (event.type === "session_deleted") {
+              onConnection?.("disconnected");
               return;
             }
           } catch {
@@ -265,7 +274,13 @@ export async function streamEvents(
         return;
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    if (signal.aborted) return;
+    onConnection?.("reconnecting");
+    await new Promise<void>((resolve) => {
+      const finish = () => { clearTimeout(timer); signal.removeEventListener("abort", finish); resolve(); };
+      const timer = setTimeout(finish, 2_000);
+      signal.addEventListener("abort", finish, { once: true });
+    });
   }
 }
 

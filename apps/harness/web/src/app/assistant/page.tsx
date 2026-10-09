@@ -1,5 +1,7 @@
 "use client";
 import { SessionAutonomy } from "@/components/session-autonomy";
+import { AssistantActivity } from "@/components/assistant-activity";
+import type { SessionActivity } from "../../../../src/harness/activity";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SpeechInput } from "@/components/speech-input";
@@ -46,6 +48,7 @@ import {
   type AssistantEvent,
   type AssistantSession,
   type HarnessHealth,
+  type StreamConnection,
 } from "@/lib/assistant-api";
 
 // The operator chat, served by the gateway and docked in Shell's right panel.
@@ -71,6 +74,8 @@ export default function AssistantPage() {
   const [requestedSessionId, setRequestedSessionId] = useState<string | null>(null);
   const [session, setSession] = useState<AssistantSession | null>(null);
   const [status, setStatus] = useState("idle");
+  const [activity, setActivity] = useState<SessionActivity | null>(null);
+  const [connection, setConnection] = useState<StreamConnection>("connecting");
   const [events, setEvents] = useState<AssistantEvent[]>([]);
   const [streamed, setStreamed] = useState("");
   const [input, setInput] = useState("");
@@ -143,6 +148,8 @@ export default function AssistantPage() {
     setContextUnavailable(false);
     setWithoutAppDetails(false);
     setStatus(record.status);
+    setActivity(null);
+    setConnection("connecting");
     setEvents([]);
     setStreamed("");
     // Whatever was left unsent in this session, put back in the box. Per session, so switching away
@@ -166,6 +173,11 @@ export default function AssistantPage() {
       record.id,
       (event) => {
         if (abort.signal.aborted) return;
+        if (event.type === "session_activity") {
+          const update = event as unknown as SessionActivity;
+          setActivity(current => current?.epoch === update.epoch && current.revision >= update.revision ? current : update);
+          return;
+        }
         if (event.type === "session_provider_changed" || event.type === "session_autonomy_changed") {
           void getSession(record.id).then(value => { if (activeSessionId.current === record.id) setSession(value); }).catch(() => {});
           void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
@@ -186,6 +198,10 @@ export default function AssistantPage() {
         }
         if (event.type === "session_status") {
           setStatus(String(event.status ?? "idle"));
+          if (!["running", "awaiting_approval", "awaiting_question"].includes(String(event.status))) {
+            setActivity(null);
+            setStreamed("");
+          }
           return;
         }
         if (event.type === "session_deleted") {
@@ -203,6 +219,12 @@ export default function AssistantPage() {
         setEvents((current) => [...current, event]);
       },
       abort.signal,
+      (state) => {
+        if (abort.signal.aborted) return;
+        setConnection(state);
+        if (state !== "connected") setActivity(null);
+        if (state === "disconnected") setStreamed("");
+      },
     );
   }, []);
 
@@ -681,7 +703,7 @@ export default function AssistantPage() {
           <MessageScrollerProvider key={session?.id ?? "connecting"} autoScroll>
             <MessageScroller className="h-auto flex-1">
               <MessageScrollerViewport aria-label="Assistant conversation">
-                <MessageScrollerContent className="gap-3 p-3" aria-busy={Boolean(streamed)}>
+                <MessageScrollerContent className="gap-3 p-3">
 
                   {health && !health.available && (
                     <MessageScrollerItem messageId="unavailable"><Alert severity="warning" title="Assistant unavailable" detail={health.reason} /></MessageScrollerItem>
@@ -719,10 +741,13 @@ export default function AssistantPage() {
                     <MessageScrollerItem messageId="streaming">
                     <div className="rounded-lg bg-muted/60 px-3 py-2">
                       <Markdown text={streamed} streaming />
-                      <Loader2 className="ml-1 inline h-3 w-3 animate-spin text-muted-foreground" aria-hidden />
                     </div>
                     </MessageScrollerItem>
                   )}
+                  {(running || stopping) && connection !== "disconnected" && <MessageScrollerItem messageId="current-activity">
+                    <AssistantActivity status={status} activity={activity?.activity ?? null}
+                      connection={connection} stopping={stopping} appNames={appNames} />
+                  </MessageScrollerItem>}
                 </MessageScrollerContent>
               </MessageScrollerViewport>
               <MessageScrollerButton aria-label="Jump to latest message" />

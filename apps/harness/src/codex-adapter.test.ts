@@ -56,6 +56,19 @@ describe("codex harness adapter", () => {
     return run;
   }
 
+  it("reports native live activity, concurrent calls and completion without retaining arguments or stale items", async () => {
+    start().send("activity");
+    await waitFor(() => events.find(e => e.type === "result"), "activity turn");
+    const states = events.filter(e => e.type === "activity").map(e => e.activity);
+    expect(states.map(a => [a.phase, a.tool?.toolName ?? null, a.toolCount])).toEqual([
+      ["working", null, 0], ["thinking", null, 0], ["working", null, 0],
+      ["working", "Command", 1], ["working", "mcp__app__read", 2],
+      ["working", "mcp__app__read", 1], ["working", null, 0], ["working", null, 0],
+    ]);
+    expect(JSON.stringify(states)).not.toMatch(/secret|private/);
+    expect(events.filter(e => e.type === "tool_use")).toHaveLength(2);
+  });
+
   it.each(["normal", "autonomous"] as const)("applies %s policy on new and resumed threads and turns", async autonomy => {
     process.env.HOSTY_TEST_AUTONOMY = autonomy;
     for (const resumeHarnessSessionId of [undefined, "existing-native-thread"]) {

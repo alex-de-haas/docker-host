@@ -9,6 +9,7 @@ import { HOST_SYSTEM_PROMPT } from "./host-prompt.js";
 import { randomUUID } from "node:crypto";
 import { deriveTitleFromMessage, normalizeTitle } from "./title.js";
 import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapter.js";
+import { workingActivity, type SessionActivity, type HarnessActivity } from "../harness/activity.js";
 import type { SessionRecord, SessionStatus, SessionStore, StoredEvent } from "./store.js";
 import type { AuditReporter } from "../audit.js";
 import type { SettingsStore } from "../settings/store.js";
@@ -35,6 +36,8 @@ export interface SessionListener {
 }
 
 interface LiveSession {
+  runEpoch?: string;
+  activity: SessionActivity;
   mcpSignature?: string;
   mcpTargetSignature?: string;
   mcpNoticeSignature?: string;
@@ -318,6 +321,7 @@ export class SessionManager {
       };
       await this.store.createSession(record);
       this.live.set(record.id, {
+        activity: { epoch: randomUUID(), revision: 0, activity: null },
         record,
         run: null,
         listeners: new Set(),
@@ -653,6 +657,7 @@ export class SessionManager {
           ...(attached.length > 0 ? { attachments: attached.map((file) => file.name) } : {}),
         });
         await this.setStatus(id, "running");
+        this.setActivity(session, workingActivity());
         if (!session.run) {
           // Read at start, not at every turn: the system prompt is the session's instruction set, so a
           // mid-conversation swap would leave a transcript whose halves ran under different rules. An
@@ -684,6 +689,7 @@ export class SessionManager {
           }
 
           this.mcpPolicy.cancel(id); // A new native client starts a fresh JSON-RPC request namespace.
+          const runEpoch = session.runEpoch = randomUUID();
           session.run = selectedAdapter.start({
             sessionId: id,
             autonomy: session.record.autonomy ?? "normal",
@@ -696,7 +702,7 @@ export class SessionManager {
             // A gateway restart loses the process but not the record: resume the harness-native
             // session when one was captured, per the reattach/resume decision in the plan.
             resumeHarnessSessionId: session.record.harnessSessionId ?? undefined,
-            onEvent: (event) => this.dispatchHarnessEvent(id, event),
+            onEvent: (event) => this.dispatchHarnessEvent(id, event, runEpoch),
           });
         }
         this.scheduleMcpRefresh(id);
@@ -1099,6 +1105,8 @@ export class SessionManager {
 
   async cancelSession(id: string): Promise<void> {
     const session = await this.requireLive(id);
+    session.runEpoch = undefined;
+    this.setActivity(session, null);
     if (session.run) {
       await session.run.stop().catch(() => undefined);
       session.run = null;
@@ -1149,7 +1157,7 @@ export class SessionManager {
       seq: session.record.lastEventSeq, ts: session.record.updatedAt,
       type: "session_status", status: session.record.status,
     };
-    return { replay: [...replay, ...tail, status], unsubscribe: () => session.listeners.delete(wrapped) };
+    return { replay: [...replay, ...tail, this.activityEvent(session), status], unsubscribe: () => session.listeners.delete(wrapped) };
   }
 
   async shutdown(): Promise<void> {
@@ -1222,6 +1230,7 @@ export class SessionManager {
     if (loaded) return loaded;
 
     const session: LiveSession = {
+      activity: { epoch: randomUUID(), revision: 0, activity: null },
       record,
       run: null,
       listeners: new Set(),
@@ -1238,14 +1247,17 @@ export class SessionManager {
   }
 
   /** Starts an event handler and keeps it, so `shutdown` can wait for it. */
-  private dispatchHarnessEvent(id: string, event: HarnessEvent): void {
+  private dispatchHarnessEvent(id: string, event: HarnessEvent, runEpoch: string): void {
     if (this.stopping) {
       // Dropped deliberately. The harness that produced it has been killed and the process is going;
       // a write started here could not finish anyway, and starting it is how a record ends up torn.
       return;
     }
 
-    const handled = this.serialize(id, () => this.onHarnessEvent(id, event));
+    const handled = this.serialize(id, async () => {
+      if (this.live.get(id)?.runEpoch !== runEpoch) return;
+      await this.onHarnessEvent(id, event);
+    });
     this.inFlightEvents.add(handled);
     void handled.finally(() => this.inFlightEvents.delete(handled));
   }
@@ -1267,6 +1279,11 @@ export class SessionManager {
     }
 
     switch (event.type) {
+      case "activity":
+        if (["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
+          this.setActivity(session, event.activity);
+        }
+        return;
       case "harness_session":
         session.record.harnessSessionId = event.harnessSessionId;
         await this.store.saveRecord(session.record);
@@ -1450,6 +1467,7 @@ export class SessionManager {
       await this.leaseWorkspaces(session, false).catch(error => console.warn("[workspaces] Lease retained; release through Core after verifying the agent stopped:", error));
     }
     session.record.status = status;
+    if (!["running", "awaiting_approval", "awaiting_question"].includes(status)) this.setActivity(session, null);
     session.record.updatedAt = new Date().toISOString();
     await this.store.saveRecord(session.record);
 
@@ -1466,6 +1484,17 @@ export class SessionManager {
       type: "session_status",
       status,
     });
+  }
+
+  private activityEvent(session: LiveSession): StoredEvent {
+    // A separate transient revision never advances the journal's SSE resume cursor.
+    return { seq: -1, ts: new Date().toISOString(), type: "session_activity", ...session.activity };
+  }
+
+  private setActivity(session: LiveSession, activity: HarnessActivity | null): void {
+    if (JSON.stringify(activity) === JSON.stringify(session.activity.activity)) return;
+    session.activity = { ...session.activity, revision: session.activity.revision + 1, activity };
+    this.fanOut(session, this.activityEvent(session));
   }
 }
 

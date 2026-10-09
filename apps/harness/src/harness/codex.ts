@@ -2,6 +2,7 @@ import { cleanAgentEnvironment } from "../connections/codex-login.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { toCodexMcpConfig } from "./codex-mcp.js";
 import { randomUUID } from "node:crypto";
+import { ActivityTracker, activeTool } from "./activity.js";
 import path from "node:path";
 import type {
   HarnessAdapter,
@@ -155,6 +156,8 @@ class CodexRun implements HarnessRun {
   private threadId: string | null = null;
   private ready: Promise<void>;
   private turnActive = false;
+  private activityTurnId: string | null = null;
+  private readonly activity = new ActivityTracker(activity => this.emit({ type: "activity", activity }));
   private stopped = false;
   private failed = false;
   /** The operator prompt rides on the first message only; later turns must not repeat it. */
@@ -248,6 +251,7 @@ class CodexRun implements HarnessRun {
     this.approvals.delete(approvalId);
     if (decision === "deny" && pending.itemId) {
       this.deniedItems.add(pending.itemId);
+      this.activity.finish(pending.itemId);
     }
     this.respond(pending.requestId, {
       decision: approvalDecision(
@@ -339,17 +343,20 @@ class CodexRun implements HarnessRun {
     }
 
     this.turnActive = true;
+    this.activityTurnId = null;
+    this.activity.reset();
     try {
       await this.ready;
       if (!this.threadId) {
         throw new Error("Codex did not return a thread id.");
       }
-      await this.request(CODEX_METHODS.turnStart, {
+      const started = await this.request(CODEX_METHODS.turnStart, {
         threadId: this.threadId,
         input: [{ type: "text", text }],
         approvalPolicy: this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
         sandboxPolicy: { type: this.options.autonomy === "autonomous" ? "dangerFullAccess" : "readOnly" },
-      });
+      }) as { turn?: { id?: string } };
+      if (this.turnActive && !this.activityTurnId) this.activityTurnId = started.turn?.id ?? null;
     } catch (error) {
       this.turnActive = false;
       if (!this.stopped) {
@@ -425,6 +432,27 @@ class CodexRun implements HarnessRun {
     }
 
     const params = message.params ?? {};
+    if (typeof params.threadId === "string" && this.threadId && params.threadId !== this.threadId) return;
+    if (message.method === "turn/started") {
+      const turn = params.turn as { id?: string } | undefined;
+      if (this.turnActive) this.activityTurnId = turn?.id ?? null;
+      return;
+    }
+    if (typeof params.turnId === "string" && this.activityTurnId && params.turnId !== this.activityTurnId) return;
+    // Item lifecycle shapes are verified from the installed app-server's generated v2 types.
+    if (message.method === "item/started") {
+      const item = (params.item ?? {}) as Record<string, unknown>;
+      if (!this.turnActive || typeof item.id !== "string" || this.deniedItems.has(item.id)) return;
+      if (item.type === "reasoning") this.activity.phase(item.id, "thinking");
+      else if (item.type === "mcpToolCall" && item.status === "inProgress") {
+        const server = String(item.server ?? "App"), tool = String(item.tool ?? "Tool");
+        this.activity.start(item.id, activeTool(`mcp__${server}__${tool}`, undefined, { server, tool }));
+      } else if (["commandExecution", "fileChange", "dynamicToolCall"].includes(String(item.type)) && item.status === "inProgress") {
+        const name = item.type === "commandExecution" ? "Command" : item.type === "fileChange" ? "FileChange" : String(item.tool ?? "Tool");
+        this.activity.start(item.id, activeTool(name));
+      } else if (item.type === "webSearch") this.activity.start(item.id, activeTool("WebSearch"));
+      return;
+    }
     // Codex reports each configured MCP server's startup, which is the only signal that a provider
     // the operator enabled did not actually come up. Verified on 0.147.0 (2026-08-19): `starting`
     // then `ready` for a reachable server.
@@ -451,12 +479,17 @@ class CodexRun implements HarnessRun {
     }
 
     if (message.method === "item/agentMessage/delta") {
+      if (!this.turnActive) return;
+      this.activity.phase(String(params.itemId ?? "response"), "responding");
       this.emit({ type: "assistant_delta", text: String(params.delta ?? "") });
       return;
     }
 
     if (message.method === "item/completed") {
       const item = (params.item ?? {}) as Record<string, unknown>;
+      if (!this.turnActive) return;
+      this.activity.finish(String(item.id ?? "response"));
+      this.activity.finish("response");
       const type = String(item.type ?? "");
       if (type === "agentMessage") {
         const text = readItemText(item);
@@ -498,7 +531,10 @@ class CodexRun implements HarnessRun {
     // auth; the turn status vocabulary is `inProgress | completed | failed | declined`, read out of
     // the binary's variant table.
     if (message.method === "turn/completed") {
+      const completedTurn = params.turn as { id?: string } | undefined;
+      if (this.activityTurnId && completedTurn?.id && completedTurn.id !== this.activityTurnId) return;
       this.turnActive = false;
+      this.activity.reset();
       const turn = params.turn as Record<string, unknown> | undefined;
       const usage = turn?.usage as Record<string, unknown> | undefined;
       const status = typeof turn?.status === "string" ? turn.status : "";
@@ -573,6 +609,7 @@ class CodexRun implements HarnessRun {
   }
 
   private emit(event: HarnessEvent): void {
+    if (this.stopped) return;
     this.options.onEvent(event);
   }
 }

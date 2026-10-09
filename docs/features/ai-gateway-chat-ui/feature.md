@@ -1,6 +1,6 @@
 ---
 created: 2026-09-22
-updated: 2026-09-30
+updated: 2026-10-09
 summary: The chat components Harness uses for messages, code blocks, attachments, the composer and collapsible activity.
 components: [apps/harness]
 ---
@@ -124,6 +124,46 @@ Messages, interactive requests and turn boundaries end a group; they retain thei
 order. Group labels do not assert execution success, because a recorded call alone does
 not establish its outcome.
 
+## Current Activity
+
+A compact status row below the latest content stays visible throughout a running turn, including
+before the first response and during gaps after commentary. It shares the conversation scroller,
+so scrolling up pauses following and Jump to latest returns to current work. Streaming text has
+no separate spinner. The row announces changes politely and respects reduced-motion preferences.
+
+The default label is **Working…**. Explicit provider reasoning signals show **Thinking…**, without
+forwarding reasoning text; response deltas show **Writing response…**. Observed executing tools
+show the action or app/tool name. File operations may include a bounded path; raw commands, MCP
+arguments and result bodies are not included in the activity channel. Concurrent calls show the
+most recently started active action and the additional active count. Repeated progress signals do
+not change their start order or flood the stream.
+
+Codex maps native item start/completion and turn identities. Claude maps thinking/text streaming
+blocks, executing-tool progress and user tool-result blocks; an assistant tool proposal or the end
+of a content block alone does not establish execution or completion. Calls without observable live
+progress retain the generic working indicator. Completed-call heartbeats are ignored.
+
+Approval/question waits take precedence over execution labels and use a waiting icon. Cancellation
+shows **Stopping…** until resolved. Completion, failure, cancellation and abandonment clear current
+activity; callbacks from a replaced run cannot restore it. A new turn starts with generic activity.
+
+SessionManager publishes live-only `session_activity` snapshots with an instance epoch and revision.
+Their negative sequence does not advance the persisted event cursor. Every SSE subscription includes
+the current snapshot after journal replay, even with an up-to-date cursor. The client ignores older
+revisions, clears activity when switching sessions, shows **Reconnecting…** after a transport failure,
+and waits for the authoritative status after replay before showing observed execution again.
+Terminal access failures remove the activity row. A quiet open stream is not treated as disconnected.
+
+This state is transient, separate from recorded tool groups and the proposed durable invocation
+history in [shared history](../assistant-shared-history/plan.md). It supplies no percentage, ETA or
+claim that a tool succeeded. Harness 0.47.0 adds this behavior without Core or Shell API changes.
+
+Verification on 2026-10-09 used a real Codex connection in the Core-managed Harness embedded in
+Shell: a slow command, approval wait, completion, reload/reattach during execution and Stop. The
+panel measured approximately 358 px; light and dark presentation had no activity-row overflow.
+The owner approved deterministic Claude SDK coverage instead of a live Claude check because this
+installation has only a Codex connection.
+
 ## Testing Expectations
 
 Composer tests cover running/waiting states, Enter and submit guards, draft retention,
@@ -131,7 +171,7 @@ stop failure/retry, send failure, and completion before or after the HTTP respon
 Gateway API tests verify that busy sends are rejected without transcript changes and
 that sending resumes after cancellation.
 
-- Run `npm run ai-gateway:test`, including chat-rendering tests for unfinished code fences,
+- Run `npm run harness:test`, including chat-rendering tests for unfinished code fences,
   inline code and URL policy, attachment errors, and transcript association after replay.
 - Code Block regression tests cover theme fallback, unfolding with offset line numbers,
   and stream-completion announcements across repeated streams in React Strict Mode.
@@ -141,7 +181,10 @@ that sending resumes after cancellation.
   conflict refresh, listener changes/unmount and avoiding accidental message submission.
   Input Group tests cover textarea focus with hidden file inputs, custom click handlers,
   cancellation and portaled content.
-- Run `npm run ai-gateway:lint` and `npm run ai-gateway:build-web`.
+- Activity tests cover provider lifecycle mappings, overlapping calls, late events, bounded display
+  fields, snapshot/replay races, cursor isolation, reconnect/access failure, waits and cancellation.
+  Page tests cover commentary/streaming gaps, revision reconciliation and switching sessions.
+- Run `npm run harness:lint` and `npm run harness:build-web`.
 - Check live streaming follow/pause/jump and switching sessions; code streaming must also
   respect manual transcript scrolling. Verify tool JSON, command copy, wrapping and expansion.
 - Check local image preview/removal, upload failure and retry without duplicate uploads,

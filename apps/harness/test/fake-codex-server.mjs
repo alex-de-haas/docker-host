@@ -61,6 +61,7 @@ function runAppServer() {
 let buffer = "";
 let pendingApprovalId = null;
 let currentTurnText = "";
+let activeThreadId = "thread-fake-1";
 
 process.stdin.on("data", (chunk) => {
   buffer += chunk.toString();
@@ -72,6 +73,7 @@ process.stdin.on("data", (chunk) => {
 });
 
 function send(message) {
+  if (message.params?.threadId === "t1") message.params.threadId = activeThreadId;
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 function fail(reason) {
@@ -153,7 +155,8 @@ function handle(msg) {
 
   if (msg.method === "thread/resume") {
     if (process.env.HOSTY_FAKE_CODEX_REJECT_RESUME === "1") { send({ id: msg.id, error: { code: -32000, message: "fixture resume refused" } }); return; }
-    send({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: msg.params?.threadId ?? "thread-fake-1" } } });
+    activeThreadId = msg.params?.threadId ?? "thread-fake-1";
+    send({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: activeThreadId } } });
     return;
   }
 
@@ -165,6 +168,21 @@ function handle(msg) {
     currentTurnText = String(msg.params?.input?.[0]?.text ?? "");
     if (currentTurnText.startsWith("[Hosty operator instructions]")) currentTurnText = currentTurnText.slice(currentTurnText.lastIndexOf("\n\n") + 2);
     send({ jsonrpc: "2.0", id: msg.id, result: {} });
+
+    if (currentTurnText === "activity") {
+      send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "current" } } });
+      const itemEvent = (method, item, turnId = "current") => send({ method, params: { threadId: activeThreadId, turnId, item } });
+      itemEvent("item/started", { type: "reasoning", id: "r", content: ["private"], summary: [] });
+      itemEvent("item/completed", { type: "reasoning", id: "r" });
+      itemEvent("item/started", { type: "commandExecution", id: "old", status: "inProgress" }, "previous");
+      itemEvent("item/started", { type: "commandExecution", id: "a", status: "inProgress", command: "secret" });
+      itemEvent("item/started", { type: "mcpToolCall", id: "b", status: "inProgress", server: "app", tool: "read", arguments: { token: "secret" } });
+      itemEvent("item/completed", { type: "commandExecution", id: "a", status: "completed" });
+      itemEvent("item/completed", { type: "mcpToolCall", id: "b", status: "failed", server: "app", tool: "read" });
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "current", status: "completed" } } });
+      itemEvent("item/started", { type: "commandExecution", id: "late", status: "inProgress" });
+      return;
+    }
 
     if (currentTurnText.includes("write")) {
       pendingApprovalId = 9000;
