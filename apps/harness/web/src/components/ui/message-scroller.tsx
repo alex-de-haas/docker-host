@@ -38,11 +38,13 @@ function MessageScrollerViewport({
   className,
   ...props
 }: React.ComponentProps<typeof MessageScrollerPrimitive.Viewport>) {
+  // Keep the gutter during autoscroll: hiding the scrollbar reflows messages and
+  // makes the resize observer repeatedly scroll an otherwise idle conversation.
   return (
     <MessageScrollerPrimitive.Viewport
       data-slot="message-scroller-viewport"
       className={cn(
-        "size-full min-h-0 min-w-0 scroll-fade-b scrollbar-thin scrollbar-gutter-stable overflow-y-auto overscroll-contain contain-content data-autoscrolling:scrollbar-none data-pending-scroll:invisible",
+        "size-full min-h-0 min-w-0 scroll-fade-b scrollbar-thin scrollbar-gutter-stable overflow-y-auto overscroll-contain contain-content data-pending-scroll:invisible",
         className
       )}
       {...props}

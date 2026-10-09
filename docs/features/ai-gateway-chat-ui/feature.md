@@ -38,6 +38,10 @@ pauses following; **Jump to latest message** resumes it. The scroller is keyed b
 session ID, so another session gets its own initial scroll context. Hidden bookkeeping
 events, hidden tools, and attachment events claimed by a message do not create empty rows.
 
+The viewport keeps a thin scrollbar and a stable gutter during automatic and manual
+scrolling. Following the bottom does not hide the scrollbar: changing its width reflows
+messages and can trigger a resize/autoscroll loop even in an idle conversation.
+
 ## Code Blocks
 
 Assistant markdown fences, expanded tool input, command approvals, and fallback approval
@@ -187,6 +191,8 @@ that sending resumes after cancellation.
 - Run `npm run harness:lint` and `npm run harness:build-web`.
 - Check live streaming follow/pause/jump and switching sessions; code streaming must also
   respect manual transcript scrolling. Verify tool JSON, command copy, wrapping and expansion.
+- At a narrow panel width, verify the transcript width stays constant during automatic
+  scrolling and after it settles; an idle conversation must not flicker or reflow repeatedly.
 - Check local image preview/removal, upload failure and retry without duplicate uploads,
   stored-name association, light/dark themes, and a 360 px panel without page overflow.
 - Use browser API fixtures for deterministic failure/streaming cases and a Core-managed,
