@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-08
+updated: 2026-10-09
 ---
 
 # Hosty Platform Vision
@@ -287,12 +287,6 @@ Decisions 1–5: 2026-08-19.
     sign-in to the target app's frame without giving its credentials to Shell. Additional native
     isolation and prefix rules remain in the [approval rules plan](features/assistant-approval-rules/plan.md).
 
-    Follow-up on 2026-10-08: the owner explicitly removed mandatory tool confirmation for each
-    conversation. Already granted permissions and the assistant app's active authorization govern
-    tool use; current-user, expiry and revocation checks remain. The
-    [app activity feature](features/app-activity-window/feature.md#assistant-activity-authorization)
-    owns this behavior.
-
 20. **Source providers belong to the platform (2026-10-07).** GitHub is the built-in Core source
     provider behind a typed internal contract, without a separate process. Shell owns personal
     account/Git identity management through a narrow reviewed permission; Harness consumes selected
@@ -300,6 +294,56 @@ Decisions 1–5: 2026-08-19.
     Harness. Azure DevOps leaves active support while saved records remain explicitly unsupported.
     External provider applications and a plugin transport are outside this implementation. The
     [source providers feature](features/source-providers/feature.md) owns the shipped boundary.
+
+21. **Workspaces is a separate ordinary app (2026-10-08).** Provide a dedicated UI over Core's
+    registered workspaces, including clean and externally owned records, source changes, app impact,
+    session ownership, publication evidence, runtime use and activity. Keep specialized source UI
+    outside Shell and replace its dashboard workspace launcher when the app ships. Workspaces adds
+    no provider role and owns neither conversations nor plan parsing. Open the recorded owner's
+    session when possible; external agents may have no session URL. The
+    [Workspaces app](features/workspaces-app/feature.md) documents the shipped read-only experience.
+
+22. **Default applications belong to Core (2026-10-08).** Explore shared default choices for
+    supported roles/provider interfaces, starting with shell and assistant. Shell renders settings;
+    preferences do not grant permissions. This supersedes assistant selection being exclusively
+    local to each UI client. Explicit owner/provider references always take precedence. Workspaces
+    remains an ordinary app, and Plans does not become a provider by reading source documents.
+    The [default applications plan](features/default-applications/plan.md) owns shared selection;
+    the [replaceable UI-client plan](features/replaceable-ui-clients/plan.md) retains shell-specific
+    work. Scope, fallback and migration details remain Draft.
+
+23. **Plan providers are an early deferred exploration (2026-10-08).** Consider a small common
+    plan/progress interface: Hosty Plans could supply specification-driven Markdown plans while
+    other apps adapt task trackers or checklists. Providers own parsing and native workflow meaning;
+    Core owns no universal plan format. MCP is a candidate agent interface, and direct authorized
+    Markdown edits remain valid. The owner requested an idea sketch, not a settled protocol or
+    implementation. The [plan-provider Draft](features/plan-provider-interface/plan.md) owns that
+    exploration, independently of the Workspaces app.
+
+24. **A session workspace contains repository worktrees (2026-10-09).** One session has zero or
+    one workspace, allocated for authorized source work; the workspace belongs only to that session.
+    It may contain worktrees for several repositories and apps, each with its own branches and PR
+    history. Agent switching is deferred session work. The
+    [workspace model](features/assistant-session-workspaces/feature.md) documents compatible grouping
+    of per-repository worktree records and the inspection authority boundary.
+
+25. **Read-only workspace inspection first (2026-10-09).** The initial
+    [Workspaces app](features/workspaces-app/feature.md) shows workspace/worktree inventory, source
+    changes, owners and existing publication facts. The read-only implementation has the separate
+    `apps.workspaces.read` grant. Management capabilities and stronger operator/session-execution
+    scope remain deferred. Later close
+    must revoke development authority without equating it with physical deletion. Builds, tests
+    and browser execution stay with [Sandbox](features/app-sandbox-runtimes/plan.md); plan linkage
+    and PR-derived plan hints remain deferred. This vision does not authorize implementation;
+    the initial viewer was implemented under the owner's subsequent explicit approval.
+
+26. **Agent source isolation is deferred container work (2026-10-09).** Current unrestricted local
+    agents follow assigned-directory guidance, with no promised filesystem containment. The later
+    direction mounts only the owning workspace's worktrees into its agent execution environment,
+    excluding original sources and other workspaces. [Agent isolation](features/assistant-approval-rules/plan.md)
+    owns the source/Git metadata boundary; [lifecycle controls](features/workspace-lifecycle-controls/plan.md)
+    owns revocation, verified execution stop and safe cleanup. App Sandbox testing and agent switching
+    remain separate deferred work. This direction is not implementation approval.
 
 ## Expectations And Later Directions
 
@@ -360,6 +404,9 @@ the manifest contract. Two standing consequences:
 
 ## Spanned Features
 
+[workspaces-app](features/workspaces-app/feature.md) ·
+[default-applications](features/default-applications/plan.md) ·
+[plan-provider-interface](features/plan-provider-interface/plan.md) ·
 [hosty-harness-swift](features/hosty-harness-swift/plan.md) ·
 [assistant-development-sessions](features/assistant-development-sessions/plan.md) ·
 [app-authoring](features/app-authoring/plan.md) ·

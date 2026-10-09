@@ -38,6 +38,8 @@ internal sealed record DevelopmentWorkspace
 {
     public required string Id { get; init; }
     public required WorkspaceOwner Owner { get; init; }
+    // Derived from the persisted owner; existing worktree allocation and replay IDs stay unchanged.
+    public string WorkspaceId => DevelopmentWorkspaceService.Hash("workspace\n" + DevelopmentWorkspaceService.OwnerIdentity(Owner));
     public required string Repository { get; init; }
     public required string RepositoryId { get; init; }
     public required string Path { get; init; }

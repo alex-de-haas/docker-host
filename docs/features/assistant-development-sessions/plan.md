@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-24
-updated: 2026-09-29
+updated: 2026-10-09
 summary: Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -111,6 +111,20 @@ The Shell handoff need not synchronize a whole conversation. AHP remains under
 evaluation for full session clients, including Swift; protocol adoption does not decide where
 authoritative storage lives. User-controlled hiding/restoring of app panel entries is tracked
 separately in [app UI surfaces](../app-ui-surfaces/plan.md), without uninstalling the backend.
+
+## Workspace Terminology Clarification (Owner Decision, 2026-10-09)
+
+Use one optional workspace for the session's development work, containing multiple repository
+worktrees. Earlier repository-workspace wording in this document refers to today's per-repository
+records; the [workspace model](../assistant-session-workspaces/feature.md) owns grouping and
+compatibility. Sessions and context remain assistant-owned, with successive agent execution inside
+the same session. Workspaces does not become a provider or a second conversation engine.
+
+The [Workspaces app](../workspaces-app/feature.md) begins with read-only inventory and per-worktree
+changes/PRs. Testing and browser execution stay in the deferred Sandbox feature; plan associations
+and implementation handoffs stay deferred. Source allocation starts with authorized edits, not
+ordinary questions. Future operator close ends development authority while retaining discussion;
+closing, cancellation and physical cleanup are distinct and must not assume native processes stopped.
 
 ## Common Invariants
 

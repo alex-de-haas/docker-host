@@ -45,6 +45,10 @@ internal static class DevelopmentWorkspaceEndpoints
         routes.MapGet(internalRoot + "/{id}", async (string appId, string sessionId, string id, HttpRequest request,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
             await Handle(async () => await workspaces.ObserveAsync(id, await auth.RequireAsync(request, appId, sessionId, ct), ct)));
+        routes.MapGet(internalRoot + "/{id}/viewer", async (string appId, string sessionId, string id, HttpRequest request,
+            WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, WorkspaceInspectionService inspection, CancellationToken ct) =>
+            await Handle(async () => await inspection.DestinationAsync(await workspaces.Read(id,
+                await auth.RequireAsync(request, appId, sessionId, ct), ct), ct)));
         routes.MapPost(internalRoot + "/{id}/diff", async (string appId, string sessionId, string id, HttpRequest request, WorkspaceDiffRequest input,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
             await Handle(async () => await workspaces.DiffAsync(id, await auth.RequireAsync(request, appId, sessionId, ct), input, ct)));

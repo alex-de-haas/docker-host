@@ -13,7 +13,7 @@ Documentation-only changes (`docs/`, `README.md`, `AGENTS.md`) are the exception
 Where the version lives:
 
 - **Platform (`apps/core` + `apps/cli`)** share one version in the root `Directory.Build.props`. Bump it there; do not add `<Version>` to individual `.csproj` files.
-- **`apps/shell`**, **`apps/marketplace`**, **`apps/plans`**, and **`apps/demo-app`** are first-party runtime apps: bump `version` in their respective `manifest.json` (the artifact source of truth) and keep their `package.json` in step. They version independently from the platform.
+- **`apps/shell`**, **`apps/marketplace`**, **`apps/plans`**, **`apps/workspaces`**, and **`apps/demo-app`** are first-party runtime apps: bump `version` in their respective `manifest.json` (the artifact source of truth) and keep their `package.json` in step. They version independently from the platform.
 - **`apps/harness`** (Hosty Harness, including its web UI) continues the former Gateway release line. Bump `version` in `apps/harness/manifest.json`, `apps/harness/package.json` and `apps/harness/web/package.json` together. It versions independently from Core and Shell.
 - **`apps/telemetry`** (collector + backend + `apps/telemetry-ui`) ships as one app: bump `version` in `apps/telemetry/manifest.json` and keep the first-party service image tags (`backend`, `ui`) and `apps/telemetry-ui/package.json` in step (`scripts/check-versions.mjs` enforces this). The collector is a third-party image and is exempt.
 - **`apps/whisper`** is an independent local speech runtime app: bump `version` in `apps/whisper/manifest.json` and keep `<Version>` in `apps/whisper/Hosty.Whisper/Hosty.Whisper.csproj` in step. `scripts/check-versions.mjs` checks both.

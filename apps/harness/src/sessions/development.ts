@@ -4,14 +4,14 @@ import type { McpToolPolicy } from "../mcp/policy.js";
 import { AppContextError } from "./app-context.js";
 
 export interface DevelopmentWorkspace {
-  id: string; path: string; branch: string; targetBranch: string; originalBase: string; state: string;
+  id: string; workspaceId?: string; path: string; branch: string; targetBranch: string; originalBase: string; state: string;
   repository: string; sessionPath: string; leases: string[]; pullRequests: string[];
   apps: { appId: string; subpath: string | null }[];
   operations: { id: string; kind: string; state: string; error?: string }[];
   observation?: { state: string; at: string; head?: string; targetHead?: string; ahead?: number; behind?: number;
     conflict?: boolean; error?: string; sessionFiles?: string[]; local?: { files: { path: string; status: string }[] } };
 }
-export type DevelopmentAction = "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
+export type DevelopmentAction = "viewer" | "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
 export class DevelopmentClient {
   constructor(private readonly origin: string | null, private readonly appId: string, private readonly token: string | null) {}
   get available(): boolean { return Boolean(this.origin && this.token); }
@@ -21,8 +21,8 @@ export class DevelopmentClient {
     const root = `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/${publication ? "publications" : "workspaces"}`;
     const id = typeof input.workspaceId === "string" ? input.workspaceId : "";
     if (!["list", "prepare", "pr-list", "pr-connections"].includes(action) && !/^[a-f0-9]{64}$/.test(id)) throw new AppContextError(400, "workspace_invalid", "A workspace ID is required.");
-    const suffix = publication ? (action === "pr-list" ? "" : action === "pr-connections" ? "/connections" : `/${id}` + (action === "pr-status" ? "" : `/${action.slice(3)}`)) : action === "list" || action === "prepare" ? "" : `/${id}` + (action === "status" ? "" : action === "diff" ? "/diff" : `/operations/${action}`);
-    const read = ["list", "status", "pr-list", "pr-status", "pr-connections"].includes(action);
+    const suffix = publication ? (action === "pr-list" ? "" : action === "pr-connections" ? "/connections" : `/${id}` + (action === "pr-status" ? "" : `/${action.slice(3)}`)) : action === "list" || action === "prepare" ? "" : `/${id}` + (action === "status" ? "" : action === "viewer" ? "/viewer" : action === "diff" ? "/diff" : `/operations/${action}`);
+    const read = ["list", "status", "viewer", "pr-list", "pr-status", "pr-connections"].includes(action);
     let response: Response;
     try {
       response = await fetch(new URL(root + suffix, this.origin!), { method: read ? "GET" : "POST",

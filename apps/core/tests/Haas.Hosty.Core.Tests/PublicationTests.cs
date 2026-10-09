@@ -7,7 +7,8 @@ public sealed partial class CoreLifecycleServiceTests
 {
     private sealed class PublicationProviderFixture : IPublicationProvider
     {
-        public string NormalizeRepository(string url) => GitHubPublicationProvider.Repository(url);
+        public string? RepositoryOverride;
+        public string NormalizeRepository(string url) => RepositoryOverride ?? GitHubPublicationProvider.Repository(url);
         public string PullRequestUrl(string repository, int number) => $"https://github.com/{repository}/pull/{number}";
         public string Head = "";
         public string State = "open";

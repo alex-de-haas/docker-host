@@ -291,9 +291,12 @@ export function buildRedirectUriFromAppPath(app: CoreApp, path: string) {
     const url = new URL(base);
     const basePath = url.pathname.endsWith("/") ? url.pathname.slice(0, -1) : url.pathname;
     const appPath = path.startsWith("/") ? path : `/${path}`;
-    url.pathname = `${basePath}${appPath}`;
-    url.search = "";
-    url.hash = "";
+    // Parse the path separately so workspace selection stays a query, not an encoded pathname.
+    // Only copy URL components; a protocol-relative input cannot replace the installed origin.
+    const destination = new URL(`http://app.invalid${appPath}`);
+    url.pathname = `${basePath}${destination.pathname}`;
+    url.search = destination.search;
+    url.hash = destination.hash;
     return url.toString();
   } catch {
     return base;

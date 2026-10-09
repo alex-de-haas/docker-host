@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-07-17
-updated: 2026-10-05
+updated: 2026-10-08
 summary: Treat shells as ordinary apps that provide a ui-client role, with Core resolving the primary UI by role instead of by app id.
 components: [apps/core, apps/shell]
 ---
@@ -10,6 +10,16 @@ components: [apps/core, apps/shell]
 
 Carried over from `docs/ideas/` on 2026-10-05. The "Decisions" below are the proposal's positions;
 the owner has not ratified them, so this plan stays Draft until they are confirmed.
+
+## Coordination With Default Applications
+
+On 2026-10-08 the owner endorsed the broader direction of Core-owned default applications by
+supported role/provider interface. The [default applications plan](../default-applications/plan.md)
+owns the shared settings model and assistant selection; this plan retains shell-specific D1-D5.
+Reconcile its proposed host/user scope, preference storage and fallback policy with Decisions 3
+and 4 here before marking either plan Ready. The existing earliest-installed fallback and concrete
+`primaryUiAppId` field remain draft proposals, not approvals inherited from that conversation.
+Workspaces is an ordinary app, not a `ui-client` or new workspace provider.
 
 ## Motivation
 

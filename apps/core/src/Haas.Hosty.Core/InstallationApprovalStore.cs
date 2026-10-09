@@ -18,13 +18,14 @@ internal static class CoreAppPermissions
     public const string ReadUsers = "users.read";
     public const string ManageUsers = "users.manage";
     public const string Sources = "apps.sources.full";
+    public const string WorkspacesRead = "apps.workspaces.read";
     public const string SourcesRead = "apps.sources.read";
     public const string LegacySources = "apps.sources";
     public const string SourceConnections = "sources.connections";
     public const string ReadSkills = "apps.skills.read";
     public const string SpeechProviders = "providers.speech-to-text";
     public const string AssistantProviders = "providers.assistant";
-    public static readonly string[] Known = [Install, ReadApps, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, SourceConnections, ReadSkills, SpeechProviders, AssistantProviders];
+    public static readonly string[] Known = [Install, ReadApps, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, SourceConnections, ReadSkills, SpeechProviders, AssistantProviders];
 
     // The old name grants exactly the same authority. Other retired permissions remain unsupported.
     public static string Normalize(string permission) => permission == LegacySources ? Sources : permission;
@@ -51,6 +52,7 @@ internal static class CoreAppPermissions
     public static string Describe(string permission) => permission switch
     {
         Sources => "Access and modify application source code, including code Hosty executes on this host in development mode; manage workspaces and use selected source-provider connections",
+        WorkspacesRead => "Inspect authorized development workspaces, worktrees, source diffs and recorded publication facts as the current administrator; no mutations",
         SourcesRead => "Read repository documentation and development workspace document changes as the current administrator; no source edits or workspace mutations",
         SourceConnections => "Manage your own source-provider accounts and Git identity; select connections for reviewed installations",
         ReadApps => "List applications and read their state",

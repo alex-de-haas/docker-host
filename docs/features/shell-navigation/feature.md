@@ -1,6 +1,6 @@
 ---
 created: 2026-07-30
-updated: 2026-10-07
+updated: 2026-10-09
 summary: Shell's three destinations, Dashboard, Settings and Apps, with the route table and the sidebar.
 components: [apps/shell]
 ---
@@ -54,7 +54,13 @@ with its own 404; the Shell client never renders it. The route parser still reso
 Dashboard, because it runs on every render against whatever `usePathname()` reports and must be
 total, but that resolution is never a screen anyone sees.
 
-`/workspace` URLs carry only the app id and app path. On load Shell asks Core for a fresh launch code
+`/workspace` URLs carry the app id and app-relative destination in `path`. The destination retains
+its query and fragment under the installed app's origin and base path. For example, an encoded
+`/?workspace=<id>&worktree=<id>` selects that worktree in Workspaces instead of requesting a
+pathname containing an encoded question mark. A protocol-relative destination cannot change the
+installed app origin.
+
+On load Shell asks Core for a fresh launch code
 before loading the iframe; codes are single-use, so a refresh re-mints rather than replaying.
 
 ## Sidebar

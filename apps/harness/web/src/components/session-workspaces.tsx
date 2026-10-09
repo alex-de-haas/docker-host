@@ -76,6 +76,18 @@ export function SessionWorkspaces({ session, running }: { session: AssistantSess
 function WorkspaceCard({ workspace: w, sessionId, busy, cleanup, refresh }: {
   workspace: Workspace; sessionId: string; busy: boolean; cleanup: () => void; refresh: () => void;
 }) {
+  const [viewer, setViewer] = useState<{ url?: string | null; unavailable?: string | null } | null>(null);
+  useEffect(() => {
+    let active = true;
+    void workspaceAction<{ url?: string | null; unavailable?: string | null }>(sessionId, "viewer", { workspaceId: w.id })
+      .then(value => { if (active) setViewer(value); })
+      .catch(() => { if (active) setViewer({ unavailable: "Workspaces app is unavailable." }); });
+    return () => { active = false; };
+  }, [sessionId, w.id]);
+  const viewerUrl = (() => {
+    try { const url = new URL(viewer?.url ?? ""); return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.href : null; }
+    catch { return null; }
+  })();
   const [view, setView] = useState("session");
   const [preview, setPreview] = useState<{ path: string; combined: string; truncated?: boolean; binary?: boolean; image?: unknown } | null>(null);
   const [error, setError] = useState("");
@@ -89,6 +101,8 @@ function WorkspaceCard({ workspace: w, sessionId, busy, cleanup, refresh }: {
     } catch (cause) { if (current === generation.current) setError(cause instanceof Error ? cause.message : String(cause)); }
   };
   return <section className="space-y-2 rounded border p-2" aria-label={`Workspace ${w.id.slice(0, 8)}`}>
+    {viewerUrl && <Button size="sm" variant="outline" asChild><a href={viewerUrl} target="_blank" rel="noreferrer">Open in Workspaces</a></Button>}
+    {viewer?.unavailable && <p className="text-xs text-muted-foreground">{viewer.unavailable}</p>}
     <p className="break-all font-medium">{w.apps.map(a => a.appId).join(", ")} · {w.state}</p>
     <p className="break-all font-mono text-xs">{w.path}</p>
     <p className="text-xs">{w.targetBranch} · {w.observation?.head?.slice(0, 8) ?? "Unknown HEAD"} · {w.leases.length > 0 ? "In use" : "No active leases"}</p>

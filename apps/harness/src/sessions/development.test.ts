@@ -50,3 +50,13 @@ describe("Core workspaces transport", () => {
     expect(instruction).toContain("does not change the running application");
   });
 });
+
+it("resolves the viewer through the owning session without making a workspace mutation", async () => {
+  const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ url: "http://workspaces.test/?workspace=aggregate" }), { status: 200 }));
+  vi.stubGlobal("fetch", fetcher);
+  const client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
+  await client.call("session/one", "user", "viewer", { workspaceId: "a".repeat(64) });
+  const [url, init] = fetcher.mock.calls[0]!;
+  expect(String(url)).toBe(`http://core.test/api/internal/apps/hosty.harness/sessions/session%2Fone/workspaces/${"a".repeat(64)}/viewer`);
+  expect(init.method).toBe("GET"); expect(init.body).toBeUndefined();
+});
