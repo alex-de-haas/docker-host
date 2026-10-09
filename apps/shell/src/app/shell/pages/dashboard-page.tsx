@@ -3,7 +3,6 @@
 import { fetchCore } from "../core-transport.js";
 
 
-import { DevelopmentWorkspaces } from "./development-workspaces";
 import { ResourceUsageProvider, ResourceUsage } from "../resources/resource-usage";
 import { Frame, FrameHeader, FramePanel } from "@/components/reui/frame";
 import { Separator } from "@/components/ui/separator";
@@ -315,7 +314,6 @@ export function DashboardPage({
         onUpdateCore={onUpdateCore}
       />
 
-      {canManageApps && <DevelopmentWorkspaces />}
 
       <Frame role="region" aria-label="Installed apps">
         <FrameHeader className="dashboard-apps-toolbar grid items-center gap-0 px-px py-1">

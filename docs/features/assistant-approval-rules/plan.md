@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-02
-updated: 2026-10-05
+updated: 2026-10-09
 summary: Session grants, shell prefix rules and explicit native development boundaries on top of the MCP tool policy.
 components: [apps/harness]
 ---
@@ -55,6 +55,33 @@ accepted agent-trust workspace mode. Do not silently claim those guarantees for 
 existing restrictions. This decision does not enable broad credentials or bypass MCP/API permission
 checks. The [external context plan](../assistant-external-session-context/plan.md)'s integration still
 needs separately scoped authority and does not upgrade the read-only facade.
+
+## Deferred Agent Container Direction (Owner Clarification, 2026-10-09)
+
+The owner confirmed the session/workspace/worktree model and deferred provider switching and
+app Sandbox work. For current unrestricted local agents, assigned worktree paths are cooperative
+guidance: explain this to operators and do not claim that Core can prevent native access to original
+sources or another workspace. Core API scope remains independently enforced.
+
+The intended later agent execution boundary is a container with only the owning workspace's
+authorized worktrees mounted as source directories. Do not expose original checkouts, sibling
+workspaces, their common parent directory or host-control interfaces that defeat this boundary.
+This is deferred execution isolation owned by D1/D7 here; it is distinct from
+[app Sandbox runtimes](../app-sandbox-runtimes/plan.md), which owns running and testing applications.
+It does not gate the read-only Workspaces app or authorize container implementation now.
+
+Linked Git worktrees need an explicit metadata design. Their `.git` files refer to per-worktree
+administrative directories outside the checkout, and repository refs/objects are shared. Mounting
+only the checkout does not provide a working native Git environment; mounting the common store
+without restrictions can expose other worktrees' metadata and refs. Evaluate Core-mediated Git
+operations versus isolated repository metadata under D1/D7, preserving authorized diff, commit and
+publication behavior. See the [Git worktree documentation](https://git-scm.com/docs/git-worktree).
+
+[Workspace lifecycle controls](../workspace-lifecycle-controls/plan.md) owns close coordination.
+For the eventual isolated backend, revoke new operations, stop and verify owned executions, detach
+their source mounts and then perform safe worktree cleanup. D3 owns process-quiescence guarantees;
+neither deleting a directory nor accepting a close request is evidence that a process lost access.
+Live unmount mechanics remain undecided and are not a prerequisite for stopping the container.
 
 ## PR Lifecycle Integration (Owner Decision, 2026-09-29)
 
@@ -317,9 +344,9 @@ parity. A disposable spike establishes the contract; this Draft does not authori
 
 ## Deliverables
 
-- [ ] D1. **Deferred — original-source isolation:** revisit technical protection of original checkouts and
-      shared Git metadata only if practical agent behavior warrants it and the owner approves that scope.
-      The instruction-based workspace feature does not wait for these enforcement experiments or changes.
+- [ ] D1. **Deferred — original-source isolation:** evaluate the owner's later container direction for
+      owned worktree mounts and isolated or Core-mediated Git metadata. Implementation needs separate
+      approval; the instruction-based workspace feature and read-only viewer do not wait for this work.
 - [ ] D2. Run and record H's current-policy baseline and candidate-boundary experiment on both adapters;
       resolve enforcement, audit and lifecycle-authority design before implementation approval.
 - [ ] D3. **Deferred — immediate process revocation:** own and terminate model-tool commands or verify all

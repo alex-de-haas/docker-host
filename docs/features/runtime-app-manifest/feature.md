@@ -1,6 +1,6 @@
 ---
 created: 2026-06-04
-updated: 2026-10-07
+updated: 2026-10-09
 summary: The app.0.1 manifest contract for installing and running runtime apps.
 components: [apps/core]
 ---
@@ -260,12 +260,14 @@ All fields are optional; blanks are dropped and an all-empty block is ignored. `
 ## Core Operation Permissions
 
 `corePermissions` declares required operations. The catalogue recognizes `apps.install`, `apps.read`,
-`apps.logs`, `apps.notifications`, `apps.lifecycle`, `apps.configure`, `apps.sources.full`, `apps.sources.read`, `apps.skills.read`,
+`apps.logs`, `apps.notifications`, `apps.lifecycle`, `apps.configure`, `apps.sources.full`, `apps.sources.read`, `apps.workspaces.read`, `apps.skills.read`,
 `core.read`, `core.update`, `core.lifecycle`, `core.configure`, `core.logs`, `users.read`, `users.manage`,
 `providers.speech-to-text` and `providers.assistant`. See [App installation](../app-installation-sdk/feature.md)
 for currently wired delegated operations and management-API integration status.
 `apps.sources` is a legacy alias for `apps.sources.full`, normalized in manifests and persisted
-declarations/grants before startup cleanup. `apps.sources.read` grants administrator-only repository
+declarations/grants before startup cleanup. `apps.workspaces.read` grants current-administrator
+inspection of authorized workspace/worktree metadata and bounded source diffs, without source or
+lifecycle mutations; see [workspace inspection](../assistant-session-workspaces/feature.md). `apps.sources.read` grants administrator-only repository
 documentation reads and workspace document projections; it does not grant source or Git mutations.
 New installs and updates reject unknown or duplicate names. Installed unsupported declarations remain
 visible for compatibility diagnostics. Neither missing required grants nor unknown required names

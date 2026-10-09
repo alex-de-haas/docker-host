@@ -59,6 +59,7 @@ jobs:
       telemetry_backend: ${{ steps.filter.outputs.telemetry_backend }}
       marketplace: ${{ steps.filter.outputs.marketplace }}
       plans: ${{ steps.filter.outputs.plans }}
+      workspaces: ${{ steps.filter.outputs.workspaces }}
       harness: ${{ steps.filter.outputs.harness }}
       telemetry_ui: ${{ steps.filter.outputs.telemetry_ui }}
       swift_shell: ${{ steps.filter.outputs.swift_shell }}
@@ -138,6 +139,11 @@ jobs:
               - 'packages/app-sdk/**'
               - 'scripts/docs-index.mjs'
               - 'docs/**'
+
+            workspaces:
+              - *node_shared
+              - 'apps/workspaces/**'
+              - 'packages/app-sdk/**'
 
             harness:
               - *node_shared
@@ -527,6 +533,33 @@ jobs:
 
       - name: Build Plans
         run: npm run plans:build
+
+  workspaces:
+    name: Workspaces
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.workspaces == 'true'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Lint Workspaces
+        run: npm run workspaces:lint
+
+      - name: Test Workspaces
+        run: npm run workspaces:test
+
+      - name: Build Workspaces
+        run: npm run workspaces:build
 
   harness:
     name: Hosty Harness

@@ -113,6 +113,8 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AppSourceService>();
         builder.Services.AddSingleton<DevelopmentWorkspaceService>();
         builder.Services.AddSingleton<SourceRepositoryFetchCoordinator>();
+        builder.Services.AddSingleton<WorkspaceInspectionService>();
+        builder.Services.AddSingleton<WorkspaceInspectionAuthorization>();
         builder.Services.AddSingleton<SourceDocumentService>();
         builder.Services.AddSingleton<SourceDocumentAuthorization>();
         builder.Services.AddSingleton<WorkspaceAuthorization>();
@@ -380,6 +382,7 @@ internal static class HostyCoreApplication
         SourceEndpoints.Map(app);
         DevelopmentWorkspaceEndpoints.Map(app);
         SourceDocumentEndpoints.Map(app);
+        WorkspaceInspectionEndpoints.Map(app);
         PublicationEndpoints.Map(app);
         ControlIdentityEndpoints.Map(app);
         AppDirectoryEndpoints.Map(app);

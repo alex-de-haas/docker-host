@@ -1,0 +1,113 @@
+{
+  "schemaVersion": "app.0.1",
+  "id": "hosty.workspaces",
+  "name": "Hosty Workspaces",
+  "description": "Read-only inspection of session workspaces, repository worktrees, changes and pull requests.",
+  "version": "0.1.0",
+  "source": {
+    "type": "git",
+    "repository": "https://github.com/alex-de-haas/docker-host.git",
+    "branch": "main",
+    "paths": [
+      "apps/workspaces"
+    ]
+  },
+  "runtimeProfiles": [
+    {
+      "key": "docker",
+      "type": "docker",
+      "default": true
+    },
+    {
+      "key": "dev",
+      "type": "localCommand",
+      "development": true
+    }
+  ],
+  "defaultRuntime": "docker",
+  "services": [
+    {
+      "key": "api",
+      "runtimes": {
+        "docker": {
+          "type": "docker",
+          "image": {
+            "repository": "ghcr.io/alex-de-haas/hosty-workspaces",
+            "tag": "0.1.0"
+          },
+          "environment": {
+            "PORT": "3000",
+            "HOSTNAME": "0.0.0.0"
+          },
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3000,
+              "protocol": "http",
+              "public": true
+            }
+          ],
+          "healthcheck": {
+            "type": "exec",
+            "command": "node -e \"fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+            "intervalSeconds": 30,
+            "timeoutSeconds": 5,
+            "retries": 3,
+            "gracePeriodSeconds": 10
+          }
+        },
+        "dev": {
+          "type": "localCommand",
+          "workingDirectory": "apps/workspaces",
+          "setup": "npm install",
+          "command": "npm run dev",
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3700,
+              "protocol": "http",
+              "public": true
+            }
+          ],
+          "healthcheck": {
+            "type": "http",
+            "port": 3700,
+            "path": "/healthz",
+            "timeoutSeconds": 5
+          }
+        }
+      }
+    }
+  ],
+  "endpoints": [
+    {
+      "key": "http",
+      "service": "api",
+      "port": "http",
+      "protocol": "http",
+      "public": true
+    }
+  ],
+  "ui": {
+    "entrypoint": {
+      "endpoint": "http",
+      "path": "/"
+    },
+    "navigation": [
+      {
+        "label": "Workspaces",
+        "endpoint": "http",
+        "path": "/"
+      }
+    ]
+  },
+  "capabilities": [
+    "logs"
+  ],
+  "catalogMetadata": {
+    "icon": "assets/icon.svg"
+  },
+  "corePermissions": [
+    "apps.workspaces.read"
+  ]
+}

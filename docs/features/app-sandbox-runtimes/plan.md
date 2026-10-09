@@ -1,7 +1,7 @@
 ---
 status: On Hold
 created: 2026-09-25
-updated: 2026-10-01
+updated: 2026-10-09
 summary: Isolated runtime instances for testing session worktrees with synthetic data and scoped browser automation.
 components: [apps/core]
 ---
@@ -26,6 +26,15 @@ reliable general solution when Core does not know the application's internals. D
 dependencies, endpoint overrides or mocks, and report unsupported cases. A separate folder and a
 container do not by themselves establish a complete sandbox guarantee. Existing feasibility and
 verification deliverables below remain unfinished; this decision authorizes no sandbox implementation.
+
+## Workspaces Viewer Boundary (Owner Clarification, 2026-10-09)
+
+The owner keeps builds, tests, browser automation, isolated app execution and their verification
+evidence in this deferred feature. The initial [Workspaces app](../workspaces-app/feature.md) inspects
+source and existing PR/CI facts; it does not implement a test runner or verification-report store.
+Existing D1/D8 retain source-bound and browser evidence work. Bind future runs to the selected
+worktree revision within the [session workspace aggregate](../assistant-session-workspaces/feature.md).
+This clarification leaves status On Hold and authorizes no sandbox implementation.
 
 ## Workspace Delivery Boundary (Owner Decision, 2026-09-27)
 

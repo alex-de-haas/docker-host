@@ -1,6 +1,6 @@
 ---
 created: 2026-10-07
-updated: 2026-10-08
+updated: 2026-10-09
 summary: Local external agents prepare authorized Core-owned Git worktrees through direct MCP, with separate workspace progress in Plans.
 components: [apps/core, apps/plans]
 ---
@@ -48,8 +48,10 @@ owners. Tracked-branch progress and each workspace's progress remain independent
 uncommitted plan edits. Observation errors stay visible with their evidence time. Existing assistant
 links and older payloads without external metadata retain their original presentation.
 
-Shell's development section links to source-capable tools. It does not read workspace source or gain
-additional permissions for this feature.
+[Workspaces](../workspaces-app/feature.md) displays external owners alongside assistant owners and
+aggregates repositories sharing one external principal/user/task reference. The legacy worktree ID
+stays unchanged; the additional `workspaceId` identifies its logical group. Shell provides ordinary
+app navigation and has no workspace source access.
 
 ## Local Agent Setup
 

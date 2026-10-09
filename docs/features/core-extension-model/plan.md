@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-07-10
-updated: 2026-10-06
+updated: 2026-10-09
 summary: Exploratory model for delivering platform capabilities as swappable apps through named contribution points.
 components: [apps/core]
 ---
@@ -233,8 +233,15 @@ Consequences for the operator surface:
 
 The owner confirmed the two-axis reading above and settled how permissions are presented and granted.
 [Assistant provider permissions](../assistant-provider-permissions/feature.md) is the first slice: a
-confirmed fan-out assistant role, one permission, and no system-role restriction. Which assistant a
-UI client's own features use is that client's setting, not a Core default.
+confirmed fan-out assistant role, one permission, and no system-role restriction. The original
+2026-09-26 direction kept assistant selection in each UI client. Owner direction on 2026-10-08
+supersedes that placement with Core-owned shared preferences; the
+[default applications plan](../default-applications/plan.md) owns the unresolved scope, migration and
+selection policy. A default does not make the assistant role exclusive or grant additional access.
+
+The same discussion keeps [Workspaces](../workspaces-app/feature.md) an ordinary API-consuming UI,
+without a provider role. A possible [plan-provider interface](../plan-provider-interface/plan.md)
+is only an early exploration. Neither introduces a new Core contract through this umbrella.
 
 - **Roles and permissions are separate.** What an app provides (assistant, UI client, login method,
   telemetry sink) is a `provides` role that Core or clients route work to; badges come from confirmed

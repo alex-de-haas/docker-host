@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-09-26
+updated: 2026-10-09
 summary: Durable session events and cross-provider context so one conversation can switch between Claude and Codex.
 components: [apps/harness]
 ---
@@ -39,6 +39,27 @@ from recent turns, a versioned summary and retrievable earlier material. Read cu
 files after another agent edits them. Mark summary coverage and stale source observations. The
 Codex-plan -> Claude-review/amend -> Codex-implement loop must work across Gateway restart as well
 as ordinary switching. Changing providers does not count as a new development session.
+
+## Owner Clarification And Upstream Evidence (2026-10-09)
+
+The owner reaffirmed one visible session with different agents selected for successive turns.
+Keep one active source-writing execution initially; parallel writers are a coordination choice,
+not a fundamental impossibility. Finish/cancel and reconcile the previous turn before a switch.
+The same session-owned workspace survives switching and may contain multiple worktrees; see the
+[workspace model](../assistant-session-workspaces/feature.md). Closing development does not erase the
+conversation, and clarification chat does not silently reopen source access.
+
+Review reusable implementations before designing a new agent transport. The current
+[VS Code handoff documentation](https://code.visualstudio.com/docs/agents/run/agent-harnesses#hand-off-a-session)
+describes context transfer but currently permits initiating handoff only from Local sessions;
+Agent Host sessions can be destinations. This is not evidence of unrestricted round-trip switching.
+The [Agent Host architecture](https://code.visualstudio.com/blogs/2026/08/26/agent-host-architecture)
+uses harness adapters and a common client-facing session model while leaving native context and
+execution to each harness. AHP does not itself make native provider history interchangeable.
+
+Evaluate that implementation against D3/D4/D5 before choosing adapters. Reuse the existing AHP
+spike for protocol/host evaluation; do not create a duplicate protocol or make Workspaces depend
+on this research. No VS Code interoperability or native context-import experiment has been run.
 
 ## Durable Events And Invocation Correlation
 
