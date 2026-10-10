@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-09
-updated: 2026-10-09
+updated: 2026-10-10
 summary: Deferred operator management for closing session development, revoking agent access and safely releasing repository worktrees.
 components: [apps/core, apps/harness]
 ---
@@ -36,7 +36,7 @@ Closing work and deleting uncommitted files are different actions. Destructive d
 explicit intent and consumer checks. A Core API revocation cannot revoke an unrestricted external
 program's OS access to a previously returned path. Operators must be told that the current native
 mode uses cooperative directory guidance. Strong containment belongs to the deferred
-[agent execution isolation](../assistant-approval-rules/plan.md), separately from app Sandbox testing.
+[agent session containment](../assistant-runtime-containment/plan.md), separately from app Sandbox testing.
 
 Owner clarification, 2026-10-09: the intended isolated mode exposes only the owning workspace's
 worktrees to its agent container. Closing must revoke new operations, stop and verify owned
@@ -45,6 +45,11 @@ acknowledgement for each step; a live unmount is not assumed. Deleting a worktre
 running process is not an access-revocation mechanism. Dirty changes, unresolved publication state,
 leases and independent runtime consumers still require the existing preservation/discard checks.
 Closure and physical cleanup may therefore have different outcomes and completion times.
+
+Ownership clarification, 2026-10-10: Containment D10 implements execution ownership, verified process
+termination and mount-release acknowledgements. D2-D3 here consume that backend contract for the
+close workflow and its acceptance; they do not implement a second process supervisor. Approval Rules
+owns grant removal and its visible meaning, not evidence that an execution has stopped.
 
 ## Deliverables
 

@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-16
-updated: 2026-09-29
+updated: 2026-10-10
 summary: Durable no-Git app creation from a prompt, with bootstrap, development guide and assisted initial Git setup.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -47,9 +47,11 @@ Owner decisions, 2026-09-16:
 
 The owner also requests general multi-app associations in chat and new-session actions in app menus.
 [Assistant app context](../assistant-app-context/feature.md) owns that shared feature and precedes this
-one. General source binding and per-app source-write/command grants belong to
+one. Per-app source-write/command grant choices belong to
 [assistant approval rules](../assistant-approval-rules/plan.md), for existing apps as well as prototypes.
-This feature consumes both shared capabilities; it does not introduce prototype-only permissions.
+They consume Core's source/workspace bindings and the capabilities enforced by
+[agent session containment](../assistant-runtime-containment/plan.md). This feature consumes these
+shared capabilities; it does not introduce prototype-only permissions or another execution boundary.
 
 Owner clarification: reuse existing source/dev-mode/lifecycle mechanisms wherever they satisfy the
 requirements, without forcing new behavior into an unsuitable abstraction. The remaining source work
@@ -356,8 +358,9 @@ Implement an authoring orchestration module in gateway. Invoke a narrow local CL
 verbs and argument arrays for the current reserved/installed app. No browser-supplied arbitrary path
 or shell command, and no manual editing of Core state. Use structured results or reconcile against
 Core reads, not styled CLI tables. Initial Create authorizes fixed bootstrap creation/install/start;
-subsequent agent changes use the shared development grant. The autonomous cycle requires the verified
-source/command boundary and app-scoped lifecycle execution from assistant approval rules. The agent
+subsequent agent changes use the shared development grant. A bounded authoring cycle consumes
+Approval Rules' grant choices, Containment's verified source/command boundary and App Development
+Controls' app-scoped lifecycle operations. The agent
 must not receive the orchestration bridge's broad host authority. A declined action cannot be retried
 through the orchestrator as a fallback. Core delegated tokens gain no blanket lifecycle authority.
 
@@ -542,6 +545,8 @@ and diff checks. Report unavailable live checks honestly. Never start a second C
 ## Approval Gate
 
 The product direction is accepted, including general per-app development grants and administrator
-responsibility for localCommand execution. Before implementation approval, assistant approval rules
-must record the both-harness baseline and enforcement experiment and resolve its technical questions.
+responsibility for localCommand execution. Before implementation approval, resolve shared grant and
+operation-authority contracts with their owners. Any claimed isolated authoring mode depends on
+Containment D9's both-adapter baseline and enforcement evidence; that experiment no longer belongs
+to Approval Rules. Existing administrator Autonomous mode is not evidence of an isolated cycle.
 This plan remains Draft; no live containment or autonomous create/edit/build result is claimed here.

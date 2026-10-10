@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-07-20
-updated: 2026-10-05
+updated: 2026-10-10
 summary: Providers learn which installed app is calling their control API by introspecting the caller's service token against Core.
 components: [apps/core, packages/app-sdk-dotnet]
 ---
@@ -128,6 +128,14 @@ No new credential is minted, no new env is injected, no lifecycle changes:
   `dependsOnCaller`) is a later opt-in, not the default — enforcement policy can then
   tighten per app without another platform change.
 
+## Residual app authority (transferred 2026-10-10)
+
+Core Extension Model D5 is retired as an umbrella. App grants, uniform assignments, optional
+permissions and assistant-target MCP grants already ship. The residual work below is Draft:
+reassess this plan's older service-token-forwarding proposal against the existing audience-bound
+provider and MCP credentials before implementation. A provider credential, app service credential
+and acting-user grant are distinct authorities.
+
 ## Deliverables
 
 Each step ships independently.
@@ -144,6 +152,10 @@ Each step ships independently.
 - [ ] D6. Enforcement staged like the token-adoption boot check: providers first accept and log
       anonymous calls, then require identification once the consumer handler has shipped. The
       default becomes require.
+
+- [ ] D7. Design any remaining general cross-app user delegation around explicit app grants, acting-user rights and target-app access. Audit the legacy exchange and on-behalf-of gates against the shipped assistant MCP credential; preserve denial until a reviewed replacement exists. The [MCP facade](../mcp-facade/plan.md) owns adopting this contract for its bridge.
+- [ ] D8. Replace manifest-system selection of app-session lifetime policy with an explicit reviewed policy or grant-based rule; define migration of existing configurable lifetime settings and test idle/absolute expiration and revocation without extending authority accidentally.
+- [ ] D9. Reconcile app permission identifiers and external token scopes by enforcement semantics; document their mapping and choose whether aliases are useful. Preserve shipped spellings and distinct authority boundaries; cosmetic dotted/colon unification is not a reason for a breaking rename.
 
 **Stopgap resolved 2026-07-20:** the original draft required `CONTROL_API_TOKEN` to stay
 unset until step 5 exists (enabling it silently 401'd the only consumer). The owner chose

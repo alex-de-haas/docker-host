@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-09
-updated: 2026-10-09
+updated: 2026-10-10
 summary: Deferred execution-scoped credentials for assistant and external-agent source operations, independently of the workspace viewer.
 components: [apps/core, apps/harness]
 ---
@@ -15,6 +15,11 @@ This plan receives execution-scope D7 and the corresponding design portion of D5
 workspace draft. External task IDs within one OAuth grant remain allocation labels, not isolation
 boundaries. App/user-wide assistant credentials retain their existing checks. Neither is advertised
 as a credential that is technically limited to one conversation.
+
+The 2026-10-10 plan consolidation places the execution-credential portion of former Approval Rules
+D8 here under D1-D3. Operation owners still decide app/action and Git destination authority;
+permission UI cannot mint stronger credentials. Native filesystem/network isolation belongs to
+Containment, not to this credential contract.
 
 ## Deliverables
 
@@ -31,4 +36,5 @@ as a credential that is technically limited to one conversation.
 
 [Workspace inspection](../workspaces-app/feature.md) owns the read-only UI;
 [lifecycle controls](../workspace-lifecycle-controls/plan.md) owns later closing;
-[agent isolation](../assistant-approval-rules/plan.md) owns the future native/container filesystem boundary.
+[agent isolation](../assistant-runtime-containment/plan.md) owns the future session execution boundary;
+[approval rules](../assistant-approval-rules/plan.md) owns permission choices, lifetime and decision audit.

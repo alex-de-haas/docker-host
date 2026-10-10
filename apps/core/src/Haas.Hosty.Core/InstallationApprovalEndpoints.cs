@@ -278,6 +278,13 @@ internal static class InstallationApprovalEndpoints
                     return CoreJson.Json(store.View(pending, origins.Effective));
                 }
             }, ct));
+        app.MapGet("/api/apps/permissions", async (HttpRequest request,
+            UserDirectoryStore users, IClock clock, AppRegistryStore apps, CancellationToken ct) =>
+            await BrowserAsync(request, users, clock, async _ =>
+            {
+                request.HttpContext.Response.Headers.CacheControl = "no-store";
+                return CoreJson.Json(AppPermissionOverview.From(await apps.ListAppRecordsAsync(ct)));
+            }, ct, csrf: false));
         app.MapGet("/api/apps/{id}/permissions", async (string id, HttpRequest request,
             UserDirectoryStore users, IClock clock, CoreLifecycleService lifecycle, CancellationToken ct) =>
             await BrowserAsync(request, users, clock, async _ =>

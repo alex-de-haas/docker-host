@@ -1,7 +1,7 @@
 ---
 status: On Hold
 created: 2026-10-05
-updated: 2026-10-06
+updated: 2026-10-10
 summary: Restrict app framing to operator-designated embedders while preserving the assistant browser runner.
 ---
 
@@ -29,7 +29,9 @@ button first.
 
 - **Designated embedders.** An app declares in its manifest that it embeds other apps, for example
   as a UI client. The operator approves the declaration, as with permissions. Shell, a third-party
-  Shell or any other client the operator accepts can be an embedder. An ordinary app cannot.
+  Shell or any other client the operator accepts can be an embedder. An undesignated app cannot;
+  designation must also be available to a standalone domain app using the shared SDK panel host,
+  independently of whether it is a full `ui-client`.
 - **Distributed list.** Core gives every app the current browser origins of the designated
   embedders. As with other browser origins, a change applies when the app next restarts.
 - **Browser enforcement.** The SDK sends `Content-Security-Policy: frame-ancestors 'self' <embedder
@@ -47,6 +49,13 @@ button first.
   is unaffected, because `frame-ancestors` applies only to framed documents. A runner that frames apps
   in its own page must use a designated embedder's origin or go through Shell. Acceptance evidence
   must not rely on disabling CSP in the runner.
+- [Shared SDK panels](../sdk-panel-system/plan.md): owner direction on 2026-10-10 requires standalone
+  Plans to host an assistant beside its document, while embedded Plans delegates to Shell. The
+  earlier blanket exclusion of ordinary apps would break the standalone case. Design explicit
+  embedder approval independently of full UI-client status, and test the actual ancestor chain.
+  SDK adoption, panel declarations and a `ui-client` role are not implicit approval. The panel plan
+  respects deployed CSP and offers explicit separate opening when denied; it does not activate this
+  restriction. This plan remains On Hold pending the existing browser-runner decision.
 - A separate investigation is tracking the finding that a process on another port of a Core or app
   hostname receives that host's cookies. It concerns the same threat (a malicious installed app) and
   may change how origins and sessions are distributed. This plan should be revisited when it lands.
@@ -59,10 +68,10 @@ button first.
 
 ## Deliverables
 
-- [ ] D1. Manifest declaration of an embedder, its operator review, and its projection into the app record.
+- [ ] D1. Manifest declaration of an embedder, its operator review, and its projection into the app record, supporting standalone SDK panel hosts independently of the full UI-client role.
 - [ ] D2. Core distributes the designated embedders' browser origins to apps.
 - [ ] D3. SDK sends `frame-ancestors` from that list, with tests for allowed, foreign and chained ancestors.
 - [ ] D4. Shell declares itself an embedder.
 - [ ] D5. Compatibility with the assistant browser runner, verified against the sandbox runtimes design.
-- [ ] D6. Browser acceptance: an undesignated installed app cannot frame another app, and Shell can.
+- [ ] D6. Browser acceptance: an undesignated installed app cannot frame another app; designated Shell and standalone SDK hosts can, including Plans → assistant and denied/revoked recovery.
 - [ ] D7. Feature docs, versions, this plan deleted and the index regenerated.

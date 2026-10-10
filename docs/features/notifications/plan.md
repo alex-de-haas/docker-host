@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-06-16
-updated: 2026-08-31
+updated: 2026-10-10
 summary: Expose notifications to non-browser clients and add delivery channels that reach users outside any client.
 components: [apps/core]
 ---
@@ -46,6 +46,12 @@ the existing service rather than a redesign.
       retry and failure posture, which is why it is a seam rather than an inline call.
 - [ ] D5. Docs: fold each shipped surface into [feature.md](feature.md) and regenerate the index.
 
+- [ ] D6. Design and implement bounded durable domain-event retention and app-facing cursor subscriptions for authorized consumers; persist replay positions, version events, define retention-gap recovery and use at-least-once delivery with idempotent consumption. This is separate from the ephemeral Core event bus.
+- [ ] D7. Deliver the first external notification-channel app (for example Telegram) using D6 and D4; define explicit subscription permissions, per-user visibility, retry/backoff and observable failures. Verify reconnects, duplicate handling and stopped/slow consumers without blocking Core.
+
+D6–D7 receive Core Extension Model D3. Transport, retention and the first delivery provider remain
+Draft design choices; no generic extension framework is a prerequisite.
+
 Not tracked here: the macOS OS banner on the `notification` event, which belongs to
 [agent-background-sessions](../agent-background-sessions/feature.md) along with the gateway's use of the
 producer endpoint. The transport it needs already exists.
@@ -64,15 +70,15 @@ endpoint.
 - Question: Can a privileged **system app** emit `host-admin` notifications over HTTP?
   Answer: Not today — `host-admin` is in-process Core only, and system apps use `audience: "user"`.
   Recommendation: defer a privileged-producer scope until a concrete system-app need appears; it is a
-  scope grant in [core-extension-model](../core-extension-model/plan.md) terms, not a special case in
+  scope grant in [app permission management](../app-permission-management/feature.md) terms, not a special case in
   this endpoint.
 
 - Question: Where do `Core → app` control signals live (lifecycle "you will be stopped",
   config-changed, token-rotated)?
   Answer: Not in this inbox. They are machine-targeted and need at-least-once delivery, retries, and
   idempotency.
-  Recommendation: pull-based event subscriptions in
-  [core-extension-model](../core-extension-model/plan.md), which revised the earlier webhook direction.
+  Recommendation: the separate durable subscription contract in D6, with the first delivery app in D7.
+  Core's current refresh-hint SSE stream provides no durable replay guarantee.
 
 ## Verification
 

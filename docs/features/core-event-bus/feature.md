@@ -1,6 +1,6 @@
 ---
 created: 2026-07-24
-updated: 2026-07-24
+updated: 2026-10-10
 summary: An in-process event bus that tells session clients over one SSE stream that something changed.
 components: [apps/core, apps/shell]
 ---
@@ -95,9 +95,8 @@ link one open tab holds Kestrel's graceful stop for the full shutdown budget and
 runtime-app stop sweep behind it.
 
 Shell is the only subscriber. There is no app-facing subscription or producer endpoint; apps neither
-read nor write the bus. [core-extension-model](../core-extension-model/plan.md) is where that
-possibility is tracked, and its durable-log design would attach to this hub as one more subscriber
-rather than change what exists here.
+read nor write the bus. Durable app-facing replay is a separate contract tracked by the
+[notifications plan](../notifications/plan.md); the current bus provides no persistence or cursor guarantees.
 
 ## Shell consumer
 

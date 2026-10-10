@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-24
-updated: 2026-10-09
+updated: 2026-10-10
 summary: Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -62,7 +62,7 @@ Three roles stay distinct:
 
 | Role | Responsibility | Current location |
 | --- | --- | --- |
-| Agent provider | Access to an agent (Codex, Claude) behind one agent interface | Inside Harness until that interface can be defined; later the candidate `agent` role of the [core extension model](../core-extension-model/plan.md) |
+| Agent provider | Access to an agent (Codex, Claude) behind one agent interface | Inside Harness until that interface can be defined; the [agent/model provider plan](../agent-provider-interface/plan.md) owns extraction and the proposed contract |
 | Assistant | An app that owns and manages sessions | Harness; other assistant apps may bring their own session engine |
 | UI client | Presents and controls an assistant's sessions | Harness web UI, the Swift client, or another app's UI |
 
@@ -162,7 +162,9 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
 - Earlier authoring plans distinguish live interactive editing from isolated non-interactive PR
   jobs. For Git-backed interactive work, this direction adds session worktrees that can be selected
   for live testing. Durable no-Git prototypes remain a separate supported path, without invented
-  Git/PR guarantees. Disposable job validation in Agent Bridge remains distinct.
+  Git/PR guarantees. Owner clarification, 2026-10-10: Sandbox now owns disposable validation for
+  both interactive and automated callers; the separate Agent Bridge D12 is retired. This umbrella's
+  D1–D2 retain integration and acceptance, and Bridge D11 retains general durable job orchestration.
 - The current MCP facade is read-only. Neither adding AHP nor installing a client plugin grants
   its tokens write access. Explicit local development integration requires its own approved authority.
 
@@ -186,6 +188,9 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
 | [Synthetic app evaluations](../agent-app-evaluations/plan.md) | Later exploratory agents and controlled variant comparisons |
 
 Existing owners retain their deliverables: [approval rules](../assistant-approval-rules/plan.md),
+[agent session containment](../assistant-runtime-containment/plan.md),
+[execution authorization](../assistant-execution-authorization/plan.md),
+[workspace lifecycle controls](../workspace-lifecycle-controls/plan.md),
 [development controls](../app-development-controls/plan.md),
 [prototype workspaces](../app-prototype-workspaces/plan.md), [authoring](../app-authoring/plan.md),
 [app publication](../app-publication/plan.md), [AI Agent Bridge](../ai-agent-bridge/plan.md),

@@ -1,20 +1,23 @@
 ---
 status: In Progress
 created: 2026-06-09
-updated: 2026-10-05
-summary: The remaining AI agent bridge rollout steps, from the user profile and app-to-model calls to durable jobs and development agents.
+updated: 2026-10-10
+summary: Durable agent jobs and the ownership map for deferred user sessions, agent providers and workspace-based development.
 components: [apps/core, apps/harness]
 ---
 
 # AI Agent Bridge — Remaining Rollout
 
-The shared model, the boundaries and the decision log live in [feature.md](feature.md) and are in
-force. This document holds only what is **not built**: the rollout checklist, and the design for the
-steps that have no feature folder of their own yet.
+The current shared model and decision log live in [feature.md](feature.md). This document retains
+the completed rollout evidence, records ownership transfers and tracks the remaining work that has
+no feature folder of its own. Completed evidence is historical, not a new acceptance run.
 
-Each step is designed here and then implemented under its own plan, which is what carries the Ready
-approval. Siblings grew out of this work and are tracked separately rather than as steps:
-[delegated-token-exchange](../delegated-token-exchange/feature.md), which step 9 cannot ship without,
+Each independently owned feature carries its own approval and deliverables. On 2026-10-10 the owner
+retained user conversations after verified isolation and app-facing agent/model providers, and
+replaced the separate development bridge with workspace and Sandbox work. D9, D10 and D12 are retired
+here by transfer, not marked implemented; their ownership is recorded below. D11 remains this plan's
+open deliverable. Siblings grew out of this work and are tracked separately:
+[delegated-token-exchange](../delegated-token-exchange/feature.md), a dependency of isolated user sessions,
 and [agent-background-sessions](../agent-background-sessions/feature.md) — both since shipped. On
 2026-08-24 four more were drafted against the gaps this document records:
 [scoped-access-tokens](../scoped-access-tokens/feature.md) (the token scopes and audit callback of open
@@ -43,32 +46,21 @@ parked it as a future separate app, with Core serving only the
 - [x] D7. The `hosty mcp` connector and the Claude Code plugin packaging. Shipped 2026-08-15 and
       verified live on 2026-08-16 — [hosty-mcp-connector](../hosty-mcp-connector/feature.md): the
       connector, the Core control route it mints through, and `packages/hosty-claude-plugin`. Claude
-      Code connects, and a session called an app's tool with no credential in its config. The
-      plugin *bundle* has still not been installed as a plugin — the equivalent registration was
-      done with `claude mcp add` — which is an unchecked deliverable on that feature's own plan,
-      alongside the remote topology it keeps blocked. Checked here regardless, because this step is
-      the local connector and its packaging, both of which exist and are verified end to end; it was
-      never gated on the remote topology.
+      Code connects, and a session called an app's tool with no credential in its config. Plugin
+      skill loading was verified on 2026-08-20, as recorded below. The remote facade is separate
+      [On Hold work](../mcp-facade/plan.md), not an unfinished part of the local connector.
 - [x] D8. The operator milestone — the `hosty.ai-gateway` system app plus the Shell assistant surface.
       Shipped 2026-08-09 and verified live: [ai-gateway](../ai-gateway/feature.md).
-- [ ] D9. The user profile: MCP-only sessions with delegated user tokens and approval-gated writes.
-- [ ] D10. Replace one app-local model integration with a discovered `/api/ai/generate`. **Gated on
-      an authorization decision** recorded as open question 1 of the
-      [platform vision](../../vision.md): the gateway is a system app, so Core
-      refuses non-admin delegated tokens for it — a regular user's app-mediated AI call has no
-      credential path until it is decided (direction: the app calls the gateway as the app, and the
-      user never holds an AI credential).
 - [ ] D11. Durable delegation and job runner, plus notifications.
-- [ ] D12. Development Agent Bridge: source checkout, PR, and an approved isolated-validation workflow.
 
 Backward compatibility is preserved throughout: an app without an `mcp` interface stays an ordinary
 runtime app.
 
 ## Step 6 — Stock client validation
 
-Both endpoints were driven live over HTTP on 2026-08-11, which proves the servers completely and
-client compatibility not at all. One cell of the matrix is now closed; the rest are listed
-individually, because "a stock client connected" is four different claims and only one is true.
+Initial HTTP probes on 2026-08-11 established server behavior, not stock-client compatibility.
+All four client/endpoint combinations below now have dated evidence; skill loading and the external
+Core OAuth path have separate records because they prove different claims.
 
 - **Claude Code → Core `/api/mcp`** (2026-08-15). Registered as an HTTP server with an admin
       access token in an `Authorization` header; `claude mcp list` reports connected and a session
@@ -112,10 +104,9 @@ individually, because "a stock client connected" is four different claims and on
 
 Record what each connection proves in the corresponding feature.md as it lands.
 
-Cost worth carrying into step 7: connecting a stock client today means a full-role admin token in
-plaintext in the client config, which `claude mcp get` prints back unmasked. Token scopes do not
-exist, so "read-only" cannot be expressed — Core MCP being read-only is a property of the endpoint,
-not of the credential.
+The initial validation cost was a full-role administrator token in plaintext client configuration,
+printed back by `claude mcp get`. At that baseline, scopes did not exist and the endpoint's read-only
+behavior did not limit the credential's authority elsewhere. The changes below supersede that cost.
 
 **Paid off for the app path on 2026-08-16, and for Core MCP on 2026-08-24.** The connector's entry is
 `{"command":"hosty","args":["mcp","--user","…"],"env":{}}` — `claude mcp get` prints it back with
@@ -126,118 +117,55 @@ credential with audience `hosty:core` and scope `mcp:read` is refused as a Core 
 else. An
 existing client config keeps working; it is an admin token until it is replaced with a scoped one.
 
-One edge case is recorded for every external path, this step included: a client holding previously
-issued Core tokens keeps calling an app MCP endpoint while Core is down or unreachable, because
-delegated tokens validate locally until their TTL expires. The recorded escape hatch — an optional
-Core token introspection or revalidation endpoint for high-risk calls — is deliberately unbuilt.
+Credential paths differ: an already-issued delegated token can validate locally until its TTL
+expires; scoped-token introspection checks live Core state. The connector obtains a fresh token per
+request and cannot fall back to a saved token during a Core outage. The isolated user-session plan
+owns the choice and verification of revocation semantics for that new profile.
 
 ## Step 7 — The `hosty mcp` connector
 
-MCP clients fix their server list at session start and cannot attach a newly discovered server
-mid-session, so static per-app configuration cannot follow a dynamic app fleet. The answer is a
-client-side aggregator: `hosty mcp`, a stdio MCP server embedded in the existing CLI and spawned by
-the agent client on the user's machine — not a hosted service, nothing added to the host runtime.
-While only one or two apps expose MCP, static entries are enough and this is not urgent.
+The local connector and plugin are shipped; their current discovery, per-request credentials,
+read-only filtering and client configuration are owned by
+[Hosty MCP connector](../hosty-mcp-connector/feature.md). The original proposed context/keychain,
+remote-login and tool-routing design is superseded by that feature's implementation.
 
-```jsonc
-{ "mcpServers": { "hosty": { "command": "hosty", "args": ["mcp"] } } }
-```
+Topologies retain their original numbers for references from the facade plan:
 
-Session flow: read host and credential from CLI context config or the keychain → discover through
-Core `list_apps`, filtered to `mcp` interfaces visible to the actor and running → parallel
-`tools/list` fan-out with a per-app timeout, an unreachable app omitted rather than fatal → re-export
-each tool namespaced `<appKey>__<tool>`, passing schemas and annotations (`readOnlyHint`,
-`destructiveHint`) through unchanged so client permission policy can key off them → poll the registry
-(~30–60 s) and emit `notifications/tools/list_changed` on a change → on call, refresh the app's
-short-TTL delegated token and invoke the app directly, a stopped app yielding a structured
-`app_stopped` error for that call only.
-
-Above roughly 60–80 exported tools the connector degrades to a generic surface (`list_app_tools` /
-`call_app_tool`) to avoid flooding client context; the threshold and a per-app allowlist live in
-connector config. Build order: generic mode → namespaced re-export →
-`notifications/tools/list_changed` → remote login.
-
-The connector's credential authenticates to Core only; per-app delegated tokens are fetched per
-session and neither ever reaches model context. It needs discovery and token-exchange rights and
-never operator rights — which means it wants scopes, and Core has none
-([feature.md](feature.md#token-mechanics)). The same gap holds back the other recorded scoped-token
-ideas: a read-only monitoring token for scripts, and per-tool agent scopes such as a token limited
-to `read_tasks` plus `track_time` against a single app.
-
-Topologies — the connector runs where the agent client runs:
-
-1. Everything on one machine: stdio plus the trusted local control channel, no login.
-2. ~~Agent client on a user machine, Core on a server, authenticating with a saved CLI credential.~~
-   **Dropped 2026-08-17**: the CLI is local-only, `hosty login` is gone, and this case is served by
-   topology 3 below rather than by a second transport under every command.
-3. CLI only on the server: `"command": "ssh", "args": ["user@server", "hosty", "mcp"]` — stdio over
-   SSH, zero new code.
-4. No CLI at all (web or mobile clients): needs a remote HTTP MCP endpoint with OAuth, a future
-   `mcp-hub` system app. Explicitly deferred; Core never hosts it. Since 2026-09-26 agents run on
-   the host (AHP is the candidate client interface), and a single-entry facade for external clients
-   is a future separate app ([mcp-facade](../mcp-facade/plan.md), On Hold).
-
-Multi-environment maps one MCP server entry per CLI context (`hosty-local`, `hosty-prod`) rather than
-one connector taking an environment argument, so the environment is explicit in every tool name,
-client policy can differ per server, and failures stay isolated.
-
-Packaging: a Claude Code plugin bundling the connector `.mcp.json`, a Hosty skill (how to discover
-apps, which tools need confirmation) and PreToolUse hooks implementing allow-read-only / ask-writes /
-deny-destructive from the tool annotations. Codex gets the same connector through `config.toml` plus
-the skill; it has no hooks, so its guardrail is token scopes — the real boundary for every client.
+1. On the Core host: stdio plus the trusted local control channel, with an explicit `--user` actor.
+2. Remote CLI login: dropped on 2026-08-17; the CLI remains local-only.
+3. Remote operator: run `hosty mcp --user <actor>` on the server through SSH, with a separate client
+   server entry for each host. There is no saved remote CLI context.
+4. External clients needing one hosted app-MCP entry: a separate
+   [MCP facade](../mcp-facade/plan.md), On Hold. Core supplies the
+   [agent MCP directory](../agent-mcp-directory/feature.md), not the app-tool proxy. Clients of
+   host-resident agent conversations have their own [AHP investigation](../assistant-ahp/plan.md).
 
 ## Step 9 — The user profile
 
-An agent loop with no shell and no file tools, MCP-only over HTTP, on the same chat surface and
-session API the operator profile already uses. Every tool call carries a Core-issued delegated token
-for the acting user; enforcement is server-side, so a fully prompt-injected session still cannot
-exceed what the user could do personally. Optional hardening: run the loop in a container with no host
-mounts and network access limited to Core and app MCP origins — machinery Hosty already has.
-
-**Needed [delegated-token-exchange](../delegated-token-exchange/feature.md), which has since
-shipped.** The whole security model is "every tool call carries a token for the acting user", and
-until that landed the gateway had no way to obtain one for a target app.
-
-Each action gets a risk class — `read_only`, `draft_only`, `write_internal`, `write_external`,
-`communication`, `financial`, `destructive`, `privileged_admin`. Read-only queries run when the user
-has app access; drafts run automatically; internal writes are approval-gated, then allowlisted for
-repeated low-risk actions under user-configured policy; external communication, financial,
-destructive, privileged and identity actions always require explicit approval. Unknown tools, unknown
-arguments, stale approvals and oversized results are denied or returned as structured errors. The
-classes apply to both profiles: operator sessions enforce them through the harness callback, user
-sessions through client approvals plus the hard boundary of token audience and app-domain checks.
-
-Edge cases this step has to answer: the user loses app assignment between planning and execution; the
-app's tool schema changes after the model proposes a call; the app returns more data than context
-allows; the same request is retried and duplicates a side effect such as time tracking; the mapped
-app-local user has lost access to the target resource while the Hosty identity is still valid.
-
-Hosty-level durable agent memory is designed together with this profile
-([feature.md](feature.md#decision-log)). Verification when the step ships includes that a session
-exposes no shell or file tools and cannot reach endpoints outside Core and the permitted app MCP
-origins.
+D9 moved to [Isolated user agent sessions](../user-agent-sessions/plan.md), On Hold. The owner retains
+direct ordinary-user conversations after verified agent isolation, with MCP authority limited to
+the user's current rights. Isolation is a prerequisite, replacing the earlier optional-hardening
+language. That plan owns the profile, permission/approval design, memory decision and acceptance;
+the current administrator-only Harness is unchanged. See vision decision 28, dated 2026-10-10.
 
 ## Step 10 — App-to-model gateway
 
-Hosty-aware apps that need model output for app-local features (a checklist generated from a task
-description) call a discovered `ai-gateway` interface rather than a provider directly — otherwise
-every app duplicates provider configuration and policy and audit have nowhere to live.
-
-`POST {AI_GATEWAY_ORIGIN}/api/ai/generate` with a Hosty-issued token. The gateway owns provider
-configuration, credentials, model profiles and adapters, and can route to local runtimes or hosted
-providers. Apps request **capabilities or model profiles** — `fastText`, `structuredJson`,
-`longContext`, `localOnly` — never a named provider, and disable the feature cleanly when no gateway
-interface is installed rather than falling back to app-local provider config. The contract stays
-provider-neutral: result limits, timeouts, streaming where needed, audit metadata and per-app,
-per-data-class policy, with no provider credentials or raw provider configuration exposed to apps.
-
-Ship it by replacing one real integration, so the contract is proven against a real caller.
-
-Edge cases: the configured provider is offline, slow, or missing a requested capability; an app sends
-sensitive data to a non-local provider without a policy saying it may; a provider supports something
-the neutral contract does not expose yet.
+D10 moved to [Agent and model provider interface](../agent-provider-interface/plan.md), Draft. Apps
+still need prompt-to-result calls, including JSON. The owner now describes independently provided
+agents/models, multiple models per provider and an established API shape to investigate. Neither
+the old `/api/ai/generate` endpoint nor a mandatory central Gateway is the selected contract.
+Existing speech/assistant providers supply infrastructure, not completion of this feature.
+The new plan owns protocol selection, extraction, authority and a real consuming-app integration;
+see vision decision 29, dated 2026-10-10.
 
 ## Step 11 — Durable jobs and notifications
+
+Existing [background sessions](../agent-background-sessions/feature.md) provide work after a tab
+closes and waiting notifications. [PR lifecycle](../assistant-pr-lifecycle/feature.md) provides its
+own persistent publication observations. Neither is a general scheduled/retryable agent runner.
+D11 retains that remaining work, including any later non-interactive source-job scheduling. Such
+jobs reuse registered workspaces, publication operations and Sandbox validation; they own none of
+those mechanisms and do not create a second development task registry.
 
 Some requests outlive a session: monitor until complete, scheduled summary, retryable action,
 long-running import, branch/PR status tracking. Core owns durable delegation grants and revocation —
@@ -251,55 +179,30 @@ role changes mid-flight, or when the action contract changes underneath it.
 
 ## Step 12 — Development Agent Bridge
 
-Owner clarification, 2026-09-24: [shared assistant development sessions](../assistant-development-sessions/plan.md)
-also uses isolated worktrees for interactive Git-backed editing and live testing. It owns session
-integration acceptance; its [shared-history](../assistant-shared-history/plan.md),
-[workspace](../assistant-session-workspaces/feature.md) and [PR](../assistant-pr-lifecycle/feature.md) children
-own those mechanisms, while this step retains non-interactive jobs and disposable validation. Reuse registered repository/workspace identities where applicable;
-do not build a competing registry. The older interactive-versus-isolated distinction below is a
-workflow distinction, not a prohibition on worktrees for interactive work. This does not authorize
-the new Draft or change the state of already implemented bridge work.
+The owner retired D12 as a separate workstream on 2026-10-10; it is superseded, not completed by this
+documentation change. The source/workspace and Sandbox features now own its mechanisms:
 
-The interactive create/edit/preview journey is tracked separately in
-[app authoring](../app-authoring/plan.md), following the owner's 2026-09-16 direction. It permits a
-durable local source folder without Git and uses the installed app's live development runtime.
-This step continues to own isolated non-interactive branch/PR jobs; its repository and disposable
-validation prerequisites do not gate that interactive journey. Shared source/session coordination
-belongs to [prototype workspaces](../app-prototype-workspaces/plan.md), and development lifecycle
-controls to [app development controls](../app-development-controls/plan.md).
+- [Session workspaces](../assistant-session-workspaces/feature.md) and
+  [PR lifecycle](../assistant-pr-lifecycle/feature.md) already own checkout/Git/publication identities
+  and operations. [Workspace lifecycle controls](../workspace-lifecycle-controls/plan.md) and
+  [execution authorization](../assistant-execution-authorization/plan.md) retain their pending scope.
+- [App Sandbox](../app-sandbox-runtimes/plan.md) D1–D8 own worktree execution, isolated test data,
+  browser validation and revision-bound results. That feature stays On Hold.
+- [Development sessions](../assistant-development-sessions/plan.md) D1–D2 own integration and
+  acceptance of workspace, validation and PR results. Publish, Merge and Complete remain distinct;
+  a passing test never grants promotion authority.
+- D11 owns any general non-interactive scheduling/retry/delegation layer that consumes those APIs.
+  Reuse registered workspaces and collision/lease checks; do not invent another checkout registry.
 
-The source-changing layer.
-In the operator profile this work is already interactive — an admin's session edits source through
-existing dev-mode and source workflows with approval-gated writes — so what remains is the
-**non-interactive** contract: one-shot sandboxed jobs (`codex exec`, `claude -p`) in an isolated
-worktree whose only output is a branch or draft PR, never a merge and never live app data.
-
-1. A UI client captures app id, route, runtime profile, followed feed, optional DOM target and note.
-2. The agent client creates a request with authorization and audit records.
-3. It resolves source metadata and a safe checkout through Core source APIs or Core MCP.
-4. It produces changes on an isolated branch or PR.
-5. A validation service prepares a disposable environment without touching the installed app's feed or
-   lifecycle state. Runtime/data isolation and browser execution are owned by the
-   [sandbox runtimes Draft](../app-sandbox-runtimes/plan.md); this step owns job integration and
-   consumption of its validation results, not a second environment implementation.
-6. The user reviews results produced against synthetic, copied or otherwise isolated data.
-7. Promotion or merge stays a separate explicit step.
-
-Development actions never mutate production app data or repoint an installed app's feed.
-
-Live-workspace writer coordination and detection of intervening human edits are tracked in
-[prototype workspaces](../app-prototype-workspaces/plan.md). Isolated jobs in this step still need
-their own branch/worktree collision handling as part of the disposable-validation contract.
+[App authoring](../app-authoring/plan.md), [prototype workspaces](../app-prototype-workspaces/plan.md)
+and [development controls](../app-development-controls/plan.md) retain their existing scopes.
 
 ## Open Questions
 
-- **Should the AI Gateway expose a provider-native API or a neutral Hosty one?** A provider-native
-  passthrough is useful for compatibility and leaks provider differences into every app.
-  Recommendation: start with a small provider-neutral API for common app-local tasks and add
-  compatibility shims only when something concrete needs one. Blocks step 10.
-- **What is the disposable-runtime and data-isolation contract for validation?** Current feeds and
-  source overrides are installed-app mechanisms, not disposable environments, and can affect
-  production lifecycle state or data. Must be resolved before step 12 is implemented.
+- Provider protocol and app/user authority decisions belong to
+  [agent providers](../agent-provider-interface/plan.md). Isolated user-profile decisions belong to
+  [user sessions](../user-agent-sessions/plan.md); disposable validation belongs to
+  [App Sandbox](../app-sandbox-runtimes/plan.md).
 - **What does the audit callback contract look like?** **Answered for the scoped-token path on
   2026-08-24**, and the answer is that no callback contract was needed: an external client presenting
   a [scoped access token](../scoped-access-tokens/feature.md) *does* pass through Core, because the

@@ -54,11 +54,14 @@ The built-in assistant's delegated `hosty:core` token cannot invoke the already 
 update mutations. Adding tool names alone cannot make the new controls usable there. External
 read-only/facade clients must not gain writes as a side effect either.
 
-Use the app/action-scoped authority owned by
-[assistant approval rules](../assistant-approval-rules/plan.md) for the built-in assistant. That feature
-verifies a Core-enforced grant or narrow trusted execution bridge; this feature extends the contract
-to runtime-switch actions. Broad CLI approval is only the current manual fallback,
-not the normal autonomous development path. Do not add write scopes to all delegated tokens,
+This feature owns app/action-scoped lifecycle and runtime-switch authority for the built-in
+assistant, receiving the operation-specific portion of former Approval Rules D8 on 2026-10-10.
+Reuse existing Core operation checks and consume trusted execution credentials from
+[execution authorization](../assistant-execution-authorization/plan.md); D2-D3 specify and implement
+any missing operation contract, and D6 owns its audit. [Approval rules](../assistant-approval-rules/plan.md)
+supplies operator permission choices, not Core credentials or the server authorization boundary.
+Broad CLI approval is only the current manual fallback, not the normal scoped development path.
+Do not add write scopes to all delegated tokens,
 infer write power from an admin role on a read-only credential, or expose the host control secret.
 Do not expand the meaning of existing `mcp:lifecycle` silently; choose and document standing-grant
 semantics for these more powerful source/runtime changes.
@@ -85,13 +88,11 @@ Data compatibility and backup/restore decisions remain distinct from source disc
       before proposing removal of source overrides; obtain separate approval for a non-destructive migration.
       Existing overrides remain available throughout workspace delivery.
 
-- [ ] D2. Decide the authorization route, scope semantics and public tool/CLI contract; make the built-in
-      assistant path explicit before claiming MCP-based development works there.
-- [ ] D3. Implement bounded development-context reads and runtime-switch MCP wrappers with honest
-      mutation annotations and Core-enforced grants; reuse the existing runtime-switch CLI.
+- [ ] D2. Decide the app/action-scoped lifecycle and runtime-switch authorization route, scope semantics and public tool/CLI contract, reusing existing Core checks and the execution-credential contract; make the built-in assistant path explicit.
+- [ ] D3. Implement bounded development-context reads, runtime-switch MCP wrappers and any missing scoped lifecycle integration with honest mutation annotations and Core-enforced app/action checks; reuse existing Core operations and the runtime-switch CLI.
 - [ ] D4. Compose existing source APIs with enter/edit/leave orchestration, preserving prior settings,
-      shared source-loss warnings/Git choices and partial-failure state. Reuse the general session
-      source binding from assistant approval rules; do not introduce a prototype-only binding.
+      shared source-loss warnings/Git choices and partial-failure state. Consume Core session/workspace
+      bindings and shared approval grants; do not introduce a prototype-only binding.
 - [ ] D5. Expose an Edit with assistant entry point and effective source/runtime state, including absent
       source/profile, non-source runtimes, restart requirements and partial-failure results.
 - [ ] D6. Audit each new mutation's actor, target, outcome and reviewed operation reference without

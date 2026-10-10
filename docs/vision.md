@@ -93,12 +93,13 @@ Any future feature that weakens one of these must say so in its plan, in those w
 
 Decisions 1–5: 2026-08-19.
 
-1. **Scopes are deferred; admin/user is the model until user-rights separation is actually needed.**
-   Regular users get no administrative rights and no direct agent access — no free-text prompting.
-   AI reaches them only through functions an app builds on top of it (the recorded example: a
-   "generate checklist from this task" button in project-manager). The one place this bites is
-   recorded as open question 1 below, and it is a *gate*, not a blocker: nothing needs deciding
-   until the first such feature ships.
+1. **Administrator-only initial agent rollout (2026-08-19; clarified 2026-10-10).**
+   The original direction deferred scopes and gave regular users AI only through functions an app
+   builds on top of it, such as a "generate checklist from this task" button. Scoped credentials
+   have since shipped. Direct Harness access remains administrator-only today; decision 28 retains
+   ordinary-user conversations as a later capability after verified isolation, rather than a
+   permanent prohibition. Decision 29 retains app-facing model/agent calls independently; their
+   authority contract remains open question 1.
 2. **Dev mode is the live-edit mechanism, and the update flow stays as it is.** An administrator
    flips an app to dev mode, edits through the agent, sees the change immediately; when done, the
    change goes back through PR → review → merge → update. Backups bound the data risk. Separate
@@ -145,8 +146,10 @@ Decisions 1–5: 2026-08-19.
    context. Association alone grants nothing. Routine work inside that authorized boundary runs
    without repeated approval cards; filesystem, command and credential restrictions require verified
    enforcement on both harnesses. This changes the former every-write-asks policy within that boundary.
-   [Assistant approval rules](features/assistant-approval-rules/plan.md) owns the permissions and the
-   experiment required before implementation; app creation consumes the general capability.
+   [Assistant approval rules](features/assistant-approval-rules/plan.md) owns the permission choices;
+   [session containment](features/assistant-runtime-containment/plan.md) owns the enforcement and
+   experiment required before claiming an isolated capability (ownership revised by decision 32).
+   App creation consumes these shared capabilities.
    The administrator owns the consequences of code they create and execute through localCommand,
    including malicious code. The current runtime executes under Core's OS account outside the agent
    sandbox; it does not provide filesystem isolation between apps. This qualifies decision 5's
@@ -160,7 +163,10 @@ Decisions 1–5: 2026-08-19.
    space is acceptable, while Hosty app source outside granted roots, Core state and credentials
    remain protected. Canonical protected roots under broadly accessible temporary directories need
    an explicit unsupported-placement policy, not an isolation promise. The remaining work and scope
-   are owned by [assistant approval rules](features/assistant-approval-rules/plan.md).
+   move to [session containment](features/assistant-runtime-containment/plan.md) and
+   [workspace lifecycle controls](features/workspace-lifecycle-controls/plan.md) under decision 32.
+   This historical native first-slice scope does not establish cross-session isolation for the later
+   container backend.
 
 8. **Profile-bound development; existing apps first (2026-09-16).** Development is a declared
    `development: true` runtime profile; `dev` is a convention, not a reserved key. Replace the independent
@@ -221,7 +227,7 @@ Decisions 1–5: 2026-08-19.
     permissions are offered unchecked and changeable later in the app's settings. `role: system`
     stops conferring privilege and remains an ownership fact. This extends decision 9 with app
     grants and leaves decision 1's admin/user model intact. The
-    [core extension model](features/core-extension-model/plan.md) owns the general model;
+    [core extension model](features/core-extension-model/feature.md) documents the shipped boundaries;
     [assistant provider permissions](features/assistant-provider-permissions/feature.md) is its first slice.
 
 15. **Core is the MCP directory, not a proxy (2026-09-26).** Agents run on the host; how clients
@@ -285,7 +291,8 @@ Decisions 1–5: 2026-08-19.
     implements the approved native approval control. The
     [embedded app sign-in feature](features/embedded-app-sign-in/feature.md) implements direct Core
     sign-in to the target app's frame without giving its credentials to Shell. Additional native
-    isolation and prefix rules remain in the [approval rules plan](features/assistant-approval-rules/plan.md).
+    isolation belongs to [session containment](features/assistant-runtime-containment/plan.md);
+    prefix rules remain in the [approval rules plan](features/assistant-approval-rules/plan.md).
 
 20. **Source providers belong to the platform (2026-10-07).** GitHub is the built-in Core source
     provider behind a typed internal contract, without a separate process. Shell owns personal
@@ -340,10 +347,86 @@ Decisions 1–5: 2026-08-19.
 26. **Agent source isolation is deferred container work (2026-10-09).** Current unrestricted local
     agents follow assigned-directory guidance, with no promised filesystem containment. The later
     direction mounts only the owning workspace's worktrees into its agent execution environment,
-    excluding original sources and other workspaces. [Agent isolation](features/assistant-approval-rules/plan.md)
+    excluding original sources and other workspaces. [Agent isolation](features/assistant-runtime-containment/plan.md)
     owns the source/Git metadata boundary; [lifecycle controls](features/workspace-lifecycle-controls/plan.md)
     owns revocation, verified execution stop and safe cleanup. App Sandbox testing and agent switching
     remain separate deferred work. This direction is not implementation approval.
+
+27. **One SDK panel system for Shell and standalone (2026-10-10).** Share panel hosting and
+    presentation across the two modes. Shell owns composition for its window, including its own
+    pages; a top-level standalone app uses the SDK host. Embedded apps delegate to the current host
+    and do not grow nested panel rails. Keep blocking authentication recovery separate from the
+    dock's layout/lifetime. The first complete scenario is Plans opening its finalized assistant
+    discussion beside the source document in either mode. Provider selection remains separate from
+    placement; opening an existing discussion cannot reselect its owner or invoke it again.
+    Explicit separate opening uses the same session, without promising live UI/draft transfer.
+    A standalone panel host is not automatically a full UI client or an approved embedder. The
+    [SDK panel plan](features/sdk-panel-system/plan.md) owns the common system and first scenario;
+    [Default applications](features/default-applications/plan.md) owns shared selection, and
+    [replaceable UI clients](features/replaceable-ui-clients/plan.md) owns full-shell eligibility
+    and primary navigation. The owner approved the direction and planning; implementation remains
+    subject to the individual plans becoming Ready.
+
+28. **Ordinary-user agents follow verified isolation (2026-10-10).** Retain free-text agent
+    conversations for non-administrators once agent execution is fully isolated and its only action
+    tools are MCP calls under the acting user's current app/resource rights. Existing administrator
+    sessions must not be opened to ordinary users by changing a role check. Containerization is a
+    dependency whose effective filesystem, network and credential boundaries need verification.
+    [Isolated user sessions](features/user-agent-sessions/plan.md) receives Bridge D9 and stays On
+    Hold; [session containment](features/assistant-runtime-containment/plan.md) owns the execution backend.
+    This direction changes the
+    permanent reading of decision 1, not current access or implementation approval.
+
+29. **Apps can consume independent agent/model providers (2026-10-10).** Retain Bridge D10's
+    app-to-AI purpose while replacing its central Gateway assumption. Agents become independently
+    provided capabilities consumable by other apps through a common interface: a defined prompt
+    can return JSON or another declared result. A provider may expose several models, including a
+    future Ollama-backed provider of local models. Specialized speech, image and other providers
+    coexist. Prefer an established API shape after comparison; no protocol is selected yet.
+    [Agent and model providers](features/agent-provider-interface/plan.md) owns the Draft contract,
+    extraction and caller authority. Distinguish inference from tool-executing agent runs so API
+    compatibility never silently imports operator permissions. Existing Harness connections and
+    assistant handoffs remain unchanged until an independently approved implementation.
+
+30. **Workspace and Sandbox features replace the separate development bridge (2026-10-10).**
+    Retire Bridge D12 as a separate workstream. Session workspaces and PR lifecycle own source and
+    publication; their pending authorization/lifecycle work stays with the respective plans.
+    Sandbox owns isolated runtime/data/browser verification, and development sessions own the
+    integrated journey. General scheduled/non-interactive agent execution remains Bridge D11.
+    This transfers ownership without claiming Sandbox or automatic source jobs already work.
+
+31. **Retire the Core Extension Model umbrella (2026-10-10).** The owner agreed that its shipped
+    concepts and outdated assumptions no longer form a useful standalone implementation plan.
+    D1's permission inventory is approved as a read-only Shell Security page in
+    [app permission management](features/app-permission-management/feature.md); remaining ownership,
+    role-state badges and lifecycle consequences move to [replaceable UI clients D8](features/replaceable-ui-clients/plan.md#deliverables).
+    D2's producer authentication moves to [Observability D1](features/observability/plan.md#deliverables),
+    with network confinement staying in [Cross-App Dependencies D6](features/cross-app-dependencies/plan.md#deliverables).
+    D3 moves to [Notifications D6–D7](features/notifications/plan.md#deliverables).
+    D4's linked login methods and broker investigation move to [Auth Provider Extensions D6–D7](features/auth-provider-extensions/plan.md#deliverables).
+    D5's remaining delegation, lifetime and vocabulary decisions move to [Cross-App Auth D7–D9](features/cross-app-auth/plan.md#deliverables),
+    with facade adoption in [MCP Facade D6](features/mcp-facade/plan.md#deliverables).
+    D7 becomes the current [extension boundary documentation](features/core-extension-model/feature.md).
+    Agent/model providers remain in their [own Draft](features/agent-provider-interface/plan.md).
+    This transfer does not approve those Draft or On Hold implementations; the permission inventory
+    is the concrete implementation requested in this discussion. Structured `provides` objects and
+    a generic extension framework are not prerequisites.
+
+32. **Separate agent isolation from permission choices (2026-10-10).** The owner requested plan
+    consolidation without implementation. [Agent Session Containment](features/assistant-runtime-containment/plan.md)
+    remains On Hold and owns individual session execution boundaries, authorized workspace/Git
+    access, credentials, network/native-tool enforcement and runtime stop evidence. A Docker profile
+    for the whole Harness app is not a substitute for isolation between sessions.
+    [Approval Rules](features/assistant-approval-rules/plan.md) remains Draft and owns grant scope,
+    lifetime, confirmation rules, visible revocation and decision audit. Existing MCP rules and
+    Normal/Autonomous are shipped dependencies; no every-write confirmation requirement is restored.
+    [Execution Authorization](features/assistant-execution-authorization/plan.md) owns trusted Core
+    execution credentials; [App Development Controls](features/app-development-controls/plan.md)
+    owns app/action lifecycle authority. [Workspace Lifecycle Controls](features/workspace-lifecycle-controls/plan.md)
+    coordinates close/revoke/cleanup using the execution backend's verified stop acknowledgement.
+    App Sandbox and ordinary-user MCP-only acceptance keep their separate owners. Retired approval
+    deliverable IDs are transferred with traceability, not marked complete or reused. Historical
+    native-sandbox experiments are regression inputs, not proof of current-version containment.
 
 ## Expectations And Later Directions
 
@@ -375,23 +458,22 @@ The direction this document sets: **the next capability does not invent a fifth 
 fits an existing contribution point or adds one deliberately, as a first-class, documented part of
 the manifest contract. Two standing consequences:
 
-- [core-extension-model](features/core-extension-model/plan.md) stops being exploratory the day a platform
-  capability ships as a swappable app through a *named* contribution point rather than a bespoke
-  integration. That is its graduation criterion.
+- Confirmed assistant and speech providers satisfy the former Core Extension Model graduation
+  criterion. Decision 31 retires that umbrella plan; new contracts remain feature-owned work.
 - The manifest is becoming an API in the `vscode.d.ts` sense. The "never bump `schemaVersion` for
   ordinary changes" discipline holds while additions stay additive; the day a contribution point
   needs breaking change, the contract needs a real versioning conversation first.
 
 ## Open Questions
 
-1. **How is a regular user's app-mediated AI call authorized?** The gateway is a system app, so Core
-   refuses to mint a delegated token for it to a non-admin (`system_app_admin_required`) — a
-   *user-attributed* credential path is closed by design. The direction that fits decision 1: the
-   app calls the gateway **as the app** (the app-to-app story of
-   [cross-app-dependencies](features/cross-app-dependencies/plan.md)), the user never holds an AI
-   credential, and the app's own UI is the boundary deciding which AI functions exist. Decide when
-   the first regular-user AI feature ships — [ai-agent-bridge](features/ai-agent-bridge/plan.md) step 10
-   is where it will land.
+1. **How are app-only inference and user-attributed agent calls authorized?** Core already provides
+   app provider grants and short-lived invocation credentials; system and ordinary apps share the
+   assignment policy. Harness itself remains administrator-only. The
+   [agent/model provider Draft](features/agent-provider-interface/plan.md) must specify when an app
+   calls on its own behalf and when the acting user's current rights also bound every tool call.
+   Reuse the existing provider foundation without exposing vendor secrets or allowing an app to
+   borrow a provider's stronger permissions. Direct ordinary-user chat has its separate isolation
+   gate in decision 28. Resolve the contract against the first real consuming-app scenario.
 2. **What is the micro-app runtime?** Scale-to-zero, activation on request, cost near zero when
    idle. Shape, isolation, and how it differs from `localCommand` are all open.
 3. **What does cross-environment integration look like?** The owner's setup is a local dev
@@ -406,14 +488,18 @@ the manifest contract. Two standing consequences:
 
 [workspaces-app](features/workspaces-app/feature.md) ·
 [default-applications](features/default-applications/plan.md) ·
+[sdk-panel-system](features/sdk-panel-system/plan.md) ·
+[replaceable-ui-clients](features/replaceable-ui-clients/plan.md) ·
 [plan-provider-interface](features/plan-provider-interface/plan.md) ·
 [hosty-harness-swift](features/hosty-harness-swift/plan.md) ·
 [assistant-development-sessions](features/assistant-development-sessions/plan.md) ·
 [app-authoring](features/app-authoring/plan.md) ·
-[core-extension-model](features/core-extension-model/plan.md) ·
+[core-extension-model](features/core-extension-model/feature.md) ·
 [assistant-provider-permissions](features/assistant-provider-permissions/feature.md) ·
 [agent-mcp-directory](features/agent-mcp-directory/feature.md) ·
 [ai-agent-bridge](features/ai-agent-bridge/plan.md) ·
+[user-agent-sessions](features/user-agent-sessions/plan.md) ·
+[agent-provider-interface](features/agent-provider-interface/plan.md) ·
 [app-ui-surfaces](features/app-ui-surfaces/feature.md) ·
 [assistant-entry-points](features/assistant-entry-points/plan.md) ·
 [agent-background-sessions](features/agent-background-sessions/feature.md) ·

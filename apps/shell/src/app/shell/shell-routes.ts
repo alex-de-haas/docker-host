@@ -55,6 +55,7 @@ export const HOST_SETTINGS_SECTIONS: {
   { id: "harness", label: "Harness", tabs: [{ id: "agents", label: "Agents" }, { id: "shell", label: "Shell" }] },
   { id: "security", label: "Security", tabs: [
     { id: "users", label: "Users" }, { id: "tokens", label: "Access tokens" },
+    { id: "permissions", label: "App permissions" },
     { id: "connections", label: "Source connections" }, { id: "policies", label: "Policies" },
   ] },
   { id: "ingress", label: "Ingress", tabs: [{ id: "ingress", label: "Ingress" }] },

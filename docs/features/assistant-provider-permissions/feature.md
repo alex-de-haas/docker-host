@@ -1,6 +1,6 @@
 ---
 created: 2026-09-26
-updated: 2026-09-27
+updated: 2026-10-10
 summary: Apps request the assistant role with provides, and Core records administrator-confirmed roles.
 components: [apps/core, apps/harness]
 ---
@@ -59,10 +59,11 @@ Update Core first, then confirm the Gateway update. Until confirmation, the olde
 no assistant tab and no cross-app skill access. No app-ID-based grants or grant migration run.
 An older Core rejects the new unknown permission. The Harness rename uses the same declarations.
 
-The gateway MCP facade and its OAuth resource resolution are unchanged. The delegated-token
-exchange and on-behalf-of route still require `role: system`: a confirmed non-system assistant can
-read skills and appear in Shell, but cannot exchange tokens to call another app. General delegation
-permissions belong to the [core extension model](../core-extension-model/plan.md).
+The gateway MCP facade retains a system-gated on-behalf-of route. The legacy exchange route
+rejects cross-app exchange. Assistant MCP access uses Core-owned per-assistant target grants and
+a separate MCP credential, including for confirmed non-system assistants; see
+[assistant MCP access](../agent-mcp-directory/feature.md). Remaining general delegation is tracked
+in [cross-app auth](../cross-app-auth/plan.md).
 
 ## Testing Expectations
 
