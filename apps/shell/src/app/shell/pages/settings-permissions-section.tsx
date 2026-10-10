@@ -28,8 +28,6 @@ export function SettingsPermissionsSection({ coreOrigin, apps }: { coreOrigin: s
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [refresh, setRefresh] = useState(0);
-  // Re-read after the live app list reports an installation, removal or authority change.
-  const authorityRevision = JSON.stringify(apps.map(app => [app.id, app.version, app.grantedCorePermissions, app.confirmedRoles]));
 
   useEffect(() => {
     const onFocus = () => setRefresh(value => value + 1);
@@ -57,7 +55,9 @@ export function SettingsPermissionsSection({ coreOrigin, apps }: { coreOrigin: s
     }
     void load();
     return () => controller.abort();
-  }, [coreOrigin, authorityRevision, refresh]);
+  // Refresh from every new app-list snapshot: same-version metadata/provisioning changes are
+  // relevant too, and their declarations are not all projected onto the client-side app record.
+  }, [coreOrigin, apps, refresh]);
 
   const search = query.trim().toLocaleLowerCase();
   const filtered = entries?.filter(entry => [entry.id, entry.description, kindLabels[entry.kind],

@@ -85,6 +85,18 @@ it("shows loading and explains an older Core without the endpoint", async () => 
   expect(container.textContent).toContain("Update Core to 0.128.0");
 });
 
+it("reloads provisioning holders from a new app snapshot with unchanged version and grants", async () => {
+  await render([providerApp]);
+  const provisioningRow = () => [...container.querySelectorAll("tbody tr")].find(row => row.textContent?.includes("otlp-collector"));
+  expect(provisioningRow()?.textContent).toContain("No apps");
+  entries = entries.map(entry => entry.kind === "provisioning" ? { ...entry, apps: [provider] } : entry);
+  await render([{ ...providerApp }]);
+  expect(provisioningRow()?.textContent).toContain("Whisper");
+  entries = entries.map(entry => entry.kind === "provisioning" ? { ...entry, apps: [] } : entry);
+  await render([{ ...providerApp }]);
+  expect(provisioningRow()?.textContent).toContain("No apps");
+});
+
 it("ignores an older response after the app authority changed", async () => {
   let resolveOld!: (response: Response) => void;
   vi.mocked(fetch).mockReturnValueOnce(new Promise<Response>(done => { resolveOld = done; }));

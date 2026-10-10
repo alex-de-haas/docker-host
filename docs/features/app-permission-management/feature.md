@@ -186,7 +186,8 @@ never create holders. The legacy `otlp-collector` declaration appears separately
 with an explanation that it is not a confirmed provider role or Core permission. User roles and
 per-assistant MCP access remain separate settings.
 
-Shell refreshes when returning to the window, when live app authority changes, and on Refresh.
+Shell refreshes when returning to the window, when the app-list snapshot changes, and on Refresh.
+Same-version metadata and legacy provisioning changes also refresh the holder lists.
 Loading and failed reads remove the previous table, so an error cannot present stale grants as
 current. Ordinary users cannot reach the tab or read its endpoint.
 
@@ -217,7 +218,7 @@ Verification on 2026-10-10:
   declaration-only requests, legacy collector labeling, revocation and administrator/app-grant gates.
 - Preserve the lifecycle asset-cache policy for live-source and locked app icons.
 - Cover search by app and description, loading/error/retry, stale-response cancellation, focus/live
-  authority refresh and denied direct navigation for ordinary users.
+  app-list refresh (including same-version provisioning changes) and denied direct navigation for ordinary users.
 
 - Observe live edits without restart; retain installed-release behavior and recover from invalid sources.
 - Keep running apps alive through missing/invalid manifests, including the first observation;
