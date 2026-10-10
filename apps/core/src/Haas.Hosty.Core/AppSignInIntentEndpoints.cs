@@ -313,7 +313,12 @@ internal static class AppSignInIntentEndpoints
             .Select(p => UiPanelService.Origin(p.EmbeddedUrl)).OfType<string>().FirstOrDefault();
         if (origin is null)
             return CoreJson.Json(new ErrorResponse("destination_unavailable", "The original app surface is not available."), 409);
-        var destination = QueryHelpers.AddQueryString(new Uri(new Uri(origin), route).AbsoluteUri, "hosty_launch", "standalone");
+        var destinationUri = new UriBuilder(new Uri(new Uri(origin), route));
+        // Replace the SDK's reserved parameter without normalizing the app's opaque query.
+        // In particular, preserve repeated fields and distinct names that differ only by case.
+        destinationUri.Query = string.Join('&', destinationUri.Query.TrimStart('?').Split('&')
+            .Where(part => Uri.UnescapeDataString(part.Split('=', 2)[0].Replace('+', ' ')) != "hosty_launch"));
+        var destination = QueryHelpers.AddQueryString(destinationUri.Uri.AbsoluteUri, "hosty_launch", "standalone");
         // The route is already constrained to a declared surface. Validate its origin separately:
         // app navigation may carry a fragment, unlike an OAuth authorization-code callback.
         await identity.RequireAllowedRedirectUriAsync(appId, origin, context.RequestAborted);

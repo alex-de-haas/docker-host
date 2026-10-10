@@ -217,6 +217,28 @@ public sealed class UiPanelHttpTests
         Assert.Equal("#turn%2F3", destination.Fragment);
     }
 
+    [Theory]
+    [InlineData("hosty_launch=embedded")]
+    [InlineData("hosty_launch=native")]
+    [InlineData("hosty_launch=embedded&hosty_launch=native")]
+    [InlineData("hosty%5Flaunch=embedded&hosty_launch=native")]
+    public async Task SeparateOpen_ReplacesExistingLaunchModeWithoutChangingAppQuery(string launchQuery)
+    {
+        await using var host = await Setup();
+        using var client = host.CreateClient();
+        client.BaseAddress = new Uri("http://localhost:7070");
+        await BrowserAuthorityFixture.Grant(host, "consumer", "member");
+        client.DefaultRequestHeaders.Add("Cookie", "hosty_session=browser-session");
+        var target = await Target(host);
+        var route = $"/panel?session=one%20two&{launchQuery}&Session=other&session=three+four#turn%2F3";
+        var link = UiPanelService.BuildOpenUrl(client.BaseAddress.GetLeftPart(UriPartial.Authority),
+            "target", target.Panel.InstallationId, "web", route);
+        using var opened = await client.GetAsync(link);
+        Assert.Equal(HttpStatusCode.Redirect, opened.StatusCode);
+        Assert.Equal("?session=one%20two&Session=other&session=three+four&hosty_launch=standalone", opened.Headers.Location!.Query);
+        Assert.Equal("#turn%2F3", opened.Headers.Location.Fragment);
+    }
+
     private static async Task<UiPanelTarget> Target(CoreHttpHarness host)
         => new(new("target", PanelIdentity.Installation((await host.Services.GetRequiredService<AppRegistryStore>().GetAppAsync("target"))!), "tool"), "/panel/session-1");
 

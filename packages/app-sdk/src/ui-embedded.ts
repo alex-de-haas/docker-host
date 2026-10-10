@@ -48,6 +48,11 @@ export class EmbeddedUiClient implements UiClient {
     return () => { this.listeners.delete(listener); };
   };
   private emit(event: UiEvent) { if (!this.disposed) for (const listener of this.listeners) listener(event); }
+  private retirePending() {
+    for (const [requestId, entry] of this.pending) entry.resolve(entry.sent
+      ? { status: "uncertain", requestId, code: "presentation_unknown" }
+      : { status: "unsupported", requestId, code: "host_unavailable" });
+  }
   private setEnvironment(connection: UiEnvironment["connection"], code?: string) {
     if (this.disposed) return;
     this.environment = { mode: "embedded", connection, ...(code ? { code } : {}) };
@@ -89,6 +94,7 @@ export class EmbeddedUiClient implements UiClient {
     if (!msg || !this.active || event.source !== window.parent || window.parent !== window.top || event.origin === "null" || this.disposed) return;
     if (msg.type === "hosty:ui:probe-request") {
       if (this.channel && event.origin === this.channel.origin && (msg.generation !== this.channel.generation || msg.hostWindowId !== this.channel.hostWindowId)) {
+        this.retirePending();
         this.channel = null; this.setEnvironment("connecting"); this.discover();
       }
       if (this.channel) { void this.recheck(); return; }
@@ -106,6 +112,9 @@ export class EmbeddedUiClient implements UiClient {
         const own = await uiRequest<UiBootstrap>(this.path, `bootstrap?parentOrigin=${encodeURIComponent(event.origin)}`);
         if (this.disposed || !this.active || this.verifying !== key) return;
         if (own.version !== 1 || !own.userId || !own.peer?.origins.includes(event.origin)) throw new UiError("host_untrusted", "Hosty cannot verify this host.");
+        const previous = this.channel;
+        if (previous && (previous.origin !== event.origin || previous.hostWindowId !== msg.hostWindowId || previous.generation !== msg.generation))
+          this.retirePending();
         this.channel = { origin: event.origin, hostWindowId: msg.hostWindowId, generation: msg.generation, own };
         this.post({ type: "hosty:ui:accept", coreOrigin: own.coreOrigin, userId: own.userId, appId: own.app.appId, installationId: own.app.installationId });
       } catch (error) {
@@ -130,7 +139,6 @@ export class EmbeddedUiClient implements UiClient {
     if (msg.type === "hosty:ui:result" && validId(msg.requestId) && validResult(msg.result, msg.requestId)) {
       const result = msg.result;
       this.pending.get(msg.requestId)?.resolve(result);
-      this.pending.delete(msg.requestId);
       this.emit({ type: "presentation", value: result });
     }
   }
@@ -147,7 +155,8 @@ export class EmbeddedUiClient implements UiClient {
       // A status response cannot satisfy an opening dispatched later. Finish that query first;
       // status queried during an opening can simply share the in-flight operation's result.
       if (input !== null && existing.input === null) {
-        await this.wait(requestId, existing, signal);
+        const result = await this.wait(requestId, existing, signal);
+        if (this.pending.get(requestId) === existing) return result;
         return this.request(requestId, message, signal);
       }
       return this.wait(requestId, existing, signal);
@@ -155,13 +164,16 @@ export class EmbeddedUiClient implements UiClient {
     if (this.pending.size >= 4) return { status: "blocked", requestId, code: "presentation_busy" };
     let settle!: (result: PresentationResult) => void;
     const operation = new Promise<PresentationResult>(resolve => { settle = resolve; });
-    const entry: PendingRequest = { input, operation, resolve: settle, waiters: 0, sent: false };
+    const entry: PendingRequest = { input, operation, waiters: 0, sent: false, resolve: result => {
+      if (this.pending.get(requestId) === entry) this.pending.delete(requestId);
+      settle(result);
+    } };
     // Reserve identity before asynchronous revalidation so racing callers cannot share
     // different payloads or overwrite each other's completion/cleanup handlers.
     this.pending.set(requestId, entry);
     void this.recheck().then(verified => {
       if (this.pending.get(requestId) !== entry) return;
-      if (!verified) settle({ status: this.environment.connection === "blocked" ? "blocked" : "unsupported", requestId, code: this.environment.code ?? "host_unavailable" });
+      if (!verified) entry.resolve({ status: this.environment.connection === "blocked" ? "blocked" : "unsupported", requestId, code: this.environment.code ?? "host_unavailable" });
       else { entry.sent = true; this.post({ ...message, requestId }); }
     });
     return this.wait(requestId, entry, signal);
@@ -169,7 +181,9 @@ export class EmbeddedUiClient implements UiClient {
   private wait(requestId: string, entry: PendingRequest, signal?: AbortSignal): Promise<PresentationResult> {
     entry.waiters++;
     return waitForPresentation(entry.operation, requestId, signal).finally(() => {
-      if (--entry.waiters === 0 && this.pending.get(requestId) === entry) this.pending.delete(requestId);
+      // Ending a caller's wait does not cancel a sent message. Keep its reservation until
+      // its response arrives or the channel is retired, so it cannot settle newer work.
+      if (--entry.waiters === 0 && !entry.sent && this.pending.get(requestId) === entry) this.pending.delete(requestId);
     });
   }
   openSurface = (target: PanelTarget, options: PresentationOptions) => validTarget(target) && options.placement === "side"

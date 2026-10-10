@@ -62,7 +62,8 @@ pending-intent persistence or handoff.
 
 Core app-open links carry `installationId`, `endpoint` and `route`. Core checks the installation,
 declared surface and user access at redemption, including after password login. The link retains
-the provider-selected path, query and fragment and forces standalone launch. Destination origin
+the provider-selected path, query and fragment, replacing any existing `hosty_launch` values with
+exactly one standalone launch value. Other query fields retain their spelling, encoding and order. Destination origin
 validation is separate from the stricter OAuth callback validation. Readiness uses the matched surface service,
 including navigation and entry surfaces, so an unrelated sidecar outage does not block opening.
 Reinstalling never redirects a completed
@@ -103,6 +104,9 @@ Immediate validation, conflict and concurrency refusals reach the embedded calle
 response path as successful placement. The child reserves a request ID and target before asynchronous
 verification, coalesces identical in-flight calls and rejects conflicting targets locally. Status
 queries share an existing opening; a later opening waits for an earlier status query to finish.
+A sent request retains its ID reservation after all waiters abort or time out, until its response
+arrives or a fresh channel retires it. A timed-out opening queued behind status does not dispatch
+automatically afterward; the caller must retry explicitly.
 New accepted openings and explicit collapse supersede pending selection intents. An older resolution
 returns `presentation_superseded` without replacing a newer selection or reopening the workspace.
 An explicit retry revalidates and can open the same target.
@@ -248,7 +252,8 @@ feature does not confer that deferred designation. Current CSP refusal has expli
   bootstrap/resolve, queued requests, stale refresh success/failure, failed renewal and actor changes.
   React tests preserve the document and iframe through revalidation.
   Concurrent-request tests exercise immediate embedded refusals, payload conflicts during
-  verification, identical replay, independent aborts and status/open ordering. Selection tests cover
+  verification, identical replay, independent aborts, late status replies after timeout/abort,
+queued-open timeouts, channel renewal and status/open ordering. Selection tests cover
   collapse during bootstrap/resolve, out-of-order selections, queued routes and delayed restoration.
 - Plans/Harness/Shell tests preserve source hashes, complete attachments, provider freezing,
   idempotent handoff recovery, review routing and existing assistant entry points. Plans tests cover
@@ -276,7 +281,8 @@ feature does not confer that deferred designation. Current CSP refusal has expli
   recovery link without mounting an iframe. Shell presentation tests cover navigation-only results,
   missing hosts, typed refusals, unexpected failure, same-request retry and actor changes.
 - Core separate-open HTTP tests preserve panel, navigation and entry queries/fragments through
-  a login round trip while keeping installation, assignment and origin validation in place.
+  a login round trip while keeping installation, assignment and origin validation in place. Existing
+  launch values (including duplicates and encoded names) are replaced without changing app query fields.
 - Shell intent tests cover legacy/malformed storage, reinstallation recovery by explicit retry,
   actor isolation and stale completion after an intent is replaced. Missing installation metadata
   tests assert an actionable incompatibility without storage/network writes and recovery after upgrade.
