@@ -142,6 +142,20 @@ describe("panel host authority and replay", () => {
     metadata = { ...metadata, canHost: false }; await h.refresh();
     expect(h.getSnapshot().tools).toEqual([]);
   });
+  it("retains transitional surfaces but still invalidates policy changes and a completed stop", async () => {
+    const h = await start(); await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    const surface = h.getSnapshot().tools[0]!.resolved.surface;
+    for (const state of ["stopping", "starting", "unavailable", "running"]) {
+      panels = [{ ...catalog, state, available: state === "running" }]; await h.refresh();
+      expect(h.getSnapshot().tools[0]!.resolved.surface).toBe(surface);
+    }
+    panels = [{ ...catalog, state: "starting", available: false, framePolicy: { microphone: false, popupEscape: false } }];
+    await h.refresh();
+    expect(h.getSnapshot().tools[0]!.resolved).toMatchObject({ surface: null, state: "policy_changed" });
+    await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    panels = [{ ...catalog, state: "stopped", available: false }]; await h.refresh();
+    expect(h.getSnapshot().tools[0]!.resolved).toMatchObject({ surface: null, state: "stopped" });
+  });
   it("clears actor-scoped targets and forbids a second composition owner", async () => {
     const h = await start(); expect(() => createUiHost()).toThrow("already owns");
     await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });

@@ -131,7 +131,8 @@ renderer and layout cookies. Neither layout adds provider defaults or fleet mana
 Frames mount lazily, one per opened tool, and survive collapse, tool switching and central Shell
 navigation. Hidden frames are inert. Document state and unsent composer state remain local to their
 mounted views. Stop/removal, lost access, changed installation/origin/path or policy invalidate the
-affected surface; transient readiness loss retains it. No automatic provider substitution or app
+affected surface; transient readiness loss, including `starting` and `stopping`, retains the existing
+frame until a completed stop or an independently invalidated identity, destination or policy. No automatic provider substitution or app
 startup occurs. Reload clears the window-local tool selection; width/open preferences remain
 host-scoped. Separate opening preserves provider-persisted context, without promising transfer of
 unsent edits between windows.
@@ -180,6 +181,8 @@ feature does not confer that deferred designation. Current CSP refusal has expli
 - SDK tests cover exact peers/generations, same-account negotiation, delayed verification, route
   readiness, replay/conflicts, uncertain waits, metadata/policy changes, fixed server adapters,
   host ownership, Overlay gating and retained React frames across layout changes.
+  Runtime-transition coverage preserves the actual iframe and unsent content through
+  stopping/starting/recovery, while a completed stop or changed frame policy removes it.
   Concurrent-request tests exercise immediate embedded refusals, payload conflicts during
   verification, identical replay, independent aborts and status/open ordering.
 - Plans/Harness/Shell tests preserve source hashes, complete attachments, provider freezing,

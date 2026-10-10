@@ -88,7 +88,7 @@ export class UiHost implements UiClient {
         const allowed = new Map(catalog.panels.map(p => [panelKey(p.panel), p]));
         this.update({ tools: this.snapshot.tools.map(tool => {
           const entry = allowed.get(tool.key);
-          const invalid = !entry || !["running", "degraded", "unavailable"].includes(entry.state);
+          const invalid = !entry || !["running", "degraded", "unavailable", "starting", "stopping"].includes(entry.state);
           const surface = tool.resolved.surface;
           const changed = entry && surface && JSON.stringify(entry.framePolicy) !== JSON.stringify(surface.framePolicy);
           const moved = entry && surface && (entry.origin !== surface.origin || entry.endpoint !== surface.endpoint

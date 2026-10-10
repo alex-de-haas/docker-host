@@ -10,6 +10,7 @@ vi.mock("./browser-auth", () => ({ appFetch: (...args: Parameters<typeof fetch>)
 let root: Root, element: HTMLDivElement, host: UiHost | null;
 let resize: () => void;
 let catalogGate: Promise<void> | null;
+let listedPanels: UiPanel[];
 const policy = { microphone: false, popupEscape: false };
 const metadata: UiBootstrap = { version: 1, coreOrigin: "https://core.test", userId: "alice", canHost: true, pinnedOpen: true,
   app: { appId: "plans", installationId: "plans-1", origins: ["http://localhost:3000"] } };
@@ -18,11 +19,12 @@ const catalog: UiPanel[] = ["assistant", "notes"].map(id => ({ panel: { appId: i
 function Document() { host = useHostyUiHost(); return <textarea aria-label="Document draft" defaultValue="Keep this selection" />; }
 beforeEach(() => {
   catalogGate = null;
+  listedPanels = catalog;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { resize = callback; } observe() {} disconnect() {} });
   vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
     if (path.includes("bootstrap")) return Response.json(metadata);
-    if (!path.endsWith("resolve")) { await catalogGate; return Response.json({ panels: catalog }); }
+    if (!path.endsWith("resolve")) { await catalogGate; return Response.json({ panels: listedPanels }); }
     const target = JSON.parse(init!.body as string), panel = catalog.find(p => p.panel.appId === target.panel.appId)!;
     return Response.json({ target: { ...target, route: target.route ?? panel.route }, available: true, state: "running", standaloneHref: "https://core.test/open",
       surface: { appId: panel.panel.appId, installationId: panel.panel.installationId, endpoint: panel.endpoint,
@@ -110,4 +112,25 @@ it("does not reopen when the user collapses before metadata arrives", async () =
   await act(async () => { release(); await host!.refresh(); });
   expect(host!.getSnapshot().expanded).toBe(false);
   expect(element.querySelectorAll("iframe")).toHaveLength(0);
+});
+it("keeps the same iframe and unsent content through runtime transitions, removing it on actual stop", async () => {
+  await render();
+  await act(async () => { await host!.selectPanel(catalog[0]!.panel); });
+  const frame = element.querySelector("iframe")!;
+  // jsdom does not load the remote app; supply its document without navigating the frame.
+  frame.contentDocument!.append(frame.contentDocument!.createElement("html"));
+  frame.contentDocument!.documentElement.append(frame.contentDocument!.createElement("body"));
+  const draft = frame.contentDocument!.createElement("textarea");
+  draft.value = "Keep this unsent draft"; frame.contentDocument!.body.append(draft);
+  for (const state of ["stopping", "starting", "unavailable", "running"]) {
+    listedPanels = [{ ...catalog[0]!, state, available: state === "running" }, catalog[1]!];
+    await act(async () => host!.refresh());
+    expect(element.querySelector("iframe")).toBe(frame);
+    expect(frame.contentDocument!.querySelector("textarea")).toBe(draft);
+    expect(draft.value).toBe("Keep this unsent draft");
+  }
+  listedPanels = [{ ...catalog[0]!, state: "stopped", available: false }];
+  await act(async () => host!.refresh());
+  expect(element.querySelector("iframe")).toBeNull();
+  expect(element.textContent).toContain("This tool is unavailable (stopped).");
 });
