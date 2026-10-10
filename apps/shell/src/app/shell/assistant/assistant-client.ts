@@ -3,6 +3,7 @@ import type { UiHost } from "@hosty-sdk/app/ui/host";
 import { assistantContractError, createAssistantRequestId, resolveAssistantDestination, type AssistantHandoffResult } from "@hosty-sdk/app/assistant";
 export { createAssistantRequestId };
 export const ASSISTANT_INTERFACE = "assistant";
+const installationMetadataError = "Update Core to identify assistant installations.";
 export type AssistantGateway = {
   installationId?: string | null;
   appId: string; key?: string; baseUrl: string; running: boolean;
@@ -16,7 +17,7 @@ export function findAssistantGateways(apps: readonly CoreApp[]): AssistantGatewa
     const declaration = declarations.find(item => item.key === "default") ?? declarations[0]!;
     return [{ appId: app.id, installationId: app.installationId, key: declaration.key, baseUrl: declaration.url?.replace(/\/$/, "") ?? "",
       running: app.runtimeState === "running" && !!declaration.url, version: declaration.version,
-      capabilities: declaration.capabilities, problem: assistantContractError(declaration) }];
+      capabilities: declaration.capabilities, problem: app.installationId ? assistantContractError(declaration) : installationMetadataError }];
   });
 }
 export function selectAssistant(assistants: readonly AssistantGateway[], selectedId: string | null): AssistantGateway | null {
@@ -37,7 +38,10 @@ export function assistantMessageFor<T extends { userId: string | null; appId: st
 
 
 export function assistantSupportsContext(gateway: AssistantGateway): Promise<boolean> {
-  return Promise.resolve(gateway.running && !assistantContractError(gateway));
+  return Promise.resolve(gateway.running && !gatewayProblem(gateway));
+}
+function gatewayProblem(gateway: AssistantGateway) {
+  return !gateway.installationId ? installationMetadataError : gateway.problem ?? assistantContractError(gateway);
 }
 /** Select the requested assistant before expansion can trigger a default tool. */
 export async function toggleAssistantPanel(host: UiHost, appId: string) {
@@ -58,7 +62,7 @@ type SendHandoff = (path: string, body: unknown) => Promise<Response>;
 export type PresentedHandoff = { id: string; result: AssistantHandoffResult; target: import("@hosty-sdk/app/ui").PanelTarget | null; url: string };
 export async function createHandoff(gateway: AssistantGateway, send: SendHandoff,
   prompt: string, appIds: string[], requestId: string): Promise<PresentedHandoff> {
-  const incompatible = assistantContractError(gateway);
+  const incompatible = gatewayProblem(gateway);
   if (incompatible) throw new Error(incompatible);
   const input = { providerAppId: gateway.appId, installationId: gateway.installationId, key: gateway.key ?? "default", prompt, appIds, requestId };
   const run = async () => {
@@ -79,6 +83,7 @@ export function createErrorSession(gateway: AssistantGateway, send: SendHandoff,
 
 /** Retain uncertain pinned intents; retire obsolete ones before an explicit new attempt. */
 export async function pendingAssistantIntent(userId: string | null, assistantId: string, prompt: string, appIds: string[], installationId: string) {
+  if (!installationId) throw new Error(installationMetadataError);
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([userId, assistantId, prompt, [...appIds].sort()])));
   const key = `hosty:assistant-intent:${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("")}`;
   const saved = sessionStorage.getItem(key);

@@ -56,7 +56,9 @@ unrelated service outage; degraded surfaces show a warning.
 servers. Next apps mount `createHostyUiRouteHandler` at `/api/hosty/ui/[...action]`; Harness uses
 the same dispatcher with its own verified administrator session. The adapters resolve credentials
 server-side, enforce same-origin JSON writes and bounded bodies, and expose no arbitrary proxy.
-An older Core or missing adapter produces explicit unsupported behavior.
+An older Core or missing adapter produces explicit unsupported behavior. Shell marks assistants
+without installation metadata as incompatible with an Update Core instruction, before selection,
+pending-intent persistence or handoff.
 
 Core app-open links carry `installationId`, `endpoint` and `route`. Core checks the installation,
 declared surface and user access at redemption, including after password login. The link retains
@@ -251,7 +253,8 @@ feature does not confer that deferred designation. Current CSP refusal has expli
 - Core separate-open HTTP tests preserve panel, navigation and entry queries/fragments through
   a login round trip while keeping installation, assignment and origin validation in place.
 - Shell intent tests cover legacy/malformed storage, reinstallation recovery by explicit retry,
-  actor isolation and stale completion after an intent is replaced.
+  actor isolation and stale completion after an intent is replaced. Missing installation metadata
+  tests assert an actionable incompatibility without storage/network writes and recovery after upgrade.
 - Browser acceptance uses Core-managed apps and normal password login in an isolated data root.
   Exercise Plans beside its finalized discussion in both modes, no implicit popup/nested rail,
   a non-assistant tool before discussion, retained drafts/document state, Shell-owned pages,
