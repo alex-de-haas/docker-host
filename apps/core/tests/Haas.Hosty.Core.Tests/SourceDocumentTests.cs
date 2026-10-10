@@ -10,9 +10,9 @@ public sealed partial class CoreLifecycleServiceTests
     private const string PlanText = "---\nstatus: Ready\ncreated: 2026-10-06\nupdated: 2026-10-07\nsummary: Example plan.\ncomponents: [apps/example]\n---\n# Example\n\n[Source](../../../README.md)\n\n## Deliverables\n\n- [ ] D1. Build.\n";
     private static Task CommitDocsAsync(string root, string message = "Docs change")
         => RunGitAsync(root, ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-am", message]);
-    private static async Task<(LifecycleFixture Fixture, string Origin, DevelopmentWorkspaceService Workspaces, SourceDocumentService Documents)> DocumentFixtureAsync()
+    private static async Task<(LifecycleFixture Fixture, string Origin, DevelopmentWorkspaceService Workspaces, SourceDocumentService Documents)> DocumentFixtureAsync(bool shortPaths = false)
     {
-        var (fixture, origin) = await SourceFixtureAsync();
+        var (fixture, origin) = await SourceFixtureAsync(shortPaths);
         Directory.CreateDirectory(Path.Combine(origin, "docs/features/sample"));
         Directory.CreateDirectory(Path.Combine(origin, "apps/example"));
         await File.WriteAllTextAsync(Path.Combine(origin, "apps/example/.keep"), "source");
@@ -354,7 +354,7 @@ public sealed partial class CoreLifecycleServiceTests
     [InlineData("worktree", "\r\n")]
     public async Task SourceDocuments_ReferenceMetadataSupportsLfAndCrLf(string version, string newline)
     {
-        var (fixture, origin, workspaces, documents) = await DocumentFixtureAsync();
+        var (fixture, origin, workspaces, documents) = await DocumentFixtureAsync(shortPaths: true);
         // Preserve the fixture's exact line endings through Git on every test host.
         await File.WriteAllTextAsync(Path.Combine(origin, ".gitattributes"), "*.md -text\n");
         var content = PlanText.Replace("components: [apps/example]", "components: [apps/example, apps/missing, README.md]")
@@ -362,40 +362,21 @@ public sealed partial class CoreLifecycleServiceTests
         await File.WriteAllTextAsync(Path.Combine(origin, PlanPath), content);
         await RunGitAsync(origin, ["add", "."]);
         await CommitDocsAsync(origin);
-        // The nested fixture paths exceed Git for Windows' default MAX_PATH limit.
-        // Set this only in the fixture object store; Core deliberately ignores global config.
-        var sourceRepository = await workspaces.CanonicalRepositoryAsync(origin, origin, default);
-        var objectStore = workspaces.RepositoryPath(sourceRepository);
-        Directory.CreateDirectory(objectStore);
-        await RunGitAsync(objectStore, ["init", "--bare"]);
-        await RunGitAsync(objectStore, ["config", "core.longpaths", "true"]);
-        try
-        {
-            var workspace = version == "target" ? null : await workspaces.PrepareAsync(WorkspaceTestOwner(fixture), WorkspaceRequest(), default);
-            var entry = Assert.Single((await documents.ListRepositoriesAsync("admin", default)).Repositories);
+        var workspace = version == "target" ? null : await workspaces.PrepareAsync(WorkspaceTestOwner(fixture), WorkspaceRequest(), default);
+        var entry = Assert.Single((await documents.ListRepositoriesAsync("admin", default)).Repositories);
 
-            // Cover the cold focused path and the full listing used by the Plans overview.
-            foreach (var focused in new[] { true, false })
-            {
-                var listing = await documents.ListDocumentsAsync(entry.Id, "admin", false, default, version, workspace?.Id, focused ? PlanPath : null);
-                var document = Assert.Single(listing.Documents);
-                var references = document.ReferencePaths!;
-                Assert.Contains(references, reference => reference.Path == "apps/example" && reference.Exists && reference.IsDirectory);
-                Assert.Contains(references, reference => reference.Path == "apps/missing" && !reference.Exists && !reference.IsDirectory);
-                Assert.Contains(references, reference => reference.Path == "README.md" && reference.Exists && !reference.IsDirectory);
-                var returned = await documents.ReadContentAsync(entry.Id, "admin", new(PlanPath, version, workspace?.Id, listing.Commit, document.Sha), default);
-                Assert.Equal(content, returned.Content);
-                Assert.Equal(SourceDocumentService.BlobSha(Encoding.UTF8.GetBytes(content), "sha1"), returned.Sha);
-            }
-        }
-        catch (AppLifecycleException error) when (error.Code == "workspace_git_failed")
+        // Cover the cold focused path and the full listing used by the Plans overview.
+        foreach (var focused in new[] { true, false })
         {
-            // These fixtures contain no credentials; expose transport diagnostics in CI only.
-            var repository = await workspaces.CanonicalRepositoryAsync(origin, origin, default);
-            var retry = await DevelopmentWorkspaceService.Git(workspaces.RepositoryPath(repository),
-                ["fetch", "--no-tags", repository, "+refs/heads/main:refs/hosty/targets/" + DevelopmentWorkspaceService.Hash("main")],
-                default, allowFailure: true);
-            throw new Xunit.Sdk.XunitException($"Fixture Git fetch failed for {repository}: {retry.StandardError}\n{error}");
+            var listing = await documents.ListDocumentsAsync(entry.Id, "admin", false, default, version, workspace?.Id, focused ? PlanPath : null);
+            var document = Assert.Single(listing.Documents);
+            var references = document.ReferencePaths!;
+            Assert.Contains(references, reference => reference.Path == "apps/example" && reference.Exists && reference.IsDirectory);
+            Assert.Contains(references, reference => reference.Path == "apps/missing" && !reference.Exists && !reference.IsDirectory);
+            Assert.Contains(references, reference => reference.Path == "README.md" && reference.Exists && !reference.IsDirectory);
+            var returned = await documents.ReadContentAsync(entry.Id, "admin", new(PlanPath, version, workspace?.Id, listing.Commit, document.Sha), default);
+            Assert.Equal(content, returned.Content);
+            Assert.Equal(SourceDocumentService.BlobSha(Encoding.UTF8.GetBytes(content), "sha1"), returned.Sha);
         }
     }
 
