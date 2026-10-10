@@ -49,6 +49,41 @@ public sealed class AppPermissionOverviewHttpTests
     }
 
     [Fact]
+    public async Task HolderIconsPreserveLiveSourceAndLockedAssetCachePolicy()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        using var client = await AppManagementHttpTests.CreateAppClient(host, "example.console", [CoreAppPermissions.ReadApps]);
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var baseline = (await apps.GetAppAsync("example.console"))!;
+        var source = Path.Combine(Path.GetTempPath(), $"hosty-permission-icon-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(source);
+        try
+        {
+            var provider = baseline with
+            {
+                Id = "example.provider", DisplayName = "Provider",
+                GrantedCorePermissions = [CoreAppPermissions.SpeechProviders],
+                RuntimeProfiles = [new("dev", "localCommand", true, Development: true)],
+                InstallManifestPath = source,
+                CatalogMetadata = new(null, null, [], "assets/icon.png", [], null, null, null, null, null, null),
+            };
+            await apps.UpsertAppAsync(provider);
+            var live = (await client.GetFromJsonAsync<AppPermissionOverview>(Route))!;
+            Assert.Equal("/api/apps/example.provider/assets/assets/icon.png",
+                Assert.Single(live.Entries.Single(e => e.Id == CoreAppPermissions.SpeechProviders).Apps).IconUrl);
+
+            await apps.UpsertAppAsync(provider with
+            {
+                RuntimeProfiles = [new("dev", "localCommand", true, Development: false)],
+            });
+            var locked = (await client.GetFromJsonAsync<AppPermissionOverview>(Route))!;
+            Assert.Equal("/api/apps/example.provider/assets/assets/icon.png?v=1.0.0",
+                Assert.Single(locked.Entries.Single(e => e.Id == CoreAppPermissions.SpeechProviders).Apps).IconUrl);
+        }
+        finally { Directory.Delete(source, recursive: true); }
+    }
+
+    [Fact]
     public async Task RequiresAdministratorAndCurrentReadAppsGrant()
     {
         await using var host = await CoreHttpHarness.StartAsync();

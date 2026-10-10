@@ -3,17 +3,21 @@ namespace Haas.Hosty.Core;
 internal sealed record AppPermissionHolder(string Id, string DisplayName, string? Icon, string? IconUrl);
 internal sealed record AppPermissionOverviewEntry(
     string Id, string Kind, string Description, IReadOnlyList<AppPermissionHolder> Apps);
-internal sealed record AppPermissionOverview(IReadOnlyList<AppPermissionOverviewEntry> Entries)
+internal sealed record AppPermissionOverview(IReadOnlyList<AppPermissionOverviewEntry> Entries);
+
+internal sealed partial class CoreLifecycleService
 {
-    public static AppPermissionOverview From(IReadOnlyList<AppRecord> apps)
+    public async Task<AppPermissionOverview> GetAppPermissionOverviewAsync(CancellationToken ct)
     {
-        var holders = apps.ToDictionary(app => app.Id, app =>
+        var records = await apps.ListAppRecordsAsync(ct);
+        var holders = new Dictionary<string, AppPermissionHolder>(StringComparer.Ordinal);
+        foreach (var app in records)
         {
-            var summary = AppSummary.From(app);
-            return new AppPermissionHolder(app.Id, app.DisplayName, summary.Icon, summary.IconUrl);
-        }, StringComparer.Ordinal);
+            var summary = await BuildAppSummaryAsync(app, ct, records);
+            holders.Add(app.Id, new(app.Id, app.DisplayName, summary.Icon, summary.IconUrl));
+        }
         AppPermissionOverviewEntry Entry(string id, string kind, string description, Func<AppRecord, bool> has)
-            => new(id, kind, description, apps.Where(has).Select(app => holders[app.Id])
+            => new(id, kind, description, records.Where(has).Select(app => holders[app.Id])
                 .OrderBy(app => app.DisplayName, StringComparer.OrdinalIgnoreCase).ThenBy(app => app.Id, StringComparer.Ordinal).ToArray());
 
         return new([

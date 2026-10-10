@@ -279,11 +279,11 @@ internal static class InstallationApprovalEndpoints
                 }
             }, ct));
         app.MapGet("/api/apps/permissions", async (HttpRequest request,
-            UserDirectoryStore users, IClock clock, AppRegistryStore apps, CancellationToken ct) =>
+            UserDirectoryStore users, IClock clock, CoreLifecycleService lifecycle, CancellationToken ct) =>
             await BrowserAsync(request, users, clock, async _ =>
             {
                 request.HttpContext.Response.Headers.CacheControl = "no-store";
-                return CoreJson.Json(AppPermissionOverview.From(await apps.ListAppRecordsAsync(ct)));
+                return CoreJson.Json(await lifecycle.GetAppPermissionOverviewAsync(ct));
             }, ct, csrf: false));
         app.MapGet("/api/apps/{id}/permissions", async (string id, HttpRequest request,
             UserDirectoryStore users, IClock clock, CoreLifecycleService lifecycle, CancellationToken ct) =>

@@ -175,6 +175,8 @@ known Core app permission and consent-bearing provider role, descriptions and in
 with icons and names. Entries without holders remain visible. Search matches identifiers,
 descriptions, role type, app names and app IDs. The table scrolls horizontally in narrow content areas.
 It is read-only; per-app changes retain the existing Core confirmation flow.
+Holder icons use the standard lifecycle projection: live-source URLs require revalidation, while
+locked app versions retain their versioned asset URLs.
 
 `GET /api/apps/permissions` requires an administrator, and app-mediated requests additionally require
 `apps.read`. The uncached response uses Core's permission catalogue and consent-role catalogue;
@@ -213,6 +215,7 @@ Verification on 2026-10-10:
 
 - Keep the host-wide overview complete with zero-holder entries; cover persisted permissions/roles,
   declaration-only requests, legacy collector labeling, revocation and administrator/app-grant gates.
+- Preserve the lifecycle asset-cache policy for live-source and locked app icons.
 - Cover search by app and description, loading/error/retry, stale-response cancellation, focus/live
   authority refresh and denied direct navigation for ordinary users.
 
