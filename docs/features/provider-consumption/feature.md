@@ -1,6 +1,6 @@
 ---
 created: 2026-09-29
-updated: 2026-10-08
+updated: 2026-10-10
 summary: Apps discover and call confirmed speech-to-text and assistant providers with short-lived Core credentials.
 components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/whisper, apps/harness]
 ---
@@ -44,6 +44,9 @@ Server-side SDK clients use the calling app's `HOSTY_APP_ID`, `HOSTY_CORE_ORIGIN
 | `POST /provider/introspect` | Provider validates `{ token, kind, key }` on every request |
 
 Descriptors contain app ID, name, category, interface key/version, capabilities, URL and availability.
+Discovery and credential issuance resolve provider API URLs from the endpoint's direct transport
+address. Generated browser hostnames and configured public origins are excluded from backend calls,
+so local speech recognition does not depend on browser-only name resolution or public ingress.
 Core 0.125.0 also includes `uiSurfaces` for assistants: declared panel, navigation and entrypoint
 endpoint identities, paths and resolved browser URLs. Consumers validate handoff destinations
 against these surfaces without an additional `apps.read` grant or an assumption that API and UI
@@ -162,6 +165,9 @@ calls; conversations require no additional consent.
 
 - Core: optional defaults and updates, review-only mutation, stale consent, stored declarations,
   role confirmation, audience/category/installation binding, live revocation and user-access checks.
+  Provider discovery and issued credentials use direct transport URLs for IPv4, IPv6 and LAN endpoints,
+  including apps with a configured public origin; missing transport remains unavailable. Assistant
+  API addresses use transport while declared UI surfaces retain their browser addresses.
   Grant changes in either direction must reject stale update enqueue without changing operation state;
   missing speech and assistant interface contracts must report category-specific validation errors.
 - SDKs: credential separation, denied access, compatibility, cancellation and assistant handoff ownership.

@@ -55,7 +55,10 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
     {
         if (provider.ConfirmedRoles?.Contains(kind, StringComparer.Ordinal) != true) yield break;
         var summary = AppSummary.From(provider);
-        if (summary.Interfaces is null || !summary.Interfaces.TryGetValue(kind, out var entries)) yield break;
+        // Provider credentials are consumed by backends. Browser origins (including *.localhost)
+        // need not resolve there and must not route audio through an app's public ingress.
+        var interfaces = AppSummary.BuildInterfaceSummaries(provider.Interfaces, provider.Endpoints, useTransportUrls: true);
+        if (interfaces is null || !interfaces.TryGetValue(kind, out var entries)) yield break;
         // Browser destinations use declared UI endpoints, which can differ from the provider API.
         // Consumers need no wider apps.read grant to validate a handoff's returned destination.
         ProviderUiSurface[]? surfaces = kind == "assistant"

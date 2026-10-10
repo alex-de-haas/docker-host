@@ -1198,9 +1198,10 @@ internal sealed record AppSummary(
             OptionalCorePermissions: app.OptionalCorePermissions ?? []);
     }
 
-    private static IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceSummary>>? BuildInterfaceSummaries(
+    internal static IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceSummary>>? BuildInterfaceSummaries(
         IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceContract>>? interfaces,
-        IReadOnlyList<AppEndpointContract> endpoints)
+        IReadOnlyList<AppEndpointContract> endpoints,
+        bool useTransportUrls = false)
     {
         if (interfaces is null || interfaces.Count == 0)
         {
@@ -1211,11 +1212,15 @@ internal sealed record AppSummary(
         foreach (var (name, declarations) in interfaces)
         {
             result[name] = declarations
-                .Select(declaration => new AppInterfaceSummary(
-                    declaration.Key,
-                    declaration.Path,
-                    BuildUiUrl(ResolveEndpointUrl(endpoints, declaration.EndpointKey), declaration.Path),
-                    ResolveEndpoint(endpoints, declaration.EndpointKey)?.Service, declaration.Version, declaration.Capabilities))
+                .Select(declaration =>
+                {
+                    var endpoint = ResolveEndpoint(endpoints, declaration.EndpointKey);
+                    return new AppInterfaceSummary(
+                        declaration.Key,
+                        declaration.Path,
+                        BuildUiUrl(useTransportUrls ? endpoint?.Url : ResolveEndpointOpenUrl(endpoint), declaration.Path),
+                        endpoint?.Service, declaration.Version, declaration.Capabilities);
+                })
                 .ToArray();
         }
 
