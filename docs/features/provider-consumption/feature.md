@@ -112,8 +112,11 @@ Whisper.net and its CPU native runtime are pinned to 1.9.1. The factory explicit
 The native runtime's Windows baseline is Windows 11 / Windows Server 2022 or newer, the Visual C++ 2022
 redistributable and an x64 CPU with AVX, AVX2, FMA and F16C. An AMD processor with those capabilities can
 use this CPU path without a discrete GPU. Linux and macOS use the corresponding packaged native runtime.
-The target Windows/AMD machine has not been exercised locally; hardware acceptance is tracked in the
-[plan](plan.md). No Vulkan acceleration or Windows performance claim is made.
+On 2026-10-10 the owner confirmed that the speech provider and text dictation work in their
+deployment. This is owner-reported functional acceptance, not an agent-run hardware test. The report
+does not specify the OS/CPU, selected model, performance measurements or individual failure cases;
+the remaining acceptance evidence is tracked in the [plan](plan.md). No Vulkan acceleration or
+Windows performance claim is made.
 
 `WHISPER_MODEL` selects multilingual `tiny`, `base` or `small` (default). Fixed upstream revision
 `5359861c739e955e79d9a303bcbc70fb988958b1`, sizes and SHA-256 hashes are in `SpeechEngine.cs`. Models are
@@ -183,5 +186,7 @@ calls; conversations require no additional consent.
   Docker consumer and the authenticated Harness backend. Reviewed revocation returns 403 on the next
   Harness transcription. Browser verification confirms optional consent and iframe microphone delegation. Tiny
   recognition contains errors; this is interoperability evidence rather than an accuracy benchmark.
+- Owner acceptance on 2026-10-10 confirms working speech recognition and text dictation. It does not
+  establish the detailed hardware measurements or per-case acceptance results retained in the plan.
 
 - With immediate handoffs enabled, provider-originated finalization remains a draft, while operator finalization dispatches immediately.

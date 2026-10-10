@@ -1,6 +1,6 @@
 ---
 created: 2026-09-16
-updated: 2026-09-30
+updated: 2026-10-10
 summary: Administrators attach up to 16 installed apps to an assistant session as shared context for Claude and Codex.
 components: [apps/harness, apps/shell]
 ---
@@ -150,12 +150,13 @@ remain authoritative. Selecting a system app creates no extra authority over it.
 
 ## Development Integration Boundary
 
-Selection is distinct from both a primary development workspace and execution grants. The
-[assistant approval rules](../assistant-approval-rules/plan.md) plan owns their implementation,
-source binding and safe native-thread reconfiguration. Its first-slice scope applies grant removal
-to subsequent dispatch/resume; immediate termination of already-running commands is deferred by the
-owner decision of 2026-09-16. Re-adding an app restores context only. This feature's selection mutation
-documents that integration boundary and performs no implicit rebinding.
+Selection is distinct from both a primary development workspace and execution grants. Re-adding an
+app restores context only; this feature's selection mutation performs no implicit rebinding or grant.
+The [approval plan](../assistant-approval-rules/plan.md) owns explicit grant choices and revocation
+feedback; [execution authorization](../assistant-execution-authorization/plan.md) owns scoped Core
+credentials, and [containment](../assistant-runtime-containment/plan.md) owns safe native execution
+reconfiguration and termination evidence. Current context changes do not prove that a running
+native command has lost OS access.
 [Prototype workspaces](../app-prototype-workspaces/plan.md) consume these
 associations rather than implementing another session binding mechanism.
 

@@ -10,6 +10,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 vi.mock("../src/app/shell/pages/user-management-page", () => ({ UserManagementPanel: () => <p>User management</p> }));
 vi.mock("../src/app/shell/pages/user-profile-page", () => ({ UserProfilePage: () => <p>Personal profile</p> }));
 vi.mock("../src/app/shell/pages/settings-agents-section", () => ({ SettingsAgentsSection: () => <p>Agent directory</p> }));
+vi.mock("../src/app/shell/pages/settings-permissions-section", () => ({ SettingsPermissionsSection: () => <p>Permission catalogue</p> }));
 vi.mock("../src/app/shell/pages/source-providers", () => ({ SourceProviders: () => <p>Source accounts</p> }));
 vi.mock("../src/app/shell/pages/settings-app-section", () => ({ AppSettingsTabPanel: () => <p>App settings</p> }));
 vi.mock("../src/app/shell/pages/ingress-diagnostics", () => ({ IngressDiagnostics: () => null }));
@@ -69,6 +70,15 @@ it("groups session, access and privileged-activity settings under Security polic
   expect(keys().sort()).toEqual(Object.keys(values).filter(key => key.startsWith("HOSTY_AUTH_") || key.startsWith("HOSTY_OAUTH_")).sort());
   expect(container.querySelector('[role="tablist"]')?.getAttribute("aria-label")).toBe("Security settings");
   expect(container.querySelector('[role="tab"][data-state="active"]')?.textContent).toBe("Policies");
+});
+
+it("places app permissions under Security and refuses direct non-admin navigation", async () => {
+  await render("permissions");
+  expect(container.querySelector('[role="tablist"]')?.getAttribute("aria-label")).toBe("Security settings");
+  expect(container.textContent).toContain("Permission catalogue");
+  await render("permissions", false);
+  expect(container.textContent).not.toContain("Permission catalogue");
+  expect([...container.querySelectorAll('[role="tab"]')].map(tab => tab.textContent)).toEqual(["Access tokens"]);
 });
 
 it("saves Core connection and provider edits together, retains the origin warning and hides inactive provider fields", async () => {

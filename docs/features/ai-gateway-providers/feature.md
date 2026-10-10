@@ -1,6 +1,6 @@
 ---
 created: 2026-09-17
-updated: 2026-09-29
+updated: 2026-10-10
 summary: Named Claude and Codex agent connections that administrators manage in the Harness Providers settings.
 components: [apps/harness]
 ---
@@ -138,8 +138,9 @@ All routes below use the existing administrator authentication and cookie CSRF g
   acknowledges the account for an older unbound chat.
 - `GET /api/health?sessionId=:id`: the selected chat's capabilities/readiness.
 
-The MCP application-provider controls are separate. This feature does not implement the tool-level
-Ask/Run/Disabled policy tracked in [Assistant Approval Rules](../assistant-approval-rules/plan.md).
+The MCP application-provider controls are separate from native provider connections. The shipped
+tool-level Ask / Run unprompted / Disabled policy is documented in
+[Assistant MCP Approval Rules](../assistant-approval-rules/feature.md).
 
 ## Verification
 

@@ -1,242 +1,234 @@
 ---
 status: Draft
 created: 2026-07-17
-updated: 2026-10-08
-summary: Treat shells as ordinary apps that provide a ui-client role, with Core resolving the primary UI by role instead of by app id.
-components: [apps/core, apps/shell]
+updated: 2026-10-10
+summary: Proposed replaceable browser UIs using confirmed roles and shared defaults, preserving app authorization and Core-owned recovery when the selected UI is unavailable.
+components: [apps/core, apps/cli, apps/shell]
 ---
 
 # Replaceable UI Clients — The `ui-client` Role And Primary Selection
 
-Carried over from `docs/ideas/` on 2026-10-05. The "Decisions" below are the proposal's positions;
-the owner has not ratified them, so this plan stays Draft until they are confirmed.
+## Goal And Approval Boundary
 
-## Coordination With Default Applications
+Make Shell one of several ordinary, independently installed browser UI clients. Core resolves a
+context-free destination through a confirmed role and a host preference, while each UI remains
+usable directly. Bootstrap, Marketplace and direct manifests continue to create ordinary app records.
+Removing the last UI remains allowed and does not remove Core, login or CLI recovery.
 
-On 2026-10-08 the owner endorsed the broader direction of Core-owned default applications by
-supported role/provider interface. The [default applications plan](../default-applications/plan.md)
-owns the shared settings model and assistant selection; this plan retains shell-specific D1-D5.
-Reconcile its proposed host/user scope, preference storage and fallback policy with Decisions 3
-and 4 here before marking either plan Ready. The existing earliest-installed fallback and concrete
-`primaryUiAppId` field remain draft proposals, not approvals inherited from that conversation.
-Workspaces is an ordinary app, not a `ui-client` or new workspace provider.
+The owner requested coordination with [Default applications](../default-applications/plan.md) on
+2026-10-10. This revision replaces the older draft proposals for `primaryUiAppId`, earliest-installed
+fallback and browser CORS. The recommendations are not approved implementation decisions; this
+plan remains Draft and owns its own deliverables. The later owner direction on the same day assigns
+shared panels to the [SDK panel system](../sdk-panel-system/plan.md), with Plans → assistant in Shell
+and standalone as its first scenario. This plan consumes that contract rather than owning it.
 
-## Motivation
+## Verified Baseline And Corrections
 
-Hosty needs two things that look like they pull in opposite directions:
+Inspected on 2026-10-10:
 
-- A **bootstrap channel**: a way to get a UI onto a fresh host from the CLI, because without Shell
-  there is no UI at all — and Marketplace itself renders inside Shell, so it cannot deliver the
-  first UI by construction. This exists: the distribution list plus `hosty setup`.
-- A **replaceability story**: Shell is *one* UI client, not *the* UI client. Third parties should be
-  able to build their own shells (or narrower UIs — a telemetry-only dashboard, a mobile-first
-  shell) and distribute them through Marketplace or plain manifest installs, using the exact
-  lifecycle every other app gets. The official Shell should be listed in Marketplace like anything
-  else, and uninstalling it should be allowed.
+- [ShellPublicOriginResolver](../../../apps/core/src/Haas.Hosty.Core/ShellPublicOriginResolver.cs)
+  still looks up `hosty.shell`. It prefers the public `web` endpoint and resolves its browser origin
+  using the shared local/public-origin policy. A missing Shell is already a supported Core state.
+- [Core app-open links](../../../apps/core/src/Haas.Hosty.Core/ControlIdentityEndpoints.cs) use
+  `/workspace?app=<id>&path=%2F`. The old draft's `/apps/{id}` is not the Shell workspace route.
+- `ShellCorsPolicyProvider` no longer exists. Shell management calls use its backend with app service
+  identity and the current user grant, checked by
+  [AppManagementAuthorization](../../../apps/core/src/Haas.Hosty.Core/AppManagementAuthorization.cs).
+  Introducing a UI role must not restore browser access to Core's primary session or broad CORS.
+- [PlatformCapabilities](../../../apps/core/src/Haas.Hosty.Core/PlatformCapabilities.cs) separates
+  role declarations from confirmed roles. Assistant/speech provider authority is already reviewed;
+  unknown `provides` strings are inert, not automatic grants or UI eligibility.
+- [Assignments](../shell-access-and-system-apps/feature.md) apply to system and ordinary apps.
+  A host default does not mean every user may enter it.
+- Bootstrap choice controls future installation, not current eligibility. Disabling bootstrap does
+  not remove a still-installed UI. Uninstall pins that choice off and must not be undone on restart.
 
-The tension is smaller than it looks, because most of the separation already shipped:
+## Recommended UI Contract
 
-- Bootstrap installs produce **ordinary app records** — same manifest, same lifecycle, same
-  reviewed update flow. Distribution origin is provenance, not privilege ([removable-system-apps](../removable-system-apps/feature.md),
-  [capabilities are not lifecycle grants](../core-extension-model/plan.md)).
-- Core already copes with **no UI client at all**: the Shell origin resolves from the installed app
-  record, and a null origin is a valid answer every caller must handle
-  (`ShellPublicOriginResolver`, shipped with "Shell config belongs to Shell").
-- Uninstalling a distribution-origin app pins its bootstrap choice to `enabled=false`, so the boot
-  reconcile does not resurrect it.
-- A domain-specific UI already exists in-tree: `telemetry-ui` is a plain app with a `ui` service
-  that renders one domain and never pretends to be the host UI.
+Add `ui-client` as a reviewed role in `provides`, represented in Core's confirmed roles. The role
+means the app can be offered as the host's browser UI; it grants no Core permission. Management
+features still need declared/reviewed permissions, and endpoints still check the acting user.
+Installation/update review explains the role without selecting it as the default.
 
-What remains is exactly one hardcode and one unowned decision:
+For the first contract:
 
-1. Core identifies "the UI" **by app id**: `ShellPublicOriginResolver.ReadAsync` calls
-   `GetAppAsync(ShellBootstrap.AppId)` — literally `hosty.shell`
-   (`apps/core/src/Haas.Hosty.Core/ShellPublicOriginResolver.cs:61`). A third-party shell under any
-   other id is invisible to Core as a UI.
-2. With more than one shell installed, nothing says **which one Core sends browsers to** when it has
-   to pick without context (login continuation, bootstrap completion, deep links).
+- Serve `/` as the landing page and `/workspace?app=<encoded-app-id>&path=<encoded-relative-path>`
+  as the app-opening adapter. This is a small compatibility route an alternative shell can translate
+  into its own internal navigation. Do not add URL templates or require it to copy Shell's page tree.
+- Choose the public HTTP(S) endpoint named `web`, otherwise a sole public HTTP(S) endpoint. Missing
+  or ambiguous endpoints make the app ineligible, with a visible reason. Do not select a TCP
+  endpoint or rely on manifest array order. Resolve the address through `LocalBrowserOrigins`.
+- Honor app access and the current SDK embedder contract. Embedded apps own their Core sign-in and
+  renewal; the UI never receives their grants or Core's primary credential as an embedding shortcut.
+- Support the shared SDK panel-host protocol for app requests, with one composition owner for the
+  window, including the UI client's own pages. Reuse the SDK host or implement its conformance
+  contract in another framework. Exact layout/navigation may differ; a finalized handoff must open
+  at its owning app/session without a new provider selection. Unsupported older clients have the
+  SDK's explicit compatibility fallback, not a promise of complete new-contract conformance.
+  Protocol v1 uses Core-verified host/child bindings for the same actor and directly mounted frames.
+  Host discovery requires `apps.panels.read` or existing `apps.read`, independently of this role;
+  consume the SDK's stable panel IDs and public API without defining another identity or bridge.
+- Treat target IDs/paths as navigation, not authority. Validate/encode the relative app path; reject
+  external, protocol-relative and ambiguous paths and check access to the target app separately.
+- A UI-client declaration does not prove route implementation or live readiness. Role-specific
+  eligibility belongs in the capability/resolution service, with review diagnostics and contract
+  tests. Keep generic `provides` shape validation forward-compatible; do not probe app routes during
+  installation or make declarations lifecycle immunity.
 
-This document defines the model that closes both gaps. It complements
-[core-extension-model](../core-extension-model/plan.md) (this is a concrete instance of a multi-instance
-contract with a designated default) and [hosty-app-sdk](../hosty-app-sdk/feature.md) (whose embedder
-contract is the behavioral half of what a shell must implement).
+Domain apps such as Telemetry, Workspaces and Plans do not acquire this role simply by serving UI
+or using the SDK to host panels when standalone. A local panel host is a composition capability;
+`ui-client` is eligibility to be offered as a complete browser UI. Neither confers embedding
+authority under the separately held [embedding restrictions](../app-embedding-restrictions/plan.md).
+No new manifest schema version is needed for the additive role; older Core treats it as inert and
+cannot offer replacement-UI selection.
 
-## Current Architecture Findings
+## Host Selection And Recovery
 
-- `provides` is an established manifest axis: a validated list of platform capability slots
-  (`RuntimeAppManifest.ValidateProvides`, `apps/core/src/Haas.Hosty.Core/RuntimeAppManifest.cs:1138`).
-  The telemetry app already declares `"provides": ["otlp-collector"]`. `PlatformCapabilities`
-  (`apps/core/src/Haas.Hosty.Core/PlatformCapabilities.cs`) maps known slots to start priority and
-  optional provisioning; unknown slots are ignored, so new slots are backward-compatible.
-- `ShellPublicOriginResolver` resolves the UI origin from the installed record — the operator's
-  `HOSTY_PUBLIC_ORIGIN_<endpoint>` setting, else the loopback URL Core assigned — preferring the
-  `web` endpoint key, falling back to any public endpoint. Null means "no UI client installed."
-  The only wrong thing about it is the lookup key.
-- Its consumers split into two groups with **different cardinality needs**:
-  - **Send-a-browser-somewhere (needs exactly one origin):** `/login` pages and
-    `RedirectAfterLogin` when no `returnTo` was provided (`HostyCoreApplication.cs:171-215`),
-    first-admin bootstrap and recovery completion `RedirectTo`
-    (`AuthBootstrapEndpoints.cs:37,54`), the `/apps/{appId}` deep link handed to CLI/agents
-    (`ControlIdentityEndpoints.cs:66-77`), and the origin surfaced in `core/status`
-    (`HostyCoreApplication.cs:143-156`).
-  - **Allow-a-browser-in (needs every UI origin):** the per-request CORS policy
-    (`ShellCorsPolicyProvider.cs`). With two shells installed, both must be able to call Core from
-    the browser; CORS keyed to a single "primary" would break whichever shell is not primary.
-- The bootstrap side needs no changes: the distribution list is release-owned, choices are
-  operator-owned intent, enabling installs immediately through the same code path as boot, and
-  disabling keeps the app (`SystemAppBootstrapService`). Shell stays a `defaultEnabled` entry.
-- `returnTo` exists and works for the flow it belongs to — "go back where you came from" after
-  login. It cannot answer "where does a context-free browser go": bootstrap completion, links
-  minted by Core (notifications, agent deep links), or a bare visit to Core have no referrer worth
-  trusting.
+Use the `ui-client` category of the shared default-applications store and API. Do not add another
+`primaryUiAppId` field to Core settings. The preference is host-wide; this release has no personal
+UI override. Other UI clients can be opened directly or chosen once without changing that setting.
 
-## Decisions
+1. A valid explicit navigation/return target stays bound to its app; it takes precedence over the
+   host default. Changing the default never sends a pending login or deep link to a different app.
+2. An explicit host UI reference chooses that installation, subject to current role/contract checks.
+3. With `automatic`, a sole eligible installed UI is selected. Zero produces `no_ui`; several
+   produce `choice_required`. Installation time and temporary readiness never break the tie.
 
-1. **Bootstrap and Marketplace are two channels to the same record, and stay that way.** The
-   distribution list's only unique job is the chicken-and-egg: delivering the first UI client when
-   no UI exists to install one. Everything after that is ordinary app lifecycle. The official Shell
-   is additionally listed in Marketplace — same manifest, same feed, second storefront. No new
-   install semantics anywhere.
+Separate selection from readiness. Keep a stopped/updating/unhealthy UI selected and display its
+state; do not redirect to a dead origin or silently substitute another UI. A removed, revoked,
+incompatible or reinstalled explicit choice remains invalid until an administrator clears/reselects
+it. Resuming the same installation restores availability without changing the setting.
 
-2. **`ui-client` becomes a `provides` slot, and Core resolves UIs by role, not id.** Any app —
-   first-party or third-party — that implements the UI-client contract declares
-   `"provides": ["ui-client"]`. `ShellPublicOriginResolver` (renamed accordingly) enumerates
-   installed apps by this slot instead of calling `GetAppAsync("hosty.shell")`. Per-app origin
-   resolution is unchanged: `web` endpoint key preferred, public-origin setting else assigned
-   loopback URL.
+Core supplies a small recovery/choice page when it cannot navigate: status, retry, an explicit
+**Open another interface** action and CLI recovery instructions. Candidate enumeration and detailed
+diagnostics require authentication; show only UIs accessible to the current user. An unassigned
+default produces a generic access/unavailable message for that user, with allowed alternatives,
+without changing the host default or granting an assignment. A one-time alternative does not become
+the default unless an authorized administrator explicitly saves it through shared settings/control.
 
-3. **"Primary UI" is a pure resolution over state, not a stamp written at install time.** Core
-   settings gain one nullable field, `primaryUiAppId`. Resolution:
+Login/setup/recovery remain Core-owned. Without a usable UI, successful login leaves the operator
+on the Core page rather than returning a broken redirect. Before login, show only generic host/UI
+availability, never a fleet inventory. Do not automatically start apps from this page. An
+administrator can repair the selection through the local control plane even with every UI stopped
+or removed; installation/removal continues through existing reviewed operations.
 
-   1. If `primaryUiAppId` names an installed app that provides `ui-client` → that app.
-   2. Else if exactly one installed app provides `ui-client` → that app.
-   3. Else if several → the earliest-installed one, ties broken by ordinal app id.
-   4. Else → null ("no UI client", the already-valid state).
+## Navigation And Status Integration
 
-   The properties fall out without any install-time mutation: the first shell is automatically
-   primary (rule 2), installing a second never steals primary (rule 3 preserves the incumbent),
-   switching is an explicit operator action (rule 1), and uninstalling the chosen shell degrades
-   gracefully (a dangling pointer falls through to rules 2–4 and self-heals if the app returns).
-   The default-browser model: every installed shell works when opened directly at its own URL;
-   primary only decides where *Core-initiated* navigation lands.
+All context-free Core navigation uses the same structured resolver: login with no explicit return,
+setup/invitation/recovery completion, control-plane `apps open --mode shell`, status and MCP directory
+links to settings. Audit every current `ShellPublicOriginResolver` caller; origin substitution alone
+is insufficient for callers that append first-party Shell-only paths.
 
-   Rule 3's tiebreak is not hypothetical hygiene: `AppRecord.InstalledAt` is non-nullable and the
-   registry already normalizes a `default` value to "now" on write (`AppRegistryStore.cs:116`), so
-   the timestamp is always present — but two records can still carry the same instant, and an
-   unordered "earliest" would let the primary UI silently swap between boots. Ordinal app id is a
-   total order over a set that is unique by construction.
+Only `/` and the workspace adapter are required navigation routes in the new UI contract. Existing Shell-specific
+management links must remain bound to an explicitly identified Shell installation, or degrade to
+the selected UI's landing page without claiming the same deep destination exists. In particular,
+an Agents settings link must not append Shell's `/settings` layout to an arbitrary UI.
 
-   **The set is "installed", and deliberately not narrower.** Two tempting filters are both wrong:
+Preserve the existing validated Core-relative login continuations for OAuth, app open and trusted
+confirmation. For new UI return links, freeze the destination installation and validated relative
+route in an expiring, opaque Core continuation; redeem it using the current actor/access and registry
+origin. No caller-supplied absolute URL is authority. The reference carries no credential and cannot
+mint an app grant. A removed/reinstalled destination produces recovery, not a new default lookup.
+Legacy unqualified Shell-relative `returnTo` paths stay bound to the legacy Shell compatibility
+installation; if it is absent, show recovery instead of interpreting the path in another UI.
 
-   - *Bootstrap-choice `enabled`* is not an app state at all. It is the operator's intent about
-     future boots (`SystemAppBootstrap.cs:14`), and disabling it explicitly **keeps the app
-     installed and running** — that is the panel's own contract ("disabling stops future installs
-     but keeps the app until you uninstall it"). A bootstrap-disabled shell serving traffic on its
-     port is a fully working UI; excluding it would send browsers nowhere while the shell they are
-     looking at keeps rendering. There is no `Enabled`/`Disabled` field on `AppRecord` — that flag
-     exists only for *users* (`UserDirectoryStore.cs:60`). Uninstall is the only removal, and it
-     drops the record, so resolution over installed apps already excludes it; the choice-pinning
-     that accompanies uninstall is about the boot reconcile, not about resolution.
-   - *Running* would make the answer flap with runtime state: a restarting shell would lose primary
-     mid-restart, and login continuation would resolve differently depending on when it was asked.
-     Resolution answers "which UI does this host present", which is a property of what is installed;
-     whether it happens to be up is the browser's problem to discover, and Core's existing null case
-     already covers "no UI at all".
+For shell-mode CLI app-open links, return a Core-owned navigation link that resolves at browser
+open under the browser's actor. It freezes the chosen UI and target before any login round trip;
+this avoids baking an unauthenticated actor-independent destination into an authorized redirect.
+Direct standalone app-open links retain their existing semantics.
 
-4. **CORS admits every installed `ui-client`, not just the primary.** `ShellCorsPolicyProvider`
-   extends from one origin to the set of origins of all installed `ui-client` apps — the same set as
-   Decision 3, for the same reasons. Multiple shells coexisting on different URLs is a feature, not a
-   conflict: each has its own record, port, and origin. Domain UIs (telemetry-ui) are *not* in this
-   set — per the trust model they call their own backends, not Core, from the browser.
+The selected primary UI handles context-free navigation, not panel placement inside an already
+open app. Standalone Plans hosts its assistant locally through the SDK even if another UI is the
+host default. An embedded app delegates presentation to its current verified host, not whichever
+UI became primary later. Changing the primary does not move panels, retarget sessions or reload
+open standalone windows.
 
-   Restricting the set to running apps would buy nothing and cost correctness. A stopped shell
-   serves no page, so no browser can originate a request from its origin; the header would go
-   unused. The "stale origin gets hijacked" worry needs an attacker who can bind that host port,
-   and an attacker with local code execution can read Core's data root directly — CORS is not the
-   boundary holding there. Meanwhile the restriction would break the real case: a shell coming up
-   would be denied its own origin for as long as the policy lags its runtime state.
+Preserve the legacy UI-origin status field's URL meaning for older clients, and add structured
+selected UI identity, role/contract validity and availability to status. Do not use a non-null origin
+as proof of readiness. Invalidate selection metadata after preference, role, installation or origin
+changes; always recheck access/readiness before navigation. Clients with no support for the new
+category cannot manage it and receive an explicit unsupported result.
 
-5. **Uninstalling Shell — including the last shell — is always allowed.** Core already treats "no
-   UI client" as valid, and the uninstall path already pins the bootstrap choice so boot does not
-   resurrect it. The install dialog warns: "This is the host's only UI client. You can reinstall it
-   from the CLI with `hosty setup`." No hard block: the CLI is the recovery path and does not
-   depend on any UI by construction.
+## Settings, Removal And Authorization
 
-6. **The UI-client contract is small and explicit.** Claiming `provides: ["ui-client"]` commits an
-   app to:
-   - a public web endpoint (key `web` preferred) — the origin Core resolves;
-   - the **embedder contract** from [hosty-app-sdk](../hosty-app-sdk/feature.md#the-embedder-contract): embedding app UIs,
-     handling `hosty:auth-required`, launch modes;
-   - two **well-known routes**, which are the only URL shapes Core ever mints:
-     - `/` — landing target for login continuation without `returnTo` and for bootstrap completion;
-     - `/apps/{appId}` — the deep link Core hands to CLI/agents to open an app.
+Contribute one **Browser interface** row to **Settings → Default applications → This host**,
+using the shared API, revision and `core.configure`/administrator checks. Show it with zero or one
+candidate too. Keep unavailable selected entries and their reason visible; there is no duplicate
+Primary UI control under Core settings. Personal assistant controls remain owned by the other plan.
 
-   Nothing else is promised. A shell's internal routing, features, and design are its own. This is
-   the `ui-client` contract in [core-extension-model](../core-extension-model/plan.md) terms:
-   multi-instance cardinality with a designated default.
+Keep every installed UI's ordinary lifecycle available. Removal review warns when removing the
+selected UI and separately when removing the last eligible UI, explaining Core/CLI recovery. The
+reviewed removal remains allowed; no automatic promotion, reinstall or grant transfer follows.
 
-   **The contract is not enforced by manifest validation.** `ValidateProvides` is deliberately
-   shape-only — kebab token, no blanks, no duplicates — and explicitly tolerates slot names a newer
-   Core would understand (`RuntimeAppManifest.cs:1134`). Teaching it that `ui-client` implies a
-   public endpoint would put per-slot knowledge into the one layer that is currently slot-agnostic,
-   and `otlp-collector` sets the precedent for the alternative: its requirements live with the
-   capability (`PlatformCapabilities`), not in manifest shape rules. It would also re-litigate #203,
-   where declarations stopped gating lifecycle. A `ui-client` with no public endpoint is not a
-   validation error but a resolution input: it never resolves to an origin, so it is never primary
-   and never in the CORS set — the same null-shaped answer Core already handles. If install-time
-   feedback proves worth it, the right surface is an install-review warning, not a rejected
-   manifest.
+No CORS expansion is part of this feature. Two UIs coexist through the same app-bound API contract.
+Test both equally; being primary, first-party, system or `ui-client` conveys no additional authority.
+Core confirmation and authentication pages retain their own origins and existing restrictions.
 
-7. **Domain-specific UIs stay out of this mechanism entirely.** A telemetry-only UI, an alternative
-   metrics dashboard, or any single-domain frontend is a plain app with a `ui` service — it does
-   not claim `ui-client`, does not participate in primary resolution, and needs nothing from this
-   design. A full third-party *telemetry replacement* is likewise the other axis: a `provides`
-   slot (`otlp-collector`), not a UI concern. The role split — "renders the whole host" vs.
-   "renders one domain" vs. "provides a capability" — is what keeps this design one setting instead
-   of a routing table.
+## Bootstrap And Upgrade Proposal
 
-## Surfaces
-
-- **Core settings** (`core-settings` store + `GET/PUT /api/core/settings`): the `primaryUiAppId`
-  field. Null/blank clears the override back to automatic resolution, matching the existing
-  clear-to-default convention of the settings endpoint.
-- **Shell Core-settings section**: a "Primary UI" dropdown listing installed `ui-client` apps,
-  visible only when more than one is installed (with one shell there is nothing to choose).
-- **`core/status`**: keeps surfacing the resolved UI origin (now "primary UI origin"), plus the
-  resolved primary app id so operators can see *why* browsers land where they land.
-- **Uninstall dialog**: the last-ui-client warning from Decision 5.
-
-## Migration
-
-- Shell's manifest adds `"provides": ["ui-client"]`; it reaches installed hosts through the normal
-  reviewed update flow (boot never advances manifest content by design).
-- Until that update lands, the resolver keeps a legacy shim: an installed `hosty.shell` counts as a
-  `ui-client` even without the slot. The shim is removed once the Shell release with the slot has
-  shipped.
-- No settings migration: absent `primaryUiAppId` plus a sole installed shell resolves identically
-  to today's behavior. Wire compatibility of `core/status` is preserved (field addition only).
+- Release Shell with the reviewed `ui-client` declaration through its ordinary update flow. Fresh
+  setup can explicitly seed the UI it successfully installs when no previous UI policy exists;
+  record this source of the choice. Later installs do not overwrite it.
+- On upgrading Core, preserve an existing `hosty.shell` as an explicit default only if no UI policy
+  was previously saved. Bind to that installation and record a one-time migration version. If Shell
+  is absent, do not reinstall it or invent a preference; use automatic/no-UI behavior.
+- For an existing Shell predating the role declaration, keep a narrow compatibility marker bound
+  to that pre-upgrade installation. It preserves the existing navigation behavior and grants no new
+  permission. A later app reusing the same ID does not receive the exception.
+- Replace that installation's marker when it accepts the reviewed role-bearing manifest; removal
+  invalidates the marker. Merely publishing a new Shell version is not a reason to remove support
+  for installed older versions. Keep the compatibility path tested throughout this feature's release.
+- Prepare/record migration atomically with the shared store revision. Retrying after a crash must
+  neither overwrite operator choices nor enroll a new installation as the old legacy Shell.
 
 ## Deliverables
 
-- [ ] D1. Core: a `ui-client` `provides` slot, UI resolution by role instead of app id, and primary-UI
-      resolution as pure state (setting, else the sole installed UI client, else the earliest
-      installed), with the legacy shim that counts an installed `hosty.shell` as a UI client.
-- [ ] D2. CORS admits every installed UI client, not only the primary.
-- [ ] D3. `primaryUiAppId` in Core settings, and the resolved primary app id and origin in
-      `core/status`.
-- [ ] D4. Shell: the Primary UI selector when more than one UI client is installed, and the
-      last-UI-client warning in the uninstall dialog; uninstalling the last shell stays allowed.
-- [ ] D5. Shell's manifest declares `"provides": ["ui-client"]`; the legacy shim is removed once that
-      release has shipped.
+- [ ] D1. Implement reviewed `ui-client` roles, eligibility and the shared-store UI resolution adapter, specifying shared SDK panel-host conformance while separating selection from readiness and preserving explicit targets.
+- [ ] D3. Integrate Core navigation, bound continuations, UI recovery through shared control/CLI and status; remove app-ID-based selection and audit every old resolver consumer.
+- [ ] D4. Add the UI row to the shared settings page, the Core recovery/choice page and selected/last-UI removal warnings while preserving assignments and allowed headless operation.
+- [ ] D5. Release Shell's role declaration and implement/test one-time default migration, bootstrap seeding and installation-bound compatibility for older installed Shell versions.
+- [ ] D6. Complete cross-client navigation and panel-host conformance, migration and failure verification, update current feature documentation, remove this plan when complete and regenerate the index.
+- [ ] D7. Verify all UI clients use the existing app-bound authorization contract; do not restore primary-session browser CORS or derive permissions from the UI role.
 
-## Not In Scope
+D2 is retired: its original task was to expand the removed Shell-specific CORS policy. D7 verifies
+the replacement authorization boundary without treating that obsolete implementation as unfinished work.
 
-- **Marketplace listing of the official Shell.** Depends only on publishing the feed entry; no code
-  in this design blocks or requires it.
-- **Per-shell start priority.** `PlatformCapabilities` could give `ui-client` a start-priority so
-  shells come up early in the fleet; not needed for correctness.
-- **Notification links.** The notifications design will mint URLs against the primary UI via the
-  same resolver; nothing extra to decide here.
-- **Capability-slot conflict UX.** What Marketplace shows when installing a second app for a
-  single-instance slot is a [core-extension-model](../core-extension-model/plan.md) question;
-  `ui-client` is multi-instance and does not hit it.
+- [ ] D8. Finish the app inventory and lifecycle presentation inherited from Core Extension Model D1: show distribution provenance and confirmed role/state badges from Core facts for all installed apps, and derive stop/restart/uninstall consequences from confirmed provider roles and dependents. Preserve shared lifecycle actions and live navigation; do not infer ownership from the manifest system flag. The read-only permissions inventory is owned by [app permission management](../app-permission-management/feature.md).
+
+## Decisions Awaiting Approval And Delivery
+
+Approve this proposal independently of Default applications and the SDK panel system. Recommended
+delivery is the complete SDK panel feature, then shared defaults, then this complete UI-client
+feature as one PR. The shared store/settings and panel protocol are dependencies; their selection,
+renderer and Plans integration deliverables are not duplicated here. The principal changes from
+the old draft are confirmed roles, no CORS expansion, no earliest-installed fallback, retained
+failed selections with Core recovery, current workspace
+routes and compatibility tied to installed upgrades rather than publication dates.
+
+Marketplace listing, per-role autostart priorities, personal UI defaults, generic URL templates and
+new notification-link features are outside this feature. Existing callers must still be migrated;
+these exclusions do not excuse broken current deep links.
+
+## Verification
+
+- Two independently installed UI clients work directly; changing the primary affects only unbound
+  navigation. Automatic selection covers zero/one/multiple clients, including stopped candidates.
+- Use an alternative-client conformance fixture: Plans opens its exact finalized discussion in the
+  current host beside the document, and tools also work on that host's own page. A primary-UI change
+  leaves it in place. Standalone Plans has one local SDK host and needs no `ui-client` role. Test
+  explicit unsupported-host recovery without requiring the alternative UI to use React.
+- Ordinary users cannot enter an unassigned default; Core offers only accessible alternatives.
+  Role declarations without confirmation, missing/ambiguous endpoints and lost grants are rejected.
+- Stop, update, uninstall and reinstall the selected UI. Verify readiness messages, no silent
+  substitution, retained preferences, last-UI removal and CLI recovery without any running UI.
+- Login, setup, recovery, invitation, OAuth consent, app sign-in, CLI shell-mode open and existing
+  MCP directory links work with either UI. Change the default during login and replay/expire a
+  continuation; it remains bound and checks the current installation and actor.
+- Cross-origin requests do not acquire primary Core-session access from the role. Both UIs obey
+  independent grants, assignments and normal app-owned identity/renewal through Core-managed runs.
+- Upgrade Core before Shell, Shell before Core, and resume an interrupted migration; preserve
+  existing choices and deliberate uninstalls. Existing Shell without a role keeps working only
+  through its recorded installation-bound compatibility path.
+- Run Core/CLI tests/builds, Shell tests/build/lint, affected identity/navigation integration tests,
+  version checks and documentation checks. This draft is documentation-only and requires no bump;
+  implementation versions the affected platform and Shell artifacts per repository policy.

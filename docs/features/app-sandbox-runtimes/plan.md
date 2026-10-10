@@ -1,7 +1,7 @@
 ---
 status: On Hold
 created: 2026-09-25
-updated: 2026-10-09
+updated: 2026-10-10
 summary: Isolated runtime instances for testing session worktrees with synthetic data and scoped browser automation.
 components: [apps/core]
 ---
@@ -47,6 +47,13 @@ versus temporary runtime replacement remains a decision of this Draft, not works
 
 ## Goal And Scope
 
+Owner clarification, 2026-10-10: workspace and Sandbox features replace AI Agent Bridge D12 as a
+separate workstream. This plan's D1–D8 cover revision-bound execution, disposable data and validation
+evidence for both interactive sessions and later automated callers. Registered source/worktree and
+publication operations stay with their existing owners; development-session integration consumes
+the results. Passing validation never authorizes publication or merge. This ownership clarification
+does not change the On Hold status or claim that a source-job runner exists.
+
 Assess and design disposable app environments for development and agent testing without using
 production data. An operator or assistant can launch a recorded source revision or session worktree,
 create synthetic data, exercise the real UI and retain evidence. Later, bounded exploratory agents
@@ -56,11 +63,13 @@ This is a feasibility proposal, not an approved implementation plan or an existi
 This feature owns sandbox runtime instances, test data and deterministic browser execution.
 [Assistant development sessions](../assistant-development-sessions/plan.md) owns the integration
 journey; its child plans own workspaces, feedback intake, timeline and publication.
-[AI agent bridge](../ai-agent-bridge/plan.md)
-owns non-interactive source jobs that may consume these environments. Existing
+[AI agent bridge D11](../ai-agent-bridge/plan.md#step-11--durable-jobs-and-notifications)
+owns the general durable job/delegation layer for later automated callers; it consumes these
+environments without duplicating workspace or validation mechanisms. Existing
 [development controls](../app-development-controls/plan.md) continue to own installed-app lifecycle.
-[Assistant approval rules](../assistant-approval-rules/plan.md) owns agent tool authority; this feature
-must close the additional boundary created when an agent's changed app code executes.
+[Assistant approval rules](../assistant-approval-rules/plan.md) owns permission choices, while
+[session containment](../assistant-runtime-containment/plan.md) owns the agent execution boundary.
+This feature owns the additional boundary created when an agent's changed app code executes.
 
 ## Feasibility Against The Current Implementation
 

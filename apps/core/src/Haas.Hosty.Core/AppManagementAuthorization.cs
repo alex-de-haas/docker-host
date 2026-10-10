@@ -103,7 +103,7 @@ internal static class AppManagementAuthorization
             foreach (var route in routes) result.Add(route, [permission]);
         }
         Add(CoreAppPermissions.ReadApps,
-            "GET /api/apps", "GET /api/apps/{appId}/health", "GET /api/apps/{appId}/update-status",
+            "GET /api/apps", "GET /api/apps/permissions", "GET /api/apps/{appId}/health", "GET /api/apps/{appId}/update-status",
             "GET /api/apps/{appId}/assets/{**assetPath}", "GET /api/apps/{id}/permissions");
         Add(CoreAppPermissions.AppLogs, "GET /api/apps/{appId}/logs");
         Add(CoreAppPermissions.Notifications, "GET /api/notifications", "POST /api/notifications/read");

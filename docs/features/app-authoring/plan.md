@@ -219,7 +219,7 @@ being a Hosty app. The disposable preview server does not constrain the generate
 | --- | --- | --- |
 | 0 | Current assistant + existing lifecycle, recipe below | Demonstrate a local prototype without waiting for new MCP tools |
 | 1a | [Assistant app context](../assistant-app-context/feature.md) | Associate any apps in chat; open a fresh session from an app menu |
-| 1a prerequisite for autonomous development | [Assistant approval rules](../assistant-approval-rules/plan.md) | Verified source-write and command grants for one or more contextual apps, existing or new |
+| Bounded development permissions | [Assistant approval rules](../assistant-approval-rules/plan.md), consuming [session containment](../assistant-runtime-containment/plan.md) | Explicit source-write and command grants for contextual apps; the execution backend owns enforcement |
 | 1b | [App prototype workspaces](../app-prototype-workspaces/plan.md) | Create → open → edit using existing source/dev mode, loss warnings and assisted Git save/push |
 | 2 | [App development controls](../app-development-controls/plan.md) | Reliably edit an existing app and enter/leave development through typed controls |
 | 3 | Integration deliverables in this umbrella | A generated app uses an installed app through its real contract |
@@ -227,8 +227,9 @@ being a Hosty app. The disposable preview server does not constrain the generate
 | 4 | [App publication](../app-publication/plan.md) | Hosted repository creation where needed, release/feed and catalog PR |
 
 Order 2 can precede 1b if editing existing apps becomes the priority; typed MCP mutations are not a
-prerequisite for the manual diagnostic below. The autonomous authoring loop requires verified
-development permissions and app-scoped lifecycle execution from assistant approval rules.
+prerequisite for the manual diagnostic below. Shipped administrator Autonomous mode remains available.
+An isolated authoring loop consumes verified Containment capabilities, Approval Rules' grant choices
+and App Development Controls' app-scoped lifecycle authority; none is inferred from the autonomy toggle.
 
 ### What can be tried with today's assistant
 
@@ -254,10 +255,12 @@ a discard, save or publish operation. Pinned starts refuse dirty checkouts.
 - [Vision decision 2](../../vision.md) already endorses interactive dev-mode editing on the executing
   installation. It does not provide an isolated copy of app data. Git owns source history; Core data
   backups do not protect source edits. Loss warnings and Git save/push belong to the first slice.
-- [AI Agent Bridge step 12](../ai-agent-bridge/plan.md#step-12--development-agent-bridge) remains the
-  isolated, non-interactive branch/PR workflow. Its Git and disposable-validation prerequisites do
-  not apply to a local interactive prototype, and its Core-owned bridge proposal does not move model
-  execution into Core.
+- Owner clarification, 2026-10-10: [workspaces](../assistant-session-workspaces/feature.md),
+  [PR lifecycle](../assistant-pr-lifecycle/feature.md) and [Sandbox](../app-sandbox-runtimes/plan.md)
+  replace the separate AI Agent Bridge D12 workflow. General scheduled source jobs remain within
+  [Bridge D11](../ai-agent-bridge/plan.md#step-11--durable-jobs-and-notifications). Their Git and
+  disposable-validation prerequisites do not gate a local interactive prototype; Core owns source
+  and runtime operations, not model execution.
 - [Assistant entry points](../assistant-entry-points/plan.md) owns generic panel and context handoff.
   Reuse it. Third-party app messages still only fill a draft; an operator pressing Create with their
   own prompt is a separate explicit submission. Do not turn `ask-assistant` into auto-send.
@@ -265,17 +268,19 @@ a discard, save or publish operation. Pinned starts refuse dirty checkouts.
   and the picker/new-session entry points. An association is conversational context, independent
   of provider grants and the registered repository workspaces selected for development.
 - [Assistant approval rules](../assistant-approval-rules/plan.md) owns reusable approval policy.
-  Per vision decision 6, it also owns general source bindings and explicit session grants for source
-  writes/project commands across selected apps, plus scoped lifecycle authority. Authoring requires
-  this verified boundary; every-write approval is not an acceptable normal development experience.
-  This explicitly weakens the old every-write-asks posture inside the granted boundary. Core-started
-  localCommand code remains the administrator's responsibility and is not isolated by the agent sandbox.
+  Per vision decisions 6 and 32, it owns explicit session grant choices for source writes/project
+  commands across selected apps. [Containment](../assistant-runtime-containment/plan.md) owns the
+  execution boundary, [execution authorization](../assistant-execution-authorization/plan.md) owns
+  Core execution credentials, and development controls owns app/action lifecycle authority.
+  Routine authorized work does not require a card for every write. Core-started localCommand code
+  remains the administrator's responsibility and is not isolated by the agent container.
 - [Core MCP](../core-mcp/feature.md) provides bounded audit search and planned updates. Development controls must
   record their own actions using that audit contract without duplicating the existing machinery.
 - [Cross-app dependencies](../cross-app-dependencies/plan.md) owns network reachability changes.
   A dependency URL is not an authorization grant; assistant access to a provider does not grant a
   generated app the same access. Unsupported identity paths remain explicit product constraints.
-- [Core extension model](../core-extension-model/plan.md) owns new contribution points. A template
+- [Core extension boundaries](../core-extension-model/feature.md) describe the current seams; new
+  contracts belong to their owning feature plans. A template
   marketplace, scale-to-zero runtime and general development environment are not prerequisites.
 
 ## Deliverables

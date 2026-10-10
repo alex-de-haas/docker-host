@@ -1,6 +1,6 @@
 ---
 created: 2026-05-19
-updated: 2026-10-07
+updated: 2026-10-10
 summary: Shell is the Core-managed browser UI app that authenticates users and embeds app pages.
 components: [apps/shell]
 ---
@@ -186,7 +186,7 @@ These are two different things, and only one of them is the app's to declare.
 
 **The manifest `capabilities` list describes optional app *features*** a client may surface, and its canonical vocabulary is therefore only `backup` and `logs` — things that genuinely depend on the app (does it have data worth snapshotting?). Core normalizes a declared list to that vocabulary, dropping the retired lifecycle tokens (`update`, `stop`, `restart`, `remove`) and the two that no client ever read: `open` is derived from the app's endpoints, and `restore` lives inside the backup panel. A manifest that declares nothing gets the full default set.
 
-This list is a client hint, never a grant. The separate manifest `provides` field is the axis on which an app declares a role to Core (see [Runtime App Manifest](../runtime-app-manifest/feature.md) and [Core Extension Model](../core-extension-model/plan.md)); self-description is load-bearing there and is guarded by explicit operator consent instead.
+This list is a client hint, never a grant. The separate manifest `provides` field is the axis on which an app declares a role to Core (see [Runtime App Manifest](../runtime-app-manifest/feature.md) and [Core Extension Model](../core-extension-model/feature.md)); self-description is load-bearing there and is guarded by explicit operator consent instead.
 
 System Apps are inspectable and configurable in Shell. Administrators can open their ordinary settings dialog, switch runtime profiles, and apply reviewed updates — system apps update through the exact same plan/apply flow as every other runtime app. Logs remain available when the `logs` capability is present. Shell hides start, stop, restart, backup, restore, autostart, and removal controls for all `system` apps. This lets Marketplace own its catalog URL as a manifest setting without adding Marketplace logic to Core. Core remains the source of truth for what operations are allowed.
 
@@ -237,7 +237,6 @@ Public exposure goes through [Cloudflare ingress](../cloudflare-ingress/feature.
 ## Links
 
 - [App UI surfaces](../app-ui-surfaces/feature.md) - where app pages, settings and panels are placed.
-- [System App Pages](../system-app-pages/plan.md) - originating proposal with navigation and access decisions still open.
 - [Marketplace System App](../runtime-app-marketplace/feature.md) - the first storefront using the generic system-app and install-intent paths.
 
 ## App Icons
@@ -279,6 +278,13 @@ Agents settings remain a fleet-wide administrative view. Embedded Harness can se
 `hosty:request-mcp-review` with a target ID; Shell validates the sending frame and origin and derives
 the assistant ID from that mounted frame. It opens Core's isolated review page and exposes a fallback
 link if a popup is blocked. Message-supplied assistant IDs and URLs are not trusted.
+
+## App permission overview
+
+The administrator Security settings include an App permissions tab. It presents Core's complete
+app permission and provider-role catalogue, descriptions and the apps holding each entry, with
+search and refresh. The [permission management feature](../app-permission-management/feature.md#host-wide-overview)
+describes the read-only projection, authorization and verification.
 
 ## Testing Expectations
 
