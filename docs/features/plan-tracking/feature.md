@@ -177,6 +177,10 @@ document; exceeding the bound produces an explicit error. Full listings also enf
 aggregate metadata budget while they are built. An oversized listing fails explicitly; a focused
 document listing can still be requested without constructing the full result.
 
+Reference extraction handles LF and CRLF documents identically on every Core host, including
+Windows. Only the temporary parsing text is normalized; document bytes and Git blob SHAs remain
+unchanged for tracked branches, workspace bases and working copies.
+
 Target fetches share an in-flight operation per repository and branch with workspace preparation,
 refresh and merge. Ordinary reads reuse a fetch for 30 seconds; explicit refresh joins an existing
 fetch or starts a fresh one. Transport has a 30-second deadline and a 128 MiB repository-growth
@@ -236,6 +240,9 @@ reading sources and presents an actionable refusal for this discussion contract.
   app-addressed assistant MCP and scoped credentials, mixed cookies, audience mismatch and revocation.
 - Repository and worktree tests cover deduplication, default branches, independent fetch freshness,
   shared in-flight fetches, stale commits/SHAs, path and size guards, symlinks and UTF-8 bytes.
+  LF/CRLF reference tests cover full and focused listings for target, base and worktree versions,
+  including existing directories, missing components, regular-file components and unchanged bytes/SHAs;
+  the Windows CI lane also runs these cases.
 - Workspace tests cover integrated target changes, merge/squash/cherry-pick equality, concurrent
   target edits, new/deleted documents, private fallback, clearing/rebinding/revocation, interrupted
   cleanup, private workspace reads during provider downtime and removed/reinstalled assistant origins.

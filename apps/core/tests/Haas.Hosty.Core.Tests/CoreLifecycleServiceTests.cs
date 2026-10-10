@@ -7142,9 +7142,12 @@ public sealed partial class CoreLifecycleServiceTests
             IHealthProbe? healthProbe = null,
             TimeSpan? readinessTimeout = null,
             IAppRuntimeAdapter? localRuntimeAdapter = null,
-            IHostApplicationLifetime? hostLifetime = null)
+            IHostApplicationLifetime? hostLifetime = null,
+            bool shortPaths = false)
         {
-            var root = Path.Combine(Path.GetTempPath(), $"hosty-core-lifecycle-tests-{Guid.NewGuid():N}");
+            // Git for Windows also bounds linked-worktree metadata paths; keep deep fixtures short.
+            var root = shortPaths ? Directory.CreateTempSubdirectory("hp-").FullName
+                : Path.Combine(Path.GetTempPath(), $"hosty-core-lifecycle-tests-{Guid.NewGuid():N}");
             Directory.CreateDirectory(root);
             await File.WriteAllTextAsync(Path.Combine(root, ".keep"), "test");
             var paths = new CoreDataPaths(
