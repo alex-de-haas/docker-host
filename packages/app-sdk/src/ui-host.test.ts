@@ -42,6 +42,37 @@ function frame() {
 }
 
 describe("panel host authority and replay", () => {
+  it("returns immediate busy refusals to the exact embedded sender", async () => {
+    await start(); const f = frame();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    fetcher.mockImplementation(async (path: string) => {
+      if (path.endsWith("resolve")) { await gate; return Response.json(resolved); }
+      return Response.json(metadata);
+    });
+    const ids = Array.from({ length: 5 }, () => createPresentationRequestId());
+    for (const requestId of ids) f.send({ ...f.offer, type: "hosty:ui:open", requestId, target, placement: "side" });
+    await vi.waitFor(() => expect(f.post.mock.calls.map(([msg]) => msg.result)).toContainEqual({
+      status: "blocked", requestId: ids[4], code: "presentation_busy",
+    }));
+    release();
+    await vi.waitFor(() => expect(f.post.mock.calls.filter(([msg]) => msg.result?.status === "opened")).toHaveLength(4));
+  });
+  it.each(["request_conflict", "invalid_presentation"])("returns immediate %s without losing the original embedded operation", async code => {
+    await start(); const f = frame(), requestId = createPresentationRequestId();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    fetcher.mockImplementation(async (path: string) => {
+      if (path.endsWith("resolve")) { await gate; return Response.json(resolved); }
+      return Response.json(metadata);
+    });
+    f.send({ ...f.offer, type: "hosty:ui:open", requestId, target, placement: "side" });
+    f.send({ ...f.offer, type: "hosty:ui:open", requestId,
+      target: code === "request_conflict" ? { ...target, route: "/assistant?session=other" } : null, placement: "side" });
+    await vi.waitFor(() => expect(f.post.mock.calls.map(([msg]) => msg.result)).toContainEqual({ status: "rejected", requestId, code }));
+    release();
+    await vi.waitFor(() => expect(f.post.mock.calls.filter(([msg]) => msg.result?.status === "opened")).toHaveLength(1));
+  });
   it("keeps identical finalized targets mounted and rechecks authority for a replay", async () => {
     const h = await start(), requestId = createPresentationRequestId();
     expect(await h.openSurface(target, { placement: "side", requestId })).toMatchObject({ status: "opened", readiness: "loading" });
@@ -163,6 +194,43 @@ describe("embedded panel discovery", () => {
     f.send({ ...f.offer, type: "hosty:ui:connected", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: "host", installationId: "host-1" });
     return f;
   }
+  it("rejects conflicting request identities before asynchronous verification completes", async () => {
+    const f = await connect(), requestId = createPresentationRequestId();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    fetcher.mockImplementation(async () => { await gate; return Response.json(metadata); });
+    const first = child!.openSurface(target, { placement: "side", requestId });
+    expect(await child!.openSurface({ ...target, route: "/assistant?session=other" }, { placement: "side", requestId }))
+      .toEqual({ status: "rejected", requestId, code: "request_conflict" });
+    expect(f.parent.postMessage.mock.calls.filter(([msg]) => msg.type === "hosty:ui:open")).toHaveLength(0);
+    release();
+    await vi.waitFor(() => expect(f.parent.postMessage.mock.calls.filter(([msg]) => msg.type === "hosty:ui:open")).toHaveLength(1));
+    f.send({ ...f.offer, type: "hosty:ui:result", requestId, result: { status: "opened", requestId, target, readiness: "loading" } });
+    expect(await first).toMatchObject({ status: "opened", target });
+  });
+  it("coalesces identical openings and status while preserving independent aborted waits", async () => {
+    const f = await connect(), requestId = createPresentationRequestId(), abort = new AbortController();
+    const first = child!.openSurface(target, { placement: "side", requestId, signal: abort.signal });
+    const second = child!.openSurface({ ...target }, { placement: "side", requestId });
+    const status = child!.getPresentation(requestId);
+    await vi.waitFor(() => expect(f.parent.postMessage.mock.calls.filter(([msg]) => msg.type === "hosty:ui:open")).toHaveLength(1));
+    abort.abort(); expect(await first).toMatchObject({ status: "uncertain" });
+    f.send({ ...f.offer, type: "hosty:ui:result", requestId, result: { status: "opened", requestId, target, readiness: "ready" } });
+    expect(await second).toMatchObject({ status: "opened", readiness: "ready" });
+    expect(await status).toMatchObject({ status: "opened", readiness: "ready" });
+    expect(f.parent.postMessage.mock.calls.filter(([msg]) => msg.type === "hosty:ui:status")).toHaveLength(0);
+  });
+  it("does not satisfy a later opening with an earlier status query's unknown result", async () => {
+    const f = await connect(), requestId = createPresentationRequestId();
+    const status = child!.getPresentation(requestId);
+    const opening = child!.openSurface(target, { placement: "side", requestId });
+    await vi.waitFor(() => expect(f.parent.postMessage.mock.calls.at(-1)![0].type).toBe("hosty:ui:status"));
+    f.send({ ...f.offer, type: "hosty:ui:result", requestId, result: { status: "unknown", requestId, code: "presentation_unknown" } });
+    expect(await status).toMatchObject({ status: "unknown" });
+    await vi.waitFor(() => expect(f.parent.postMessage.mock.calls.at(-1)![0].type).toBe("hosty:ui:open"));
+    f.send({ ...f.offer, type: "hosty:ui:result", requestId, result: { status: "opened", requestId, target, readiness: "ready" } });
+    expect(await opening).toMatchObject({ status: "opened" });
+  });
   it("discovers without identity, verifies the observed parent and uses exact-origin messages", async () => {
     const f = await connect();
     expect(Object.keys(f.probe).sort()).toEqual(["childNonce", "type", "version", "versions"]);

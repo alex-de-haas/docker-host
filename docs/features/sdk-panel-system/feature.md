@@ -91,6 +91,10 @@ window-local ledger scoped to source document and serializes operations per tool
 revalidates authority and reuses the frame; conflicting payloads fail. Status rechecks the target.
 An aborted/timed-out wait is uncertain, not cancellation; retry/status uses the same ID. Message
 size and concurrent-request limits bound work. Core restart requires no browser-lease restoration.
+Immediate validation, conflict and concurrency refusals reach the embedded caller through the same
+response path as successful placement. The child reserves a request ID and target before asynchronous
+verification, coalesces identical in-flight calls and rejects conflicting targets locally. Status
+queries share an existing opening; a later opening waits for an earlier status query to finish.
 
 ## SDK Integration
 
@@ -176,6 +180,8 @@ feature does not confer that deferred designation. Current CSP refusal has expli
 - SDK tests cover exact peers/generations, same-account negotiation, delayed verification, route
   readiness, replay/conflicts, uncertain waits, metadata/policy changes, fixed server adapters,
   host ownership, Overlay gating and retained React frames across layout changes.
+  Concurrent-request tests exercise immediate embedded refusals, payload conflicts during
+  verification, identical replay, independent aborts and status/open ordering.
 - Plans/Harness/Shell tests preserve source hashes, complete attachments, provider freezing,
   idempotent handoff recovery, review routing and existing assistant entry points.
 - Delayed-catalog tests cover restoring Shell's open preference, preserving an existing selection

@@ -2,12 +2,15 @@ import { createPresentationRequestId, type UiClient } from "./ui";
 import { UiError, type PanelTarget, type PresentationOptions, type PresentationResult, type UiBootstrap, type UiEnvironment, type UiEvent } from "./ui-types";
 import { DISCOVERY_TIMEOUT, failure, readUiMessage, uiRequest, validId, validTarget, waitForPresentation, type UiMessage } from "./ui-transport";
 
+type PendingRequest = { input: string | null; operation: Promise<PresentationResult>;
+  resolve: (result: PresentationResult) => void; waiters: number };
+
 /** Direct-child transport. Discovery carries no identity and never creates a fallback host. */
 export class EmbeddedUiClient implements UiClient {
   private environment: UiEnvironment = { mode: "embedded", connection: "connecting" };
   private readonly nonce = createPresentationRequestId();
   private readonly listeners = new Set<(event: UiEvent) => void>();
-  private readonly pending = new Map<string, Set<(result: PresentationResult) => void>>();
+  private readonly pending = new Map<string, PendingRequest>();
   private channel: { origin: string; hostWindowId: string; generation: string; own: UiBootstrap } | null = null;
   private verifying: string | null = null;
   private disposed = false;
@@ -123,7 +126,7 @@ export class EmbeddedUiClient implements UiClient {
     if (this.environment.connection !== "connected") return;
     if (msg.type === "hosty:ui:result" && validId(msg.requestId) && validResult(msg.result, msg.requestId)) {
       const result = msg.result;
-      for (const resolve of this.pending.get(msg.requestId) ?? []) resolve(result);
+      this.pending.get(msg.requestId)?.resolve(result);
       this.pending.delete(msg.requestId);
       this.emit({ type: "presentation", value: result });
     }
@@ -131,14 +134,38 @@ export class EmbeddedUiClient implements UiClient {
   private async request(requestId: string, message: Record<string, unknown>, signal?: AbortSignal): Promise<PresentationResult> {
     if (!validId(requestId)) return { status: "rejected", requestId, code: "invalid_presentation" };
     if (signal?.aborted) return { status: "uncertain", requestId, code: "presentation_unknown" };
-    if (!await this.recheck()) return { status: this.environment.connection === "blocked" ? "blocked" : "unsupported", requestId, code: this.environment.code ?? "host_unavailable" };
-    if (this.pending.size >= 4 && !this.pending.has(requestId)) return { status: "blocked", requestId, code: "presentation_busy" };
+    const target = message.target as PanelTarget | undefined;
+    const input = target ? JSON.stringify([target.panel.appId, target.panel.installationId, target.panel.panelId, target.route ?? null]) : null;
+    const existing = this.pending.get(requestId);
+    if (existing) {
+      if (input !== null && existing.input !== null && input !== existing.input)
+        return { status: "rejected", requestId, code: "request_conflict" };
+      // A status response cannot satisfy an opening dispatched later. Finish that query first;
+      // status queried during an opening can simply share the in-flight operation's result.
+      if (input !== null && existing.input === null) {
+        await this.wait(requestId, existing, signal);
+        return this.request(requestId, message, signal);
+      }
+      return this.wait(requestId, existing, signal);
+    }
+    if (this.pending.size >= 4) return { status: "blocked", requestId, code: "presentation_busy" };
     let settle!: (result: PresentationResult) => void;
     const operation = new Promise<PresentationResult>(resolve => { settle = resolve; });
-    const listeners = this.pending.get(requestId) ?? new Set(); listeners.add(settle); this.pending.set(requestId, listeners);
-    this.post({ ...message, requestId });
-    return waitForPresentation(operation, requestId, signal).finally(() => {
-      listeners.delete(settle); if (!listeners.size) this.pending.delete(requestId);
+    const entry: PendingRequest = { input, operation, resolve: settle, waiters: 0 };
+    // Reserve identity before asynchronous revalidation so racing callers cannot share
+    // different payloads or overwrite each other's completion/cleanup handlers.
+    this.pending.set(requestId, entry);
+    void this.recheck().then(verified => {
+      if (this.pending.get(requestId) !== entry) return;
+      if (!verified) settle({ status: this.environment.connection === "blocked" ? "blocked" : "unsupported", requestId, code: this.environment.code ?? "host_unavailable" });
+      else this.post({ ...message, requestId });
+    });
+    return this.wait(requestId, entry, signal);
+  }
+  private wait(requestId: string, entry: PendingRequest, signal?: AbortSignal): Promise<PresentationResult> {
+    entry.waiters++;
+    return waitForPresentation(entry.operation, requestId, signal).finally(() => {
+      if (--entry.waiters === 0 && this.pending.get(requestId) === entry) this.pending.delete(requestId);
     });
   }
   openSurface = (target: PanelTarget, options: PresentationOptions) => validTarget(target) && options.placement === "side"
@@ -152,7 +179,7 @@ export class EmbeddedUiClient implements UiClient {
   dispose = () => {
     this.disposed = true; clearTimeout(this.deadline); this.retries.forEach(clearTimeout);
     window.removeEventListener("message", this.onMessage); window.removeEventListener("focus", this.onFocus); window.removeEventListener("keydown", this.onKey);
-    for (const [id, listeners] of this.pending) for (const resolve of listeners) resolve(failure(id, new UiError("host_unavailable", "Host disconnected.")));
+    for (const [id, entry] of this.pending) entry.resolve(failure(id, new UiError("host_unavailable", "Host disconnected.")));
     this.pending.clear(); this.listeners.clear();
   };
 }

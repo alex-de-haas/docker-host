@@ -146,7 +146,6 @@ export class UiHost implements UiClient {
     void operation.then(result => {
       entry.pending = undefined; entry.result = result;
       if (this.toolQueues.get(toolKey) === operation) this.toolQueues.delete(toolKey);
-      if (frame?.live && currentSource()) this.post(frame, { type: "hosty:ui:result", requestId: id, result });
       if (!frame) this.emit({ type: "presentation", value: result });
       const keys = [...this.ledger.keys()].filter(k => k.startsWith(source + ":"));
       for (const oldKey of keys.slice(0, Math.max(0, keys.length - 256))) if (!this.ledger.get(oldKey)?.pending) this.ledger.delete(oldKey);
@@ -255,7 +254,9 @@ export class UiHost implements UiClient {
     if (!frame.connected) return;
     const source = `${frame.surface.appId}:${frame.generation}:${frame.nonce}`;
     if (msg.type === "hosty:ui:open" && validId(msg.requestId)) {
-      await this.open(msg.target as PanelTarget, { placement: msg.placement as "side", requestId: msg.requestId }, source, frame);
+      const result = await this.open(msg.target as PanelTarget, { placement: msg.placement as "side", requestId: msg.requestId }, source, frame);
+      if (source === `${frame.surface.appId}:${frame.generation}:${frame.nonce}`)
+        this.post(frame, { type: "hosty:ui:result", requestId: msg.requestId, result });
     } else if (msg.type === "hosty:ui:status" && validId(msg.requestId)) {
       const result = await this.status(msg.requestId, source, frame);
       if (source === `${frame.surface.appId}:${frame.generation}:${frame.nonce}`)
