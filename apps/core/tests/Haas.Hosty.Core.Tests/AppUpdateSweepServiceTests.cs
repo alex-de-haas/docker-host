@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
 using Haas.Hosty.Core;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Haas.Hosty.Core.Tests;
@@ -105,6 +107,53 @@ public sealed class AppUpdateSweepServiceTests
         Assert.Null(healthy.UpdateCheck!.Error);
 
         Assert.NotNull(fixture.Sweep.Status.LastCompletedAt);
+        Assert.Contains("Fleet update check finished: 2 apps checked, 1 failed.", fixture.Log.Messages);
+    }
+
+    [Fact]
+    public async Task RunAsync_UnpublishedImageCountsAsFailureAndRecoversAfterPublication()
+    {
+        using var fixture = CreateFixture();
+        fixture.Set(FeedsUrl, FeedDocument(MainManifestUrl));
+        fixture.Set(MainManifestUrl, Manifest("1.0.0"));
+        await fixture.InstallFromFeedAsync();
+        var healthyPath = Path.Combine(fixture.Root, "healthy.json");
+        await File.WriteAllTextAsync(healthyPath, Manifest("1.0.0", id: "com.example.healthy"));
+        await fixture.Lifecycle.InstallAsync(new AppInstallRequest(healthyPath));
+
+        fixture.Set(MainManifestUrl, Manifest("1.1.0"));
+        await fixture.Sweep.RunAsync(CancellationToken.None);
+        var previous = (await fixture.Lifecycle.ListAppsAsync()).Single(app => app.Id == "com.example.notes").UpdateCheck!;
+        fixture.Log.Messages.Clear();
+
+        // The manifest advances before its image is published. Plan creation returns an error
+        // verdict rather than throwing, and the last confirmed offer must survive that failure.
+        fixture.Set(MainManifestUrl, Manifest("1.2.0"));
+        fixture.Adapter.UnavailableTag = "1.2.0";
+        await fixture.Sweep.RunAsync(CancellationToken.None);
+
+        var summaries = await fixture.Lifecycle.ListAppsAsync();
+        var failed = summaries.Single(app => app.Id == "com.example.notes").UpdateCheck!;
+        Assert.Contains("app (ghcr.io/example/notes:1.2.0)", failed.Error);
+        Assert.Contains("may not be published yet", failed.Error);
+        Assert.Equal(previous.TargetVersion, failed.TargetVersion);
+        Assert.Equal(previous.LastSuccessfulCheckAt, failed.LastSuccessfulCheckAt);
+        Assert.Null(failed.PlanDigest);
+        Assert.Null(summaries.Single(app => app.Id == "com.example.healthy").UpdateCheck!.Error);
+        Assert.Contains("Fleet update check finished: 2 apps checked, 1 failed.", fixture.Log.Messages);
+        Assert.Contains(fixture.Log.Messages, message => message.Contains("Update check failed for app com.example.notes:", StringComparison.Ordinal)
+            && message.Contains("ghcr.io/example/notes:1.2.0", StringComparison.Ordinal));
+
+        fixture.Adapter.UnavailableTag = null;
+        fixture.Log.Messages.Clear();
+        await fixture.Sweep.RunAsync(CancellationToken.None);
+
+        var recovered = (await fixture.Lifecycle.ListAppsAsync()).Single(app => app.Id == "com.example.notes");
+        Assert.Equal("1.0.0", recovered.Version);
+        Assert.Null(recovered.UpdateCheck!.Error);
+        Assert.Equal("1.2.0", recovered.UpdateCheck.TargetVersion);
+        Assert.NotNull(recovered.UpdateCheck.PlanDigest);
+        Assert.Contains("Fleet update check finished: 2 apps checked, 0 failed.", fixture.Log.Messages);
     }
 
     [Fact]
@@ -127,6 +176,7 @@ public sealed class AppUpdateSweepServiceTests
         // An incomplete check offers no one-click apply; the operator reviews whatever it did find.
         Assert.Null(sourceless.UpdateCheck.PlanDigest);
         Assert.Equal("1.0.0", sourceless.UpdateCheck.TargetVersion);
+        Assert.Contains("Fleet update check finished: 1 apps checked, 1 failed.", fixture.Log.Messages);
 
         // Naming a source explicitly — what `hosty apps update-plan --manifest` does — is a complete
         // check again, and its finding replaces the error on the same summary.
@@ -385,7 +435,7 @@ public sealed class AppUpdateSweepServiceTests
                 manifests,
                 backups,
                 sources,
-                [new NoopDockerRuntimeAdapter()],
+                [Adapter],
                 new NoopIngressController(),
                 NullLogger<CoreLifecycleService>.Instance,
                 clock: clock,
@@ -394,7 +444,7 @@ public sealed class AppUpdateSweepServiceTests
             Sweep = new AppUpdateSweepService(
                 Lifecycle,
                 clock,
-                NullLogger<AppUpdateSweepService>.Instance,
+                Log,
                 events: Events,
                 appCheckTimeout: perAppCheckTimeout);
         }
@@ -403,6 +453,8 @@ public sealed class AppUpdateSweepServiceTests
         public AppRegistryStore Apps { get; }
         public CoreLifecycleService Lifecycle { get; }
         public AppUpdateSweepService Sweep { get; }
+        public NoopDockerRuntimeAdapter Adapter { get; } = new();
+        public CapturingLogger Log { get; } = new();
 
         public CoreEventHub Events { get; }
 
@@ -475,12 +527,22 @@ public sealed class AppUpdateSweepServiceTests
         public DateTimeOffset UtcNow => DateTimeOffset.UtcNow;
     }
 
+    private sealed class CapturingLogger : ILogger<AppUpdateSweepService>
+    {
+        public ConcurrentQueue<string> Messages { get; } = new();
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Messages.Enqueue(formatter(state, exception));
+    }
+
     private sealed class NoopDockerRuntimeAdapter : IAppRuntimeAdapter, IImageDigestResolver
     {
         public string Type => "docker";
+        public string? UnavailableTag { get; set; }
 
         public Task<string?> ResolveRemoteDigestAsync(RuntimeDockerImage image, CancellationToken cancellationToken = default)
-            => Task.FromResult<string?>("sha256:" + new string('a', 64));
+            => Task.FromResult(image.Tag == UnavailableTag ? null : "sha256:" + new string('a', 64));
 
         public Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
             => Task.FromResult(new AppRuntimeStartResult("running", []));

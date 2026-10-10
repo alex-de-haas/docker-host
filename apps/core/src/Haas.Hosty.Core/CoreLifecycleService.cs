@@ -1855,7 +1855,17 @@ internal sealed partial class CoreLifecycleService(
         if (verdict.Error is null && !sourceConfigured)
             verdict = verdict with { Error = MissingUpdateSourceError(appId) };
         if (verdict.Error is null && artifactProbes.Any(probe => string.IsNullOrEmpty(probe.CandidateDigest)))
-            verdict = verdict with { Error = "Could not resolve one or more image revisions. Check the registry connection and retry." };
+        {
+            var unresolvedImages = artifactProbes
+                .Where(probe => string.IsNullOrEmpty(probe.CandidateDigest))
+                .Select(probe => $"{probe.Service} ({selection.Services.First(service => service.Key == probe.Service).Image!.TagReference})");
+            verdict = verdict with
+            {
+                Error = $"Could not resolve Docker image revisions: {string.Join(", ", unresolvedImages)}. " +
+                    "An image tag may not be published yet, or registry access may have failed. " +
+                    "Retry after publication or check registry access. See Core logs for details.",
+            };
+        }
         // A failed older apply can leave the record at the new pin while the running app's checkout
         // is still old. Comparing two recorded pins alone would call that installation up to date.
         // Stopped apps materialize on Start; available updates keep their normal recovery path.
@@ -5489,7 +5499,7 @@ internal sealed partial class CoreLifecycleService(
     // even when the target digest resolves. Parses the entry this class itself emits (AddImageChange):
     // service keys cannot contain ':' and docker references cannot contain '>', so the format is
     // unambiguous. Anything that does not parse cleanly is review-class.
-    private static bool IsSameRepositoryImageChange(string change)
+    internal static bool IsSameRepositoryImageChange(string change)
     {
         const string prefix = "image:";
         if (!change.StartsWith(prefix, StringComparison.Ordinal))
@@ -5518,7 +5528,7 @@ internal sealed partial class CoreLifecycleService(
 
     // Repository part of a docker reference: strips an `@sha256:...` digest pin, then a trailing
     // `:tag` — a colon followed by a '/' belongs to a registry port, not a tag.
-    private static string ImageRepository(string reference)
+    internal static string ImageRepository(string reference)
     {
         var digestSeparator = reference.IndexOf('@');
         if (digestSeparator >= 0)

@@ -569,7 +569,7 @@ internal static class InstallationApprovalEndpoints
             ? $"{nameLine}<p class=muted>Requested by {E(entry.CallerName)}</p>{(notice is null ? "" : $"<p role=status>{E(notice)}</p>")}{review}<form method=post>{installChoices}{optionalReview}<div class=actions><input type=hidden name=nonce value=\"{E(nonce)}\"><button name=decision value=deny>Cancel</button><button class=primary name=decision value=approve{(unavailableRuntime ? " disabled" : "")}>{action}</button></div></form>"
             : $"<p role=status>{E(entry.Status switch { "succeeded" => "Completed. You can close this window.", "denied" => "Cancelled. Nothing was changed. You can close this window.", "failed" => entry.Error ?? "The operation failed.", "executing" => "Your request was accepted. Follow its progress in the app. You can close this window.", _ => "Finish preparing this request in the app first." })}</p>";
         if (closeWindow) body += $"<script>{CloseWindowScript}</script>";
-        return $"<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>{title} — Hosty Core</title><style>:root{{color-scheme:light dark;font-family:system-ui}}body{{margin:0;padding:24px;background:Canvas;color:CanvasText}}main{{max-width:560px;margin:0 auto}}h1{{font-size:1.5rem}}h2{{font-size:1rem}}li{{margin:8px 0}}.muted{{font-size:.9rem;opacity:.75}}dl{{display:grid;grid-template-columns:110px 1fr;gap:8px;font-size:.9rem}}dt{{opacity:.75}}dd{{margin:0;overflow-wrap:anywhere}}select{{font:inherit;padding:8px;max-width:100%}}button:disabled{{opacity:.5;cursor:default}}.source{{overflow-wrap:anywhere;font-size:.9rem;opacity:.75}}.warning{{padding:12px;border:1px solid #b7791f;border-radius:8px}}form{{margin-top:20px}}.actions{{display:flex;justify-content:flex-end;gap:12px;margin-top:24px}}fieldset{{border:1px solid GrayText;border-radius:8px}}button{{font:inherit;padding:10px 18px;border:1px solid GrayText;border-radius:8px;cursor:pointer}}.primary{{background:#2563eb;color:white;border-color:#2563eb}}button:focus-visible{{outline:3px solid #60a5fa;outline-offset:3px}}</style><main><p>HOSTY CORE</p><h1>{title}</h1>{body}</main></html>";
+        return $"<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>{title} — Hosty Core</title><style>:root{{color-scheme:light dark;font-family:system-ui}}body{{margin:0;padding:24px;background:Canvas;color:CanvasText}}main{{max-width:560px;margin:0 auto}}h1{{font-size:1.5rem}}h2{{font-size:1rem}}li{{margin:8px 0;overflow-wrap:anywhere}}.muted{{font-size:.9rem;opacity:.75}}dl{{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px;font-size:.9rem}}dt{{opacity:.75}}dd{{margin:0;overflow-wrap:anywhere}}select{{font:inherit;padding:8px;max-width:100%}}button:disabled{{opacity:.5;cursor:default}}.source{{overflow-wrap:anywhere;font-size:.9rem;opacity:.75}}.warning{{padding:12px;border:1px solid #b7791f;border-radius:8px}}form{{margin-top:20px}}.actions{{display:flex;justify-content:flex-end;gap:12px;margin-top:24px}}fieldset{{min-width:0;border:1px solid GrayText;border-radius:8px}}button{{font:inherit;padding:10px 18px;border:1px solid GrayText;border-radius:8px;cursor:pointer}}.primary{{background:#2563eb;color:white;border-color:#2563eb}}button:focus-visible{{outline:3px solid #60a5fa;outline-offset:3px}}</style><main><p>HOSTY CORE</p><h1>{title}</h1>{body}</main></html>";
     }
 
     private static string RenderInstallChoices(AppInstallPlan plan, bool autostart)
@@ -604,7 +604,11 @@ internal static class InstallationApprovalEndpoints
     private static string RenderUpdateMetadata(AppUpdatePlan plan)
     {
         static string E(string? value) => WebUtility.HtmlEncode(value ?? "");
-        var metadata = $"<dl><dt>Version</dt><dd>{E(plan.CurrentVersion)} → {E(plan.TargetVersion)}</dd><dt>Runtime</dt><dd>{E(plan.CurrentRuntime)} → {E(plan.TargetRuntime)}{(plan.TargetRuntimeType is null ? "" : " · " + E(plan.TargetRuntimeType))}</dd><dt>Backup</dt><dd>{(plan.WillCreatePreUpdateBackup ? "App data is backed up before updating" : "No app data backup is needed")}</dd></dl>";
+        var runtime = plan.CurrentRuntime == plan.TargetRuntime
+            ? E(plan.TargetRuntime) : $"{E(plan.CurrentRuntime)} → {E(plan.TargetRuntime)}";
+        if (plan.TargetRuntimeType is not null && plan.TargetRuntimeType != plan.TargetRuntime)
+            runtime += " · " + E(plan.TargetRuntimeType);
+        var metadata = $"<dl><dt>Version</dt><dd>{E(plan.CurrentVersion)} → {E(plan.TargetVersion)}</dd><dt>Runtime</dt><dd>{runtime}</dd><dt>Backup</dt><dd>{(plan.WillCreatePreUpdateBackup ? "App data is backed up before updating" : "No app data backup is needed")}</dd></dl>";
         if (plan.FeedsUrl is not null) metadata += $"<p class=source>Feed: {E(plan.FeedsUrl)}{(plan.FeedId is null ? "" : " · " + E(plan.FeedId))}</p>";
         if (!plan.SourceConfigured) metadata += "<p class=warning>No external update source is configured. This review uses the selected manifest.</p>";
         if (plan.Error is not null) metadata += $"<p class=warning>{E(plan.Error)}</p>";
@@ -619,8 +623,7 @@ internal static class InstallationApprovalEndpoints
             && !change.StartsWith("Core permission ", StringComparison.Ordinal)
             && !change.StartsWith("Optional permission ", StringComparison.Ordinal)
             && !change.StartsWith("Provider role ", StringComparison.Ordinal)
-            && change != "configuration:required").Select(change => change.StartsWith("source-access:", StringComparison.Ordinal)
-                ? "Private source access changed; review the listed connections" : DescribeMountChange(change)).ToArray();
+            && change != "configuration:required").Select(DescribeUpdateChange).OfType<string>().ToArray();
         if (other.Length > 0)
         {
             var list = "<ul>" + string.Join("", other.Select(change => $"<li>{E(change)}</li>")) + "</ul>";
@@ -629,6 +632,29 @@ internal static class InstallationApprovalEndpoints
         if (plan.ConfigurationReadiness is { Required: true } readiness) metadata += RenderConfigurationWarning(readiness, plan.AppId == "hosty.shell");
         if (plan.TargetRuntimeType is "localCommand" or "mixed") metadata += "<p class=warning>This update runs commands directly on your host, outside a container.</p>";
         return metadata;
+    }
+
+    private static string? DescribeUpdateChange(string change)
+    {
+        // Keep exact references and digests in the frozen plan; consent highlights source changes.
+        var parts = change.Split(':', 3);
+        if (parts.Length == 3 && parts[0] is "image" or "artifact" && parts[1].Length > 0)
+        {
+            var references = parts[2].Split("->", 2, StringSplitOptions.None);
+            if (references.Length == 2 && references.All(reference => !string.IsNullOrWhiteSpace(reference)))
+            {
+                if (parts[0] == "artifact")
+                    return references[1] == "unknown" ? $"Image for {parts[1]} could not be verified" : null;
+                if (CoreLifecycleService.IsSameRepositoryImageChange(change)) return null;
+                var current = CoreLifecycleService.ImageRepository(references[0]);
+                var target = CoreLifecycleService.ImageRepository(references[1]);
+                return references[0] == "none" ? $"Image source for {parts[1]} added: {target}"
+                    : references[1] == "none" ? $"Image source for {parts[1]} removed: {current}"
+                    : $"Image source for {parts[1]} changed: {current} → {target}";
+            }
+        }
+        return change.StartsWith("source-access:", StringComparison.Ordinal)
+            ? "Private source access changed; review the listed connections" : DescribeMountChange(change);
     }
 
     private static string DescribeMountChange(string change)
