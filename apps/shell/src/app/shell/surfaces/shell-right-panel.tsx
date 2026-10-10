@@ -264,6 +264,7 @@ function RightPanelBody({
   return (
     <EmbeddedAppFrame
       src={src}
+      standaloneHref={activeTab.embeddedUrl}
       title={activeTab.label}
       appId={activeTab.appId}
       grantedCorePermissions={activeTab.grantedCorePermissions}

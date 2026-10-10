@@ -125,7 +125,9 @@ The shared `HostyAppFrame` applies sandbox and clipboard/microphone policy, them
 attention, app-owned authentication and permission/MCP review. Reviews use the registered app
 identity and canonical Core URL, ignoring child-supplied identity/URLs; a visible link remains when
 popups are blocked. No delegated-token responder is installed. HTTPS hosts refuse HTTP frames with
-explicit recovery. Actual CSP remains authoritative.
+explicit recovery. Shell forwards its existing standalone workspace URL and the declared settings
+or legacy panel URL to that recovery link; the embedded launch URL is not reused. Actual CSP remains
+authoritative.
 
 ## Layout And Lifetime
 
@@ -218,7 +220,8 @@ feature does not confer that deferred designation. Current CSP refusal has expli
   Shortcut tests verify that a non-assistant first catalog entry is never selected, including delayed
   metadata, and that toggling the selected assistant closed creates no new placement. Shell chrome
   tests cover delayed/refused links, cookie/legacy preference migration and the first toggle in both
-  directions against the actual SDK workspace.
+  directions against the actual SDK workspace. HTTPS Shell frame tests preserve explicit standalone
+  recovery for HTTP workspace, settings and legacy panel surfaces while continuing to embed HTTPS.
 - Shell intent tests cover legacy/malformed storage, reinstallation recovery by explicit retry,
   actor isolation and stale completion after an intent is replaced.
 - Browser acceptance uses Core-managed apps and normal password login in an isolated data root.

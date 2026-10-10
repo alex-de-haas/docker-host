@@ -8,6 +8,7 @@ import type { DelegatedTokenGrant } from "../workspace/delegated-token-intent";
 /** Shell supplies Core-projected identity; all frame coordination belongs to the SDK. */
 export function EmbeddedAppFrame(props: {
   src: string; title: string; frameKey?: string; appId: string;
+  standaloneHref?: string | null;
   grantedCorePermissions?: readonly string[] | null;
   theme: HostyResolvedTheme; themePreference: HostyThemePreference; className?: string;
   onAuthRequired?: (appId: string) => void;
