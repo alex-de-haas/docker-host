@@ -130,7 +130,9 @@ chooses a provider nor performs I/O.
 The shared `HostyAppFrame` applies sandbox and clipboard/microphone policy, theme messages,
 attention, app-owned authentication and permission/MCP review. Reviews use the registered app
 identity and canonical Core URL, ignoring child-supplied identity/URLs; a visible link remains when
-popups are blocked. No delegated-token responder is installed. HTTPS hosts refuse HTTP frames with
+popups are blocked. Shell uses explicit Core frame policy when present; with older Core metadata it
+derives microphone and popup-escape policy from the target app’s persisted speech/install grants.
+Missing or unrelated grants enable neither capability. No delegated-token responder is installed. HTTPS hosts refuse HTTP frames with
 explicit recovery. Shell forwards its existing standalone workspace URL and the declared settings
 or legacy panel URL to that recovery link; the embedded launch URL is not reused. Actual CSP remains
 authoritative. A mixed-content panel retains the Core-resolved target and standalone link in the
@@ -247,6 +249,8 @@ feature does not confer that deferred designation. Current CSP refusal has expli
   tests cover delayed/refused links, cookie/legacy preference migration and the first toggle in both
   directions against the actual SDK workspace. HTTPS Shell frame tests preserve explicit standalone
   recovery for HTTP workspace, settings and legacy panel surfaces while continuing to embed HTTPS.
+  Frame policy tests cover older-Core speech/install grants, missing/unrelated grants and the
+  precedence of explicit Core policy over fallback grants.
   HTTPS SDK workspace tests cover both rail modes retaining a resolved HTTP tool and its pinned
   recovery link without mounting an iframe. Shell presentation tests cover navigation-only results,
   missing hosts, typed refusals, unexpected failure, same-request retry and actor changes.

@@ -28,6 +28,9 @@ export function EmbeddedAppFrame(props: {
   const endpoint = candidates.find(item => item.embeddedUrl && new URL(item.embeddedUrl).origin === url.origin)?.endpoint ?? app.entryEndpoint;
   const surface = { appId: app.id, installationId: app.installationId ?? "", endpoint: endpoint ?? "",
     origin: url.origin, route: url.pathname + url.search + url.hash,
-    framePolicy: app.framePolicy ?? { microphone: false, popupEscape: false } };
+    framePolicy: app.framePolicy ?? {
+      microphone: props.grantedCorePermissions?.includes("providers.speech-to-text") ?? false,
+      popupEscape: props.grantedCorePermissions?.includes("apps.install") ?? false,
+    } };
   return <HostyAppFrame key={JSON.stringify([props.frameKey, props.src, surface])} {...props} surface={surface} />;
 }
