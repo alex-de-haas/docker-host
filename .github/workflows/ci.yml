@@ -428,12 +428,12 @@ jobs:
 
       # The main Core gate runs on Linux. Keep this Windows lane narrow: it exists for the native
       # handle/job-object behaviors that a Linux run necessarily skips, including the harness
-      # cmd -> npm -> tsx -> node shutdown regression.
-      - name: Test Windows process control
+      # cmd -> npm -> tsx -> node shutdown regression, and platform-dependent document newlines.
+      - name: Test Windows process control and document references
         run: >-
           dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj
           --filter
-          "FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop"
+          "FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop|FullyQualifiedName~SourceDocuments_ReferenceMetadataSupportsLfAndCrLf"
 
   cli:
     name: CLI
