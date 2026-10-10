@@ -142,6 +142,9 @@ unless a tool is already selected or the operator has collapsed the workspace. A
 assistant-session link takes precedence over this default restoration. Shell observes the independent
 panel catalog and consumes the link only after successful placement; a refusal retains the link for
 retry on refreshed metadata. Stale completion after leaving the link cannot consume a newer URL.
+Shell retires obsolete or reinstallation-mismatched pending handoff records with an explicit error.
+The next operator retry creates a new request for the current installation; it never moves the old
+discussion. Completing an older request cannot erase the replacement's pending intent.
 
 At 900 CSS pixels of inner workspace width the layout docks: a 48-pixel rail, 12-pixel gap, default
 360-pixel body, 280–800 bounds and at least 480 pixels reserved for the document. Below that it uses
@@ -189,6 +192,8 @@ feature does not confer that deferred designation. Current CSP refusal has expli
   idempotent handoff recovery, review routing and existing assistant entry points.
 - Delayed-catalog tests cover restoring Shell's open preference, preserving an existing selection
   or collapse, and consuming assistant-session links only after successful panel placement.
+- Shell intent tests cover legacy/malformed storage, reinstallation recovery by explicit retry,
+  actor isolation and stale completion after an intent is replaced.
 - Browser acceptance uses Core-managed apps and normal password login in an isolated data root.
   Exercise Plans beside its finalized discussion in both modes, no implicit popup/nested rail,
   a non-assistant tool before discussion, retained drafts/document state, Shell-owned pages,

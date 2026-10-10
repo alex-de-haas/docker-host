@@ -68,17 +68,29 @@ export function createErrorSession(gateway: AssistantGateway, send: SendHandoff,
   return createHandoff(gateway, send, prompt, appId ? [appId] : [], requestId);
 }
 
-/** Retain uncertain intents across page reloads; clear only after the destination is accepted. */
+/** Retain uncertain pinned intents; retire obsolete ones before an explicit new attempt. */
 export async function pendingAssistantIntent(userId: string | null, assistantId: string, prompt: string, appIds: string[], installationId: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([userId, assistantId, prompt, [...appIds].sort()])));
   const key = `hosty:assistant-intent:${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("")}`;
   const saved = sessionStorage.getItem(key);
   let previous: { requestId: string; installationId: string } | null = null;
   if (saved) {
-    try { previous = JSON.parse(saved); } catch { throw new Error("This pending discussion predates installation pinning. Start a new discussion after reloading the tab."); }
+    let parsed: unknown;
+    try { parsed = JSON.parse(saved); } catch { /* Legacy plain request IDs have no installation identity. */ }
+    if (!parsed || typeof parsed !== "object" || !("requestId" in parsed) || typeof parsed.requestId !== "string"
+      || !/^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i.test(parsed.requestId)
+      || !("installationId" in parsed) || typeof parsed.installationId !== "string" || !parsed.installationId) {
+      sessionStorage.removeItem(key);
+      throw new Error("This pending discussion is obsolete and cannot be resumed safely. Retry the action to start a new discussion.");
+    }
+    previous = { requestId: parsed.requestId, installationId: parsed.installationId };
   }
-  if (previous && previous.installationId !== installationId) throw new Error("The assistant was reinstalled. The pending discussion cannot be moved to its replacement.");
+  if (previous && previous.installationId !== installationId) {
+    sessionStorage.removeItem(key);
+    throw new Error("The assistant was reinstalled. The pending discussion cannot be moved to its replacement. Retry the action to start a new discussion.");
+  }
   const requestId = previous?.requestId ?? createAssistantRequestId();
-  sessionStorage.setItem(key, JSON.stringify({ requestId, installationId }));
-  return { requestId, complete: () => sessionStorage.removeItem(key) };
+  const value = JSON.stringify({ requestId, installationId });
+  sessionStorage.setItem(key, value);
+  return { requestId, complete: () => { if (sessionStorage.getItem(key) === value) sessionStorage.removeItem(key); } };
 }
