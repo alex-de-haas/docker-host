@@ -132,6 +132,12 @@ startup occurs. Reload clears the window-local tool selection; width/open prefer
 host-scoped. Separate opening preserves provider-persisted context, without promising transfer of
 unsent edits between windows.
 
+Shell restores an open panel by selecting the first available catalog tool after metadata arrives,
+unless a tool is already selected or the operator has collapsed the workspace. A notification's
+assistant-session link takes precedence over this default restoration. Shell observes the independent
+panel catalog and consumes the link only after successful placement; a refusal retains the link for
+retry on refreshed metadata. Stale completion after leaving the link cannot consume a newer URL.
+
 At 900 CSS pixels of inner workspace width the layout docks: a 48-pixel rail, 12-pixel gap, default
 360-pixel body, 280–800 bounds and at least 480 pixels reserved for the document. Below that it uses
 a drawer up to 440 pixels wide. Constraints do not overwrite the preferred width. Arrow keys resize
@@ -172,6 +178,8 @@ feature does not confer that deferred designation. Current CSP refusal has expli
   host ownership, Overlay gating and retained React frames across layout changes.
 - Plans/Harness/Shell tests preserve source hashes, complete attachments, provider freezing,
   idempotent handoff recovery, review routing and existing assistant entry points.
+- Delayed-catalog tests cover restoring Shell's open preference, preserving an existing selection
+  or collapse, and consuming assistant-session links only after successful panel placement.
 - Browser acceptance uses Core-managed apps and normal password login in an isolated data root.
   Exercise Plans beside its finalized discussion in both modes, no implicit popup/nested rail,
   a non-assistant tool before discussion, retained drafts/document state, Shell-owned pages,

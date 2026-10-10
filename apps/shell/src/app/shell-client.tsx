@@ -33,6 +33,7 @@ import { SourceInstallDialog } from "./shell/dialogs/private-source-connections"
 import { createInstallationClient, openInstallationConfirmation, type InstallationSource } from "@hosty-sdk/app/install";
 import { showCoreConfirmation } from "./shell/core-confirmation";
 import { useAssistantSelection } from "./shell/assistant/use-assistant-selection";
+import { useAssistantSessionLink } from "./shell/assistant/use-assistant-session-link";
 import { assistantMessageFor, assistantSupportsContext, createAppSession, createErrorSession, createHandoff, pendingAssistantIntent, type PresentedHandoff } from "./shell/assistant/assistant-client";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
 import { ShellTopStrip } from "./shell/chrome/shell-top-strip";
@@ -1854,34 +1855,22 @@ export function ShellClient({
   // the request, which is the same division as everywhere else in the rail.
   const assistantSessionParam = readAssistantSessionParam(searchParams.get("assistantSession"));
   const sessionAssistantId = searchParams.get("assistantApp") ?? (assistants.length === 1 ? assistants[0].appId : null);
-  useEffect(() => {
-    if (!assistantSessionParam) {
-      return;
-    }
-
-    // The tab has to be selected as well as the rail revealed: the outbound message is handed only to
-    // the *active* tab's frame, so a link arriving while another app's panel was open reached nobody
-    // and then stripped its own parameter on the way out.
-    const assistantTab = appPanelTabs.find((tab) => tab.appId === sessionAssistantId);
-    if (!assistantTab) {
-      return;
-    }
-
-    setPanelOpen(true);
-    const panel = panelHost?.getSnapshot().catalog.find(item => item.panel.appId === assistantTab.appId);
-    if (panel) void panelHost?.selectPanel(panel.panel);
-    setAssistantAsk((current) => ({
-      userId: activeUserId, appId: assistantTab.appId,
-      message: { type: "hosty:open-assistant-session", sessionId: assistantSessionParam },
-      nonce: (current?.nonce ?? 0) + 1,
-    }));
-    // Stripped once acted on: a reload should not re-open a session the operator has since left, and
-    // a link that keeps reasserting itself is one they cannot navigate away from.
-    const next = new URLSearchParams(searchParams.toString());
-    next.delete("assistantSession");
-    next.delete("assistantApp");
-    router.replace(`${pathname}${next.toString() ? `?${next}` : ""}`);
-  }, [appPanelTabs, sessionAssistantId, assistantSessionParam, pathname, router, searchParams, activeUserId, panelHost, setPanelOpen]);
+  useAssistantSessionLink({ host: panelHost, appId: sessionAssistantId, sessionId: assistantSessionParam, userId: activeUserId,
+    onOpened: () => {
+      if (!sessionAssistantId) return;
+      setPanelOpen(true);
+      setAssistantAsk((current) => ({
+        userId: activeUserId, appId: sessionAssistantId,
+        message: { type: "hosty:open-assistant-session", sessionId: assistantSessionParam },
+        nonce: (current?.nonce ?? 0) + 1,
+      }));
+      // Failed or pending placement retains the link; only successful placement consumes it.
+      const next = new URLSearchParams(searchParams.toString());
+      next.delete("assistantSession");
+      next.delete("assistantApp");
+      router.replace(`${pathname}${next.toString() ? `?${next}` : ""}`);
+    },
+  });
 
   const [assistantContextReady, setAssistantContextReady] = useState(false);
   const [assistantSessionPending, setAssistantSessionPending] = useState(false);
@@ -2219,7 +2208,7 @@ export function ShellClient({
 
         <HostyPanelWorkspace railMode="catalog" className="hosty-shell-panels" initialWidth={initialRightPanelWidth}
           renderIcon={panel => <AppIcon src={null} name={panel.icon} fallback={PanelsTopLeft} className="size-4" />}
-          initialExpanded={initialRightPanelOpen ?? false}
+          initialExpanded={!assistantSessionParam && (initialRightPanelOpen ?? false)}
           onExpandedChange={open => { setRightPanelOpen(open); persistChromePref(RIGHT_PANEL_OPEN_PREF_KEY, open); }}
           onWidthChange={width => { document.cookie = `${RIGHT_PANEL_WIDTH_PREF_KEY}=${Math.round(width)}; path=/; max-age=31536000; samesite=lax`; }}
           onStartApp={canManageApps ? startAppById : undefined} onAskAssistant={assistantAvailable ? askAssistant : undefined}

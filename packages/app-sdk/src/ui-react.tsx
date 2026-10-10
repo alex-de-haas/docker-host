@@ -85,9 +85,19 @@ export function HostyPanelWorkspace({ children, railMode = "opened", className =
     if (initialWidth !== undefined) host.setWidth(initialWidth);
     if (initialExpanded !== undefined) host.setExpanded(initialExpanded);
   }, [host]);
+  const restoredHost = useRef<UiHost | null>(null);
+  useEffect(() => {
+    if (!host || railMode !== "catalog" || !state.expanded || state.selected || restoredHost.current === host) return;
+    const first = state.catalog.find(panel => panel.available);
+    if (!first) return;
+    // Catalog metadata may arrive after the persisted open preference. Restore once, without
+    // replacing a selection made by an explicit presentation or reopening a collapsed workspace.
+    restoredHost.current = host;
+    void host.selectPanel(first.panel);
+  }, [host, railMode, state.expanded, state.selected, state.catalog]);
   const lastPrefs = useRef({ width: initialWidth ?? 360, expanded: initialExpanded ?? false });
   useEffect(() => {
-    if (!host) return;
+    if (!host || state !== host.getSnapshot()) return;
     if (state.width !== lastPrefs.current.width) optionsRef.current.onWidthChange?.(state.width);
     if (state.expanded !== lastPrefs.current.expanded) optionsRef.current.onExpandedChange?.(state.expanded);
     lastPrefs.current = { width: state.width, expanded: state.expanded };

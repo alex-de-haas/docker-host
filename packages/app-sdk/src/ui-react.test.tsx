@@ -9,6 +9,7 @@ import type { UiBootstrap, UiPanel } from "./ui-types";
 vi.mock("./browser-auth", () => ({ appFetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
 let root: Root, element: HTMLDivElement, host: UiHost | null;
 let resize: () => void;
+let catalogGate: Promise<void> | null;
 const policy = { microphone: false, popupEscape: false };
 const metadata: UiBootstrap = { version: 1, coreOrigin: "https://core.test", userId: "alice", canHost: true, pinnedOpen: true,
   app: { appId: "plans", installationId: "plans-1", origins: ["http://localhost:3000"] } };
@@ -16,11 +17,12 @@ const catalog: UiPanel[] = ["assistant", "notes"].map(id => ({ panel: { appId: i
   endpoint: "web", route: "/panel", origin: `https://${id}.test`, label: id, appName: id, icon: null, available: true, state: "running", canStart: false, framePolicy: policy }));
 function Document() { host = useHostyUiHost(); return <textarea aria-label="Document draft" defaultValue="Keep this selection" />; }
 beforeEach(() => {
+  catalogGate = null;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { resize = callback; } observe() {} disconnect() {} });
   vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
     if (path.includes("bootstrap")) return Response.json(metadata);
-    if (!path.endsWith("resolve")) return Response.json({ panels: catalog });
+    if (!path.endsWith("resolve")) { await catalogGate; return Response.json({ panels: catalog }); }
     const target = JSON.parse(init!.body as string), panel = catalog.find(p => p.panel.appId === target.panel.appId)!;
     return Response.json({ target: { ...target, route: target.route ?? panel.route }, available: true, state: "running", standaloneHref: "https://core.test/open",
       surface: { appId: panel.panel.appId, installationId: panel.panel.installationId, endpoint: panel.endpoint,
@@ -66,4 +68,46 @@ it("removes panel chrome for an older app adapter without remounting the protect
   expect(element.querySelector("textarea")).toBe(documentDraft);
   expect((element.querySelector("nav") as HTMLElement).style.display).toBe("none");
   expect((element.querySelector(".hosty-panel-workspace") as HTMLElement).style.display).toBe("contents");
+});
+
+async function mountRestoration() {
+  const changed = vi.fn();
+  await act(async () => root.render(<HostyUiRoot panelLayout="slot"><HostyPanelWorkspace railMode="catalog"
+    initialExpanded initialWidth={420} onExpandedChange={changed}><Document /></HostyPanelWorkspace></HostyUiRoot>));
+  return changed;
+}
+it("restores the open preference once the delayed catalog supplies a tool", async () => {
+  let release!: () => void;
+  catalogGate = new Promise<void>(resolve => { release = resolve; });
+  const changed = await mountRestoration();
+  expect(element.querySelectorAll("iframe")).toHaveLength(0);
+  expect(changed).not.toHaveBeenCalledWith(false);
+  await act(async () => { release(); await host!.refresh(); });
+  expect(host!.getSnapshot().selected).toEqual(catalog[0]!.panel);
+  expect(element.querySelector("aside")!.hidden).toBe(false);
+  expect(host!.getSnapshot().width).toBe(420);
+  const frame = element.querySelector("iframe");
+  await act(async () => host!.refresh());
+  expect(element.querySelector("iframe")).toBe(frame);
+  expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("resolve"))).toHaveLength(1);
+});
+it("does not restore over a selection made before the catalog arrives", async () => {
+  let release!: () => void;
+  catalogGate = new Promise<void>(resolve => { release = resolve; });
+  await mountRestoration();
+  await act(async () => { await host!.selectPanel(catalog[1]!.panel); });
+  const frame = element.querySelector("iframe");
+  await act(async () => { release(); await host!.refresh(); });
+  expect(host!.getSnapshot().selected).toEqual(catalog[1]!.panel);
+  expect(element.querySelector("iframe")).toBe(frame);
+  expect(element.querySelectorAll("iframe")).toHaveLength(1);
+});
+it("does not reopen when the user collapses before metadata arrives", async () => {
+  let release!: () => void;
+  catalogGate = new Promise<void>(resolve => { release = resolve; });
+  await mountRestoration();
+  await act(async () => host!.setExpanded(false));
+  await act(async () => { release(); await host!.refresh(); });
+  expect(host!.getSnapshot().expanded).toBe(false);
+  expect(element.querySelectorAll("iframe")).toHaveLength(0);
 });
