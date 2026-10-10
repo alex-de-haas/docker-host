@@ -40,6 +40,7 @@ import { ShellTopStrip } from "./shell/chrome/shell-top-strip";
 import { HostyPanelWorkspace, useHostyUiHost } from "@hosty-sdk/app/ui/react";
 import { createPresentationRequestId } from "@hosty-sdk/app/ui";
 import { RIGHT_PANEL_WIDTH_PREF_KEY } from "./shell/chrome/panel-width";
+import { usePanelExpanded } from "./shell/chrome/use-panel-expanded";
 import { getAppPanelTabs, getAppSettingsTabs, resolveSettingsSurface } from "./shell/surfaces/app-surface-tabs";
 import { ShellActionsContext, ShellStateContext } from "./shell/shell-context";
 import {
@@ -247,7 +248,8 @@ export function ShellClient({
     return () => window.removeEventListener("keydown", dismissOnEscape);
   }, [mobileSidebarOpen]);
   const panelHost = useHostyUiHost();
-  const [rightPanelOpen, setRightPanelOpen] = useState(initialRightPanelOpen ?? false);
+  const assistantSessionParam = readAssistantSessionParam(searchParams.get("assistantSession"));
+  const rightPanelOpen = usePanelExpanded(panelHost, initialRightPanelOpen, !!assistantSessionParam);
   // Gates the chrome grid's column transition. Off during the initial settle: the right panel
   // column can only appear once /api/apps names a panel-capable app, and animating that data
   // arrival reads as the panel opening by itself on load.
@@ -297,12 +299,7 @@ export function ShellClient({
       setSidebarCompact(compact);
       persistChromePref(SIDEBAR_COMPACT_PREF_KEY, compact);
     }
-    if (initialRightPanelOpen === null) {
-      const open = window.localStorage.getItem(RIGHT_PANEL_OPEN_PREF_KEY) === "true";
-      setRightPanelOpen(open);
-      persistChromePref(RIGHT_PANEL_OPEN_PREF_KEY, open);
-    }
-  }, [initialSidebarCompact, initialRightPanelOpen]);
+  }, [initialSidebarCompact]);
 
   // One frame after the first load settles (success or error — `loading` starts true and drops on
   // either), so the settled layout paints before transitions can animate; user toggles from then on
@@ -1808,7 +1805,6 @@ export function ShellClient({
       if (first) void panelHost.selectPanel(first.panel);
     }
     panelHost?.setExpanded(open);
-    setRightPanelOpen(open);
     persistChromePref(RIGHT_PANEL_OPEN_PREF_KEY, open);
   }, [panelHost]);
 
@@ -1853,7 +1849,6 @@ export function ShellClient({
   // A notification links here with the session it is about. Revealing the rail and forwarding the id
   // reuses the channel built for asks — the panel owns which session is shown, and Shell only carries
   // the request, which is the same division as everywhere else in the rail.
-  const assistantSessionParam = readAssistantSessionParam(searchParams.get("assistantSession"));
   const sessionAssistantId = searchParams.get("assistantApp") ?? (assistants.length === 1 ? assistants[0].appId : null);
   useAssistantSessionLink({ host: panelHost, appId: sessionAssistantId, sessionId: assistantSessionParam, userId: activeUserId,
     onOpened: () => {
@@ -2203,8 +2198,7 @@ export function ShellClient({
 
         <HostyPanelWorkspace railMode="catalog" className="hosty-shell-panels" initialWidth={initialRightPanelWidth}
           renderIcon={panel => <AppIcon src={null} name={panel.icon} fallback={PanelsTopLeft} className="size-4" />}
-          initialExpanded={!assistantSessionParam && (initialRightPanelOpen ?? false)}
-          onExpandedChange={open => { setRightPanelOpen(open); persistChromePref(RIGHT_PANEL_OPEN_PREF_KEY, open); }}
+          onExpandedChange={open => persistChromePref(RIGHT_PANEL_OPEN_PREF_KEY, open)}
           onWidthChange={width => { document.cookie = `${RIGHT_PANEL_WIDTH_PREF_KEY}=${Math.round(width)}; path=/; max-age=31536000; samesite=lax`; }}
           onStartApp={canManageApps ? startAppById : undefined} onAskAssistant={assistantAvailable ? askAssistant : undefined}
           onAuthRequired={handleSurfaceAuthRequired}

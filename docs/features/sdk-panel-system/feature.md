@@ -146,6 +146,9 @@ unless a tool is already selected or the operator has collapsed the workspace. A
 assistant-session link takes precedence over this default restoration. Shell observes the independent
 panel catalog and consumes the link only after successful placement; a refusal retains the link for
 retry on refreshed metadata. Stale completion after leaving the link cannot consume a newer URL.
+Shell chrome reads expansion from the host snapshot. Cookie or legacy localStorage preferences
+initialize the host once; an explicit session link defers default expansion until its placement.
+The top-strip toggle follows SDK changes and its first click acts on the actual host state.
 The assistant keyboard shortcut waits for catalog metadata and selects its requested tool directly;
 it does not concurrently expand a default tool. Repeating it on the visible assistant collapses it.
 Shell retires obsolete or reinstallation-mismatched pending handoff records with an explicit error.
@@ -206,7 +209,9 @@ feature does not confer that deferred designation. Current CSP refusal has expli
 - Delayed-catalog tests cover restoring Shell's open preference, preserving an existing selection
   or collapse, and consuming assistant-session links only after successful panel placement.
   Shortcut tests verify that a non-assistant first catalog entry is never selected, including delayed
-  metadata, and that toggling the selected assistant closed creates no new placement.
+  metadata, and that toggling the selected assistant closed creates no new placement. Shell chrome
+  tests cover delayed/refused links, cookie/legacy preference migration and the first toggle in both
+  directions against the actual SDK workspace.
 - Shell intent tests cover legacy/malformed storage, reinstallation recovery by explicit retry,
   actor isolation and stale completion after an intent is replaced.
 - Browser acceptance uses Core-managed apps and normal password login in an isolated data root.
