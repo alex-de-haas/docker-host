@@ -89,10 +89,20 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
       const existing = !startNew && results.current.get(resultKey);
       if (existing) { await present(existing, generation); return; }
       let intent = startNew ? undefined : requests.current.get(storageKey);
-      try {
-        const stored = !startNew && JSON.parse(sessionStorage.getItem(storageKey) ?? "null");
-        if (stored && typeof stored.requestId === "string" && typeof stored.installationId === "string") intent ??= stored;
-      } catch { /* Memory retry identity remains available. */ }
+      if (!intent && !startNew) {
+        let saved: string | null = null;
+        try { saved = sessionStorage.getItem(storageKey); } catch { /* Storage may be disabled. */ }
+        if (saved !== null) {
+          let stored: unknown;
+          try { stored = JSON.parse(saved); } catch { /* Bare UUIDs from older Plans have no installation identity. */ }
+          if (!stored || typeof stored !== "object" || !("requestId" in stored) || typeof stored.requestId !== "string"
+            || !/^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i.test(stored.requestId)
+            || !("installationId" in stored) || typeof stored.installationId !== "string" || !stored.installationId) {
+            throw { code: "pending_intent_obsolete", message: "The saved discussion cannot be resumed safely. It may already exist; choose Start a new discussion to create another." };
+          }
+          intent = { requestId: stored.requestId, installationId: stored.installationId };
+        }
+      }
       intent ??= { requestId: createAssistantRequestId(), installationId: selected.installationId };
       requests.current.set(storageKey, intent);
       try { sessionStorage.setItem(storageKey, JSON.stringify(intent)); } catch { /* Preserve in memory for this page. */ }
@@ -130,7 +140,7 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
     {error && <div role="alert" className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-sm text-destructive"><p>{error.message}</p>
       {error.reviewUrl && <a href={error.reviewUrl} target="_blank" rel="noopener noreferrer" className="underline">Review Plans permissions</a>}
       {!options && <Button variant="link" size="sm" onClick={() => setEpoch(value => value + 1)}>Retry</Button>}
-      {["handoff_closed", "request_expired", "conversation_deleted", "provider_changed"].includes(error.code ?? "") &&
+      {["handoff_closed", "request_expired", "conversation_deleted", "provider_changed", "pending_intent_obsolete"].includes(error.code ?? "") &&
         <Button variant="link" size="sm" disabled={pending} onClick={() => void discuss(true)}>Start a new discussion</Button>}
     </div>}
     {!error && detail && unavailable && <p role="status" className="text-right text-xs text-muted-foreground">{unavailable}</p>}

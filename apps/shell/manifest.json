@@ -3,7 +3,7 @@
   "id": "hosty.shell",
   "name": "Hosty Shell",
   "description": "Hosty browser management shell.",
-  "version": "0.99.9",
+  "version": "0.99.10",
   "role": "system",
   "source": {
     "type": "git",

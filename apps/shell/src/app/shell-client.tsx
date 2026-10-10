@@ -1800,10 +1800,6 @@ export function ShellClient({
   }
 
   const setPanelOpen = useCallback((open: boolean) => {
-    if (open && panelHost && !panelHost.getSnapshot().selected) {
-      const first = panelHost.getSnapshot().catalog.find(panel => panel.available);
-      if (first) void panelHost.selectPanel(first.panel);
-    }
     panelHost?.setExpanded(open);
     persistChromePref(RIGHT_PANEL_OPEN_PREF_KEY, open);
   }, [panelHost]);

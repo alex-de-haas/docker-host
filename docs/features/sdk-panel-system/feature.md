@@ -163,7 +163,8 @@ unsent edits between windows.
 Retained frames receive current availability and runtime metadata, so degradation warnings appear
 and disappear with the catalog without navigating the iframe.
 
-Shell restores an open panel by selecting the first available catalog tool after metadata arrives,
+Shell’s manual top-strip opening delegates default selection to the workspace restoration handler,
+so the first opening performs one selection and one resolve. Shell restores an open panel by selecting the first available catalog tool after metadata arrives,
 unless a tool is already selected or the operator has collapsed the workspace. A refused restoration
 can retry on fresh catalog metadata, including metadata received while resolution was pending; it
 does not loop on unrelated state updates. A notification's
@@ -198,7 +199,9 @@ installation. After reinstall, the original pending intent is revalidated and re
 Start a new discussion action creates a handoff for the replacement. A pending handoff captures
 the actor, source version and selected provider generation. Navigation, account/provider changes
 or unmount prevent its late result from opening a panel or displaying an error in the new context.
-Returning to the original source can explicitly reuse the cached finalized result.
+Returning to the original source can explicitly reuse the cached finalized result. Legacy bare UUIDs
+and malformed persisted intents are retained and refused without sending a handoff; only Start a
+new discussion replaces them with a new installation-bound request.
 
 The normal path calls `openSurface` with a presentation UUID. It opens Shell's panel when embedded
 and the local SDK host when standalone, without reserving a popup. Plans distinguishes successful
@@ -246,11 +249,13 @@ feature does not confer that deferred designation. Current CSP refusal has expli
   idempotent handoff recovery, review routing and existing assistant entry points. Plans tests cover
   completed results across provider reinstall, including navigation-only destinations and explicit
   replacement handoffs with the original document hash. Delayed handoff tests cover document/content/
-  workspace/actor/provider changes, navigation away and back, unmount and stale errors. Harness tests cover message-selected readiness
+  workspace/actor/provider changes, navigation away and back, unmount and stale errors. Legacy/malformed
+  intent tests require explicit replacement without a new handoff on ordinary retries. Harness tests cover message-selected readiness
   before and after authentication, failed/mismatched session loads and exact URL-session reporting.
 - Delayed-catalog tests cover restoring Shell's open preference, preserving an existing selection
   or collapse, and consuming assistant-session links only after successful panel placement.
   Restoration tests also cover transient refusals, bounded retries and catalog refresh during resolution.
+  A delayed-resolution test verifies a single selection/resolve for the first top-strip opening.
   Session-link tests reject unrelated panels, wait for assistant discovery and ignore consumption
   after assistant-role removal.
   Shortcut tests verify that a non-assistant first catalog entry is never selected, including delayed

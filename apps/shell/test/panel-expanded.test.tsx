@@ -17,7 +17,7 @@ const panels: UiPanel[] = ["notes", "assistant"].map(appId => ({ panel: { appId,
   endpoint: "web", route: "/panel", origin: `https://${appId}.test`, label: appId, appName: appId, icon: null,
   available: true, state: "running", canStart: false, framePolicy: policy }));
 let root: Root, container: HTMLDivElement, host: UiHost | null;
-let catalogGate: Promise<void> | null, refused: boolean;
+let catalogGate: Promise<void> | null, resolutionGate: Promise<void> | null, refused: boolean;
 const persisted = vi.fn();
 function Shell({ initialOpen, link }: { initialOpen: boolean | null; link: boolean }) {
   const panelHost = useHostyUiHost();
@@ -35,7 +35,7 @@ async function render(initialOpen: boolean | null, link = false) {
 }
 const toggle = (open: boolean) => container.querySelector<HTMLButtonElement>(`button[aria-label="${open ? "Hide" : "Show"} the panel"]`)!;
 beforeEach(() => {
-  host = null; catalogGate = null; refused = false; persisted.mockReset(); localStorage.clear();
+  host = null; catalogGate = null; resolutionGate = null; refused = false; persisted.mockReset(); localStorage.clear();
   document.cookie = `${RIGHT_PANEL_OPEN_PREF_KEY}=; max-age=0; path=/`;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -43,6 +43,7 @@ beforeEach(() => {
     if (url.endsWith("bootstrap")) return Response.json(bootstrap);
     if (url.endsWith("panels")) { await catalogGate; return Response.json({ panels }); }
     if (url.endsWith("resolve")) {
+      await resolutionGate;
       if (refused) return Response.json({ code: "access_unavailable" }, { status: 403 });
       const target = JSON.parse(init!.body as string), panel = panels.find(item => item.panel.appId === target.panel.appId)!;
       return Response.json({ target: { ...target, route: panel.route }, available: true, state: "running", standaloneHref: "https://core.test/open",
@@ -98,4 +99,20 @@ it("honors the cookie over legacy storage and follows SDK changes without reappl
   expect(toggle(true)).not.toBeNull();
   await act(async () => host!.setExpanded(false));
   expect(toggle(false)).not.toBeNull();
+});
+it("performs one resolution for the first top-strip opening after catalog discovery", async () => {
+  await render(false);
+  await act(async () => host!.refresh());
+  let release!: () => void;
+  resolutionGate = new Promise(resolve => { release = resolve; });
+  const select = vi.spyOn(host!, "selectPanel");
+  const requests = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("resolve"));
+  await act(async () => toggle(false).click());
+  expect(select).toHaveBeenCalledTimes(1);
+  expect(requests()).toHaveLength(1);
+  await act(async () => release());
+  expect(select).toHaveBeenCalledTimes(1);
+  expect(requests()).toHaveLength(1);
+  expect(host!.getSnapshot().selected).toEqual(panels[0].panel);
+  expect(container.querySelector("aside")?.hidden).toBe(false);
 });

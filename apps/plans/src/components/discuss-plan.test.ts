@@ -162,6 +162,35 @@ describe("discuss document action", () => {
     const second = JSON.parse(fetch.mock.calls.filter(call => call[1]?.method === "POST")[1][1].body).requestId;
     expect(first).not.toBe(second);
   });
+  it.each(["bare UUID", "JSON UUID", "missing identity", "invalid UUID", "null"])("requires explicit replacement of a legacy or malformed pending record: %s", async format => {
+    fetch.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === "POST"
+      ? Promise.reject(new TypeError("Response lost")) : response(options));
+    await render(); await act(async () => button().click());
+    const key = sessionStorage.key(0)!;
+    const original = JSON.parse(sessionStorage.getItem(key)!);
+    const saved = format === "bare UUID" ? original.requestId : format === "JSON UUID" ? JSON.stringify(original.requestId)
+      : format === "missing identity" ? JSON.stringify({ requestId: original.requestId })
+        : format === "invalid UUID" ? JSON.stringify({ ...original, requestId: "invalid" }) : "null";
+    sessionStorage.setItem(key, saved);
+    await act(async () => root.unmount()); root = createRoot(container);
+    fetch.mockClear();
+    fetch.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === "POST" ? response(result) : response(options));
+    await render();
+    await act(async () => button().click());
+    await act(async () => button().click());
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("cannot be resumed safely");
+    expect(fetch.mock.calls.filter(call => call[1]?.method === "POST")).toHaveLength(0);
+    expect(sessionStorage.getItem(key)).toBe(saved);
+    expect(presentation.openSurface).not.toHaveBeenCalled();
+    const start = Array.from(container.querySelectorAll("button")).find(item => item.textContent === "Start a new discussion")!;
+    await act(async () => start.click());
+    const calls = fetch.mock.calls.filter(call => call[1]?.method === "POST");
+    expect(calls).toHaveLength(1);
+    const input = JSON.parse(calls[0][1].body);
+    expect(input.requestId).not.toBe(original.requestId);
+    expect(input.installationId).toBe("installed-1");
+    expect(JSON.parse(sessionStorage.getItem(key)!)).toEqual({ requestId: input.requestId, installationId: input.installationId });
+  });
   it("shows optional permission review and refreshes discovery on return", async () => {
     fetch.mockResolvedValueOnce(response({ message: "Plans needs assistant access.", reviewUrl: "https://core.example/install/permissions/hosty.plans" }, false));
     await render(); expect(button().disabled).toBe(true);
