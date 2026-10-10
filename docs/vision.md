@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-09
+updated: 2026-10-10
 ---
 
 # Hosty Platform Vision
@@ -179,7 +179,7 @@ Decisions 1–5: 2026-08-19.
    be forged with an app token. Custom preparation UI remains supported. Permission increases on
    update cross the same trusted boundary. This adds app grants, not a redesign of user roles or
    external OAuth scopes. [App installation](features/app-installation-sdk/feature.md) describes
-   the implementation; its [plan](features/app-installation-sdk/plan.md) owns remaining verification.
+   the implementation and completed browser acceptance.
 
 10. **Shared development sessions and clients (2026-09-24; clarified 2026-09-26).** A session owns
     a shared conversation and optional registered source workspace. Switching connected agents

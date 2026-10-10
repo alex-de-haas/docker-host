@@ -1,6 +1,6 @@
 ---
 created: 2026-09-18
-updated: 2026-10-08
+updated: 2026-10-10
 summary: A shared install dialog for Marketplace and Shell, with final authorization on a separate Core-origin confirmation page.
 components: [packages/app-sdk, apps/marketplace, apps/shell, apps/core]
 ---
@@ -93,19 +93,17 @@ See [assistant provider permissions](../assistant-provider-permissions/feature.m
 
 ## Required Permissions And Runtime Lifecycle
 
-Core checks the effective manifest before start, restart and runtime switching, and rechecks before
-launching services. Unsupported required names produce `app_permissions_unsupported`; known but
-ungranted requirements produce `app_permissions_required`. An unreadable contract produces
-`app_permissions_unverifiable`. A last-good manifest fallback cannot bypass these checks. Optional
-permissions, including unsupported names in an installed manifest, do not block execution.
+Missing or unsupported required permissions do not block start, restart, autostart, runtime
+switching or retained workloads. Privileged API calls check current grants independently of runtime
+state. A source manifest can declare new requirements without acquiring their authority; changing
+runtime preserves the approved set and still requires explicit review to grant those permissions.
 
-The permission observer checks running apps every five seconds and stops apps with verified missing
-or unsupported required permissions using the installed runtime contract. Unreadable manifests
-produce stale permission observations without stopping a running app; launch still refuses them.
-The observer skips apps whose lifecycle lock is busy and retries them on a later pass, so long
-operations do not delay checks for the remaining apps. Boot reconciliation checks retained workloads
-before autostart. Permission-blocked apps retain an explanatory error and do not enter automatic
-restart loops. API authorization continues to check current grants independently of the stop sweep.
+The permission observer checks apps every five seconds and reports missing or unsupported
+requirements without stopping services. Unreadable manifests produce stale observations for running
+apps, retaining the last verified declarations and the read error. The observer skips apps whose
+lifecycle lock is busy and retries them on a later pass, so long operations do not delay checks for
+the remaining apps. Optional permissions, including unsupported names in an installed manifest, do
+not block execution. See [App permission management](../app-permission-management/feature.md).
 Shell shows unsupported requirements separately from missing approval; only supported requirements
 can be approved. Direct Core navigation to `/install/permissions/{appId}` prepares a review without
 running Shell or the target app. It requires an administrator cookie on Core's isolated origin,
@@ -211,6 +209,50 @@ confirmation-required error. Every app source-override POST returns that error, 
 protected paths are rejected during review preparation and never produce an approvable plan. Blocked popups retain an explicit link,
 and completion is reported only after Core returns `succeeded`.
 
+## Browser Acceptance
+
+Acceptance on 2026-10-10 covers the current source with Core-managed Shell and Marketplace in an
+isolated temporary data root. The administrator uses normal browser setup and password login;
+no browser session is seeded. The checks use desktop Chromium, including narrow viewport emulation.
+
+- **Independent embedding:** Demo App 0.14.0 installs from Marketplace inside Shell and Solitaire
+  0.3.1 installs from a script-free generic iframe embedder. Both use official feeds and isolated
+  Core confirmation with automatic startup disabled. Core records both installations; the
+  Shell-embedded catalog changes to Installed without reloading.
+- **Revocation:** a QA-only Marketplace manifest makes `apps.install` optional for ordinary Core
+  permission review. Revocation detaches Shell's old frame and removes
+  `allow-popups-to-escape-sandbox` from its replacement. A later installation request is refused
+  while Marketplace stays running. The production manifest is unchanged.
+- **Blocked popup and narrow layouts:** with Chromium's native popup blocker enabled, an Install
+  action without transient user activation opens no window. The visible Open Core confirmation
+  link opens that pending request on a normal click; Cancel closes the popup and the caller reports
+  Installation cancelled. The SDK dialog and Core review fit 390 x 844 and 320 x 640 viewports;
+  scrolling reaches every review control without horizontal overflow. Native mobile devices are
+  outside this viewport check.
+- **Fresh login and cookie isolation:** removing the QA Core cookie sends a pending request through
+  password login and back to the same confirmation. A browser cancellation POST to the shared
+  loopback hostname is refused with HTTP 409 without consuming the request; legacy GET navigation
+  redirects to the isolated Core origin. Assigning Core's hostname to an app is refused with
+  `origin_host_conflict`.
+- **Runtime switching:** a local fixture starts with no grants, then its source declares
+  `apps.install`. A reviewed switch between two development profiles succeeds with the service
+  running, empty persisted grants and unchanged accepted declarations. Its permission view reports
+  the new requirement as missing approval.
+
+Verification at the same baseline passes:
+
+- `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj` with an isolated
+  artifacts directory: 3002 passed, 4 existing opt-in Docker/torrent integration tests skipped.
+  The exact Core project also builds and runs from an isolated source generation; existing compiler
+  warnings remain. Native AOT publishing is not repeated for this documentation-only closure.
+- `npm run sdk:test`: 398 passed; `npm run shell:test`: 182 Node and 188 component tests passed;
+  `npm run marketplace:test`: 111 passed.
+- `npm run build --workspace @hosty-sdk/app`, `npm run build --workspace @haas/hosty-shell` and
+  `npm run build --workspace @haas/hosty-marketplace -- --webpack`: successful in a separate copy
+  with matching source, preserving the running apps' development output.
+- `node scripts/check-versions.mjs`, `node scripts/docs-index.mjs --check` and `git diff --check`:
+  successful. Acceptance requires only documentation corrections, with no artifact version change.
+
 ## Testing Expectations
 
 - Test real HTTP decisions, separate app/user credentials, rejected cross-origin decisions,
@@ -229,8 +271,8 @@ and completion is reported only after Core returns `succeeded`.
   preserving accepted declarations, grants and review state for unchanged source authority.
 - Test client races, duplicate submits, lost responses, API errors and the server adapter boundary.
 - Build and test Core, SDK, Shell and Marketplace; check package exports and artifact versions.
-- Complete the remaining managed-runtime/browser verification in [plan.md](plan.md), including
-  standalone Marketplace, embedding without an installation responder, and cookie-host isolation.
-
+- Verify managed-runtime installation in standalone Marketplace, Shell and an embedder without an
+  installation responder; cover grant revocation, popup fallback, narrow layouts, fresh-login
+  continuation, cookie-host isolation and preservation of grants during runtime switching.
 - Verify source/mount approval, protected paths and symlinks, stale snapshots and caller revocation;
   require confirmation for app-selected workspaces and preserve operator authority and intentional Docker source mounts.
