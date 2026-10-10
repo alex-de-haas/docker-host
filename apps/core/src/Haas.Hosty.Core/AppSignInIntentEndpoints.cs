@@ -314,7 +314,9 @@ internal static class AppSignInIntentEndpoints
         if (origin is null)
             return CoreJson.Json(new ErrorResponse("destination_unavailable", "The original app surface is not available."), 409);
         var destination = QueryHelpers.AddQueryString(new Uri(new Uri(origin), route).AbsoluteUri, "hosty_launch", "standalone");
-        await identity.RequireAllowedRedirectUriAsync(appId, destination, context.RequestAborted);
+        // The route is already constrained to a declared surface. Validate its origin separately:
+        // app navigation may carry a fragment, unlike an OAuth authorization-code callback.
+        await identity.RequireAllowedRedirectUriAsync(appId, origin, context.RequestAborted);
         return Results.Redirect(destination);
     }
 

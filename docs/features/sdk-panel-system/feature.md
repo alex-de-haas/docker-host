@@ -60,7 +60,8 @@ An older Core or missing adapter produces explicit unsupported behavior.
 
 Core app-open links carry `installationId`, `endpoint` and `route`. Core checks the installation,
 declared surface and user access at redemption, including after password login. The link retains
-the provider-selected route and forces standalone launch. Readiness uses the matched surface service,
+the provider-selected path, query and fragment and forces standalone launch. Destination origin
+validation is separate from the stricter OAuth callback validation. Readiness uses the matched surface service,
 including navigation and entry surfaces, so an unrelated sidecar outage does not block opening.
 Reinstalling never redirects a completed
 discussion to the replacement installation.
@@ -240,6 +241,8 @@ feature does not confer that deferred designation. Current CSP refusal has expli
   HTTPS SDK workspace tests cover both rail modes retaining a resolved HTTP tool and its pinned
   recovery link without mounting an iframe. Shell presentation tests cover navigation-only results,
   missing hosts, typed refusals, unexpected failure, same-request retry and actor changes.
+- Core separate-open HTTP tests preserve panel, navigation and entry queries/fragments through
+  a login round trip while keeping installation, assignment and origin validation in place.
 - Shell intent tests cover legacy/malformed storage, reinstallation recovery by explicit retry,
   actor isolation and stale completion after an intent is replaced.
 - Browser acceptance uses Core-managed apps and normal password login in an isolated data root.

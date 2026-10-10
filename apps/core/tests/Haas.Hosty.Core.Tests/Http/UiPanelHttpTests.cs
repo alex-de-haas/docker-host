@@ -175,6 +175,48 @@ public sealed class UiPanelHttpTests
         else Assert.Null(opened.Headers.Location);
     }
 
+    [Theory]
+    [InlineData("/panel")]
+    [InlineData("/navigation")]
+    [InlineData("/entry")]
+    public async Task SeparateOpen_WithQueryAndFragment_PreservesRouteThroughLogin(string path)
+    {
+        await using var host = await Setup();
+        await host.Services.GetRequiredService<AppRegistryStore>().UpdateAppAsync("target", a => a with {
+            Ui = a.Ui! with { EntryPath = "/entry", Navigation = [new("Navigation", "/navigation", "web")] }
+        });
+        using var client = host.CreateClient();
+        client.BaseAddress = new Uri("http://localhost:7070");
+        var route = path + "?session=one%20two#turn%2F3";
+        var target = (await Target(host)) with { Route = route };
+        var link = UiPanelService.BuildOpenUrl(client.BaseAddress.GetLeftPart(UriPartial.Authority),
+            "target", target.Panel.InstallationId, "web", route);
+        if (path == "/panel")
+        {
+            using var consumer = await Client(host);
+            using var response = await consumer.PostAsJsonAsync("/api/internal/apps/consumer/ui/panels/resolve", target);
+            response.EnsureSuccessStatusCode();
+            var resolved = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(route, resolved.GetProperty("surface").GetProperty("route").GetString());
+            link = resolved.GetProperty("standaloneHref").GetString()!;
+        }
+        using var login = await client.GetAsync(link);
+        Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
+        var returnTo = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(login.Headers.Location!.OriginalString.Split('?', 2)[1])["returnTo"].ToString();
+        Assert.Equal(new Uri(link).PathAndQuery, returnTo);
+        await BrowserAuthorityFixture.Grant(host, "consumer", "member");
+        client.DefaultRequestHeaders.Add("Cookie", "hosty_session=browser-session");
+        using var opened = await client.GetAsync(returnTo);
+        Assert.Equal(HttpStatusCode.Redirect, opened.StatusCode);
+        var destination = opened.Headers.Location!;
+        Assert.Equal("http://atargetz.hosty.localhost:3102", destination.GetLeftPart(UriPartial.Authority));
+        Assert.Equal(path, destination.AbsolutePath);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(destination.Query);
+        Assert.Equal("one two", query["session"].ToString());
+        Assert.Equal("standalone", query["hosty_launch"].ToString());
+        Assert.Equal("#turn%2F3", destination.Fragment);
+    }
+
     private static async Task<UiPanelTarget> Target(CoreHttpHarness host)
         => new(new("target", PanelIdentity.Installation((await host.Services.GetRequiredService<AppRegistryStore>().GetAppAsync("target"))!), "tool"), "/panel/session-1");
 
