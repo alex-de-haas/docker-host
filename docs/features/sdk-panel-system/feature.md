@@ -216,6 +216,11 @@ placement fails. A visible notice offers the pinned separate link and, when a pa
 Retry opening for the same presentation identity. It does not repeat the domain handoff or open a
 popup. Recovery state is isolated to the signed-in actor. Session links place a panel only after
 the requested app appears in the discovered assistant list; an unrelated panel cannot consume them.
+Harness notifications include `assistantPanel` alongside `assistantApp` and `assistantSession`.
+Shell resolves that exact panel and its declared route before sending the session command. Legacy
+links without a panel ID resolve only when the app declares one panel; ambiguous/missing targets
+remain pending. Workspace outbound commands carry the resolved `PanelTarget` and reach only its
+matching app, installation, panel ID and route, including when other app panels remain mounted.
 
 ## Related Features
 
@@ -257,7 +262,9 @@ feature does not confer that deferred designation. Current CSP refusal has expli
   Restoration tests also cover transient refusals, bounded retries and catalog refresh during resolution.
   A delayed-resolution test verifies a single selection/resolve for the first top-strip opening.
   Session-link tests reject unrelated panels, wait for assistant discovery and ignore consumption
-  after assistant-role removal.
+  after assistant-role removal. Multi-panel tests verify explicit notification targets, refusal of
+  ambiguous/unavailable targets, and the declared route instead of another session’s route.
+  Workspace command tests exclude other panels/installations and stale routes.
   Shortcut tests verify that a non-assistant first catalog entry is never selected, including delayed
   metadata, and that toggling the selected assistant closed creates no new placement. Shell chrome
   tests cover delayed/refused links, cookie/legacy preference migration and the first toggle in both

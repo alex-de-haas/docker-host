@@ -32,7 +32,8 @@ beforeEach(() => {
     const refused = refuseResolution;
     await resolutionGate;
     if (refused) return Response.json({ code: "access_unavailable" }, { status: 403 });
-    const target = JSON.parse(init!.body as string), panel = listedPanels.find(p => p.panel.appId === target.panel.appId)!;
+    const target = JSON.parse(init!.body as string), panel = listedPanels.find(p => p.panel.appId === target.panel.appId
+      && p.panel.installationId === target.panel.installationId && p.panel.panelId === target.panel.panelId)!;
     return Response.json({ target: { ...target, route: target.route ?? panel.route }, available: panel.available, state: panel.state, standaloneHref: "https://core.test/open",
       surface: { appId: panel.panel.appId, installationId: panel.panel.installationId, endpoint: panel.endpoint,
         origin: panel.origin, route: target.route ?? panel.route, framePolicy: policy } });
@@ -103,6 +104,35 @@ it("removes panel chrome for an older app adapter without remounting the protect
   expect(element.querySelector("textarea")).toBe(documentDraft);
   expect((element.querySelector("nav") as HTMLElement).style.display).toBe("none");
   expect((element.querySelector(".hosty-panel-workspace") as HTMLElement).style.display).toBe("contents");
+});
+it("delivers commands only to the exact panel among retained frames from the same app", async () => {
+  listedPanels = [catalog[0]!, { ...catalog[0]!, panel: { ...catalog[0]!.panel, panelId: "second" }, route: "/second" }];
+  await render("slot");
+  await act(async () => { for (const panel of listedPanels) await host!.selectPanel(panel.panel); });
+  const frames = [...element.querySelectorAll("iframe")];
+  const posts = frames.map(frame => vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {}));
+  await act(async () => frames.forEach(frame => frame.dispatchEvent(new Event("load"))));
+  const target = host!.getSnapshot().tools[1]!.target;
+  const command = { type: "hosty:open-assistant-session", sessionId: "selected-session" };
+  await act(async () => root.render(<HostyUiRoot panelLayout="slot"><HostyPanelWorkspace outbound={{ target, message: command, nonce: 1 }}><Document /></HostyPanelWorkspace></HostyUiRoot>));
+  const commands = (index: number) => posts[index]!.mock.calls.filter(([value]) => value.type === command.type);
+  expect(commands(0)).toHaveLength(0);
+  expect(commands(1).map(([value]) => value)).toEqual([command]);
+  const replaced = { ...target, panel: { ...target.panel, installationId: "reinstalled" } };
+  await act(async () => root.render(<HostyUiRoot panelLayout="slot"><HostyPanelWorkspace outbound={{ target: replaced, message: command, nonce: 2 }}><Document /></HostyPanelWorkspace></HostyUiRoot>));
+  expect(commands(0)).toHaveLength(0); expect(commands(1)).toHaveLength(1);
+});
+it("does not replay a session command after the same panel navigates to another discussion route", async () => {
+  await render("slot");
+  await act(async () => { await host!.selectPanel(catalog[0]!.panel); });
+  const target = host!.getSnapshot().tools[0]!.target;
+  const command = { type: "hosty:open-assistant-session", sessionId: "previous-session" };
+  await act(async () => root.render(<HostyUiRoot panelLayout="slot"><HostyPanelWorkspace outbound={{ target, message: command, nonce: 1 }}><Document /></HostyPanelWorkspace></HostyUiRoot>));
+  await act(async () => { await host!.openSurface({ ...target, route: "/panel?session=new-discussion" }, { placement: "side", requestId: crypto.randomUUID() }); });
+  const frame = element.querySelector("iframe")!;
+  const post = vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
+  await act(async () => frame.dispatchEvent(new Event("load")));
+  expect(post.mock.calls.filter(([value]) => value.type === command.type)).toHaveLength(0);
 });
 
 async function mountRestoration() {

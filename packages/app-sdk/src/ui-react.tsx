@@ -5,7 +5,7 @@ import { createUiHost, type UiHost, type UiHostSnapshot } from "./ui-host";
 import { EmbeddedUiClient } from "./ui-embedded";
 import { UiHostContext } from "./ui-context";
 import { HostyAppFrame, type HostyAppFrameProps } from "./ui-frame";
-import { panelKey, type UiEnvironment, type UiPanel } from "./ui-types";
+import { panelKey, type PanelTarget, type UiEnvironment, type UiPanel } from "./ui-types";
 import { uiPath as normalizeUiPath } from "./ui-transport";
 export { HostyAppFrame, type HostyAppFrameProps } from "./ui-frame";
 
@@ -58,7 +58,7 @@ export type HostyPanelWorkspaceProps = {
   initialWidth?: number; initialExpanded?: boolean; onWidthChange?: (width: number) => void; onExpandedChange?: (expanded: boolean) => void;
   onStartApp?: (appId: string) => void | Promise<void>;
   onAskAssistant?: HostyAppFrameProps["onAskAssistant"]; onAuthRequired?: HostyAppFrameProps["onAuthRequired"];
-  outbound?: { appId: string; message: unknown; nonce: number } | null;
+  outbound?: { target: PanelTarget; message: unknown; nonce: number } | null;
   renderIcon?: (panel: UiPanel) => ReactNode;
 };
 
@@ -201,7 +201,7 @@ export function HostyPanelWorkspace({ children, railMode = "opened", className =
         {item.resolved.surface ? <HostyAppFrame key={JSON.stringify(item.resolved.surface)} surface={{ ...item.resolved.surface, panelId: item.target.panel.panelId }}
           title={state.catalog.find(p => panelKey(p.panel) === item.key)?.label ?? "Tool"} standaloneHref={item.resolved.standaloneHref}
           onAskAssistant={onAskAssistant} onAuthRequired={onAuthRequired} onAttention={count => host?.setAttention(item.target.panel, count)}
-          outbound={outbound?.appId === item.target.panel.appId ? outbound : null} />
+          outbound={outbound && panelKey(outbound.target.panel) === item.key && outbound.target.route === item.target.route ? outbound : null} />
           : <div className="hosty-panel-notice"><p>This tool is unavailable ({item.resolved.state}).</p><button type="button" onClick={() => void host?.selectPanel(item.target.panel)}>Retry opening</button></div>}
       </div>)}
       {drawer && expanded && <span tabIndex={0} aria-hidden="true" className="hosty-panel-focus-guard" onFocus={() => close.current?.focus()} />}

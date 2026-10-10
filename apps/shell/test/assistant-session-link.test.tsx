@@ -15,23 +15,24 @@ const panels: UiPanel[] = ["notes", "assistant"].map(appId => ({ panel: { appId,
   available: true, state: "running", canStart: false, framePolicy: policy }));
 let root: Root, container: HTMLDivElement, host: UiHost;
 let catalogGate: Promise<void> | null, placementGate: Promise<void> | null, refused: boolean;
+let listedPanels: UiPanel[];
 const opened = vi.fn();
-function Link({ sessionId = "existing", userId = "alice", appId = "assistant", assistantIds = ["assistant"] }: { sessionId?: string | null; userId?: string; appId?: string; assistantIds?: string[] }) {
-  useAssistantSessionLink({ host, appId, assistantIds, sessionId, userId, onOpened: opened });
+function Link({ sessionId = "existing", userId = "alice", appId = "assistant", assistantIds = ["assistant"], panelId = null }: { sessionId?: string | null; userId?: string; appId?: string; assistantIds?: string[]; panelId?: string | null }) {
+  useAssistantSessionLink({ host, appId, assistantIds, panelId, sessionId, userId, onOpened: opened });
   return null;
 }
 beforeEach(() => {
-  catalogGate = null; placementGate = null; refused = false; opened.mockReset();
+  catalogGate = null; placementGate = null; refused = false; opened.mockReset(); listedPanels = panels;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("bootstrap")) return Response.json(bootstrap);
-    if (url.endsWith("panels")) { await catalogGate; return Response.json({ panels }); }
+    if (url.endsWith("panels")) { await catalogGate; return Response.json({ panels: listedPanels }); }
     if (url.endsWith("resolve")) {
       await placementGate;
       if (refused) return Response.json({ code: "access_unavailable" }, { status: 403 });
-      const target = JSON.parse(init!.body as string), panel = panels.find(item => item.panel.appId === target.panel.appId)!;
-      return Response.json({ target: { ...target, route: panel.route }, available: true, state: "running", standaloneHref: "https://core.test/open",
-        surface: { ...panel.panel, endpoint: panel.endpoint, origin: panel.origin, route: panel.route, framePolicy: policy } });
+      const target = JSON.parse(init!.body as string), panel = listedPanels.find(item => item.panel.appId === target.panel.appId && item.panel.panelId === target.panel.panelId)!;
+      return Response.json({ target: { ...target, route: target.route ?? panel.route }, available: true, state: "running", standaloneHref: "https://core.test/open",
+        surface: { ...panel.panel, endpoint: panel.endpoint, origin: panel.origin, route: target.route ?? panel.route, framePolicy: policy } });
     }
     throw new Error(`Unexpected request: ${url}`);
   }));
@@ -80,6 +81,28 @@ it("does not consume a departed link when an older placement completes", async (
 it("does not open a link with another account's host metadata", async () => {
   await mount("bob");
   expect(opened).not.toHaveBeenCalled(); expect(placements()).toHaveLength(0);
+});
+it("selects the notification's explicit panel even when the same app's other tool is first", async () => {
+  listedPanels = [{ ...panels[1], panel: { ...panels[1].panel, panelId: "other" }, route: "/other" }, panels[1]];
+  host = createUiHost();
+  await act(async () => root.render(<Link panelId="tool" />));
+  expect(host.getSnapshot().selected).toEqual(panels[1].panel);
+  expect(placements()).toHaveLength(1);
+  expect(opened).toHaveBeenCalledWith({ panel: panels[1].panel, route: "/panel" });
+});
+it.each([null, "missing", "tool"])("retains an ambiguous or unavailable explicit panel link (%s)", async panelId => {
+  listedPanels = [{ ...panels[1], panel: { ...panels[1].panel, panelId: "other" }, route: "/other" }, { ...panels[1], available: false }];
+  host = createUiHost();
+  await act(async () => root.render(<Link panelId={panelId} />));
+  await act(async () => host.refresh());
+  expect(placements()).toHaveLength(0); expect(opened).not.toHaveBeenCalled();
+});
+it("uses the declared panel route instead of reusing another discussion's route for a session command", async () => {
+  host = createUiHost(); await host.refresh();
+  await host.openSurface({ panel: panels[1].panel, route: "/panel?session=previous" }, { placement: "side", requestId: crypto.randomUUID() });
+  await act(async () => root.render(<Link panelId="tool" />));
+  expect(host.getSnapshot().tools[0].target.route).toBe("/panel");
+  expect(opened).toHaveBeenCalledWith({ panel: panels[1].panel, route: "/panel" });
 });
 it.each(["notes", "former-assistant"])("does not place or consume a session link for non-assistant %s", async appId => {
   host = createUiHost();

@@ -39,6 +39,7 @@ import { assistantMessageFor, assistantSupportsContext, createAppSession, create
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
 import { ShellTopStrip } from "./shell/chrome/shell-top-strip";
 import { HostyPanelWorkspace, useHostyUiHost } from "@hosty-sdk/app/ui/react";
+import type { PanelTarget } from "@hosty-sdk/app/ui";
 import { RIGHT_PANEL_WIDTH_PREF_KEY } from "./shell/chrome/panel-width";
 import { usePanelExpanded } from "./shell/chrome/use-panel-expanded";
 import { getAppPanelTabs, getAppSettingsTabs, resolveSettingsSurface } from "./shell/surfaces/app-surface-tabs";
@@ -264,7 +265,7 @@ export function ShellClient({
 
   // What Shell last asked the assistant panel, as a message for its frame. The nonce is the ask:
   // the same text twice is two asks, and the panel must see both.
-  const [assistantAsk, setAssistantAsk] = useState<{ userId: string | null; appId: string; message: unknown; nonce: number } | null>(null);
+  const [assistantAsk, setAssistantAsk] = useState<{ userId: string | null; appId: string; target: PanelTarget; message: unknown; nonce: number } | null>(null);
   const activeWorkspaceRoute = shellRoute.workspace ?? optimisticWorkspaceRoute;
   const workspaceRouteKey = getWorkspaceRouteKey(activeWorkspaceRoute);
   const pendingWorkspaceRoute = useRef<string | null>(null);
@@ -1838,11 +1839,12 @@ export function ShellClient({
   // the request, which is the same division as everywhere else in the rail.
   const sessionAssistantId = searchParams.get("assistantApp") ?? (assistants.length === 1 ? assistants[0].appId : null);
   useAssistantSessionLink({ host: panelHost, appId: sessionAssistantId, assistantIds, sessionId: assistantSessionParam, userId: activeUserId,
-    onOpened: () => {
+    panelId: searchParams.get("assistantPanel"),
+    onOpened: (target) => {
       if (!sessionAssistantId) return;
       setPanelOpen(true);
       setAssistantAsk((current) => ({
-        userId: activeUserId, appId: sessionAssistantId,
+        userId: activeUserId, appId: sessionAssistantId, target,
         message: { type: "hosty:open-assistant-session", sessionId: assistantSessionParam },
         nonce: (current?.nonce ?? 0) + 1,
       }));
@@ -1850,6 +1852,7 @@ export function ShellClient({
       const next = new URLSearchParams(searchParams.toString());
       next.delete("assistantSession");
       next.delete("assistantApp");
+      next.delete("assistantPanel");
       router.replace(`${pathname}${next.toString() ? `?${next}` : ""}`);
     },
   });
