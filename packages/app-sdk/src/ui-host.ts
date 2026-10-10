@@ -94,7 +94,8 @@ export class UiHost implements UiClient {
           const moved = entry && surface && (entry.origin !== surface.origin || entry.endpoint !== surface.endpoint
             || !routeWithin(surface.route, entry.route));
           return invalid || changed || moved ? { ...tool, resolved: { ...tool.resolved, available: false, surface: null,
-            state: !entry ? "access_unavailable" : changed ? "policy_changed" : moved ? "destination_changed" : entry.state } } : tool;
+            state: !entry ? "access_unavailable" : changed ? "policy_changed" : moved ? "destination_changed" : entry.state } }
+            : entry && surface ? { ...tool, resolved: { ...tool.resolved, available: entry.available, state: entry.state } } : tool;
         }) });
         for (const frame of this.frames) this.post(frame, { type: "hosty:ui:probe-request" });
       } catch (error) {

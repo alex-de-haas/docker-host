@@ -34,7 +34,7 @@ import { createInstallationClient, openInstallationConfirmation, type Installati
 import { showCoreConfirmation } from "./shell/core-confirmation";
 import { useAssistantSelection } from "./shell/assistant/use-assistant-selection";
 import { useAssistantSessionLink } from "./shell/assistant/use-assistant-session-link";
-import { assistantMessageFor, assistantSupportsContext, createAppSession, createErrorSession, createHandoff, pendingAssistantIntent, type PresentedHandoff } from "./shell/assistant/assistant-client";
+import { assistantMessageFor, assistantSupportsContext, createAppSession, createErrorSession, createHandoff, pendingAssistantIntent, toggleAssistantPanel, type PresentedHandoff } from "./shell/assistant/assistant-client";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
 import { ShellTopStrip } from "./shell/chrome/shell-top-strip";
 import { HostyPanelWorkspace, useHostyUiHost } from "@hosty-sdk/app/ui/react";
@@ -1952,21 +1952,16 @@ export function ShellClient({
       void (async () => {
         const gateway = await chooseAssistant();
         const assistantTab = appPanelTabs.find((tab) => tab.appId === gateway?.appId);
-        if (!assistantTab) return;
+        if (!assistantTab || !panelHost) return;
         // Already looking at it means "put it away"; anything else means "bring it here", including
         // an open rail showing somebody else's panel.
-        const showing = rightPanelOpen && panelHost?.getSnapshot().selected?.appId === assistantTab.appId;
-        setPanelOpen(!showing);
-        if (!showing) {
-          const panel = panelHost?.getSnapshot().catalog.find(item => item.panel.appId === assistantTab.appId);
-          if (panel) await panelHost?.selectPanel(panel.panel);
-        }
+        await toggleAssistantPanel(panelHost, assistantTab.appId);
       })();
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [panelHost, appPanelTabs, assistantAvailable, chooseAssistant, rightPanelOpen, setPanelOpen]);
+  }, [panelHost, appPanelTabs, assistantAvailable, chooseAssistant]);
 
   // The rail exists only while something declares a panel; opening it is then the operator's choice.
   // An app's settings page fills the content column the way a workspace app does, so the column

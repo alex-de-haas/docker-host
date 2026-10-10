@@ -145,9 +145,11 @@ describe("panel host authority and replay", () => {
   it("retains transitional surfaces but still invalidates policy changes and a completed stop", async () => {
     const h = await start(); await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
     const surface = h.getSnapshot().tools[0]!.resolved.surface;
-    for (const state of ["stopping", "starting", "unavailable", "running"]) {
-      panels = [{ ...catalog, state, available: state === "running" }]; await h.refresh();
+    for (const state of ["degraded", "stopping", "starting", "unavailable", "running"]) {
+      const available = state === "running" || state === "degraded";
+      panels = [{ ...catalog, state, available }]; await h.refresh();
       expect(h.getSnapshot().tools[0]!.resolved.surface).toBe(surface);
+      expect(h.getSnapshot().tools[0]!.resolved).toMatchObject({ state, available });
     }
     panels = [{ ...catalog, state: "starting", available: false, framePolicy: { microphone: false, popupEscape: false } }];
     await h.refresh();

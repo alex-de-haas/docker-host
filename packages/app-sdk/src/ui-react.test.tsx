@@ -25,8 +25,8 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
     if (path.includes("bootstrap")) return Response.json(metadata);
     if (!path.endsWith("resolve")) { await catalogGate; return Response.json({ panels: listedPanels }); }
-    const target = JSON.parse(init!.body as string), panel = catalog.find(p => p.panel.appId === target.panel.appId)!;
-    return Response.json({ target: { ...target, route: target.route ?? panel.route }, available: true, state: "running", standaloneHref: "https://core.test/open",
+    const target = JSON.parse(init!.body as string), panel = listedPanels.find(p => p.panel.appId === target.panel.appId)!;
+    return Response.json({ target: { ...target, route: target.route ?? panel.route }, available: panel.available, state: panel.state, standaloneHref: "https://core.test/open",
       surface: { appId: panel.panel.appId, installationId: panel.panel.installationId, endpoint: panel.endpoint,
         origin: panel.origin, route: target.route ?? panel.route, framePolicy: policy } });
   }));
@@ -133,4 +133,17 @@ it("keeps the same iframe and unsent content through runtime transitions, removi
   await act(async () => host!.refresh());
   expect(element.querySelector("iframe")).toBeNull();
   expect(element.textContent).toContain("This tool is unavailable (stopped).");
+});
+it.each(["running", "degraded"])("updates degradation warnings without replacing a frame opened while %s", async initial => {
+  listedPanels = [{ ...catalog[0]!, state: initial }];
+  await render();
+  await act(async () => { await host!.selectPanel(catalog[0]!.panel); });
+  const frame = element.querySelector("iframe");
+  for (const state of [initial, "degraded", "running", "unavailable", "starting", "stopping", "running"]) {
+    listedPanels = [{ ...catalog[0]!, state, available: state === "running" || state === "degraded" }];
+    await act(async () => host!.refresh());
+    expect(element.querySelector("iframe")).toBe(frame);
+    expect(element.textContent!.includes("This app’s health check is failing.")).toBe(state === "degraded");
+    expect(host!.getSnapshot().tools[0]!.resolved).toMatchObject({ state, available: listedPanels[0]!.available });
+  }
 });

@@ -1,4 +1,5 @@
 import type { CoreApp } from "../types";
+import type { UiHost } from "@hosty-sdk/app/ui/host";
 import { assistantContractError, createAssistantRequestId, resolveAssistantDestination, type AssistantHandoffResult } from "@hosty-sdk/app/assistant";
 export { createAssistantRequestId };
 export const ASSISTANT_INTERFACE = "assistant";
@@ -37,6 +38,14 @@ export function assistantMessageFor<T extends { userId: string | null; appId: st
 
 export function assistantSupportsContext(gateway: AssistantGateway): Promise<boolean> {
   return Promise.resolve(gateway.running && !assistantContractError(gateway));
+}
+/** Select the requested assistant before expansion can trigger a default tool. */
+export async function toggleAssistantPanel(host: UiHost, appId: string) {
+  const state = host.getSnapshot();
+  if (state.expanded && state.selected?.appId === appId) { host.setExpanded(false); return; }
+  await host.refresh();
+  const panel = host.getSnapshot().catalog.find(item => item.panel.appId === appId);
+  if (panel) await host.selectPanel(panel.panel);
 }
 export function assistantOpenUrl(app: CoreApp, result: AssistantHandoffResult): string {
   return resolveAssistantDestination(result.open, [

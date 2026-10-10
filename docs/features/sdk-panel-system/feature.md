@@ -136,12 +136,16 @@ frame until a completed stop or an independently invalidated identity, destinati
 startup occurs. Reload clears the window-local tool selection; width/open preferences remain
 host-scoped. Separate opening preserves provider-persisted context, without promising transfer of
 unsent edits between windows.
+Retained frames receive current availability and runtime metadata, so degradation warnings appear
+and disappear with the catalog without navigating the iframe.
 
 Shell restores an open panel by selecting the first available catalog tool after metadata arrives,
 unless a tool is already selected or the operator has collapsed the workspace. A notification's
 assistant-session link takes precedence over this default restoration. Shell observes the independent
 panel catalog and consumes the link only after successful placement; a refusal retains the link for
 retry on refreshed metadata. Stale completion after leaving the link cannot consume a newer URL.
+The assistant keyboard shortcut waits for catalog metadata and selects its requested tool directly;
+it does not concurrently expand a default tool. Repeating it on the visible assistant collapses it.
 Shell retires obsolete or reinstallation-mismatched pending handoff records with an explicit error.
 The next operator retry creates a new request for the current installation; it never moves the old
 discussion. Completing an older request cannot erase the replacement's pending intent.
@@ -186,12 +190,15 @@ feature does not confer that deferred designation. Current CSP refusal has expli
   host ownership, Overlay gating and retained React frames across layout changes.
   Runtime-transition coverage preserves the actual iframe and unsent content through
   stopping/starting/recovery, while a completed stop or changed frame policy removes it.
+  Degradation-warning tests cover appearance and recovery on the same retained frame.
   Concurrent-request tests exercise immediate embedded refusals, payload conflicts during
   verification, identical replay, independent aborts and status/open ordering.
 - Plans/Harness/Shell tests preserve source hashes, complete attachments, provider freezing,
   idempotent handoff recovery, review routing and existing assistant entry points.
 - Delayed-catalog tests cover restoring Shell's open preference, preserving an existing selection
   or collapse, and consuming assistant-session links only after successful panel placement.
+  Shortcut tests verify that a non-assistant first catalog entry is never selected, including delayed
+  metadata, and that toggling the selected assistant closed creates no new placement.
 - Shell intent tests cover legacy/malformed storage, reinstallation recovery by explicit retry,
   actor isolation and stale completion after an intent is replaced.
 - Browser acceptance uses Core-managed apps and normal password login in an isolated data root.

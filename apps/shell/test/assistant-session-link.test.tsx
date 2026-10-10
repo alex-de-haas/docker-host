@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createUiHost, type UiHost } from "@hosty-sdk/app/ui/host";
 import type { UiBootstrap, UiPanel } from "@hosty-sdk/app/ui/types";
 import { useAssistantSessionLink } from "../src/app/shell/assistant/use-assistant-session-link";
+import { toggleAssistantPanel } from "../src/app/shell/assistant/assistant-client";
 
 vi.mock("@hosty-sdk/app/browser-auth", () => ({ appFetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
 const policy = { microphone: false, popupEscape: false };
@@ -79,4 +80,29 @@ it("does not consume a departed link when an older placement completes", async (
 it("does not open a link with another account's host metadata", async () => {
   await mount("bob");
   expect(opened).not.toHaveBeenCalled(); expect(placements()).toHaveLength(0);
+});
+it("opens only the requested assistant when another tool is first in the catalog", async () => {
+  host = createUiHost(); await host.refresh();
+  await toggleAssistantPanel(host, "assistant");
+  expect(host.getSnapshot().selected?.appId).toBe("assistant");
+  expect(host.getSnapshot().expanded).toBe(true);
+  expect(placements().map(([, init]) => JSON.parse(init!.body as string).panel.appId)).toEqual(["assistant"]);
+});
+it("collapses an already selected assistant without opening another tool", async () => {
+  host = createUiHost(); await host.refresh();
+  await toggleAssistantPanel(host, "assistant");
+  await toggleAssistantPanel(host, "assistant");
+  expect(host.getSnapshot().expanded).toBe(false);
+  expect(placements()).toHaveLength(1);
+});
+it("waits for shortcut catalog metadata before selecting and expanding the assistant", async () => {
+  let release!: () => void;
+  catalogGate = new Promise<void>(resolve => { release = resolve; });
+  host = createUiHost();
+  const opening = toggleAssistantPanel(host, "assistant");
+  expect(host.getSnapshot().expanded).toBe(false);
+  expect(placements()).toHaveLength(0);
+  release(); await opening;
+  expect(host.getSnapshot().selected?.appId).toBe("assistant");
+  expect(placements()).toHaveLength(1);
 });
