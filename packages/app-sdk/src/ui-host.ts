@@ -135,14 +135,13 @@ export class UiHost implements UiClient {
         if (this.disposed || this.snapshot.bootstrap?.userId !== own.userId || this.snapshot.bootstrap?.coreOrigin !== own.coreOrigin || this.snapshot.bootstrap?.app.installationId !== own.app.installationId
           || frame && (!frame.live || !frame.connected || frame.actor !== own.userId || !currentSource())) throw new UiError("actor_mismatch", "The signed-in account changed.");
         if (!resolved.available || !resolved.surface) throw new UiError(resolved.state || "destination_unavailable", "The selected panel is unavailable.");
-        if (window.location.protocol === "https:" && new URL(resolved.surface.origin).protocol === "http:")
-          throw new UiError("insecure_embed", "Open this HTTP application separately.");
+        const insecure = window.location.protocol === "https:" && new URL(resolved.surface.origin).protocol === "http:";
         if (selectionGeneration !== this.selectionGeneration)
           throw new UiError("presentation_superseded", "A newer panel action replaced this opening. Retry to open it again.");
         const old = this.snapshot.tools.find(t => t.key === toolKey);
         const same = old?.resolved.surface && JSON.stringify(old.resolved.surface) === JSON.stringify(resolved.surface);
         const tool: UiTool = { key: toolKey, target: resolved.target, resolved,
-          readiness: same ? old.readiness : "loading", attention: old?.attention ?? 0 };
+          readiness: insecure ? "unreported" : same ? old.readiness : "loading", attention: old?.attention ?? 0 };
         this.update({ tools: old ? this.snapshot.tools.map(t => t.key === toolKey ? tool : t) : [...this.snapshot.tools, tool], selected: target.panel, expanded: true });
         return { status: "opened", requestId: id, target: resolved.target, readiness: tool.readiness };
       } catch (error) { return failure(id, error); }

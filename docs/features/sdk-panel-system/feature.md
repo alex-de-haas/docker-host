@@ -130,13 +130,16 @@ identity and canonical Core URL, ignoring child-supplied identity/URLs; a visibl
 popups are blocked. No delegated-token responder is installed. HTTPS hosts refuse HTTP frames with
 explicit recovery. Shell forwards its existing standalone workspace URL and the declared settings
 or legacy panel URL to that recovery link; the embedded launch URL is not reused. Actual CSP remains
-authoritative.
+authoritative. A mixed-content panel retains the Core-resolved target and standalone link in the
+workspace, with unreported readiness; no HTTP iframe is mounted and no popup is opened.
 
 ## Layout And Lifetime
 
 Standalone shows opened tools and Add tool; the chooser lists accessible declared panels before
 any discussion. Shell uses the catalog rail, including on Dashboard/settings, and retains its icon
 renderer and layout cookies. Neither layout adds provider defaults or fleet management to Plans.
+Demo App participates as a panel but uses `panelLayout="none"` in its own document: its manifest
+does not request the permissions to host other tools.
 
 Frames mount lazily, one per opened tool, and survive collapse, tool switching and central Shell
 navigation. Hidden frames are inert. Document state and unsent composer state remain local to their
@@ -191,6 +194,11 @@ the prepared draft. Harness reports readiness only after loading the exact reque
 including requests delivered by Shell messages to the default assistant route. A failed or mismatched
 session fetch cannot report a previously attached session as ready for that request.
 
+Shell retains completed assistant results when they have only a navigation destination or side
+placement fails. A visible notice offers the pinned separate link and, when a panel target exists,
+Retry opening for the same presentation identity. It does not repeat the domain handoff or open a
+popup. Recovery state is isolated to the signed-in actor.
+
 ## Related Features
 
 [Default applications](../default-applications/plan.md) owns selection policy before a new operation;
@@ -229,6 +237,9 @@ feature does not confer that deferred designation. Current CSP refusal has expli
   tests cover delayed/refused links, cookie/legacy preference migration and the first toggle in both
   directions against the actual SDK workspace. HTTPS Shell frame tests preserve explicit standalone
   recovery for HTTP workspace, settings and legacy panel surfaces while continuing to embed HTTPS.
+  HTTPS SDK workspace tests cover both rail modes retaining a resolved HTTP tool and its pinned
+  recovery link without mounting an iframe. Shell presentation tests cover navigation-only results,
+  missing hosts, typed refusals, unexpected failure, same-request retry and actor changes.
 - Shell intent tests cover legacy/malformed storage, reinstallation recovery by explicit retry,
   actor isolation and stale completion after an intent is replaced.
 - Browser acceptance uses Core-managed apps and normal password login in an isolated data root.

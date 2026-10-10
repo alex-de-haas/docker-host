@@ -34,11 +34,11 @@ import { createInstallationClient, openInstallationConfirmation, type Installati
 import { showCoreConfirmation } from "./shell/core-confirmation";
 import { useAssistantSelection } from "./shell/assistant/use-assistant-selection";
 import { useAssistantSessionLink } from "./shell/assistant/use-assistant-session-link";
-import { assistantMessageFor, assistantSupportsContext, createAppSession, createErrorSession, createHandoff, pendingAssistantIntent, toggleAssistantPanel, type PresentedHandoff } from "./shell/assistant/assistant-client";
+import { useAssistantPresentation } from "./shell/assistant/use-assistant-presentation";
+import { assistantMessageFor, assistantSupportsContext, createAppSession, createErrorSession, createHandoff, pendingAssistantIntent, toggleAssistantPanel } from "./shell/assistant/assistant-client";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
 import { ShellTopStrip } from "./shell/chrome/shell-top-strip";
 import { HostyPanelWorkspace, useHostyUiHost } from "@hosty-sdk/app/ui/react";
-import { createPresentationRequestId } from "@hosty-sdk/app/ui";
 import { RIGHT_PANEL_WIDTH_PREF_KEY } from "./shell/chrome/panel-width";
 import { usePanelExpanded } from "./shell/chrome/use-panel-expanded";
 import { getAppPanelTabs, getAppSettingsTabs, resolveSettingsSurface } from "./shell/surfaces/app-surface-tabs";
@@ -1834,16 +1834,7 @@ export function ShellClient({
   // app arrives with none — the tab still exists and says so.
   const appSettingsTabs = useMemo(() => getAppSettingsTabs(state.apps), [state.apps]);
   const appPanelTabs = useMemo(() => getAppPanelTabs(state.apps), [state.apps]);
-  const assistantPresentations = useRef(new Map<string, string>());
-  const revealAssistant = useCallback(async (session: PresentedHandoff) => {
-    if (!session.target || !panelHost) throw new Error("This assistant cannot open beside the document. Open it separately.");
-    const key = JSON.stringify([activeUserId, session.target, session.id]);
-    const requestId = assistantPresentations.current.get(key) ?? createPresentationRequestId();
-    assistantPresentations.current.set(key, requestId);
-    const result = await panelHost.openSurface(session.target, { placement: "side", requestId });
-    if (result.status !== "opened") throw new Error("The discussion was created, but its panel could not be opened. Retry to reopen the same discussion.");
-  }, [panelHost, activeUserId]);
-  useEffect(() => { assistantPresentations.current.clear(); }, [activeUserId]);
+  const { reveal: revealAssistant, notice: assistantPresentationNotice } = useAssistantPresentation(panelHost, activeUserId);
   useEffect(() => { void panelHost?.refresh(); }, [panelHost, state.apps]);
 
   // A notification links here with the session it is about. Revealing the rail and forwarding the id
@@ -1888,8 +1879,6 @@ export function ShellClient({
     const gateway = await chooseAssistant();
     if (!gateway) return;
     if (!gateway.running) { toast.error("Start the selected assistant to continue."); return; }
-    const tab = appPanelTabs.find(item => item.appId === gateway.appId);
-    if (!tab) { toast.error("The assistant panel is unavailable. Refresh Shell and retry."); return; }
     creatingAssistantSession.current = true;
     setAssistantSessionPending(true);
     try {
@@ -1899,18 +1888,16 @@ export function ShellClient({
       intent.complete();
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : String(cause)); }
     finally { creatingAssistantSession.current = false; setAssistantSessionPending(false); }
-  }, [canManageApps, chooseAssistant, appPanelTabs, sendCsrfJson, activeUserId, revealAssistant]);
+  }, [canManageApps, chooseAssistant, sendCsrfJson, activeUserId, revealAssistant]);
 
   const askErrorAssistant = useCallback(async (report: ErrorReport, requestId: string) => {
     if (!canManageApps) return false;
     const gateway = await chooseAssistant();
     if (!gateway) return false;
     if (!gateway.running) throw new Error("Start the selected assistant to continue.");
-    const tab = appPanelTabs.find(item => item.appId === gateway.appId);
-    if (!tab) throw new Error("The assistant panel is unavailable. Refresh Shell and retry.");
     const session = await createErrorSession(gateway, sendCsrfJson, report.appId, requestId, errorReportText(report));
     await revealAssistant(session);
-  }, [canManageApps, chooseAssistant, appPanelTabs, sendCsrfJson, revealAssistant]);
+  }, [canManageApps, chooseAssistant, sendCsrfJson, revealAssistant]);
 
   const askAssistant = useCallback((text: string, sourceAppId: string) => {
     void (async () => {
@@ -1921,14 +1908,12 @@ export function ShellClient({
       const gateway = await chooseAssistant();
       if (!gateway) return;
       if (!gateway.running) { toast.error("Start the selected assistant to continue."); return; }
-      const assistantTab = appPanelTabs.find(tab => tab.appId === gateway.appId);
-      if (!assistantTab) throw new Error("The assistant panel is unavailable.");
       const intent = await pendingAssistantIntent(activeUserId, gateway.appId, text, [sourceAppId], gateway.installationId ?? "");
       const session = await createHandoff(gateway, sendCsrfJson, text, [sourceAppId], intent.requestId);
       await revealAssistant(session);
       intent.complete();
     })().catch(error => toast.error(error instanceof Error ? error.message : String(error)));
-  }, [appPanelTabs, chooseAssistant, activeUserId, sendCsrfJson, revealAssistant]);
+  }, [chooseAssistant, activeUserId, sendCsrfJson, revealAssistant]);
 
 
   // The assistant is meant to be at hand, so it gets a key. Toggles rather than only opening: a
@@ -2136,6 +2121,7 @@ export function ShellClient({
           }}
         />
 
+      {assistantPresentationNotice}
       <div
         className={cn(
           "relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)]",
