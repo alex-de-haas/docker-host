@@ -9,6 +9,58 @@ namespace Haas.Hosty.Core.Tests.Http;
 
 public sealed class ProviderHttpTests
 {
+    [Theory]
+    [InlineData("http://127.0.0.1:3456", null)]
+    [InlineData("http://127.0.0.1:3456", "https://speech.example.test")]
+    [InlineData("http://[::1]:3456", null)]
+    [InlineData("http://192.0.2.10:3456", "https://speech.example.test")]
+    public async Task SpeechDiscoveryAndCredentialsUseTransportInsteadOfBrowserOrigin(string transport, string? publicOrigin)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var tokens = host.Services.GetRequiredService<AppServiceTokenService>();
+        await apps.UpsertAppAsync(Record("example.consumer") with { GrantedCorePermissions = [CoreAppPermissions.SpeechProviders] });
+        await apps.UpsertAppAsync(Speech("example.speech") with {
+            Endpoints = [new("api", "http", transport, true)],
+            Settings = publicOrigin is null ? new Dictionary<string, AppSettingValue>()
+                : new Dictionary<string, AppSettingValue> { [PublicOriginSettings.BuildSettingKey("api")] = new(PublicOriginSettings.BuildSettingKey("api"), "string", publicOrigin, false) },
+        });
+        using var client = host.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", tokens.CreateToken("example.consumer"));
+
+        using var discovery = await client.GetAsync("/api/internal/apps/example.consumer/providers/speech-to-text");
+        discovery.EnsureSuccessStatusCode();
+        var descriptor = Assert.Single((await discovery.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("providers").EnumerateArray());
+        Assert.Equal(transport + "/api/speech/v1", descriptor.GetProperty("url").GetString());
+        Assert.True(descriptor.GetProperty("available").GetBoolean());
+
+        using var issuance = await client.PostAsJsonAsync("/api/internal/apps/example.consumer/providers/speech-to-text/token",
+            new { providerAppId = "example.speech" });
+        issuance.EnsureSuccessStatusCode();
+        var binding = (await issuance.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("provider");
+        Assert.Equal(transport + "/api/speech/v1", binding.GetProperty("url").GetString());
+    }
+
+    [Fact]
+    public async Task ProviderWithoutTransportCannotUsePublicOriginToMintCredentials()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var access = host.Services.GetRequiredService<ProviderAccessService>();
+        var caller = Record("example.consumer") with { GrantedCorePermissions = [CoreAppPermissions.SpeechProviders] };
+        var target = Speech("example.speech") with {
+            Endpoints = [new("api", "http", "", true, PublicOrigin: "https://speech.example.test")],
+        };
+        await apps.UpsertAppAsync(caller);
+        await apps.UpsertAppAsync(target);
+
+        var descriptor = Assert.Single((await access.ListAsync(caller, "speech-to-text", default)).Providers);
+        Assert.Null(descriptor.Url);
+        Assert.False(descriptor.Available);
+        var error = await Assert.ThrowsAsync<AppIdentityException>(() => access.IssueAsync(caller, "speech-to-text", new(target.Id), null, default));
+        Assert.Equal("provider_unavailable", error.Code);
+    }
+
     [Fact]
     public async Task AssistantDiscoveryProjectsDeclaredBrowserSurfacesWithIndependentEndpoints()
     {
@@ -31,6 +83,7 @@ public sealed class ProviderHttpTests
         response.EnsureSuccessStatusCode();
         var provider = Assert.Single((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("providers").EnumerateArray());
         Assert.Equal("example.assistant", provider.GetProperty("appId").GetString());
+        Assert.Equal("http://127.0.0.1:3456/api/assistant/v1", provider.GetProperty("url").GetString());
         var panel = provider.GetProperty("uiSurfaces").EnumerateArray().Single(surface => surface.GetProperty("path").GetString() == "/assistant");
         Assert.Equal("web", panel.GetProperty("endpoint").GetString());
         var browser = new Uri(panel.GetProperty("url").GetString()!);
