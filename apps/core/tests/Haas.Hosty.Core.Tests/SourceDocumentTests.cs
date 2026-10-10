@@ -362,6 +362,13 @@ public sealed partial class CoreLifecycleServiceTests
         await File.WriteAllTextAsync(Path.Combine(origin, PlanPath), content);
         await RunGitAsync(origin, ["add", "."]);
         await CommitDocsAsync(origin);
+        // The nested fixture paths exceed Git for Windows' default MAX_PATH limit.
+        // Set this only in the fixture object store; Core deliberately ignores global config.
+        var sourceRepository = await workspaces.CanonicalRepositoryAsync(origin, origin, default);
+        var objectStore = workspaces.RepositoryPath(sourceRepository);
+        Directory.CreateDirectory(objectStore);
+        await RunGitAsync(objectStore, ["init", "--bare"]);
+        await RunGitAsync(objectStore, ["config", "core.longpaths", "true"]);
         try
         {
             var workspace = version == "target" ? null : await workspaces.PrepareAsync(WorkspaceTestOwner(fixture), WorkspaceRequest(), default);
