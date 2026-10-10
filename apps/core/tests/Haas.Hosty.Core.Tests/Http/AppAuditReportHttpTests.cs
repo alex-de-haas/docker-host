@@ -25,7 +25,13 @@ public sealed class AppAuditReportHttpTests
         request.Content = JsonContent.Create(new
         {
             action = "ai_action_approved",
-            details = new Dictionary<string, string> { ["sessionId"] = "s1", ["toolName"] = "Write" },
+            details = new Dictionary<string, string>
+            {
+                ["sessionId"] = serviceToken,
+                ["toolName"] = "Write",
+                ["accessToken"] = serviceToken,
+                ["prompt"] = "private-transcript-canary",
+            },
         });
         using var response = await client.SendAsync(request);
 
@@ -35,6 +41,10 @@ public sealed class AppAuditReportHttpTests
         var record = Assert.Single(records, candidate => candidate.Action == "app.ai_action_approved");
         Assert.Equal(AppId, record.ResourceId);
         Assert.Equal("Write", record.Details["toolName"]);
+        Assert.Equal(CoreSessionAuthorization.FingerprintSessionId(serviceToken), record.Details["sessionFingerprint"]);
+        var persisted = await File.ReadAllTextAsync(harness.Services.GetRequiredService<CoreDataPaths>().AuditLogPath);
+        Assert.DoesNotContain(serviceToken, persisted);
+        Assert.DoesNotContain("private-transcript-canary", persisted);
     }
 
     [Fact]

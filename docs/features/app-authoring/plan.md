@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-16
-updated: 2026-10-05
+updated: 2026-10-10
 summary: Epic for prompt-driven app creation, live iteration, integration with installed apps and optional publication.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -270,8 +270,8 @@ a discard, save or publish operation. Pinned starts refuse dirty checkouts.
   this verified boundary; every-write approval is not an acceptable normal development experience.
   This explicitly weakens the old every-write-asks posture inside the granted boundary. Core-started
   localCommand code remains the administrator's responsibility and is not isolated by the agent sandbox.
-- [Core MCP](../core-mcp/plan.md) owns its existing audit/update backlog. Development controls must
-  record their own actions while composing with that work, without copying that backlog here.
+- [Core MCP](../core-mcp/feature.md) provides bounded audit search and planned updates. Development controls must
+  record their own actions using that audit contract without duplicating the existing machinery.
 - [Cross-app dependencies](../cross-app-dependencies/plan.md) owns network reachability changes.
   A dependency URL is not an authorization grant; assistant access to a provider does not grant a
   generated app the same access. Unsupported identity paths remain explicit product constraints.

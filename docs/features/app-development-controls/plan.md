@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-16
-updated: 2026-09-27
+updated: 2026-10-10
 summary: Typed inspect, enter, run and leave operations for app development, with runtime verification and authority checks.
 components: [apps/core, apps/harness]
 ---
@@ -95,7 +95,7 @@ Data compatibility and backup/restore decisions remain distinct from source disc
 - [ ] D5. Expose an Edit with assistant entry point and effective source/runtime state, including absent
       source/profile, non-source runtimes, restart requirements and partial-failure results.
 - [ ] D6. Audit each new mutation's actor, target, outcome and reviewed operation reference without
-      credentials. Compose with [Core MCP audit work](../core-mcp/plan.md), without duplicating it.
+      credentials. Compose with [Core MCP audit contract](../core-mcp/feature.md), without duplicating it.
 - [ ] D7. Verify permission, failure and data-compatibility cases, update affected feature documentation,
       remove this plan, regenerate the index and bump affected release artifacts.
 

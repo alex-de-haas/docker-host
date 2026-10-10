@@ -219,6 +219,7 @@ internal static class HostyCoreApplication
         app.Use(LocalBrowserNavigation.InvokeAsync);
         app.UseRouting();
         app.UseCors();
+        app.Use(LifecycleAuditFilter.RecordEarlyRefusalAsync);
         app.Use(AppManagementAuthorization.InvokeAsync);
         InstallationApprovalEndpoints.Map(app);
         ProviderEndpoints.Map(app);

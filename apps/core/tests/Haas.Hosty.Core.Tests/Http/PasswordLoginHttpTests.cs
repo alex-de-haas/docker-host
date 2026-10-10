@@ -33,6 +33,11 @@ public sealed class PasswordLoginHttpTests
         var session = await client.GetFromJsonAsync<JsonElement>("/api/auth/session");
         Assert.True(session.GetProperty("authenticated").GetBoolean());
         Assert.Equal("admin", session.GetProperty("user").GetProperty("id").GetString());
+        var audit = await harness.Services.GetRequiredService<AuditStore>().ReadRecentAsync();
+        Assert.Contains(audit, entry => entry.Action == "auth.login.succeeded");
+        var persisted = await File.ReadAllTextAsync(harness.Services.GetRequiredService<CoreDataPaths>().AuditLogPath);
+        Assert.DoesNotContain(Password, persisted);
+        Assert.DoesNotContain(cookie.Split(';')[0]["hosty_session=".Length..], persisted);
     }
 
     [Theory]

@@ -1,85 +1,107 @@
 ---
 created: 2026-08-26
-updated: 2026-08-26
-summary: Core's bounded, append-ordered audit trail of security-relevant events, read backwards from the end.
+updated: 2026-10-10
+summary: Core's bounded audit trail records security and lifecycle events, constrains exported metadata and searches retained history with explicit limits.
 components: [apps/core]
 ---
 
 # Audit Log — A Bounded, Append-Ordered Trail
 
-Core records security-relevant events to one newline-delimited JSON file,
-`<core-root>/audit/audit.ndjson`, owner-only because every line names an actor. Writers append, readers
-read backwards from the end, and the file is capped so the trail costs bounded disk rather than
-growing for the life of the host.
+Core records security and lifecycle events to `<core-root>/audit/audit.ndjson`, owner-only because
+records include actor identities. Writers append one JSON record per line. Readers walk backwards,
+and rotation bounds retained disk usage under normal filesystem operation.
 
-## What is written
+## Records And Producers
 
-`AuditStore.AppendAsync` takes one `AuditRecord` — id, action, resource type and id, outcome, actor
-user id, timestamp, and a string-keyed detail bag — and appends it as a single line. Producers include
-every login attempt, every credential issue and revoke, every delegated-token exchange and
-on-behalf-of call (**refusals included** — they are the more interesting half of the trail), and every
-named MCP tool call ([core-mcp](../core-mcp/feature.md)). The write is best-effort and never rewrites
-history: once an action has happened, a failed append costs the line, never the truth of what ran.
+`AuditRecord` contains id, action, resource type/id, outcome, actor user id, timestamp and `Details`.
+Producers include authentication, credential issuance/revocation, delegated exchanges and app
+introspection, approvals, notifications, backups, development workspaces, agent policy and
+app-reported activity. Lifecycle endpoints and MCP record operator start, stop, restart, update,
+configure, autostart and runtime-switch actions. MCP exposes start/stop/restart and planned updates;
+see [Core MCP](../core-mcp/feature.md) for authority, tools and attribution.
 
-The log is append-**ordered**, which is what lets every read stop early: the first record older than a
-query's window means every record before it is older still.
+HTTP captures the authenticated Host user; local control authenticates a host secret and therefore
+has a null user with `via: control`. Refusals before an app-management principal is established also
+have a null actor. Queued updates capture actor and transport before detaching, append `accepted`
+before starting work, and later append `succeeded`, `failed` or `cancelled` with the same
+`operationId`. Client cancellation does not erase a completed action. Lifecycle audit failures are
+best-effort: they cost a record and emit a diagnostic, but do not change the mutation response.
+The store itself propagates I/O failures; each producer owns its failure handling.
+
+Append order is distinct from timestamp order. Concurrent writers can capture time before waiting
+for the append gate, and wall clocks can move backwards. Readers preserve append order rather than
+sorting by timestamps, and a timestamp outside the query window does not end the search.
+
+## Details Contract
+
+`AuditStore.AppendAsync` constrains details before JSON serialization. Producers use a reviewed
+metadata schema selected by action family; unknown keys and unknown families produce no additional
+exported data. New metadata requires an explicit policy change and regression coverage.
+
+| Producer family | Permitted metadata |
+| --- | --- |
+| `auth.*` | Email, role, labels, expiry, counts, audience, scopes, tool/channel names, reason codes and related app/user/record ids |
+| `app.lifecycle.*`, `core.lifecycle.restart` | `via`, `tool`, `operation`, `operationId` |
+| Installation, permissions and MCP approvals | Request id, caller, operation, path-change classification, removal options and selected permissions/assistant policy |
+| App activity with outcome `reported` | Tool name, actor labels, autonomy/mode/wait metadata and a session fingerprint |
+| Notifications and backups | App id, status/reason, recipient/pruned/deleted/skipped counts and backup plan digest |
+| Development workspaces and agent policy | Request/assistant ids and policy selections |
+
+The first 32 supplied fields are considered; each accepted value is capped at 4,096 characters and
+control characters are removed. App-reported `sessionId` is replaced with `sessionFingerprint`
+(the first 12 hex characters of SHA-256), because a raw Core session id is a bearer credential.
+Request bodies, settings, passwords, tokens, prompts and exception-message fields are not accepted.
+Allowed metadata values still belong to the producer's contract; the policy is a structural schema,
+not a detector for arbitrary secrets disguised as a label. Existing on-disk history is not rewritten.
 
 ## Rotation
 
-The live log is capped at 8 MiB. On the append that finds it at or over the cap, the file is renamed
-to `audit.ndjson.1` — replacing any previous generation — and the append starts a fresh live file.
-Rotation is a rename, so it costs the same whatever the file's size, and the rotated file keeps its
-owner-only mode by construction (it is the same inode).
+At the next append after the live log reaches 8 MiB, Core renames it to `audit.ndjson.1`, replacing
+any previous generation, then starts a fresh live log. The size can exceed the threshold by one
+record. The renamed file retains its owner-only mode. Both generations are readable, so a first
+rotation preserves the preceding events. Overwriting a previous generation discards older history;
+this is an operational trail, not a long-term archive.
 
-Two generations are kept rather than one because rotation must not drop the recent past the moment it
-fires: **reads span the live log and the generation behind it**, newest first, so a window is never
-truncated by a rotation that just ran. Beyond that, history is dropped — this is an operational trail
-for answering "what happened recently on this host", not a compliance archive.
+Appends and rotation share a gate. A failed rotation is retried at the next append; it can increase
+disk usage rather than prevent an otherwise possible write. On the first rotation that overwrites
+a previous generation, Core writes `audit.ndjson.discarded`. This marker survives process restarts
+and tells later searches that retained history is incomplete. Marker creation is best-effort; a
+filesystem failure can lose that completeness signal.
 
-Appends are serialized on a gate so a rotation cannot run underneath another append, which would write
-into the file that was just moved aside. Audit traffic is auth events rather than a request flood, so
-a gate around one small write costs nothing worth measuring. A rotation that fails (a locked or
-read-only file) is swallowed and retried on the next append: losing a rotation costs disk, losing the
-append would cost an audit record.
+## Bounded Tail Reads
 
-The rotation that **overwrites** an existing previous generation is the moment the trail stops reaching
-back to the host's first event. That rotation writes a marker file (`audit.ndjson.discarded`) beside
-the log, because the fact outlives the process that discarded the generation and a later search has to
-know it — see the truncation rule below.
+`ReadRecentAsync` serves `/control/v1/audit/recent` (default 100, clamped to 1–500).
+`SearchAsync` serves MCP `search_audit` (default 50, clamped to 1–200). Both walk files backwards in
+64 KiB blocks without materializing the whole file. A line crossing a block boundary is carried
+into the next block. The reader opens both generations under the append gate before releasing it, so a concurrent
+rotation cannot duplicate a generation. Each file walk fixes its starting length; later appends to
+that file belong to a subsequent read.
 
-## Reads are tail reads
+Search combines optional resource id, action prefix and outcome filters with an inclusive timestamp
+window, clamped to 60 seconds–30 days. It excludes future timestamps and scans at most 20,000 lines,
+even when no records match. This bound remains necessary because timestamp order cannot justify an
+early stop. A result states its effective range and limit, their clamp flags, returned count and
+`truncated` flag, including when empty.
 
-Both readers — `ReadRecentAsync` (the newest N, behind `/control/v1/audit/recent`) and `SearchAsync`
-(filtered, behind Core's MCP audit tool) — walk the files backwards in 64 KiB blocks and stop as soon
-as they have their answer. A line straddling a block boundary is carried into the next, earlier block
-where its beginning is; splitting on the newline *byte* is safe because no byte of a multi-byte UTF-8
-sequence can be `0x0A`. Nothing materializes the file, so the cost of a read is set by the size of the
-answer rather than by how long the host has been up — the newest-50 read touches exactly one block
-however large the log has grown.
-
-A read **snapshots both generations up front**, opening the live log and the rotated file together
-under the same gate rotation runs in, and only then walks them. Opening them lazily by path would let
-a rotation landing between the two opens hand the reader the inode it had just finished — every record
-duplicated, and the newly created live log never read at all. The gate is held for the opens only, so
-a long read never blocks an append; entries appended during a read simply belong to the next one.
-
-`SearchAsync` additionally carries a scan ceiling (20 000 records) so a filter that matches three
-entries in a very long file still cannot read all of it. It reports `Truncated` when it stopped on the
-limit, on the ceiling, **or on the end of the retained trail after a generation has been discarded** —
-each without having reached the window's start. That last case is why the marker exists: running out
-of file is an honest "you saw everything" on a host young enough to still hold its whole history, and
-a claim of completeness that may be false once anything has been dropped. A young host therefore still
-reports a complete answer. The window travels with the result because a caller that cannot see a clamp
-reports "nothing happened" when it means "nothing in the newest fifty".
+`truncated` is true when the result limit or scan ceiling is reached, or the discarded-history marker
+exists. This deliberately conservative signal does not claim that another match definitely exists;
+it says completeness is unproven. An exhaustive search on a host with no discarded history returns
+false. Filtered search cost is bounded by the scan ceiling; recent reads normally touch only the
+blocks needed for the requested records.
 
 ## Testing Expectations
 
-- `AuditStoreTests`: a newest-first read is exact and complete across read-block boundaries (the carry
-  is where a wrong tail reader silently drops or splices lines); a log with no trailing newline still
-  yields its last line first; an oversized log is rotated aside and a read still spans the rotation;
-  a read over a rotated pair returns no duplicated records; `SearchAsync` filters from the end,
-  reports truncation when the limit fills, and stops at the start of its window; a missing log reads
-  empty.
-- `AuditStoreTests`, both directions of the truncation rule: a search that exhausts the trail reports
-  `Truncated` once a second rotation has discarded a generation, and reports a complete answer on a
-  host that has never discarded one.
+- `AuditStoreTests` covers tail reads across block boundaries, a missing final newline, missing logs,
+  rotation across both generations, snapshot uniqueness and persisted discarded-history signaling.
+- Search tests pair matches and non-matches for all filters, combine filters, exercise both range and
+  limit bounds and empty results, and verify exact time boundaries, future/unordered timestamps,
+  result-limit and scan-ceiling truncation.
+- Every producer family's metadata is preserved while credential/payload canaries are absent from
+  the serialized file. Unknown schemas, control characters, oversized values and session
+  fingerprinting are covered; real HTTP login, credential issuance and app-report tests verify secrets.
+- Lifecycle HTTP tests exercise all seven verbs on HTTP/control, Shell-style app-management actor
+  attribution, equivalent route casing/trailing slashes, refusals before and inside handlers, and I/O failure. Queued update tests pair
+  acceptance with settled success/failure/shutdown cancellation and prove client cancellation and
+  audit failure do not falsify applied work.
+- Live acceptance stops a Core-managed app through MCP and Shell and reads both actions back through
+  `search_audit`, including a refused MCP mutation, CLI attribution and background update outcomes.

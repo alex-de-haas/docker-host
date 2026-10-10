@@ -4,6 +4,7 @@ internal static class LifecycleEndpoints
 {
     public static void Map(WebApplication app)
     {
+        var audited = app.MapGroup("").WithMetadata(new LifecycleAuditMarker()).AddEndpointFilter<LifecycleAuditFilter>();
         app.MapPost("/api/apps/install/feed/plan", async (
             HttpRequest request,
             UserDirectoryStore users,
@@ -66,7 +67,7 @@ internal static class LifecycleEndpoints
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
-        app.MapPost("/api/apps/{appId}/start", async (
+        audited.MapPost("/api/apps/{appId}/start", async (
             string appId,
             HttpRequest request,
             UserDirectoryStore users,
@@ -81,7 +82,7 @@ internal static class LifecycleEndpoints
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
-        app.MapPost("/api/apps/{appId}/stop", async (
+        audited.MapPost("/api/apps/{appId}/stop", async (
             string appId,
             HttpRequest request,
             UserDirectoryStore users,
@@ -96,7 +97,7 @@ internal static class LifecycleEndpoints
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
-        app.MapPost("/api/apps/{appId}/restart", async (
+        audited.MapPost("/api/apps/{appId}/restart", async (
             string appId,
             HttpRequest request,
             UserDirectoryStore users,
@@ -111,7 +112,7 @@ internal static class LifecycleEndpoints
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
-        app.MapPost("/api/apps/{appId}/configure", async (
+        audited.MapPost("/api/apps/{appId}/configure", async (
             string appId,
             HttpRequest request,
             UserDirectoryStore users,
@@ -265,7 +266,7 @@ internal static class LifecycleEndpoints
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
-        app.MapPost("/api/apps/{appId}/autostart", async (
+        audited.MapPost("/api/apps/{appId}/autostart", async (
             string appId,
             HttpRequest request,
             UserDirectoryStore users,
@@ -383,7 +384,7 @@ internal static class LifecycleEndpoints
         // page reload never aborts it. Progress is the record's operationStatus ("updating"), the
         // outcome is the record flip plus a notification. The CLI control-plane twin below stays
         // synchronous. See docs/features/runtime-app-update/feature.md.
-        app.MapPost("/api/apps/{appId}/update", async (
+        audited.MapPost("/api/apps/{appId}/update", async (
             string appId,
             HttpRequest request,
             UserDirectoryStore users,
@@ -407,7 +408,7 @@ internal static class LifecycleEndpoints
                         return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code == "app_not_found" ? 404 : 400);
                     }
                     return await HandleLifecycleError(() => lifecycle.EnqueueUpdateAsync(appId, input, cancellationToken,
-                        requireRoutine: true));
+                        requireRoutine: true, auditOperation: LifecycleAuditOperation.Current(request)));
                 },
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
@@ -428,7 +429,7 @@ internal static class LifecycleEndpoints
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
-        app.MapPost("/api/apps/{appId}/switch-runtime", async (
+        audited.MapPost("/api/apps/{appId}/switch-runtime", async (
             string appId,
             HttpRequest request,
             UserDirectoryStore users,
@@ -684,7 +685,7 @@ internal static class LifecycleEndpoints
                     }, cancellationToken);
                 })));
 
-        app.MapPost("/control/v1/apps/{appId}/configure", async (
+        audited.MapPost("/control/v1/apps/{appId}/configure", async (
             string appId,
             HttpRequest request,
             ControlSecret secret,
@@ -715,7 +716,7 @@ internal static class LifecycleEndpoints
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 await HandleLifecycleError(() => lifecycle.ConfigureSharedMountsAsync(appId, name, input, cancellationToken))));
 
-        app.MapPost("/control/v1/apps/{appId}/autostart", async (
+        audited.MapPost("/control/v1/apps/{appId}/autostart", async (
             string appId,
             HttpRequest request,
             ControlSecret secret,
@@ -735,7 +736,7 @@ internal static class LifecycleEndpoints
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 await HandleLifecycleError(() => lifecycle.SetFeedAsync(appId, input, cancellationToken))));
 
-        app.MapPost("/control/v1/apps/{appId}/start", async (
+        audited.MapPost("/control/v1/apps/{appId}/start", async (
             string appId,
             HttpRequest request,
             ControlSecret secret,
@@ -744,7 +745,7 @@ internal static class LifecycleEndpoints
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 await HandleLifecycleError(() => lifecycle.StartAsync(appId, cancellationToken))));
 
-        app.MapPost("/control/v1/apps/{appId}/stop", async (
+        audited.MapPost("/control/v1/apps/{appId}/stop", async (
             string appId,
             HttpRequest request,
             ControlSecret secret,
@@ -753,7 +754,7 @@ internal static class LifecycleEndpoints
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 await HandleLifecycleError(() => lifecycle.StopAsync(appId, cancellationToken))));
 
-        app.MapPost("/control/v1/apps/{appId}/restart", async (
+        audited.MapPost("/control/v1/apps/{appId}/restart", async (
             string appId,
             HttpRequest request,
             ControlSecret secret,
@@ -772,7 +773,7 @@ internal static class LifecycleEndpoints
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 await HandleLifecycleError(() => lifecycle.CreateUpdatePlanAsync(appId, input, cancellationToken))));
 
-        app.MapPost("/control/v1/apps/{appId}/update", async (
+        audited.MapPost("/control/v1/apps/{appId}/update", async (
             string appId,
             HttpRequest request,
             ControlSecret secret,
@@ -792,7 +793,7 @@ internal static class LifecycleEndpoints
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 await HandleLifecycleError(() => lifecycle.CreateRuntimeSwitchPlanAsync(appId, input, cancellationToken))));
 
-        app.MapPost("/control/v1/apps/{appId}/switch-runtime", async (
+        audited.MapPost("/control/v1/apps/{appId}/switch-runtime", async (
             string appId,
             HttpRequest request,
             ControlSecret secret,
