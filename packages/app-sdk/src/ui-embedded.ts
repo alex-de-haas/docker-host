@@ -3,12 +3,12 @@ import { UiError, type PanelTarget, type PresentationOptions, type PresentationR
 import { DISCOVERY_TIMEOUT, failure, readUiMessage, uiRequest, validId, validTarget, waitForPresentation, type UiMessage } from "./ui-transport";
 
 type PendingRequest = { input: string | null; operation: Promise<PresentationResult>;
-  resolve: (result: PresentationResult) => void; waiters: number };
+  resolve: (result: PresentationResult) => void; waiters: number; sent: boolean };
 
 /** Direct-child transport. Discovery carries no identity and never creates a fallback host. */
 export class EmbeddedUiClient implements UiClient {
   private environment: UiEnvironment = { mode: "embedded", connection: "connecting" };
-  private readonly nonce = createPresentationRequestId();
+  private nonce = createPresentationRequestId();
   private readonly listeners = new Set<(event: UiEvent) => void>();
   private readonly pending = new Map<string, PendingRequest>();
   private channel: { origin: string; hostWindowId: string; generation: string; own: UiBootstrap } | null = null;
@@ -32,9 +32,16 @@ export class EmbeddedUiClient implements UiClient {
   getEnvironment = () => this.environment;
   setActive(active: boolean) {
     if (this.active === active) return;
-    this.active = active;
     if (!active) this.post({ type: "hosty:ui:auth-required" });
-    else { this.channel = null; this.setEnvironment("connecting"); this.discover(); }
+    this.active = active;
+    this.channel = null; this.verifying = null; this.nonce = createPresentationRequestId();
+    clearTimeout(this.deadline); this.retries.forEach(clearTimeout);
+    if (!active) {
+      for (const [requestId, entry] of this.pending) entry.resolve(entry.sent
+        ? { status: "uncertain", requestId, code: "presentation_unknown" }
+        : { status: "blocked", requestId, code: "activity_required" });
+      this.pending.clear(); this.setEnvironment("blocked", "activity_required");
+    } else { this.setEnvironment("connecting"); this.discover(); }
   }
   subscribe = (listener: (event: UiEvent) => void) => {
     this.listeners.add(listener); listener({ type: "environment", value: this.environment });
@@ -47,7 +54,7 @@ export class EmbeddedUiClient implements UiClient {
     this.emit({ type: "environment", value: this.environment });
   }
   private probe() {
-    if (!this.disposed && window.parent === window.top && !this.channel)
+    if (this.active && !this.disposed && window.parent === window.top && !this.channel)
       window.parent.postMessage({ type: "hosty:ui:probe", version: 1, versions: [1], childNonce: this.nonce }, "*");
   }
   private discover() {
@@ -59,11 +66,11 @@ export class EmbeddedUiClient implements UiClient {
     this.retries = [150, 500, 1500].map(delay => setTimeout(() => this.probe(), delay));
   }
   private post(value: Record<string, unknown>) {
-    const channel = this.channel; if (!channel || this.disposed) return;
+    const channel = this.channel; if (!channel || !this.active || this.disposed) return;
     window.parent.postMessage({ version: 1, childNonce: this.nonce, hostWindowId: channel.hostWindowId, generation: channel.generation, ...value }, channel.origin);
   }
   private async recheck(): Promise<boolean> {
-    const channel = this.channel; if (!channel || this.environment.connection !== "connected") return false;
+    const channel = this.channel; if (!this.active || !channel || this.environment.connection !== "connected") return false;
     try {
       const own = await uiRequest<UiBootstrap>(this.path, `bootstrap?parentOrigin=${encodeURIComponent(channel.origin)}`);
       if (this.disposed || this.channel !== channel) return false;
@@ -79,7 +86,7 @@ export class EmbeddedUiClient implements UiClient {
   }
   private async receive(event: MessageEvent) {
     const msg = readUiMessage(event.data);
-    if (!msg || event.source !== window.parent || window.parent !== window.top || event.origin === "null" || this.disposed) return;
+    if (!msg || !this.active || event.source !== window.parent || window.parent !== window.top || event.origin === "null" || this.disposed) return;
     if (msg.type === "hosty:ui:probe-request") {
       if (this.channel && event.origin === this.channel.origin && (msg.generation !== this.channel.generation || msg.hostWindowId !== this.channel.hostWindowId)) {
         this.channel = null; this.setEnvironment("connecting"); this.discover();
@@ -92,21 +99,17 @@ export class EmbeddedUiClient implements UiClient {
       this.offered = true;
       if (this.channel?.origin === event.origin && this.channel.hostWindowId === msg.hostWindowId
         && this.channel.generation === msg.generation && this.environment.connection === "connected") return;
-      const key = `${event.origin}:${msg.hostWindowId}:${msg.generation}`;
+      const key = `${this.nonce}:${event.origin}:${msg.hostWindowId}:${msg.generation}`;
       if (this.verifying === key) return;
       this.verifying = key;
       try {
-        if (!this.active) {
-          window.parent.postMessage({ version: 1, type: "hosty:ui:auth-required", childNonce: this.nonce,
-            hostWindowId: msg.hostWindowId, generation: msg.generation }, event.origin);
-          return;
-        }
         const own = await uiRequest<UiBootstrap>(this.path, `bootstrap?parentOrigin=${encodeURIComponent(event.origin)}`);
         if (this.disposed || !this.active || this.verifying !== key) return;
         if (own.version !== 1 || !own.userId || !own.peer?.origins.includes(event.origin)) throw new UiError("host_untrusted", "Hosty cannot verify this host.");
         this.channel = { origin: event.origin, hostWindowId: msg.hostWindowId, generation: msg.generation, own };
         this.post({ type: "hosty:ui:accept", coreOrigin: own.coreOrigin, userId: own.userId, appId: own.app.appId, installationId: own.app.installationId });
       } catch (error) {
+        if (this.disposed || !this.active || this.verifying !== key) return;
         const code = error instanceof UiError ? error.code : "ui_unavailable";
         this.setEnvironment(code.startsWith("unsupported") ? "unsupported" : "blocked", code);
       } finally { if (this.verifying === key) this.verifying = null; }
@@ -133,6 +136,7 @@ export class EmbeddedUiClient implements UiClient {
   }
   private async request(requestId: string, message: Record<string, unknown>, signal?: AbortSignal): Promise<PresentationResult> {
     if (!validId(requestId)) return { status: "rejected", requestId, code: "invalid_presentation" };
+    if (!this.active) return { status: "blocked", requestId, code: "activity_required" };
     if (signal?.aborted) return { status: "uncertain", requestId, code: "presentation_unknown" };
     const target = message.target as PanelTarget | undefined;
     const input = target ? JSON.stringify([target.panel.appId, target.panel.installationId, target.panel.panelId, target.route ?? null]) : null;
@@ -151,14 +155,14 @@ export class EmbeddedUiClient implements UiClient {
     if (this.pending.size >= 4) return { status: "blocked", requestId, code: "presentation_busy" };
     let settle!: (result: PresentationResult) => void;
     const operation = new Promise<PresentationResult>(resolve => { settle = resolve; });
-    const entry: PendingRequest = { input, operation, resolve: settle, waiters: 0 };
+    const entry: PendingRequest = { input, operation, resolve: settle, waiters: 0, sent: false };
     // Reserve identity before asynchronous revalidation so racing callers cannot share
     // different payloads or overwrite each other's completion/cleanup handlers.
     this.pending.set(requestId, entry);
     void this.recheck().then(verified => {
       if (this.pending.get(requestId) !== entry) return;
       if (!verified) settle({ status: this.environment.connection === "blocked" ? "blocked" : "unsupported", requestId, code: this.environment.code ?? "host_unavailable" });
-      else this.post({ ...message, requestId });
+      else { entry.sent = true; this.post({ ...message, requestId }); }
     });
     return this.wait(requestId, entry, signal);
   }

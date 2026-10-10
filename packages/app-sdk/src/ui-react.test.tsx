@@ -11,6 +11,7 @@ let root: Root, element: HTMLDivElement, host: UiHost | null;
 let resize: () => void;
 let catalogGate: Promise<void> | null;
 let resolutionGate: Promise<void> | null;
+let refuseResolution: boolean;
 let listedPanels: UiPanel[];
 const policy = { microphone: false, popupEscape: false };
 const metadata: UiBootstrap = { version: 1, coreOrigin: "https://core.test", userId: "alice", canHost: true, pinnedOpen: true,
@@ -21,13 +22,16 @@ function Document() { host = useHostyUiHost(); return <textarea aria-label="Docu
 beforeEach(() => {
   catalogGate = null;
   resolutionGate = null;
+  refuseResolution = false;
   listedPanels = catalog;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { resize = callback; } observe() {} disconnect() {} });
   vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
     if (path.includes("bootstrap")) return Response.json(metadata);
     if (!path.endsWith("resolve")) { await catalogGate; return Response.json({ panels: listedPanels }); }
+    const refused = refuseResolution;
     await resolutionGate;
+    if (refused) return Response.json({ code: "access_unavailable" }, { status: 403 });
     const target = JSON.parse(init!.body as string), panel = listedPanels.find(p => p.panel.appId === target.panel.appId)!;
     return Response.json({ target: { ...target, route: target.route ?? panel.route }, available: panel.available, state: panel.state, standaloneHref: "https://core.test/open",
       surface: { appId: panel.panel.appId, installationId: panel.panel.installationId, endpoint: panel.endpoint,
@@ -95,6 +99,38 @@ it("restores the open preference once the delayed catalog supplies a tool", asyn
   await act(async () => host!.refresh());
   expect(element.querySelector("iframe")).toBe(frame);
   expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("resolve"))).toHaveLength(1);
+});
+it("retries refused restoration only after fresh catalog metadata", async () => {
+  refuseResolution = true;
+  await mountRestoration();
+  expect(host!.getSnapshot()).toMatchObject({ expanded: true, selected: null });
+  const requests = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("resolve"));
+  expect(requests()).toHaveLength(1);
+  await act(async () => host!.setWidth(500));
+  expect(requests()).toHaveLength(1);
+  refuseResolution = false;
+  await act(async () => host!.refresh());
+  expect(host!.getSnapshot().selected).toEqual(catalog[0]!.panel);
+  expect(requests()).toHaveLength(2);
+  expect(element.querySelector("aside")!.hidden).toBe(false);
+});
+it("does not retry refused restoration after the operator collapses", async () => {
+  refuseResolution = true; await mountRestoration();
+  await act(async () => host!.setExpanded(false));
+  refuseResolution = false;
+  await act(async () => host!.refresh());
+  expect(host!.getSnapshot()).toMatchObject({ expanded: false, selected: null, tools: [] });
+  expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("resolve"))).toHaveLength(1);
+});
+it("retries with catalog metadata received while a refused restoration was still pending", async () => {
+  let release!: () => void;
+  resolutionGate = new Promise(resolve => { release = resolve; }); refuseResolution = true;
+  await mountRestoration();
+  await act(async () => host!.refresh());
+  refuseResolution = false;
+  await act(async () => release());
+  expect(host!.getSnapshot().selected).toEqual(catalog[0]!.panel);
+  expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("resolve"))).toHaveLength(2);
 });
 it("does not reopen when the operator collapses during delayed default-tool restoration", async () => {
   let release!: () => void;

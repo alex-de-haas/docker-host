@@ -265,6 +265,71 @@ describe("embedded panel discovery", () => {
     f.send({ ...f.offer, type: "hosty:ui:connected", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: "host", installationId: "host-1" });
     return f;
   }
+  async function reconnect(f: ReturnType<typeof begin>) {
+    child!.setActive(true);
+    const probe = f.parent.postMessage.mock.calls.at(-1)![0];
+    const offer = { ...f.offer, childNonce: probe.childNonce };
+    f.send(offer);
+    await vi.waitFor(() => expect(f.parent.postMessage.mock.calls.at(-1)![0]).toMatchObject({ type: "hosty:ui:accept", childNonce: probe.childNonce }));
+    f.send({ ...offer, type: "hosty:ui:connected", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: "host", installationId: "host-1" });
+    return offer;
+  }
+  it("rejects inactive calls without I/O and requires a fresh handshake after renewal", async () => {
+    const f = await connect(); child!.setActive(false);
+    const calls = fetcher.mock.calls.length, posts = f.parent.postMessage.mock.calls.length;
+    const requestId = createPresentationRequestId();
+    expect(await child!.openSurface(target, { placement: "side", requestId })).toMatchObject({ status: "blocked", code: "activity_required" });
+    expect(await child!.getPresentation(requestId)).toMatchObject({ status: "blocked", code: "activity_required" });
+    window.dispatchEvent(new Event("focus"));
+    child!.reportSurfaceState({ route: "/panel", state: "ready" }); f.send(f.offer);
+    expect(fetcher).toHaveBeenCalledTimes(calls); expect(f.parent.postMessage).toHaveBeenCalledTimes(posts);
+    child!.setActive(true);
+    f.send({ ...f.offer, type: "hosty:ui:connected", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: "host", installationId: "host-1" });
+    expect(child!.getEnvironment().connection).toBe("connecting");
+    expect(await child!.openSurface(target, { placement: "side", requestId })).toMatchObject({ code: "host_unavailable" });
+    const offer = await reconnect(f);
+    expect(offer.childNonce).not.toBe(f.offer.childNonce);
+    expect(child!.getEnvironment().connection).toBe("connected");
+  });
+  it("blocks an unsent request when deactivated during revalidation", async () => {
+    const f = await connect();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    fetcher.mockImplementation(async () => { await gate; return Response.json(metadata); });
+    const opening = child!.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    child!.setActive(false);
+    expect(await opening).toMatchObject({ status: "blocked", code: "activity_required" });
+    release(); await Promise.resolve(); await Promise.resolve();
+    expect(f.parent.postMessage.mock.calls.filter(([msg]) => msg.type === "hosty:ui:open")).toHaveLength(0);
+    expect(child!.getEnvironment()).toMatchObject({ connection: "blocked", code: "activity_required" });
+  });
+  it("marks dispatched work uncertain and ignores old replies after renewal", async () => {
+    const f = await connect(), requestId = createPresentationRequestId();
+    const opening = child!.openSurface(target, { placement: "side", requestId });
+    await vi.waitFor(() => expect(f.parent.postMessage.mock.calls.at(-1)![0].type).toBe("hosty:ui:open"));
+    child!.setActive(false);
+    expect(await opening).toMatchObject({ status: "uncertain", code: "presentation_unknown" });
+    const offer = await reconnect(f), settled = vi.fn();
+    const retry = child!.openSurface(target, { placement: "side", requestId }).then(settled);
+    await vi.waitFor(() => expect(f.parent.postMessage.mock.calls.at(-1)![0].type).toBe("hosty:ui:open"));
+    const result = { status: "opened", requestId, target, readiness: "ready" };
+    f.send({ ...f.offer, type: "hosty:ui:result", requestId, result }); await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    f.send({ ...offer, type: "hosty:ui:result", requestId, result }); await retry;
+    expect(settled).toHaveBeenCalledWith(result);
+  });
+  it.each(["success", "failure"])("ignores stale verification %s from before activity renewal", async outcome => {
+    const f = begin();
+    let finish!: (value: Response) => void, reject!: (cause: Error) => void;
+    fetcher.mockImplementationOnce(() => new Promise<Response>((resolve, fail) => { finish = resolve; reject = fail; }));
+    f.send(f.offer); child!.setActive(false);
+    const offer = await reconnect(f);
+    if (outcome === "success") finish(Response.json(metadata)); else reject(new Error("Old failure"));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(child!.getEnvironment().connection).toBe("connected");
+    const accepts = f.parent.postMessage.mock.calls.filter(([msg]) => msg.type === "hosty:ui:accept");
+    expect(accepts).toHaveLength(1); expect(accepts[0][0].childNonce).toBe(offer.childNonce);
+  });
   it("rejects conflicting request identities before asynchronous verification completes", async () => {
     const f = await connect(), requestId = createPresentationRequestId();
     let release!: () => void;

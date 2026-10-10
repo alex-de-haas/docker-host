@@ -78,7 +78,10 @@ Cooperating SDK surfaces compare both Core and actor identity before mounting pr
 An account mismatch blocks the child and offers reconnection. Target authentication stays inside
 its frame; host authentication blocks the outer composition. An auth-required advisory carries no
 credentials or authority. Same-user recovery rechecks the channel; actor/host-installation changes
-clear old targets. A verified peer is an installed app, not a trusted implementation: this protocol
+clear old targets. Activity renewal suspends the embedded channel and discovery; inactive calls are
+blocked without I/O. Unsent work is blocked, while already-dispatched work becomes uncertain.
+Resumption uses a fresh nonce and verified handshake; stale replies or verification cannot restore
+the old channel. A verified peer is an installed app, not a trusted implementation: this protocol
 does not isolate the UI from a malicious embedder or replace each app's server authorization.
 Legacy surfaces that do not negotiate cannot claim the cooperative account-matching guarantee.
 
@@ -147,7 +150,9 @@ Retained frames receive current availability and runtime metadata, so degradatio
 and disappear with the catalog without navigating the iframe.
 
 Shell restores an open panel by selecting the first available catalog tool after metadata arrives,
-unless a tool is already selected or the operator has collapsed the workspace. A notification's
+unless a tool is already selected or the operator has collapsed the workspace. A refused restoration
+can retry on fresh catalog metadata, including metadata received while resolution was pending; it
+does not loop on unrelated state updates. A notification's
 assistant-session link takes precedence over this default restoration. Shell observes the independent
 panel catalog and consumes the link only after successful placement; a refusal retains the link for
 retry on refreshed metadata. Stale completion after leaving the link cannot consume a newer URL.
@@ -203,6 +208,7 @@ feature does not confer that deferred designation. Current CSP refusal has expli
   degraded probes, stopped services and app transitions.
 - SDK tests cover exact peers/generations, same-account negotiation, delayed verification, route
   readiness, replay/conflicts, uncertain waits, metadata/policy changes, fixed server adapters,
+  inactive request refusal, uncertain dispatched work, renewed handshakes and stale verification,
   host ownership, Overlay gating and retained React frames across layout changes.
   Runtime-transition coverage preserves the actual iframe and unsent content through
   stopping/starting/recovery, while a completed stop or changed frame policy removes it.
@@ -217,6 +223,7 @@ feature does not confer that deferred designation. Current CSP refusal has expli
   before and after authentication, failed/mismatched session loads and exact URL-session reporting.
 - Delayed-catalog tests cover restoring Shell's open preference, preserving an existing selection
   or collapse, and consuming assistant-session links only after successful panel placement.
+  Restoration tests also cover transient refusals, bounded retries and catalog refresh during resolution.
   Shortcut tests verify that a non-assistant first catalog entry is never selected, including delayed
   metadata, and that toggling the selected assistant closed creates no new placement. Shell chrome
   tests cover delayed/refused links, cookie/legacy preference migration and the first toggle in both

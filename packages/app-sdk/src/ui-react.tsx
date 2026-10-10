@@ -85,16 +85,26 @@ export function HostyPanelWorkspace({ children, railMode = "opened", className =
     if (initialWidth !== undefined) host.setWidth(initialWidth);
     if (initialExpanded !== undefined) host.setExpanded(initialExpanded);
   }, [host]);
-  const restoredHost = useRef<UiHost | null>(null);
   useEffect(() => {
-    if (!host || railMode !== "catalog" || !state.expanded || state.selected || restoredHost.current === host) return;
-    const first = state.catalog.find(panel => panel.available);
-    if (!first) return;
-    // Catalog metadata may arrive after the persisted open preference. Restore once, without
-    // replacing a selection made by an explicit presentation or reopening a collapsed workspace.
-    restoredHost.current = host;
-    void host.selectPanel(first.panel);
-  }, [host, railMode, state.expanded, state.selected, state.catalog]);
+    if (!host || railMode !== "catalog") return;
+    let live = true, pending = false, completed = false;
+    let attemptedCatalog: UiPanel[] | null = null;
+    const restore = () => {
+      const current = host.getSnapshot();
+      if (!current.expanded) { attemptedCatalog = null; return; }
+      if (!live || pending || completed || current.selected || current.catalog === attemptedCatalog) return;
+      const first = current.catalog.find(panel => panel.available);
+      if (!first) return;
+      pending = true; attemptedCatalog = current.catalog;
+      void host.selectPanel(first.panel).then(result => { completed = result.status === "opened"; })
+        .finally(() => { pending = false; restore(); });
+    };
+    // A refusal consumes only this catalog generation. A refresh can retry, including one
+    // received while resolution was pending, but a user collapse always prevents restoration.
+    const stop = host.subscribeSnapshot(restore);
+    restore();
+    return () => { live = false; stop(); };
+  }, [host, railMode]);
   const lastPrefs = useRef({ width: initialWidth ?? 360, expanded: initialExpanded ?? false });
   useEffect(() => {
     if (!host || state !== host.getSnapshot()) return;
