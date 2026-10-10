@@ -88,6 +88,8 @@ internal static class AppSignInIntentEndpoints
             if (!request.Query.ContainsKey("requestId"))
             {
                 if (post) return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
+                if (request.Query.ContainsKey("installationId"))
+                    return await OpenPinnedSurfaceAsync(appId, context, identity, apps, users, clock);
                 if (request.Query.Keys.Any(key => key != "redirectUri"))
                     return await RefuseLegacyAttemptAsync(appId, context, identity, auditAppId, audit, clock);
                 var redirect = request.Query["redirectUri"].ToString();
@@ -282,6 +284,36 @@ internal static class AppSignInIntentEndpoints
                 "Unable to complete sign-in. Return to the app and start a new attempt after Core storage becomes available.",
                 StatusCodes.Status503ServiceUnavailable);
         }
+    }
+
+    private static async Task<IResult> OpenPinnedSurfaceAsync(string appId, HttpContext context,
+        AppIdentityService identity, AppRegistryStore apps, UserDirectoryStore users, IClock clock)
+    {
+        var request = context.Request;
+        if (request.Query.Count != 3 || request.Query.Any(p => p.Value.Count != 1 || p.Key is not ("installationId" or "endpoint" or "route")))
+            return CoreJson.Json(new ErrorResponse("destination_invalid", "Invalid installation-bound destination."), 400);
+        var installation = request.Query["installationId"].ToString();
+        var endpoint = request.Query["endpoint"].ToString();
+        var route = request.Query["route"].ToString();
+        if (string.IsNullOrEmpty(installation) || string.IsNullOrEmpty(endpoint) || !UiSurfaceRoutes.Valid(route))
+            return CoreJson.Json(new ErrorResponse("destination_invalid", "Invalid app surface destination."), 400);
+        var navigation = await CoreSessionAuthorization.ResolveNavigationSessionAsync(request, users, clock, context.RequestAborted);
+        if (navigation.Denied is not null) return navigation.Denied;
+        if (navigation.User is null)
+            return Results.Redirect($"/login?returnTo={Uri.EscapeDataString(request.Path + request.QueryString)}");
+        var (_, app) = await identity.RequireAccessibleUserAsync(appId, navigation.User.Id, context.RequestAborted);
+        if (PanelIdentity.Installation(app) != installation)
+            return CoreJson.Json(new ErrorResponse("installation_changed", "The original app installation is no longer available."), 409);
+        var summary = AppSummary.From(app);
+        var urls = summary.PanelSurfaces.Where(p => p.Endpoint == endpoint && UiSurfaceRoutes.Within(route, p.Path)).Select(p => p.EmbeddedUrl)
+            .Concat(summary.Navigation.Where(p => p.Endpoint == endpoint && UiSurfaceRoutes.Within(route, p.Path)).Select(p => p.EmbeddedUrl))
+            .Concat(summary.EntryEndpoint == endpoint && summary.EntryPath is { } path && UiSurfaceRoutes.Within(route, path) ? [summary.EmbeddedUrl] : []);
+        var origin = urls.Select(UiPanelService.Origin).OfType<string>().FirstOrDefault();
+        if (origin is null || app.RuntimeState != "running")
+            return CoreJson.Json(new ErrorResponse("destination_unavailable", "The original app surface is not available."), 409);
+        var destination = QueryHelpers.AddQueryString(new Uri(new Uri(origin), route).AbsoluteUri, "hosty_launch", "standalone");
+        await identity.RequireAllowedRedirectUriAsync(appId, destination, context.RequestAborted);
+        return Results.Redirect(destination);
     }
 
     private static async Task RecordTerminalStorageRefusalAsync(HttpContext context, string? appId, string reason, AuditStore audit, IClock clock)

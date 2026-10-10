@@ -3,6 +3,7 @@ import { assistantContractError, createAssistantRequestId, resolveAssistantDesti
 export { createAssistantRequestId };
 export const ASSISTANT_INTERFACE = "assistant";
 export type AssistantGateway = {
+  installationId?: string | null;
   appId: string; key?: string; baseUrl: string; running: boolean;
   version?: number | null; capabilities?: readonly string[] | null; problem?: string | null;
 };
@@ -12,7 +13,7 @@ export function findAssistantGateways(apps: readonly CoreApp[]): AssistantGatewa
     const declarations = app.interfaces?.assistant;
     if (!declarations?.length) return [];
     const declaration = declarations.find(item => item.key === "default") ?? declarations[0]!;
-    return [{ appId: app.id, key: declaration.key, baseUrl: declaration.url?.replace(/\/$/, "") ?? "",
+    return [{ appId: app.id, installationId: app.installationId, key: declaration.key, baseUrl: declaration.url?.replace(/\/$/, "") ?? "",
       running: app.runtimeState === "running" && !!declaration.url, version: declaration.version,
       capabilities: declaration.capabilities, problem: assistantContractError(declaration) }];
   });
@@ -45,14 +46,15 @@ export function assistantOpenUrl(app: CoreApp, result: AssistantHandoffResult): 
   ]);
 }
 type SendHandoff = (path: string, body: unknown) => Promise<Response>;
+export type PresentedHandoff = { id: string; result: AssistantHandoffResult; target: import("@hosty-sdk/app/ui").PanelTarget | null; url: string };
 export async function createHandoff(gateway: AssistantGateway, send: SendHandoff,
-  prompt: string, appIds: string[], requestId: string): Promise<{ id: string; result: AssistantHandoffResult }> {
+  prompt: string, appIds: string[], requestId: string): Promise<PresentedHandoff> {
   const incompatible = assistantContractError(gateway);
   if (incompatible) throw new Error(incompatible);
-  const input = { providerAppId: gateway.appId, key: gateway.key ?? "default", prompt, appIds, requestId };
+  const input = { providerAppId: gateway.appId, installationId: gateway.installationId, key: gateway.key ?? "default", prompt, appIds, requestId };
   const run = async () => {
     const response = await send("/api/assistant/handoff", input);
-    return response.json() as Promise<{ id: string; result: AssistantHandoffResult }>;
+    return response.json() as Promise<PresentedHandoff>;
   };
   try { return await run(); } catch (error) {
     if (!(error instanceof TypeError) && !(error instanceof DOMException)) throw error;
@@ -67,10 +69,16 @@ export function createErrorSession(gateway: AssistantGateway, send: SendHandoff,
 }
 
 /** Retain uncertain intents across page reloads; clear only after the destination is accepted. */
-export async function pendingAssistantIntent(userId: string | null, assistantId: string, prompt: string, appIds: string[]) {
+export async function pendingAssistantIntent(userId: string | null, assistantId: string, prompt: string, appIds: string[], installationId: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([userId, assistantId, prompt, [...appIds].sort()])));
   const key = `hosty:assistant-intent:${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("")}`;
-  const requestId = sessionStorage.getItem(key) ?? createAssistantRequestId();
-  sessionStorage.setItem(key, requestId);
+  const saved = sessionStorage.getItem(key);
+  let previous: { requestId: string; installationId: string } | null = null;
+  if (saved) {
+    try { previous = JSON.parse(saved); } catch { throw new Error("This pending discussion predates installation pinning. Start a new discussion after reloading the tab."); }
+  }
+  if (previous && previous.installationId !== installationId) throw new Error("The assistant was reinstalled. The pending discussion cannot be moved to its replacement.");
+  const requestId = previous?.requestId ?? createAssistantRequestId();
+  sessionStorage.setItem(key, JSON.stringify({ requestId, installationId }));
   return { requestId, complete: () => sessionStorage.removeItem(key) };
 }

@@ -6,6 +6,7 @@ internal static class CoreAppPermissions
 {
     public const string Install = "apps.install";
     public const string ReadApps = "apps.read";
+    public const string ReadPanels = "apps.panels.read";
     public const string AppLogs = "apps.logs";
     public const string Notifications = "apps.notifications";
     public const string AppLifecycle = "apps.lifecycle";
@@ -25,7 +26,7 @@ internal static class CoreAppPermissions
     public const string ReadSkills = "apps.skills.read";
     public const string SpeechProviders = "providers.speech-to-text";
     public const string AssistantProviders = "providers.assistant";
-    public static readonly string[] Known = [Install, ReadApps, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, SourceConnections, ReadSkills, SpeechProviders, AssistantProviders];
+    public static readonly string[] Known = [Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, SourceConnections, ReadSkills, SpeechProviders, AssistantProviders];
 
     // The old name grants exactly the same authority. Other retired permissions remain unsupported.
     public static string Normalize(string permission) => permission == LegacySources ? Sources : permission;
@@ -56,6 +57,7 @@ internal static class CoreAppPermissions
         SourcesRead => "Read repository documentation and development workspace document changes as the current administrator; no source edits or workspace mutations",
         SourceConnections => "Manage your own source-provider accounts and Git identity; select connections for reviewed installations",
         ReadApps => "List applications and read their state",
+        ReadPanels => "Discover accessible application panels and open them beside this app",
         AppLogs => "Read application logs",
         Notifications => "Read application notifications",
         AppLifecycle => "Start, stop and restart applications; change autostart and select reviewed runtimes. Source folder changes require Core confirmation",

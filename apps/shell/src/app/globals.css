@@ -206,3 +206,5 @@
 @container dashboard (width >= 700px) {
   .dashboard-service-endpoints { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+.hosty-panel-workspace.hosty-shell-panels { height: 100%; border-radius: 12px; }

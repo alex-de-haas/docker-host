@@ -6,8 +6,8 @@ namespace Haas.Hosty.Core;
 
 internal sealed record ProviderDescriptor(string AppId, string DisplayName, string Kind, string Key,
     int? Version, IReadOnlyList<string> Capabilities, string? Url, bool Available,
-    IReadOnlyList<ProviderUiSurface>? UiSurfaces = null);
-internal sealed record ProviderUiSurface(string? Endpoint, string Path, string? Url);
+    IReadOnlyList<ProviderUiSurface>? UiSurfaces = null, string? InstallationId = null);
+internal sealed record ProviderUiSurface(string? Endpoint, string Path, string? Url, string? Kind = null, string? PanelId = null);
 internal sealed record ProviderDirectory(IReadOnlyList<ProviderDescriptor> Providers);
 internal sealed record AppPermissionState(IReadOnlyList<string> Required, IReadOnlyList<string> Optional, IReadOnlyList<string> Granted, bool ReviewAvailable = true, IReadOnlyList<string>? UnsupportedRequired = null, string Status = "known");
 internal sealed record ProviderTokenRequest(string ProviderAppId, string Key = "default");
@@ -62,10 +62,10 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
         // Browser destinations use declared UI endpoints, which can differ from the provider API.
         // Consumers need no wider apps.read grant to validate a handoff's returned destination.
         ProviderUiSurface[]? surfaces = kind == "assistant"
-            ? summary.PanelSurfaces.Select(s => new ProviderUiSurface(s.Endpoint, s.Path, s.EmbeddedUrl))
-                .Concat(summary.Navigation.Select(s => new ProviderUiSurface(s.Endpoint, s.Path, s.EmbeddedUrl)))
+            ? summary.PanelSurfaces.Select(s => new ProviderUiSurface(s.Endpoint, s.Path, s.EmbeddedUrl, "panel", s.PanelId))
+                .Concat(summary.Navigation.Select(s => new ProviderUiSurface(s.Endpoint, s.Path, s.EmbeddedUrl, "navigation")))
                 .Concat(summary.EntryPath is { } path
-                    ? [new ProviderUiSurface(summary.EntryEndpoint, path, summary.EmbeddedUrl)] : [])
+                    ? [new ProviderUiSurface(summary.EntryEndpoint, path, summary.EmbeddedUrl, "entrypoint")] : [])
                 .Where(s => s.Url is not null).Distinct().ToArray()
             : null;
         foreach (var entry in entries)
@@ -73,7 +73,7 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
             var healthy = summary.Health is null || summary.Health.Services.Where(s => s.Service == entry.Service).All(s => s.Status == "running" && s.Health is not "unhealthy" and not "starting");
             yield return new(provider.Id, provider.DisplayName, kind, entry.Key, entry.Version,
                 entry.Capabilities ?? [], entry.Url,
-                provider.RuntimeState == "running" && healthy && entry.Url is not null, surfaces);
+                provider.RuntimeState == "running" && healthy && entry.Url is not null, surfaces, PanelIdentity.Installation(provider));
         }
     }
 

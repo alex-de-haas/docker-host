@@ -49,13 +49,15 @@ button first.
   is unaffected, because `frame-ancestors` applies only to framed documents. A runner that frames apps
   in its own page must use a designated embedder's origin or go through Shell. Acceptance evidence
   must not rely on disabling CSP in the runner.
-- [Shared SDK panels](../sdk-panel-system/plan.md): owner direction on 2026-10-10 requires standalone
+- [Shared SDK panels](../sdk-panel-system/feature.md): owner direction on 2026-10-10 requires standalone
   Plans to host an assistant beside its document, while embedded Plans delegates to Shell. The
   earlier blanket exclusion of ordinary apps would break the standalone case. Design explicit
   embedder approval independently of full UI-client status, and test the actual ancestor chain.
   SDK adoption, panel declarations and a `ui-client` role are not implicit approval. The panel plan
   respects deployed CSP and offers explicit separate opening when denied; it does not activate this
-  restriction. This plan remains On Hold pending the existing browser-runner decision.
+  restriction. Its stateless Core peer-origin lookup verifies installed-app provenance, not operator
+  designation, and must not be described as consuming this plan's unimplemented embedder list.
+  This plan remains On Hold pending the existing browser-runner decision.
 - A separate investigation is tracking the finding that a process on another port of a Core or app
   hostname receives that host's cookies. It concerns the same threat (a malicious installed app) and
   may change how origins and sessions are distributed. This plan should be revisited when it lands.

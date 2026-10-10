@@ -1,6 +1,8 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { AssistantError, resolveAssistantDestination } from "@hosty-sdk/app/assistant";
+import { AssistantError, resolveAssistantPresentation } from "@hosty-sdk/app/assistant";
+import { UiError, buildSurfaceOpenUrl } from "@hosty-sdk/app/ui";
+import { UiServerClient } from "@hosty-sdk/app/ui/server";
 import { ProviderError, type ProviderDescriptor } from "@hosty-sdk/app/providers";
 import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { getAppId, getCorePublicOrigin } from "@hosty-sdk/app/server";
@@ -13,16 +15,16 @@ const headers = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" 
 const requestIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function choice(provider: ProviderDescriptor): DiscussionChoice {
-  return { appId: provider.appId, key: provider.key, displayName: provider.displayName,
+  return { appId: provider.appId, installationId: provider.installationId ?? null, key: provider.key, displayName: provider.displayName,
     problem: !provider.available ? "This assistant is not running or ready."
       : provider.version !== 1 ? "This assistant needs interface version 1."
       : !provider.capabilities.includes("attachments") ? "This assistant does not support file attachments."
-      : !provider.uiSurfaces?.length ? "Update Core to expose this assistant’s browser destination."
+      : !provider.installationId || !provider.uiSurfaces?.length ? "Update Core to expose this assistant’s browser destination."
       : null };
 }
 
 function failure(error: unknown): Response {
-  const known = error instanceof PlansError || error instanceof ProviderError || error instanceof AssistantError;
+  const known = error instanceof PlansError || error instanceof ProviderError || error instanceof AssistantError || error instanceof UiError;
   const code = known ? error.code : "assistant_unavailable";
   const core = getCorePublicOrigin();
   const needsAssistantPermission = error instanceof ProviderError && code === "app_permission_required";
@@ -49,6 +51,7 @@ function parseInput(value: unknown): DiscussionInput {
       typeof input.contentHash !== "string" || !/^[a-f0-9]{64}$/.test(input.contentHash) ||
       typeof input.providerAppId !== "string" || !input.providerAppId || input.providerAppId.length > 256 ||
       typeof input.key !== "string" || !input.key || input.key.length > 100 ||
+      typeof input.installationId !== "string" || !input.installationId || input.installationId.length > 256 ||
       typeof input.requestId !== "string" || !requestIdPattern.test(input.requestId))
     throw new PlansError("Select a source document and an assistant before discussing it.", 400, "invalid_discussion");
   return input as DiscussionInput;
@@ -97,10 +100,13 @@ export async function createDiscussion(request: Request): Promise<Response> {
     const providers = new ProviderClient({ appId: getAppId(config) });
     const selected = (await providers.list("assistant", request.signal)).find(item => item.appId === input.providerAppId && item.key === input.key);
     if (!selected) throw new PlansError("The selected assistant is no longer installed.", 409, "assistant_unavailable");
+    if (selected.installationId !== input.installationId) throw new PlansError("The assistant was reinstalled. Start a new discussion explicitly.", 409, "provider_changed");
     const problem = choice(selected).problem;
     if (problem) throw new PlansError(problem, 409, "assistant_unavailable");
     const core = getCorePublicOrigin();
     if (!core) throw new PlansError("Core's browser address is unavailable.", 503, "core_unconfigured");
+    const bootstrap = await new UiServerClient({ appId: getAppId(config) }).bootstrap({}, actor.token, request.signal);
+    if (!bootstrap.pinnedOpen) throw new UiError("unsupported_core", "Update Core to open installation-bound discussions.");
     const document = await readDiscussionDocument(new CoreSourceReader(actor.token, request.signal), input);
     const client = await providers.assistant(selected, async () => actor.token);
     const prepared = await client.prepare({ requestId: input.requestId, prompt: document.prompt, appIds: [] });
@@ -113,10 +119,10 @@ export async function createDiscussion(request: Request): Promise<Response> {
     if (!finalized.result) throw new Error("The assistant did not return a finalized discussion.");
     // Read current UI metadata again: a provider update can change its public origin or surfaces.
     const current = (await providers.list("assistant", request.signal)).find(item => item.appId === selected.appId && item.key === selected.key);
-    const destination = new URL(resolveAssistantDestination(finalized.result.open, current?.uiSurfaces ?? []));
-    destination.searchParams.set("hosty_launch", "standalone");
-    const url = new URL(`/api/apps/${encodeURIComponent(selected.appId)}/open`, core);
-    url.searchParams.set("redirectUri", destination.href);
-    return Response.json({ url: url.href, conversationId: finalized.conversationId }, { headers });
+    if (!current) throw new PlansError("The selected assistant is no longer installed.", 409, "provider_changed");
+    const presentation = resolveAssistantPresentation(current, finalized.result, { expectedProvider: {
+      appId: input.providerAppId, installationId: input.installationId, key: input.key,
+    } });
+    return Response.json({ ...presentation, url: buildSurfaceOpenUrl(bootstrap.coreOrigin, presentation.destination), conversationId: finalized.conversationId }, { headers });
   } catch (error) { return failure(error); }
 }

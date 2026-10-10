@@ -1,4 +1,5 @@
 import { createHostySessionResponse } from "@hosty-sdk/app/session/server";
+import { createHostyUiResponse } from "@hosty-sdk/app/ui/server";
 import { readOwnPermissionNotice } from "@hosty-sdk/app/permissions/server";
 import { delegationCredential } from "./session-delegation.js";
 import { speechRoute } from "./speech.js";
@@ -138,6 +139,19 @@ async function route(
       status: "ok",
       harness: health,
     });
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/hosty/ui/")) {
+    const token = readAppCredential(request);
+    const session = await resolveAppSession(token);
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(request.headers)) if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+    const body = method === "POST" ? JSON.stringify(await readJson(request)) : undefined;
+    const incoming = new Request(url, { method, headers, body });
+    const result = await createHostyUiResponse(incoming, { session, token }, { administratorOnly: true, appId: process.env.HOSTY_APP_ID ?? "hosty.harness" });
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, result.status, await result.json());
     return;
   }
 

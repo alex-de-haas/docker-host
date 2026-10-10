@@ -10,12 +10,16 @@ import { parseSourceDocument } from "@/lib/parser";
 import type { PlanDetail, WorkspacePlan } from "@/lib/types";
 
 const fetch = vi.hoisted(() => vi.fn());
+const presentation = vi.hoisted(() => ({ openSurface: vi.fn(), subscribe: () => () => {} }));
+vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => presentation }));
+const target = { panel: { appId: "assistant", installationId: "installed-1", panelId: "assistant" }, route: "/assistant?session=existing" };
+const result = { url: "https://core.example/open-discussion", target, conversationId: "existing" };
 vi.mock("@hosty-sdk/app/browser-auth", () => ({ appFetch: fetch }));
 const document = parseSourceDocument("docs/features/example/plan.md", "# Plan\nFull document");
 const detail: PlanDetail = { path: document.path, document, error: null, workspaces: [], repository: {
   id: "repo", repository: "https://git.example/repo", branch: "main", workspaceDerived: false, apps: [], state: "available", error: null, commit: "commit", fetchedAt: null,
 } };
-const options = { userId: "admin", providers: [{ appId: "assistant", key: "default", displayName: "Assistant", problem: null }] };
+const options = { userId: "admin", providers: [{ appId: "assistant", installationId: "installed-1", key: "default", displayName: "Assistant", problem: null }] };
 let root: Root, container: HTMLDivElement;
 async function render(current = detail, workspaceId: string | null = null) {
   await act(async () => root.render(createElement(DiscussPlan, { detail: current, workspaceId })));
@@ -24,9 +28,10 @@ const button = () => container.querySelector<HTMLButtonElement>('button[aria-lab
 const response = (body: unknown, ok = true) => ({ ok, json: async () => body });
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.stubGlobal("crypto", webcrypto); vi.stubGlobal("TextEncoder", TextEncoder);
-  sessionStorage.clear(); fetch.mockReset();
+  sessionStorage.clear(); fetch.mockReset(); presentation.openSurface.mockReset();
+  presentation.openSurface.mockImplementation(async (_target, options) => ({ status: "opened", requestId: options.requestId, target, readiness: "ready" }));
   fetch.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === "POST"
-    ? response({ url: "https://core.example/open-discussion" }) : response(options));
+    ? response(result) : response(options));
   vi.spyOn(window, "open").mockReturnValue(null);
   container = window.document.createElement("div"); window.document.body.append(container); root = createRoot(container);
 });
@@ -49,15 +54,15 @@ describe("discussion version selection", () => {
 });
 
 describe("discuss document action", () => {
-  it("disables duplicate activation while attaching and exposes a link if the new tab is blocked", async () => {
+  it("disables duplicate activation while attaching and exposes only an explicit separate link", async () => {
     let finish!: (value: unknown) => void;
     fetch.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === "POST" ? new Promise(resolve => { finish = resolve; }) : response(options));
     await render();
     await act(async () => { button().click(); button()?.click(); });
     await vi.waitFor(() => expect(fetch.mock.calls.filter(call => call[1]?.method === "POST")).toHaveLength(1));
     expect(container.querySelector<HTMLButtonElement>('button[aria-busy="true"]')?.disabled).toBe(true);
-    expect(window.open).toHaveBeenCalledTimes(1);
-    await act(async () => finish(response({ url: "https://core.example/open-discussion" })));
+    expect(window.open).not.toHaveBeenCalled();
+    await act(async () => finish(response(result)));
     expect(container.querySelector("a")?.href).toBe("https://core.example/open-discussion");
     expect(button().disabled).toBe(false);
   });
@@ -79,27 +84,22 @@ describe("discuss document action", () => {
     await act(async () => { select.value = "second:default"; select.dispatchEvent(new Event("change", { bubbles: true })); });
     expect(button().disabled).toBe(false); expect(window.open).not.toHaveBeenCalled();
   });
-  it("opens the finalized destination in the reserved tab without a model send", async () => {
-    const tab = { opener: window, document: { title: "", body: { textContent: "" } }, closed: false, location: { replace: vi.fn() }, close: vi.fn() };
-    vi.mocked(window.open).mockReturnValue(tab as unknown as Window);
+  it("opens the finalized target beside the document without a popup or model send", async () => {
     await render(); await act(async () => button().click());
-    expect(tab.opener).toBeNull(); expect(tab.location.replace).toHaveBeenCalledWith("https://core.example/open-discussion");
+    expect(presentation.openSurface).toHaveBeenCalledWith(target, { placement: "side", requestId: expect.any(String) });
+    expect(window.open).not.toHaveBeenCalled();
     expect(fetch.mock.calls.filter(call => call[1]?.method === "POST").map(call => call[0])).toEqual(["/api/assistant"]);
-    expect(tab.close).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Discussion opened beside the document.");
   });
-  it("keeps the sandboxed popup's opener until navigation starts, then detaches it", async () => {
-    const tab = { opener: window as Window | null, document: { title: "", body: { textContent: "" } }, closed: false, location: { replace: vi.fn() }, close: vi.fn() };
-    tab.location.replace.mockImplementation(() => {
-      // A sandboxed iframe cannot navigate an auxiliary window it has already disowned.
-      if (tab.opener === null) throw new DOMException("The current window does not have permission to navigate the target frame.", "SecurityError");
-    });
-    vi.mocked(window.open).mockReturnValue(tab as unknown as Window);
+  it("retries only presentation with the same ID after an uncertain open", async () => {
+    presentation.openSurface.mockResolvedValueOnce({ status: "uncertain", code: "presentation_unknown" });
     await render(); await act(async () => button().click());
-    expect(container.querySelector('[role="alert"]')).toBeNull();
-    expect(tab.location.replace).toHaveBeenCalledWith("https://core.example/open-discussion");
-    expect(tab.opener).toBeNull();
-    expect(tab.close).not.toHaveBeenCalled();
+    const retry = Array.from(container.querySelectorAll("button")).find(item => item.textContent === "Retry opening")!;
+    await act(async () => retry.click());
+    expect(presentation.openSurface.mock.calls[1]).toEqual(presentation.openSurface.mock.calls[0]);
     expect(fetch.mock.calls.filter(call => call[1]?.method === "POST")).toHaveLength(1);
+    expect(window.open).not.toHaveBeenCalled();
+    expect(container.querySelector("a")?.rel).toBe("noopener noreferrer");
   });
   it("starts a new request only after an explicit action when a handoff is closed", async () => {
     fetch.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === "POST"

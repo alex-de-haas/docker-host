@@ -40,7 +40,7 @@ export default async function RootLayout({
       <body>
         <ThemeProvider>
           <Suspense fallback={<div className="min-h-dvh bg-muted/30" />}>
-            <HostyOverlay><ShellClient
+            <HostyOverlay panelLayout="slot"><ShellClient
               coreOrigin={getCoreOrigin()}
               shellAppId={getShellAppId()}
               initialSidebarCompact={readChromePref(cookieStore.get(SIDEBAR_COMPACT_PREF_KEY)?.value)}

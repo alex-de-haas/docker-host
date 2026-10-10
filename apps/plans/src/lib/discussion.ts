@@ -1,11 +1,13 @@
 import type { PlanDetail } from "./types";
+import type { AppSurfaceRef, PanelTarget } from "@hosty-sdk/app/ui";
 
-export type DiscussionChoice = { appId: string; key: string; displayName: string; problem: string | null };
+export type DiscussionChoice = { appId: string; installationId: string | null; key: string; displayName: string; problem: string | null };
 export type DiscussionOptions = { userId: string; providers: DiscussionChoice[] };
 export type DiscussionInput = {
   repositoryId: string; path: string; workspaceId: string | null; contentHash: string;
-  providerAppId: string; key: string; requestId: string;
+  providerAppId: string; installationId: string; key: string; requestId: string;
 };
+export type DiscussionResult = { url: string; conversationId: string; target: PanelTarget | null; destination: AppSurfaceRef; reason?: "no_panel" | "ambiguous_surface" };
 
 export function discussionVersion(detail: PlanDetail, workspaceId: string | null) {
   if (!workspaceId)

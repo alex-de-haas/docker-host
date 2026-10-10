@@ -518,6 +518,18 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         }
 
         ValidateProvides(manifest.Provides, errors);
+        var panelIds = new HashSet<string>(StringComparer.Ordinal);
+        if (manifest.Ui is { } panelUi)
+        {
+            for (var index = 0; index < panelUi.Panels.Count; index++)
+            {
+                if (panelUi.Panels[index].Id is not { } id) continue;
+                if (!PanelIdentity.IsExplicitId(id))
+                    errors.Add(new("app_manifest_ui_panel_id_invalid", "Panel IDs must be lowercase kebab tokens of at most 64 characters and cannot start with legacy-.", $"$.ui.panels[{index}].id"));
+                else if (!panelIds.Add(id))
+                    errors.Add(new("app_manifest_ui_panel_id_duplicate", "Panel IDs must be unique within the app.", $"$.ui.panels[{index}].id"));
+            }
+        }
         foreach (var permission in manifest.CorePermissions.Concat(manifest.OptionalCorePermissions))
         {
             if (!allowUnsupportedPermissions && !CoreAppPermissions.Known.Contains(permission, StringComparer.Ordinal))
@@ -1219,19 +1231,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         // A panel tab is labelled by its own text, not by the app's name — several apps' tools share
         // one strip, and one app may contribute several, so "Notes" beats a second copy of the app
         // name. Required for that reason.
-        var seenPanelLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var panel in ui.Panels)
         {
             ValidateSystemUiSurface(manifest, panel, "$.ui.panels[]", labelRequired: true, errors);
-            // Two tabs of one app under the same name are indistinguishable on the strip, which is
-            // the only place they appear.
-            if (!string.IsNullOrWhiteSpace(panel.Label) && !seenPanelLabels.Add(panel.Label.Trim()))
-            {
-                errors.Add(new(
-                    "app_manifest_system_ui_panel_label_duplicate",
-                    $"System app UI declares panel label '{panel.Label.Trim()}' more than once.",
-                    "$.ui.panels[].label"));
-            }
         }
     }
 
@@ -3774,6 +3776,8 @@ internal sealed class RuntimeAppUiManifest
 /// </remarks>
 internal sealed class RuntimeAppUiSurfaceManifest
 {
+    // Optional stable panel identity; absent in older manifests and on settings surfaces.
+    public string? Id { get; init; }
     // Required for newly installed/updated panels; nullable for legacy records and settings.
     public string? Icon { get; init; }
     public string? Endpoint { get; init; }

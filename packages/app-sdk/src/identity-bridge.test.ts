@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const hooks = vi.hoisted(() => ({ effect: null as (() => (() => void)) | null, state: { kind: "recovering" } as { kind: string } }));
 const intents = vi.hoisted(() => ({ submit: vi.fn() }));
 vi.mock("./browser-auth", async importOriginal => ({ ...await importOriginal<typeof import("./browser-auth")>(), submitAppAuthIntent: intents.submit }));
-vi.mock("react", () => ({
+vi.mock("react", async original => ({
+  ...await original<typeof import("react")>(),
   useEffect: (effect: () => (() => void)) => { hooks.effect = effect; },
   useRef: (initial: unknown) => ({ current: initial }),
   useState: (initial: { kind?: string }) => [initial?.kind ? hooks.state : null, (state: { kind: string }) => { if (state.kind) hooks.state = state; }],

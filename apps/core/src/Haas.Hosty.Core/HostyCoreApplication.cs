@@ -199,6 +199,7 @@ internal static class HostyCoreApplication
         builder.Services.AddHostedService<AppUpdateSweepScheduler>();
         builder.Services.AddHostedService<AppPermissionObserver>();
         builder.Services.AddSingleton<ProviderAccessService>();
+        builder.Services.AddSingleton<UiPanelService>();
         builder.Services.AddSingleton<InstallationApprovalStore>();
         builder.Services.AddSingleton<HostPathApprovalService>();
         builder.Services.AddSingleton<InstallationApprovalService>();
@@ -223,6 +224,7 @@ internal static class HostyCoreApplication
         app.Use(AppManagementAuthorization.InvokeAsync);
         InstallationApprovalEndpoints.Map(app);
         ProviderEndpoints.Map(app);
+        UiPanelEndpoints.Map(app);
 
         app.MapGet("/healthz", () => CoreJson.Json(new HealthResponse("ok")));
         app.MapGet("/api/core/status", async (

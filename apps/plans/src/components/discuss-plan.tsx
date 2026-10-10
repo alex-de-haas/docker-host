@@ -4,8 +4,10 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
 import { createAssistantRequestId } from "@hosty-sdk/app/assistant";
+import { createPresentationRequestId, type PresentationResult } from "@hosty-sdk/app/ui";
+import { useHostyUi } from "@hosty-sdk/app/ui/react";
 import { LoaderCircleIcon, MessageCircleIcon } from "lucide-react";
-import { discussionVersion, type DiscussionInput, type DiscussionOptions } from "@/lib/discussion";
+import { discussionVersion, type DiscussionInput, type DiscussionOptions, type DiscussionResult } from "@/lib/discussion";
 import type { PlanDetail } from "@/lib/types";
 import { Button } from "./ui/button";
 
@@ -25,11 +27,15 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
   const [selection, setSelection] = useState("");
   const [error, setError] = useState<Failure | null>(null);
   const [pending, setPending] = useState(false);
-  const [openUrl, setOpenUrl] = useState<string | null>(null);
+  const ui = useHostyUi();
+  const [completed, setCompleted] = useState<{ result: DiscussionResult; presentationId: string; userId: string; path: string; source: string } | null>(null);
+  const [presentation, setPresentation] = useState<PresentationResult | null>(null);
   const [epoch, setEpoch] = useState(0);
   const running = useRef(false);
-  const requests = useRef(new Map<string, string>());
+  const requests = useRef(new Map<string, { requestId: string; installationId: string }>());
+  const results = useRef(new Map<string, { result: DiscussionResult; presentationId: string; userId: string; path: string; source: string }>());
   const version = detail && discussionVersion(detail, workspaceId);
+  const sourceKey = JSON.stringify([detail?.repository.id, detail?.path, workspaceId, version?.document.content]);
   const selected = options?.providers.find(item => `${item.appId}:${item.key}` === selection)
     ?? (options?.providers.length === 1 ? options.providers[0] : undefined);
 
@@ -48,36 +54,43 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
     return () => { controller.abort(); window.removeEventListener("focus", load); };
   }, [epoch]);
 
+  useEffect(() => ui.subscribe(event => {
+    if (event.type === "presentation" && event.value.requestId === completed?.presentationId) setPresentation(event.value);
+  }), [ui, completed?.presentationId]);
+
+  async function present(value: NonNullable<typeof completed>) {
+    setCompleted(value);
+    if (!value.result.target) { setPresentation(null); return; }
+    setPresentation(await ui.openSurface(value.result.target, { placement: "side", requestId: value.presentationId }));
+  }
+
   async function discuss(startNew = false) {
-    if (running.current || !detail || !version || !selected || selected.problem || !options) return;
-    running.current = true; setPending(true); setError(null); setOpenUrl(null);
-    // Reserve the tab in the click gesture. If blocked, the finalized discussion remains a link.
-    let tab: Window | null = null;
+    if (running.current || !detail || !version || !selected?.installationId || selected.problem || !options) return;
+    running.current = true; setPending(true); setError(null);
     try {
-      tab = window.open("about:blank", "_blank");
-      if (tab) { tab.document.title = "Opening Assistant"; tab.document.body.textContent = "Attaching the document to Assistant…"; }
       // Named HTTP localhost origins do not expose Web Crypto in every supported browser.
       const contentHash = Array.from(sha256(new TextEncoder().encode(version.document.content)), value => value.toString(16).padStart(2, "0")).join("");
       const input = { repositoryId: detail.repository.id, path: detail.path, workspaceId: version.workspaceId,
         contentHash, providerAppId: selected.appId, key: selected.key };
       const storageKey = `hosty.plans.discussion:${JSON.stringify([options.userId, input])}`;
-      let requestId = startNew ? undefined : requests.current.get(storageKey);
-      try { if (!startNew) requestId ??= sessionStorage.getItem(storageKey) ?? undefined; } catch { /* Memory retry identity remains available. */ }
-      requestId ??= createAssistantRequestId();
-      requests.current.set(storageKey, requestId);
-      try { sessionStorage.setItem(storageKey, requestId); } catch { /* Preserve in memory for this page. */ }
-      const body: DiscussionInput = { ...input, requestId };
+      const existing = !startNew && results.current.get(storageKey);
+      if (existing) { await present(existing); return; }
+      let intent = startNew ? undefined : requests.current.get(storageKey);
+      try {
+        const stored = !startNew && JSON.parse(sessionStorage.getItem(storageKey) ?? "null");
+        if (stored && typeof stored.requestId === "string" && typeof stored.installationId === "string") intent ??= stored;
+      } catch { /* Memory retry identity remains available. */ }
+      intent ??= { requestId: createAssistantRequestId(), installationId: selected.installationId };
+      requests.current.set(storageKey, intent);
+      try { sessionStorage.setItem(storageKey, JSON.stringify(intent)); } catch { /* Preserve in memory for this page. */ }
+      const body: DiscussionInput = { ...input, ...intent };
       const result = await appFetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
-        .then(responseBody<{ url: string }>);
-      setOpenUrl(result.url);
-      if (tab && !tab.closed) {
-        // Sandboxed frames may navigate their own popup only while the opener relationship exists.
-        // Detach in this same task, before the destination document can run.
-        tab.location.replace(result.url);
-        tab.opener = null;
-      }
+        .then(responseBody<DiscussionResult>);
+      const value = { result, presentationId: createPresentationRequestId(), userId: options.userId, path: detail.path, source: sourceKey };
+      results.current.set(storageKey, value);
+      await present(value);
     } catch (cause) {
-      tab?.close(); setError(failure(cause));
+      setError(failure(cause));
     } finally { running.current = false; setPending(false); }
   }
 
@@ -104,10 +117,15 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
     {error && <div role="alert" className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-sm text-destructive"><p>{error.message}</p>
       {error.reviewUrl && <a href={error.reviewUrl} target="_blank" rel="noopener noreferrer" className="underline">Review Plans permissions</a>}
       {!options && <Button variant="link" size="sm" onClick={() => setEpoch(value => value + 1)}>Retry</Button>}
-      {["handoff_closed", "request_expired", "conversation_deleted"].includes(error.code ?? "") &&
+      {["handoff_closed", "request_expired", "conversation_deleted", "provider_changed"].includes(error.code ?? "") &&
         <Button variant="link" size="sm" disabled={pending} onClick={() => void discuss(true)}>Start a new discussion</Button>}
     </div>}
     {!error && detail && unavailable && <p role="status" className="text-right text-xs text-muted-foreground">{unavailable}</p>}
-    {openUrl && <a href={openUrl} target="_blank" rel="noopener noreferrer" className="self-end text-xs underline">Open discussion</a>}
+    {completed && completed.userId === options?.userId && completed.path === detail?.path && completed.source === sourceKey && <div className="flex flex-wrap items-center justify-end gap-3 text-xs">
+      <span role="status">{presentation?.status === "opened" ? presentation.readiness === "ready" ? "Discussion opened beside the document." : presentation.readiness === "unreported" ? "Discussion created. The assistant has not confirmed that it loaded." : presentation.readiness === "auth-required" ? "Discussion created. Check access in the assistant panel." : "Discussion created. Connecting to the assistant…"
+        : "Discussion created. You can retry opening it here or open it separately."}</span>
+      {completed.result.target && <Button variant="link" size="sm" disabled={pending} onClick={() => void present(completed)}>Retry opening</Button>}
+      <a href={completed.result.url} target="_blank" rel="noopener noreferrer" className="underline">Open separately</a>
+    </div>}
   </div>;
 }

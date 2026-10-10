@@ -225,6 +225,7 @@ export type CoreReassignResult = {
 
 /** A settings or panel surface as Core resolved it: what to call the tab, and what to embed. */
 export type CoreAppSurface = {
+  panelId?: string | null;
   endpoint?: string | null;
   icon?: string | null;
   label?: string | null;
@@ -251,6 +252,8 @@ export type CoreNavigationItem = {
 };
 
 export type CoreApp = {
+  installationId?: string | null;
+  framePolicy?: { microphone: boolean; popupEscape: boolean } | null;
   configurationReadiness?: { required: boolean; missingSettings: string[]; mounts: { key: string; label?: string | null; reason: string }[]; error?: string | null } | null;
   id: string;
   grantedCorePermissions?: string[] | null;

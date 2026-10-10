@@ -254,6 +254,36 @@ public sealed class AppManifestServiceTests
         Assert.Equal(new[] { "bot", "contact-round" }, selection.Manifest.Ui!.Panels.Select(panel => panel.Icon));
     }
 
+    [Theory]
+    [InlineData("", "app_manifest_ui_panel_id_invalid")]
+    [InlineData("Upper", "app_manifest_ui_panel_id_invalid")]
+    [InlineData("legacy-old", "app_manifest_ui_panel_id_invalid")]
+    [InlineData("chat", "app_manifest_ui_panel_id_duplicate")]
+    public async Task LoadAsync_RejectsInvalidOrDuplicatePanelIds(string id, string expected)
+    {
+        var manifestPath = await WriteSystemUiManifestAsync(null, $$"""
+            , "ui": { "panels": [
+                { "id": "chat", "path": "/one", "label": "Chat", "icon": "bot" },
+                { "id": {{JsonSerializer.Serialize(id)}}, "path": "/two", "label": "Chat", "icon": "bot" }
+            ] }
+            """);
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+        Assert.Contains(error.Errors, e => e.Code == expected);
+    }
+
+    [Fact]
+    public async Task LoadAsync_DistinctPanelIdsMayShareLabelsAndPaths()
+    {
+        var manifestPath = await WriteSystemUiManifestAsync("system", """
+            , "ui": { "entrypoint": { "endpoint": "web", "path": "/" }, "panels": [
+                { "id": "one", "endpoint": "web", "path": "/panel", "label": "Tool", "icon": "bot" },
+                { "id": "two", "endpoint": "web", "path": "/panel", "label": "Tool", "icon": "bot" }
+            ] }
+            """);
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+        Assert.Equal(["one", "two"], selection.Manifest.Ui!.Panels.Select(p => p.Id));
+    }
+
     [Fact]
     public async Task LoadAsync_SystemUi_AcceptsDeclaredSurfaces()
     {

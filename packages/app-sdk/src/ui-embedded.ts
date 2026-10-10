@@ -1,0 +1,165 @@
+import { createPresentationRequestId, type UiClient } from "./ui";
+import { UiError, type PanelTarget, type PresentationOptions, type PresentationResult, type UiBootstrap, type UiEnvironment, type UiEvent } from "./ui-types";
+import { DISCOVERY_TIMEOUT, failure, readUiMessage, uiRequest, validId, validTarget, waitForPresentation, type UiMessage } from "./ui-transport";
+
+/** Direct-child transport. Discovery carries no identity and never creates a fallback host. */
+export class EmbeddedUiClient implements UiClient {
+  private environment: UiEnvironment = { mode: "embedded", connection: "connecting" };
+  private readonly nonce = createPresentationRequestId();
+  private readonly listeners = new Set<(event: UiEvent) => void>();
+  private readonly pending = new Map<string, Set<(result: PresentationResult) => void>>();
+  private channel: { origin: string; hostWindowId: string; generation: string; own: UiBootstrap } | null = null;
+  private verifying: string | null = null;
+  private disposed = false;
+  private deadline: ReturnType<typeof setTimeout> | undefined;
+  private retries: ReturnType<typeof setTimeout>[] = [];
+  private state: { route: string; state: "ready" | "blocked"; code?: string } | null = null;
+  private active = true;
+  private offered = false;
+  private readonly onMessage = (event: MessageEvent) => { void this.receive(event); };
+  private readonly onFocus = () => { void this.recheck(); };
+  private readonly onKey = (event: KeyboardEvent) => { if (this.active && !event.defaultPrevented && event.key === "Escape") this.post({ type: "hosty:ui:dismiss" }); };
+  constructor(private readonly path: string) {
+    window.addEventListener("message", this.onMessage);
+    window.addEventListener("focus", this.onFocus);
+    window.addEventListener("keydown", this.onKey);
+    this.discover();
+    if (window.parent !== window.top) this.setEnvironment("unsupported", "unsupported_nesting");
+  }
+  getEnvironment = () => this.environment;
+  setActive(active: boolean) {
+    if (this.active === active) return;
+    this.active = active;
+    if (!active) this.post({ type: "hosty:ui:auth-required" });
+    else { this.channel = null; this.setEnvironment("connecting"); this.discover(); }
+  }
+  subscribe = (listener: (event: UiEvent) => void) => {
+    this.listeners.add(listener); listener({ type: "environment", value: this.environment });
+    return () => { this.listeners.delete(listener); };
+  };
+  private emit(event: UiEvent) { if (!this.disposed) for (const listener of this.listeners) listener(event); }
+  private setEnvironment(connection: UiEnvironment["connection"], code?: string) {
+    if (this.disposed) return;
+    this.environment = { mode: "embedded", connection, ...(code ? { code } : {}) };
+    this.emit({ type: "environment", value: this.environment });
+  }
+  private probe() {
+    if (!this.disposed && window.parent === window.top && !this.channel)
+      window.parent.postMessage({ type: "hosty:ui:probe", version: 1, versions: [1], childNonce: this.nonce }, "*");
+  }
+  private discover() {
+    clearTimeout(this.deadline); this.retries.forEach(clearTimeout);
+    this.deadline = setTimeout(() => {
+      if (this.environment.connection === "connecting") this.setEnvironment(this.offered ? "blocked" : "unsupported", "host_unavailable");
+    }, DISCOVERY_TIMEOUT);
+    this.probe();
+    this.retries = [150, 500, 1500].map(delay => setTimeout(() => this.probe(), delay));
+  }
+  private post(value: Record<string, unknown>) {
+    const channel = this.channel; if (!channel || this.disposed) return;
+    window.parent.postMessage({ version: 1, childNonce: this.nonce, hostWindowId: channel.hostWindowId, generation: channel.generation, ...value }, channel.origin);
+  }
+  private async recheck(): Promise<boolean> {
+    const channel = this.channel; if (!channel || this.environment.connection !== "connected") return false;
+    try {
+      const own = await uiRequest<UiBootstrap>(this.path, `bootstrap?parentOrigin=${encodeURIComponent(channel.origin)}`);
+      if (this.disposed || this.channel !== channel) return false;
+      if (own.userId !== channel.own.userId || own.coreOrigin !== channel.own.coreOrigin || own.app.installationId !== channel.own.app.installationId
+        || own.peer?.installationId !== channel.own.peer?.installationId || own.peer?.appId !== channel.own.peer?.appId)
+        throw new UiError("actor_mismatch", "Reconnect using the same Hosty account.");
+      return true;
+    } catch (error) {
+      if (this.channel !== channel || this.disposed) return false;
+      this.post({ type: "hosty:ui:surface-state", route: this.state?.route, state: "auth-required" });
+      this.setEnvironment("blocked", error instanceof UiError ? error.code : "ui_unavailable"); return false;
+    }
+  }
+  private async receive(event: MessageEvent) {
+    const msg = readUiMessage(event.data);
+    if (!msg || event.source !== window.parent || window.parent !== window.top || event.origin === "null" || this.disposed) return;
+    if (msg.type === "hosty:ui:probe-request") {
+      if (this.channel && event.origin === this.channel.origin && (msg.generation !== this.channel.generation || msg.hostWindowId !== this.channel.hostWindowId)) {
+        this.channel = null; this.setEnvironment("connecting"); this.discover();
+      }
+      if (this.channel) { void this.recheck(); return; }
+      this.probe(); return;
+    }
+    if (msg.childNonce !== this.nonce || !validId(msg.hostWindowId) || !validId(msg.generation)) return;
+    if (msg.type === "hosty:ui:offer") {
+      this.offered = true;
+      if (this.channel?.origin === event.origin && this.channel.hostWindowId === msg.hostWindowId
+        && this.channel.generation === msg.generation && this.environment.connection === "connected") return;
+      const key = `${event.origin}:${msg.hostWindowId}:${msg.generation}`;
+      if (this.verifying === key) return;
+      this.verifying = key;
+      try {
+        if (!this.active) {
+          window.parent.postMessage({ version: 1, type: "hosty:ui:auth-required", childNonce: this.nonce,
+            hostWindowId: msg.hostWindowId, generation: msg.generation }, event.origin);
+          return;
+        }
+        const own = await uiRequest<UiBootstrap>(this.path, `bootstrap?parentOrigin=${encodeURIComponent(event.origin)}`);
+        if (this.disposed || !this.active || this.verifying !== key) return;
+        if (own.version !== 1 || !own.userId || !own.peer?.origins.includes(event.origin)) throw new UiError("host_untrusted", "Hosty cannot verify this host.");
+        this.channel = { origin: event.origin, hostWindowId: msg.hostWindowId, generation: msg.generation, own };
+        this.post({ type: "hosty:ui:accept", coreOrigin: own.coreOrigin, userId: own.userId, appId: own.app.appId, installationId: own.app.installationId });
+      } catch (error) {
+        const code = error instanceof UiError ? error.code : "ui_unavailable";
+        this.setEnvironment(code.startsWith("unsupported") ? "unsupported" : "blocked", code);
+      } finally { if (this.verifying === key) this.verifying = null; }
+      return;
+    }
+    const channel = this.channel;
+    if (!channel || event.origin !== channel.origin || msg.hostWindowId !== channel.hostWindowId || msg.generation !== channel.generation) return;
+    if (msg.type === "hosty:ui:connected") {
+      const own = channel.own;
+      if (msg.code || msg.coreOrigin !== own.coreOrigin || msg.userId !== own.userId || msg.appId !== own.peer?.appId || msg.installationId !== own.peer?.installationId) {
+        this.setEnvironment("blocked", "actor_mismatch"); return;
+      }
+      clearTimeout(this.deadline); this.setEnvironment("connected");
+      if (this.state) this.reportSurfaceState(this.state);
+      return;
+    }
+    if (this.environment.connection !== "connected") return;
+    if (msg.type === "hosty:ui:result" && validId(msg.requestId) && validResult(msg.result, msg.requestId)) {
+      const result = msg.result;
+      for (const resolve of this.pending.get(msg.requestId) ?? []) resolve(result);
+      this.pending.delete(msg.requestId);
+      this.emit({ type: "presentation", value: result });
+    }
+  }
+  private async request(requestId: string, message: Record<string, unknown>, signal?: AbortSignal): Promise<PresentationResult> {
+    if (!validId(requestId)) return { status: "rejected", requestId, code: "invalid_presentation" };
+    if (signal?.aborted) return { status: "uncertain", requestId, code: "presentation_unknown" };
+    if (!await this.recheck()) return { status: this.environment.connection === "blocked" ? "blocked" : "unsupported", requestId, code: this.environment.code ?? "host_unavailable" };
+    if (this.pending.size >= 4 && !this.pending.has(requestId)) return { status: "blocked", requestId, code: "presentation_busy" };
+    let settle!: (result: PresentationResult) => void;
+    const operation = new Promise<PresentationResult>(resolve => { settle = resolve; });
+    const listeners = this.pending.get(requestId) ?? new Set(); listeners.add(settle); this.pending.set(requestId, listeners);
+    this.post({ ...message, requestId });
+    return waitForPresentation(operation, requestId, signal).finally(() => {
+      listeners.delete(settle); if (!listeners.size) this.pending.delete(requestId);
+    });
+  }
+  openSurface = (target: PanelTarget, options: PresentationOptions) => validTarget(target) && options.placement === "side"
+    ? this.request(options.requestId, { type: "hosty:ui:open", target, placement: "side" }, options.signal)
+    : Promise.resolve({ status: "rejected", requestId: options.requestId, code: "invalid_presentation" } as PresentationResult);
+  getPresentation = (requestId: string, options?: { signal?: AbortSignal }) => this.request(requestId, { type: "hosty:ui:status" }, options?.signal);
+  reportSurfaceState = (state: { route: string; state: "ready" | "blocked"; code?: string }) => {
+    this.state = state;
+    if (this.environment.connection === "connected") this.post({ type: "hosty:ui:surface-state", ...state });
+  };
+  dispose = () => {
+    this.disposed = true; clearTimeout(this.deadline); this.retries.forEach(clearTimeout);
+    window.removeEventListener("message", this.onMessage); window.removeEventListener("focus", this.onFocus); window.removeEventListener("keydown", this.onKey);
+    for (const [id, listeners] of this.pending) for (const resolve of listeners) resolve(failure(id, new UiError("host_unavailable", "Host disconnected.")));
+    this.pending.clear(); this.listeners.clear();
+  };
+}
+
+function validResult(value: unknown, id: string): value is PresentationResult {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Partial<PresentationResult>;
+  return v.requestId === id && (v.status === "opened" ? validTarget(v.target) && ["loading", "ready", "unreported", "auth-required"].includes(v.readiness!)
+    : ["blocked", "unsupported", "rejected", "uncertain", "unknown"].includes(v.status!) && "code" in v && typeof v.code === "string");
+}

@@ -361,11 +361,11 @@ Decisions 1–5: 2026-08-19.
     placement; opening an existing discussion cannot reselect its owner or invoke it again.
     Explicit separate opening uses the same session, without promising live UI/draft transfer.
     A standalone panel host is not automatically a full UI client or an approved embedder. The
-    [SDK panel plan](features/sdk-panel-system/plan.md) owns the common system and first scenario;
+    [SDK panel system](features/sdk-panel-system/feature.md) implements the common system and first scenario;
     [Default applications](features/default-applications/plan.md) owns shared selection, and
     [replaceable UI clients](features/replaceable-ui-clients/plan.md) owns full-shell eligibility
-    and primary navigation. The owner approved the direction and planning; implementation remains
-    subject to the individual plans becoming Ready.
+    and primary navigation. The owner subsequently approved and authorized the SDK panel implementation;
+    Default applications and replaceable UI clients remain subject to their own Ready approval.
 
 28. **Ordinary-user agents follow verified isolation (2026-10-10).** Retain free-text agent
     conversations for non-administrators once agent execution is fully isolated and its only action
@@ -488,7 +488,7 @@ the manifest contract. Two standing consequences:
 
 [workspaces-app](features/workspaces-app/feature.md) ·
 [default-applications](features/default-applications/plan.md) ·
-[sdk-panel-system](features/sdk-panel-system/plan.md) ·
+[sdk-panel-system](features/sdk-panel-system/feature.md) ·
 [replaceable-ui-clients](features/replaceable-ui-clients/plan.md) ·
 [plan-provider-interface](features/plan-provider-interface/plan.md) ·
 [hosty-harness-swift](features/hosty-harness-swift/plan.md) ·

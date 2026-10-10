@@ -299,3 +299,75 @@ listen for `APP_SESSION_ENDED`, and call `renewAppActivity` directly from a clic
 or reload to renew access. `appActivityNeedsRenewal()` supports proactive click renewal near expiry.
 See [the activity contract](../../docs/features/app-activity-window/feature.md), including the
 separate Core-approved assistant session leases.
+
+## Shared panels (Core 0.129.0 / SDK 0.25.0)
+
+`HostyOverlay` composes one UI owner per top-level browser document. Its default
+`panelLayout="auto"` adds an opened-tool rail, an **Add tool** chooser and a resizable
+workspace. In a directly embedded app it delegates presentation to the verified parent
+and renders no local rail. Use `panelLayout="slot"` with exactly one
+`HostyPanelWorkspace` inside your chrome, or `"none"` for a custom controller renderer.
+Panel hosting requires reviewed optional `apps.panels.read` (or existing `apps.read`);
+participating as a child does not require catalog access.
+
+```ts
+// app/api/hosty/ui/[...action]/route.ts — own app configuration/session only
+import { createHostyUiRouteHandler } from "@hosty-sdk/app/server";
+const handler = createHostyUiRouteHandler(config);
+export const GET = handler;
+export const POST = handler;
+```
+
+Non-Next servers use `createHostyUiResponse` from `@hosty-sdk/app/ui/server` with their
+revalidated own app-user session/token. `UiServerClient` provides only `bootstrap`,
+`listPanels` and `resolvePanel`; never expose a generic Core proxy or caller-supplied credentials.
+Both server adapters return `no-store` metadata. The React root's `uiPath` defaults to
+`/api/hosty/ui` and must be a same-origin path.
+
+Finalize a business handoff before requesting placement. Freeze the provider's app ID,
+installation ID and interface key before `ProviderClient.assistant(...)`, then read its
+current descriptor and map the completed result:
+
+```ts
+import { resolveAssistantPresentation } from "@hosty-sdk/app/assistant";
+import { buildSurfaceOpenUrl } from "@hosty-sdk/app/ui";
+const presentation = resolveAssistantPresentation(currentProvider, finalized, { expectedProvider });
+const href = buildSurfaceOpenUrl(bootstrap.coreOrigin, presentation.destination);
+// bootstrap.pinnedOpen must be true before relying on this link.
+```
+
+The pure mapper never selects an assistant or invokes it. Explicit `result.open.panelId`
+selects a matching declared panel; otherwise the unique longest endpoint/path boundary
+wins. Ties return `ambiguous_surface`, navigation-only providers return `no_panel`, and
+both retain the exact same-session destination for explicit separate opening. A changed
+provider installation is refused. Core validates pinned links again after login.
+
+```tsx
+import { useHostyUi } from "@hosty-sdk/app/ui/react";
+import { createPresentationRequestId } from "@hosty-sdk/app/ui";
+const ui = useHostyUi();
+const requestId = createPresentationRequestId(); // retain with the completed result
+const result = await ui.openSurface(presentation.target!, { placement: "side", requestId });
+// Reuse requestId and target for retries; do not repeat the business action.
+const current = await ui.getPresentation(requestId);
+const unsubscribe = ui.subscribe(event => { /* environment or presentation update */ });
+```
+
+`opened` confirms placement, with separate `loading`, `auth-required`, `ready` or
+`unreported` readiness. Providers call `ui.reportSurfaceState({ route, state: "ready" })`
+after their exact route has loaded; iframe load alone is not readiness. Deadline/abort
+returns `uncertain`, not cancellation. Query or retry the same ID. An unsupported host
+never automatically opens a tab or creates a nested workspace. **Open separately** is an
+explicit `target="_blank" rel="noopener noreferrer"` link to the pinned destination.
+
+Framework-neutral clients use `createUiHost` from `@hosty-sdk/app/ui/host`, its snapshots,
+`registerFrame`, `openSurface`, `getPresentation`, `setExpanded`, `setWidth` and `dispose`.
+React clients normally use the overlay-owned controller via `useHostyUiHost` and the shared
+`HostyAppFrame`. Core projects the target's minimal microphone/popup policy; an app message
+cannot widen it. No delegated-token responder is required.
+
+Trust is limited to exact mounted window/origin, document generation and stateless Core
+peer metadata. Matching opaque Core/user contexts prevents accidental account mixing
+between cooperating apps; it is not attestation of app code or delegated API authority.
+Every target API still authorizes its own session. Older surfaces remain `unreported`.
+See [the panel contract and verification](../../docs/features/sdk-panel-system/feature.md).
