@@ -345,6 +345,41 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.DoesNotContain(references, p => p.Path.StartsWith("hidden", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("target", "\n")]
+    [InlineData("target", "\r\n")]
+    [InlineData("base", "\n")]
+    [InlineData("base", "\r\n")]
+    [InlineData("worktree", "\n")]
+    [InlineData("worktree", "\r\n")]
+    public async Task SourceDocuments_ReferenceMetadataSupportsLfAndCrLf(string version, string newline)
+    {
+        var (fixture, origin, workspaces, documents) = await DocumentFixtureAsync();
+        // Preserve the fixture's exact line endings through Git on every test host.
+        await File.WriteAllTextAsync(Path.Combine(origin, ".gitattributes"), "*.md -text\n");
+        var content = PlanText.Replace("components: [apps/example]", "components: [apps/example, apps/missing, README.md]")
+            .Replace("\n", newline);
+        await File.WriteAllTextAsync(Path.Combine(origin, PlanPath), content);
+        await RunGitAsync(origin, ["add", "."]);
+        await CommitDocsAsync(origin);
+        var workspace = version == "target" ? null : await workspaces.PrepareAsync(WorkspaceTestOwner(fixture), WorkspaceRequest(), default);
+        var entry = Assert.Single((await documents.ListRepositoriesAsync("admin", default)).Repositories);
+
+        // Cover the cold focused path and the full listing used by the Plans overview.
+        foreach (var focused in new[] { true, false })
+        {
+            var listing = await documents.ListDocumentsAsync(entry.Id, "admin", false, default, version, workspace?.Id, focused ? PlanPath : null);
+            var document = Assert.Single(listing.Documents);
+            var references = document.ReferencePaths!;
+            Assert.Contains(references, reference => reference.Path == "apps/example" && reference.Exists && reference.IsDirectory);
+            Assert.Contains(references, reference => reference.Path == "apps/missing" && !reference.Exists && !reference.IsDirectory);
+            Assert.Contains(references, reference => reference.Path == "README.md" && reference.Exists && !reference.IsDirectory);
+            var returned = await documents.ReadContentAsync(entry.Id, "admin", new(PlanPath, version, workspace?.Id, listing.Commit, document.Sha), default);
+            Assert.Equal(content, returned.Content);
+            Assert.Equal(SourceDocumentService.BlobSha(Encoding.UTF8.GetBytes(content), "sha1"), returned.Sha);
+        }
+    }
+
     [Fact]
     public async Task SourceDocuments_ReferenceLimitFailsExplicitly()
     {

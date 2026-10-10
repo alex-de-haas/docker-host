@@ -462,7 +462,9 @@ internal sealed partial class SourceDocumentService(AppRegistryStore apps,
                 else if (fence == marker[0] && marker.Length >= fenceLength && string.IsNullOrWhiteSpace(trim[marker.Length..])) fence = '\0';
                 continue;
             }
-            if (fence == '\0') prose.AppendLine(InlineCodePattern().Replace(line, ""));
+            // The multiline component pattern expects LF. Normalize CRLF input and avoid
+            // AppendLine, which introduces CRLF on Windows even for LF Git blobs.
+            if (fence == '\0') prose.Append(InlineCodePattern().Replace(line.TrimEnd('\r'), "")).Append('\n');
         }
         foreach (Match match in ReferencePattern().Matches(prose.ToString()))
         {
