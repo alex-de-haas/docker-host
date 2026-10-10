@@ -74,14 +74,17 @@ export default function AssistantPage() {
   const requestedSessionRef = useRef<string | null>(null);
   const requestedDraftRef = useRef<{ sessionId: string; text: string; sourceAppId: string } | null>(null);
   const [requestedSessionId, setRequestedSessionId] = useState<string | null>(null);
+  // Retain the expected message-selected session even if fetching it fails.
+  const [surfaceSessionId, setSurfaceSessionId] = useState<string | null>(null);
   const [session, setSession] = useState<AssistantSession | null>(null);
   useEffect(() => {
     const route = new URL(window.location.href);
     const expected = route.searchParams.get("session");
-    if (!expected || session?.id !== expected) return;
+    if (!session?.id || (expected && session.id !== expected)
+      || (surfaceSessionId && session.id !== surfaceSessionId)) return;
     for (const key of ["hosty_launch", "hosty_theme", "hosty_theme_preference"]) route.searchParams.delete(key);
     ui.reportSurfaceState({ route: `${route.pathname}${route.search}${route.hash}`, state: "ready" });
-  }, [ui, session?.id]);
+  }, [ui, session?.id, surfaceSessionId]);
   const [status, setStatus] = useState("idle");
   const [activity, setActivity] = useState<SessionActivity | null>(null);
   const [connection, setConnection] = useState<StreamConnection>("connecting");
@@ -365,6 +368,7 @@ export default function AssistantPage() {
           sourceAppId: typeof data.sourceAppId === "string" ? data.sourceAppId : "",
         } : null;
         requestedSessionRef.current = data.sessionId;
+        setSurfaceSessionId(data.sessionId);
         setRequestedSessionId(data.sessionId);
         return;
       }

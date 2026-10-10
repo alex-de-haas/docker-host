@@ -10,6 +10,7 @@ vi.mock("./browser-auth", () => ({ appFetch: (...args: Parameters<typeof fetch>)
 let root: Root, element: HTMLDivElement, host: UiHost | null;
 let resize: () => void;
 let catalogGate: Promise<void> | null;
+let resolutionGate: Promise<void> | null;
 let listedPanels: UiPanel[];
 const policy = { microphone: false, popupEscape: false };
 const metadata: UiBootstrap = { version: 1, coreOrigin: "https://core.test", userId: "alice", canHost: true, pinnedOpen: true,
@@ -19,12 +20,14 @@ const catalog: UiPanel[] = ["assistant", "notes"].map(id => ({ panel: { appId: i
 function Document() { host = useHostyUiHost(); return <textarea aria-label="Document draft" defaultValue="Keep this selection" />; }
 beforeEach(() => {
   catalogGate = null;
+  resolutionGate = null;
   listedPanels = catalog;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { resize = callback; } observe() {} disconnect() {} });
   vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
     if (path.includes("bootstrap")) return Response.json(metadata);
     if (!path.endsWith("resolve")) { await catalogGate; return Response.json({ panels: listedPanels }); }
+    await resolutionGate;
     const target = JSON.parse(init!.body as string), panel = listedPanels.find(p => p.panel.appId === target.panel.appId)!;
     return Response.json({ target: { ...target, route: target.route ?? panel.route }, available: panel.available, state: panel.state, standaloneHref: "https://core.test/open",
       surface: { appId: panel.panel.appId, installationId: panel.panel.installationId, endpoint: panel.endpoint,
@@ -92,6 +95,16 @@ it("restores the open preference once the delayed catalog supplies a tool", asyn
   await act(async () => host!.refresh());
   expect(element.querySelector("iframe")).toBe(frame);
   expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("resolve"))).toHaveLength(1);
+});
+it("does not reopen when the operator collapses during delayed default-tool restoration", async () => {
+  let release!: () => void;
+  resolutionGate = new Promise(resolve => { release = resolve; });
+  await mountRestoration();
+  expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("resolve"))).toHaveLength(1);
+  await act(async () => host!.setExpanded(false));
+  await act(async () => release());
+  expect(host!.getSnapshot()).toMatchObject({ expanded: false, selected: null, tools: [] });
+  expect(element.querySelectorAll("iframe")).toHaveLength(0);
 });
 it("does not restore over a selection made before the catalog arrives", async () => {
   let release!: () => void;

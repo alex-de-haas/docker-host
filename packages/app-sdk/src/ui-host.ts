@@ -29,6 +29,7 @@ export class UiHost implements UiClient {
   private readonly frames = new Set<Frame>();
   private readonly ledger = new Map<string, Ledger>();
   private readonly toolQueues = new Map<string, Promise<PresentationResult>>();
+  private selectionGeneration = 0;
   private disposed = false;
   private workspace: object | null = null;
   private refreshing: Promise<void> | null = null;
@@ -121,6 +122,7 @@ export class UiHost implements UiClient {
     if ([...this.ledger.entries()].filter(([k, v]) => k.startsWith(source + ":") && v.pending).length >= 4)
       return Promise.resolve({ status: "blocked", requestId: id, code: "presentation_busy" });
     const entry: Ledger = { input, frame };
+    const selectionGeneration = ++this.selectionGeneration;
     const currentSource = () => !frame || source === `${frame.surface.appId}:${frame.generation}:${frame.nonce}`;
     const toolKey = panelKey(target.panel), previous = this.toolQueues.get(toolKey);
     const operation = (async (): Promise<PresentationResult> => {
@@ -135,6 +137,8 @@ export class UiHost implements UiClient {
         if (!resolved.available || !resolved.surface) throw new UiError(resolved.state || "destination_unavailable", "The selected panel is unavailable.");
         if (window.location.protocol === "https:" && new URL(resolved.surface.origin).protocol === "http:")
           throw new UiError("insecure_embed", "Open this HTTP application separately.");
+        if (selectionGeneration !== this.selectionGeneration)
+          throw new UiError("presentation_superseded", "A newer panel action replaced this opening. Retry to open it again.");
         const old = this.snapshot.tools.find(t => t.key === toolKey);
         const same = old?.resolved.surface && JSON.stringify(old.resolved.surface) === JSON.stringify(resolved.surface);
         const tool: UiTool = { key: toolKey, target: resolved.target, resolved,
@@ -184,7 +188,10 @@ export class UiHost implements UiClient {
     const opened = this.snapshot.tools.find(t => t.key === panelKey(ref));
     return this.openSurface(opened?.target ?? { panel: ref }, { placement: "side", requestId: createPresentationRequestId() });
   };
-  setExpanded = (expanded: boolean) => this.update({ expanded });
+  setExpanded = (expanded: boolean) => {
+    if (!expanded) this.selectionGeneration++;
+    this.update({ expanded });
+  };
   setWidth = (width: number) => { if (Number.isFinite(width)) this.update({ width: Math.min(800, Math.max(280, width)) }); };
   setAttention = (panel: PanelRef, attention: number) => this.update({ tools: this.snapshot.tools.map(t => t.key === panelKey(panel) ? { ...t, attention: Math.max(0, Math.floor(attention)) } : t) });
   reportSurfaceState = (_state: { route: string; state: "ready" | "blocked"; code?: string }) => {};

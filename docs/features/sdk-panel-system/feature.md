@@ -97,6 +97,9 @@ Immediate validation, conflict and concurrency refusals reach the embedded calle
 response path as successful placement. The child reserves a request ID and target before asynchronous
 verification, coalesces identical in-flight calls and rejects conflicting targets locally. Status
 queries share an existing opening; a later opening waits for an earlier status query to finish.
+New accepted openings and explicit collapse supersede pending selection intents. An older resolution
+returns `presentation_superseded` without replacing a newer selection or reopening the workspace.
+An explicit retry revalidates and can open the same target.
 
 ## SDK Integration
 
@@ -177,7 +180,9 @@ The normal path calls `openSurface` with a presentation UUID. It opens Shell's p
 and the local SDK host when standalone, without reserving a popup. Plans distinguishes successful
 placement from provider-reported readiness. Retry opening reuses the completed result; Open
 separately is an explicit noopener link. Neither action repeats uploads/finalization or submits
-the prepared draft. Harness reports readiness only after loading the exact requested session.
+the prepared draft. Harness reports readiness only after loading the exact requested session,
+including requests delivered by Shell messages to the default assistant route. A failed or mismatched
+session fetch cannot report a previously attached session as ready for that request.
 
 ## Related Features
 
@@ -201,11 +206,13 @@ feature does not confer that deferred designation. Current CSP refusal has expli
   stopping/starting/recovery, while a completed stop or changed frame policy removes it.
   Degradation-warning tests cover appearance and recovery on the same retained frame.
   Concurrent-request tests exercise immediate embedded refusals, payload conflicts during
-  verification, identical replay, independent aborts and status/open ordering.
+  verification, identical replay, independent aborts and status/open ordering. Selection tests cover
+  collapse during bootstrap/resolve, out-of-order selections, queued routes and delayed restoration.
 - Plans/Harness/Shell tests preserve source hashes, complete attachments, provider freezing,
   idempotent handoff recovery, review routing and existing assistant entry points. Plans tests cover
   completed results across provider reinstall, including navigation-only destinations and explicit
-  replacement handoffs with the original document hash.
+  replacement handoffs with the original document hash. Harness tests cover message-selected readiness
+  before and after authentication, failed/mismatched session loads and exact URL-session reporting.
 - Delayed-catalog tests cover restoring Shell's open preference, preserving an existing selection
   or collapse, and consuming assistant-session links only after successful panel placement.
   Shortcut tests verify that a non-assistant first catalog entry is never selected, including delayed

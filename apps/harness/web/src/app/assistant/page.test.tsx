@@ -5,6 +5,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import AssistantPage from "./page";
 import * as api from "@/lib/assistant-api";
 
+const ui = vi.hoisted(() => ({ reportSurfaceState: vi.fn() }));
+vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => ui }));
+
 vi.mock("@/lib/assistant-api", async original => ({
   ...await original<typeof api>(),
   getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(),
@@ -60,6 +63,54 @@ const status = (value: string) => act(async () => {
 const submit = () => act(async () => {
   input().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+});
+
+const openSession = (sessionId: string) => act(async () => window.dispatchEvent(new MessageEvent("message", {
+  source: window.parent, data: { type: "hosty:open-assistant-session", sessionId },
+})));
+
+it("reports the mounted default route only after its message-selected session attaches", async () => {
+  window.history.replaceState({}, "", "/assistant?hosty_launch=embedded&hosty_theme=dark&hosty_theme_preference=system");
+  await render(); ui.reportSurfaceState.mockClear();
+  let finish!: (value: api.AssistantSession) => void;
+  vi.mocked(api.getSession).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  await openSession("requested");
+  expect(ui.reportSurfaceState).not.toHaveBeenCalled();
+  await act(async () => finish({ ...record, id: "requested" }));
+  expect(ui.reportSurfaceState).toHaveBeenCalledExactlyOnceWith({ route: "/assistant", state: "ready" });
+  expect(api.postMessage).not.toHaveBeenCalled();
+});
+
+it("waits for a message-selected session received before initial authentication completes", async () => {
+  let healthReady!: (value: api.HarnessHealth) => void;
+  vi.mocked(api.getHealth).mockImplementationOnce(() => new Promise(resolve => { healthReady = resolve; }));
+  let finish!: (value: api.AssistantSession) => void;
+  vi.mocked(api.getSession).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  await render(); await openSession("requested");
+  await act(async () => healthReady({ name: "fake", available: true }));
+  expect(api.getSession).toHaveBeenCalledWith("requested");
+  expect(ui.reportSurfaceState).not.toHaveBeenCalled();
+  await act(async () => finish({ ...record, id: "requested" }));
+  expect(ui.reportSurfaceState).toHaveBeenCalledExactlyOnceWith({ route: "/assistant", state: "ready" });
+  expect(api.createSession).not.toHaveBeenCalled();
+});
+
+it.each(["failure", "mismatch"])("does not report an old or different session ready after requested-session %s", async outcome => {
+  await render(); ui.reportSurfaceState.mockClear();
+  if (outcome === "failure") vi.mocked(api.getSession).mockRejectedValueOnce(new Error("Unavailable"));
+  else vi.mocked(api.getSession).mockResolvedValueOnce({ ...record, id: "different" });
+  await openSession("requested");
+  expect(ui.reportSurfaceState).not.toHaveBeenCalled();
+});
+
+it("preserves exact URL-session readiness when a different session is requested by message", async () => {
+  window.history.replaceState({}, "", "/assistant?session=session-one");
+  await render();
+  expect(ui.reportSurfaceState).toHaveBeenCalledWith({ route: "/assistant?session=session-one", state: "ready" });
+  ui.reportSurfaceState.mockClear();
+  vi.mocked(api.getSession).mockResolvedValueOnce({ ...record, id: "other" });
+  await openSession("other");
+  expect(ui.reportSurfaceState).not.toHaveBeenCalled();
 });
 
 it.each(["running", "awaiting_approval", "awaiting_question"])("keeps a draft unsent and shows only composer Stop while %s", async value => {

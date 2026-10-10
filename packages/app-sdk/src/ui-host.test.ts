@@ -56,7 +56,8 @@ describe("panel host authority and replay", () => {
       status: "blocked", requestId: ids[4], code: "presentation_busy",
     }));
     release();
-    await vi.waitFor(() => expect(f.post.mock.calls.filter(([msg]) => msg.result?.status === "opened")).toHaveLength(4));
+    await vi.waitFor(() => expect(f.post.mock.calls.filter(([msg]) => msg.result?.status === "opened")).toHaveLength(1));
+    expect(f.post.mock.calls.filter(([msg]) => msg.result?.code === "presentation_superseded")).toHaveLength(3);
   });
   it.each(["request_conflict", "invalid_presentation"])("returns immediate %s without losing the original embedded operation", async code => {
     await start(); const f = frame(), requestId = createPresentationRequestId();
@@ -83,6 +84,60 @@ describe("panel host authority and replay", () => {
     expect(h.getSnapshot().tools).toHaveLength(1); expect(h.getSnapshot().expanded).toBe(true);
     expect(fetcher.mock.calls.filter(([url]) => url.endsWith("resolve"))).toHaveLength(2);
     expect(await h.openSurface({ ...target, route: "/assistant?session=other" }, { placement: "side", requestId })).toMatchObject({ status: "rejected", code: "request_conflict" });
+  });
+  it.each(["bootstrap", "resolve"])("does not reopen after collapse while %s is pending, but permits an explicit retry", async pending => {
+    const h = await start(), requestId = createPresentationRequestId();
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    fetcher.mockImplementation(async (path: string) => {
+      if (path.endsWith(pending)) { entered(); await gate; }
+      return Response.json(path.endsWith("resolve") ? resolved : metadata);
+    });
+    const opening = h.openSurface(target, { placement: "side", requestId });
+    await waiting; h.setExpanded(false); release();
+    expect(await opening).toMatchObject({ status: "blocked", code: "presentation_superseded" });
+    expect(h.getSnapshot()).toMatchObject({ expanded: false, selected: null, tools: [] });
+    expect(await h.getPresentation(requestId)).toMatchObject({ status: "blocked", code: "presentation_superseded" });
+    expect(await h.openSurface(target, { placement: "side", requestId })).toMatchObject({ status: "opened" });
+    expect(h.getSnapshot().expanded).toBe(true);
+  });
+  it("keeps the newer tool selected when an earlier resolution finishes last", async () => {
+    const h = await start();
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const newer = { appId: "notes", installationId: "notes-1", panelId: "notes" };
+    fetcher.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (!path.endsWith("resolve")) return Response.json(metadata);
+      const requested = JSON.parse(init!.body as string);
+      if (requested.panel.appId === panel.appId) { entered(); await gate; return Response.json(resolved); }
+      return Response.json({ ...resolved, target: { panel: newer, route: "/notes" },
+        surface: { ...resolved.surface, appId: newer.appId, installationId: newer.installationId, route: "/notes" } });
+    });
+    const first = h.selectPanel(panel); await waiting;
+    expect(await h.selectPanel(newer)).toMatchObject({ status: "opened" }); release();
+    expect(await first).toMatchObject({ status: "blocked", code: "presentation_superseded" });
+    expect(h.getSnapshot().selected).toEqual(newer);
+    expect(h.getSnapshot().tools).toHaveLength(1);
+  });
+  it("applies only the latest queued route for the same tool", async () => {
+    const h = await start();
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    fetcher.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (!path.endsWith("resolve")) return Response.json(metadata);
+      const requested = JSON.parse(init!.body as string);
+      if (requested.route === target.route) { entered(); await gate; }
+      return Response.json({ ...resolved, target: requested, surface: { ...resolved.surface, route: requested.route } });
+    });
+    const first = h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() }); await waiting;
+    const latest = { ...target, route: "/assistant?session=latest" };
+    const second = h.openSurface(latest, { placement: "side", requestId: createPresentationRequestId() }); release();
+    expect(await first).toMatchObject({ status: "blocked", code: "presentation_superseded" });
+    expect(await second).toMatchObject({ status: "opened", target: latest });
+    expect(h.getSnapshot().tools.map(tool => tool.target)).toEqual([latest]);
   });
   it("rejects strangers, stale generations and different accounts before dispatch", async () => {
     const h = await start(); await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
