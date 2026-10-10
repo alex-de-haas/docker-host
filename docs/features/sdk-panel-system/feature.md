@@ -92,7 +92,9 @@ Legacy surfaces that do not negotiate cannot claim the cooperative account-match
 Discovery and readiness are bounded. A known host whose verification times out remains blocked;
 an unsupported legacy host permits compatibility rendering without a nested panel host. Readiness
 is separate from successful placement: `loading`, `auth-required`, `ready` or `unreported`. Only a
-matching declared installation, endpoint and exact route can report ready. A blank/CSP-refused or
+matching declared installation, endpoint and route can report ready. Route comparison removes only
+SDK-owned `hosty_launch`, `hosty_theme` and `hosty_theme_preference` parameters and normalizes query
+encoding on both sides; app parameters, their order, the path and fragment still participate. A blank/CSP-refused or
 older surface remains unreported and exposes explicit separate opening.
 
 Presentation IDs are caller-generated UUIDs, distinct from handoff IDs. The host keeps a bounded
@@ -225,6 +227,10 @@ Shell resolves that exact panel and its declared route before sending the sessio
 links without a panel ID resolve only when the app declares one panel; ambiguous/missing targets
 remain pending. Workspace outbound commands carry the resolved `PanelTarget` and reach only its
 matching app, installation, panel ID and route, including when other app panels remain mounted.
+Hosted frames hold retained commands until the child completes a verified connection, and deliver
+them again after child authentication/activity recovery or host renewal without requiring an iframe
+load. Duplicate accepts on the same connection do not redeliver commands. Frames without a panel
+host retain their legacy load-based delivery.
 
 ## Related Features
 
@@ -269,7 +275,10 @@ queued-open timeouts, channel renewal and status/open ordering. Selection tests 
   Session-link tests reject unrelated panels, wait for assistant discovery and ignore consumption
   after assistant-role removal. Multi-panel tests verify explicit notification targets, refusal of
   ambiguous/unavailable targets, and the declared route instead of another session’s route.
-  Workspace command tests exclude other panels/installations and stale routes.
+  Workspace command tests exclude other panels/installations and stale routes, hold commands during
+  authentication, reject foreign/mismatched connections and redeliver after child/host activity renewal.
+  Readiness tests normalize reserved launch/theme parameters while rejecting changed app parameters,
+  paths and fragments.
   Shortcut tests verify that a non-assistant first catalog entry is never selected, including delayed
   metadata, and that toggling the selected assistant closed creates no new placement. Shell chrome
   tests cover delayed/refused links, cookie/legacy preference migration and the first toggle in both

@@ -1,13 +1,14 @@
 import { createPresentationRequestId, type UiClient } from "./ui";
 import { UiError, panelKey, routeWithin, type PanelRef, type PanelTarget, type PresentationOptions, type PresentationResult,
   type UiBootstrap, type UiEnvironment, type UiEvent, type UiFrameSurface, type UiPanel, type UiResolvedPanel, type SurfaceReadiness } from "./ui-types";
-import { DISCOVERY_TIMEOUT, failure, readUiMessage, uiPath, uiRequest, validId, validTarget, waitForPresentation, type UiMessage } from "./ui-transport";
+import { canonicalSurfaceRoute, DISCOVERY_TIMEOUT, failure, readUiMessage, uiPath, uiRequest, validId, validTarget, waitForPresentation, type UiMessage } from "./ui-transport";
 
 export type UiTool = { key: string; target: PanelTarget; resolved: UiResolvedPanel; readiness: SurfaceReadiness; attention: number };
 export type UiHostSnapshot = { bootstrap: UiBootstrap | null; catalog: UiPanel[]; tools: UiTool[];
   selected: PanelRef | null; expanded: boolean; width: number; error: { code: string; message: string } | null };
 type Frame = { element: HTMLIFrameElement; surface: UiFrameSurface; generation: string; nonce: string | null;
-  connected: boolean; actor: string | null; live: boolean; cleanup: () => void; waitForReadiness: () => void };
+  connected: boolean; actor: string | null; live: boolean; cleanup: () => void; waitForReadiness: () => void;
+  onConnection?: (connected: boolean) => void };
 type Ledger = { input: string; result?: PresentationResult; pending?: Promise<PresentationResult>; frame?: Frame };
 let documentHost: UiHost | null = null;
 
@@ -52,6 +53,7 @@ export class UiHost implements UiClient {
     for (const [key, entry] of this.ledger) if (entry.pending) this.ledger.delete(key);
     for (const frame of this.frames) {
       frame.connected = false; frame.actor = null; frame.nonce = null;
+      frame.onConnection?.(false);
       frame.generation = createPresentationRequestId();
     }
     this.setEnvironment(active ? "connecting" : "blocked", active ? undefined : "activity_required");
@@ -90,6 +92,7 @@ export class UiHost implements UiClient {
       this.ledger.clear(); this.toolQueues.clear();
       for (const frame of this.frames) {
         frame.connected = false; frame.actor = null; frame.nonce = null;
+        frame.onConnection?.(false);
         frame.generation = createPresentationRequestId();
         this.post(frame, { type: "hosty:ui:probe-request" });
       }
@@ -233,8 +236,8 @@ export class UiHost implements UiClient {
   setAttention = (panel: PanelRef, attention: number) => this.update({ tools: this.snapshot.tools.map(t => t.key === panelKey(panel) ? { ...t, attention: Math.max(0, Math.floor(attention)) } : t) });
   reportSurfaceState = (_state: { route: string; state: "ready" | "blocked"; code?: string }) => {};
 
-  registerFrame = (element: HTMLIFrameElement, surface: UiFrameSurface): (() => void) => {
-    const frame: Frame = { element, surface, generation: createPresentationRequestId(), nonce: null, connected: false, actor: null, live: true, cleanup: () => {}, waitForReadiness: () => {} };
+  registerFrame = (element: HTMLIFrameElement, surface: UiFrameSurface, onConnection?: (connected: boolean) => void): (() => void) => {
+    const frame: Frame = { element, surface, onConnection, generation: createPresentationRequestId(), nonce: null, connected: false, actor: null, live: true, cleanup: () => {}, waitForReadiness: () => {} };
     let timer: ReturnType<typeof setTimeout> | undefined;
     const forget = () => { for (const [key, entry] of this.ledger) if (entry.frame === frame) this.ledger.delete(key); };
     frame.waitForReadiness = () => {
@@ -246,6 +249,7 @@ export class UiHost implements UiClient {
     const loaded = () => {
       forget();
       frame.generation = createPresentationRequestId(); frame.nonce = null; frame.connected = false; frame.actor = null;
+      frame.onConnection?.(false);
       this.reportFrame(frame, "loading");
       this.post(frame, { type: "hosty:ui:probe-request" }); frame.waitForReadiness();
     };
@@ -281,19 +285,25 @@ export class UiHost implements UiClient {
     const own = this.snapshot.bootstrap;
     if (!frame || !own?.canHost) return;
     if (msg.type === "hosty:ui:probe" && validId(msg.childNonce) && Array.isArray(msg.versions) && msg.versions.includes(1)) {
+      if (frame.nonce !== msg.childNonce) { frame.connected = false; frame.actor = null; frame.onConnection?.(false); }
       frame.nonce = msg.childNonce;
       this.post(frame, { type: "hosty:ui:offer" }); return;
     }
     if (msg.hostWindowId !== this.windowId || msg.generation !== frame.generation || msg.childNonce !== frame.nonce || !frame.nonce) return;
     // This is advisory state, accepted only from the mounted origin/document. It grants no authority.
-    if (msg.type === "hosty:ui:auth-required") { this.reportFrame(frame, "auth-required"); return; }
+    if (msg.type === "hosty:ui:auth-required") {
+      frame.connected = false; frame.actor = null; frame.onConnection?.(false);
+      this.reportFrame(frame, "auth-required"); return;
+    }
     if (msg.type === "hosty:ui:accept") {
+      const wasConnected = frame.connected;
       frame.connected = msg.coreOrigin === own.coreOrigin && msg.userId === own.userId
         && msg.appId === frame.surface.appId && msg.installationId === frame.surface.installationId;
       frame.actor = frame.connected ? own.userId : null;
       if (frame.connected) { this.reportFrame(frame, "loading"); frame.waitForReadiness(); }
       this.post(frame, { type: "hosty:ui:connected", coreOrigin: own.coreOrigin, userId: own.userId,
         appId: own.app.appId, installationId: own.app.installationId, code: frame.connected ? null : "actor_mismatch", route: frame.surface.route });
+      if (frame.connected !== wasConnected) frame.onConnection?.(frame.connected);
       if (!frame.connected) this.reportFrame(frame, "auth-required");
       return;
     }
@@ -307,7 +317,8 @@ export class UiHost implements UiClient {
       const result = await this.status(msg.requestId, source, frame);
       if (source === `${frame.surface.appId}:${frame.generation}:${frame.nonce}`)
         this.post(frame, { type: "hosty:ui:result", requestId: msg.requestId, result });
-    } else if (msg.type === "hosty:ui:surface-state" && msg.route === frame.surface.route) {
+    } else if (msg.type === "hosty:ui:surface-state" && canonicalSurfaceRoute(msg.route) !== null
+      && canonicalSurfaceRoute(msg.route) === canonicalSurfaceRoute(frame.surface.route)) {
       if (msg.state === "ready") this.reportFrame(frame, "ready");
       else if (msg.state === "auth-required" || msg.state === "blocked") this.reportFrame(frame, "auth-required");
     } else if (msg.type === "hosty:ui:dismiss") {

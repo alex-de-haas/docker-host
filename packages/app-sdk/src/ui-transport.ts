@@ -12,6 +12,12 @@ export function readUiMessage(value: unknown): UiMessage | null {
   return msg.version === UI_VERSION && typeof msg.type === "string" && msg.type.startsWith("hosty:ui:") ? msg as UiMessage : null;
 }
 export function validId(value: unknown): value is string { return typeof value === "string" && /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i.test(value); }
+export function canonicalSurfaceRoute(value: unknown): string | null {
+  if (!isSurfaceRoute(value)) return null;
+  const route = new URL(value, "https://surface.invalid");
+  for (const key of ["hosty_launch", "hosty_theme", "hosty_theme_preference"]) route.searchParams.delete(key);
+  return `${route.pathname}${route.search}${route.hash}`;
+}
 export function validTarget(value: unknown): value is PanelTarget {
   if (!value || typeof value !== "object") return false;
   const target = value as Partial<PanelTarget>, panel = target.panel;

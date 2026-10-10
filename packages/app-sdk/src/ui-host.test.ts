@@ -29,10 +29,10 @@ afterEach(() => {
   Object.defineProperty(window, "top", { configurable: true, value: originalTop });
 });
 async function start() { host = createUiHost(); await host.refresh(); return host; }
-function frame() {
+function frame(surface = resolved.surface!) {
   const element = document.createElement("iframe"); document.body.append(element);
   const post = vi.spyOn(element.contentWindow!, "postMessage").mockImplementation(() => {});
-  const release = host!.registerFrame(element, { ...resolved.surface!, panelId: panel.panelId });
+  const release = host!.registerFrame(element, { ...surface, panelId: panel.panelId });
   const nonce = createPresentationRequestId();
   const send = (data: object, origin = "https://assistant.test", source: unknown = element.contentWindow) => window.dispatchEvent(new MessageEvent("message", { data: { version: 1, ...data }, origin, source: source as Window }));
   send({ type: "hosty:ui:probe", childNonce: nonce, versions: [1] });
@@ -42,6 +42,22 @@ function frame() {
 }
 
 describe("panel host authority and replay", () => {
+  it.each([
+    ["hosty_launch=native", "/assistant?session=one+two#turn", "ready"],
+    ["hosty_launch=embedded&hosty_launch=native", "/assistant?session=one%20two#turn", "ready"],
+    ["hosty%5Flaunch=native&hosty_theme=dark&hosty_theme_preference=system", "/assistant?session=one+two&hosty_launch=embedded&hosty_theme=light#turn", "ready"],
+    ["hosty_launch=native", "/assistant?session=other#turn", "loading"],
+    ["hosty_launch=native", "/assistant?session=one+two#different", "loading"],
+    ["hosty_launch=native", "/other?session=one+two#turn", "loading"],
+  ])("matches readiness without reserved parameters (%s, %s)", async (launch, route, expected) => {
+    const withLaunch = { ...target, route: `/assistant?session=one%20two&${launch}#turn` };
+    resolution = { ...resolved, target: withLaunch, surface: { ...resolved.surface!, route: withLaunch.route } };
+    const h = await start();
+    await h.openSurface(withLaunch, { placement: "side", requestId: crypto.randomUUID() });
+    const f = frame(resolution.surface!);
+    f.send({ ...f.offer, type: "hosty:ui:surface-state", route, state: "ready" });
+    expect(h.getSnapshot().tools[0]!.readiness).toBe(expected);
+  });
   it("suspends local calls, frame traffic and focus refresh until activity revalidation and a new handshake", async () => {
     const h = await start(), requestId = createPresentationRequestId();
     await h.openSurface(target, { placement: "side", requestId });

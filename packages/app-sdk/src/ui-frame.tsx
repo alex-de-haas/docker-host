@@ -36,6 +36,7 @@ export function HostyAppFrame(props: HostyAppFrameProps) {
   const callbacks = useRef(props); callbacks.current = props;
   const [review, setReview] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [connection, setConnection] = useState({ ready: false, generation: 0 });
   const [appearance, setAppearance] = useState<{ theme: HostyResolvedTheme; preference: HostyThemePreference }>({ theme: "light", preference: "system" });
   useEffect(() => {
     const read = () => { const root = document.documentElement; setAppearance({
@@ -54,7 +55,7 @@ export function HostyAppFrame(props: HostyAppFrameProps) {
   const frameId = JSON.stringify([surface, source]);
   useLayoutEffect(() => {
     const frame = ref.current; if (!frame || !host) return;
-    return host.registerFrame(frame, surface);
+    return host.registerFrame(frame, surface, ready => setConnection(current => ({ ready, generation: current.generation + (ready ? 1 : 0) })));
   }, [host, frameId]); // Caller keys the frame by this immutable surface.
   useEffect(() => {
     if (loaded) ref.current?.contentWindow?.postMessage(createShellThemeMessage(resolvedTheme, preference), surface.origin);
@@ -78,9 +79,10 @@ export function HostyAppFrame(props: HostyAppFrameProps) {
     };
     window.addEventListener("message", handle); return () => window.removeEventListener("message", handle);
   }, [host, frameId, source, surface]);
+  const outboundReady = host ? connection.ready : loaded;
   useEffect(() => {
-    if (loaded && props.outbound) ref.current?.contentWindow?.postMessage(props.outbound.message, surface.origin);
-  }, [loaded, props.outbound?.nonce, surface.origin]);
+    if (outboundReady && props.outbound) ref.current?.contentWindow?.postMessage(props.outbound.message, surface.origin);
+  }, [outboundReady, connection.generation, props.outbound?.nonce, surface.origin]);
   const insecure = typeof window !== "undefined" && window.location.protocol === "https:" && new URL(surface.origin).protocol === "http:";
   if (insecure) return <div role="status" className="hosty-panel-notice"><strong>{title} needs HTTPS to appear here</strong>
     <p>This app publishes an HTTP address. Configure its public HTTPS origin in Hosty.</p>

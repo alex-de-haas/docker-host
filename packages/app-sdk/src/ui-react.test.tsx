@@ -45,6 +45,17 @@ async function render(layout: "auto" | "slot" | "none" = "auto") {
   await act(async () => root.render(<HostyUiRoot panelLayout={layout}>{layout === "slot" ? <HostyPanelWorkspace><Document /></HostyPanelWorkspace> : <Document />}</HostyUiRoot>));
   await act(async () => host!.refresh());
 }
+async function connectTool(frame: HTMLIFrameElement, post: ReturnType<typeof vi.spyOn>, userId = metadata.userId) {
+  const origin = new URL(frame.src).origin;
+  const tool = host!.getSnapshot().tools.find(t => t.resolved.surface?.origin === origin)!;
+  const send = (data: object, eventOrigin = origin) => window.dispatchEvent(new MessageEvent("message", { source: frame.contentWindow, origin: eventOrigin, data }));
+  await act(async () => send({ type: "hosty:ui:probe", version: 1, versions: [1], childNonce: crypto.randomUUID() }));
+  const offer = post.mock.calls.filter(([message]) => message.type === "hosty:ui:offer").at(-1)![0];
+  const accept = { ...offer, type: "hosty:ui:accept", coreOrigin: metadata.coreOrigin, userId,
+    appId: tool.target.panel.appId, installationId: tool.target.panel.installationId };
+  await act(async () => send(accept));
+  return { offer, accept, send };
+}
 it("retains the document and each opened tool across switching, collapse, replay and the drawer breakpoint", async () => {
   await render(); expect(element.querySelectorAll("iframe")).toHaveLength(0);
   const documentDraft = element.querySelector("textarea")!; documentDraft.setSelectionRange(2, 6);
@@ -112,6 +123,7 @@ it("delivers commands only to the exact panel among retained frames from the sam
   const frames = [...element.querySelectorAll("iframe")];
   const posts = frames.map(frame => vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {}));
   await act(async () => frames.forEach(frame => frame.dispatchEvent(new Event("load"))));
+  for (let i = 0; i < frames.length; i++) await connectTool(frames[i]!, posts[i]!);
   const target = host!.getSnapshot().tools[1]!.target;
   const command = { type: "hosty:open-assistant-session", sessionId: "selected-session" };
   await act(async () => root.render(<HostyUiRoot panelLayout="slot"><HostyPanelWorkspace outbound={{ target, message: command, nonce: 1 }}><Document /></HostyPanelWorkspace></HostyUiRoot>));
@@ -133,6 +145,38 @@ it("does not replay a session command after the same panel navigates to another 
   const post = vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
   await act(async () => frame.dispatchEvent(new Event("load")));
   expect(post.mock.calls.filter(([value]) => value.type === command.type)).toHaveLength(0);
+});
+it("holds commands until verified sign-in and redelivers after renewal without an iframe load", async () => {
+  await render("slot");
+  await act(async () => { await host!.selectPanel(catalog[0]!.panel); });
+  const frame = element.querySelector("iframe")!, post = vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
+  const target = host!.getSnapshot().tools[0]!.target;
+  const command = { type: "hosty:open-assistant-session", sessionId: "notification-session" };
+  const show = (nonce: number) => root.render(<HostyUiRoot panelLayout="slot"><HostyPanelWorkspace outbound={{ target, message: command, nonce }}><Document /></HostyPanelWorkspace></HostyUiRoot>);
+  await act(async () => { show(1); frame.dispatchEvent(new Event("load")); });
+  const commands = () => post.mock.calls.filter(([message]) => message.type === command.type);
+  expect(commands()).toHaveLength(0);
+  const mismatch = await connectTool(frame, post, "another-user");
+  expect(commands()).toHaveLength(0);
+  await act(async () => mismatch.send({ ...mismatch.accept, userId: metadata.userId }, "https://foreign.test"));
+  expect(commands()).toHaveLength(0);
+  const connected = await connectTool(frame, post);
+  expect(commands().map(([message]) => message)).toEqual([command]);
+  await act(async () => connected.send(connected.accept));
+  expect(commands()).toHaveLength(1);
+  await act(async () => connected.send({ ...connected.offer, type: "hosty:ui:auth-required" }));
+  await act(async () => show(2));
+  expect(commands()).toHaveLength(1);
+  await connectTool(frame, post);
+  expect(commands().map(([message]) => message)).toEqual([command, command]);
+  await act(async () => host!.setActive(false));
+  await act(async () => show(3));
+  expect(commands()).toHaveLength(2);
+  await act(async () => { host!.setActive(true); await host!.refresh(); });
+  expect(commands()).toHaveLength(2);
+  await connectTool(frame, post);
+  expect(commands().map(([message]) => message)).toEqual([command, command, command]);
+  expect(element.querySelector("iframe")).toBe(frame);
 });
 
 async function mountRestoration() {
