@@ -362,21 +362,33 @@ public sealed partial class CoreLifecycleServiceTests
         await File.WriteAllTextAsync(Path.Combine(origin, PlanPath), content);
         await RunGitAsync(origin, ["add", "."]);
         await CommitDocsAsync(origin);
-        var workspace = version == "target" ? null : await workspaces.PrepareAsync(WorkspaceTestOwner(fixture), WorkspaceRequest(), default);
-        var entry = Assert.Single((await documents.ListRepositoriesAsync("admin", default)).Repositories);
-
-        // Cover the cold focused path and the full listing used by the Plans overview.
-        foreach (var focused in new[] { true, false })
+        try
         {
-            var listing = await documents.ListDocumentsAsync(entry.Id, "admin", false, default, version, workspace?.Id, focused ? PlanPath : null);
-            var document = Assert.Single(listing.Documents);
-            var references = document.ReferencePaths!;
-            Assert.Contains(references, reference => reference.Path == "apps/example" && reference.Exists && reference.IsDirectory);
-            Assert.Contains(references, reference => reference.Path == "apps/missing" && !reference.Exists && !reference.IsDirectory);
-            Assert.Contains(references, reference => reference.Path == "README.md" && reference.Exists && !reference.IsDirectory);
-            var returned = await documents.ReadContentAsync(entry.Id, "admin", new(PlanPath, version, workspace?.Id, listing.Commit, document.Sha), default);
-            Assert.Equal(content, returned.Content);
-            Assert.Equal(SourceDocumentService.BlobSha(Encoding.UTF8.GetBytes(content), "sha1"), returned.Sha);
+            var workspace = version == "target" ? null : await workspaces.PrepareAsync(WorkspaceTestOwner(fixture), WorkspaceRequest(), default);
+            var entry = Assert.Single((await documents.ListRepositoriesAsync("admin", default)).Repositories);
+
+            // Cover the cold focused path and the full listing used by the Plans overview.
+            foreach (var focused in new[] { true, false })
+            {
+                var listing = await documents.ListDocumentsAsync(entry.Id, "admin", false, default, version, workspace?.Id, focused ? PlanPath : null);
+                var document = Assert.Single(listing.Documents);
+                var references = document.ReferencePaths!;
+                Assert.Contains(references, reference => reference.Path == "apps/example" && reference.Exists && reference.IsDirectory);
+                Assert.Contains(references, reference => reference.Path == "apps/missing" && !reference.Exists && !reference.IsDirectory);
+                Assert.Contains(references, reference => reference.Path == "README.md" && reference.Exists && !reference.IsDirectory);
+                var returned = await documents.ReadContentAsync(entry.Id, "admin", new(PlanPath, version, workspace?.Id, listing.Commit, document.Sha), default);
+                Assert.Equal(content, returned.Content);
+                Assert.Equal(SourceDocumentService.BlobSha(Encoding.UTF8.GetBytes(content), "sha1"), returned.Sha);
+            }
+        }
+        catch (AppLifecycleException error) when (error.Code == "workspace_git_failed")
+        {
+            // These fixtures contain no credentials; expose transport diagnostics in CI only.
+            var repository = await workspaces.CanonicalRepositoryAsync(origin, origin, default);
+            var retry = await DevelopmentWorkspaceService.Git(workspaces.RepositoryPath(repository),
+                ["fetch", "--no-tags", repository, "+refs/heads/main:refs/hosty/targets/" + DevelopmentWorkspaceService.Hash("main")],
+                default, allowFailure: true);
+            throw new Xunit.Sdk.XunitException($"Fixture Git fetch failed for {repository}: {retry.StandardError}\n{error}");
         }
     }
 
