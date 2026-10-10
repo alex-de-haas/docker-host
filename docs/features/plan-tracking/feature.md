@@ -1,6 +1,6 @@
 ---
 created: 2026-10-07
-updated: 2026-10-08
+updated: 2026-10-10
 summary: Administrator plan overview across installed source repositories and unreleased development workspaces, backed by bounded Core document reads.
 components: [apps/core, apps/plans, apps/harness, apps/shell, packages/app-sdk]
 ---
@@ -17,6 +17,7 @@ separately in memory.
 The interface uses free ReUI components, ShadCN primitives and Tailwind 4 with the same semantic
 theme tokens as Shell and Harness. ReUI frames hold the active document version; shared tabs, inputs,
 selects, toggle groups, badges, progress, alerts and empty states provide the workbench controls.
+The app omits its name and tagline in every launch mode, including standalone.
 
 The overview shows plans across repositories and branches, status counts and deliverable progress,
 and supports title/summary search and repository, app and status filters in the Data Grid header.
@@ -37,7 +38,13 @@ Plans new in a workspace appear beside tracked-branch plans. A deleted plan has 
 `completing` only when the same workspace creates or changes that folder's `feature.md`; otherwise
 its label is `removed`. The label identifies the evidence and does not introduce a plan status.
 
-The detail view uses a full-width tab panel. The first tab shows the tracked branch and opens by
+The detail view fills the viewport with a full-width tab panel. Its toolbar, version tabs and
+document metadata stay in place while the active content panel scrolls independently, including
+by keyboard. The frame header carries the document path, adding the repository on large screens;
+its tooltip always includes both. The tracked panel places status and progress beside the path on wider
+screens and below it on narrow screens. The document title appears only in the Markdown; the
+tracked branch appears only in its tab.
+The first tab shows the tracked branch and opens by
 default; each workspace changing this document has its own tab. Workspace panels display status,
 progress, deliverable changes, a diff against the workspace's base, a full-document toggle and an
 assistant-session link when available. Tab selection is stored in the URL and follows browser
@@ -208,7 +215,7 @@ standalone Next.js server as the cache mount's unprivileged owner. The image wor
 publication on version checks, lint and tests and follows the repository's immutable version-tag
 policy. It builds Linux amd64 and arm64 images with provenance attestations, carrying the repository
 and ReUI license notices.
-`manifest.json`, `package.json` and the Docker image tag share the independent app version `0.4.1`.
+`manifest.json`, `package.json` and the Docker image tag share the independent app version `0.4.2`.
 Document discussions require Core 0.125.0's assistant UI projection and the SDK 0.24.0 descriptor.
 Older Core remains usable for reading sources and presents an actionable refusal for discussions.
 
@@ -245,7 +252,8 @@ production build pass, including a popup regression that fails before the fix.
 - Browser checks cover Data Grid sorting, pagination, page size, search and quiet background reads.
 - Detail tests cover tracked-branch defaults, workspace deep links, independent base diffs,
   unavailable selections and workspace-only plans. Browser checks cover tab keyboard navigation,
-  narrow-screen overflow, polling and Back/Forward navigation. Discussion uses only the active tab.
+  narrow-screen overflow, independent content scrolling with stationary controls, polling and
+  Back/Forward navigation. Discussion uses only the active tab.
 - Live acceptance uses a Core-owned worktree prepared through Harness without a model run. It covers
   uncommitted plan edits, separate tracked/workspace progress, expansion preserved across polling,
   workspace-only plans, completing/removed deletions, workspace URLs, base diffs, deliverable changes,

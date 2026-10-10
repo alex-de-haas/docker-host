@@ -36,7 +36,7 @@ export function PlansWorkbench() {
   const workspaceId = query.get("workspace");
   function navigate(url: string) { window.history.pushState(null, "", url); window.scrollTo({ top: 0 }); }
   function refresh() { setEpoch(value => value + 1); }
-  return <main className="mx-auto flex max-w-[1500px] flex-col gap-4 px-4 py-4 text-sm sm:px-6 lg:px-8"><header className="hosty-shell-chrome"><h1 className="text-2xl font-semibold tracking-tight">Hosty Plans</h1><p className="mt-1 text-muted-foreground">Plans in Git, across your apps.</p></header>
+  return <main className={`mx-auto flex max-w-[1500px] flex-col px-4 py-4 text-sm sm:px-6 lg:px-8 ${documentPath && repositoryId ? "h-dvh min-h-0 gap-2 overflow-hidden" : "gap-4"}`}>
     {documentPath && repositoryId ? <Detail key={`${repositoryId}:${documentPath}`} repositoryId={repositoryId} path={documentPath} workspaceId={workspaceId} epoch={epoch} navigate={navigate} onRefresh={refresh} /> : <Overview query={new URLSearchParams(query.toString())} epoch={epoch} navigate={navigate} onRefresh={refresh} />}
   </main>;
 }
@@ -140,26 +140,26 @@ function Detail({ repositoryId, path, workspaceId, epoch, navigate, onRefresh }:
     return () => { controller.abort(); clearInterval(interval); document.removeEventListener("visibilitychange", refreshVisible); };
   }, [repositoryId, path, epoch]);
   const current = detail?.path === path ? detail : null;
-  const selected = current?.workspaces.find(item => item.workspace.id === workspaceId);
   return <>
-    <DiscussPlan key={`${repositoryId}:${path}:${workspaceId ?? "target"}`} detail={current} workspaceId={workspaceId}
+    <div className="shrink-0"><DiscussPlan key={`${repositoryId}:${path}:${workspaceId ?? "target"}`} detail={current} workspaceId={workspaceId}
       back={<Button variant="ghost" className="min-w-0 shrink" asChild><a href={`/?${new URLSearchParams({ repository: repositoryId })}`} title="All plans in this repository" onClick={event => { event.preventDefault(); navigate(`/?${new URLSearchParams({ repository: repositoryId })}`); }}><ArrowLeftIcon data-icon="inline-start" /><span className="truncate">All plans in this repository</span></a></Button>}
       refresh={<Button variant="outline" className="shrink-0" aria-label="Refresh sources" title="Refresh sources" onClick={onRefresh}><RefreshCwIcon data-icon="inline-start" /><span className="hidden sm:inline">Refresh sources</span></Button>}
-    />
+    /></div>
     {error && <Alert variant="destructive"><AlertTitle>Document unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
     {!current && !error && <LoadingIndicator message="Loading document versions…" />}
-    {current && <>
-      <div className="flex flex-col gap-2"><h1 className="text-2xl font-semibold tracking-tight">{current.document?.title ?? selected?.document?.title ?? path}</h1><p className="break-all text-xs text-muted-foreground">{repoName(current.repository)} / {current.repository.branch} / {path}</p></div>
-      <PlanVersions detail={current} workspaceId={workspaceId} navigate={navigate} />
-    </>}
+    {current && <PlanVersions detail={current} workspaceId={workspaceId} navigate={navigate} />}
   </>;
+}
+function DocumentPath({ detail }: { detail: PlanDetail }) {
+  const label = `${repoName(detail.repository)} / ${detail.path}`;
+  return <p className="min-w-0 truncate text-xs text-muted-foreground" title={label}><span className="hidden lg:inline">{repoName(detail.repository)} / </span>{detail.path}</p>;
 }
 export function PlanVersions({ detail, workspaceId, navigate }: { detail: PlanDetail; workspaceId: string | null; navigate: (url: string) => void }) {
   const selected = detail.workspaces.find(version => version.workspace.id === workspaceId);
   const unavailable = workspaceId !== null && !selected;
   const repositoryId = detail.repository.id;
-  return <Tabs value={workspaceId ?? "tracked"} onValueChange={value => navigate(planLink(repositoryId, detail.path, value === "tracked" ? undefined : value))} className="min-w-0 gap-4">
-    <div className="min-w-0 overflow-x-auto border-b pb-1">
+  return <Tabs value={workspaceId ?? "tracked"} onValueChange={value => navigate(planLink(repositoryId, detail.path, value === "tracked" ? undefined : value))} className="min-h-0 min-w-0 flex-1 gap-2 overflow-hidden">
+    <div className="min-w-0 shrink-0 overflow-x-auto border-b pb-1">
       <TabsList variant="line" aria-label="Document versions">
         <TabsTrigger value="tracked" className="shrink-0"><GitBranchIcon />Tracked branch<span className="max-w-40 truncate text-muted-foreground" title={detail.repository.branch}>{detail.repository.branch}</span></TabsTrigger>
         {detail.workspaces.map(({ workspace }) => <TabsTrigger key={workspace.id} value={workspace.id} className="shrink-0" title={workspace.branch}>
@@ -168,17 +168,17 @@ export function PlanVersions({ detail, workspaceId, navigate }: { detail: PlanDe
         {unavailable && <TabsTrigger value={workspaceId} className="shrink-0">Unavailable workspace</TabsTrigger>}
       </TabsList>
     </div>
-    <TabsContent value="tracked" className="min-w-0">
-      <Frame><FrameHeader className="gap-2"><FrameTitle><h2>Tracked branch</h2></FrameTitle><div className="flex flex-wrap items-center gap-3"><Badge variant="outline"><GitBranchIcon />{detail.repository.branch}</Badge>{detail.document && <><Badge variant="secondary">{detail.document.status ?? "Document"}</Badge><Progress document={detail.document} /></>}</div></FrameHeader><FramePanel>
+    <TabsContent value="tracked" className="min-h-0 min-w-0 overflow-hidden">
+      <Frame className="h-full min-h-0"><FrameHeader className="shrink-0 gap-2 sm:flex-row sm:items-center sm:justify-between"><DocumentPath detail={detail} />{detail.document && <div className="flex shrink-0 items-center gap-3"><Badge variant="secondary">{detail.document.status ?? "Document"}</Badge><Progress document={detail.document} /></div>}</FrameHeader><FramePanel className="min-h-0 flex-1 overflow-y-auto overscroll-contain focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" role="region" aria-label="Document content" tabIndex={0}>
         <TrackedDocument document={detail.document} error={detail.error} repositoryId={repositoryId} navigate={navigate} />
       </FramePanel></Frame>
     </TabsContent>
-    {detail.workspaces.map(version => <TabsContent key={version.workspace.id} value={version.workspace.id} className="min-w-0">
-      <Frame><FrameHeader className="gap-2"><FrameTitle><h2 className="break-all">{version.workspace.branch}</h2></FrameTitle><VersionBrief version={version} /><FrameDescription>Changes against this workspace’s own base.</FrameDescription></FrameHeader><FramePanel>
+    {detail.workspaces.map(version => <TabsContent key={version.workspace.id} value={version.workspace.id} className="min-h-0 min-w-0 overflow-hidden">
+      <Frame className="h-full min-h-0"><FrameHeader className="shrink-0 gap-1"><DocumentPath detail={detail} /><FrameTitle><h2 className="truncate" title={version.workspace.branch}>{version.workspace.branch}</h2></FrameTitle><VersionBrief version={version} /><FrameDescription>Changes against this workspace’s own base.</FrameDescription></FrameHeader><FramePanel className="min-h-0 flex-1 overflow-y-auto overscroll-contain focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" role="region" aria-label="Workspace content" tabIndex={0}>
         <WorkspaceDocument version={version} repositoryId={repositoryId} navigate={navigate} />
       </FramePanel></Frame>
     </TabsContent>)}
-    {unavailable && <TabsContent value={workspaceId}><Alert><AlertTitle>Workspace version unavailable</AlertTitle><AlertDescription>The selected workspace no longer changes this document. Select the tracked branch or another workspace.</AlertDescription></Alert></TabsContent>}
+    {unavailable && <TabsContent value={workspaceId} className="min-h-0 overflow-y-auto"><Alert><AlertTitle>Workspace version unavailable</AlertTitle><AlertDescription>The selected workspace no longer changes this document. Select the tracked branch or another workspace.</AlertDescription></Alert></TabsContent>}
   </Tabs>;
 }
 export function WorkspaceDocument({ version, repositoryId, navigate }: { version: WorkspacePlan; repositoryId: string; navigate: (url: string) => void }) {
