@@ -171,8 +171,14 @@ internal sealed class AppUpdateSweepService(
                 appTimeout.CancelAfter(perAppCheckTimeout);
                 try
                 {
-                    // Success writes the availability projection inside the plan build itself.
-                    _ = await lifecycle.CreateUpdatePlanAsync(target.Id, new AppUpdatePlanRequest(), appTimeout.Token);
+                    // The plan build persists both successful and incomplete verdicts. An unresolved
+                    // artifact or source returns a plan with Error instead of throwing.
+                    var plan = await lifecycle.CreateUpdatePlanAsync(target.Id, new AppUpdatePlanRequest(), appTimeout.Token);
+                    if (plan.Error is not null)
+                    {
+                        Interlocked.Increment(ref failures);
+                        logger.LogWarning("Update check failed for app {AppId}: {Error}", target.Id, plan.Error);
+                    }
                 }
                 // Only this app's own deadline: a cancelled sweep (shutdown) falls through to the
                 // rethrow below, so a stopping host is never recorded as eight failed checks, and a

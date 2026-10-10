@@ -1,6 +1,6 @@
 ---
 created: 2026-10-08
-updated: 2026-10-08
+updated: 2026-10-10
 summary: One Core-owned consent page for review-required app updates, with frozen change metadata and direct routine update actions.
 components: [apps/core, apps/shell]
 ---
@@ -34,6 +34,13 @@ revoked rights are separate access information. Existing accepted optional choic
 new ones start unchecked, and legacy baselines are explicitly unavailable. Snapshot metadata is
 included in the plan digest and never re-fetched from a moving feed during consent.
 
+The confirmation page omits routine image tag and digest changes from Other changes. Image
+repository or registry changes remain visible as a readable source comparison per service, without
+tags or digest pins; added and removed image sources remain visible too. Unresolved image digests
+show a verification warning. The frozen plan retains every exact reference and digest, and update
+classification and approval enforcement use the complete change list. An unchanged runtime appears
+once, and long change details wrap within the page.
+
 Candidate configuration readiness is shown before approval. Apply rechecks under the app lock
 and leaves an incomplete target successfully installed and stopped, preserving automatic startup.
 A confirmed runtime stop releases its active source/mount path reservations before constructing the
@@ -60,6 +67,8 @@ manual reload guidance.
 - Frozen review tests cover declaration/grant differences, optional-to-required moves, legacy
   metadata, safe settings details, mount declaration deltas, exact source/runtime/backup information
   and secret-safe HTML escaping. Mount-only changes and legacy routine snapshots cannot bypass review.
+- Confirmation rendering hides same-repository image tags and resolved digests, retains registry,
+  repository, added/removed source and unresolved-image changes, and preserves the frozen plan.
 - HTTP tests cover current administrator/caller authority, nonce/Origin, stale snapshots and atomic
   one-time execution, including channel/runtime changes before consent. Direct Core-session queued
   requests cannot bypass any review-required change category; routine apply and confirmed execution remain available.
