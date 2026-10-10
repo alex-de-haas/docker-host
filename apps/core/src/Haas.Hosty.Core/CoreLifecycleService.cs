@@ -64,7 +64,8 @@ internal sealed partial class CoreLifecycleService(
     LocalCommandProcessRegistry? localProcesses = null,
     AgentPolicyStore? agentPolicies = null,
     PrivateSourceService? privateSources = null,
-    CorePublicOriginResolver? coreOrigins = null)
+    CorePublicOriginResolver? coreOrigins = null,
+    AuditStore? audit = null)
 {
     private async Task ValidatePrivateSelectionAsync(RuntimeAppManifestSelection selection, CancellationToken ct)
     {
@@ -1950,7 +1951,8 @@ internal sealed partial class CoreLifecycleService(
     // keeps the synchronous ApplyUpdateAsync. Completion flips the record (existing apply path),
     // publishes a notification, and re-plans the app so its row settles without waiting for the
     // next sweep. See docs/features/runtime-app-update/feature.md.
-    public async Task<AppLifecycleResponse> EnqueueUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default, bool requireRoutine = false)
+    public async Task<AppLifecycleResponse> EnqueueUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default, bool requireRoutine = false,
+        LifecycleAuditOperation? auditOperation = null)
     {
         // Advisory pre-checks — the background run re-validates both under the app lock. Cheap and
         // local (no network): the confirmed plan must exist and match, and the base must not have
@@ -1999,7 +2001,9 @@ internal sealed partial class CoreLifecycleService(
             throw;
         }
 
-        var run = ExecuteBackgroundUpdateAsync(appId, request, hostLifetime?.ApplicationStopping ?? CancellationToken.None, requireRoutine);
+        auditOperation ??= new LifecycleAuditOperation(appId, "update", null, "core");
+        await auditOperation.AcceptAsync(audit, clock);
+        var run = ExecuteBackgroundUpdateAsync(appId, request, hostLifetime?.ApplicationStopping ?? CancellationToken.None, requireRoutine, auditOperation);
         runningBackgroundUpdates[appId] = run;
         _ = RemoveWhenCompleteAsync(appId, run);
 
@@ -2045,24 +2049,37 @@ internal sealed partial class CoreLifecycleService(
     // The detached apply body. Exception-total: every outcome lands on the record, because there is
     // no request left to surface it to. Deliberately silent in the notification inbox — an update is
     // always something the operator just asked for, and its outcome is already on the app row.
-    private async Task ExecuteBackgroundUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken, bool requireRoutine)
+    private async Task ExecuteBackgroundUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken, bool requireRoutine,
+        LifecycleAuditOperation auditOperation)
     {
+        var outcome = "failed";
         try
         {
             await ApplyUpdateAsync(appId, request, cancellationToken, preserveGrants: true, requireRoutine: requireRoutine);
-            await RebuildPlanAfterApplyAsync(appId, cancellationToken);
+            outcome = "succeeded";
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // Core is shutting down mid-apply. The record stays "updating" and the boot sweep flips
             // it to failed/interrupted on the next start (RecoverInterruptedUpdatesAsync).
             logger.LogWarning("Background update for app {AppId} was cancelled by shutdown; the boot sweep will mark it interrupted.", appId);
+            outcome = "cancelled";
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Background update for app {AppId} failed.", appId);
             await SetUpdateProgressAsync(appId, "failed", null, CancellationToken.None);
             await RecordBackgroundLifecycleFailureAsync(appId, "update", ex.Message, CancellationToken.None);
+        }
+        finally
+        {
+            await auditOperation.WriteAsync(audit, clock, outcome);
+        }
+        // A refresh failure after a completed apply must not rewrite its settled audit outcome.
+        if (outcome == "succeeded" && !cancellationToken.IsCancellationRequested)
+        {
+            try { await RebuildPlanAfterApplyAsync(appId, cancellationToken); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         }
     }
 

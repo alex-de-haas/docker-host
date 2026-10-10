@@ -2,6 +2,135 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed class AuditStoreTests
 {
+    [Theory]
+    [InlineData("auth.login.succeeded", "email")]
+    [InlineData("auth.bootstrap.completed", "email")]
+    [InlineData("auth.invitation.accepted", "invitationId")]
+    [InlineData("auth.credential.created", "scopes")]
+    [InlineData("auth.credential.used", "tool")]
+    [InlineData("auth.oauth.token", "client")]
+    [InlineData("auth.delegated-token.exchange", "callerAppId")]
+    [InlineData("auth.delegated-token.on-behalf-of", "targetAppId")]
+    [InlineData("auth.delegated-token.control", "requestedUser")]
+    [InlineData("auth.app-code.exchange", "callingAppId")]
+    [InlineData("auth.app-sign-in", "reason")]
+    [InlineData("auth.assistant-mcp.issue", "callerAppId")]
+    [InlineData("auth.user.connection.created", "kind")]
+    [InlineData("auth.user.retention.cleanup", "purged")]
+    [InlineData("notification.publish", "recipients")]
+    [InlineData("notification.retention.cleanup", "pruned")]
+    [InlineData("backup.app.create", "appId")]
+    [InlineData("backup.retention.cleanup", "planDigest")]
+    [InlineData("development.workspace.prepare", "requestId")]
+    [InlineData("agent.policy.updated", "approvedSkills")]
+    [InlineData("app.installation.approval", "removalOptions")]
+    [InlineData("app.permissions.approval", "selectedOptionalPermissions")]
+    [InlineData("app.mcp.approval", "assistantTarget")]
+    [InlineData("app.lifecycle.stop", "operationId")]
+    [InlineData("core.lifecycle.restart", "operation")]
+    [InlineData("app.ai_action_approved", "toolName")]
+    public async Task AppendAsync_AllProducerSchemasKeepMetadataButOmitUnreviewedCredentialFields(string action, string metadataKey)
+    {
+        var paths = CreatePaths();
+        var store = new AuditStore(paths);
+        const string credential = "credential-canary-not-for-export";
+        await store.AppendAsync(CreateRecord(1) with
+        {
+            Action = action,
+            Outcome = action == "app.ai_action_approved" ? "reported" : "succeeded",
+            Details = new Dictionary<string, string>
+            {
+                [metadataKey] = "reviewed-metadata",
+                ["Authorization"] = "Bearer " + credential,
+                ["password"] = credential,
+                ["accessToken"] = credential,
+                ["refresh_token"] = credential,
+                ["requestBody"] = credential,
+                ["settings"] = credential,
+                ["exception"] = credential,
+                ["futureUnreviewedField"] = credential,
+            },
+        });
+
+        var entry = Assert.Single(await store.ReadRecentAsync());
+        Assert.Equal("reviewed-metadata", Assert.Single(entry.Details).Value);
+        Assert.Equal(metadataKey, Assert.Single(entry.Details).Key);
+        Assert.DoesNotContain(credential, await File.ReadAllTextAsync(paths.AuditLogPath));
+    }
+
+    [Fact]
+    public async Task AppendAsync_UnknownSchemasAreEmptyAndSessionIdsAreNonReplayable()
+    {
+        var paths = CreatePaths();
+        var store = new AuditStore(paths);
+        const string session = "opaque-live-browser-session-canary";
+        await store.AppendAsync(CreateRecord(1) with { Action = "future.new-writer", Details = new Dictionary<string, string> { ["email"] = session } });
+        await store.AppendAsync(CreateRecord(2) with
+        {
+            Action = "app.ai_session_created", Outcome = "reported",
+            Details = new Dictionary<string, string> { ["sessionId"] = session, ["toolName"] = "Read\n" + new string('x', 6000) },
+        });
+        var records = await store.ReadRecentAsync();
+        Assert.Empty(records[1].Details);
+        Assert.Equal(CoreSessionAuthorization.FingerprintSessionId(session), records[0].Details["sessionFingerprint"]);
+        Assert.DoesNotContain("sessionId", records[0].Details.Keys);
+        Assert.DoesNotContain('\n', records[0].Details["toolName"]);
+        Assert.InRange(records[0].Details["toolName"].Length, 1, 4096);
+        Assert.DoesNotContain(session, await File.ReadAllTextAsync(paths.AuditLogPath));
+    }
+
+    [Fact]
+    public async Task SearchAsync_FiltersBothTimeBoundsWithoutAssumingTimestampOrder()
+    {
+        var now = DateTimeOffset.Parse("2026-08-26T01:00:00Z");
+        var store = new AuditStore(CreatePaths());
+        await store.AppendAsync(CreateRecord(0) with { CreatedAt = now.AddMinutes(-2) });
+        await store.AppendAsync(CreateRecord(1) with { CreatedAt = now.AddHours(-2) });
+        await store.AppendAsync(CreateRecord(2) with { CreatedAt = now.AddMinutes(1) });
+        await store.AppendAsync(CreateRecord(3) with { CreatedAt = now.AddHours(-1) });
+        await store.AppendAsync(CreateRecord(4) with { CreatedAt = now });
+        var result = await store.SearchAsync(new AuditQuery(RangeSeconds: 3600), now);
+        Assert.Equal(["audit_0004", "audit_0003", "audit_0000"], result.Entries.Select(e => e.Id));
+        Assert.False(result.Window.Truncated);
+    }
+
+    [Theory]
+    [InlineData(-1, -1, 60, 1, true)]
+    [InlineData(60, 1, 60, 1, false)]
+    [InlineData(2592000, 200, 2592000, 200, false)]
+    [InlineData(int.MaxValue, int.MaxValue, 2592000, 200, true)]
+    public async Task SearchAsync_ReportsLowerAndUpperBoundsEvenWhenEmpty(int range, int limit, int actualRange, int actualLimit, bool clamped)
+    {
+        var result = await new AuditStore(CreatePaths()).SearchAsync(new AuditQuery(RangeSeconds: range, Limit: limit), DateTimeOffset.UtcNow);
+        Assert.Empty(result.Entries);
+        Assert.Equal(actualRange, result.Window.RangeSeconds);
+        Assert.Equal(actualLimit, result.Window.Limit);
+        Assert.Equal(clamped, result.Window.RangeClamped);
+        Assert.Equal(clamped, result.Window.LimitClamped);
+        Assert.Equal(0, result.Window.Returned);
+        Assert.False(result.Window.Truncated);
+    }
+
+    [Fact]
+    public async Task SearchAsync_CombinesFiltersAndReportsScanCeilingForNonMatchingEntries()
+    {
+        var store = new AuditStore(CreatePaths());
+        var now = DateTimeOffset.Parse("2026-08-26T01:00:00Z");
+        await store.AppendAsync(CreateRecord(0) with { ResourceId = "target", Outcome = "refused" });
+        await store.AppendAsync(CreateRecord(1) with { ResourceId = "target", Outcome = "succeeded" });
+        await store.AppendAsync(CreateRecord(2) with { ResourceId = "other", Outcome = "refused" });
+        await store.AppendAsync(CreateRecord(3) with { ResourceId = "target", Outcome = "refused", Action = "notification.publish" });
+        var query = new AuditQuery(ResourceId: "target", ActionPrefix: "auth.", Outcome: "REFUSED");
+        var complete = await store.SearchAsync(query, now);
+        Assert.Equal("audit_0000", Assert.Single(complete.Entries).Id);
+        Assert.False(complete.Window.Truncated);
+        var bounded = await store.SearchAsync(query, now, scanCeiling: 2);
+        Assert.Empty(bounded.Entries);
+        Assert.True(bounded.Window.Truncated);
+        Assert.Empty((await store.SearchAsync(query with { ActionPrefix = "absent" }, now)).Entries);
+        Assert.Empty((await store.SearchAsync(query with { Outcome = "absent" }, now)).Entries);
+    }
+
     [Fact]
     public async Task ReadRecentAsync_ReturnsNewestFirstAcrossReadBlockBoundaries()
     {

@@ -390,15 +390,15 @@ internal sealed class HostyCoreTools
     [Description(
         "Searches the host's audit log: who did what to this host and whether it worked. Distinct from tail_app_logs, " +
         "which is an app's own output — this records actions taken *on* apps and on the host's own credentials, " +
-        "users and backups. Coverage is uneven today: lifecycle actions are recorded only when an agent performed " +
-        "them, so an absent entry is not evidence that nothing happened.")]
+        "users and backups. Lifecycle actions from HTTP clients, local control and MCP are recorded, including " +
+        "refusals and settled background update outcomes. Read the returned window before drawing conclusions.")]
     public static async Task<string> SearchAuditAsync(
         AuditStore audit,
         IClock clock,
         CancellationToken cancellationToken,
         [Description("Only entries about this resource, e.g. an app id from list_apps. Omit for all.")] string? resourceId = null,
         [Description("Only actions starting with this, e.g. 'app.lifecycle' or 'auth'. Omit for all.")] string? actionPrefix = null,
-        [Description("Only this outcome: succeeded, failed, refused, reported. Omit for all.")] string? outcome = null,
+        [Description("Only this outcome: succeeded, failed, refused, accepted, cancelled, reported. Omit for all.")] string? outcome = null,
         [Description("How far back to look, in seconds (60 to 30 days, default 86400).")] int rangeSeconds = 86_400,
         [Description("How many entries to return (1-200, default 50).")] int limit = 50)
     {
@@ -467,7 +467,7 @@ internal sealed class HostyCoreTools
         CancellationToken cancellationToken)
         => MutateAsync("restart_app", "restart", appId, lifecycle.RestartAsync, httpContext, audit, clock, cancellationToken);
 
-    // --- Updates (docs/features/core-mcp/plan.md) ------------------------------------------------
+    // --- Updates (docs/features/core-mcp/feature.md) ------------------------------------------------
     //
     // Two steps, mirroring what the CLI and Shell already do, because the shape *is* the safeguard:
     // planning names the versions and the changes, and applying names the plan it was shown. An
@@ -558,37 +558,41 @@ internal sealed class HostyCoreTools
         // so an update that changed underneath the plan cannot be applied on the strength of the older
         // one - which is the whole reason this is two calls rather than one.
         var digest = NormalizeAppId(planDigest);
+        var operation = new LifecycleAuditOperation(target, "update", grants.ActorUserId, "mcp", "apply_app_update");
         string payload;
         string outcome;
         try
         {
             var result = await lifecycle.EnqueueUpdateAsync(target, new AppUpdateApplyRequest(digest), cancellationToken,
-                requireRoutine: grants.RequireRoutineUpdates);
+                requireRoutine: grants.RequireRoutineUpdates, auditOperation: operation);
 
             // **Accepted, not succeeded.** The apply runs detached — EnqueueUpdateAsync returns
             // "updating" the moment the work is queued — so calling this a success would report an
-            // outcome nobody has yet. The runtime state in that response is still the *pre-update*
-            // one, which is exactly how a model concludes the update is done and moves on.
+            // outcome nobody has yet. The tool returns the queued status, not a settled runtime state.
             //
-            // The settled outcome lands on the app record, not here, and audit does not learn it:
-            // CoreLifecycleService holds no AuditStore, and giving it one belongs to the producer
-            // deliverable in docs/features/core-mcp/plan.md. Until then this line says what it knows.
+            // Enqueue records acceptance before the worker starts; that worker owns the correlated
+            // settled outcome, with the actor captured above rather than a request-scoped context.
             outcome = "accepted";
             payload = CoreJson.Text(new McpLifecycleResult(
                 target,
                 "update",
                 result.Status,
                 null,
-                "The update was accepted and runs in the background. Call get_app to see whether it finished; " +
-                "the runtime state above is the one from before it started."));
+                "The update was accepted and runs in the background. Call get_app for its current state " +
+                "and search_audit for the settled outcome."));
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             outcome = "failed";
             payload = CoreJson.Text(new McpLifecycleResult(target, "update", null, $"Could not update '{target}': {exception.Message}", null));
         }
+        catch (OperationCanceledException)
+        {
+            if (!operation.Accepted) await operation.WriteAsync(audit, clock, "cancelled");
+            throw;
+        }
 
-        await AppendLifecycleAuditAsync(audit, clock, "update", target, "apply_app_update", grants.ActorUserId, outcome);
+        if (!operation.Accepted) await operation.WriteAsync(audit, clock, outcome);
         return payload;
     }
 
@@ -638,6 +642,11 @@ internal sealed class HostyCoreTools
             // Returned as a result the model can act on; a thrown error would just end the turn.
             outcome = "failed";
             payload = CoreJson.Text(new McpLifecycleResult(target, verb, null, $"Could not {verb} '{target}': {exception.Message}"));
+        }
+        catch (OperationCanceledException)
+        {
+            await AppendLifecycleAuditAsync(audit, clock, verb, target, tool, grants.ActorUserId, "cancelled");
+            throw;
         }
 
         await AppendLifecycleAuditAsync(audit, clock, verb, target, tool, grants.ActorUserId, outcome);

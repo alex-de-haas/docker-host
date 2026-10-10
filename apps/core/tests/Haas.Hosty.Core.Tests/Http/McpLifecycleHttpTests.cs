@@ -173,6 +173,16 @@ public sealed class McpLifecycleHttpTests
             var updated = (await apps.GetAppAsync(plan.AppId))!;
             Assert.Equal("1.0.1", updated.Version);
             Assert.Null(updated.LastError);
+            var entries = (await host.Services.GetRequiredService<AuditStore>().ReadRecentAsync())
+                .Where(entry => entry.Action == "app.lifecycle.update" && entry.ResourceId == plan.AppId).Reverse().ToArray();
+            Assert.Equal(["accepted", "succeeded"], entries.Select(entry => entry.Outcome));
+            Assert.All(entries, entry =>
+            {
+                Assert.NotNull(entry.ActorUserId);
+                Assert.Equal("mcp", entry.Details["via"]);
+                Assert.Equal("apply_app_update", entry.Details["tool"]);
+            });
+            Assert.Single(entries.Select(entry => entry.Details["operationId"]).Distinct());
             Assert.Empty(updated.GrantedCorePermissions!);
         }
     }
