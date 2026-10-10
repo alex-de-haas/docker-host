@@ -73,7 +73,9 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
       const input = { repositoryId: detail.repository.id, path: detail.path, workspaceId: version.workspaceId,
         contentHash, providerAppId: selected.appId, key: selected.key };
       const storageKey = `hosty.plans.discussion:${JSON.stringify([options.userId, input])}`;
-      const existing = !startNew && results.current.get(storageKey);
+      // A reinstall must revalidate the pinned pending intent before offering a new discussion.
+      const resultKey = JSON.stringify([storageKey, selected.installationId]);
+      const existing = !startNew && results.current.get(resultKey);
       if (existing) { await present(existing); return; }
       let intent = startNew ? undefined : requests.current.get(storageKey);
       try {
@@ -87,7 +89,7 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
       const result = await appFetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
         .then(responseBody<DiscussionResult>);
       const value = { result, presentationId: createPresentationRequestId(), userId: options.userId, path: detail.path, source: sourceKey };
-      results.current.set(storageKey, value);
+      results.current.set(resultKey, value);
       await present(value);
     } catch (cause) {
       setError(failure(cause));

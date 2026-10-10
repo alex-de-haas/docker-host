@@ -140,6 +140,41 @@ public sealed class UiPanelHttpTests
         Assert.Null(changed.Headers.Location);
     }
 
+    [Theory]
+    [InlineData("/panel/session-1", "unknown", "running", "healthy", true)]
+    [InlineData("/navigation/session-1", "unknown", "running", "healthy", true)]
+    [InlineData("/entry/session-1", "unknown", "running", "healthy", true)]
+    [InlineData("/panel/session-1", "unknown", "running", "unhealthy", true)]
+    [InlineData("/panel/session-1", "running", "exited", null, false)]
+    [InlineData("/panel/session-1", "running", "running", "starting", false)]
+    [InlineData("/panel/session-1", "starting", "running", "healthy", false)]
+    [InlineData("/panel/session-1", "stopping", "running", "healthy", false)]
+    public async Task SeparateOpenUsesTheMatchedSurfaceServiceReadiness(string route, string runtime,
+        string serviceStatus, string? serviceHealth, bool available)
+    {
+        await using var host = await Setup();
+        using var client = host.CreateClient();
+        client.BaseAddress = new Uri("http://localhost:7070");
+        await BrowserAuthorityFixture.Grant(host, "consumer", "member");
+        client.DefaultRequestHeaders.Add("Cookie", "hosty_session=browser-session");
+        await host.Services.GetRequiredService<AppRegistryStore>().UpdateAppAsync("target", a => a with {
+            RuntimeState = runtime, Endpoints = [a.Endpoints[0] with { Service = "web" }],
+            Health = new("degraded", [new("web", serviceStatus, serviceHealth), new("sidecar", "exited", null)], DateTimeOffset.UtcNow),
+            Ui = a.Ui! with { EntryPath = "/entry", Navigation = [new("Navigation", "/navigation", "web")] }
+        });
+        var target = await Target(host);
+        var link = UiPanelService.BuildOpenUrl(client.BaseAddress.GetLeftPart(UriPartial.Authority),
+            "target", target.Panel.InstallationId, "web", route);
+        using var opened = await client.GetAsync(link);
+        Assert.Equal(available ? HttpStatusCode.Redirect : HttpStatusCode.Conflict, opened.StatusCode);
+        if (available)
+        {
+            Assert.Equal(route, opened.Headers.Location!.AbsolutePath);
+            Assert.Contains("hosty_launch=standalone", opened.Headers.Location.Query);
+        }
+        else Assert.Null(opened.Headers.Location);
+    }
+
     private static async Task<UiPanelTarget> Target(CoreHttpHarness host)
         => new(new("target", PanelIdentity.Installation((await host.Services.GetRequiredService<AppRegistryStore>().GetAppAsync("target"))!), "tool"), "/panel/session-1");
 

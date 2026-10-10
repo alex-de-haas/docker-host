@@ -305,11 +305,13 @@ internal static class AppSignInIntentEndpoints
         if (PanelIdentity.Installation(app) != installation)
             return CoreJson.Json(new ErrorResponse("installation_changed", "The original app installation is no longer available."), 409);
         var summary = AppSummary.From(app);
-        var urls = summary.PanelSurfaces.Where(p => p.Endpoint == endpoint && UiSurfaceRoutes.Within(route, p.Path)).Select(p => p.EmbeddedUrl)
-            .Concat(summary.Navigation.Where(p => p.Endpoint == endpoint && UiSurfaceRoutes.Within(route, p.Path)).Select(p => p.EmbeddedUrl))
-            .Concat(summary.EntryEndpoint == endpoint && summary.EntryPath is { } path && UiSurfaceRoutes.Within(route, path) ? [summary.EmbeddedUrl] : []);
-        var origin = urls.Select(UiPanelService.Origin).OfType<string>().FirstOrDefault();
-        if (origin is null || app.RuntimeState != "running")
+        var surfaces = summary.PanelSurfaces.Where(p => p.Endpoint == endpoint && UiSurfaceRoutes.Within(route, p.Path)).Select(p => (p.EmbeddedUrl, p.Service))
+            .Concat(summary.Navigation.Where(p => p.Endpoint == endpoint && UiSurfaceRoutes.Within(route, p.Path)).Select(p => (p.EmbeddedUrl, p.Service)))
+            .Concat(summary.EntryEndpoint == endpoint && summary.EntryPath is { } path && UiSurfaceRoutes.Within(route, path)
+                ? [(summary.EmbeddedUrl, summary.Endpoints.FirstOrDefault(e => e.Key == endpoint)?.Service)] : []);
+        var origin = surfaces.Where(p => UiPanelService.Available(app, p.Service, p.EmbeddedUrl))
+            .Select(p => UiPanelService.Origin(p.EmbeddedUrl)).OfType<string>().FirstOrDefault();
+        if (origin is null)
             return CoreJson.Json(new ErrorResponse("destination_unavailable", "The original app surface is not available."), 409);
         var destination = QueryHelpers.AddQueryString(new Uri(new Uri(origin), route).AbsoluteUri, "hosty_launch", "standalone");
         await identity.RequireAllowedRedirectUriAsync(appId, destination, context.RequestAborted);

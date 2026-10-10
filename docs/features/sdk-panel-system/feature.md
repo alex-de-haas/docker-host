@@ -60,7 +60,9 @@ An older Core or missing adapter produces explicit unsupported behavior.
 
 Core app-open links carry `installationId`, `endpoint` and `route`. Core checks the installation,
 declared surface and user access at redemption, including after password login. The link retains
-the provider-selected route and forces standalone launch. Reinstalling never redirects a completed
+the provider-selected route and forces standalone launch. Readiness uses the matched surface service,
+including navigation and entry surfaces, so an unrelated sidecar outage does not block opening.
+Reinstalling never redirects a completed
 discussion to the replacement installation.
 
 ## Browser Trust And Protocol
@@ -164,7 +166,9 @@ Plans freezes the selected provider installation before prepare/upload/finalize.
 source, content hash, attachment and handoff replay checks remain authoritative. The result contains
 the finalized conversation, typed presentation target and pinned separate link. Browser state is
 bound to the actor, document version and provider; persisted pending intent retains the original
-request/installation across a lost response.
+request/installation across a lost response. Completed-result reuse also requires the selected provider
+installation. After reinstall, the original pending intent is revalidated and refused; only the explicit
+Start a new discussion action creates a handoff for the replacement.
 
 The normal path calls `openSurface` with a presentation UUID. It opens Shell's panel when embedded
 and the local SDK host when standalone, without reserving a popup. Plans distinguishes successful
@@ -185,6 +189,8 @@ feature does not confer that deferred designation. Current CSP refusal has expli
 
 - Core HTTP/contract tests cover caller/user credentials, optional grants, actor filtering,
   ambiguous origins, explicit/legacy IDs, reinstall, service health and app-open pinning after login.
+  Separate-open tests cover panel/navigation/entry service readiness during a sidecar outage,
+  degraded probes, stopped services and app transitions.
 - SDK tests cover exact peers/generations, same-account negotiation, delayed verification, route
   readiness, replay/conflicts, uncertain waits, metadata/policy changes, fixed server adapters,
   host ownership, Overlay gating and retained React frames across layout changes.
@@ -194,7 +200,9 @@ feature does not confer that deferred designation. Current CSP refusal has expli
   Concurrent-request tests exercise immediate embedded refusals, payload conflicts during
   verification, identical replay, independent aborts and status/open ordering.
 - Plans/Harness/Shell tests preserve source hashes, complete attachments, provider freezing,
-  idempotent handoff recovery, review routing and existing assistant entry points.
+  idempotent handoff recovery, review routing and existing assistant entry points. Plans tests cover
+  completed results across provider reinstall, including navigation-only destinations and explicit
+  replacement handoffs with the original document hash.
 - Delayed-catalog tests cover restoring Shell's open preference, preserving an existing selection
   or collapse, and consuming assistant-session links only after successful panel placement.
   Shortcut tests verify that a non-assistant first catalog entry is never selected, including delayed

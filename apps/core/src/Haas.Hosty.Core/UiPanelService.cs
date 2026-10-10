@@ -105,13 +105,19 @@ internal sealed class UiPanelService(AppRegistryStore apps, AppIdentityService i
     }
 
     private static bool Available(AppRecord app, AppSurfaceSummary panel)
-        => SurfaceState(app, panel) is "running" or "degraded";
+        => Available(app, panel.Service, panel.EmbeddedUrl);
+
+    internal static bool Available(AppRecord app, string? service, string? url)
+        => SurfaceState(app, service, url) is "running" or "degraded";
 
     private static string SurfaceState(AppRecord app, AppSurfaceSummary panel)
+        => SurfaceState(app, panel.Service, panel.EmbeddedUrl);
+
+    private static string SurfaceState(AppRecord app, string? serviceName, string? url)
     {
         if (app.RuntimeState is "starting" or "stopping") return app.RuntimeState;
-        var service = app.Health?.Services.FirstOrDefault(s => s.Service == panel.Service);
-        if (panel.EmbeddedUrl is null || (service is not null ? service.Status != "running" : app.RuntimeState != "running"))
+        var service = app.Health?.Services.FirstOrDefault(s => s.Service == serviceName);
+        if (url is null || (service is not null ? service.Status != "running" : app.RuntimeState != "running"))
             return app.RuntimeState == "running" ? "unavailable" : app.RuntimeState;
         // A failed sidecar does not make a working UI unavailable. A failed probe is advisory.
         var health = service?.Health ?? app.Health?.Status;

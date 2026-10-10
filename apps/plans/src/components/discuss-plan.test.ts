@@ -118,4 +118,36 @@ describe("discuss document action", () => {
     await act(async () => window.dispatchEvent(new Event("focus")));
     expect(button().disabled).toBe(false); expect(container.querySelector('[role="alert"]')).toBeNull();
   });
+  it.each([true, false])("revalidates completed discussions after reinstall before an explicit new handoff (panel: %s)", async hasPanel => {
+    fetch.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === "POST"
+      ? response({ ...result, target: hasPanel ? target : null }) : response(options));
+    await render(); await act(async () => button().click());
+    const first = JSON.parse(fetch.mock.calls.find(call => call[1]?.method === "POST")![1].body);
+    // Repeated activation still reuses the completed result for the same installation.
+    await act(async () => button().click());
+    expect(fetch.mock.calls.filter(call => call[1]?.method === "POST")).toHaveLength(1);
+    const oldPresentations = presentation.openSurface.mock.calls.length;
+    const replacement = { ...target, panel: { ...target.panel, installationId: "installed-2" }, route: "/assistant?session=replacement" };
+    fetch.mockImplementation(async (_url: string, init?: RequestInit) => {
+      if (init?.method !== "POST") return response({ ...options, providers: [{ ...options.providers[0], installationId: "installed-2" }] });
+      return JSON.parse(init.body as string).installationId === "installed-1"
+        ? response({ message: "The assistant installation changed.", code: "provider_changed" }, false)
+        : response({ ...result, url: "https://core.example/replacement-discussion", target: hasPanel ? replacement : null, conversationId: "replacement" });
+    });
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    await act(async () => button().click());
+    const retried = JSON.parse(fetch.mock.calls.filter(call => call[1]?.method === "POST")[1][1].body);
+    expect(retried).toEqual(first);
+    expect(presentation.openSurface).toHaveBeenCalledTimes(oldPresentations);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("The assistant installation changed.");
+    const start = Array.from(container.querySelectorAll("button")).find(item => item.textContent === "Start a new discussion")!;
+    await act(async () => start.click());
+    const created = JSON.parse(fetch.mock.calls.filter(call => call[1]?.method === "POST")[2][1].body);
+    expect(created.installationId).toBe("installed-2");
+    expect(created.requestId).not.toBe(first.requestId);
+    expect(created.contentHash).toBe(first.contentHash);
+    if (hasPanel) expect(presentation.openSurface).toHaveBeenLastCalledWith(replacement, expect.objectContaining({ placement: "side" }));
+    expect(container.querySelector("a")?.href).toBe("https://core.example/replacement-discussion");
+    expect(window.open).not.toHaveBeenCalled();
+  });
 });
