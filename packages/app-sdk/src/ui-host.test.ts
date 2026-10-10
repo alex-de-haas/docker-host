@@ -42,6 +42,94 @@ function frame() {
 }
 
 describe("panel host authority and replay", () => {
+  it("suspends local calls, frame traffic and focus refresh until activity revalidation and a new handshake", async () => {
+    const h = await start(), requestId = createPresentationRequestId();
+    await h.openSurface(target, { placement: "side", requestId });
+    const f = frame();
+    h.setActive(false);
+    const calls = fetcher.mock.calls.length, posts = f.post.mock.calls.length;
+    expect(await h.openSurface(target, { placement: "side", requestId })).toMatchObject({ status: "blocked", code: "activity_required" });
+    expect(await h.getPresentation(requestId)).toMatchObject({ status: "blocked", code: "activity_required" });
+    window.dispatchEvent(new Event("focus")); await h.refresh();
+    f.send({ ...f.offer, type: "hosty:ui:open", requestId, target, placement: "side" });
+    f.send({ ...f.offer, type: "hosty:ui:surface-state", route: target.route, state: "ready" });
+    expect(fetcher).toHaveBeenCalledTimes(calls); expect(f.post).toHaveBeenCalledTimes(posts);
+    expect(h.getSnapshot().tools[0]!.readiness).toBe("loading");
+    h.setActive(true); await h.refresh();
+    expect(h.getEnvironment().connection).toBe("connected");
+    f.send({ ...f.offer, type: "hosty:ui:open", requestId, target, placement: "side" });
+    expect(fetcher.mock.calls.filter(([url]) => url.endsWith("resolve"))).toHaveLength(1);
+    f.send({ type: "hosty:ui:probe", childNonce: createPresentationRequestId(), versions: [1] });
+    const offer = f.post.mock.calls.filter(([msg]) => msg.type === "hosty:ui:offer").at(-1)![0];
+    expect(offer.generation).not.toBe(f.offer.generation);
+    f.send({ ...offer, type: "hosty:ui:accept", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: panel.appId, installationId: panel.installationId });
+    f.send({ ...offer, type: "hosty:ui:surface-state", route: target.route, state: "ready" });
+    expect(h.getSnapshot().tools[0]!.readiness).toBe("ready");
+    expect(await h.getPresentation(requestId)).toMatchObject({ status: "opened", readiness: "ready" });
+  });
+  it.each(["bootstrap", "resolve"])("refuses a placement suspended during %s even after activity resumes", async pending => {
+    const h = await start();
+    let release!: () => void, entered!: () => void, held = false;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    fetcher.mockImplementation(async (path: string) => {
+      if (!held && path.endsWith(pending)) { held = true; entered(); await gate; }
+      return Response.json(path.includes("bootstrap") ? metadata : path.endsWith("resolve") ? resolved : { panels });
+    });
+    const requestId = createPresentationRequestId();
+    const opening = h.openSurface(target, { placement: "side", requestId });
+    await waiting; h.setActive(false); h.setActive(true); await h.refresh(); release();
+    expect(await opening).toMatchObject({ status: "blocked", code: "activity_required" });
+    expect(h.getSnapshot().tools).toHaveLength(0);
+    expect(await h.openSurface(target, { placement: "side", requestId })).toMatchObject({ status: "opened" });
+  });
+  it("does not dispatch a queued placement from before activity suspension", async () => {
+    const h = await start();
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    fetcher.mockImplementation(async (path: string) => {
+      if (path.endsWith("resolve")) { entered(); await gate; }
+      return Response.json(path.includes("bootstrap") ? metadata : path.endsWith("resolve") ? resolved : { panels });
+    });
+    const first = h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    await waiting;
+    const second = h.openSurface({ ...target, route: "/assistant?session=queued" }, { placement: "side", requestId: createPresentationRequestId() });
+    h.setActive(false); h.setActive(true); await h.refresh(); release();
+    for (const result of await Promise.all([first, second])) expect(result).toMatchObject({ status: "blocked", code: "activity_required" });
+    expect(fetcher.mock.calls.filter(([url]) => url.endsWith("resolve"))).toHaveLength(1);
+    expect(h.getSnapshot().tools).toHaveLength(0);
+  });
+  it.each(["success", "failure"])("ignores a stale refresh %s from before renewal", async outcome => {
+    const h = await start();
+    let finish!: (value: Response) => void, reject!: (error: Error) => void, held = false;
+    fetcher.mockImplementation(async (path: string) => {
+      if (!held && path.endsWith("panels")) {
+        held = true; return new Promise<Response>((resolve, fail) => { finish = resolve; reject = fail; });
+      }
+      return Response.json(path.includes("bootstrap") ? metadata : { panels });
+    });
+    const old = h.refresh(); await vi.waitFor(() => expect(finish).toBeDefined());
+    h.setActive(false); h.setActive(true); await h.refresh();
+    if (outcome === "success") finish(Response.json({ panels: [] })); else reject(new Error("Old failure"));
+    await old;
+    expect(h.getEnvironment().connection).toBe("connected");
+    expect(h.getSnapshot().catalog).toEqual(panels);
+    expect(h.getSnapshot().error).toBeNull();
+  });
+  it("keeps renewed activity blocked after failed revalidation and clears old actor tools on recovery", async () => {
+    const h = await start();
+    await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    h.setActive(false);
+    fetcher.mockRejectedValueOnce(new Error("Offline"));
+    h.setActive(true); await h.refresh();
+    const calls = fetcher.mock.calls.length;
+    expect(await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() })).toMatchObject({ status: "blocked", code: "activity_required" });
+    expect(fetcher).toHaveBeenCalledTimes(calls);
+    metadata = { ...metadata, userId: "bob" }; await h.refresh();
+    expect(h.getSnapshot().tools).toHaveLength(0);
+    expect(h.getEnvironment().connection).toBe("connected");
+  });
   it("returns immediate busy refusals to the exact embedded sender", async () => {
     await start(); const f = frame();
     let release!: () => void;

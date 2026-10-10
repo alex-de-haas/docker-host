@@ -3,7 +3,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { HostyPanelWorkspace, HostyUiRoot, useHostyUiHost } from "./ui-react";
-import { createPresentationRequestId } from "./ui";
+import { createPresentationRequestId, ui } from "./ui";
 import type { UiHost } from "./ui-host";
 import type { UiBootstrap, UiPanel } from "./ui-types";
 vi.mock("./browser-auth", () => ({ appFetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
@@ -69,6 +69,32 @@ it.each(["slot", "none"] as const)("supports %s composition without adding a sec
   expect(element.querySelectorAll(".hosty-panel-workspace")).toHaveLength(layout === "slot" ? 1 : 0);
   expect(host).not.toBeNull();
   if (layout === "slot") expect(() => host!.claimWorkspace({})).toThrow("Exactly one");
+});
+it("creates an initially inactive standalone host without metadata traffic", async () => {
+  await act(async () => root.render(<HostyUiRoot active={false}><Document /></HostyUiRoot>));
+  expect(fetch).not.toHaveBeenCalled();
+  expect(ui.getEnvironment()).toMatchObject({ connection: "blocked", code: "activity_required" });
+  expect(await ui.openSurface({ panel: catalog[0]!.panel }, { placement: "side", requestId: createPresentationRequestId() })).toMatchObject({ status: "blocked", code: "activity_required" });
+  expect(fetch).not.toHaveBeenCalled();
+});
+it("suspends the bound standalone facade and preserves mounted drafts while renewal revalidates", async () => {
+  await render();
+  await act(async () => { await host!.selectPanel(catalog[0]!.panel); });
+  const documentDraft = element.querySelector("textarea"), frame = element.querySelector("iframe");
+  await act(async () => root.render(<HostyUiRoot active={false}><Document /></HostyUiRoot>));
+  const calls = vi.mocked(fetch).mock.calls.length;
+  expect(await ui.openSurface({ panel: catalog[1]!.panel }, { placement: "side", requestId: createPresentationRequestId() })).toMatchObject({ status: "blocked", code: "activity_required" });
+  expect(fetch).toHaveBeenCalledTimes(calls);
+  let release!: () => void;
+  catalogGate = new Promise<void>(resolve => { release = resolve; });
+  await act(async () => root.render(<HostyUiRoot active><Document /></HostyUiRoot>));
+  expect(ui.getEnvironment().connection).toBe("connecting");
+  expect(await ui.getPresentation(createPresentationRequestId())).toMatchObject({ status: "blocked", code: "activity_required" });
+  expect(element.querySelector("textarea")).toBe(documentDraft);
+  expect(element.querySelector("iframe")).toBe(frame);
+  await act(async () => { release(); await host!.refresh(); });
+  expect(ui.getEnvironment().connection).toBe("connected");
+  expect(element.querySelector("iframe")).toBe(frame);
 });
 it("removes panel chrome for an older app adapter without remounting the protected document", async () => {
   await render(); const documentDraft = element.querySelector("textarea");

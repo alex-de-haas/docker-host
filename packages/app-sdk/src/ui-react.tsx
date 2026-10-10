@@ -19,10 +19,16 @@ export function HostyUiRoot({ children, uiPath, panelLayout = "auto", active = t
   const [host, setHost] = useState<UiHost | null>(null);
   const [environment, setEnvironment] = useState<UiEnvironment | null>(null);
   const mounted = useRef(false);
-  const clientRef = useRef<UiClient | null>(null);
+  const clientRef = useRef<UiHost | EmbeddedUiClient | null>(null);
+  const activeRef = useRef(active);
+  useLayoutEffect(() => {
+    activeRef.current = active;
+    clientRef.current?.setActive(active);
+  }, [active]);
   useEffect(() => {
     const path = normalizeUiPath(uiPath);
-    const client = window.parent === window ? createUiHost({ uiPath: path }) : new EmbeddedUiClient(path);
+    const client = window.parent === window ? createUiHost({ uiPath: path, active: activeRef.current }) : new EmbeddedUiClient(path);
+    client.setActive(activeRef.current);
     clientRef.current = client;
     const release = bindUiClient(client), stop = client.subscribe(event => { if (event.type === "environment") setEnvironment(event.value); });
     if (client instanceof EmbeddedUiClient) setHost(null); else setHost(client);
@@ -30,10 +36,6 @@ export function HostyUiRoot({ children, uiPath, panelLayout = "auto", active = t
   }, [uiPath]);
   const allowed = environment?.mode === "standalone" || environment?.connection === "connected" || environment?.connection === "unsupported";
   if (allowed) mounted.current = true;
-  useEffect(() => {
-    if (active && host) void host.refresh();
-    if (clientRef.current instanceof EmbeddedUiClient) clientRef.current.setActive(active);
-  }, [host, active]);
   return <UiHostContext.Provider value={host}>
     <div hidden={!allowed} inert={!allowed} style={{ display: allowed ? "contents" : "none" }}>
       {mounted.current && (panelLayout === "auto" && host ? <HostyPanelWorkspace>{children}</HostyPanelWorkspace> : children)}

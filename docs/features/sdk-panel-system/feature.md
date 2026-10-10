@@ -138,6 +138,12 @@ or legacy panel URL to that recovery link; the embedded launch URL is not reused
 authoritative. A mixed-content panel retains the Core-resolved target and standalone link in the
 workspace, with unreported readiness; no HTTP iframe is mounted and no popup is opened.
 
+Standalone activity renewal also suspends the host and its bound facade. Inactive hosts do not
+refresh metadata, resolve targets, accept frame messages or update readiness. Renewal revalidates
+bootstrap and catalog before reopening requests, rotates frame generations and requires fresh
+handshakes. Stale responses and queued requests from before suspension cannot commit afterward;
+existing same-actor frames and drafts remain mounted.
+
 ## Layout And Lifetime
 
 Standalone shows opened tools and Add tool; the chooser lists accessible declared panels before
@@ -230,6 +236,9 @@ feature does not confer that deferred designation. Current CSP refusal has expli
   Runtime-transition coverage preserves the actual iframe and unsent content through
   stopping/starting/recovery, while a completed stop or changed frame policy removes it.
   Degradation-warning tests cover appearance and recovery on the same retained frame.
+  Host activity tests cover an initially inactive root, blocked facade/frame traffic, delayed
+  bootstrap/resolve, queued requests, stale refresh success/failure, failed renewal and actor changes.
+  React tests preserve the document and iframe through revalidation.
   Concurrent-request tests exercise immediate embedded refusals, payload conflicts during
   verification, identical replay, independent aborts and status/open ordering. Selection tests cover
   collapse during bootstrap/resolve, out-of-order selections, queued routes and delayed restoration.

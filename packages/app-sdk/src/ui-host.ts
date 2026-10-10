@@ -12,10 +12,10 @@ type Ledger = { input: string; result?: PresentationResult; pending?: Promise<Pr
 let documentHost: UiHost | null = null;
 
 /** One top-level composition owner. All Core traffic goes through this app's authenticated adapter. */
-export function createUiHost(options: { uiPath?: string } = {}): UiHost {
+export function createUiHost(options: { uiPath?: string; active?: boolean } = {}): UiHost {
   if (typeof window === "undefined" || window.parent !== window) throw new Error("A panel host belongs to a top-level browser document.");
   if (documentHost) throw new Error("A Hosty panel host already owns this document.");
-  const host = new UiHost(uiPath(options.uiPath));
+  const host = new UiHost(uiPath(options.uiPath), options.active);
   documentHost = host;
   return host;
 }
@@ -30,17 +30,37 @@ export class UiHost implements UiClient {
   private readonly ledger = new Map<string, Ledger>();
   private readonly toolQueues = new Map<string, Promise<PresentationResult>>();
   private selectionGeneration = 0;
+  private activityGeneration = 0;
+  private activityReady: boolean;
   private disposed = false;
   private workspace: object | null = null;
   private refreshing: Promise<void> | null = null;
   private readonly onMessage = (event: MessageEvent) => { void this.receive(event); };
   private readonly onFocus = () => { void this.refresh(); };
-  constructor(private readonly path: string) {
+  constructor(private readonly path: string, private active = true) {
+    this.activityReady = active;
     window.addEventListener("message", this.onMessage);
     window.addEventListener("focus", this.onFocus);
-    void this.refresh();
+    if (active) void this.refresh(); else this.setEnvironment("blocked", "activity_required");
   }
   getEnvironment = () => this.environment;
+  setActive(active: boolean) {
+    if (this.disposed || this.active === active) return;
+    this.active = active; this.activityReady = false;
+    this.activityGeneration++; this.selectionGeneration++;
+    this.refreshing = null; this.toolQueues.clear();
+    for (const [key, entry] of this.ledger) if (entry.pending) this.ledger.delete(key);
+    for (const frame of this.frames) {
+      frame.connected = false; frame.actor = null; frame.nonce = null;
+      frame.generation = createPresentationRequestId();
+    }
+    this.setEnvironment(active ? "connecting" : "blocked", active ? undefined : "activity_required");
+    if (active) void this.refresh();
+  }
+  private checkActivity(generation: number, renewing = false) {
+    if (this.disposed || !this.active || generation !== this.activityGeneration || !renewing && !this.activityReady)
+      throw new UiError("activity_required", "Renew this app's activity before opening panels.");
+  }
   claimWorkspace = (owner: object) => {
     if (this.workspace && this.workspace !== owner) throw new Error("Exactly one panel workspace may occupy this host.");
     this.workspace = owner;
@@ -60,8 +80,10 @@ export class UiHost implements UiClient {
     this.environment = { mode: "standalone", connection, ...(code ? { code } : {}) };
     this.emit({ type: "environment", value: this.environment });
   }
-  private async bootstrap(): Promise<UiBootstrap> {
+  private async bootstrap(generation = this.activityGeneration, renewing = false): Promise<UiBootstrap> {
+    this.checkActivity(generation, renewing);
     const value = await uiRequest<UiBootstrap>(this.path, "bootstrap");
+    this.checkActivity(generation, renewing);
     if (value.version !== 1 || !value.app?.installationId || !value.userId) throw new UiError("unsupported_app", "Unsupported panel metadata.");
     const previous = this.snapshot.bootstrap;
     if (previous && (previous.userId !== value.userId || previous.coreOrigin !== value.coreOrigin || previous.app.installationId !== value.app.installationId)) {
@@ -77,13 +99,18 @@ export class UiHost implements UiClient {
     return value;
   }
   refresh = (): Promise<void> => {
+    if (!this.active || this.disposed) return Promise.resolve();
     if (this.refreshing) return this.refreshing;
-    this.refreshing = (async () => {
+    const generation = this.activityGeneration;
+    const operation = (async () => {
       try {
-        const own = await this.bootstrap();
+        const own = await this.bootstrap(generation, true);
+        this.checkActivity(generation, true);
         if (!own.canHost) { this.setEnvironment("unsupported", "app_permission_required"); this.update({ catalog: [], tools: [], selected: null, expanded: false }); return; }
         const catalog = await uiRequest<{ panels: UiPanel[] }>(this.path, "panels");
+        this.checkActivity(generation, true);
         if (!Array.isArray(catalog.panels)) throw new UiError("ui_response_invalid", "Invalid panel catalog.");
+        this.activityReady = true;
         this.update({ catalog: catalog.panels, error: null }); this.setEnvironment("connected");
         // Catalog disappearance/replacement is access loss, while temporary readiness loss retains drafts.
         const allowed = new Map(catalog.panels.map(p => [panelKey(p.panel), p]));
@@ -100,12 +127,14 @@ export class UiHost implements UiClient {
         }) });
         for (const frame of this.frames) this.post(frame, { type: "hosty:ui:probe-request" });
       } catch (error) {
+        if (!this.active || this.disposed || generation !== this.activityGeneration) return;
         const code = error instanceof UiError ? error.code : "ui_unavailable";
         this.update({ error: { code, message: error instanceof Error ? error.message : "Panel metadata is unavailable." } });
         this.setEnvironment(code.startsWith("unsupported") ? "unsupported" : "blocked", code);
       }
-    })().finally(() => { this.refreshing = null; });
-    return this.refreshing;
+    })().finally(() => { if (this.refreshing === operation) this.refreshing = null; });
+    this.refreshing = operation;
+    return operation;
   };
 
   openSurface = (target: PanelTarget, options: PresentationOptions): Promise<PresentationResult> =>
@@ -113,6 +142,9 @@ export class UiHost implements UiClient {
 
   private open(target: PanelTarget, options: PresentationOptions, source: string, frame?: Frame): Promise<PresentationResult> {
     const id = options.requestId;
+    if (!this.active || !this.activityReady || this.disposed)
+      return Promise.resolve({ status: "blocked", requestId: id, code: "activity_required" });
+    const generation = this.activityGeneration;
     if (!validId(id) || !validTarget(target) || options.placement !== "side")
       return Promise.resolve({ status: "rejected", requestId: id, code: "invalid_presentation" });
     const key = `${source}:${id}`, input = JSON.stringify([target.panel.appId, target.panel.installationId, target.panel.panelId, target.route ?? null]);
@@ -128,10 +160,12 @@ export class UiHost implements UiClient {
     const operation = (async (): Promise<PresentationResult> => {
       if (previous) await previous;
       try {
-        const own = await this.bootstrap();
+        const own = await this.bootstrap(generation);
+        this.checkActivity(generation);
         if (!own.canHost) throw new UiError("app_permission_required", "Allow this app to host panels.");
         if (frame && (!frame.live || !frame.connected || frame.actor !== own.userId || !currentSource())) throw new UiError("actor_mismatch", "Reconnect using the same account.");
         const resolved = await uiRequest<UiResolvedPanel>(this.path, "panels/resolve", target);
+        this.checkActivity(generation);
         if (this.disposed || this.snapshot.bootstrap?.userId !== own.userId || this.snapshot.bootstrap?.coreOrigin !== own.coreOrigin || this.snapshot.bootstrap?.app.installationId !== own.app.installationId
           || frame && (!frame.live || !frame.connected || frame.actor !== own.userId || !currentSource())) throw new UiError("actor_mismatch", "The signed-in account changed.");
         if (!resolved.available || !resolved.surface) throw new UiError(resolved.state || "destination_unavailable", "The selected panel is unavailable.");
@@ -150,7 +184,7 @@ export class UiHost implements UiClient {
     void operation.then(result => {
       entry.pending = undefined; entry.result = result;
       if (this.toolQueues.get(toolKey) === operation) this.toolQueues.delete(toolKey);
-      if (!frame) this.emit({ type: "presentation", value: result });
+      if (!frame && this.active && generation === this.activityGeneration) this.emit({ type: "presentation", value: result });
       const keys = [...this.ledger.keys()].filter(k => k.startsWith(source + ":"));
       for (const oldKey of keys.slice(0, Math.max(0, keys.length - 256))) if (!this.ledger.get(oldKey)?.pending) this.ledger.delete(oldKey);
     });
@@ -159,9 +193,11 @@ export class UiHost implements UiClient {
 
   getPresentation = (id: string, options?: { signal?: AbortSignal }) => waitForPresentation(this.status(id, "local"), id, options?.signal);
   private async status(id: string, source: string, frame?: Frame): Promise<PresentationResult> {
+    const generation = this.activityGeneration;
     try {
-      const own = await this.bootstrap();
+      const own = await this.bootstrap(generation);
       const check = () => {
+        this.checkActivity(generation);
         if (!own.canHost) throw new UiError("app_permission_required", "Allow this app to host panels.");
         if (this.snapshot.bootstrap?.userId !== own.userId || this.snapshot.bootstrap?.coreOrigin !== own.coreOrigin
           || this.snapshot.bootstrap?.app.installationId !== own.app.installationId || frame && (!frame.live || !frame.connected || frame.actor !== own.userId
@@ -171,6 +207,7 @@ export class UiHost implements UiClient {
       check();
       const entry = this.ledger.get(`${source}:${id}`);
       const result = entry?.pending ? await entry.pending : entry?.result;
+      check();
       if (result?.status === "opened") {
         const current = await uiRequest<UiResolvedPanel>(this.path, "panels/resolve", result.target);
         check();
@@ -188,6 +225,7 @@ export class UiHost implements UiClient {
     return this.openSurface(opened?.target ?? { panel: ref }, { placement: "side", requestId: createPresentationRequestId() });
   };
   setExpanded = (expanded: boolean) => {
+    if (expanded && (!this.active || !this.activityReady)) return;
     if (!expanded) this.selectionGeneration++;
     this.update({ expanded });
   };
@@ -215,12 +253,12 @@ export class UiHost implements UiClient {
     this.frames.add(frame); element.addEventListener("load", loaded); loaded(); return frame.cleanup;
   };
   private post(frame: Frame, value: Record<string, unknown>) {
-    if (!frame.live || this.disposed) return;
+    if (!frame.live || this.disposed || !this.active || !this.activityReady) return;
     frame.element.contentWindow?.postMessage({ version: 1, hostWindowId: this.windowId, generation: frame.generation,
       childNonce: frame.nonce, ...value }, frame.surface.origin);
   }
   private reportFrame(frame: Frame, readiness: SurfaceReadiness) {
-    if (!frame.surface.panelId) return;
+    if (!frame.surface.panelId || !this.active || !this.activityReady) return;
     const tools = this.snapshot.tools.map(t => t.resolved.surface?.appId === frame.surface.appId
       && t.target.panel.panelId === frame.surface.panelId
       && t.resolved.surface.installationId === frame.surface.installationId && t.resolved.surface.endpoint === frame.surface.endpoint
@@ -237,6 +275,7 @@ export class UiHost implements UiClient {
     }
   }
   private async receive(event: MessageEvent) {
+    if (!this.active || !this.activityReady || this.disposed) return;
     const msg = readUiMessage(event.data); if (!msg) return;
     const frame = [...this.frames].find(f => f.live && f.element.contentWindow === event.source && f.surface.origin === event.origin);
     const own = this.snapshot.bootstrap;
