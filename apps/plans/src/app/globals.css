@@ -125,9 +125,6 @@
 }
 
 /* The document reader keeps prose and code readable inside the shared app chrome. */
-html[data-hosty-launch="embedded"] .hosty-shell-chrome,
-html[data-hosty-launch="native"] .hosty-shell-chrome { display: none; }
-
 .markdown { @apply min-w-0 max-w-[80ch] text-sm leading-7 wrap-anywhere; }
 .markdown h1 { @apply mb-5 text-2xl font-semibold leading-tight; }
 .markdown h2 { @apply mt-7 mb-3 text-lg font-semibold; }
