@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
 import { createAssistantRequestId } from "@hosty-sdk/app/assistant";
@@ -28,22 +28,29 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
   const [error, setError] = useState<Failure | null>(null);
   const [pending, setPending] = useState(false);
   const ui = useHostyUi();
-  const [completed, setCompleted] = useState<{ result: DiscussionResult; presentationId: string; userId: string; path: string; source: string } | null>(null);
+  const [completed, setCompleted] = useState<{ result: DiscussionResult; presentationId: string; userId: string; path: string; source: string; contextKey: string } | null>(null);
   const [presentation, setPresentation] = useState<PresentationResult | null>(null);
   const [epoch, setEpoch] = useState(0);
   const running = useRef(false);
   const requests = useRef(new Map<string, { requestId: string; installationId: string }>());
-  const results = useRef(new Map<string, { result: DiscussionResult; presentationId: string; userId: string; path: string; source: string }>());
+  const results = useRef(new Map<string, NonNullable<typeof completed>>());
   const version = detail && discussionVersion(detail, workspaceId);
   const sourceKey = JSON.stringify([detail?.repository.id, detail?.path, workspaceId, version?.document.content]);
   const selected = options?.providers.find(item => `${item.appId}:${item.key}` === selection)
     ?? (options?.providers.length === 1 ? options.providers[0] : undefined);
+  const contextKey = JSON.stringify([options?.userId, sourceKey, selected?.appId, selected?.key, selected?.installationId, selected?.problem]);
+  const context = useRef<object | null>(null);
+  useLayoutEffect(() => {
+    const generation = {};
+    context.current = generation;
+    return () => { if (context.current === generation) context.current = null; };
+  }, [contextKey]);
 
   useEffect(() => {
     const controller = new AbortController();
     let loading = false;
     const load = () => {
-      if (loading || running.current) return;
+      if (loading) return;
       loading = true;
       void appFetch("/api/assistant", { cache: "no-store", signal: controller.signal })
       .then(responseBody<DiscussionOptions>).then(value => { if (!controller.signal.aborted) { setOptions(value); setError(null); } })
@@ -58,14 +65,18 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
     if (event.type === "presentation" && event.value.requestId === completed?.presentationId) setPresentation(event.value);
   }), [ui, completed?.presentationId]);
 
-  async function present(value: NonNullable<typeof completed>) {
+  async function present(value: NonNullable<typeof completed>, generation = context.current) {
+    if (!generation || context.current !== generation || value.contextKey !== contextKey) return;
     setCompleted(value);
-    if (!value.result.target) { setPresentation(null); return; }
-    setPresentation(await ui.openSurface(value.result.target, { placement: "side", requestId: value.presentationId }));
+    setPresentation(null);
+    if (!value.result.target) return;
+    const result = await ui.openSurface(value.result.target, { placement: "side", requestId: value.presentationId });
+    if (context.current === generation) setPresentation(result);
   }
 
   async function discuss(startNew = false) {
     if (running.current || !detail || !version || !selected?.installationId || selected.problem || !options) return;
+    const generation = context.current;
     running.current = true; setPending(true); setError(null);
     try {
       // Named HTTP localhost origins do not expose Web Crypto in every supported browser.
@@ -76,7 +87,7 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
       // A reinstall must revalidate the pinned pending intent before offering a new discussion.
       const resultKey = JSON.stringify([storageKey, selected.installationId]);
       const existing = !startNew && results.current.get(resultKey);
-      if (existing) { await present(existing); return; }
+      if (existing) { await present(existing, generation); return; }
       let intent = startNew ? undefined : requests.current.get(storageKey);
       try {
         const stored = !startNew && JSON.parse(sessionStorage.getItem(storageKey) ?? "null");
@@ -88,12 +99,12 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
       const body: DiscussionInput = { ...input, ...intent };
       const result = await appFetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
         .then(responseBody<DiscussionResult>);
-      const value = { result, presentationId: createPresentationRequestId(), userId: options.userId, path: detail.path, source: sourceKey };
+      const value = { result, presentationId: createPresentationRequestId(), userId: options.userId, path: detail.path, source: sourceKey, contextKey };
       results.current.set(resultKey, value);
-      await present(value);
+      await present(value, generation);
     } catch (cause) {
-      setError(failure(cause));
-    } finally { running.current = false; setPending(false); }
+      if (context.current === generation) setError(failure(cause));
+    } finally { running.current = false; if (context.current) setPending(false); }
   }
 
   const unavailable = !version ? "This document version is unavailable or deleted."
@@ -123,7 +134,7 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
         <Button variant="link" size="sm" disabled={pending} onClick={() => void discuss(true)}>Start a new discussion</Button>}
     </div>}
     {!error && detail && unavailable && <p role="status" className="text-right text-xs text-muted-foreground">{unavailable}</p>}
-    {completed && completed.userId === options?.userId && completed.path === detail?.path && completed.source === sourceKey && <div className="flex flex-wrap items-center justify-end gap-3 text-xs">
+    {completed && completed.contextKey === contextKey && completed.userId === options?.userId && completed.path === detail?.path && completed.source === sourceKey && <div className="flex flex-wrap items-center justify-end gap-3 text-xs">
       <span role="status">{presentation?.status === "opened" ? presentation.readiness === "ready" ? "Discussion opened beside the document." : presentation.readiness === "unreported" ? "Discussion created. The assistant has not confirmed that it loaded." : presentation.readiness === "auth-required" ? "Discussion created. Check access in the assistant panel." : "Discussion created. Connecting to the assistant…"
         : "Discussion created. You can retry opening it here or open it separately."}</span>
       {completed.result.target && <Button variant="link" size="sm" disabled={pending} onClick={() => void present(completed)}>Retry opening</Button>}

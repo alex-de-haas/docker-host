@@ -1841,7 +1841,7 @@ export function ShellClient({
   // reuses the channel built for asks — the panel owns which session is shown, and Shell only carries
   // the request, which is the same division as everywhere else in the rail.
   const sessionAssistantId = searchParams.get("assistantApp") ?? (assistants.length === 1 ? assistants[0].appId : null);
-  useAssistantSessionLink({ host: panelHost, appId: sessionAssistantId, sessionId: assistantSessionParam, userId: activeUserId,
+  useAssistantSessionLink({ host: panelHost, appId: sessionAssistantId, assistantIds, sessionId: assistantSessionParam, userId: activeUserId,
     onOpened: () => {
       if (!sessionAssistantId) return;
       setPanelOpen(true);

@@ -23,7 +23,7 @@ function Shell({ initialOpen, link }: { initialOpen: boolean | null; link: boole
   const panelHost = useHostyUiHost();
   useEffect(() => { host = panelHost; }, [panelHost]);
   const expanded = usePanelExpanded(panelHost, initialOpen, link);
-  useAssistantSessionLink({ host: panelHost, appId: "assistant", sessionId: link ? "existing" : null, userId: "alice", onOpened: () => {} });
+  useAssistantSessionLink({ host: panelHost, appId: "assistant", assistantIds: ["assistant"], sessionId: link ? "existing" : null, userId: "alice", onOpened: () => {} });
   return <>
     <ShellTopStrip title="Plans" navigationWidth={60} leftRailExpanded={false} onToggleLeftRail={() => {}}
       rightRailExpanded={expanded} onToggleRightRail={() => panelHost?.setExpanded(!expanded)} showNotifications={false} onBrandClick={() => {}} />

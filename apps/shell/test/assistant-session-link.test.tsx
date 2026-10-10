@@ -16,8 +16,8 @@ const panels: UiPanel[] = ["notes", "assistant"].map(appId => ({ panel: { appId,
 let root: Root, container: HTMLDivElement, host: UiHost;
 let catalogGate: Promise<void> | null, placementGate: Promise<void> | null, refused: boolean;
 const opened = vi.fn();
-function Link({ sessionId = "existing", userId = "alice" }: { sessionId?: string | null; userId?: string }) {
-  useAssistantSessionLink({ host, appId: "assistant", sessionId, userId, onOpened: opened });
+function Link({ sessionId = "existing", userId = "alice", appId = "assistant", assistantIds = ["assistant"] }: { sessionId?: string | null; userId?: string; appId?: string; assistantIds?: string[] }) {
+  useAssistantSessionLink({ host, appId, assistantIds, sessionId, userId, onOpened: opened });
   return null;
 }
 beforeEach(() => {
@@ -80,6 +80,30 @@ it("does not consume a departed link when an older placement completes", async (
 it("does not open a link with another account's host metadata", async () => {
   await mount("bob");
   expect(opened).not.toHaveBeenCalled(); expect(placements()).toHaveLength(0);
+});
+it.each(["notes", "former-assistant"])("does not place or consume a session link for non-assistant %s", async appId => {
+  host = createUiHost();
+  await act(async () => root.render(<Link appId={appId} />));
+  await act(async () => host.refresh());
+  expect(placements()).toHaveLength(0);
+  expect(opened).not.toHaveBeenCalled();
+  expect(host.getSnapshot().selected).toBeNull();
+});
+it("retains the link until assistant discovery confirms the requested app", async () => {
+  host = createUiHost();
+  await act(async () => root.render(<Link assistantIds={[]} />));
+  await act(async () => host.refresh());
+  expect(placements()).toHaveLength(0); expect(opened).not.toHaveBeenCalled();
+  await act(async () => root.render(<Link />));
+  expect(placements()).toHaveLength(1); expect(opened).toHaveBeenCalledTimes(1);
+});
+it("does not consume a pending link after the destination loses its assistant role", async () => {
+  let release!: () => void;
+  placementGate = new Promise<void>(resolve => { release = resolve; });
+  await mount();
+  await act(async () => root.render(<Link assistantIds={[]} />));
+  await act(async () => release());
+  expect(opened).not.toHaveBeenCalled();
 });
 it("opens only the requested assistant when another tool is first in the catalog", async () => {
   host = createUiHost(); await host.refresh();

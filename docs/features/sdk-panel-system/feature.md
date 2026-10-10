@@ -185,7 +185,10 @@ the finalized conversation, typed presentation target and pinned separate link. 
 bound to the actor, document version and provider; persisted pending intent retains the original
 request/installation across a lost response. Completed-result reuse also requires the selected provider
 installation. After reinstall, the original pending intent is revalidated and refused; only the explicit
-Start a new discussion action creates a handoff for the replacement.
+Start a new discussion action creates a handoff for the replacement. A pending handoff captures
+the actor, source version and selected provider generation. Navigation, account/provider changes
+or unmount prevent its late result from opening a panel or displaying an error in the new context.
+Returning to the original source can explicitly reuse the cached finalized result.
 
 The normal path calls `openSurface` with a presentation UUID. It opens Shell's panel when embedded
 and the local SDK host when standalone, without reserving a popup. Plans distinguishes successful
@@ -198,7 +201,8 @@ session fetch cannot report a previously attached session as ready for that requ
 Shell retains completed assistant results when they have only a navigation destination or side
 placement fails. A visible notice offers the pinned separate link and, when a panel target exists,
 Retry opening for the same presentation identity. It does not repeat the domain handoff or open a
-popup. Recovery state is isolated to the signed-in actor.
+popup. Recovery state is isolated to the signed-in actor. Session links place a panel only after
+the requested app appears in the discovered assistant list; an unrelated panel cannot consume them.
 
 ## Related Features
 
@@ -228,11 +232,14 @@ feature does not confer that deferred designation. Current CSP refusal has expli
 - Plans/Harness/Shell tests preserve source hashes, complete attachments, provider freezing,
   idempotent handoff recovery, review routing and existing assistant entry points. Plans tests cover
   completed results across provider reinstall, including navigation-only destinations and explicit
-  replacement handoffs with the original document hash. Harness tests cover message-selected readiness
+  replacement handoffs with the original document hash. Delayed handoff tests cover document/content/
+  workspace/actor/provider changes, navigation away and back, unmount and stale errors. Harness tests cover message-selected readiness
   before and after authentication, failed/mismatched session loads and exact URL-session reporting.
 - Delayed-catalog tests cover restoring Shell's open preference, preserving an existing selection
   or collapse, and consuming assistant-session links only after successful panel placement.
   Restoration tests also cover transient refusals, bounded retries and catalog refresh during resolution.
+  Session-link tests reject unrelated panels, wait for assistant discovery and ignore consumption
+  after assistant-role removal.
   Shortcut tests verify that a non-assistant first catalog entry is never selected, including delayed
   metadata, and that toggling the selected assistant closed creates no new placement. Shell chrome
   tests cover delayed/refused links, cookie/legacy preference migration and the first toggle in both

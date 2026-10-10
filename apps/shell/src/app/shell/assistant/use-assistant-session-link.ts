@@ -4,19 +4,21 @@ import { useEffect, useEffectEvent } from "react";
 import type { UiHost } from "@hosty-sdk/app/ui/host";
 
 /** Keep a notification link pending until its panel is actually placed. */
-export function useAssistantSessionLink({ host, appId, sessionId, userId, onOpened }: {
+export function useAssistantSessionLink({ host, appId, assistantIds, sessionId, userId, onOpened }: {
   host: UiHost | null; appId: string | null; sessionId: string | null; userId: string | null;
+  assistantIds: readonly string[];
   onOpened: () => void;
 }) {
   const opened = useEffectEvent(onOpened);
+  const eligibleAppId = appId && assistantIds.includes(appId) ? appId : null;
   useEffect(() => {
-    if (!host || !appId || !sessionId || !userId) return;
+    if (!host || !eligibleAppId || !sessionId || !userId) return;
     let cancelled = false, pending = false, completed = false;
     let attemptedCatalog: ReturnType<UiHost["getSnapshot"]>["catalog"] | null = null;
     const tryOpen = () => {
       const state = host.getSnapshot();
       if (cancelled || pending || completed || state.bootstrap?.userId !== userId || state.catalog === attemptedCatalog) return;
-      const panel = state.catalog.find(item => item.panel.appId === appId && item.available);
+      const panel = state.catalog.find(item => item.panel.appId === eligibleAppId && item.available);
       if (!panel) return;
       pending = true;
       attemptedCatalog = state.catalog;
@@ -30,5 +32,5 @@ export function useAssistantSessionLink({ host, appId, sessionId, userId, onOpen
     const stop = host.subscribeSnapshot(tryOpen);
     tryOpen();
     return () => { cancelled = true; stop(); };
-  }, [host, appId, sessionId, userId]);
+  }, [host, eligibleAppId, sessionId, userId]);
 }

@@ -77,6 +77,57 @@ describe("discuss document action", () => {
     const second = JSON.parse(fetch.mock.calls.filter(call => call[1]?.method === "POST")[1][1].body);
     expect(second).toEqual(first); expect(second.contentHash).toMatch(/^[a-f0-9]{64}$/);
   });
+  it.each(["document", "content", "workspace", "actor", "provider", "roundtrip"])("does not present a completed handoff after the %s context changes", async change => {
+    let finish!: (value: unknown) => void;
+    let discovery = options;
+    fetch.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === "POST"
+      ? new Promise(resolve => { finish = resolve; }) : response(discovery));
+    const initial = { ...detail, workspaces: [{ workspace: { id: "workspace", branch: "work" }, document: { ...document, content: "Workspace content" }, error: null } as WorkspacePlan] };
+    await render(initial);
+    await act(async () => button().click());
+    if (change === "document" || change === "roundtrip") {
+      await render({ ...initial, path: "docs/features/other/plan.md" });
+      if (change === "roundtrip") await render(initial);
+    } else if (change === "content") {
+      await render({ ...initial, document: { ...document, content: "Changed document" } });
+    } else if (change === "workspace") {
+      await render(initial, "workspace");
+    } else {
+      discovery = change === "actor" ? { ...options, userId: "another-user" }
+        : { ...options, providers: [{ ...options.providers[0], installationId: "installed-2" }] };
+      await act(async () => window.dispatchEvent(new Event("focus")));
+    }
+    await act(async () => finish(response(result)));
+    expect(presentation.openSurface).not.toHaveBeenCalled();
+    expect(container.querySelector("a")).toBeNull();
+    expect(window.open).not.toHaveBeenCalled();
+    if (change === "roundtrip") {
+      // Returning to the source does not auto-open it; an explicit action reuses the finalized result.
+      await act(async () => button().click());
+      expect(presentation.openSurface).toHaveBeenCalledTimes(1);
+      expect(fetch.mock.calls.filter(call => call[1]?.method === "POST")).toHaveLength(1);
+    }
+  });
+  it("does not present a pending handoff after its component unmounts", async () => {
+    let finish!: (value: unknown) => void;
+    fetch.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === "POST"
+      ? new Promise(resolve => { finish = resolve; }) : response(options));
+    await render(); await act(async () => button().click());
+    await act(async () => root.unmount()); root = createRoot(container);
+    await act(async () => finish(response(result)));
+    expect(presentation.openSurface).not.toHaveBeenCalled();
+  });
+  it("does not show an old document's handoff error beside a new document", async () => {
+    let finish!: (value: unknown) => void;
+    fetch.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === "POST"
+      ? new Promise(resolve => { finish = resolve; }) : response(options));
+    await render(); await act(async () => button().click());
+    await render({ ...detail, path: "docs/features/other/plan.md" });
+    await act(async () => finish(response({ message: "Old document disappeared" }, false)));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(presentation.openSurface).not.toHaveBeenCalled();
+    expect(button().disabled).toBe(false);
+  });
   it("requires a choice when multiple assistants are installed", async () => {
     fetch.mockResolvedValue(response({ ...options, providers: [...options.providers, { ...options.providers[0], appId: "second" }] }));
     await render(); expect(button().disabled).toBe(true);
