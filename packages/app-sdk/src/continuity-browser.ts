@@ -29,11 +29,14 @@ export function configureAppContinuity(config: Owner): () => void {
   owner = config; checkedAt = 0; valid = true;
   let disposed = false;
   let failures = 0;
+  let scheduleVersion = 0;
   let timer: ReturnType<typeof setTimeout>;
   const schedule = async (force = false) => {
+    const version = ++scheduleVersion;
     clearTimeout(timer);
     const ok = await ensureAppContinuity(force);
-    if (disposed) return;
+    // Events can share one pending probe; only the latest waiter installs its next timer.
+    if (disposed || version !== scheduleVersion) return;
     failures = ok ? 0 : Math.min(4, failures + 1);
     const seconds = ok ? config.authority.checkAfterSeconds : Math.min(300, 15 * 2 ** failures);
     timer = setTimeout(() => { void schedule(); }, seconds * 1000 * (0.9 + Math.random() * 0.2));

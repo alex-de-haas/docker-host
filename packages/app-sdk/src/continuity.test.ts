@@ -36,6 +36,26 @@ it("blocked frame transport does not turn a valid probe into logout", async () =
   expect(await pending).toBe(true); expect(probe).toHaveBeenCalledTimes(1);
 });
 
+it.each([true, false])("keeps one maintenance timer after concurrent wake events (probe=%s)", async result => {
+  vi.useFakeTimers(); vi.spyOn(Math, "random").mockReturnValue(0.5);
+  let resolve!: (value: boolean) => void;
+  const first = new Promise<boolean>(done => { resolve = done; });
+  const probe = vi.fn().mockReturnValueOnce(first).mockResolvedValue(result);
+  cleanup = configureAppContinuity({ coreOrigin: "http://core.localhost", authority: { ...authority, mode: "native" }, probe });
+  window.dispatchEvent(new Event("focus"));
+  document.dispatchEvent(new Event("visibilitychange"));
+  window.dispatchEvent(new Event("online"));
+  expect(probe).toHaveBeenCalledTimes(1);
+  resolve(result);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(vi.getTimerCount()).toBe(1);
+  await vi.advanceTimersByTimeAsync(result ? 300_000 : 30_000);
+  expect(probe).toHaveBeenCalledTimes(2);
+  expect(vi.getTimerCount()).toBe(1);
+  cleanup(); cleanup = undefined;
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 it("refuses protected dispatch during outage and recovers without replay on network return", async () => {
   vi.useFakeTimers(); const probe = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue(true);
   const fetcher = vi.fn().mockResolvedValue(new Response("ok")); vi.stubGlobal("fetch", fetcher);

@@ -205,8 +205,11 @@ struct AppWorkspaceView: View {
                 session.workspaces.finishSignIn(attempt, appID: app.id)
                 return
             }
-            let continuous = (try? await session.client.supportsAppContinuity()) == true
-            if confirmationClient == nil && !continuous {
+        }
+        guard session.workspaces.isCurrentSignIn(attempt, appID: app.id) else { return }
+        do {
+            if request.inPlace, confirmationClient == nil, try await session.client.supportsAppContinuity() == false {
+                guard session.workspaces.isCurrentSignIn(attempt, appID: app.id) else { return }
                 // Old Core still requires explicit renewal. New Core validates the live device principal.
                 renewalAttempt = attempt
                 renewalLoginError = nil
@@ -215,9 +218,7 @@ struct AppWorkspaceView: View {
                 showingRenewalLogin = true
                 return
             }
-        }
-        guard session.workspaces.isCurrentSignIn(attempt, appID: app.id) else { return }
-        do {
+            guard session.workspaces.isCurrentSignIn(attempt, appID: app.id) else { return }
             let launch = try await (confirmationClient ?? session.client).createLaunchCode(
                 appID: app.id, redirectURI: request.redirectURI,
                 codeChallenge: request.codeChallenge, codeChallengeMethod: request.codeChallengeMethod,

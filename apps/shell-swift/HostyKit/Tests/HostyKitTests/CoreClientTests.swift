@@ -12,6 +12,7 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
     struct Stub: Sendable {
         var status: Int = 200
         var body: Data = Data()
+        var error: URLError?
     }
 
     private static let lock = NSLock()
@@ -70,6 +71,11 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
             let stub = Self.stubs.count > 1 ? Self.stubs.removeFirst() : Self.stubs[0]
             Self.recorded.append((request, body))
             return stub
+        }
+
+        if let error = stub.error {
+            client?.urlProtocol(self, didFailWithError: error)
+            return
         }
 
         let response = HTTPURLResponse(
@@ -323,6 +329,20 @@ struct CoreClientTests {
             #expect(try await client().supportsAppContinuity())
             StubURLProtocol.install([StubURLProtocol.stub(json: #"{"version":2}"#)])
             #expect(try await client().supportsAppContinuity() == false)
+        }
+
+        @Test("A capability outage is retryable, not a legacy renewal decision", arguments: [
+            StubURLProtocol.stub(status: 503, json: #"{"code":"unavailable","message":"Try again"}"#),
+            StubURLProtocol.Stub(error: URLError(.notConnectedToInternet)),
+        ])
+        func continuityOutage(stub: StubURLProtocol.Stub) async throws {
+            let native = try client()
+            StubURLProtocol.install([stub])
+            await #expect(throws: CoreError.self) { try await native.supportsAppContinuity() }
+            #expect(await native.isAuthenticated)
+            #expect(StubURLProtocol.requests.allSatisfy { $0.request.url?.path == "/api/auth/apps/protocol" })
+            StubURLProtocol.install([StubURLProtocol.stub(json: #"{"version":2,"sessionContinuityVersion":1}"#)])
+            #expect(try await native.supportsAppContinuity())
         }
 
         @Test("Only explicit native renewal requests interactive activity")

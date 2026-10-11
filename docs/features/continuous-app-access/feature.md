@@ -45,7 +45,8 @@ app service credential and user app grant cannot keep the parent browser session
 
 The SDK owns one coordinator per document. It checks on mount, at a five-minute interval with
 jitter, on focus/visibility/online return and before a protected request when validation is older
-than 30 seconds. Concurrent checks coalesce. Timers are advisory; the server decides validity.
+than 30 seconds. Concurrent checks coalesce; a burst of wake events schedules one next timer.
+Timers are advisory; the server decides validity.
 
 For browser sessions, a transient Core-owned iframe uses
 `GET /api/auth/apps/continuity/frame?grantId=…&origin=…&state=…`. Core validates the installed app
@@ -70,7 +71,9 @@ Silent success emits `APP_CONTINUITY_UPDATED`, not `APP_ACTIVITY_RENEWED`; it do
 conversations, replay handoffs/messages or change panel generations. Harness's session probe and
 credential-refresh endpoint update all live conversations owned by that actor. Native Shell uses
 its existing device credential when Core advertises continuity, and retains the older confirmation
-flow for an older Core. Native credentials never enter app JavaScript.
+flow for an older Core. Failed capability discovery remains retryable and does not open the legacy
+password sheet; only a successful legacy capability result chooses that path. Native credentials
+never enter app JavaScript.
 
 ## Explicit background delegation
 
