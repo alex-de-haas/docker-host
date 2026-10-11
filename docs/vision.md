@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-10
+updated: 2026-10-11
 ---
 
 # Hosty Platform Vision
@@ -428,6 +428,28 @@ Decisions 1–5: 2026-08-19.
     deliverable IDs are transferred with traceability, not marked complete or reused. Historical
     native-sandbox experiments are regression inputs, not proof of current-version containment.
 
+33. **Explicit SDK composition across shells (2026-10-11).** Framing and presentation are separate.
+    A plain standalone tab defaults to visible app navigation and access to authorized tools;
+    a host explicitly chooses navigation/tool policy and owns placement. Supply both a standard
+    manifest-driven SDK menu and a visibility boundary for custom navigation. A desktop shell may
+    keep navigation in each app window while sharing an assistant window or dock; do not impose
+    one assistant per app, a fixed desktop layout or conversation-selection behavior in the SDK.
+    [SDK UI composition](features/sdk-ui-composition/plan.md) owns the new mechanisms, extending
+    decision 27's shipped panel system. The owner requested documents first and deferred UI
+    implementation; the new plan remains Draft alongside the coordinated defaults/UI-client plans.
+
+34. **Continuous trusted-app access and explicit unattended authority (2026-10-11).** Remove the
+    product requirement for routine hourly Renew access while a trusted app remains in use.
+    Maintain already-authorized access transparently, preserve current user/app rights and
+    revocation, and give deliberately configured background work an independent, visible grant.
+    App trust does not imply all user permissions, and browser activity is not background consent.
+    [Continuous app access](features/continuous-app-access/plan.md) owns the proposed session policy,
+    SDK maintenance and durable Core grants. Cross-App Auth D8 moves there; Bridge D11 retains its
+    runner and consumes those grants. Container-based isolation and honest disclosure of
+    unrestricted local commands remain separate from authentication UX. Publish both new Drafts
+    through a documentation PR, then prioritize access; this decision does not authorize live grant
+    changes or implement either proposal.
+
 ## Expectations And Later Directions
 
 - **Apps ship with source.** The default is open source; a company's internal apps are closed by
@@ -489,6 +511,8 @@ the manifest contract. Two standing consequences:
 [workspaces-app](features/workspaces-app/feature.md) ·
 [default-applications](features/default-applications/plan.md) ·
 [sdk-panel-system](features/sdk-panel-system/feature.md) ·
+[sdk-ui-composition](features/sdk-ui-composition/plan.md) ·
+[continuous-app-access](features/continuous-app-access/plan.md) ·
 [replaceable-ui-clients](features/replaceable-ui-clients/plan.md) ·
 [plan-provider-interface](features/plan-provider-interface/plan.md) ·
 [hosty-harness-swift](features/hosty-harness-swift/plan.md) ·

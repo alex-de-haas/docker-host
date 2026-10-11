@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-07-17
-updated: 2026-10-10
+updated: 2026-10-11
 summary: Proposed replaceable browser UIs using confirmed roles and shared defaults, preserving app authorization and Core-owned recovery when the selected UI is unavailable.
 components: [apps/core, apps/cli, apps/shell]
 ---
@@ -21,6 +21,12 @@ fallback and browser CORS. The recommendations are not approved implementation d
 plan remains Draft and owns its own deliverables. The later owner direction on the same day assigns
 shared panels to the [SDK panel system](../sdk-panel-system/feature.md), with Plans → assistant in Shell
 and standalone as its first scenario. This plan consumes that contract rather than owning it.
+
+Owner clarification, 2026-10-11: [SDK UI composition](../sdk-ui-composition/plan.md) owns explicit
+navigation/tool policies, standalone defaults and host renderer hooks. A desktop UI can keep page
+navigation inside its app windows and use shared tool windows or docks. This plan does not require
+all UI clients to reproduce Shell's sidebar or one assistant view per app. The new composition and
+[continuous access](../continuous-app-access/plan.md) plans remain Draft; access is the next priority.
 
 ## Verified Baseline And Corrections
 
@@ -60,6 +66,9 @@ For the first contract:
   endpoint or rely on manifest array order. Resolve the address through `LocalBrowserOrigins`.
 - Honor app access and the current SDK embedder contract. Embedded apps own their Core sign-in and
   renewal; the UI never receives their grants or Core's primary credential as an embedding shortcut.
+- Adopt explicit SDK navigation/tool policy when its negotiated capability is available. Framing
+  selects transport, not navigation visibility. Until then use the documented legacy adapter;
+  full-client eligibility does not imply that a new composition contract has already shipped.
 - Support the shared SDK panel-host protocol for app requests, with one composition owner for the
   window, including the UI client's own pages. Reuse the SDK host or implement its conformance
   contract in another framework. Exact layout/navigation may differ; a finalized handoff must open
@@ -82,7 +91,8 @@ or using the SDK to host panels when standalone. A local panel host is a composi
 `ui-client` is eligibility to be offered as a complete browser UI. Neither confers embedding
 authority under the separately held [embedding restrictions](../app-embedding-restrictions/plan.md).
 Standalone's window-local opened-tool rail and Add tool chooser expose declared panels without
-app navigation or fleet management; they do not make the host a full UI client. Peer-origin lookup
+fleet management; they do not make the host a full UI client. The planned SDK page menu is local
+app navigation and likewise confers no full-client role. Peer-origin lookup
 does not depend on the held plan's unimplemented list of designated embedders.
 No new manifest schema version is needed for the additive role; older Core treats it as inert and
 cannot offer replacement-UI selection.
@@ -192,7 +202,7 @@ Core confirmation and authentication pages retain their own origins and existing
 - [ ] D3. Integrate Core navigation, bound continuations, UI recovery through shared control/CLI and status; remove app-ID-based selection and audit every old resolver consumer.
 - [ ] D4. Add the UI row to the shared settings page, the Core recovery/choice page and selected/last-UI removal warnings while preserving assignments and allowed headless operation.
 - [ ] D5. Release Shell's role declaration and implement/test one-time default migration, bootstrap seeding and installation-bound compatibility for older installed Shell versions.
-- [ ] D6. Complete cross-client navigation and panel-host conformance, migration and failure verification, update current feature documentation, remove this plan when complete and regenerate the index.
+- [ ] D6. Complete cross-client navigation and panel-host conformance, including adoption of explicit navigation/tool policy when supported, migration and failure verification; update current feature documentation, remove this plan when complete and regenerate the index. SDK policy and multi-view mechanisms remain owned by SDK UI composition.
 - [ ] D7. Verify all UI clients use the existing app-bound authorization contract; do not restore primary-session browser CORS or derive permissions from the UI role.
 
 D2 is retired: its original task was to expand the removed Shell-specific CORS policy. D7 verifies
@@ -202,10 +212,12 @@ the replacement authorization boundary without treating that obsolete implementa
 
 ## Decisions Awaiting Approval And Delivery
 
-Approve this proposal independently of Default applications. The SDK panel system is implemented. Recommended
-delivery is the complete SDK panel feature, then shared defaults, then this complete UI-client
-feature as one PR. The shared store/settings and panel protocol are dependencies; their selection,
-renderer and Plans integration deliverables are not duplicated here. The principal changes from
+Approve this proposal independently of Default applications. The SDK panel system is implemented.
+The owner prioritizes continuous app access next; SDK UI composition is separately documented and
+deferred. Within the default/UI-client work, deliver shared defaults before this complete UI-client
+feature as one PR. Negotiate the available composition contract rather than assuming the new Draft
+already shipped. The shared store/settings and panel protocol are dependencies; their selection,
+renderer, explicit-policy mechanisms and Plans integration deliverables are not duplicated here. The principal changes from
 the old draft are confirmed roles, no CORS expansion, no earliest-installed fallback, retained
 failed selections with Core recovery, current workspace
 routes and compatibility tied to installed upgrades rather than publication dates.
@@ -219,7 +231,9 @@ these exclusions do not excuse broken current deep links.
 - Two independently installed UI clients work directly; changing the primary affects only unbound
   navigation. Automatic selection covers zero/one/multiple clients, including stopped candidates.
 - Use an alternative-client conformance fixture: Plans opens its exact finalized discussion in the
-  current host beside the document, and tools also work on that host's own page. A primary-UI change
+  current host without requiring another browser tab, and tools also work on that host's own page.
+  The SDK composition fixture additionally covers app-local navigation and host-selected shared
+  tool placement without prescribing a desktop layout. A primary-UI change
   leaves it in place. Standalone Plans has one local SDK host and needs no `ui-client` role. Test
   explicit unsupported-host recovery without requiring the alternative UI to use React.
 - Ordinary users cannot enter an unassigned default; Core offers only accessible alternatives.

@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-06-09
-updated: 2026-10-10
+updated: 2026-10-11
 summary: Durable agent jobs and the ownership map for deferred user sessions, agent providers and workspace-based development.
 components: [apps/core, apps/harness]
 ---
@@ -51,7 +51,7 @@ parked it as a future separate app, with Core serving only the
       [On Hold work](../mcp-facade/plan.md), not an unfinished part of the local connector.
 - [x] D8. The operator milestone — the `hosty.ai-gateway` system app plus the Shell assistant surface.
       Shipped 2026-08-09 and verified live: [ai-gateway](../ai-gateway/feature.md).
-- [ ] D11. Durable delegation and job runner, plus notifications.
+- [ ] D11. Implement the durable job runner, scheduling/retry budgets and notifications, consuming the Core background grants owned by Continuous app access. Grant issuance/lifetime/revocation moved to that plan on 2026-10-11 and is not completed here.
 
 Backward compatibility is preserved throughout: an app without an `mcp` interface stays an ordinary
 runtime app.
@@ -167,6 +167,11 @@ D11 retains that remaining work, including any later non-interactive source-job 
 jobs reuse registered workspaces, publication operations and Sandbox validation; they own none of
 those mechanisms and do not create a second development task registry.
 
+Owner coordination, 2026-10-11: [Continuous app access](../continuous-app-access/plan.md) D1/D4–D6
+now owns the durable Core authorization primitive, grant management and its verification. D11
+consumes it and retains the runner, scheduling, retry budgets and notifications. This is an ownership
+transfer, not shipped authority or approval to implement the new Draft from this In Progress plan.
+
 Some requests outlive a session: monitor until complete, scheduled summary, retryable action,
 long-running import, branch/PR status tracking. Core owns durable delegation grants and revocation —
 who approved, which app and action scopes, what resource scope, expiry or revoke condition, maximum
@@ -191,7 +196,7 @@ documentation change. The source/workspace and Sandbox features now own its mech
 - [Development sessions](../assistant-development-sessions/plan.md) D1–D2 own integration and
   acceptance of workspace, validation and PR results. Publish, Merge and Complete remain distinct;
   a passing test never grants promotion authority.
-- D11 owns any general non-interactive scheduling/retry/delegation layer that consumes those APIs.
+- D11 owns general non-interactive scheduling/retry and consumes those APIs plus the independently tracked Core background delegation contract.
   Reuse registered workspaces and collision/lease checks; do not invent another checkout registry.
 
 [App authoring](../app-authoring/plan.md), [prototype workspaces](../app-prototype-workspaces/plan.md)
