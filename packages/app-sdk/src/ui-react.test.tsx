@@ -77,6 +77,22 @@ it("hides custom navigation without losing its component state or retaining keyb
   await act(async () => host!.setViewChrome("root", {}));
   expect(element.querySelector("input")).toBe(input); expect(input.value).toBe("Keep this");
 });
+it("preserves view overrides through remounting and still applies explicit prop policy changes", async () => {
+  const panel = catalog[0]!, surface = { ...panel.panel, endpoint: panel.endpoint, origin: panel.origin!, route: panel.route, framePolicy: policy };
+  const show = (key: string, chrome = {}) => root.render(<HostyUiRoot panelLayout="none"><Document />
+    <HostyAppFrame key={key} surface={surface} title="App" view={{ viewId: "stable-app", workspaceId: "default", chrome }} />
+  </HostyUiRoot>);
+  await act(async () => show("first"));
+  const override = { navigation: "show" as const, tools: { enabled: false } };
+  await act(async () => host!.setViewChrome("stable-app", override));
+  await act(async () => show("replacement"));
+  expect(host!.getViewChrome("stable-app")).toEqual(override);
+  const url = new URL(element.querySelector("iframe")!.src);
+  expect(url.searchParams.get("hosty_navigation")).toBe("show");
+  expect(url.searchParams.get("hosty_tools")).toBe("disabled");
+  await act(async () => show("replacement", { navigation: "hide" }));
+  expect(host!.getViewChrome("stable-app")).toEqual({ navigation: "hide" });
+});
 it("acknowledges a visible chooser and does not reopen it when the request is replayed", async () => {
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", { configurable: true, value: function (this: HTMLDialogElement) { this.open = true; } });
   Object.defineProperty(HTMLDialogElement.prototype, "close", { configurable: true, value: function (this: HTMLDialogElement) { this.open = false; } });
@@ -129,6 +145,9 @@ it.each([false, true])("keeps frame integrations on the resolved origin after na
   };
   const post = vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
   const offer = await connect(initial.origin, post);
+  const viewId = retained ? `tool-${presentationId}` : "app";
+  const chrome = { navigation: "show" as const, tools: { enabled: false, launcher: "show" as const } };
+  await act(async () => host!.setViewChrome(viewId, chrome));
   const originalFetch = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (...args) => String(args[0]).endsWith("navigation/resolve")
     ? Response.json({ available: true, surface: next, state: "running" }) : originalFetch(...args));
@@ -136,12 +155,16 @@ it.each([false, true])("keeps frame integrations on the resolved origin after na
   await act(async () => show()); // An unrelated parent render must keep the new document and handlers.
   expect(element.querySelector("iframe")).toBe(frame); expect(frame.parentElement).toBe(parent);
   expect(new URL(frame.src).origin).toBe(next.origin);
+  expect(new URL(frame.src).searchParams.get("hosty_navigation")).toBe("show");
+  expect(new URL(frame.src).searchParams.get("hosty_tools")).toBe("disabled");
+  expect(new URL(frame.src).searchParams.get("hosty_tool_launcher")).toBe("show");
   expect(frame.getAttribute("allow")).toContain("microphone");
   if (retained) expect(host!.getSnapshot().tools[0]).toMatchObject({ presentationId, currentRoute: next.route,
     readiness: "loading", resolved: { surface: next } });
   const nextPost = vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
   await act(async () => frame.dispatchEvent(new Event("load")));
   const nextOffer = await connect(next.origin, nextPost);
+  expect(nextPost.mock.calls.filter(([message]) => message.type === "hosty:ui:connected").at(-1)![0].chrome).toEqual(chrome);
   expect(nextPost).toHaveBeenCalledWith(command, next.origin);
   expect(nextPost.mock.calls.some(([message, origin]) => message.type === "hosty:shell-theme" && origin === next.origin)).toBe(true);
   await act(async () => {

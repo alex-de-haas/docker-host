@@ -59,7 +59,8 @@ export function HostyAppFrame(props: HostyAppFrameProps) {
   // Theme changes are messages; they must not replace a document with an unsent draft.
   const [launch, setLaunch] = useState(() => {
     const url = new URL(source); url.searchParams.set("hosty_launch", "embedded");
-    return appendThemeLaunchParams(withChromeHints(url.href, props.view?.chrome ?? { navigation: "hide", tools: { launcher: "hide" } }), resolvedTheme, preference);
+    return appendThemeLaunchParams(withChromeHints(url.href, host?.getViewChrome?.(props.view?.viewId ?? defaultViewId)
+      ?? props.view?.chrome ?? { navigation: "hide", tools: { launcher: "hide" } }), resolvedTheme, preference);
   });
   const frameId = JSON.stringify([surface, source]);
   useLayoutEffect(() => {
@@ -74,12 +75,16 @@ export function HostyAppFrame(props: HostyAppFrameProps) {
           const url = new URL(next.route, next.origin); url.searchParams.set("hosty_launch", "embedded");
           setLoaded(false); setReview(null);
           setDestination({ inputId: JSON.stringify([current.surface, current.src]), surface: { ...next, panelId: surface.panelId } });
-          setLaunch(appendThemeLaunchParams(withChromeHints(url.href, current.view?.chrome ?? { navigation: "hide", tools: { launcher: "hide" } }), resolvedTheme, preference));
+          setLaunch(appendThemeLaunchParams(withChromeHints(url.href, host.getViewChrome(current.view?.viewId ?? defaultViewId)
+            ?? current.view?.chrome ?? { navigation: "hide", tools: { launcher: "hide" } }), resolvedTheme, preference));
         } });
   }, [host, frameId]);
   const policy = JSON.stringify(props.view?.chrome ?? {});
+  const previousPolicy = useRef({ viewId: props.view?.viewId, policy });
   useEffect(() => {
-    if (host && props.view && ref.current) host.setViewChrome(props.view.viewId, JSON.parse(policy));
+    const previous = previousPolicy.current; previousPolicy.current = { viewId: props.view?.viewId, policy };
+    if (host && props.view && ref.current && previous.viewId === props.view.viewId && previous.policy !== policy)
+      host.setViewChrome(props.view.viewId, JSON.parse(policy));
   }, [host, props.view?.viewId, policy]);
   useEffect(() => {
     if (loaded) ref.current?.contentWindow?.postMessage(createShellThemeMessage(resolvedTheme, preference), surface.origin);

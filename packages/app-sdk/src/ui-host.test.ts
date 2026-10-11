@@ -1016,6 +1016,37 @@ describe("composition presentation instances", () => {
       expect(frame.contentWindow).toBe(context); expect(renderer.focus).toHaveBeenLastCalledWith(id);
     }
   });
+  it.each(["move", "opening", "picker"])("cancels an earlier move when a newer %s claims the destination", async action => {
+    host = createUiHost(); const h = host, layer = {};
+    let firstId = "", signal!: AbortSignal, aborted!: () => void;
+    const cancelled = new Promise<void>(resolve => { aborted = resolve; });
+    const renderer = { frameLayer: layer, present: async () => "accepted" as const, focus() {}, collapse() {}, release() {}, showToolPicker: async () => "accepted" as const };
+    h.registerWorkspace({ workspaceId: "floating", renderer });
+    h.registerWorkspace({ workspaceId: "default", renderer: { ...renderer,
+      present: async (tool, abort) => {
+        if (tool.presentationId === firstId) {
+          signal = abort;
+          return new Promise(resolve => abort.addEventListener("abort", () => { aborted(); resolve("unavailable"); }, { once: true }));
+        }
+        await cancelled; return "accepted";
+      }, showToolPicker: async () => { await cancelled; return "accepted"; },
+    } });
+    await h.refresh(); h.setPlacementResolver(() => ({ workspaceId: "floating" }));
+    const first = await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    const second = await h.openSurface(target, { placement: "side", reuse: "new", requestId: createPresentationRequestId() });
+    if (first.status !== "opened" || second.status !== "opened") throw new Error("Fixture did not open tools.");
+    firstId = first.presentationId!; h.setPlacementResolver();
+    const moving = h.movePresentation(firstId, "default");
+    await vi.waitFor(() => expect(signal).toBeDefined());
+    const next = action === "move" ? h.movePresentation(second.presentationId!, "default")
+      : action === "opening" ? h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() })
+      : h.openToolPicker({ requestId: createPresentationRequestId() });
+    await vi.waitFor(() => expect(signal.aborted).toBe(true));
+    expect(await moving).toBe(false);
+    if (action === "move") expect(await next).toBe(true);
+    else expect(await next).toMatchObject({ status: action === "opening" ? "opened" : "accepted" });
+    expect(h.getSnapshot().tools.find(tool => tool.presentationId === firstId)?.workspaceId).toBe("floating");
+  });
   it("does not acknowledge an absent renderer or retarget a preferred mismatching instance", async () => {
     host = createUiHost(); await host.refresh();
     expect(await host.openSurface(target, { placement: "side", requestId: createPresentationRequestId() })).toMatchObject({ code: "presentation_unavailable" });

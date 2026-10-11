@@ -41,6 +41,7 @@ export class UiHost implements UiClient {
   private readonly listeners = new Set<() => void>();
   private readonly events = new Set<(event: UiEvent) => void>();
   private readonly frames = new Set<Frame>();
+  private readonly viewChrome = new Map<string, UiChromeOverrides>();
   private readonly ledger = new Map<string, Ledger>();
   private readonly toolQueues = new Map<string, Promise<PresentationResult>>();
   private readonly moves = new Map<string, AbortController>();
@@ -118,12 +119,16 @@ export class UiHost implements UiClient {
       workspaces: [...this.workspaces.values()].map(({ workspaceId, selectedId, expanded, width }) => ({ workspaceId, selectedId, expanded, width })) });
   }
   setPlacementResolver = (resolver?: UiPlacementResolver) => { this.placement = resolver; };
+  getViewChrome = (viewId: string): UiChromeOverrides | undefined => {
+    const chrome = this.viewChrome.get(viewId) ?? [...this.frames].find(frame => frame.view.viewId === viewId)?.chrome;
+    return chrome ? structuredClone(chrome) : undefined;
+  };
   setViewChrome = (viewId: string, overrides: UiChromeOverrides) => {
     if (!validChromeOverrides(overrides)) throw new Error("Invalid chrome policy.");
     if (viewId === ROOT_VIEW) { this.composition.setHostPolicy("root", this.getChrome().hostRevision + 1, overrides, false); return; }
     const frame = [...this.frames].find(f => f.view.viewId === viewId);
     if (!frame) throw new Error("Unknown view.");
-    frame.chrome = structuredClone(overrides); this.publishPolicy(frame);
+    frame.chrome = structuredClone(overrides); this.viewChrome.set(viewId, frame.chrome); this.publishPolicy(frame);
   };
   private publishPolicy(frame: Frame) {
     if (!frame.composition || !frame.connected) return;
@@ -176,9 +181,10 @@ export class UiHost implements UiClient {
     const moved = { ...tool, workspaceId }, controller = new AbortController();
     const retainedSource = () => this.snapshot.tools.find(t => t.presentationId === id && t.workspaceId === tool.workspaceId && t.resolved.surface);
     this.moves.set(id, controller);
-    const stop = this.subscribeSnapshot(() => {
-      if (!retainedSource() || generation !== next.generation || renderer !== next.renderer) controller.abort();
-    });
+    this.rendererWork.set(controller, { check: () => {
+      if (!retainedSource() || generation !== next.generation || renderer !== next.renderer) throw new Error("Movement was superseded.");
+    } });
+    const stop = () => { this.rendererWork.delete(controller); };
     try {
       if (await renderer.present(moved, controller.signal) !== "accepted") throw new Error("Movement was refused.");
       this.checkActivity(activity); this.requireTools();
@@ -544,7 +550,7 @@ export class UiHost implements UiClient {
     const descriptor = view ?? { viewId: createPresentationRequestId(), workspaceId: DEFAULT_WORKSPACE, chrome: { navigation: "hide", tools: { launcher: "hide" } } };
     if (descriptor.viewId === ROOT_VIEW || [...this.frames].some(f => f.view.viewId === descriptor.viewId)) throw new Error("A view ID must be unique.");
     if (!this.workspaces.has(descriptor.workspaceId)) throw new Error("Register the workspace before its views.");
-    const frame: Frame = { element, surface, view: descriptor, chrome: structuredClone(descriptor.chrome ?? {}), policyRevision: 0, composition: false, onConnection, generation: createPresentationRequestId(), nonce: null, connected: false, actor: null, live: true, cleanup: () => {}, waitForReadiness: () => {} };
+    const frame: Frame = { element, surface, view: descriptor, chrome: structuredClone(this.viewChrome.get(descriptor.viewId) ?? descriptor.chrome ?? {}), policyRevision: 0, composition: false, onConnection, generation: createPresentationRequestId(), nonce: null, connected: false, actor: null, live: true, cleanup: () => {}, waitForReadiness: () => {} };
     let timer: ReturnType<typeof setTimeout> | undefined;
     const forget = () => this.forgetFrameRequests(frame);
     frame.waitForReadiness = () => {
@@ -696,7 +702,7 @@ export class UiHost implements UiClient {
     this.resetPresentations();
     this.disposed = true; this.composition.dispose(); this.actions.clear(); for (const frame of this.frames) frame.cleanup();
     window.removeEventListener("message", this.onMessage); window.removeEventListener("focus", this.onFocus);
-    this.listeners.clear(); this.events.clear(); this.ledger.clear();
+    this.listeners.clear(); this.events.clear(); this.ledger.clear(); this.viewChrome.clear();
     if (documentHost === this) documentHost = null;
   };
 }
