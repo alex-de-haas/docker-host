@@ -37,14 +37,26 @@ async function render(children: ReactNode = <input aria-label="Draft" defaultVal
 }
 
 describe("HostyOverlay", () => {
-  it("keeps explicitly local content usable during an outage without revealing protected content", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }));
+  it.each(["identity", "setup"])("keeps local content usable during a %s outage without revealing protected content", async outage => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      if (outage === "identity") throw new TypeError("offline");
+      return Response.json(active("unavailable"));
+    }));
     await act(async () => root.render(<HostyOverlay localContent={<input aria-label="Local note" defaultValue="Offline draft" />}>
       <input aria-label="Private document" defaultValue="Private" />
     </HostyOverlay>));
     expect(node.querySelector<HTMLInputElement>('[aria-label="Local note"]')?.value).toBe("Offline draft");
     expect(node.querySelector('[aria-label="Private document"]')).toBeNull();
     expect(document.querySelector("dialog[open]")).toBeNull();
+  });
+  it("does not dispatch protected work when continuous identity is cached but required setup is unavailable", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL) => Response.json({ ...active("unavailable"),
+      continuity: { version: 1, mode: "native", grantId: "reference", expiresAt: "2030-01-01T00:00:00Z", checkAfterSeconds: 300 } }));
+    vi.stubGlobal("fetch", fetcher);
+    await render();
+    const response = await appFetch("/api/write", { method: "POST", body: "draft" });
+    expect(response.status).toBe(503);
+    expect(fetcher.mock.calls.every(args => String(args[0]).includes("/api/hosty/session"))).toBe(true);
   });
   it("opens only the connected portal after layout effects resume with retained state", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(active("missing"))));

@@ -263,8 +263,9 @@ export function useAppIdentity({
     if (!continuity || !activity?.openUrl || !continuityActor) return;
     return configureAppContinuity({ coreOrigin: new URL(activity.openUrl).origin, authority: continuity,
       probe: async () => {
-        const next = await refreshRef.current() as { status?: string; userId?: string } | null;
-        return next?.status === "active" && next.userId === continuityActor;
+        const next = await refreshRef.current() as { status?: string; userId?: string; hosty?: { version?: number; setup?: string } } | null;
+        return next?.status === "active" && next.userId === continuityActor
+          && (!next.hosty || (next.hosty.version === 1 && next.hosty.setup === "ready"));
       } });
   }, [continuity?.grantId, activity?.openUrl, continuityActor]);
 

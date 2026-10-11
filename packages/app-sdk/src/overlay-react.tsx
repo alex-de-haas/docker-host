@@ -150,7 +150,8 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
     action = activity.renew; actionLabel = "Renew access";
   }
 
-  const localOffline = identity.ui.kind === "unavailable" && localContent !== undefined;
+  const localOffline = (identity.ui.kind === "unavailable" || (identity.ui.kind === "active" && session?.setup === "unavailable"))
+    && localContent !== undefined;
   return <>
     {localOffline && <div data-hosty-local-content><p role="status">Hosty is unavailable. Local content remains available.</p>{localContent}</div>}
     <div data-hosty-content hidden={!ready} inert={!ready} style={ready ? { display: "contents" } : { display: "none" }}>

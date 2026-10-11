@@ -117,7 +117,12 @@ internal sealed class AppIdentityService(
     }
 
     // MCP credentials carry only this one-way reference, never the parent app session secret.
-    internal async Task<AppSessionValidationResult> RevalidateHashAsync(string tokenHash, string callingAppId, CancellationToken cancellationToken, bool allowBackground = false)
+    internal async Task<AppSessionValidationResult> RevalidateHashAsync(string tokenHash, string callingAppId, CancellationToken cancellationToken)
+        => (await RevalidateAuthorityAsync(tokenHash, callingAppId, cancellationToken, allowBackground: false)).Actor;
+
+    // Keep the validated background scope with the actor for this dispatch, never in a cache or wire response.
+    internal async Task<(AppSessionValidationResult Actor, (BackgroundGrant Grant, BackgroundScope Scope)? Background)>
+        RevalidateAuthorityAsync(string tokenHash, string callingAppId, CancellationToken cancellationToken, bool allowBackground)
     {
         var now = clock.UtcNow;
         var grant = await grants.TryResolveAsync(tokenHash, cancellationToken) ??
@@ -156,8 +161,8 @@ internal sealed class AppIdentityService(
         {
             if (!allowBackground || background is null || grant.BackgroundScopeId is null)
                 throw BackgroundGrantService.Error("This credential cannot establish interactive app identity.");
-            await background.ValidateAsync(callingAppId, grant.BackgroundGrantId, grant.BackgroundScopeId, cancellationToken);
-            return new(true, grant.AppId, user.Id, user.Email, user.DisplayName, user.Role, grant.AbsoluteExpiresAt);
+            var validated = await background.ValidateAsync(callingAppId, grant.BackgroundGrantId, grant.BackgroundScopeId, cancellationToken);
+            return (new(true, grant.AppId, user.Id, user.Email, user.DisplayName, user.Role, grant.AbsoluteExpiresAt), validated);
         }
         AuthSessionRecord? parent = null;
         if (grant.IssuedVia == AppGrantIssuedVia.Code && grant.AuthorizingSessionId is not null)
@@ -186,7 +191,7 @@ internal sealed class AppIdentityService(
             }
         }
 
-        return new AppSessionValidationResult(
+        return (new AppSessionValidationResult(
             true,
             grant.AppId,
             user.Id,
@@ -196,7 +201,7 @@ internal sealed class AppIdentityService(
             grant.AbsoluteExpiresAt, grant.AuthorityVersion == 1 ? null : grant.ActiveUntil,
             grant.AuthorityVersion != 1 && (app.RequiredCorePermissions?.Count ?? 0) + (app.OptionalCorePermissions?.Count ?? 0) + (app.GrantedCorePermissions?.Count ?? 0) > 0,
             parent is not null && grant.AuthorityVersion == 1 ? new AppContinuityInfo(1,
-                parent.Kind is null ? "browser" : "native", grant.Id, grant.AbsoluteExpiresAt, 300) : null);
+                parent.Kind is null ? "browser" : "native", grant.Id, grant.AbsoluteExpiresAt, 300) : null), null);
     }
 
     // Only explicitly scope-aware dispatchers may accept background authority.
@@ -206,11 +211,16 @@ internal sealed class AppIdentityService(
         var grant = await grants.TryResolveAsync(hash, ct);
         if (grant?.BackgroundGrantId is null) return requireActivity ? await RequireActivityHashAsync(hash, appId, ct)
             : await RevalidateHashAsync(hash, appId, ct);
-        var actor = await RevalidateHashAsync(hash, appId, ct, allowBackground: true);
-        var validated = await background!.ValidateAsync(appId, grant.BackgroundGrantId, grant.BackgroundScopeId!, ct);
+        var authority = await RevalidateAuthorityAsync(hash, appId, ct, allowBackground: true);
+        await RequireBackgroundOperationAsync(authority.Background!.Value, permits, ct);
+        return authority.Actor;
+    }
+
+    internal async Task RequireBackgroundOperationAsync((BackgroundGrant Grant, BackgroundScope Scope) validated,
+        Func<BackgroundScope, bool> permits, CancellationToken ct)
+    {
         if (!permits(validated.Scope)) throw BackgroundGrantService.Error("This operation exceeds the selected background scope.");
-        await background.AuditAsync(validated.Grant, "dispatch", ct);
-        return actor;
+        await background!.AuditAsync(validated.Grant, "dispatch", ct);
     }
 
     private async Task<AppIdentityTokenResult> CreateGrantAsync(

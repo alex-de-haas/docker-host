@@ -61,8 +61,9 @@ same-origin identity probe confirms actual access; unavailable frame transport i
 
 Network failure retains credentials and mounted state, prevents protected dispatch and retries
 with bounded backoff. `HostyOverlay localContent={…}` explicitly exposes app-owned local/public
-content during an outage, outside the hidden protected root. It must not contain another user's
-private content. Real expiry/revocation uses ordinary recovery. Same-user recovery preserves
+content during an outage, outside the hidden protected root, including when identity is cached but
+required setup cannot be checked. Protected dispatch remains suspended in that case. Local content
+must not contain another user's private content. Real expiry/revocation uses ordinary recovery. Same-user recovery preserves
 state; a changed actor clears protected state before pending operations can resume.
 
 Silent success emits `APP_CONTINUITY_UPDATED`, not `APP_ACTIVITY_RENEWED`; it does not recreate
