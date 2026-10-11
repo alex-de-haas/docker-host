@@ -16,6 +16,12 @@ This extends the [SDK panel system](../sdk-panel-system/feature.md). Apps retain
 conversations and domain actions. Plans finalizes its discussion before requesting placement;
 opening or retrying a presentation neither submits a message nor creates another discussion.
 
+Implementation approval: on 2026-10-11, after the contract refinement, the owner explicitly
+instructed the implementation agent in chat to proceed. [Vision decision 33](../../vision.md)
+records that approval. The earlier committed Draft describes the documentation-first stage;
+it is not the latest owner instruction. Deliverables D1–D5 were implemented and verified before
+the completed plan was retired with the implementation, as required by the documentation workflow.
+
 ## Policy And Defaults
 
 | Context | App navigation | Tool launcher | Tool owner |
