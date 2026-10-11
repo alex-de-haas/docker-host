@@ -25,8 +25,10 @@ and standalone as its first scenario. This plan consumes that contract rather th
 Owner clarification, 2026-10-11: [SDK UI composition](../sdk-ui-composition/plan.md) owns explicit
 navigation/tool policies, standalone defaults and host renderer hooks. A desktop UI can keep page
 navigation inside its app windows and use shared tool windows or docks. This plan does not require
-all UI clients to reproduce Shell's sidebar or one assistant view per app. The new composition and
-[continuous access](../continuous-app-access/plan.md) plans remain Draft; access is the next priority.
+all UI clients to reproduce Shell's sidebar or one assistant view per app. The composition plan
+remains Draft.
+[Continuous access](../continuous-app-access/feature.md) supplies the implemented session lifecycle
+independently of a UI client's presentation.
 
 ## Verified Baseline And Corrections
 

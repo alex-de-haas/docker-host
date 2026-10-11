@@ -242,7 +242,8 @@ Wrapping an app that has no Hosty-aware auth of its own is part of [app authorin
 - The scoped app directory returns assigned users plus enabled admins, and never the full Host user directory.
 - Missing, invalid and wrong-app service credentials or proof cannot consume a target app's code;
   the matching caller can subsequently redeem it. Single use, expiry, access/revision checks,
-  parent-session logout and identity-only silent grants retain their existing rules.
+  parent-session logout and live silent sign-in follow the current continuous-authority policy;
+  missing continuity metadata retains legacy activity behavior.
 - Intents enforce exact/null/foreign Origin, navigation modes, immutable continuation and nonce
   verification before login or issuance. Relayed links and direct proof GETs cannot issue a code;
   legitimate parallel attempts stay independent and each intent claims at most one code.

@@ -443,12 +443,12 @@ Decisions 1–5: 2026-08-19.
     Maintain already-authorized access transparently, preserve current user/app rights and
     revocation, and give deliberately configured background work an independent, visible grant.
     App trust does not imply all user permissions, and browser activity is not background consent.
-    [Continuous app access](features/continuous-app-access/plan.md) owns the proposed session policy,
-    SDK maintenance and durable Core grants. Cross-App Auth D8 moves there; Bridge D11 retains its
-    runner and consumes those grants. Container-based isolation and honest disclosure of
-    unrestricted local commands remain separate from authentication UX. Publish both new Drafts
-    through a documentation PR, then prioritize access; this decision does not authorize live grant
-    changes or implement either proposal.
+    [Continuous app access](features/continuous-app-access/feature.md) implements the session policy,
+    SDK maintenance and durable Core grants after the owner's subsequent implementation approval
+    on 2026-10-11. Cross-App Auth D8 is retired by transfer; Bridge D11 retains its runner and consumes
+    those grants. Container-based isolation and honest disclosure of unrestricted local commands
+    remain separate from authentication UX. SDK UI composition remains deferred. Verification uses
+    an isolated instance; this direction does not authorize changes to the operator's live grants.
 
 ## Expectations And Later Directions
 
@@ -512,7 +512,7 @@ the manifest contract. Two standing consequences:
 [default-applications](features/default-applications/plan.md) ·
 [sdk-panel-system](features/sdk-panel-system/feature.md) ·
 [sdk-ui-composition](features/sdk-ui-composition/plan.md) ·
-[continuous-app-access](features/continuous-app-access/plan.md) ·
+[continuous-app-access](features/continuous-app-access/feature.md) ·
 [replaceable-ui-clients](features/replaceable-ui-clients/plan.md) ·
 [plan-provider-interface](features/plan-provider-interface/plan.md) ·
 [hosty-harness-swift](features/hosty-harness-swift/plan.md) ·

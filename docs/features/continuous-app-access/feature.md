@@ -164,6 +164,21 @@ System grant settings remain labeled legacy. Browser-session defaults remain 7 i
 days; the feature does not make the primary session permanent. Closed tabs cease browser maintenance;
 background services need explicit delegation to work independently of interactive sessions.
 
+## Verified integration
+
+Isolated Core-managed browser acceptance on 2026-10-11 uses normal password login and the existing
+Plans → assistant handoff in Shell and standalone. Both presentations retain the document, original
+conversation, edited draft and uploaded attachment across a 65-minute browser-clock advance,
+network loss/recovery and a source Core restart with app adoption. Fresh session probes report
+active continuity v1 without Renew access. The two intentional handoffs create exactly two idle
+conversations and no agent messages or runs. Harness uses its fake backend for this UI check;
+Core scope and dispatch tests establish authorization independently of generated assistant output.
+
+A scoped background fixture still reads its permitted target after ordinary logout and browser
+closure, refuses another target, and cannot obtain a credential after explicit revocation.
+Clock-controlled server tests establish actual authority deadlines, migration and parent-idle
+behavior; the browser clock advance is not evidence of elapsed server time or physical device sleep.
+
 ## Testing Expectations
 
 - Clock-controlled Core tests cross the former hour, separate child use from browser-parent idle

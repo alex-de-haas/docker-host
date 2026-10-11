@@ -156,9 +156,10 @@ Each step ships independently.
 - [ ] D7. Design any remaining general cross-app user delegation around explicit app grants, acting-user rights and target-app access. Audit the legacy exchange and on-behalf-of gates against the shipped assistant MCP credential; preserve denial until a reviewed replacement exists. The [MCP facade](../mcp-facade/plan.md) owns adopting this contract for its bridge.
 - [ ] D9. Reconcile app permission identifiers and external token scopes by enforcement semantics; document their mapping and choose whether aliases are useful. Preserve shipped spellings and distinct authority boundaries; cosmetic dotted/colon unification is not a reason for a breaking rename.
 
-D8 is retired by transfer on 2026-10-11, not completed: [Continuous app access](../continuous-app-access/plan.md)
-D1–D3 and D5–D6 own the common app-session policy, migration of configurable lifetimes and
-expiry/revocation verification. This plan retains D7's general cross-app delegation contract;
+D8 remains retired by transfer on 2026-10-11; its ID is not reused or checked off here.
+[Continuous app access](../continuous-app-access/feature.md) implements the common app-session
+policy, migration of configurable lifetimes and expiry/revocation verification. This plan retains
+D7's general cross-app delegation contract;
 continuous access reuses existing provider/MCP credentials and does not implement that broader
 contract implicitly. Neither plan's Draft approval is inherited from the other.
 

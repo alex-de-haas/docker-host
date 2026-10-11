@@ -21,6 +21,11 @@ and the live authorizing Core sign-in, app grant, confirmed assistant role/inter
 relationship, both installation identities, global offer and user access to the target. Core MCP
 also requires the current user to be an administrator.
 
+An explicit [background grant](../continuous-app-access/feature.md) supplies an alternative source:
+its short-lived app-bound credential pins the target and exact allowed tools. That path needs no
+browser principal or conversation ID, but keeps the confirmed relationship, installation and user
+checks. Ordinary logout does not revoke it; grant revocation and account authorization changes do.
+
 The five-minute `hosty_mcp.1` credential is signed and distinct from app sessions and legacy delegated
 tokens. Its claims bind the assistant, target, user, installations, relationship revision and a
 one-way reference to the parent app grant. The parent secret is never exported. A grant predating
@@ -39,9 +44,9 @@ legacy delegated-token validators also reject the separate token format. Applica
 the MCP-specific helper only on their MCP surface and must not cache introspection. Applications
 using only the old local delegated validator need an SDK/handler update before accepting this format.
 
-Introspection rechecks app activity, the live Core sign-in, relationship, installations, global offer,
-parent app grant and current user access on every call. Revoking the relationship, explicit logout revoking the parent grant,
-removing a user assignment or disabling the user refuses subsequent calls. Regranting a relationship
+Introspection rechecks current app authority, its live source, relationship, installations, global
+offer, parent app grant and current user access on every call. Revoking the relationship or parent
+grant, removing a user assignment or disabling the user refuses subsequent calls. Regranting a relationship
 does not revive a token carrying its old revision. Core outages refuse validation; already-dispatched
 operations are not rolled back.
 
@@ -56,7 +61,8 @@ Harness keeps the user's app credential in memory and requests target-specific M
 Core with its service credential. The local session proxy forwards only the target credential.
 Native agent processes receive a session-local proxy key, never the Core cookie or app grant.
 Source/workspace operations retain their own app-credential path. Session transcripts persist no
-credentials. Normal app recovery refreshes the selected chat without a per-chat consent screen.
+credentials. Normal app recovery and silent maintenance refresh all live conversations owned by
+the actor without a per-chat consent screen.
 Harness's Ask / Run unprompted / Disabled rules are an additional execution policy.
 
 ## Settings Catalog Discovery
@@ -72,10 +78,10 @@ limits the exchange to 20 seconds, 20 pages and 1,000 tools. Only the tool catal
 No caller-supplied upstream URL, RPC method, tool name or arguments are forwarded.
 
 The internal discovery credential expires after 30 seconds, binds the parent grant and relationship,
-and revalidates current administrator activity on introspection. It has only `mcp:read`; introspection
+and revalidates current administrator authority on introspection. It has only `mcp:read`; introspection
 with any tool name is inactive, and Core MCP rejects tool calls and other arbitrary RPC methods.
-The ordinary `/mcp/token` request cannot select discovery mode. Normal execution retains conversation
-context, current app activity and the assistant's granted Core permissions for Core tools.
+The ordinary `/mcp/token` request cannot select discovery mode. Interactive execution retains
+conversation context, current app authority and the assistant's granted Core permissions for Core tools.
 
 ## Legacy Compatibility
 

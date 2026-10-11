@@ -16,8 +16,9 @@ assistant in a shared window or dock. The current Shell may render navigation it
 also remain usable in a plain browser tab without launch parameters or any running shell.
 
 This is a documentation proposal, not approval to implement panels or a desktop shell. The owner
-requested publishing this plan together with [continuous app access](../continuous-app-access/plan.md),
-then working on access first. Exact desktop placement and assistant conversation-selection UX
+requested publishing this plan together with continuous app access, then working on access first.
+[Continuous app access](../continuous-app-access/feature.md) is implemented; this composition plan
+remains deferred. Exact desktop placement and assistant conversation-selection UX
 belong to the consuming shell/provider; they are not prerequisites or defaults imposed by this SDK.
 
 ## Baseline And Target Changes
@@ -141,7 +142,7 @@ verification fails. Neither permits silently creating a nested local host. Keep 
 usable in supported compatibility mode and expose explicit separate-opening recovery for unavailable
 placement. Account mismatch still follows the SDK's protected-content boundary. Core/network
 unavailability must not be misreported as a request to hide navigation; authentication and offline
-content behavior are owned by [continuous app access](../continuous-app-access/plan.md).
+content behavior are owned by [continuous app access](../continuous-app-access/feature.md).
 
 [Default applications](../default-applications/plan.md) chooses an assistant for a new unbound
 operation, not its view or conversation. This plan does not change Plans' new-discussion handoff
