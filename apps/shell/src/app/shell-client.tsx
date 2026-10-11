@@ -602,12 +602,12 @@ export function ShellClient({
   );
 
   const launchAppPage = useCallback(
-    async (app: CoreApp, page: AppPageLink, target: AppOpenTarget = "workspace") => {
+    async (app: CoreApp, page: AppPageLink, target: AppOpenTarget = "workspace"): Promise<boolean> => {
       if (app.id === shellAppId) {
         setWorkspace(null);
         setOptimisticWorkspaceRoute(null);
         router.push(getShellViewHref(canManageApps ? "dashboard" : "available-apps"));
-        return;
+        return true;
       }
 
       // Per service, not per app (app-readiness): a page whose service is alive opens through a
@@ -620,17 +620,17 @@ export function ShellClient({
             ? `System app '${app.displayName}' is ${app.runtimeState || app.operationStatus}. Manage it from Dashboard.`
             : "App must be running before it can be opened.",
         }));
-        return;
+        return false;
       }
 
       if (!gate.allowed) {
         setState((current) => ({ ...current, error: `${app.displayName} is starting — it opens when it answers.` }));
-        return;
+        return false;
       }
 
       if (target === "tab") {
         window.open(getStandaloneAppHref(app, page), "_blank", "noreferrer");
-        return;
+        return true;
       }
 
       const routePath = normalizeAppPath(page.path);
@@ -653,7 +653,7 @@ export function ShellClient({
           externalUrl: getStandaloneAppHref(app, page),
         });
         router.push(workspaceHref);
-        return;
+        return true;
       }
 
       const routeKey = getWorkspaceRouteKey(nextWorkspaceRoute);
@@ -669,7 +669,8 @@ export function ShellClient({
           currentUrl.searchParams.get("app") !== app.id ||
           normalizeAppPath(currentUrl.searchParams.get("path")) !== routePath
         ) {
-          return;
+          // The router accepted the transition; the route effect finishes mounting its workspace.
+          return true;
         }
 
         setWorkspace({
@@ -682,14 +683,16 @@ export function ShellClient({
           // and a new tab opened on it would be an app hiding the navigation nothing else renders.
           externalUrl: getStandaloneAppHref(app, page),
         });
+        return true;
       } catch (error) {
         if (isAuthRequiredRedirectError(error)) {
-          return;
+          return false;
         }
 
         const message = error instanceof Error ? error.message : "Unable to create app launch link.";
         setWorkspace(null);
         setState((current) => ({ ...current, error: message }));
+        return false;
       } finally {
         if (pendingWorkspaceRoute.current === routeKey) {
           pendingWorkspaceRoute.current = null;

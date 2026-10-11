@@ -1,6 +1,7 @@
 "use client";
 
 import { HostyAppFrame } from "@hosty-sdk/app/ui/react";
+import { UiError } from "@hosty-sdk/app/ui";
 import { useId } from "react";
 import { useShellState, useShellActions } from "../shell-context";
 import type { HostyResolvedTheme, HostyThemePreference } from "../types";
@@ -39,7 +40,8 @@ export function EmbeddedAppFrame(props: {
     view={{ viewId: `app-${app.id}-${frameId}`, workspaceId: "default", chrome: { navigation: "hide", tools: { enabled: true, launcher: "hide" } },
       navigate: async next => {
         const page = app.navigation?.find(item => item.endpoint === next.endpoint && item.path === next.route);
-        await launchAppPage(app, { label: page?.label ?? props.title, path: next.route,
+        const accepted = await launchAppPage(app, { label: page?.label ?? props.title, path: next.route,
           redirectUri: new URL(next.route, next.origin).href, service: page?.service });
+        if (!accepted) throw new UiError("navigation_unavailable", "Shell could not open this page. Refresh the app state and try again.");
       } }} />;
 }

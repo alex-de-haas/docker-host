@@ -263,7 +263,9 @@ shell, and this API does not add context to an existing assistant conversation.
 - Overlay integration tests cover focus return to the inner app-content landmark when hiding
   custom, standard and drawer navigation, bypassing the non-focusable authentication wrapper.
 - Shell integration mounts workspace, settings and right-panel frames for the same app against a
-  real SDK host, verifying distinct view IDs and stable frames across rerenders.
+  real SDK host, verifying distinct view IDs and stable frames across rerenders. Shell launch tests
+  distinguish stopped/starting service refusal from accepted routing, and frame navigation propagates
+  refusal instead of reporting success while staying on the old page.
 - App and native tests cover explicit launch policy, route synchronization, notification routing
   by presentation ID, focus, responsive geometry and retained drafts. Version and docs checks
   cover all affected artifacts and feature links.
@@ -288,7 +290,7 @@ Verification recorded on 2026-10-11:
 | Core build and `UiPanelHttpTests` after the icon-origin fix | Build passed; 31 HTTP tests passed |
 | `npm run core:aot` | Native AOT publish passed for osx-arm64 with no trim/AOT warnings |
 | `npm test --workspace=@hosty-sdk/app` | 601 passed |
-| `npm test` in Shell / Plans / Harness / Marketplace / Workspaces / Demo / Telemetry UI | 191 Node + 239 component / 117 / 536 / 111 / 7 / 4 / 10 passed |
+| `npm test` in Shell / Plans / Harness / Marketplace / Workspaces / Demo / Telemetry UI | 191 Node + 244 component / 117 / 536 / 111 / 7 / 4 / 10 passed |
 | `npm run build --workspace=@hosty-sdk/app` and overlay upgrade contract script | Passed, including optional Next export and unchanged consumer compatibility |
 | `npm run build -- --webpack` in all seven affected web apps | Passed; affected app lint checks passed with no errors |
 | `swift test --scratch-path /tmp/hosty-ui-composition-swift` in `apps/shell-swift/HostyKit` | 183 passed; native launch helper coverage, without a WKWebView runtime session |

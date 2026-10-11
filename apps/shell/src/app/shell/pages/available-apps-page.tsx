@@ -17,7 +17,7 @@ export function AvailableAppsPage({
   apps: CoreApp[];
   loading: boolean;
   busyAction: string | null;
-  onLaunchApp: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
+  onLaunchApp: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<boolean>;
   getStandaloneHref: (app: CoreApp, page: AppPageLink) => string;
 }) {
   return (
