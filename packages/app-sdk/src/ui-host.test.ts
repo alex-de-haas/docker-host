@@ -1076,6 +1076,44 @@ describe("composition presentation instances", () => {
     expect(await current.movePresentation(result.presentationId!, "floating")).toBe(true);
     expect(current.getSnapshot().tools[0]).toMatchObject({ presentationId: result.presentationId, workspaceId: "floating" });
   });
+  it.each(["default", "floating"])("reopens the retained selection through the %s renderer", async workspaceId => {
+    host = createUiHost(); const h = host, region = document.createElement("aside"); region.hidden = true; document.body.append(region);
+    const focus = vi.fn((_id: string) => { region.hidden = false; });
+    h.registerWorkspace({ workspaceId, renderer: { present: async () => "accepted", focus,
+      collapse() { region.hidden = true; }, release() {}, showToolPicker: async () => "accepted" } });
+    await h.refresh(); h.setPlacementResolver(() => ({ workspaceId }));
+    h.setExpanded(true, workspaceId); expect(focus).not.toHaveBeenCalled();
+    const opened = await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    if (opened.status !== "opened") throw new Error(opened.code);
+    expect(region.hidden).toBe(false);
+    h.setExpanded(false, workspaceId); expect(region.hidden).toBe(true); focus.mockClear();
+    h.setExpanded(true, workspaceId);
+    expect(region.hidden).toBe(false); expect(focus).toHaveBeenCalledExactlyOnceWith(opened.presentationId);
+    expect(h.getSnapshot().tools).toHaveLength(1);
+  });
+  it.each([false, true])("updates source renderer visibility when moving a tool (selected: %s)", async selected => {
+    host = createUiHost(); const h = host, frameLayer = {}, regions = [document.createElement("aside"), document.createElement("aside")];
+    const collapses = regions.map(region => vi.fn(() => { region.hidden = true; }));
+    ["default", "floating"].forEach((workspaceId, index) => {
+      const region = regions[index]!; region.hidden = true; document.body.append(region);
+      h.registerWorkspace({ workspaceId, renderer: { frameLayer, present: async () => "accepted",
+        focus() { region.hidden = false; }, collapse: collapses[index]!, release() {}, showToolPicker: async () => "accepted" } });
+    });
+    await h.refresh();
+    const opened = [];
+    for (let index = 0; index < 2; index++) {
+      const result = await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId(), reuse: "new" });
+      if (result.status !== "opened") throw new Error(result.code);
+      opened.push(result.presentationId!);
+    }
+    collapses.forEach(collapse => collapse.mockClear());
+    expect(await h.movePresentation(opened[selected ? 1 : 0]!, "floating")).toBe(true);
+    expect(regions[0]!.hidden).toBe(selected); expect(regions[1]!.hidden).toBe(false);
+    expect(collapses[0]).toHaveBeenCalledTimes(selected ? 1 : 0); expect(collapses[1]).not.toHaveBeenCalled();
+    expect(h.getSnapshot().workspaces?.find(w => w.workspaceId === "default"))
+      .toMatchObject({ expanded: !selected, selectedId: selected ? null : opened[1] });
+    expect(h.getSnapshot().tools).toHaveLength(2);
+  });
   it.each(["superseded", "refused", "closed", "metadata"])("coordinates external renderer placement during a pending move (%s)", async outcome => {
     host = createUiHost(); const h = host, layer = {}, frames = new Map<string, HTMLIFrameElement>();
     let finish!: (result: "accepted" | "unavailable") => void, signal!: AbortSignal;

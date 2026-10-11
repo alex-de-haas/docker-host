@@ -182,7 +182,9 @@ Host chrome overrides are stored by view ID for the host lifetime. Replacement d
 them in both launch hints and handshake policy; explicit changes to a React view's chrome prop still
 update that policy. `getViewChrome(viewId)` returns a copy of the effective per-view overrides.
 
-Movement requires matching renderer `frameLayer` identity. One move per presentation runs at a time. Supersession, close and activity changes abort
+Reopening a selected workspace calls its renderer's `focus`; successful movement of its selected
+tool calls the source renderer's `collapse`. External renderers receive these visibility transitions
+without a snapshot subscription. Movement requires matching renderer `frameLayer` identity. One move per presentation runs at a time. Supersession, close and activity changes abort
 the pending renderer operation; refusal or supersession restores the retained frame through its
 current owning renderer before returning failure. Concurrent attention, readiness or catalog updates
 do not cancel a retained presentation; movement checks its ID and workspace ownership, and commits
@@ -251,7 +253,8 @@ shell, and this API does not add context to an existing assistant conversation.
   routes, renewed readiness within the resolved navigation route tree and Escape dismissal. Non-React
   renderer fixtures verify frame release on actor/Core/installation changes, authority loss and disposal.
   Delayed-renderer tests cover move supersession/refusal/close, rollback, cancellation and concurrent
-  movement rejection, plus successful movement during ordinary metadata refresh. Pending opening
+  movement rejection, plus successful movement during ordinary metadata refresh. External renderer
+  visibility tests cover default/named workspace reopening and selected/non-selected tool movement. Pending opening
   and picker tests verify cancellation on collapse, newer opening/picker and activity changes,
   including progress of the next queued opening. Workspace removal during bootstrap/panel resolution
   prevents orphaned tools and stale openings after re-registration; pending pickers also retire.
@@ -306,7 +309,7 @@ Verification recorded on 2026-10-11:
 | `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --artifacts-path "$PWD/build/ui-composition" --verbosity quiet` | 3,139 passed; 4 opt-in Docker/VPN integration tests skipped because their fixtures were not enabled |
 | Core build and `UiPanelHttpTests` after the icon-origin fix | Build passed; 31 HTTP tests passed |
 | `npm run core:aot` | Native AOT publish passed for osx-arm64 with no trim/AOT warnings |
-| `npm test --workspace=@hosty-sdk/app` | 627 passed |
+| `npm test --workspace=@hosty-sdk/app` | 631 passed |
 | `npm test` in Shell / Plans / Harness / Marketplace / Workspaces / Demo / Telemetry UI | 191 Node + 244 component / 117 / 536 / 111 / 7 / 4 / 10 passed |
 | `npm run build --workspace=@hosty-sdk/app` and overlay upgrade contract script | Passed, including optional Next export and unchanged consumer compatibility |
 | `npm run build -- --webpack` in all seven affected web apps | Passed; affected app lint checks passed with no errors |

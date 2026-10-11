@@ -197,7 +197,7 @@ export class UiHost implements UiClient {
         throw new Error("Movement was superseded.");
       stop(); previous.generation++;
       this.update({ tools: this.snapshot.tools.map(t => t.presentationId === id ? { ...t, workspaceId } : t) });
-      if (previous.selectedId === id) { previous.selectedId = null; previous.expanded = false; }
+      if (previous.selectedId === id) { previous.selectedId = null; previous.expanded = false; previous.renderer?.collapse(); }
       for (const frame of this.frames) if (frame.view.presentationId === id) frame.view = { ...frame.view, workspaceId };
       this.focusPresentation(id); return true;
     } catch {
@@ -549,7 +549,11 @@ export class UiHost implements UiClient {
   setExpanded = (expanded: boolean, workspaceId = DEFAULT_WORKSPACE) => {
     if (!expanded) return this.collapseWorkspace(workspaceId);
     if (!this.active || !this.activityReady || !this.getChrome().tools.enabled) return;
-    const state = this.workspaces.get(workspaceId); if (state) { state.expanded = true; this.publishWorkspaces(); }
+    const state = this.workspaces.get(workspaceId);
+    if (state) {
+      state.expanded = true; this.publishWorkspaces();
+      if (state.expanded && state.selectedId) state.renderer?.focus(state.selectedId);
+    }
   };
   setWidth = (width: number, workspaceId = DEFAULT_WORKSPACE) => {
     const state = this.workspaces.get(workspaceId);
