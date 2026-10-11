@@ -108,7 +108,10 @@ export class UiHost implements UiClient {
     state.renderer = renderer; this.workspaces.set(workspaceId, state); this.publishWorkspaces();
     return () => {
       if (!this.disposed && this.snapshot.tools.some(t => t.workspaceId === workspaceId)) throw new Error("Close or move presentations before disposing their workspace.");
-      if (state.renderer === renderer) { state.renderer = undefined; this.publishWorkspaces(); }
+      if (state.renderer === renderer) {
+        state.generation++; this.invalidateRendererWork();
+        state.renderer = undefined; this.publishWorkspaces();
+      }
     };
   };
   private publishWorkspaces() {

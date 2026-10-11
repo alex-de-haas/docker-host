@@ -48,6 +48,51 @@ function frame(surface = resolved.surface!, view?: UiViewDescriptor) {
 }
 
 describe("panel host authority and replay", () => {
+  it.each(["bootstrap", "panels/resolve"].flatMap(stage => [false, true].map(remount => ({ stage, remount }))))(
+    "supersedes openings when their workspace unmounts during $stage (remount: $remount)", async ({ stage, remount }) => {
+      host = createUiHost(); const h = host; await h.refresh();
+      const present = vi.fn(async () => "accepted" as const), release = vi.fn();
+      const renderer = { present, release, focus() {}, collapse() {}, showToolPicker: async () => "accepted" as const };
+      const unregister = h.registerWorkspace({ workspaceId: "default", renderer });
+      const previous = fetcher.getMockImplementation()!;
+      let finish!: () => void, paused = false;
+      fetcher.mockImplementation((path: string, ...args: unknown[]) => {
+        if (!paused && path.endsWith(stage)) {
+          paused = true;
+          return new Promise<Response>(resolve => { finish = () => resolve(Response.json(stage === "bootstrap" ? metadata : resolution)); });
+        }
+        return previous(path, ...args);
+      });
+      const pending = h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+      await vi.waitFor(() => expect(finish).toBeDefined());
+      unregister();
+      if (remount) h.registerWorkspace({ workspaceId: "default", renderer });
+      finish();
+      expect(await pending).toMatchObject({ status: "blocked", code: "presentation_superseded" });
+      expect(h.getSnapshot().tools).toHaveLength(0);
+      expect(present).not.toHaveBeenCalled(); expect(release).not.toHaveBeenCalled();
+      if (!remount) h.registerWorkspace({ workspaceId: "default", renderer });
+      expect(await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() })).toMatchObject({ status: "opened" });
+      expect(present).toHaveBeenCalledOnce();
+    });
+  it("aborts a pending picker before removing its workspace renderer", async () => {
+    host = createUiHost(); const h = host; await h.refresh();
+    let signal!: AbortSignal;
+    const renderer = { present: async () => "accepted" as const, release() {}, focus() {}, collapse() {},
+      showToolPicker: vi.fn((value: AbortSignal) => {
+        signal = value;
+        return new Promise<"accepted">((_resolve, reject) => value.addEventListener("abort", () => reject(new Error("Picker cancelled")), { once: true }));
+      }) };
+    const unregister = h.registerWorkspace({ workspaceId: "default", renderer });
+    const pending = h.openToolPicker({ requestId: createPresentationRequestId() });
+    await vi.waitFor(() => expect(signal).toBeDefined());
+    unregister();
+    expect(signal.aborted).toBe(true);
+    h.registerWorkspace({ workspaceId: "default", renderer });
+    expect(await pending).toMatchObject({ status: "blocked", code: "presentation_superseded" });
+    renderer.showToolPicker.mockResolvedValue("accepted");
+    expect(await h.openToolPicker({ requestId: createPresentationRequestId() })).toMatchObject({ status: "accepted" });
+  });
   it.each(["actor", "core", "installation", "permission", "dispose"])("releases non-React rendered frames at the %s boundary", async boundary => {
     host = createUiHost(); const h = host, releases = [vi.fn(), vi.fn()];
     const mounted = new Map<string, HTMLIFrameElement>();
