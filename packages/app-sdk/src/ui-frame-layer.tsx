@@ -81,4 +81,3 @@ export function HostyPresentationLayer({ layer, host, active }: { layer: UiFrame
     </>, container, tool.presentationId);
   })}</>;
 }
-
