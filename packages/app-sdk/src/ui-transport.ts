@@ -1,5 +1,5 @@
 import { appFetch } from "./browser-auth";
-import { UiError, isSurfaceRoute, type PanelTarget, type PresentationResult } from "./ui-types";
+import { UiError, isSurfaceRoute, type PanelTarget, type PresentationResult, type UiActionResult } from "./ui-types";
 
 export const UI_VERSION = 1;
 export const DISCOVERY_TIMEOUT = 5_000;
@@ -15,7 +15,7 @@ export function validId(value: unknown): value is string { return typeof value =
 export function canonicalSurfaceRoute(value: unknown): string | null {
   if (!isSurfaceRoute(value)) return null;
   const route = new URL(value, "https://surface.invalid");
-  for (const key of ["hosty_launch", "hosty_theme", "hosty_theme_preference"]) route.searchParams.delete(key);
+  for (const key of ["hosty_launch", "hosty_theme", "hosty_theme_preference", "hosty_navigation", "hosty_tools", "hosty_tool_launcher"]) route.searchParams.delete(key);
   return `${route.pathname}${route.search}${route.hash}`;
 }
 export function validTarget(value: unknown): value is PanelTarget {
@@ -42,9 +42,9 @@ export function failure(requestId: string, error: unknown): PresentationResult {
   return { status: error instanceof UiError && error.code.startsWith("unsupported") ? "unsupported" : "blocked", requestId,
     code: error instanceof UiError ? error.code : "ui_unavailable" };
 }
-export function waitForPresentation(operation: Promise<PresentationResult>, requestId: string, signal?: AbortSignal): Promise<PresentationResult> {
+export function waitForPresentation<T extends PresentationResult | UiActionResult>(operation: Promise<T>, requestId: string, signal?: AbortSignal): Promise<T> {
   return new Promise(resolve => {
-    const finish = (value: PresentationResult) => { clearTimeout(timer); signal?.removeEventListener("abort", uncertain); resolve(value); };
+    const finish = (value: PresentationResult | UiActionResult) => { clearTimeout(timer); signal?.removeEventListener("abort", uncertain); resolve(value as T); };
     const uncertain = () => finish({ status: "uncertain", requestId, code: "presentation_unknown" });
     const timer = setTimeout(uncertain, RESPONSE_TIMEOUT);
     if (signal?.aborted) uncertain(); else signal?.addEventListener("abort", uncertain, { once: true });

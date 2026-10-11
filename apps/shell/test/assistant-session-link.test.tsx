@@ -41,7 +41,7 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.dispose(); container.remove(); vi.unstubAllGlobals(); });
 const placements = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("resolve"));
 async function mount(userId = "alice") {
-  host = createUiHost();
+  host = createUiHost(); host.registerWorkspace({ workspaceId: "default", renderer: { present: async () => "accepted", focus() {}, collapse() {}, release() {}, showToolPicker: async () => "accepted" } });
   await act(async () => root.render(<Link userId={userId} />));
 }
 
@@ -84,28 +84,28 @@ it("does not open a link with another account's host metadata", async () => {
 });
 it("selects the notification's explicit panel even when the same app's other tool is first", async () => {
   listedPanels = [{ ...panels[1], panel: { ...panels[1].panel, panelId: "other" }, route: "/other" }, panels[1]];
-  host = createUiHost();
+  host = createUiHost(); host.registerWorkspace({ workspaceId: "default", renderer: { present: async () => "accepted", focus() {}, collapse() {}, release() {}, showToolPicker: async () => "accepted" } });
   await act(async () => root.render(<Link panelId="tool" />));
   expect(host.getSnapshot().selected).toEqual(panels[1].panel);
   expect(placements()).toHaveLength(1);
-  expect(opened).toHaveBeenCalledWith({ panel: panels[1].panel, route: "/panel" });
+  expect(opened).toHaveBeenCalledWith({ panel: panels[1].panel, route: "/panel" }, expect.any(String));
 });
 it.each([null, "missing", "tool"])("retains an ambiguous or unavailable explicit panel link (%s)", async panelId => {
   listedPanels = [{ ...panels[1], panel: { ...panels[1].panel, panelId: "other" }, route: "/other" }, { ...panels[1], available: false }];
-  host = createUiHost();
+  host = createUiHost(); host.registerWorkspace({ workspaceId: "default", renderer: { present: async () => "accepted", focus() {}, collapse() {}, release() {}, showToolPicker: async () => "accepted" } });
   await act(async () => root.render(<Link panelId={panelId} />));
   await act(async () => host.refresh());
   expect(placements()).toHaveLength(0); expect(opened).not.toHaveBeenCalled();
 });
 it("uses the declared panel route instead of reusing another discussion's route for a session command", async () => {
-  host = createUiHost(); await host.refresh();
+  host = createUiHost(); host.registerWorkspace({ workspaceId: "default", renderer: { present: async () => "accepted", focus() {}, collapse() {}, release() {}, showToolPicker: async () => "accepted" } }); await host.refresh();
   await host.openSurface({ panel: panels[1].panel, route: "/panel?session=previous" }, { placement: "side", requestId: crypto.randomUUID() });
   await act(async () => root.render(<Link panelId="tool" />));
-  expect(host.getSnapshot().tools[0].target.route).toBe("/panel");
-  expect(opened).toHaveBeenCalledWith({ panel: panels[1].panel, route: "/panel" });
+  expect(host.getSnapshot().tools.map(tool => tool.target.route)).toEqual(["/panel?session=previous", "/panel"]);
+  expect(opened).toHaveBeenCalledWith({ panel: panels[1].panel, route: "/panel" }, expect.any(String));
 });
 it.each(["notes", "former-assistant"])("does not place or consume a session link for non-assistant %s", async appId => {
-  host = createUiHost();
+  host = createUiHost(); host.registerWorkspace({ workspaceId: "default", renderer: { present: async () => "accepted", focus() {}, collapse() {}, release() {}, showToolPicker: async () => "accepted" } });
   await act(async () => root.render(<Link appId={appId} />));
   await act(async () => host.refresh());
   expect(placements()).toHaveLength(0);
@@ -113,7 +113,7 @@ it.each(["notes", "former-assistant"])("does not place or consume a session link
   expect(host.getSnapshot().selected).toBeNull();
 });
 it("retains the link until assistant discovery confirms the requested app", async () => {
-  host = createUiHost();
+  host = createUiHost(); host.registerWorkspace({ workspaceId: "default", renderer: { present: async () => "accepted", focus() {}, collapse() {}, release() {}, showToolPicker: async () => "accepted" } });
   await act(async () => root.render(<Link assistantIds={[]} />));
   await act(async () => host.refresh());
   expect(placements()).toHaveLength(0); expect(opened).not.toHaveBeenCalled();
@@ -129,14 +129,14 @@ it("does not consume a pending link after the destination loses its assistant ro
   expect(opened).not.toHaveBeenCalled();
 });
 it("opens only the requested assistant when another tool is first in the catalog", async () => {
-  host = createUiHost(); await host.refresh();
+  host = createUiHost(); host.registerWorkspace({ workspaceId: "default", renderer: { present: async () => "accepted", focus() {}, collapse() {}, release() {}, showToolPicker: async () => "accepted" } }); await host.refresh();
   await toggleAssistantPanel(host, "assistant");
   expect(host.getSnapshot().selected?.appId).toBe("assistant");
   expect(host.getSnapshot().expanded).toBe(true);
   expect(placements().map(([, init]) => JSON.parse(init!.body as string).panel.appId)).toEqual(["assistant"]);
 });
 it("collapses an already selected assistant without opening another tool", async () => {
-  host = createUiHost(); await host.refresh();
+  host = createUiHost(); host.registerWorkspace({ workspaceId: "default", renderer: { present: async () => "accepted", focus() {}, collapse() {}, release() {}, showToolPicker: async () => "accepted" } }); await host.refresh();
   await toggleAssistantPanel(host, "assistant");
   await toggleAssistantPanel(host, "assistant");
   expect(host.getSnapshot().expanded).toBe(false);
@@ -145,7 +145,7 @@ it("collapses an already selected assistant without opening another tool", async
 it("waits for shortcut catalog metadata before selecting and expanding the assistant", async () => {
   let release!: () => void;
   catalogGate = new Promise<void>(resolve => { release = resolve; });
-  host = createUiHost();
+  host = createUiHost(); host.registerWorkspace({ workspaceId: "default", renderer: { present: async () => "accepted", focus() {}, collapse() {}, release() {}, showToolPicker: async () => "accepted" } });
   const opening = toggleAssistantPanel(host, "assistant");
   expect(host.getSnapshot().expanded).toBe(false);
   expect(placements()).toHaveLength(0);

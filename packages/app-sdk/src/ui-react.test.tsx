@@ -2,7 +2,7 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { HostyPanelWorkspace, HostyUiRoot, useHostyUiHost } from "./ui-react";
+import { HostyPanelWorkspace, HostyUiRoot, HostyNavigationBoundary, useHostyUiHost } from "./ui-react";
 import { createPresentationRequestId, ui } from "./ui";
 import type { UiHost } from "./ui-host";
 import type { UiBootstrap, UiPanel } from "./ui-types";
@@ -20,12 +20,14 @@ const catalog: UiPanel[] = ["assistant", "notes"].map(id => ({ panel: { appId: i
   endpoint: "web", route: "/panel", origin: `https://${id}.test`, label: id, appName: id, icon: null, available: true, state: "running", canStart: false, framePolicy: policy }));
 function Document() { host = useHostyUiHost(); return <textarea aria-label="Document draft" defaultValue="Keep this selection" />; }
 beforeEach(() => {
+  document.documentElement.removeAttribute("data-hosty-chrome-hints");
   catalogGate = null;
   resolutionGate = null;
   refuseResolution = false;
   listedPanels = catalog;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { resize = callback; } observe() {} disconnect() {} });
+  const observers = new Set<() => void>(); resize = () => { for (const callback of observers) callback(); };
+  vi.stubGlobal("ResizeObserver", class { constructor(private callback: () => void) {} observe() { observers.add(this.callback); } disconnect() { observers.delete(this.callback); } });
   vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
     if (path.includes("bootstrap")) return Response.json(metadata);
     if (!path.endsWith("resolve")) { await catalogGate; return Response.json({ panels: listedPanels }); }
@@ -39,6 +41,51 @@ beforeEach(() => {
         origin: panel.origin, route: target.route ?? panel.route, framePolicy: policy } });
   }));
   host = null; element = document.createElement("div"); document.body.append(element); root = createRoot(element);
+});
+it("retains iframe identity across same-panel instances and movement to another workspace", async () => {
+  await act(async () => root.render(<HostyUiRoot panelLayout="slot">
+    <HostyPanelWorkspace><Document /></HostyPanelWorkspace>
+    <HostyPanelWorkspace workspaceId="floating" layout="dock"><span>Window</span></HostyPanelWorkspace>
+  </HostyUiRoot>));
+  await act(async () => host!.refresh());
+  const target = { panel: catalog[0]!.panel, route: "/panel?session=one" };
+  await act(async () => { await host!.openSurface(target, { placement: "side", requestId: createPresentationRequestId() }); });
+  const first = host!.getSnapshot().tools[0]!, frame = element.querySelector("iframe")!, context = frame.contentWindow;
+  const parent = frame.parentElement;
+  await act(async () => { await host!.openSurface({ ...target, route: "/panel?session=two" }, { placement: "side", requestId: createPresentationRequestId() }); });
+  expect(element.querySelectorAll("iframe")).toHaveLength(2);
+  expect(element.querySelector('select[aria-label="Tool instance"]')?.children).toHaveLength(2);
+  await act(async () => { expect(await host!.movePresentation(first.presentationId, "floating")).toBe(true); });
+  expect(frame.parentElement).toBe(parent); expect(frame.contentWindow).toBe(context); expect(frame.isConnected).toBe(true);
+  await act(async () => host!.setViewChrome("root", { tools: { enabled: false } }));
+  expect(host!.getSnapshot().workspaces?.every(w => !w.expanded)).toBe(true); expect(element.querySelectorAll("iframe")).toHaveLength(2);
+  await act(async () => host!.setViewChrome("root", {}));
+  expect(host!.getSnapshot().workspaces?.every(w => !w.expanded)).toBe(true);
+  await act(async () => host!.closePresentation(first.presentationId));
+  expect(frame.isConnected).toBe(false); expect(element.querySelectorAll("iframe")).toHaveLength(1);
+});
+it("hides custom navigation without losing its component state or retaining keyboard focus", async () => {
+  await act(async () => root.render(<HostyUiRoot navigation={{ renderer: "custom" }}>
+    <HostyNavigationBoundary><input aria-label="Navigation state" defaultValue="Keep this" /></HostyNavigationBoundary><Document />
+  </HostyUiRoot>));
+  const input = element.querySelector<HTMLInputElement>('input[aria-label="Navigation state"]')!;
+  input.focus(); expect(document.activeElement).toBe(input);
+  await act(async () => host!.setViewChrome("root", { navigation: "hide" }));
+  expect(input.closest("[data-hosty-navigation-boundary]")?.hasAttribute("hidden")).toBe(true);
+  expect(document.activeElement).toBe(element.querySelector("[data-hosty-content]"));
+  await act(async () => host!.setViewChrome("root", {}));
+  expect(element.querySelector("input")).toBe(input); expect(input.value).toBe("Keep this");
+});
+it("acknowledges a visible chooser and does not reopen it when the request is replayed", async () => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", { configurable: true, value: function (this: HTMLDialogElement) { this.open = true; } });
+  Object.defineProperty(HTMLDialogElement.prototype, "close", { configurable: true, value: function (this: HTMLDialogElement) { this.open = false; } });
+  await render(); const requestId = createPresentationRequestId();
+  await act(async () => { expect(await ui.openToolPicker({ requestId })).toMatchObject({ status: "accepted" }); });
+  const dialog = element.querySelector<HTMLDialogElement>("dialog.hosty-tool-chooser")!; expect(dialog.open).toBe(true);
+  await act(async () => dialog.querySelector<HTMLButtonElement>('button[aria-label="Close tool chooser"]')!.click());
+  expect(dialog.open).toBe(false);
+  await act(async () => { expect(await ui.openToolPicker({ requestId })).toMatchObject({ status: "accepted" }); });
+  expect(dialog.open).toBe(false);
 });
 afterEach(async () => { await act(async () => root.unmount()); element.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 async function render(layout: "auto" | "slot" | "none" = "auto") {
@@ -113,7 +160,7 @@ it("removes panel chrome for an older app adapter without remounting the protect
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({}, { status: 404 })));
   await act(async () => host!.refresh());
   expect(element.querySelector("textarea")).toBe(documentDraft);
-  expect((element.querySelector("nav") as HTMLElement).style.display).toBe("none");
+  expect((element.querySelector(".hosty-panel-rail") as HTMLElement).style.display).toBe("none");
   expect((element.querySelector(".hosty-panel-workspace") as HTMLElement).style.display).toBe("contents");
 });
 it("delivers commands only to the exact panel among retained frames from the same app", async () => {

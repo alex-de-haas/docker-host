@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { launchModeBootstrapScript } from "@hosty-sdk/app";
-import { HostyOverlay, HostLaunchBridge, HostThemeBridge } from "@hosty-sdk/app/react";
+import { launchModeBootstrapScript, chromeBootstrapScript } from "@hosty-sdk/app";
+import { HostyNextOverlay as HostyOverlay } from "@hosty-sdk/app/next";
+import { HostLaunchBridge, HostThemeBridge } from "@hosty-sdk/app/react";
 import { themeBootstrapScript } from "@hosty-sdk/app/theme";
 import { AppShell } from "@/components/app-shell";
 import "./globals.css";
@@ -22,13 +23,13 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <head>
         {/* Ahead of any body markup, so chrome a shell already renders is never painted, and the
             first paint is already in the shell's theme. */}
-        <script dangerouslySetInnerHTML={{ __html: launchModeBootstrapScript }} />
+        <script dangerouslySetInnerHTML={{ __html: chromeBootstrapScript() }} /><script dangerouslySetInnerHTML={{ __html: launchModeBootstrapScript }} />
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
       </head>
       <body>
         <HostThemeBridge />
         <HostLaunchBridge />
-        <HostyOverlay><AppShell>{children}</AppShell></HostyOverlay>
+        <HostyOverlay navigation={{ renderer: "custom" }}><AppShell>{children}</AppShell></HostyOverlay>
       </body>
     </html>
   );

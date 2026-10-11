@@ -5,7 +5,7 @@ import { EmbeddedAppFrame } from "../src/app/shell/embedding/embedded-app-frame"
 
 type Policy = { microphone: boolean; popupEscape: boolean };
 const metadata = vi.hoisted(() => ({ policy: undefined as Policy | undefined }));
-vi.mock("../src/app/shell/shell-context", () => ({ useShellState: () => ({ state: { apps: [{
+vi.mock("../src/app/shell/shell-context", () => ({ useShellActions: () => ({ launchAppPage: vi.fn() }), useShellState: () => ({ state: { apps: [{
   id: "tool", entryEndpoint: "web", embeddedUrl: "https://tool.test/page", framePolicy: metadata.policy,
 }] } }) }));
 const both = ["providers.speech-to-text", "apps.install"];

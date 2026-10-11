@@ -124,8 +124,7 @@
   }
 }
 
-html[data-hosty-launch="embedded"] .hosty-shell-chrome,
-html[data-hosty-launch="native"] .hosty-shell-chrome { display: none; }
+html[data-hosty-navigation="hide"] [data-hosty-navigation-boundary] { display: none; }
 .diff-line { display: block; min-width: max-content; padding: 0 1rem; }
 .diff-line[data-kind="added"] { background: color-mix(in srgb, var(--success) 10%, transparent); color: var(--success); }
 .diff-line[data-kind="removed"] { background: color-mix(in srgb, var(--destructive) 10%, transparent); color: var(--destructive); }

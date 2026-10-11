@@ -1,7 +1,7 @@
 "use client";
 
 import { HostyAppFrame } from "@hosty-sdk/app/ui/react";
-import { useShellState } from "../shell-context";
+import { useShellState, useShellActions } from "../shell-context";
 import type { HostyResolvedTheme, HostyThemePreference } from "../types";
 import type { DelegatedTokenGrant } from "../workspace/delegated-token-intent";
 
@@ -19,10 +19,11 @@ export function EmbeddedAppFrame(props: {
   onAttention?: (count: number) => void;
 }) {
   const { state } = useShellState();
+  const { launchAppPage } = useShellActions();
   const app = state.apps.find(item => item.id === props.appId);
   if (!app) return null;
   const url = new URL(props.src);
-  for (const key of ["hosty_launch", "hosty_theme", "hosty_theme_preference"]) url.searchParams.delete(key);
+  for (const key of ["hosty_launch", "hosty_theme", "hosty_theme_preference", "hosty_navigation", "hosty_tools", "hosty_tool_launcher"]) url.searchParams.delete(key);
   const candidates = [...(app.navigation ?? []), ...(app.panelSurfaces ?? []), ...(app.settingsSurface ? [app.settingsSurface] : []),
     { endpoint: app.entryEndpoint, embeddedUrl: app.embeddedUrl }];
   const endpoint = candidates.find(item => item.embeddedUrl && new URL(item.embeddedUrl).origin === url.origin)?.endpoint ?? app.entryEndpoint;
@@ -32,5 +33,11 @@ export function EmbeddedAppFrame(props: {
       microphone: props.grantedCorePermissions?.includes("providers.speech-to-text") ?? false,
       popupEscape: props.grantedCorePermissions?.includes("apps.install") ?? false,
     } };
-  return <HostyAppFrame key={JSON.stringify([props.frameKey, props.src, surface])} {...props} surface={surface} />;
+  return <HostyAppFrame key={JSON.stringify([props.frameKey, props.src, surface])} {...props} surface={surface}
+    view={{ viewId: `app-${app.id}`, workspaceId: "default", chrome: { navigation: "hide", tools: { enabled: true, launcher: "hide" } },
+      navigate: async next => {
+        const page = app.navigation?.find(item => item.endpoint === next.endpoint && item.path === next.route);
+        await launchAppPage(app, { label: page?.label ?? props.title, path: next.route,
+          redirectUri: new URL(next.route, next.origin).href, service: page?.service });
+      } }} />;
 }

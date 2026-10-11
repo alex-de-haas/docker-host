@@ -9,7 +9,7 @@ export function useAssistantSessionLink({ host, appId, assistantIds, panelId = n
   host: UiHost | null; appId: string | null; sessionId: string | null; userId: string | null;
   assistantIds: readonly string[];
   panelId?: string | null;
-  onOpened: (target: PanelTarget) => void;
+  onOpened: (target: PanelTarget, presentationId?: string) => void;
 }) {
   const opened = useEffectEvent(onOpened);
   const eligibleAppId = appId && assistantIds.includes(appId) ? appId : null;
@@ -26,10 +26,12 @@ export function useAssistantSessionLink({ host, appId, assistantIds, panelId = n
       if (!panel?.available) return;
       pending = true;
       attemptedCatalog = state.catalog;
-      void host.openSurface({ panel: panel.panel, route: panel.route }, { placement: "side", requestId: createPresentationRequestId() }).then(result => {
+      // The legacy session command changes the provider's current conversation. Give it a new
+      // instance so an existing conversation's unsent draft is never retargeted by a notification.
+      void host.openSurface({ panel: panel.panel, route: panel.route }, { placement: "side", requestId: createPresentationRequestId(), reuse: "new" }).then(result => {
         if (!cancelled && result.status === "opened") {
           completed = true;
-          opened(result.target);
+          opened(result.target, result.presentationId);
         }
       }).finally(() => { pending = false; tryOpen(); });
     };

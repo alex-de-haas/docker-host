@@ -8,6 +8,72 @@ namespace Haas.Hosty.Core.Tests.Http;
 public sealed class UiPanelHttpTests
 {
     [Fact]
+    public async Task OwnNavigationNeedsNoCatalogGrant_AndKeepsStableKeysAcrossLabels()
+    {
+        await using var host = await Setup();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        await apps.UpdateAppAsync("target", a => a with { Ui = a.Ui! with { Navigation = [
+            new("Overview", "/", "web", "assets/home.svg"), new("People", "/people?sort=name#list", "web"),
+            new("Duplicate", "/people?sort=name#list", "web") ] } });
+        using var client = await Client(host, "target");
+        var first = await client.GetFromJsonAsync<UiNavigationCatalog>("/api/internal/apps/target/ui/navigation");
+        Assert.Equal(["Overview", "People"], first!.Entries.Select(e => e.Label));
+        Assert.Equal("/people?sort=name#list", first.Entries[1].Route);
+        Assert.NotNull(first.Entries[1].Origin);
+        Assert.StartsWith("http", first.Entries[0].Icon);
+        Assert.Equal(new Uri(first.Entries[0].StandaloneHref!).Authority, new Uri(first.Entries[0].Icon!).Authority);
+        Assert.Contains("/api/apps/target/assets/assets/home.svg", first.Entries[0].Icon);
+        Assert.Contains("installationId=", first.Entries[1].StandaloneHref);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/internal/apps/target/ui/panels")).StatusCode);
+        var target = new UiNavigationTarget("target", first.InstallationId, first.Entries[1].Key);
+        using var resolved = await client.PostAsJsonAsync("/api/internal/apps/target/ui/navigation/resolve", target);
+        resolved.EnsureSuccessStatusCode();
+        Assert.Equal(first.Entries[1].Route, (await resolved.Content.ReadFromJsonAsync<UiResolvedNavigation>())!.Surface!.Route);
+        await apps.UpdateAppAsync("target", a => a with { Ui = a.Ui! with { Navigation = [new("Members", "/people?sort=name#list", "web"), new("Home", "/", "web")] } });
+        var changed = await client.GetFromJsonAsync<UiNavigationCatalog>("/api/internal/apps/target/ui/navigation");
+        Assert.Equal(first.Entries[1].Key, changed!.Entries[0].Key);
+        Assert.NotEqual(first.Revision, changed.Revision);
+    }
+
+    [Fact]
+    public async Task NavigationResolutionRechecksHostGrantAssignmentAndInstallation()
+    {
+        await using var host = await Setup();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        await apps.UpdateAppAsync("target", a => a with { Ui = a.Ui! with { Navigation = [new("People", "/people", "web")] } });
+        using var own = await Client(host, "target");
+        var catalog = (await own.GetFromJsonAsync<UiNavigationCatalog>("/api/internal/apps/target/ui/navigation"))!;
+        var target = new UiNavigationTarget("target", catalog.InstallationId, catalog.Entries[0].Key);
+        using var client = await Client(host);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/internal/apps/consumer/ui/navigation/resolve", target)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await own.PostAsJsonAsync("/api/internal/apps/target/ui/navigation/resolve", target with { AppId = "consumer" })).StatusCode);
+        await apps.UpdateAppAsync("consumer", a => a with { GrantedCorePermissions = [] });
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/internal/apps/consumer/ui/navigation/resolve", target)).StatusCode);
+        await apps.UpdateAppAsync("consumer", a => a with { GrantedCorePermissions = [CoreAppPermissions.ReadPanels] });
+        await apps.UpdateAppAsync("target", a => a with { InstalledAt = a.InstalledAt.AddSeconds(1) });
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/internal/apps/consumer/ui/navigation/resolve", target)).StatusCode);
+        await host.Services.GetRequiredService<UserDirectoryStore>().UpdateAsync(state => state with { Assignments = state.Assignments.Where(a => a.AppId != "target").ToArray() });
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/internal/apps/consumer/ui/navigation/resolve", target)).StatusCode);
+    }
+
+    [Fact]
+    public async Task EmptyNavigationDoesNotInventPages_AndInvalidLegacyDestinationsCannotResolve()
+    {
+        await using var host = await Setup();
+        using var client = await Client(host, "target");
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        await apps.UpdateAppAsync("target", a => a with { Ui = a.Ui! with { Navigation = [] } });
+        var empty = await client.GetFromJsonAsync<UiNavigationCatalog>("/api/internal/apps/target/ui/navigation");
+        Assert.Empty(empty!.Entries);
+        await apps.UpdateAppAsync("target", a => a with { Ui = a.Ui! with { Navigation = [new("Unsafe", "//foreign.test", "web")] } });
+        var invalid = (await client.GetFromJsonAsync<UiNavigationCatalog>("/api/internal/apps/target/ui/navigation"))!;
+        var entry = Assert.Single(invalid.Entries);
+        Assert.Null(entry.Route); Assert.Null(entry.StandaloneHref); Assert.False(entry.Available);
+        using var rejected = await client.PostAsJsonAsync("/api/internal/apps/target/ui/navigation/resolve", new UiNavigationTarget("target", invalid.InstallationId, entry.Key));
+        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+    }
+
+    [Fact]
     public async Task CatalogUsesActorAssignmentsAndTargetGrants_AndResolveRechecksRevocation()
     {
         await using var host = await Setup();

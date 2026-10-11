@@ -1,4 +1,5 @@
 "use client";
+import { captureChromeHints } from "./ui-composition";
 
 // React slice: the client identity bridge — probe, silent recovery, and the fallback
 // cards. Prop-less by design: the app id and browser-reachable Core origin arrive in the
@@ -158,6 +159,7 @@ function currentLaunchMode(): AppLaunchMode {
  */
 export function HostLaunchBridge() {
   useEffect(() => {
+    captureChromeHints();
     const url = new URL(window.location.href);
     const param = url.searchParams.get(LAUNCH_MODE_PARAM);
     const { mode, fromParam } = resolveLaunchMode({
@@ -650,3 +652,5 @@ export { MissingPermissionsNotice } from "./permissions-react";
 
 export { AppActivityBridge } from "./activity-react";
 export { HostyOverlay } from "./overlay-react";
+
+export { HostyNavigation, HostyNavigationBoundary, useHostyChrome, useHostyNavigation } from "./ui-navigation-react";

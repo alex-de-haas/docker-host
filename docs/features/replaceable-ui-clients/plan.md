@@ -22,11 +22,13 @@ plan remains Draft and owns its own deliverables. The later owner direction on t
 shared panels to the [SDK panel system](../sdk-panel-system/feature.md), with Plans → assistant in Shell
 and standalone as its first scenario. This plan consumes that contract rather than owning it.
 
-Owner clarification, 2026-10-11: [SDK UI composition](../sdk-ui-composition/plan.md) owns explicit
+Owner clarification, 2026-10-11: [SDK UI composition](../sdk-ui-composition/feature.md) owns explicit
 navigation/tool policies, standalone defaults and host renderer hooks. A desktop UI can keep page
 navigation inside its app windows and use shared tool windows or docks. This plan does not require
-all UI clients to reproduce Shell's sidebar or one assistant view per app. The composition plan
-remains Draft.
+all UI clients to reproduce Shell's sidebar or one assistant view per app. The negotiated
+`ui.composition.v1` capability adds view policy and retained presentation instances; an exact target
+can be shared across app views without replacing another conversation. Role confirmation does not
+assert that capability. Composition support is negotiated independently of client eligibility.
 [Continuous access](../continuous-app-access/feature.md) supplies the implemented session lifecycle
 independently of a UI client's presentation.
 
@@ -214,11 +216,11 @@ the replacement authorization boundary without treating that obsolete implementa
 
 ## Decisions Awaiting Approval And Delivery
 
-Approve this proposal independently of Default applications. The SDK panel system is implemented.
-The owner prioritizes continuous app access next; SDK UI composition is separately documented and
-deferred. Within the default/UI-client work, deliver shared defaults before this complete UI-client
-feature as one PR. Negotiate the available composition contract rather than assuming the new Draft
-already shipped. The shared store/settings and panel protocol are dependencies; their selection,
+Approve this proposal independently of Default applications. The SDK panel system, continuous app
+access and SDK UI composition are implemented.
+Within the default/UI-client work, deliver shared defaults before this complete UI-client
+feature as one PR. Negotiate composition support with each peer rather than inferring it from a role.
+The shared store/settings and panel protocol are dependencies; their selection,
 renderer, explicit-policy mechanisms and Plans integration deliverables are not duplicated here. The principal changes from
 the old draft are confirmed roles, no CORS expansion, no earliest-installed fallback, retained
 failed selections with Core recovery, current workspace

@@ -265,7 +265,7 @@ export function ShellClient({
 
   // What Shell last asked the assistant panel, as a message for its frame. The nonce is the ask:
   // the same text twice is two asks, and the panel must see both.
-  const [assistantAsk, setAssistantAsk] = useState<{ userId: string | null; appId: string; target: PanelTarget; message: unknown; nonce: number } | null>(null);
+  const [assistantAsk, setAssistantAsk] = useState<{ userId: string | null; appId: string; target: PanelTarget; presentationId?: string; message: unknown; nonce: number } | null>(null);
   const activeWorkspaceRoute = shellRoute.workspace ?? optimisticWorkspaceRoute;
   const workspaceRouteKey = getWorkspaceRouteKey(activeWorkspaceRoute);
   const pendingWorkspaceRoute = useRef<string | null>(null);
@@ -1840,11 +1840,11 @@ export function ShellClient({
   const sessionAssistantId = searchParams.get("assistantApp") ?? (assistants.length === 1 ? assistants[0].appId : null);
   useAssistantSessionLink({ host: panelHost, appId: sessionAssistantId, assistantIds, sessionId: assistantSessionParam, userId: activeUserId,
     panelId: searchParams.get("assistantPanel"),
-    onOpened: (target) => {
+    onOpened: (target, presentationId) => {
       if (!sessionAssistantId) return;
       setPanelOpen(true);
       setAssistantAsk((current) => ({
-        userId: activeUserId, appId: sessionAssistantId, target,
+        userId: activeUserId, appId: sessionAssistantId, target, presentationId,
         message: { type: "hosty:open-assistant-session", sessionId: assistantSessionParam },
         nonce: (current?.nonce ?? 0) + 1,
       }));

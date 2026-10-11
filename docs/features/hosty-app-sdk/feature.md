@@ -47,6 +47,8 @@ revocation and upgrade-order contracts.
 @hosty-sdk/app/server          # import "server-only": Core revalidation, code exchange, app secrets
 @hosty-sdk/app/session/server  # framework-neutral validated-session and required-setup response
 @hosty-sdk/app/delegated       # local ECDSA validation of Core-issued delegated tokens
+@hosty-sdk/app/next            # optional Next App Router composition adapter
+@hosty-sdk/app/ui/react        # policy/navigation hooks, boundaries, frames and retained workspaces
 @hosty-sdk/app/react           # 'use client': HostyOverlay, legacy bridges, launch/theme helpers
 @hosty-sdk/app/embedder        # theme sender and legacy message parsers
 @hosty-sdk/app/browser-auth    # app-local proof attempts, grant persistence, appFetch and popup sign-in
@@ -190,8 +192,9 @@ an old attempt and restarts once with fresh proof. See [App Code Exchange](../ap
 
 The SDK reports how an app is running — `embedded`, `native`, or `standalone` — as a first-class
 helper, resolved from the `hosty_launch` parameter with a `sessionStorage` fallback and exposed as the
-`data-hosty-launch` attribute plus the `hosty-shell-chrome` class, so an app can drop the navigation
-its embedder already renders without a flash.
+`data-hosty-launch` attribute for legacy consumers. New navigation visibility uses the independent
+[UI composition policy](../sdk-ui-composition/feature.md), `chromeBootstrapScript`, and
+`HostyNavigationBoundary`. Framing and copied launch storage do not hide navigation in that contract.
 
 Logout UI is the app's discretion, gated by that helper: embedded can hide logout to avoid duplicating the host account controls (the app still owns
 its session), standalone may offer a control that drops the app cookie and navigates to Core's

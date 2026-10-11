@@ -5,6 +5,19 @@ const context = { session: { status: "active" as const, identity: { hostRole: "h
 const target = { panel: { appId: "assistant", installationId: "install", panelId: "chat" }, route: "/chat?session=existing" };
 afterEach(() => vi.unstubAllGlobals());
 describe("fixed panel adapter", () => {
+  it("projects only this app's navigation and resolves pinned entries through fixed operations", async () => {
+    const fetcher = vi.fn(async () => Response.json({ entries: [] })); vi.stubGlobal("fetch", fetcher);
+    expect((await createHostyUiResponse(new Request("https://plans.test/api/hosty/ui/navigation"), context, options)).status).toBe(200);
+    expect(fetcher.mock.calls[0]?.[0]).toEqual(new URL("https://core.test/api/internal/apps/plans/ui/navigation"));
+    fetcher.mockClear();
+    expect((await createHostyUiResponse(new Request("https://plans.test/api/hosty/ui/navigation?appId=foreign"), context, options)).status).toBe(400);
+    const resolve = (origin: string) => new Request("https://plans.test/api/hosty/ui/navigation/resolve", { method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ appId: "plans", installationId: "install", entryKey: "opaque" }) });
+    expect((await createHostyUiResponse(resolve("https://foreign.test"), context, options)).status).toBe(403);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect((await createHostyUiResponse(resolve("https://plans.test"), context, options)).status).toBe(200);
+    expect(fetcher.mock.calls[0]?.[0]).toEqual(new URL("https://core.test/api/internal/apps/plans/ui/navigation/resolve"));
+  });
   it("uses only its own service and revalidated user credentials for fixed Core operations", async () => {
     const fetcher = vi.fn(async () => Response.json({ target })); vi.stubGlobal("fetch", fetcher);
     const response = await createHostyUiResponse(new Request("https://plans.test/api/hosty/ui/panels/resolve", {

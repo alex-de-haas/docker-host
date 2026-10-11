@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createUiHost, type UiHost } from "./ui-host";
+import { createUiHost, type UiHost, type UiViewDescriptor } from "./ui-host";
 import { createPresentationRequestId } from "./ui";
 import { EmbeddedUiClient } from "./ui-embedded";
 import { routeWithin, type UiBootstrap, type UiPanel, type UiResolvedPanel } from "./ui-types";
@@ -28,11 +28,17 @@ afterEach(() => {
   Object.defineProperty(window, "parent", { configurable: true, value: originalParent });
   Object.defineProperty(window, "top", { configurable: true, value: originalTop });
 });
-async function start() { host = createUiHost(); await host.refresh(); return host; }
-function frame(surface = resolved.surface!) {
+async function start() {
+  host = createUiHost();
+  host.registerWorkspace({ workspaceId: "default", renderer: {
+    present: async () => "accepted", focus() {}, collapse() {}, release() {}, showToolPicker: async () => "accepted",
+  } });
+  await host.refresh(); return host;
+}
+function frame(surface = resolved.surface!, view?: UiViewDescriptor) {
   const element = document.createElement("iframe"); document.body.append(element);
   const post = vi.spyOn(element.contentWindow!, "postMessage").mockImplementation(() => {});
-  const release = host!.registerFrame(element, { ...surface, panelId: panel.panelId });
+  const release = host!.registerFrame(element, { ...surface, panelId: panel.panelId }, undefined, view);
   const nonce = createPresentationRequestId();
   const send = (data: object, origin = "https://assistant.test", source: unknown = element.contentWindow) => window.dispatchEvent(new MessageEvent("message", { data: { version: 1, ...data }, origin, source: source as Window }));
   send({ type: "hosty:ui:probe", childNonce: nonce, versions: [1] });
@@ -96,6 +102,27 @@ describe("panel host authority and replay", () => {
     expect(h.getSnapshot().tools[0]!.resolved.surface).not.toBeNull();
     expect(await h.selectPanel(panel)).toMatchObject({ status: "opened", target });
     expect(JSON.parse(fetcher.mock.calls.at(-1)![1].body)).toEqual(target);
+  });
+  it.each([{ origin: "https://moved.test" }, { framePolicy: { microphone: false, popupEscape: false } }])(
+    "invalidates a retained frame when selection discovers a changed surface before catalog refresh: %j", async change => {
+      const h = await start();
+      await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+      resolution = { ...resolved, surface: { ...resolved.surface!, ...change } };
+      expect(await h.selectPanel(panel)).toMatchObject({ status: "blocked", code: "destination_changed" });
+      expect(h.getSnapshot().tools[0]!.resolved.surface).toBeNull();
+    });
+  it("does not reopen a retained tool when a pending rail selection is superseded by collapse", async () => {
+    const h = await start();
+    await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    let finish!: (response: Response) => void;
+    fetcher.mockImplementation(async (path: string) => path.endsWith("resolve")
+      ? new Promise<Response>(resolve => { finish = resolve; }) : Response.json(metadata));
+    const selecting = h.selectPanel(panel);
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    h.collapseWorkspace("default"); finish(Response.json(resolved));
+    expect(await selecting).toMatchObject({ status: "blocked", code: "presentation_superseded" });
+    expect(h.getSnapshot()).toMatchObject({ expanded: false });
+    expect(h.getSnapshot().tools).toHaveLength(1);
   });
   it.each([
     ["hosty_launch=native", "/assistant?session=one+two#turn", "ready"],
@@ -433,6 +460,27 @@ describe("embedded panel discovery", () => {
     f.send({ ...offer, type: "hosty:ui:connected", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: "host", installationId: "host-1" });
     return offer;
   }
+  it("negotiates explicit policy only after verification and ignores stale policy revisions", async () => {
+    const f = begin();
+    f.send({ ...f.offer, type: "hosty:ui:chrome", revision: 99, chrome: { navigation: "hide" } });
+    expect(child!.getChrome().navigation).toBe("show");
+    f.send(f.offer); await vi.waitFor(() => expect(f.parent.postMessage.mock.calls.at(-1)![0].type).toBe("hosty:ui:accept"));
+    f.send({ ...f.offer, type: "hosty:ui:connected", coreOrigin: metadata.coreOrigin, userId: metadata.userId,
+      appId: "host", installationId: "host-1", capabilities: ["ui.composition.v1"], revision: 2,
+      chrome: { navigation: "show", tools: { launcher: "hide" } }, rootDisabled: false });
+    expect(child!.getChrome()).toMatchObject({ navigation: "show", tools: { owner: "host", enabled: true, launcher: "hide" } });
+    f.send({ ...f.offer, type: "hosty:ui:chrome", revision: 1, chrome: { navigation: "hide" }, rootDisabled: true });
+    expect(child!.getChrome().tools.enabled).toBe(true);
+    f.send({ ...f.offer, type: "hosty:ui:chrome", revision: 3, chrome: { navigation: "hide" }, rootDisabled: true });
+    expect(child!.getChrome()).toMatchObject({ navigation: "hide", tools: { enabled: false } });
+    expect(await child!.openSurface(target, { placement: "side", requestId: createPresentationRequestId() })).toMatchObject({ code: "tools_disabled" });
+  });
+  it("does not silently send composition-only options to a legacy host", async () => {
+    const f = await connect(), count = f.parent.postMessage.mock.calls.length;
+    expect(await child!.openSurface(target, { placement: "side", requestId: createPresentationRequestId(), reuse: "new" })).toMatchObject({ code: "unsupported_composition" });
+    expect(await child!.openToolPicker({ requestId: createPresentationRequestId() })).toMatchObject({ code: "unsupported_composition" });
+    expect(f.parent.postMessage.mock.calls.length).toBe(count);
+  });
   it("rejects inactive calls without I/O and requires a fresh handshake after renewal", async () => {
     const f = await connect(); child!.setActive(false);
     const calls = fetcher.mock.calls.length, posts = f.parent.postMessage.mock.calls.length;
@@ -581,7 +629,7 @@ describe("embedded panel discovery", () => {
   });
   it("discovers without identity, verifies the observed parent and uses exact-origin messages", async () => {
     const f = await connect();
-    expect(Object.keys(f.probe).sort()).toEqual(["childNonce", "type", "version", "versions"]);
+    expect(Object.keys(f.probe).sort()).toEqual(["capabilities", "childNonce", "type", "version", "versions"]);
     expect(f.parent.postMessage.mock.calls[0]![1]).toBe("*");
     expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("parentOrigin=https%3A%2F%2Fshell.test"), expect.anything());
     expect(child!.getEnvironment().connection).toBe("connected");
@@ -624,5 +672,106 @@ describe("embedded panel discovery", () => {
     child!.setActive(false); expect(f.parent.postMessage.mock.calls.at(-1)![0].type).toBe("hosty:ui:auth-required");
     child!.setActive(true); await vi.advanceTimersByTimeAsync(5_001);
     expect(child!.getEnvironment().connection).toBe("blocked");
+  });
+});
+
+describe("composition presentation instances", () => {
+  it("binds navigation to the registered app view, synchronizes its host adapter and replays once", async () => {
+    await start(); const navigate = vi.fn();
+    const f = frame(resolved.surface!, { viewId: "app-window", workspaceId: "default", navigate });
+    f.send({ type: "hosty:ui:probe", childNonce: f.offer.childNonce, versions: [1], capabilities: ["ui.composition.v1"] });
+    f.send({ ...f.offer, type: "hosty:ui:accept", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: panel.appId, installationId: panel.installationId });
+    const next = { ...resolved.surface!, endpoint: "other", origin: "https://other.test", route: "/people" };
+    fetcher.mockImplementation(async (path: string) => Response.json(path.endsWith("navigation/resolve") ? { available: true, surface: next, state: "running" } : metadata));
+    const requestId = createPresentationRequestId(), message = { ...f.offer, type: "hosty:ui:navigate", requestId, entryKey: "entry", appId: "forged", installationId: "forged" };
+    f.send(message); await vi.waitFor(() => expect(navigate).toHaveBeenCalledOnce());
+    expect(navigate).toHaveBeenCalledWith(next);
+    expect(JSON.parse(fetcher.mock.calls.find(([path]) => path.endsWith("navigation/resolve"))![1].body)).toEqual({ appId: panel.appId, installationId: panel.installationId, entryKey: "entry" });
+    f.send(message); await vi.waitFor(() => expect(f.post.mock.calls.filter(([m]) => m.type === "hosty:ui:action-result")).toHaveLength(2));
+    expect(navigate).toHaveBeenCalledOnce();
+  });
+  it("retires pending requests from a closed source while preserving shared presentations", async () => {
+    const h = await start(); await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    const retained = h.getSnapshot().tools[0]!.presentationId, f = frame();
+    let finish!: (value: Response) => void;
+    fetcher.mockImplementation(async (path: string) => path.endsWith("resolve") ? new Promise<Response>(resolve => { finish = resolve; }) : Response.json(metadata));
+    const requestId = createPresentationRequestId();
+    f.send({ ...f.offer, type: "hosty:ui:open", requestId, target: { ...target, route: "/assistant?session=pending" }, placement: "side" });
+    await vi.waitFor(() => expect(finish).toBeDefined()); f.release(); finish(Response.json(resolved));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(h.getSnapshot().tools.map(t => t.presentationId)).toEqual([retained]);
+    expect(f.post.mock.calls.some(([m]) => m.type === "hosty:ui:result" && m.requestId === requestId)).toBe(false);
+  });
+  it("retains different conversations, reuses the exact route and never resurrects a closed request", async () => {
+    const h = await start(), firstId = createPresentationRequestId();
+    const first = await h.openSurface(target, { placement: "side", requestId: firstId });
+    expect(first.status).toBe("opened"); if (first.status !== "opened") return;
+    const next = { ...target, route: "/assistant?session=other" };
+    resolution = { ...resolved, target: next, surface: { ...resolved.surface!, route: next.route } };
+    const second = await h.openSurface(next, { placement: "side", requestId: createPresentationRequestId() });
+    expect(second).toMatchObject({ status: "opened" }); expect(h.getSnapshot().tools).toHaveLength(2);
+    resolution = structuredClone(resolved);
+    expect(await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() })).toMatchObject({ presentationId: first.presentationId });
+    const duplicate = await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId(), reuse: "new" });
+    expect(duplicate).not.toMatchObject({ presentationId: first.presentationId }); expect(h.getSnapshot().tools).toHaveLength(3);
+    h.closePresentation(first.presentationId!);
+    expect(await h.openSurface(target, { placement: "side", requestId: firstId })).toMatchObject({ status: "opened", presentationId: first.presentationId });
+    expect(h.getSnapshot().tools).toHaveLength(2);
+  });
+  it("isolates workspace supersession and rejects disabled source requests without deleting retained tools", async () => {
+    const h = await start();
+    h.registerWorkspace({ workspaceId: "second", renderer: { present: async () => "accepted", focus() {}, collapse() {}, release() {}, showToolPicker: async () => "accepted" } });
+    h.setPlacementResolver(({ target }) => ({ workspaceId: target.route?.includes("other") ? "second" : "default" }));
+    let finish!: (value: Response) => void;
+    fetcher.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (!path.endsWith("resolve")) return Response.json(path.endsWith("bootstrap") ? metadata : { panels });
+      const requested = JSON.parse(init!.body as string);
+      if (requested.route === target.route) return new Promise<Response>(resolve => { finish = resolve; });
+      return Response.json({ ...resolved, target: requested, surface: { ...resolved.surface!, route: requested.route } });
+    });
+    const pending = h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    const other = await h.openSurface({ ...target, route: "/assistant?session=other" }, { placement: "side", requestId: createPresentationRequestId() });
+    h.collapseWorkspace("default"); finish(Response.json(resolved));
+    expect(await pending).toMatchObject({ code: "presentation_superseded" });
+    expect(other.status).toBe("opened"); expect(h.getSnapshot().workspaces?.find(w => w.workspaceId === "second")?.expanded).toBe(true);
+    h.setViewChrome("root", { tools: { enabled: false } });
+    expect(h.getSnapshot().tools).toHaveLength(1);
+    expect(await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() })).toMatchObject({ code: "tools_disabled" });
+    h.setViewChrome("root", {});
+    expect(h.getSnapshot().workspaces?.every(w => !w.expanded)).toBe(true);
+  });
+  it("moves only between renderers sharing a retained frame layer", async () => {
+    const h = await start(), layer = {}, next = vi.fn(async () => "accepted" as const);
+    // A separately registered default renderer is rejected, so use a fresh host for this fixture.
+    h.dispose(); host = createUiHost(); const current = host;
+    const renderer = { frameLayer: layer, present: next, focus() {}, collapse() {}, release() {}, showToolPicker: async () => "accepted" as const };
+    current.registerWorkspace({ workspaceId: "default", renderer });
+    current.registerWorkspace({ workspaceId: "floating", renderer: { ...renderer } });
+    current.registerWorkspace({ workspaceId: "foreign-layer", renderer: { ...renderer, frameLayer: {} } });
+    await current.refresh();
+    const result = await current.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    if (result.status !== "opened") throw new Error(result.code);
+    expect(await current.movePresentation(result.presentationId!, "foreign-layer")).toBe(false);
+    expect(await current.movePresentation(result.presentationId!, "floating")).toBe(true);
+    expect(current.getSnapshot().tools[0]).toMatchObject({ presentationId: result.presentationId, workspaceId: "floating" });
+  });
+  it("does not acknowledge an absent renderer or retarget a preferred mismatching instance", async () => {
+    host = createUiHost(); await host.refresh();
+    expect(await host.openSurface(target, { placement: "side", requestId: createPresentationRequestId() })).toMatchObject({ code: "presentation_unavailable" });
+    host.dispose(); const h = await start();
+    const first = await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    if (first.status !== "opened") throw new Error(first.code);
+    h.setPlacementResolver(() => ({ workspaceId: "default", presentationId: first.presentationId }));
+    const other = { ...target, route: "/assistant?session=other" };
+    resolution = { ...resolved, target: other, surface: { ...resolved.surface!, route: other.route } };
+    expect(await h.openSurface(other, { placement: "side", requestId: createPresentationRequestId() })).toMatchObject({ code: "destination_changed" });
+    expect(h.getSnapshot().tools[0]?.target).toEqual(target);
+  });
+  it("keeps chooser and presentation request IDs in one conflict namespace", async () => {
+    const h = await start(), requestId = createPresentationRequestId();
+    expect(await h.openToolPicker({ requestId })).toMatchObject({ status: "accepted" });
+    expect(await h.openSurface(target, { placement: "side", requestId })).toMatchObject({ code: "request_conflict" });
+    expect(await h.openToolPicker({ requestId })).toMatchObject({ status: "accepted" });
   });
 });
