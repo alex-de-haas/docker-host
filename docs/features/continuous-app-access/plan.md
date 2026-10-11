@@ -1,5 +1,5 @@
 ---
-status: Draft
+status: Ready
 created: 2026-10-11
 updated: 2026-10-11
 summary: Replace hourly app activity renewal with continuous authorized sessions and separately revocable background delegation.
@@ -15,10 +15,11 @@ Renew access. Apps should maintain their authorized access transparently, includ
 shell with many windows. Deliberately authorized background work must also be possible without
 an open tab. Preserve enforceable permissions and revocation while removing routine consent churn.
 
-This Draft records a concrete proposal for approval before implementation. The owner requested
-publishing it with [SDK UI composition](../sdk-ui-composition/plan.md) and prioritizing access next.
-It does not authorize deployment, new grants on the live host or changes to existing user sessions
-during this documentation task. Composition work is not a dependency of the access change.
+On 2026-10-11 the owner approved finalizing D1, moving this plan to Ready and implementing all
+deliverables, including isolated Shell/standalone verification and a reviewed, green PR merged
+with a regular merge commit. The technical contract below records the implementation decisions.
+[SDK UI composition](../sdk-ui-composition/plan.md) remains deferred; panel layout/API work is
+excluded. Verification uses an isolated Core, without changing grants on the operator's live host.
 
 ## Verified Baseline And Problem
 
@@ -195,9 +196,100 @@ are separate runtime/product decisions. This change does not implement them or d
 commands as sandboxed. Existing app/user permissions continue to constrain only the operations
 where Core or another enforcing service actually checks them.
 
+## D1 Technical Contract (approved implementation direction, 2026-10-11)
+
+### Session authority and maintenance
+
+- Persist an authority version and installation identity on app grants. Version 1 browser grants
+  bind the existing authorizing browser session; native grants bind an unscoped device/manual
+  credential with no audience, OAuth grant or delegated scopes. Diagnostic grants retain their
+  finite diagnostic policy and cannot authorize privileged app operations.
+- Existing live code grants migrate only after validating the original identity lifetime, user
+  auth revision, installation age and live authorizing principal. Elapsed activity alone is ignored.
+  Persist the migration before returning new metadata. Missing provenance requires normal sign-in.
+- Version 1 interactive grants use the common app idle policy and the authorizing principal's
+  absolute deadline (if the native principal has none, the common app absolute period applies).
+  Revalidation checks the parent independently without touching it. Access loss and explicit
+  parent/device revocation are terminal. No grant can outlive a revoked authority source.
+- Extend revalidation/session envelopes with `continuity: { version: 1, mode, grantId,
+  expiresAt, checkAfterSeconds: 300 }`; `mode` is `browser` or `native`. The opaque grant ID is a
+  public reference, never a credential. Return `activityRequired: false` and `activeUntil: null`
+  for continuous grants so existing clients cease enforcing the obsolete hourly deadline.
+  Missing continuity metadata retains the old server's behavior.
+- Browser SDK maintenance refreshes the same-origin session probe and, for browser mode, mounts
+  a transient Core-owned maintenance frame. `GET /api/auth/apps/continuity/frame` accepts the
+  grant reference, validated app origin and random correlation state; it never touches a session.
+  The Core document performs `POST /api/auth/apps/continuity/maintain` with its primary cookie,
+  Core-origin CSRF/origin proof and the bound grant reference. Validate exact session, actor,
+  current installation and safe Core cookie host before a throttled idle touch. App-bound backend
+  revalidation remains unable to touch the parent. Native clients maintain their device principal
+  through their own authenticated Core calls, never by giving its credential to the app.
+- Frame replies contain only status and deadlines. SDK checks exact source/origin/state and a
+  bounded timeout. Cookie/framing refusal is `unavailable`, not logout; actual parent failure is
+  confirmed through the app probe. Coalesce checks, jitter the five-minute interval, back off on
+  outage, and check on focus, visibility and online events. No token, intent or reply allows a
+  backend-only parent keepalive. A frame response cannot switch the app's actor.
+- Keep `APP_SESSION_ENDED` for actual auth failures and `APP_ACTIVITY_RENEWED` for successful
+  explicit recovery. Silent maintenance must not rotate panel generations or replay domain work.
+  Add a separate continuity update signal for credential consumers. Harness refreshes every live
+  conversation owned by that actor; same-actor opaque app credentials remain stable during normal
+  maintenance. Expose an opt-in local-content slot outside Overlay's protected root.
+
+### Background grant and request credentials
+
+- Store versioned records under Core's auth data: grant ID, owner and auth revision, consuming
+  installation, label, immutable scopes, optional expiry, created timestamp and revocation. Scope
+  entries pin a target installation and identify `core`, `provider` or `mcp` operations. Grant
+  changes use revoke-and-create, preserving an audit trail; no implicit broadening on update.
+- Core scopes use a closed catalog of named app read/health/update-plan/update/lifecycle operations
+  mapped to exact HTTP method/route/required permission and explicit target app IDs. Unmapped routes,
+  fleet-wide discovery and arbitrary request-body targets are refused. Updates retain existing
+  install-review restrictions; the grant cannot approve newly requested permissions.
+- Provider scopes name kind, key and target installation; invocation uses existing provider tokens.
+  MCP scopes name the target and exact tool names (no wildcard). They cover that tool's argument
+  domain at the selected target, not a claimed filesystem or workspace sandbox. Existing confirmed
+  assistant/target grants and Core tool permissions remain prerequisites. Tool introspection checks
+  the exact requested name; a catalog credential cannot execute a tool.
+- `GET/POST /api/auth/background-grants` lists/creates the current administrator's grants;
+  `DELETE /api/auth/background-grants/{id}` revokes an owned grant. Core session + CSRF protects
+  mutations; app-bound identity is refused for creating authority. Core's account page provides
+  create/list/revoke, including a clearly labeled revoke-all-authorizations action. Matching local
+  control routes and CLI commands allow recovery without Shell; creation names an existing owner
+  and enforces the same scopes/access. No ordinary-user Harness policy changes.
+- `POST /api/internal/apps/{appId}/background/token` requires that app's service credential and
+  `{ grantId, scopeId }`. It issues a five-minute app-bound request credential, clamped to the grant
+  expiry. Persist its source grant/revision/scope binding with the existing opaque app-grant model.
+  It is refused as browser identity, session continuity, grant creation or unrelated internal API
+  authority. Explicit Core route authorization or provider/MCP issuance must validate its scope.
+- Existing provider/MCP child tokens bind that same source credential and introspect its current
+  background grant on use. No parent browser session is required. Core writes and tool dispatch
+  validate online; SDK read caches remain at most 30 seconds and clamp to expiry. Background-source
+  credentials cannot be exchanged into an unrestricted interactive credential.
+- TypeScript and .NET server clients acquire these request credentials from a grant/scope reference
+  and their service identity. Refresh before expiry with concurrent-request coalescing; never
+  automatically replay an ambiguous write. Audit issue/dispatch and grant lifecycle without secrets.
+- Ordinary logout revokes interactive descendants only. Explicit revoke-all-authorizations revokes
+  sessions, app grants and background grants owned by the user. Account auth revision, disable,
+  assignment removal, scope permission loss and target/consumer reinstall invalidate delegation.
+
+### Inventory and delivery
+
+The existing gates are `AppIdentityService`, `AppManagementAuthorization`, `ProviderAccessService`,
+`AssistantSessionAuthority`/`AssistantMcpAccess`, workspace/source/publication authorization and
+UI bootstrap. Browser consumers are the SDK identity/activity/Overlay adapters and the session
+adapters in Shell, Plans, Workspaces, Marketplace, Demo App, Telemetry UI and Harness. Native
+renewal is in Swift's `AppWorkspaceView` and `CoreClient`. Preserve the composition protocol and
+layout; only authentication lifecycle consumers change. Core settings retain legacy lifetime
+values with deprecation diagnostics, while removing the hourly setting from active configuration.
+
+Deliver the feature on one branch/PR, with no per-phase releases. Required validation includes
+clock-controlled authority/migration/scope tests, SDK transport and outage tests, Core AOT,
+first-party affected builds/tests, native tests, and real normal-password Shell/standalone flows
+on an isolated Core. Background verification uses a scoped fixture, never production auto-updates.
+
 ## Deliverables
 
-- [ ] D1. Finalize and approve the authority-source, common lifetime, maintenance, background grant, migration and error contracts; inventory every activity check and every first-party renewal consumer.
+- [x] D1. Finalize and approve the authority-source, common lifetime, maintenance, background grant, migration and error contracts; inventory every activity check and every first-party renewal consumer.
 - [ ] D2. Implement Core continuous browser/native app authorization, browser-proven parent idle maintenance separated from app-bound grant maintenance, and capability negotiation; remove the separate activity gate for supported sources while preserving expiry, revocation and effective permission checks.
 - [ ] D3. Implement silent browser/server SDK maintenance and credential reacquisition, migrate first-party consumers including Harness live runs and native Shell, and separate transient outage from authentication recovery and explicitly local content.
 - [ ] D4. Implement explicit Core background grants, scope-preserving credential issuance and list/revoke controls through settings and control/CLI, with audited lifecycle and no implicit conversion of browser sessions.
@@ -231,4 +323,4 @@ where Core or another enforcing service actually checks them.
   live expired activity versus expired identity, custom policy migration and retained diagnostics.
 - Run affected Core/CLI/TypeScript SDK/.NET SDK/Shell/Harness/Plans tests and builds, native checks,
   Core AOT validation when contracts require it, version checks and documentation validation.
-  This Draft is documentation-only; implementation versions all affected release artifacts.
+  Implementation versions all affected release artifacts before publication.
