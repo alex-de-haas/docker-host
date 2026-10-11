@@ -138,7 +138,9 @@ mismatched targets or combining a preferred instance with `new` fail rather than
 
 Composition `opened` results include `presentationId`, separate from readiness. Replaying a request
 returns its accepted identity even after closing; it does not resurrect that frame. Replay revalidates the original accepted destination and access
-without confusing deliberate navigation of the live instance with a changed installation. Reopening needs
+without confusing deliberate navigation of the live instance with a changed installation. This
+destination revalidation also applies after the instance has closed; a moved origin, endpoint or
+changed frame policy cannot replay an obsolete acceptance. Reopening needs
 a new request ID. Current lifetime is visible in host snapshots. Current routes and readiness are
 bound to the exact registered presentation, not merely the initial iframe URL or panel declaration.
 
@@ -167,8 +169,12 @@ reports outside its resolved route tree remain unreported.
 Renderers implement `present`, `focus`, `collapse`, `release` and `showToolPicker`. An accepted
 presentation requires a real attached destination, frame or explicit loading/unavailable state.
 Refusal returns `presentation_unavailable`; a finalized discussion remains retryable.
-Movement requires matching renderer `frameLayer` identity and preserves the original instance on
-failure. The React renderer keeps iframe containers in one stable DOM layer and positions them
+Movement requires matching renderer `frameLayer` identity. One move per presentation runs at a time. Supersession, close and activity changes abort
+the pending renderer operation; refusal or supersession restores the retained frame through its
+current owning renderer before returning failure. A closed instance is released instead of restored.
+If that renderer also refuses restoration, the inconsistent presentation is closed. Renderer release
+operations must tolerate an already released ID when cleaning up a cancelled in-flight operation.
+The React renderer keeps iframe containers in one stable DOM layer and positions them
 over workspace viewports; movement, switching, collapse and resize never reparent the iframe.
 
 `HostyPanelWorkspace` defaults to the `default` workspace, with `workspaceId` for additional areas.
@@ -221,6 +227,8 @@ shell, and this API does not add context to an existing assistant conversation.
   includes route reports before readiness, collapse/rail selection, catalog refresh, rejected foreign
   routes, renewed readiness within the resolved navigation route tree and Escape dismissal. Non-React
   renderer fixtures verify frame release on actor/Core/installation changes, authority loss and disposal.
+  Delayed-renderer tests cover move supersession/refusal/close, rollback, cancellation and concurrent
+  movement rejection. Closed-request replay still checks origin, endpoint and frame-policy changes.
 - Plans component tests use a real SDK host to close and reopen a finalized discussion through both
   visible actions, retain its conversation target and replay a later uncertain opening without
   repeating the assistant handoff.
@@ -249,7 +257,7 @@ Verification recorded on 2026-10-11:
 | `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --artifacts-path "$PWD/build/ui-composition" --verbosity quiet` | 3,139 passed; 4 opt-in Docker/VPN integration tests skipped because their fixtures were not enabled |
 | Core build and `UiPanelHttpTests` after the icon-origin fix | Build passed; 31 HTTP tests passed |
 | `npm run core:aot` | Native AOT publish passed for osx-arm64 with no trim/AOT warnings |
-| `npm test --workspace=@hosty-sdk/app` | 562 passed |
+| `npm test --workspace=@hosty-sdk/app` | 568 passed |
 | `npm test` in Shell / Plans / Harness / Marketplace / Workspaces / Demo / Telemetry UI | 191 Node + 238 component / 117 / 536 / 111 / 7 / 4 / 10 passed |
 | `npm run build --workspace=@hosty-sdk/app` and overlay upgrade contract script | Passed, including optional Next export and unchanged consumer compatibility |
 | `npm run build -- --webpack` in all seven affected web apps | Passed; affected app lint checks passed with no errors |

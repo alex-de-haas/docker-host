@@ -448,6 +448,17 @@ describe("panel host authority and replay", () => {
     resolution = { ...resolution, surface: { ...resolution.surface!, origin: "https://moved.test" } };
     expect(await h.getPresentation(requestId)).toMatchObject({ status: "blocked", code: "destination_changed" });
   });
+  it.each([{ origin: "https://moved.test" }, { endpoint: "other" }, { framePolicy: { microphone: false, popupEscape: false } }])(
+    "revalidates the accepted destination after its presentation was closed: %j", async change => {
+      const h = await start(), requestId = createPresentationRequestId();
+      const opened = await h.openSurface(target, { placement: "side", requestId });
+      if (opened.status !== "opened") throw new Error(opened.code);
+      h.closePresentation(opened.presentationId!);
+      resolution = { ...resolution, surface: { ...resolution.surface!, ...change } };
+      expect(await h.getPresentation(requestId)).toMatchObject({ status: "blocked", code: "destination_changed" });
+      expect(await h.openSurface(target, { placement: "side", requestId })).toMatchObject({ status: "blocked", code: "destination_changed" });
+      expect(h.getSnapshot().tools).toHaveLength(0);
+    });
   it("rejects an in-flight placement across a Core origin change", async () => {
     const h = await start(); let finish!: (v: Response) => void;
     fetcher.mockImplementation(async (path: string) => path.endsWith("resolve") ? new Promise<Response>(r => { finish = r; })
@@ -813,6 +824,42 @@ describe("composition presentation instances", () => {
     expect(await current.movePresentation(result.presentationId!, "foreign-layer")).toBe(false);
     expect(await current.movePresentation(result.presentationId!, "floating")).toBe(true);
     expect(current.getSnapshot().tools[0]).toMatchObject({ presentationId: result.presentationId, workspaceId: "floating" });
+  });
+  it.each(["superseded", "refused", "closed"])("restores external renderer placement after a %s pending move", async outcome => {
+    host = createUiHost(); const h = host, layer = {}, frames = new Map<string, HTMLIFrameElement>();
+    let finish!: (result: "accepted" | "unavailable") => void, signal!: AbortSignal;
+    const present = async (tool: { presentationId: string; workspaceId: string }) => {
+      let frame = frames.get(tool.presentationId);
+      if (!frame) { frame = document.createElement("iframe"); document.body.append(frame); frames.set(tool.presentationId, frame); }
+      frame.dataset.workspace = tool.workspaceId;
+      return "accepted" as const;
+    };
+    const renderer = { frameLayer: layer, present, focus: vi.fn(), collapse: vi.fn(), showToolPicker: async () => "accepted" as const,
+      release(id: string) { frames.get(id)?.remove(); frames.delete(id); } };
+    h.registerWorkspace({ workspaceId: "default", renderer });
+    h.registerWorkspace({ workspaceId: "floating", renderer: { ...renderer, present: async (tool, abort) => {
+      await present(tool); signal = abort;
+      return new Promise(resolve => { finish = resolve; });
+    } } });
+    await h.refresh();
+    const opened = await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    if (opened.status !== "opened") throw new Error(opened.code);
+    const id = opened.presentationId!, frame = frames.get(id)!, context = frame.contentWindow;
+    const moving = h.movePresentation(id, "floating");
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    expect(frame.dataset.workspace).toBe("floating");
+    expect(await h.movePresentation(id, "floating")).toBe(false);
+    if (outcome === "closed") h.closePresentation(id);
+    else if (outcome === "superseded") h.collapseWorkspace("floating");
+    if (outcome !== "refused") expect(signal.aborted).toBe(true);
+    finish(outcome === "refused" ? "unavailable" : "accepted");
+    expect(await moving).toBe(false);
+    if (outcome === "closed") {
+      expect(frames.size).toBe(0); expect(frame.isConnected).toBe(false); expect(h.getSnapshot().tools).toHaveLength(0);
+    } else {
+      expect(h.getSnapshot().tools[0]!.workspaceId).toBe("default"); expect(frame.dataset.workspace).toBe("default");
+      expect(frame.contentWindow).toBe(context); expect(renderer.focus).toHaveBeenLastCalledWith(id);
+    }
   });
   it("does not acknowledge an absent renderer or retarget a preferred mismatching instance", async () => {
     host = createUiHost(); await host.refresh();

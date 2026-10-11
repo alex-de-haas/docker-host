@@ -42,6 +42,7 @@ export class UiHost implements UiClient {
   private readonly frames = new Set<Frame>();
   private readonly ledger = new Map<string, Ledger>();
   private readonly toolQueues = new Map<string, Promise<PresentationResult>>();
+  private readonly moves = new Map<string, AbortController>();
   readonly composition: UiCompositionModel;
   private readonly workspaces = new Map<string, UiWorkspace>([[DEFAULT_WORKSPACE, workspace(DEFAULT_WORKSPACE)]]);
   private placement?: UiPlacementResolver;
@@ -72,6 +73,7 @@ export class UiHost implements UiClient {
   subscribeNavigation = (listener: () => void) => this.composition.subscribeNavigation(listener);
   setActive(active: boolean) {
     if (this.disposed || this.active === active) return;
+    for (const move of this.moves.values()) move.abort();
     this.active = active; this.activityReady = false;
     this.activityGeneration++; for (const state of this.workspaces.values()) state.generation++;
     this.composition.resetNavigation(); this.actions.clear();
@@ -144,6 +146,7 @@ export class UiHost implements UiClient {
   };
   closePresentation = (id: string) => {
     const tool = this.snapshot.tools.find(t => t.presentationId === id); if (!tool) return;
+    this.moves.get(id)?.abort();
     const state = this.workspaces.get(tool.workspaceId)!;
     for (const frame of this.frames) if (frame.view.presentationId === id) frame.cleanup();
     state.generation++; state.renderer?.release(id);
@@ -161,22 +164,40 @@ export class UiHost implements UiClient {
   movePresentation = async (id: string, workspaceId: string): Promise<boolean> => {
     this.requireTools();
     const tool = this.snapshot.tools.find(t => t.presentationId === id), next = this.workspaces.get(workspaceId);
-    if (!tool || !next?.renderer) return false;
+    if (!tool || !next?.renderer || this.moves.has(id)) return false;
     const previous = this.workspaces.get(tool.workspaceId)!;
     if (previous === next) return true;
     if (!previous.renderer?.frameLayer || previous.renderer.frameLayer !== next.renderer.frameLayer) return false;
     const activity = this.activityGeneration, generation = ++next.generation, renderer = next.renderer;
-    const moved = { ...tool, workspaceId };
+    const moved = { ...tool, workspaceId }, controller = new AbortController();
+    this.moves.set(id, controller);
+    const stop = this.subscribeSnapshot(() => {
+      if (!this.snapshot.tools.includes(tool) || generation !== next.generation || renderer !== next.renderer) controller.abort();
+    });
     try {
-      if (await renderer.present(moved, new AbortController().signal) !== "accepted") return false;
+      if (await renderer.present(moved, controller.signal) !== "accepted") throw new Error("Movement was refused.");
       this.checkActivity(activity); this.requireTools();
-    } catch { return false; }
-    if (!this.snapshot.tools.includes(tool) || generation !== next.generation || renderer !== next.renderer) return false;
-    previous.generation++;
-    this.update({ tools: this.snapshot.tools.map(t => t === tool ? moved : t) });
-    if (previous.selectedId === id) { previous.selectedId = null; previous.expanded = false; }
-    for (const frame of this.frames) if (frame.view.presentationId === id) frame.view = { ...frame.view, workspaceId };
-    this.focusPresentation(id); return true;
+      if (controller.signal.aborted || !this.snapshot.tools.includes(tool) || generation !== next.generation || renderer !== next.renderer)
+        throw new Error("Movement was superseded.");
+      stop(); previous.generation++;
+      this.update({ tools: this.snapshot.tools.map(t => t === tool ? moved : t) });
+      if (previous.selectedId === id) { previous.selectedId = null; previous.expanded = false; }
+      for (const frame of this.frames) if (frame.view.presentationId === id) frame.view = { ...frame.view, workspaceId };
+      this.focusPresentation(id); return true;
+    } catch {
+      stop(); controller.abort();
+      const retained = this.snapshot.tools.find(t => t.presentationId === id);
+      if (!retained) { renderer.release(id); return false; }
+      const state = this.workspaces.get(retained.workspaceId)!, restore = state.renderer;
+      const rollback = new AbortController(); this.moves.set(id, rollback);
+      try {
+        if (!restore || await restore.present(retained, rollback.signal) !== "accepted") throw new Error("Restoration was refused.");
+        if (!this.snapshot.tools.some(t => t.presentationId === id)) { restore.release(id); return false; }
+        if (this.active && this.getChrome().tools.enabled && state.expanded && state.selectedId) restore.focus(state.selectedId);
+        else restore.collapse();
+      } catch { this.closePresentation(id); }
+      return false;
+    } finally { stop(); this.moves.delete(id); }
   };
   getSnapshot = () => this.snapshot;
   subscribeSnapshot = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
@@ -434,7 +455,7 @@ export class UiHost implements UiClient {
         if (!current.available) return { status: "blocked", requestId: id, code: current.state };
         const tool = this.snapshot.tools.find(t => t.presentationId === result.presentationId);
         // Navigation changes the live document, not the destination accepted by this request.
-        if (tool && (!tool.resolved.surface || JSON.stringify(entry?.openingSurface) !== JSON.stringify(current.surface)))
+        if ((tool && !tool.resolved.surface) || JSON.stringify(entry?.openingSurface) !== JSON.stringify(current.surface))
           return { status: "blocked", requestId: id, code: "destination_changed" };
         return { ...result, readiness: tool && tool.currentRoute === result.target.route ? tool.readiness : result.readiness };
       }
