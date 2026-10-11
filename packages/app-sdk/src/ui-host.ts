@@ -390,7 +390,8 @@ export class UiHost implements UiClient {
         this.update({ tools: this.snapshot.tools.map(t => t.presentationId === tool.presentationId ? { ...t, focusedAt: ++this.focusSequence } : t) });
         this.publishWorkspaces(); state.renderer?.focus(tool.presentationId);
         entry.openingSurface = resolved.surface;
-        return { status: "opened", requestId: id, target: resolved.target, readiness: tool.readiness, presentationId: tool.presentationId };
+        const readiness = this.snapshot.tools.find(t => t.presentationId === tool.presentationId)?.readiness ?? tool.readiness;
+        return { status: "opened", requestId: id, target: resolved.target, readiness, presentationId: tool.presentationId };
       } catch (error) { return failure(id, error); }
     })();
     entry.pending = operation; this.ledger.set(key, entry); this.toolQueues.set(queueKey, operation);
@@ -540,7 +541,10 @@ export class UiHost implements UiClient {
             ? { ...t, resolved: { ...t.resolved, available: false, surface: null, state: "destination_changed" } } : t) });
           throw new UiError("destination_changed", "The tool destination changed. Open its current version again.");
         }
-        if (this.focusPresentation(opened.presentationId)) return { status: "opened", requestId, target: resolved.target, readiness: opened.readiness, presentationId: opened.presentationId };
+        if (this.focusPresentation(opened.presentationId)) {
+          const readiness = this.snapshot.tools.find(t => t.presentationId === opened.presentationId)?.readiness ?? opened.readiness;
+          return { status: "opened", requestId, target: resolved.target, readiness, presentationId: opened.presentationId };
+        }
       } catch (error) { return failure(requestId, error); }
     } else if (opened) this.closePresentation(opened.presentationId);
     const requestId = createPresentationRequestId();

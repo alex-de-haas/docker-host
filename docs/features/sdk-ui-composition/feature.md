@@ -254,7 +254,9 @@ shell, and this API does not add context to an existing assistant conversation.
   renderer fixtures verify frame release on actor/Core/installation changes, authority loss and disposal.
   Delayed-renderer tests cover move supersession/refusal/close, rollback, cancellation and concurrent
   movement rejection, plus successful movement during ordinary metadata refresh. External renderer
-  visibility tests cover default/named workspace reopening and selected/non-selected tool movement. Pending opening
+  visibility tests cover default/named workspace reopening and selected/non-selected tool movement.
+  Opening and rail selection return current readiness after delayed placement/resolution; tests cover
+  ready/auth-required reports received during the wait, including the opening event. Pending opening
   and picker tests verify cancellation on collapse, newer opening/picker and activity changes,
   including progress of the next queued opening. Workspace removal during bootstrap/panel resolution
   prevents orphaned tools and stale openings after re-registration; pending pickers also retire.
@@ -309,7 +311,7 @@ Verification recorded on 2026-10-11:
 | `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --artifacts-path "$PWD/build/ui-composition" --verbosity quiet` | 3,139 passed; 4 opt-in Docker/VPN integration tests skipped because their fixtures were not enabled |
 | Core build and `UiPanelHttpTests` after the icon-origin fix | Build passed; 31 HTTP tests passed |
 | `npm run core:aot` | Native AOT publish passed for osx-arm64 with no trim/AOT warnings |
-| `npm test --workspace=@hosty-sdk/app` | 631 passed |
+| `npm test --workspace=@hosty-sdk/app` | 635 passed |
 | `npm test` in Shell / Plans / Harness / Marketplace / Workspaces / Demo / Telemetry UI | 191 Node + 244 component / 117 / 536 / 111 / 7 / 4 / 10 passed |
 | `npm run build --workspace=@hosty-sdk/app` and overlay upgrade contract script | Passed, including optional Next export and unchanged consumer compatibility |
 | `npm run build -- --webpack` in all seven affected web apps | Passed; affected app lint checks passed with no errors |

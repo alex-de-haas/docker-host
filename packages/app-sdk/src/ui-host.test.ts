@@ -48,6 +48,39 @@ function frame(surface = resolved.surface!, view?: UiViewDescriptor) {
 }
 
 describe("panel host authority and replay", () => {
+  it.each(["ready", "blocked"] as const)("returns current %s readiness after delayed renderer placement", async state => {
+    host = createUiHost(); const h = host; let finish!: (value: "accepted") => void;
+    h.registerWorkspace({ workspaceId: "default", renderer: {
+      present: () => new Promise(resolve => { finish = resolve; }), focus() {}, collapse() {}, release() {}, showToolPicker: async () => "accepted",
+    } });
+    await h.refresh();
+    const events = vi.fn(); h.subscribe(events);
+    const requestId = createPresentationRequestId(), pending = h.openSurface(target, { placement: "side", requestId });
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    const presentationId = h.getSnapshot().tools[0]!.presentationId;
+    const f = frame(resolved.surface!, { viewId: "loading-tool", workspaceId: "default", presentationId });
+    f.send({ ...f.offer, type: "hosty:ui:surface-state", route: target.route, state });
+    const readiness = state === "ready" ? "ready" : "auth-required";
+    expect(h.getSnapshot().tools[0]!.readiness).toBe(readiness);
+    finish("accepted");
+    expect(await pending).toMatchObject({ status: "opened", presentationId, readiness });
+    expect(events).toHaveBeenCalledWith({ type: "presentation", value: expect.objectContaining({ requestId, readiness }) });
+  });
+  it.each(["ready", "blocked"] as const)("returns current %s readiness after delayed rail selection", async state => {
+    const h = await start(), opened = await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    if (opened.status !== "opened") throw new Error(opened.code);
+    const f = frame(resolved.surface!, { viewId: "retained-tool", workspaceId: "default", presentationId: opened.presentationId });
+    h.collapseWorkspace("default");
+    let finish!: (value: Response) => void;
+    const previous = fetcher.getMockImplementation()!;
+    fetcher.mockImplementation((path: string, ...args: unknown[]) => path.endsWith("panels/resolve")
+      ? new Promise<Response>(resolve => { finish = resolve; }) : previous(path, ...args));
+    const pending = h.selectPanel(panel);
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    f.send({ ...f.offer, type: "hosty:ui:surface-state", route: target.route, state });
+    finish(Response.json(resolution));
+    expect(await pending).toMatchObject({ status: "opened", presentationId: opened.presentationId, readiness: state === "ready" ? "ready" : "auth-required" });
+  });
   it.each(["bootstrap", "panels/resolve"].flatMap(stage => [false, true].map(remount => ({ stage, remount }))))(
     "supersedes openings when their workspace unmounts during $stage (remount: $remount)", async ({ stage, remount }) => {
       host = createUiHost(); const h = host; await h.refresh();
