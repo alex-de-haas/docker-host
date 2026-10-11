@@ -1,6 +1,7 @@
 "use client";
 
 import { HostyAppFrame } from "@hosty-sdk/app/ui/react";
+import { useId } from "react";
 import { useShellState, useShellActions } from "../shell-context";
 import type { HostyResolvedTheme, HostyThemePreference } from "../types";
 import type { DelegatedTokenGrant } from "../workspace/delegated-token-intent";
@@ -18,6 +19,7 @@ export function EmbeddedAppFrame(props: {
   outbound?: { message: unknown; nonce: number } | null;
   onAttention?: (count: number) => void;
 }) {
+  const frameId = useId();
   const { state } = useShellState();
   const { launchAppPage } = useShellActions();
   const app = state.apps.find(item => item.id === props.appId);
@@ -34,7 +36,7 @@ export function EmbeddedAppFrame(props: {
       popupEscape: props.grantedCorePermissions?.includes("apps.install") ?? false,
     } };
   return <HostyAppFrame key={JSON.stringify([props.frameKey, props.src, surface])} {...props} surface={surface}
-    view={{ viewId: `app-${app.id}`, workspaceId: "default", chrome: { navigation: "hide", tools: { enabled: true, launcher: "hide" } },
+    view={{ viewId: `app-${app.id}-${frameId}`, workspaceId: "default", chrome: { navigation: "hide", tools: { enabled: true, launcher: "hide" } },
       navigate: async next => {
         const page = app.navigation?.find(item => item.endpoint === next.endpoint && item.path === next.route);
         await launchAppPage(app, { label: page?.label ?? props.title, path: next.route,

@@ -768,6 +768,33 @@ describe("embedded panel discovery", () => {
 });
 
 describe("composition presentation instances", () => {
+  it.each(["inactive", "renewed", "reconnected", "closed-source"])("rejects custom navigation after its source becomes %s", async boundary => {
+    const h = await start(), opened = await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    expect(opened.status).toBe("opened"); if (opened.status !== "opened") return;
+    let finish!: () => void;
+    const navigate = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+    const f = frame(resolved.surface!, { viewId: "custom-tool", workspaceId: "default", presentationId: opened.presentationId, navigate });
+    f.send({ type: "hosty:ui:probe", childNonce: f.offer.childNonce, versions: [1], capabilities: ["ui.composition.v1"] });
+    f.send({ ...f.offer, type: "hosty:ui:accept", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: panel.appId, installationId: panel.installationId });
+    const next = { ...resolved.surface!, endpoint: "other", origin: "https://other.test", route: "/people" };
+    const previous = fetcher.getMockImplementation()!;
+    fetcher.mockImplementation((path: string, ...args: unknown[]) => path.endsWith("navigation/resolve")
+      ? Promise.resolve(Response.json({ available: true, surface: next, state: "running" })) : previous(path, ...args));
+    f.send({ ...f.offer, type: "hosty:ui:navigate", requestId: createPresentationRequestId(), entryKey: "people" });
+    await vi.waitFor(() => expect(navigate).toHaveBeenCalledOnce());
+    if (boundary === "inactive" || boundary === "renewed") h.setActive(false);
+    if (boundary === "renewed") { h.setActive(true); await h.refresh(); }
+    if (boundary === "closed-source") f.release();
+    if (boundary === "reconnected") {
+      f.send({ type: "hosty:ui:probe", childNonce: createPresentationRequestId(), versions: [1], capabilities: ["ui.composition.v1"] });
+      const offer = f.post.mock.calls.filter(([message]) => message.type === "hosty:ui:offer").at(-1)![0];
+      f.send({ ...offer, type: "hosty:ui:accept", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: panel.appId, installationId: panel.installationId });
+    }
+    finish(); await new Promise(resolve => setTimeout(resolve, 0));
+    expect(h.getSnapshot().tools[0]!.resolved.surface).toEqual(resolved.surface);
+    expect(h.getSnapshot().tools[0]!.currentRoute).toBe(target.route);
+    expect(f.post.mock.calls.some(([message]) => message.type === "hosty:ui:action-result" && message.result.status === "accepted")).toBe(false);
+  });
   it.each(["valid", "origin", "endpoint", "policy", "installation", "unavailable", "stale-route", "closed-source"])(
     "validates local manifest route roots before readiness: %s", async outcome => {
       const h = await start(), opened = await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });

@@ -445,8 +445,11 @@ export class UiHost implements UiClient {
       const target: UiNavigationTarget = { appId: frame.surface.appId, installationId: frame.surface.installationId, entryKey };
       const resolved = await uiRequest<UiResolvedNavigation>(this.path, "navigation/resolve", target); check();
       if (!resolved.available || !resolved.surface) throw new UiError(resolved.state, "This page is unavailable.");
-      if (frame.view.navigate) await frame.view.navigate(resolved.surface);
-      else {
+      if (frame.view.navigate) {
+        const navigation = frame.view.navigate(resolved.surface);
+        if (navigation) await navigation;
+        check();
+      } else {
         this.forgetFrameRequests(frame); frame.onConnection?.(false);
         frame.surface = { ...resolved.surface, panelId: frame.surface.panelId };
         frame.connected = false; frame.actor = null; frame.nonce = null; frame.generation = createPresentationRequestId();

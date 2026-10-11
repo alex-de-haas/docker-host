@@ -245,11 +245,15 @@ shell, and this API does not add context to an existing assistant conversation.
   renewed request-ID reuse in both host and embedded clients; retired navigation cannot report success.
   Same-endpoint navigation covers manifest-key reports, delayed readiness, invalid destinations, stale
   validation, source closure, return to the panel root and exact reuse without frame navigation.
+  Delayed custom navigation callbacks cannot update a retained tool after activity changes, source
+  reconnection or closure; synchronous React navigation still updates its surface before replacement.
 - Plans component tests use a real SDK host to close and reopen a finalized discussion through both
   visible actions, retain its conversation target and replay a later uncertain opening without
   repeating the assistant handoff.
 - Overlay integration tests cover focus return to the inner app-content landmark when hiding
   custom, standard and drawer navigation, bypassing the non-focusable authentication wrapper.
+- Shell integration mounts workspace, settings and right-panel frames for the same app against a
+  real SDK host, verifying distinct view IDs and stable frames across rerenders.
 - App and native tests cover explicit launch policy, route synchronization, notification routing
   by presentation ID, focus, responsive geometry and retained drafts. Version and docs checks
   cover all affected artifacts and feature links.
@@ -273,8 +277,8 @@ Verification recorded on 2026-10-11:
 | `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --artifacts-path "$PWD/build/ui-composition" --verbosity quiet` | 3,139 passed; 4 opt-in Docker/VPN integration tests skipped because their fixtures were not enabled |
 | Core build and `UiPanelHttpTests` after the icon-origin fix | Build passed; 31 HTTP tests passed |
 | `npm run core:aot` | Native AOT publish passed for osx-arm64 with no trim/AOT warnings |
-| `npm test --workspace=@hosty-sdk/app` | 592 passed |
-| `npm test` in Shell / Plans / Harness / Marketplace / Workspaces / Demo / Telemetry UI | 191 Node + 238 component / 117 / 536 / 111 / 7 / 4 / 10 passed |
+| `npm test --workspace=@hosty-sdk/app` | 596 passed |
+| `npm test` in Shell / Plans / Harness / Marketplace / Workspaces / Demo / Telemetry UI | 191 Node + 239 component / 117 / 536 / 111 / 7 / 4 / 10 passed |
 | `npm run build --workspace=@hosty-sdk/app` and overlay upgrade contract script | Passed, including optional Next export and unchanged consumer compatibility |
 | `npm run build -- --webpack` in all seven affected web apps | Passed; affected app lint checks passed with no errors |
 | `swift test --scratch-path /tmp/hosty-ui-composition-swift` in `apps/shell-swift/HostyKit` | 183 passed; native launch helper coverage, without a WKWebView runtime session |
