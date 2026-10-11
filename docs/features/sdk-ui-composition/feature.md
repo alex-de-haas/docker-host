@@ -155,7 +155,9 @@ Placement resolvers synchronously choose a registered workspace and optional pre
 from source metadata, target and current presentations. They cannot rewrite the target or bypass
 Core resolution. Selection ordering is reserved before asynchronous work and superseded per
 destination workspace. Collapse or a newer request prevents a late result from stealing selection.
-Closing a source retires its unaccepted requests while preserving accepted shared tools.
+Closing a source retires its unaccepted requests while preserving accepted shared tools. Manifest
+navigation updates the retained presentation and React frame coordinator together, so the new
+document uses its resolved origin and frame policy for messages and access-review requests.
 
 Renderers implement `present`, `focus`, `collapse`, `release` and `showToolPicker`. An accepted
 presentation requires a real attached destination, frame or explicit loading/unavailable state.
@@ -201,7 +203,9 @@ shell, and this API does not add context to an existing assistant conversation.
   pinning, canonical destinations, stable keys, unavailable entries and absolute icon origins.
 - SDK tests cover policy precedence/capture/history, copied legacy storage, immutable models,
   endpoint matching, local routing, old/new peers, generation-bound replay, renderer refusal,
-  exact/new instances, workspace supersession, source closure and retained frame identity.
+  exact/new instances, workspace supersession, source closure and retained frame identity. Cross-endpoint
+  navigation tests verify the updated surface, frame policy, theme, commands and permission-review
+  routing for both app views and retained tools; messages from the previous origin are rejected.
 - App and native tests cover explicit launch policy, route synchronization, notification routing
   by presentation ID, focus, responsive geometry and retained drafts. Version and docs checks
   cover all affected artifacts and feature links.
@@ -225,14 +229,16 @@ Verification recorded on 2026-10-11:
 | `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --artifacts-path "$PWD/build/ui-composition" --verbosity quiet` | 3,139 passed; 4 opt-in Docker/VPN integration tests skipped because their fixtures were not enabled |
 | Core build and `UiPanelHttpTests` after the icon-origin fix | Build passed; 31 HTTP tests passed |
 | `npm run core:aot` | Native AOT publish passed for osx-arm64 with no trim/AOT warnings |
-| `npm test --workspace=@hosty-sdk/app` | 550 passed |
+| `npm test --workspace=@hosty-sdk/app` | 552 passed |
 | `npm test` in Shell / Plans / Harness / Marketplace / Workspaces / Demo / Telemetry UI | 191 Node + 238 component / 114 / 536 / 111 / 7 / 4 / 10 passed |
 | `npm run build --workspace=@hosty-sdk/app` and overlay upgrade contract script | Passed, including optional Next export and unchanged consumer compatibility |
 | `npm run build -- --webpack` in all seven affected web apps | Passed; affected app lint checks passed with no errors |
 | `swift test --scratch-path /tmp/hosty-ui-composition-swift` in `apps/shell-swift/HostyKit` | 183 passed; native launch helper coverage, without a WKWebView runtime session |
 | `node scripts/check-versions.mjs`, `node scripts/docs-index.mjs --check`, `git diff --check` | Passed |
 
-Browser acceptance was repeated for Shell and standalone on the final builds. The test Core and
-its apps were stopped afterward; the operator instance was not used for lifecycle changes.
+Browser acceptance was repeated for Shell and standalone on the implementation builds. The later
+cross-endpoint origin-coordination review fix was verified with two component regressions, the full
+SDK suite and the SDK build; the complete browser matrix was not repeated for that fix. The test
+Core and its apps were stopped afterward; the operator instance was not used for lifecycle changes.
 Core restore reported NU1900 because the NuGet vulnerability feed was unavailable; package restore,
 compilation, tests and native publish completed. This run does not establish a fresh dependency audit.

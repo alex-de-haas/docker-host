@@ -392,10 +392,12 @@ export class UiHost implements UiClient {
       if (frame.view.navigate) await frame.view.navigate(resolved.surface);
       else {
         this.forgetFrameRequests(frame); frame.onConnection?.(false);
-        frame.surface = resolved.surface;
+        frame.surface = { ...resolved.surface, panelId: frame.surface.panelId };
         frame.connected = false; frame.actor = null; frame.nonce = null; frame.generation = createPresentationRequestId();
         frame.element.src = withChromeHints(new URL(resolved.surface.route, resolved.surface.origin).href, frame.chrome);
       }
+      if (frame.view.presentationId) this.update({ tools: this.snapshot.tools.map(tool => tool.presentationId === frame.view.presentationId
+        ? { ...tool, resolved: { ...tool.resolved, surface: resolved.surface }, currentRoute: resolved.surface!.route, readiness: "loading" } : tool) });
     }, frame);
   }
 

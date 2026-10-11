@@ -6,6 +6,7 @@ import { HostyPanelWorkspace, HostyUiRoot, HostyNavigationBoundary, useHostyUiHo
 import { createPresentationRequestId, ui } from "./ui";
 import type { UiHost } from "./ui-host";
 import type { UiBootstrap, UiPanel } from "./ui-types";
+import { HostyAppFrame } from "./ui-frame";
 vi.mock("./browser-auth", () => ({ appFetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
 let root: Root, element: HTMLDivElement, host: UiHost | null;
 let resize: () => void;
@@ -103,6 +104,60 @@ async function connectTool(frame: HTMLIFrameElement, post: ReturnType<typeof vi.
   await act(async () => send(accept));
   return { offer, accept, send };
 }
+it.each([false, true])("keeps frame integrations on the resolved origin after navigation (retained tool: %s)", async retained => {
+  const panel = catalog[0]!, authRequired = vi.fn(), open = vi.spyOn(window, "open").mockReturnValue(null);
+  const initial = { ...panel.panel, endpoint: panel.endpoint, origin: panel.origin!, route: panel.route, framePolicy: policy };
+  const next = { ...initial, origin: "https://other-endpoint.test", endpoint: "backend", route: "/people", framePolicy: { ...policy, microphone: true } };
+  await render("slot");
+  if (retained) await act(async () => { await host!.selectPanel(panel.panel); });
+  const presentationId = host!.getSnapshot().tools[0]?.presentationId;
+  const command = { type: "test:command" };
+  const show = () => root.render(<HostyUiRoot panelLayout="slot"><HostyPanelWorkspace onAuthRequired={authRequired}
+    outbound={retained ? { target: { panel: panel.panel }, presentationId, message: command, nonce: 1 } : null}>
+    <Document />{!retained && <HostyAppFrame surface={{ ...initial }} title="App view" view={{ viewId: "app", workspaceId: "default" }}
+      onAuthRequired={authRequired} outbound={{ message: command, nonce: 1 }} />}
+  </HostyPanelWorkspace></HostyUiRoot>);
+  await act(async () => show());
+  const frame = element.querySelector("iframe")!, parent = frame.parentElement;
+  const send = (data: object, origin: string) => window.dispatchEvent(new MessageEvent("message", { source: frame.contentWindow, origin, data }));
+  const connect = async (origin: string, post: ReturnType<typeof vi.spyOn>) => {
+    await act(async () => send({ type: "hosty:ui:probe", version: 1, versions: [1], childNonce: crypto.randomUUID(), capabilities: ["ui.composition.v1"] }, origin));
+    const offer = post.mock.calls.filter(([message]) => message.type === "hosty:ui:offer").at(-1)![0];
+    await act(async () => send({ ...offer, type: "hosty:ui:accept", coreOrigin: metadata.coreOrigin, userId: metadata.userId,
+      appId: panel.panel.appId, installationId: panel.panel.installationId }, origin));
+    return offer;
+  };
+  const post = vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
+  const offer = await connect(initial.origin, post);
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) => String(args[0]).endsWith("navigation/resolve")
+    ? Response.json({ available: true, surface: next, state: "running" }) : originalFetch(...args));
+  await act(async () => send({ ...offer, type: "hosty:ui:navigate", requestId: createPresentationRequestId(), entryKey: "other" }, initial.origin));
+  await act(async () => show()); // An unrelated parent render must keep the new document and handlers.
+  expect(element.querySelector("iframe")).toBe(frame); expect(frame.parentElement).toBe(parent);
+  expect(new URL(frame.src).origin).toBe(next.origin);
+  expect(frame.getAttribute("allow")).toContain("microphone");
+  if (retained) expect(host!.getSnapshot().tools[0]).toMatchObject({ presentationId, currentRoute: next.route,
+    readiness: "loading", resolved: { surface: next } });
+  const nextPost = vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
+  await act(async () => frame.dispatchEvent(new Event("load")));
+  const nextOffer = await connect(next.origin, nextPost);
+  expect(nextPost).toHaveBeenCalledWith(command, next.origin);
+  expect(nextPost.mock.calls.some(([message, origin]) => message.type === "hosty:shell-theme" && origin === next.origin)).toBe(true);
+  await act(async () => {
+    send({ type: "hosty:request-permission-review" }, initial.origin);
+    send({ type: "hosty:auth-required", appId: panel.panel.appId }, initial.origin);
+  });
+  expect(open).not.toHaveBeenCalled(); expect(authRequired).not.toHaveBeenCalled();
+  await act(async () => {
+    send({ type: "hosty:request-permission-review" }, next.origin);
+    send({ type: "hosty:auth-required", appId: panel.panel.appId }, next.origin);
+    send({ ...nextOffer, type: "hosty:ui:surface-state", route: next.route, state: "ready" }, next.origin);
+  });
+  expect(open).toHaveBeenCalledWith(`https://core.test/install/permissions/${panel.panel.appId}`, "_blank", "noopener,noreferrer");
+  expect(authRequired).toHaveBeenCalledWith(panel.panel.appId);
+  if (retained) expect(host!.getSnapshot().tools[0]!.readiness).toBe("ready");
+});
 it("retains the document and each opened tool across switching, collapse, replay and the drawer breakpoint", async () => {
   await render(); expect(element.querySelectorAll("iframe")).toHaveLength(0);
   const documentDraft = element.querySelector("textarea")!; documentDraft.setSelectionRange(2, 6);
