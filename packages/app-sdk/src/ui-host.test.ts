@@ -471,6 +471,40 @@ describe("panel host authority and replay", () => {
   });
 });
 
+describe("local navigation activity", () => {
+  it.each(["host", "embedded"].flatMap(mode => ["inactive", "disposed", "renewed"].map(boundary => ({ mode, boundary }))))(
+    "rejects delayed $mode navigation after the client is $boundary", async ({ mode, boundary }) => {
+      const entries = ["first", "second"].map(key => ({ key, route: `/${key}`, endpoint: "web", origin: window.location.origin,
+        label: key, icon: null, available: true, state: "running", standaloneHref: "https://core.test/open" }));
+      fetcher.mockImplementation(async (path: string) => Response.json(path.endsWith("navigation")
+        ? { appId: "host", installationId: "host-1", revision: "r1", entries } : path.includes("bootstrap") ? metadata : { panels }));
+      if (mode === "embedded") {
+        const parent = { postMessage: vi.fn() };
+        Object.defineProperty(window, "parent", { configurable: true, value: parent });
+        Object.defineProperty(window, "top", { configurable: true, value: parent });
+      }
+      const client = mode === "host" ? await start() : (child = new EmbeddedUiClient("/api/hosty/ui"));
+      let finish!: () => void;
+      const navigate = vi.fn(async () => {}).mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+      client.composition.attachRouter({ endpoint: "web", getRoute: () => "/", navigate, subscribe: () => () => {} });
+      await client.composition.refreshNavigation();
+      const requestId = createPresentationRequestId(), pending = client.navigate("first", { requestId });
+      await vi.waitFor(() => expect(navigate).toHaveBeenCalledOnce());
+      if (boundary === "disposed") client.dispose(); else client.setActive(false);
+      if (boundary === "renewed") {
+        client.setActive(true); if (mode === "host") await host!.refresh();
+        await client.composition.refreshNavigation();
+        expect(await client.navigate("second", { requestId })).toMatchObject({ status: "accepted" });
+      }
+      finish();
+      expect(await pending).toMatchObject({ status: "blocked", code: "activity_required", requestId });
+      if (boundary === "renewed") {
+        expect(await client.navigate("second", { requestId })).toMatchObject({ status: "accepted" });
+        expect(navigate).toHaveBeenCalledTimes(2);
+      }
+    });
+});
+
 describe("embedded panel discovery", () => {
   function begin(nested = false) {
     const parent = { postMessage: vi.fn() };

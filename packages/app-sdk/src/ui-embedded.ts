@@ -246,7 +246,9 @@ export class EmbeddedUiClient implements UiClient {
       try {
         if (!this.active || this.disposed || nonce !== this.nonce) throw new UiError("activity_required", "Sign in to navigate.");
         if (options.signal?.aborted) return { status: "uncertain", requestId: id, code: "presentation_unknown" };
-        await this.composition.navigateLocal(entry); return { status: "accepted", requestId: id };
+        await this.composition.navigateLocal(entry);
+        if (!this.active || this.disposed || nonce !== this.nonce) throw new UiError("activity_required", "Sign in to navigate.");
+        return { status: "accepted", requestId: id };
       } catch (error) { return failure(id, error) as UiActionResult; }
     });
     const action = { key: entryKey, result: operation, pending: true };

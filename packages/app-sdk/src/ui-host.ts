@@ -414,7 +414,7 @@ export class UiHost implements UiClient {
   navigate = (entryKey: string, options: UiActionOptions): Promise<UiActionResult> => this.action("navigate", entryKey, options, async check => {
     const catalog = this.getNavigation().catalog, entry = catalog?.entries.find(e => e.key === entryKey);
     if (!entry || !entry.route) throw new UiError("destination_changed", "Refresh this app's navigation.");
-    if (await this.composition.navigateLocal(entry)) return;
+    if (await this.composition.navigateLocal(entry)) { check(); return; }
     const resolved = await uiRequest<UiResolvedNavigation>(this.path, "navigation/resolve", { appId: catalog!.appId, installationId: catalog!.installationId, entryKey });
     check();
     if (!resolved.available || !resolved.surface) throw new UiError(resolved.state, "This page is unavailable.");
