@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-01
+updated: 2026-10-10
 summary: Apps declare where their pages belong, such as settings, panels or navigation, and Shell places them.
 components: [apps/shell, apps/core]
 ---
@@ -34,10 +34,16 @@ where they belong. The fields stay per-kind rather than collapsing into one `ui.
 room beside them for kinds not built yet.
 
 **Endpoint, path and label validation is stricter for system apps.** For `role: system` the endpoint must exist and be
-explicit, paths absolute, every panel labelled and labels unique within the app — its pages render as
+explicit, paths absolute and every panel labelled — its pages render as
 administrator Shell surfaces, so it must not lean on the permissive fallbacks ordinary `app.0.1`
 manifests keep for compatibility. An ordinary app keeps those fallbacks, so Shell supplies a label
 for a panel that declared none.
+
+Panels optionally declare a stable `id` (lowercase letter followed by up to 63 lowercase letters,
+digits or hyphens). IDs are unique within the app and cannot start with the reserved `legacy-` prefix.
+Without an ID, Core derives one from the effective endpoint and normalized route; identical legacy
+declarations coalesce. Labels, icons and array order do not identify a panel. The SDK addresses a
+panel by app ID, installation identity and panel ID; reinstalling invalidates old references.
 
 New installs and updates require a non-empty `ui.panels[].icon` Lucide name in both
 ordinary and system apps. Settings surfaces do not require one. Core carries the icon
@@ -102,74 +108,40 @@ The navigation and 48 px top strip share the Shell's background without an enclo
 The left navigation toggle and page title sit together above the workspace, aligned to its
 left edge. The brand occupies the navigation width and shows only its mark in compact mode.
 Notifications, theme selection and the right panel toggle stay at the right edge.
-The workspace and optional right panel are separate rounded, bordered surfaces, with 12 px
-outer spacing beside navigation, at the right edge, and along the bottom. The right tool
-surface contains the selected body on its left and a 48 px icon rail at its right edge. Both
-share the rounded border and frame background, including in dark mode. The selected
-icon has a muted fill. Shell adds no title header; the app owns the full body height,
-while tooltips and accessible labels identify each panel. Compact left
-navigation retains its own icon rail. Embedded content is clipped at rounded corners.
+Shell places the shared SDK workspace inside its own navigation and top strip. The document and
+right tool body share a resizable area with a 48 px rail; a tool header provides its title,
+**Open separately** and **Return to document**. The same component supplies standalone panels.
+See [SDK Panel System](../sdk-panel-system/feature.md) for the host protocol and [panel resizing](../shell-panel-resize/feature.md).
 
-**The right panel** holds `ui.panels` tools, in declared order. With no declaring apps,
-the whole surface is absent. Otherwise its icon rail remains visible when the body is
-collapsed. Clicking any icon while collapsed opens its panel; clicking the selected
-icon while expanded collapses the body; clicking another selects and opens that tool.
-The top-strip toggle retains the selection, and Assistant shortcuts, deep links and
-Ask actions select/open Assistant as before. Body visibility uses the existing cookie.
+**The right panel** lists actor-accessible `ui.panels` in catalog order. The rail remains visible
+when the body is collapsed. Selecting another tool retains every previously opened iframe in this
+window, hidden and inert, while unopened tools are not mounted. Central navigation, Shell-owned
+pages, collapse and tool switches preserve the selected conversation and draft. Removed access,
+installation replacement and frame-policy revocation invalidate affected tools rather than silently
+selecting a replacement. The top-strip toggle and assistant shortcut use the same host.
 
-The rail scrolls vertically. Tooltips name the app and panel, buttons expose their
-open/hidden state, and app-level attention remains visible beside the icon. Up/Down
-and Home/End move focus without activating a tool; Enter/Space activates it. Hidden
-content is inert and cannot receive keyboard focus. A collapsed rail does not mint
-credentials or mount an unopened iframe. Once opened, the selected iframe stays
-mounted across collapse/expand, retaining unsent input; switching still uses only one
-selected iframe. Runtime disappearance and authentication recovery still apply while hidden.
+Each panel has an explicit app-local ID or a Core-derived legacy ID. Selection uses app ID,
+installation ID and panel ID, never label or array index. Labels/icons/reordering do not change
+explicit identity. An ID-less endpoint/route change does; identical legacy declarations coalesce.
+Core supplies typed provider surfaces so navigation entries never become implicit side panels.
 
-A [resizable gap](../shell-panel-resize/feature.md) separates the surfaces when the
-body is expanded, with a remembered body width, keyboard controls and double-click reset.
+Tooltips name app and panel. Buttons expose expanded state and attention; Up/Down and Home/End
+move rail focus without activating a tool. The shared workspace is a dock at widths of at least
+900 px and a dismissible modal drawer below that boundary. It retains the same frame tree across
+that change and restores document access/focus on dismissal.
 
-Tabs are keyed rather than indexed, because stopping or removing an app reorders the strip and an
-index would then point at somebody else's tool. A stopped app **keeps** its tab, dimmed and saying
-why, with a start action offered only to a user who can actually start apps — panels are deliberately
-not administrator-only, but Core's start route is, so offering everyone the button would promise
-something guaranteed to fail: a surface that vanished with its app would read as uninstalled, and the
-operator would go looking for the app rather than starting it. If the chosen tab's app disappears,
-the strip falls back to the first rather than rendering blank.
-
-Whether a surface can be embedded is decided by the app's runtime state, not by whether Core handed
-Shell a URL. An endpoint keeps its reserved port while its app is down, so Core projects a
-well-formed URL for a stopped app that nothing answers; embedding it renders the browser's own
-connection-error page inside the tab, and the app then looks broken rather than stopped. The strip
-itself carries the state as dimming and a tooltip only: a glyph beside the label was tried and read
-as decoration rather than as "stopped", since no shape in Shell's vocabulary means it. Dimming
-reaches nobody using a screen reader, so an unavailable tab says so in text for that reader alone.
-
-Whether a tab leads anywhere and *why it does not* are kept as two questions. A tab dims on the URL
-alone — the rule above has already folded the runtime state into it — while the runtime state picks
-only the wording, so a tab can never dim for one reason and explain itself with another. The two
-agree for a stopped app; where they differ, an app running with no address resolved yet is told
-exactly that, and is not offered a Start it does not need.
-
-A third state sits between the two: while Core reports `starting` or `stopping`, a verb is already in
-flight, so the surface reports progress and offers nothing. "Not running" admits that state too, and
-reading it as "stopped" told the operator to start an app that was already starting, behind a button
-whose click would have raced it.
-
-Readiness is the softer question on top ([App Readiness](../app-readiness/feature.md)): a surface
-whose service is alive has a URL, and *opens* when that service's reading is `healthy` (or nothing
-probes it, or Core has no reading for it — an older Core must not hold a tab). While the reading is
-`starting` the tab shows progress; when it is
-`degraded` the tab says readiness is not confirmed and offers **Open anyway**, since an expired budget
-proves nothing about the app. Readiness gates opening only: a frame already on screen survives
-`healthy → degraded` — a transient probe failure must not destroy what the operator has typed — and is
-unmounted only when its own service stops running or a lifecycle verb takes the app down. Decided per
-service, so a dead sibling leaves the living service's tab open while the app reads `unknown`. No
-authentication starts for a tab that has not opened.
+Catalog and target resolution apply current user assignments and reviewed host authority. App
+startup is offered only through Shell's authorized lifecycle callback. Stopped apps keep their
+catalog entry and explain their state. A working service remains usable during a sibling outage;
+a failing probe is advisory and the panel identifies degraded readiness. Temporary probe failures
+retain mounted drafts. Protocol placement and domain readiness are separate: a provider reports
+its exact requested route after loading; an older/refused frame remains unreported with explicit
+separate-open recovery. A frame's app-owned sign-in is not a delegated-token exchange.
 
 **The top strip** owns what belongs to neither rail: a toggle for each rail, and the name
 of whatever fills the content area — an app's page, or the Shell page — plus the notification bell
 and the theme control, both relocated here from the sidebar footer. The right-rail toggle is absent
-while the rail does not exist. Apps contribute nothing to the strip; an app that could write there
+when no app contributes a panel. Apps contribute nothing to the strip; an app that could write there
 would be writing outside its frame.
 
 Navigation collapses and expands through its top-strip toggle, retaining the persisted

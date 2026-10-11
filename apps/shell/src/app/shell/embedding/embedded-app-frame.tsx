@@ -1,329 +1,36 @@
 "use client";
 
-import { mcpReviewRequest } from "./mcp-review";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ExternalLink, ShieldAlert } from "lucide-react";
-import { ASK_ASSISTANT_TYPE, DELEGATED_TOKEN_TYPE } from "@hosty-sdk/app";
-import { createShellThemeMessage } from "@hosty-sdk/app/theme";
-import {
-  parseActiveFramePermissionReview,
-  parseActiveFrameAskAssistant,
-  parseActiveFrameAttention,
-  parseActiveFrameDelegatedTokenRequest,
-} from "@hosty-sdk/app/embedder";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { HostyAppFrame } from "@hosty-sdk/app/ui/react";
+import { useShellState } from "../shell-context";
 import type { HostyResolvedTheme, HostyThemePreference } from "../types";
-import { parseActiveFrameAuthRequired } from "../workspace/auth-intent";
 import type { DelegatedTokenGrant } from "../workspace/delegated-token-intent";
-import { getEmbedOrigin, isInsecureEmbedBlocked, isLoopbackEmbedHost } from "../workspace/insecure-embed";
-import { permissionReviewUrl } from "@hosty-sdk/app/permissions";
-import { useShellActions } from "../shell-context";
-import { appFrameSandbox } from "./frame-sandbox";
 
-// Every place Shell embeds an app's page. There are three now — the workspace, a Settings tab, and a
-// right-panel tab (docs/features/app-ui-surfaces/plan.md) — and they share this one component rather
-// than a copy each.
-//
-// That is the whole point of extracting it. The delegated-token handshake used to live only in the
-// workspace, so a page embedded anywhere else hung waiting for an answer that no listener was going
-// to give; the failure looked like a broken app, not like a missing embedder. A second copy would
-// have been a second thing to forget.
-
-export function EmbeddedAppFrame({
-  src,
-  title,
-  frameKey,
-  appId,
-  grantedCorePermissions,
-  theme,
-  themePreference,
-  className,
-  onAuthRequired,
-  onDelegatedTokenRequest,
-  onMessage,
-  onAskAssistant,
-  outbound,
-  onAttention,
-}: {
-  src: string;
-  title: string;
-  /** Remounts the iframe when it changes, so a navigation is a fresh document rather than a reused one. */
-  frameKey?: string;
-  appId: string;
+/** Shell supplies Core-projected identity; all frame coordination belongs to the SDK. */
+export function EmbeddedAppFrame(props: {
+  src: string; title: string; frameKey?: string; appId: string;
+  standaloneHref?: string | null;
   grantedCorePermissions?: readonly string[] | null;
-  theme: HostyResolvedTheme;
-  themePreference: HostyThemePreference;
-  className?: string;
-  /** Called when the app reports its Hosty session expired. Recovery is universal, so every context passes it. */
+  theme: HostyResolvedTheme; themePreference: HostyThemePreference; className?: string;
   onAuthRequired?: (appId: string) => void;
-  /**
-   * Mints a delegated token for this app, or undefined to answer nothing.
-   *
-   * Undefined is a real answer, not an omission: a delegated token is a user-scoped credential, and
-   * handing one to whatever the operator installed is a different decision from embedding it. A
-   * context that passes nothing attaches no listener, so a frame that asks is simply never answered.
-   */
   onDelegatedTokenRequest?: (refresh: boolean) => Promise<DelegatedTokenGrant>;
-  /** Extra verified-sender message handling for one context. */
-  onMessage?: (event: MessageEvent, frameWindow: Window | null) => void;
-  /**
-   * The app asked for its text to be put in the operator's assistant draft.
-   *
-   * Wired for every embedded app, unlike the delegated-token responder: this hands the app nothing
-   * — it costs the operator a glance, and the operator is the one who decides whether to send.
-   */
+  onMessage?: (event: MessageEvent, frame: Window | null) => void;
   onAskAssistant?: (text: string, sourceAppId: string) => void;
-  /**
-   * A message to hand the embedded page, delivered when `nonce` changes.
-   *
-   * Posting is done here rather than by the caller because the *target origin* is the part that must
-   * not be got wrong: a message posted to `*` is readable by whatever document happens to occupy the
-   * frame. The embedder already resolves the frame's own origin for the token handshake, so this
-   * reuses it. The nonce is what makes a repeat explicit — the same text asked twice is two asks.
-   */
   outbound?: { message: unknown; nonce: number } | null;
-  /**
-   * How many of this frame's sessions are waiting for the operator.
-   *
-   * Reported by the frame rather than polled, so the badge and the list behind it cannot disagree.
-   * Undefined attaches no listener, which is the right answer for every frame but the assistant's.
-   */
   onAttention?: (count: number) => void;
 }) {
-  const { coreOrigin } = useShellActions();
-  const [reviewUrl, setReviewUrl] = useState<string | null>(null);
-  const sandbox = appFrameSandbox(grantedCorePermissions);
-  const allow = grantedCorePermissions?.includes("providers.speech-to-text") ? "clipboard-write; microphone 'src'" : "clipboard-write";
-  const documentKey = `${frameKey ?? ""}:${src}:${sandbox}:${allow}`;
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [loadedDocument, setLoadedDocument] = useState(documentKey);
-
-  // Reset while rendering rather than in an effect: https://react.dev/learn/you-might-not-need-an-effect
-  if (loadedDocument !== documentKey) {
-    setLoadedDocument(documentKey);
-    setLoaded(false);
-    setReviewUrl(null);
-  }
-
-  useEffect(() => {
-    const review = (event: MessageEvent) => {
-      const trustedApp = parseActiveFramePermissionReview(event, iframeRef.current?.contentWindow, src, appId);
-      const mcp = mcpReviewRequest(event, iframeRef.current?.contentWindow, src, appId);
-      if (!trustedApp && !mcp) return;
-      const url = mcp ? new URL(`/install/agents/${encodeURIComponent(mcp.appId)}/${encodeURIComponent(mcp.targetAppId)}`, coreOrigin).href : permissionReviewUrl(coreOrigin, trustedApp!);
-      // Some browsers do not carry user activation across postMessage; keep a clickable fallback.
-      setReviewUrl(url);
-      window.open(url, "_blank", "noopener,noreferrer");
-    };
-    window.addEventListener("message", review);
-    return () => window.removeEventListener("message", review);
-  }, [src, appId, coreOrigin]);
-
-  const postTheme = useCallback(() => {
-    const frame = iframeRef.current;
-    if (!frame?.contentWindow) {
-      return;
-    }
-
-    try {
-      frame.contentWindow.postMessage(createShellThemeMessage(theme, themePreference), getPostMessageTargetOrigin(src));
-    } catch {
-      // A frame that has navigated away or is mid-teardown is not an error worth surfacing.
-    }
-  }, [src, theme, themePreference]);
-
-  // Until load, the initial about:blank document inherits Shell's origin. Posting to the app's
-  // origin then produces a target-origin error; deliver the theme after the app document loads.
-  useEffect(() => {
-    if (loaded && loadedDocument === documentKey) postTheme();
-  }, [postTheme, loaded, loadedDocument, documentKey]);
-
-  useEffect(() => {
-    if (!onAuthRequired) {
-      return;
-    }
-
-    const handleMessage = (event: MessageEvent) => {
-      if (parseActiveFrameAuthRequired(event, iframeRef.current?.contentWindow, src, appId)) {
-        onAuthRequired(appId);
-      }
-    };
-
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [onAuthRequired, src, appId]);
-
-  useEffect(() => {
-    if (!onAskAssistant) {
-      return;
-    }
-
-    const handleMessage = (event: MessageEvent) => {
-      if (onAttention) {
-        const count = parseActiveFrameAttention(event, iframeRef.current?.contentWindow, src);
-        if (count !== null) {
-          onAttention(count);
-          return;
-        }
-      }
-
-      const intent = parseActiveFrameAskAssistant(event, iframeRef.current?.contentWindow, src);
-      if (intent) {
-        onAskAssistant(intent.text, appId);
-        return;
-      }
-
-      // Named and dropped, the way the token handshake does: a message that looks like an ask but
-      // fails the sender checks is the interesting case, and silence would leave an app author
-      // debugging a button that does nothing.
-      const data = event.data as { type?: unknown } | null;
-      if (data?.type === ASK_ASSISTANT_TYPE && event.source === iframeRef.current?.contentWindow) {
-        console.warn(`Ignored a ${ASK_ASSISTANT_TYPE} from an unexpected origin: ${event.origin}`);
-      }
-    };
-
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [onAskAssistant, onAttention, src, appId]);
-
-  useEffect(() => {
-    if (!onMessage) {
-      return;
-    }
-
-    const handleMessage = (event: MessageEvent) => onMessage(event, iframeRef.current?.contentWindow ?? null);
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [onMessage]);
-
-  // A layout effect, unlike every other listener here: the embedded page asks for its token from an
-  // inline script, so the request can arrive as soon as the frame's document runs. Passive effects
-  // flush after paint, which leaves a window where the only request would be dropped; layout effects
-  // run in the same task as the DOM mutation that inserts the iframe, so the listener is attached
-  // before the browser can dispatch anything from it. (The app half retries as well — an embedder
-  // that attaches late is not something the app can verify.)
-  useLayoutEffect(() => {
-    if (!onDelegatedTokenRequest) {
-      return;
-    }
-
-    const handleMessage = (event: MessageEvent) => {
-      const frameWindow = iframeRef.current?.contentWindow;
-      const intent = parseActiveFrameDelegatedTokenRequest(event, frameWindow, src);
-      if (!intent) {
-        return;
-      }
-
-      void (async () => {
-        try {
-          const grant = await onDelegatedTokenRequest(intent.refresh);
-          // The token is a credential, so it goes to the frame's own origin — never "*" — and only
-          // if that frame is still the one that asked: a mint is a round trip to Core, and the
-          // context may have navigated to another app in the meantime.
-          if (iframeRef.current?.contentWindow !== frameWindow) {
-            return;
-          }
-          frameWindow?.postMessage(
-            { type: DELEGATED_TOKEN_TYPE, token: grant.token, expiresAt: grant.expiresAt },
-            getPostMessageTargetOrigin(src),
-          );
-        } catch {
-          // Staying silent is the honest answer: Shell has no surface here, and every reason a mint
-          // fails (Core unreachable, the operator is not an administrator) is one the page states
-          // better itself when its own request times out.
-        }
-      })();
-    };
-
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [onDelegatedTokenRequest, src]);
-
-  // Delivered once the frame has loaded: a page that has not run yet has no listener attached, and a
-  // message posted into it is dropped with no trace. Keyed on the nonce so nothing is re-sent when
-  // the component re-renders for an unrelated reason.
-  const outboundNonce = outbound?.nonce ?? 0;
-  const outboundMessage = outbound?.message;
-  useEffect(() => {
-    if (!outboundNonce || !loaded || outboundMessage === undefined) {
-      return;
-    }
-    iframeRef.current?.contentWindow?.postMessage(outboundMessage, getPostMessageTargetOrigin(src));
-  }, [loaded, outboundMessage, outboundNonce, src]);
-
-  const handleLoad = useCallback(() => setLoaded(true), []);
-  const currentFrameLoaded = loaded && loadedDocument === documentKey;
-
-  // Read through useSyncExternalStore so a server render stays hydration-safe: the server snapshot
-  // reports "http:" (never blocked), and a client mount reads the real protocol on its first render.
-  const pageProtocol = useSyncExternalStore(noopSubscribe, readPageProtocol, readServerPageProtocol);
-  if (isInsecureEmbedBlocked(pageProtocol, src)) {
-    return <BlockedInsecureEmbed src={src} title={title} />;
-  }
-
-  return (
-    <>
-    {reviewUrl && <a className="absolute right-4 top-4 z-50 rounded border bg-background p-3 text-sm underline" href={reviewUrl} target="_blank" rel="noopener noreferrer">Review access in Core</a>}
-    <iframe
-      ref={iframeRef}
-      key={documentKey}
-      className={cn("hosty-app-frame transition-opacity duration-100", currentFrameLoaded ? "opacity-100" : "opacity-0", className)}
-      title={title}
-      src={src}
-      sandbox={sandbox}
-      allow={allow}
-      style={{ colorScheme: theme }}
-      onLoad={handleLoad}
-    />
-    </>
-  );
-}
-
-const noopSubscribe = () => () => {};
-const readPageProtocol = () => window.location.protocol;
-const readServerPageProtocol = () => "http:";
-
-// Rendered instead of the iframe when embedding is impossible (https Shell, http app URL). The
-// browser would block the frame as mixed content without firing load or error, leaving a blank panel
-// with no hint at the cause — this states the cause and the fix.
-function BlockedInsecureEmbed({ src, title }: { src: string; title: string }) {
-  const origin = getEmbedOrigin(src);
-  return (
-    <div className="flex h-full w-full items-center justify-center bg-background px-6">
-      <div className="max-w-lg rounded-lg border bg-card p-6 text-center">
-        <ShieldAlert className="mx-auto mb-3 h-6 w-6 text-amber-600" />
-        <div className="font-medium">{title} can&apos;t be embedded over HTTPS</div>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Shell is open at an https:// address, but this app publishes its UI at{" "}
-          <code className="rounded bg-muted px-1 py-0.5 text-xs">{origin}</code> — plain http. Browsers
-          refuse to embed insecure content in a secure page, so the frame would stay blank.
-        </p>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Give the app a public HTTPS origin: set its <code className="rounded bg-muted px-1 py-0.5 text-xs">HOSTY_PUBLIC_ORIGIN_…</code>{" "}
-          app setting, or enable managed ingress so Core derives one, then restart the app.
-        </p>
-        <Button asChild variant="outline" size="sm" className="mt-4">
-          <a href={src} target="_blank" rel="noreferrer">
-            <ExternalLink /> Open in a new tab
-          </a>
-        </Button>
-        {isLoopbackEmbedHost(src) && (
-          <p className="mt-3 text-xs text-muted-foreground">
-            {origin} is a loopback address, so it is only reachable from a browser running on the Hosty
-            host itself.
-          </p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function getPostMessageTargetOrigin(src: string) {
-  try {
-    return new URL(src, window.location.origin).origin;
-  } catch {
-    return window.location.origin;
-  }
+  const { state } = useShellState();
+  const app = state.apps.find(item => item.id === props.appId);
+  if (!app) return null;
+  const url = new URL(props.src);
+  for (const key of ["hosty_launch", "hosty_theme", "hosty_theme_preference"]) url.searchParams.delete(key);
+  const candidates = [...(app.navigation ?? []), ...(app.panelSurfaces ?? []), ...(app.settingsSurface ? [app.settingsSurface] : []),
+    { endpoint: app.entryEndpoint, embeddedUrl: app.embeddedUrl }];
+  const endpoint = candidates.find(item => item.embeddedUrl && new URL(item.embeddedUrl).origin === url.origin)?.endpoint ?? app.entryEndpoint;
+  const surface = { appId: app.id, installationId: app.installationId ?? "", endpoint: endpoint ?? "",
+    origin: url.origin, route: url.pathname + url.search + url.hash,
+    framePolicy: app.framePolicy ?? {
+      microphone: props.grantedCorePermissions?.includes("providers.speech-to-text") ?? false,
+      popupEscape: props.grantedCorePermissions?.includes("apps.install") ?? false,
+    } };
+  return <HostyAppFrame key={JSON.stringify([props.frameKey, props.src, surface])} {...props} surface={surface} />;
 }

@@ -86,6 +86,9 @@ public sealed class ProviderHttpTests
         Assert.Equal("http://127.0.0.1:3456/api/assistant/v1", provider.GetProperty("url").GetString());
         var panel = provider.GetProperty("uiSurfaces").EnumerateArray().Single(surface => surface.GetProperty("path").GetString() == "/assistant");
         Assert.Equal("web", panel.GetProperty("endpoint").GetString());
+        Assert.Equal("panel", panel.GetProperty("kind").GetString());
+        Assert.StartsWith("legacy-", panel.GetProperty("panelId").GetString());
+        Assert.Equal(target.InstalledAt.ToString("O"), provider.GetProperty("installationId").GetString());
         var browser = new Uri(panel.GetProperty("url").GetString()!);
         Assert.EndsWith(".hosty.localhost", browser.Host);
         Assert.Equal(4567, browser.Port);

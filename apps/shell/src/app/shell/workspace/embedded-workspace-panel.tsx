@@ -30,6 +30,7 @@ export function EmbeddedWorkspacePanel({
     <div className="relative h-full w-full overflow-hidden bg-background">
       <EmbeddedAppFrame
         src={workspace.src}
+        standaloneHref={workspace.externalUrl}
         title={`${workspace.title}: ${workspace.pageLabel}`}
         frameKey={`${workspace.appId}:${workspace.path}:${workspace.src}`}
         appId={workspace.appId}

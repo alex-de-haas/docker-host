@@ -6,6 +6,31 @@ namespace Haas.Hosty.Core.Tests;
 public class AppUiSurfaceContractTests
 {
     [Fact]
+    public void ExplicitPanelIdentitySurvivesPresentationChanges()
+    {
+        var first = new AppSurfaceContract("/chat", "web", "Assistant", "bot", "assistant");
+        var changed = first with { Path = "/conversation", Label = "Chat", Icon = "message-circle" };
+        Assert.Equal("assistant", PanelIdentity.Resolve(first, "web"));
+        Assert.Equal("assistant", PanelIdentity.Resolve(changed, "web"));
+        var ui = AppUiContract.FromManifest(new RuntimeAppUiManifest {
+            Panels = [new() { Id = "assistant", Path = "/chat", Label = "Chat" }],
+        });
+        Assert.Equal("assistant", Assert.Single(ui!.Panels!).Id);
+    }
+
+    [Fact]
+    public void LegacyIdentityUsesEndpointAndFullRouteButNotPresentation()
+    {
+        var panel = new AppSurfaceContract("/panel?mode=chat#draft", "web", "Chat", "bot");
+        var id = PanelIdentity.Resolve(panel, "web");
+        Assert.StartsWith("legacy-", id);
+        Assert.Equal(id, PanelIdentity.Resolve(panel with { Label = "New name", Icon = "star" }, "web"));
+        Assert.NotEqual(id, PanelIdentity.Resolve(panel, "other"));
+        Assert.NotEqual(id, PanelIdentity.Resolve(panel with { Path = "/panel?mode=chat#other" }, "web"));
+        Assert.NotEqual(id, PanelIdentity.Resolve(panel with { Id = "chat" }, "web"));
+    }
+
+    [Fact]
     public void AnAppDeclaringNeitherSurfaceProjectsNeither()
     {
         // The common case, and the one that must not regress: every app that existed before this
@@ -98,8 +123,8 @@ public class AppUiSurfaceContractTests
         });
 
         Assert.Equal(["Assistant", "Notes"], ui!.Panels!.Select(panel => panel.Label));
-        Assert.Equal(["/chat", "/notes"], ui.Panels.Select(panel => panel.Path));
+        Assert.Equal(["/chat", "/notes"], ui.Panels!.Select(panel => panel.Path));
         // Both inherit the entrypoint endpoint, like any other surface that names none.
-        Assert.All(ui.Panels, panel => Assert.Equal("http", panel.EndpointKey));
+        Assert.All(ui.Panels!, panel => Assert.Equal("http", panel.EndpointKey));
     }
 }

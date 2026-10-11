@@ -23,20 +23,24 @@ stop a backend, delete sessions or change which assistant handles Shell requests
 
 ## Shared Panel-System Coordination
 
-Owner direction, 2026-10-10: the [SDK panel system](../sdk-panel-system/plan.md) owns the shared
+Owner direction, 2026-10-10: the [SDK panel system](../sdk-panel-system/feature.md) owns the shared
 rail/host and the first Plans → assistant scenario in Shell and standalone. This plan continues to
 own hide/restore preferences and hidden-target behavior; it does not own a second panel renderer.
 Implement visibility through that host's catalog/presentation hooks if it ships first. Coordinate
 D1 with its `{ appId, installationId, panelId }` reference rather than creating another label/index
-key. The SDK plan now specifies optional explicit `ui.panels[].id`, deterministic legacy IDs and
-unambiguous installation-local aliases. Consume that identity/migration contract here; do not
-duplicate its Core implementation. Explicit IDs survive label/path changes, while reinstallation
-resets the installation scope. Hide/restore storage and the hidden-target policy still belong here.
+key. The SDK contract provides optional explicit `ui.panels[].id` and deterministic legacy IDs, with
+no persisted alias map. Adding an explicit ID to an ID-less panel creates a new identity. Consume
+that contract here; do not duplicate its Core implementation or infer preference transfer. Explicit
+IDs survive label/path changes, while reinstallation resets the installation scope. Current Shell
+does not persist its selected index, so there is no old selection-cookie migration. Hide/restore
+storage and the hidden-target policy still belong here.
 
 This plan's original Shell preference scope remains unchanged. Whether standalone hosts share or
 have separate visibility preferences needs an explicit decision before widening that scope; the
 SDK host alone does not make local Shell preferences global. Hiding a tool must never cause an
 explicit finalized handoff to be recreated at another provider. D3 owns the reveal/restore policy.
+The SDK's standalone opened-tool rail and Add tool chooser use window-local state, with no persisted
+hide/pin setting. That scope does not require this plan's cross-host preference decision first.
 
 ## Deliverables
 

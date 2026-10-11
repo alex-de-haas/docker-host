@@ -748,7 +748,8 @@ internal sealed record AppUiContract(
                 Path: NormalizePath(surface.Path),
                 EndpointKey: FirstNonBlank(surface.Endpoint, surface.PortKey, entry.EndpointKey),
                 Label: NullIfBlank(surface.Label),
-                Icon: NullIfBlank(surface.Icon));
+                Icon: NullIfBlank(surface.Icon),
+                Id: surface.Id);
 
     // Raw declared entrypoint (endpoint key + un-normalized path) shared with the strict system-app
     // manifest validation, which must see exactly what the author wrote before any normalization.
@@ -806,7 +807,7 @@ internal sealed record AppUiContract(
 internal sealed record AppNavigationContract(string Label, string Path, string? EndpointKey, string? IconAsset = null);
 
 /// <summary>A settings or panel surface as declared, before its endpoint is resolved to a URL.</summary>
-internal sealed record AppSurfaceContract(string Path, string? EndpointKey, string? Label, string? Icon = null);
+internal sealed record AppSurfaceContract(string Path, string? EndpointKey, string? Label, string? Icon = null, string? Id = null);
 
 // Normalized platform-interface declarations (top-level `interfaces`), denormalized onto the app
 // record and projected onto the summary so clients discover interface providers from the registry
@@ -1093,7 +1094,9 @@ internal sealed record AppSummary(
     AppPermissionObservation? PermissionState = null,
     // Effective launch requirements, derived by Core from the installed contract and current
     // values/shared mounts. Presence only; secret values and host paths never appear here.
-    AppConfigurationReadiness? ConfigurationReadiness = null)
+    AppConfigurationReadiness? ConfigurationReadiness = null,
+    string? InstallationId = null,
+    UiFramePolicy? FramePolicy = null)
 {
     public static AppSummary From(
         AppRecord app,
@@ -1141,7 +1144,12 @@ internal sealed record AppSummary(
 
         var settingsSurface = Surface(ui?.Settings, app.DisplayName);
         var panelSurfaces = (ui?.Panels ?? [])
-            .Select(panel => Surface(panel, app.DisplayName)!)
+            .Select(panel =>
+            {
+                var surface = Surface(panel, app.DisplayName)!;
+                return surface with { PanelId = PanelIdentity.Resolve(panel, surface.Endpoint) };
+            })
+            .DistinctBy(panel => panel.PanelId, StringComparer.Ordinal)
             .ToArray();
 
         // Source settings remain available for any source-capable profile, including reviewed ones.
@@ -1195,7 +1203,9 @@ internal sealed record AppSummary(
             ConfirmedRoles: app.ConfirmedRoles ?? [],
             EntryEndpoint: ui is null ? null : ResolveEndpoint(endpoints, ui.EndpointKey)?.Key,
             RequiredCorePermissions: app.RequiredCorePermissions ?? app.GrantedCorePermissions ?? [],
-            OptionalCorePermissions: app.OptionalCorePermissions ?? []);
+            OptionalCorePermissions: app.OptionalCorePermissions ?? [],
+            InstallationId: PanelIdentity.Installation(app),
+            FramePolicy: UiFramePolicy.From(app));
     }
 
     internal static IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceSummary>>? BuildInterfaceSummaries(
@@ -1428,7 +1438,7 @@ internal sealed record AppNavigationSummary(string Label, string Path, string? E
 
 /// <summary>A placed surface as a client consumes it: what to call the tab, and what to embed.</summary>
 // `Service` as on AppNavigationSummary: which service's health gates embedding this surface.
-internal sealed record AppSurfaceSummary(string? Label, string Path, string? EmbeddedUrl, string? Service = null, string? Icon = null, string? Endpoint = null);
+internal sealed record AppSurfaceSummary(string? Label, string Path, string? EmbeddedUrl, string? Service = null, string? Icon = null, string? Endpoint = null, string? PanelId = null);
 
 internal sealed record AppMountSummary(
     string Key,

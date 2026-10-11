@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import { useAssistantSelection } from "../src/app/shell/assistant/use-assistant-selection";
 import type { CoreApp } from "../src/app/shell/types";
 
-const app = (id: string) => ({ id, displayName: id, runtimeState: "running", confirmedRoles: ["assistant"],
+const app = (id: string) => ({ id, installationId: `${id}-installed`, displayName: id, runtimeState: "running", confirmedRoles: ["assistant"],
   version: "1.0.0", kind: "runtime", system: false, source: "test", operationStatus: "installed", capabilities: [],
   interfaces: { "assistant": [{ version: 1, capabilities: ["attachments"], key: "default", path: "/api", url: `http://${id}/api` }] } }) as CoreApp;
 let host: HTMLDivElement, root: Root;
@@ -44,4 +44,17 @@ test("changing the acting user cancels a pending choice and does not inherit the
   expect(delivered).toEqual([null]);
   expect(host.querySelector("output")!.textContent).toBe("Choose");
   expect(document.querySelector('[role="dialog"]')).toBeNull();
+});
+test("explains missing Core installation metadata and enables the same provider after upgrade", async () => {
+  await render([{ ...app("assistant"), installationId: undefined }]);
+  expect(host.querySelector("output")!.textContent).toBe("Choose");
+  await click("Request");
+  const unavailable = [...document.querySelectorAll("button")].find(item => item.textContent?.includes("Update Core"))!;
+  expect(unavailable.disabled).toBe(true);
+  await act(async () => unavailable.click());
+  expect(delivered).toEqual([]);
+  expect(document.cookie).not.toContain("=assistant");
+  await render([app("assistant")]);
+  await click("assistant");
+  expect(delivered).toEqual(["assistant"]);
 });

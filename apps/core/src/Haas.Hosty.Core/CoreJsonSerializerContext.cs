@@ -89,6 +89,10 @@ internal static class CoreJson
 
 // Persisted state / internal serialization roots.
 [JsonSerializable(typeof(ProviderDirectory))]
+[JsonSerializable(typeof(UiBootstrap))]
+[JsonSerializable(typeof(UiPanelCatalog))]
+[JsonSerializable(typeof(UiPanelTarget))]
+[JsonSerializable(typeof(UiResolvedPanel))]
 [JsonSerializable(typeof(ProviderTokenClaims))]
 [JsonSerializable(typeof(ProviderTokenRequest))]
 [JsonSerializable(typeof(ProviderTokenResponse))]

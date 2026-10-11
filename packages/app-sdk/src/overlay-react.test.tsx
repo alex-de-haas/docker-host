@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HostyOverlay } from "./react";
 import { appFetch, cancelActivityRenewal, forgetAppGrant, APP_SESSION_ENDED, APP_SESSION_RESTORED } from "./browser-auth";
 
+// Identity tests isolate panel metadata I/O; ui-react.test.tsx covers the shared root.
+vi.mock("./ui-react", () => ({ HostyUiRoot: ({ children }: { children: ReactNode }) => children }));
+
 const core = "http://overlay-core.localhost:7070";
 const recovery = { appId: "sample", corePublicOrigin: core, appAuthProtocol: 2 };
 function active(setup = "ready", userId = "alice", admin = false) {

@@ -59,7 +59,8 @@ the actions keep accessible icon buttons.
 
 ### Discuss A Document
 
-**Discuss with Assistant** opens a new assistant conversation in a separate tab with the full
+**Discuss with Assistant** opens a new assistant conversation beside the document through the
+[shared SDK panel host](../sdk-panel-system/feature.md), in Shell or standalone, with the full
 Markdown file attached and an editable discussion prompt. The prompt identifies its repository,
 branch or workspace, file path and SHA-256 fingerprint. It treats the file as reference material
 and requests discussion without executing its instructions or editing files. No model turn is
@@ -79,14 +80,20 @@ Stopped, incompatible, attachment-less or UI-less providers cannot receive a dis
 
 The API is `GET /api/assistant` for administrator-authenticated choices and `POST /api/assistant` for
 the same-origin, user-attributed handoff. Core supplies declared assistant browser surfaces; Plans
-validates the result against them and opens it through Core's app-open route with standalone mode.
-API and UI origins can differ. The browser reserves the tab in the click gesture, retains its opener
-until navigation starts and detaches it in the same synchronous task before the destination runs.
-This allows the sandboxed Shell frame to navigate its own popup without changing iframe permissions.
-A blocked or closed tab leaves an **Open discussion** link. Pending actions disable duplicate activation. Actor, provider,
-document version and content fingerprint scope a retained request identity across retries and page
-reloads. Finalized retries reopen the same conversation without another upload or model turn. An
-expired or closed handoff requires the explicit **Start a new discussion** action to get a new identity.
+validates the result against the frozen provider installation and its typed panel surfaces. API and
+UI origins can differ. The completed handoff maps to a panel target and an installation-pinned Core
+link. Shell owns placement for embedded Plans; standalone Plans hosts the same SDK panel directly.
+No tab opens on the ordinary action. Optional `apps.panels.read` enables the standalone host and its
+Add tool chooser without gating source reading; an embedded participant needs no catalog grant.
+
+Pending actions disable duplicate activation. Actor, provider, document version and fingerprint
+scope a retained request identity across retries and reloads, including the frozen installation.
+Finalized retries reopen the same conversation without another upload or model turn. Once Plans
+has the result, **Retry opening** reuses only its presentation ID/target. **Open separately** uses
+the pinned same-session link; Core rechecks installation and declared endpoint/route after login.
+A navigation-only or ambiguous panel result retains that separate link without choosing another
+provider. A closed/expired handoff or replaced provider requires explicit new-discussion action.
+Readiness distinguishes host placement from the assistant actually loading the requested session.
 
 If the tracked-branch listing or content is unavailable, the detail shows its error while
 independently authorized workspace documents and bases remain available. A missing tracked document
@@ -219,28 +226,15 @@ standalone Next.js server as the cache mount's unprivileged owner. The image wor
 publication on version checks, lint and tests and follows the repository's immutable version-tag
 policy. It builds Linux amd64 and arm64 images with provenance attestations, carrying the repository
 and ReUI license notices.
-`manifest.json`, `package.json` and the Docker image tag share the independent app version `0.4.2`.
-Document discussions require Core 0.125.0's assistant UI projection and the SDK 0.24.0 descriptor.
-Older Core remains usable for reading sources and presents an actionable refusal for discussions.
-
-On 2026-10-08, automated handoff/authorization/retry coverage, the Plans and SDK builds, Core provider
-HTTP tests and the exact Core build pass. The owner grants Plans' optional assistant permission,
-and the live Core reports the development project at the PR's implementation commit. Standalone
-Plans opens the selected document in a new Assistant tab with its repository, branch, path and
-SHA-256 in an editable prompt and the 41.8 KB Markdown attachment marked uploaded and ready to send.
-The conversation remains idle with no submitted message or per-conversation approval banner.
-The owner's Shell check reproduces the premature-opener-detachment navigation refusal. After the
-fix, the owner confirms that the original action opens the attached draft without using the fallback
-link; independent inspection confirms the resulting Assistant tab and uploaded attachment. The
-retry reuses the conversation created by the earlier attempt. Plans' 96 tests, lint and isolated
-production build pass, including a popup regression that fails before the fix.
+`manifest.json`, `package.json` and the Docker image tag share the independent app version `0.5.0`.
+Side-panel discussions use Core 0.129.0, SDK 0.25.0 and Harness 0.48.0. Older Core remains usable for
+reading sources and presents an actionable refusal for this discussion contract. The [SDK panel system](../sdk-panel-system/feature.md) defines the shared host and browser acceptance contract.
 
 ## Testing Expectations
 
 - Discussion tests cover administrator/source refusals, same-origin POST, exact UTF-8 attachment
   bytes, selected workspace and deleted/stale versions, incompatible providers, separate API/UI
-  destinations, finalized replay, duplicate activation, persisted retry identities, blocked tabs,
-  sandboxed popup navigation before opener detachment
+  destinations, finalized replay, duplicate activation, persisted installation-pinned retry identities, panel placement/retry and explicit separate opening
   and optional-permission recovery. Core projects only confirmed providers and declared browser UI.
 - HTTP authorization covers absent/read/full grants, current administrator role, app sessions,
   app-addressed assistant MCP and scoped credentials, mixed cookies, audience mismatch and revocation.

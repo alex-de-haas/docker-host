@@ -19,7 +19,7 @@ The owner requested coordination with [Default applications](../default-applicat
 2026-10-10. This revision replaces the older draft proposals for `primaryUiAppId`, earliest-installed
 fallback and browser CORS. The recommendations are not approved implementation decisions; this
 plan remains Draft and owns its own deliverables. The later owner direction on the same day assigns
-shared panels to the [SDK panel system](../sdk-panel-system/plan.md), with Plans → assistant in Shell
+shared panels to the [SDK panel system](../sdk-panel-system/feature.md), with Plans → assistant in Shell
 and standalone as its first scenario. This plan consumes that contract rather than owning it.
 
 ## Verified Baseline And Corrections
@@ -65,7 +65,9 @@ For the first contract:
   contract in another framework. Exact layout/navigation may differ; a finalized handoff must open
   at its owning app/session without a new provider selection. Unsupported older clients have the
   SDK's explicit compatibility fallback, not a promise of complete new-contract conformance.
-  Protocol v1 uses Core-verified host/child bindings for the same actor and directly mounted frames.
+  Protocol v1 verifies exact windows/origins and document generations for directly mounted frames,
+  with stateless Core peer-origin metadata and an explicit account-consistency check. It creates
+  no Core connection records and does not treat peer-reported actor identity as API authority.
   Host discovery requires `apps.panels.read` or existing `apps.read`, independently of this role;
   consume the SDK's stable panel IDs and public API without defining another identity or bridge.
 - Treat target IDs/paths as navigation, not authority. Validate/encode the relative app path; reject
@@ -79,6 +81,9 @@ Domain apps such as Telemetry, Workspaces and Plans do not acquire this role sim
 or using the SDK to host panels when standalone. A local panel host is a composition capability;
 `ui-client` is eligibility to be offered as a complete browser UI. Neither confers embedding
 authority under the separately held [embedding restrictions](../app-embedding-restrictions/plan.md).
+Standalone's window-local opened-tool rail and Add tool chooser expose declared panels without
+app navigation or fleet management; they do not make the host a full UI client. Peer-origin lookup
+does not depend on the held plan's unimplemented list of designated embedders.
 No new manifest schema version is needed for the additive role; older Core treats it as inert and
 cannot offer replacement-UI selection.
 
@@ -197,7 +202,7 @@ the replacement authorization boundary without treating that obsolete implementa
 
 ## Decisions Awaiting Approval And Delivery
 
-Approve this proposal independently of Default applications and the SDK panel system. Recommended
+Approve this proposal independently of Default applications. The SDK panel system is implemented. Recommended
 delivery is the complete SDK panel feature, then shared defaults, then this complete UI-client
 feature as one PR. The shared store/settings and panel protocol are dependencies; their selection,
 renderer and Plans integration deliverables are not duplicated here. The principal changes from

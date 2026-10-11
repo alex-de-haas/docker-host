@@ -1,6 +1,6 @@
 ---
 created: 2026-10-08
-updated: 2026-10-08
+updated: 2026-10-10
 summary: SDK-owned React overlay combines session and required-permission readiness, hides blocked content and preserves same-user state through recovery.
 components: [packages/app-sdk, apps/shell, apps/marketplace, apps/plans, apps/demo-app, apps/harness, apps/telemetry-ui]
 ---
@@ -112,6 +112,16 @@ renew it. Privileged activity has its existing fixed deadline. See
 [session lifecycle](../auth-session-lifecycle/feature.md) and [activity window](../app-activity-window/feature.md).
 Element picking, screenshots and assistant evidence belong to
 [App Feedback Inbox](../app-feedback-inbox/plan.md), separately from this overlay.
+
+## Shared Panel Composition
+
+SDK 0.25.0 composes the [panel system](../sdk-panel-system/feature.md) inside this root. The default
+`panelLayout="auto"` hosts a standalone workspace; `slot` lets Shell place exactly one shared
+workspace inside its navigation, and `none` supports a custom layout. Directly embedded apps use
+the verified parent's host and draw no local rail. `uiPath` configures the app-owned UI adapter.
+The coordinator can report an authentication block before protected children mount. Same-user
+access recovery retains mounted document/tool state; actor change reloads the app and clears it.
+Optional catalog authority does not become a required-permission authentication gate.
 
 ## Testing Expectations
 

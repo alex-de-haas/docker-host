@@ -26,7 +26,7 @@ export default function RootLayout({
       <body className="font-sans antialiased">
         <HostThemeBridge />
         <HostLaunchBridge />
-        <HostyOverlay><DemoSession>{children}</DemoSession></HostyOverlay>
+        <HostyOverlay panelLayout="none"><DemoSession>{children}</DemoSession></HostyOverlay>
       </body>
     </html>
   );

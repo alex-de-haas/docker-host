@@ -33,10 +33,12 @@ export class ProviderClient {
   async list(kind: ProviderKind, signal?: AbortSignal): Promise<ProviderDescriptor[]> {
     return (await this.coreRequest<{ providers: ProviderDescriptor[] }>(`/providers/${kind}`, undefined, signal)).providers;
   }
-  private async connect(provider: Pick<ProviderDescriptor, "appId" | "kind" | "key">, signal?: AbortSignal, userToken?: string) {
+  private async connect(provider: Pick<ProviderDescriptor, "appId" | "kind" | "key"> & { installationId?: string | null }, signal?: AbortSignal, userToken?: string) {
     const issued = await this.coreRequest<{ token: string; provider: ProviderDescriptor }>(`/providers/${provider.kind}/token`,
       { providerAppId: provider.appId, key: provider.key }, signal, userToken);
     if (issued.provider.version !== 1 || !issued.provider.url) throw new ProviderError("provider_incompatible", "This provider does not support interface version 1.", 409);
+    if (provider.installationId && issued.provider.installationId !== provider.installationId)
+      throw new ProviderError("provider_changed", "The selected assistant installation changed. Start a new discussion explicitly.", 409);
     const url = new URL(issued.provider.url);
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new ProviderError("provider_url_invalid", "Invalid provider endpoint.", 409);
     // Core's internal origin already identifies the host from this consumer's vantage point.
@@ -57,12 +59,12 @@ export class ProviderClient {
       headers: { authorization: `Bearer ${binding.token}`, "content-type": audio.type || "audio/wav" }, body: audio }));
   }
   /** User-attributed requests preserve the assistant's existing handoff and dispatch policy. */
-  async assistant(provider: Pick<ProviderDescriptor, "appId" | "key">, userToken: () => Promise<string>): Promise<AssistantClient> {
+  async assistant(provider: Pick<ProviderDescriptor, "appId" | "key"> & { installationId?: string | null }, userToken: () => Promise<string>): Promise<AssistantClient> {
     const target = { ...provider, kind: "assistant" as const };
     const binding = await this.connect(target, undefined, await userToken());
     return new AssistantClient(binding.url, { version: binding.provider.version, capabilities: binding.provider.capabilities }, async () => {
       const fresh = await this.connect(target, undefined, await userToken());
-      if (fresh.url !== binding.url) throw new ProviderError("provider_changed", "The assistant endpoint changed. Reconnect explicitly.", 409);
+      if (fresh.url !== binding.url || fresh.provider.installationId !== binding.provider.installationId) throw new ProviderError("provider_changed", "The assistant endpoint or installation changed. Reconnect explicitly.", 409);
       return { token: fresh.token };
     });
   }

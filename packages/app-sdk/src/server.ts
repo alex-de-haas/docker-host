@@ -2,6 +2,7 @@
 // bundle — the service token lives here.
 import "server-only";
 import { createHostySessionResponse } from "./session-server";
+import { createHostyUiResponse } from "./ui-server";
 import { resolveAppAuthProtocol, appAuthProtocolMinimum, isValidCodeVerifier, type AppAuthProtocol } from "./app-code";
 export { isValidCodeVerifier } from "./app-code";
 
@@ -74,6 +75,15 @@ export function createHostySessionRouteHandler(config: HostyAppConfig, options: 
       resolveAppSession(readAppIdentityToken(request.headers, config), config), getRecoveryParams(config),
     ]);
     return createHostySessionResponse(session, recovery, { ...options, signal: request.signal });
+  };
+}
+
+/** Mount GET/POST at /api/hosty/ui/[...action] for the shared panel protocol. */
+export function createHostyUiRouteHandler(config: HostyAppConfig, options: { administratorOnly?: boolean; uiPath?: string } = {}) {
+  return async (request: Request): Promise<Response> => {
+    const token = readAppIdentityToken(request.headers, config);
+    const session = await resolveAppSession(token, config);
+    return createHostyUiResponse(request, { session, token }, { ...options, appId: getAppId(config) });
   };
 }
 

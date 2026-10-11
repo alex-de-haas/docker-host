@@ -303,7 +303,7 @@ it looks like settings:
   "settings": { "endpoint": "http", "path": "/settings" },
 
   // Any number. Tabs on Shell's right panel, docked beside the content.
-  "panels": [ { "label": "Session", "icon": "contact-round", "endpoint": "http", "path": "/panel" } ]
+  "panels": [ { "id": "session", "label": "Session", "icon": "contact-round", "endpoint": "http", "path": "/panel" } ]
 }
 ```
 
@@ -324,7 +324,13 @@ place in the navigation. Declare navigation for every page you want offered.
 Both fields are additive under `app.0.1` and need no `schemaVersion` bump. `endpoint` is optional and
 defaults to the entrypoint's; `path` is absolute on that origin. A panel's `label` names its tab —
 several apps' tools share one strip, so the app's own name is a poor label, and a system app must
-declare one. Two panels of one app may not share a label.
+declare one. Use distinct labels to make different tools recognizable.
+
+Give each panel a stable optional `id`: a lowercase letter followed by up to 63 lowercase letters,
+digits or hyphens, unique within that app. The `legacy-` prefix is reserved. Core derives IDs for
+older declarations from endpoint and route; changing those fields changes their identity. An explicit
+ID survives route, label, icon and array-order changes. SDK references also include the installation
+identity, so a reinstall never silently rebinds an old panel target.
 
 Every panel in a new install or update must declare a non-empty `icon`: a Lucide icon
 name describing that tool (for example `bot` or `contact-round`), following the `ui.icon`

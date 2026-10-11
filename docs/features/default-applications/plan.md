@@ -16,7 +16,7 @@ On 2026-10-10 the owner requested concrete proposals coordinated with
 [replaceable UI clients](../replaceable-ui-clients/plan.md). The recommendations below answer the
 design questions; they are not yet approved for implementation. The later owner direction on the
 same day assigns shared panel presentation and the first Plans discussion flow to the separate
-[SDK panel system](../sdk-panel-system/plan.md). These plans remain Draft.
+[SDK panel system](../sdk-panel-system/feature.md). Default applications and replaceable UI clients remain Draft; the panel contract is implemented independently.
 
 The first categories are browser UI and assistant. Workspaces and Plans remain ordinary apps;
 this work creates no workspace/plan-provider role, default agent, model selector or speech default.
@@ -181,10 +181,16 @@ Neither an assistant preference nor the host Browser interface setting selects a
 already open window. Standalone Plans continues to host its tools locally instead of redirecting
 to the selected full UI.
 
+The shared SDK maps a finalized result from typed provider metadata using a pure
+function; it adds no Core assistant-presentation endpoint. Shared selection must pass through the
+provider installation frozen before prepare. Panel opening and separate-open links remain pinned
+to that installation, and the current host rechecks access. The standalone tool chooser changes
+presentation only: choosing/opening a tool never saves or overrides an assistant default.
+
 | Owner | Deliverables owned here or there |
 | --- | --- |
 | This plan | Shared store/API/revisions and host control commands, assistant selection, personal migration, settings container, resolver SDK and Shell/Plans selection integration |
-| [SDK panel system](../sdk-panel-system/plan.md) | Generic placement/host protocol and renderer, Shell/standalone composition, first Plans → assistant discussion beside its document, presentation retry and explicit separate opening |
+| [SDK panel system](../sdk-panel-system/feature.md) | Generic placement/host protocol and renderer, Shell/standalone composition, first Plans → assistant discussion beside its document, presentation retry and explicit separate opening |
 | [UI-client plan](../replaceable-ui-clients/plan.md) | Confirmed `ui-client` role, UI eligibility/resolution adapter, navigation/links, Core recovery page, UI settings row, UI recovery through shared CLI, manifest rollout and legacy UI migration |
 | Existing identity/readiness features | App authentication, assignments, grants, Core confirmation and readiness observations; reuse without redesign |
 
