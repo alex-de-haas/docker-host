@@ -167,10 +167,10 @@ D11 retains that remaining work, including any later non-interactive source-job 
 jobs reuse registered workspaces, publication operations and Sandbox validation; they own none of
 those mechanisms and do not create a second development task registry.
 
-Owner coordination, 2026-10-11: [Continuous app access](../continuous-app-access/plan.md) D1/D4–D6
-now owns the durable Core authorization primitive, grant management and its verification. D11
-consumes it and retains the runner, scheduling, retry budgets and notifications. This is an ownership
-transfer, not shipped authority or approval to implement the new Draft from this In Progress plan.
+Owner coordination, 2026-10-11: [Continuous app access](../continuous-app-access/feature.md)
+implements the durable Core authorization primitive, grant management and its verification. D11
+consumes it and retains the runner, scheduling, retry budgets and notifications. The shipped grant
+does not implement scheduling or broaden the authority of a runner.
 
 Some requests outlive a session: monitor until complete, scheduled summary, retryable action,
 long-running import, branch/PR status tracking. Core owns durable delegation grants and revocation —

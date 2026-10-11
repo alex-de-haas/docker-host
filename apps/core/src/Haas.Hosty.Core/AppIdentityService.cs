@@ -10,12 +10,11 @@ internal sealed class AppIdentityService(
     AppSessionGrantStore grants,
     CoreSettingsService settings,
     AuditStore audit,
-    IClock clock)
+    IClock clock, BackgroundGrantService? background = null)
 {
     private static readonly TimeSpan AuthCodeLifetime = TimeSpan.FromMinutes(5);
     // The idle window slides on use, but rewriting the grant store on every server render is wasteful, so
-    // LastSeenAt is only advanced once per this window. Idle TTLs are days, so minutes of imprecision are
-    // irrelevant.
+    // LastSeenAt is advanced at most once per this window, shortened for custom idle timeouts.
     private static readonly TimeSpan TouchThrottle = TimeSpan.FromMinutes(5);
 
     private const string GrantTokenPrefix = "hostyg_";
@@ -118,6 +117,11 @@ internal sealed class AppIdentityService(
 
     // MCP credentials carry only this one-way reference, never the parent app session secret.
     internal async Task<AppSessionValidationResult> RevalidateHashAsync(string tokenHash, string callingAppId, CancellationToken cancellationToken)
+        => (await RevalidateAuthorityAsync(tokenHash, callingAppId, cancellationToken, allowBackground: false)).Actor;
+
+    // Keep the validated background scope with the actor for this dispatch, never in a cache or wire response.
+    internal async Task<(AppSessionValidationResult Actor, (BackgroundGrant Grant, BackgroundScope Scope)? Background)>
+        RevalidateAuthorityAsync(string tokenHash, string callingAppId, CancellationToken cancellationToken, bool allowBackground)
     {
         var now = clock.UtcNow;
         var grant = await grants.TryResolveAsync(tokenHash, cancellationToken) ??
@@ -143,19 +147,42 @@ internal sealed class AppIdentityService(
         var (user, app) = await RequireAccessibleUserAsync(grant.AppId, grant.UserId, cancellationToken);
         RequireCurrentAuthRevision(grant.AuthRevision, user);
 
-        var (idle, _) = settings.AuthLifetimes.ForGrant(app.System, grant.IssuedVia);
+        if ((grant.Installation is null && grant.CreatedAt < app.InstalledAt) || (grant.Installation is { } installation && installation != app.InstalledAt))
+            throw new AppIdentityException("token_revoked", "Sign in again after reinstalling the app.");
+        var (legacyIdle, _) = settings.AuthLifetimes.ForGrant(app.System, grant.IssuedVia);
+        var idle = grant.AuthorityVersion == 1 ? settings.AuthLifetimes.AppGrantIdle : legacyIdle;
         if (grant.LastSeenAt.Add(idle) <= now)
         {
             throw new AppIdentityException("token_expired", "App session has been idle too long.");
         }
 
+        if (grant.BackgroundGrantId is not null)
+        {
+            if (!allowBackground || background is null || grant.BackgroundScopeId is null)
+                throw BackgroundGrantService.Error("This credential cannot establish interactive app identity.");
+            var validated = await background.ValidateAsync(callingAppId, grant.BackgroundGrantId, grant.BackgroundScopeId, cancellationToken);
+            return (new(true, grant.AppId, user.Id, user.Email, user.DisplayName, user.Role, grant.AbsoluteExpiresAt), validated);
+        }
+        AuthSessionRecord? parent = null;
+        if (grant.IssuedVia == AppGrantIssuedVia.Code && grant.AuthorizingSessionId is not null)
+        {
+            // A migration does not revive a dead legacy identity, nor invent browser provenance.
+            parent = await TryLivePrincipalAsync(grant.AuthorizingSessionId, grant.UserId, cancellationToken);
+            if (parent is not null && grant.AuthorityVersion == 0)
+                grant = await grants.UpgradeContinuityAsync(tokenHash, app.InstalledAt,
+                    PrincipalDeadline(parent, now), now, legacyIdle, cancellationToken);
+        }
+        if (grant.AuthorityVersion == 1 && parent is null)
+            throw new AppIdentityException("token_expired", "The session authorizing this app has ended. Sign in again.");
+
         // Fast path: skip the store round-trip (read + mutex) on the common throttled case. TouchAsync
         // re-checks the throttle under the lock, so a racing writer cannot cause a double advance.
-        if (now - grant.LastSeenAt >= TouchThrottle)
+        var touchThrottle = TimeSpan.FromTicks(Math.Min(TouchThrottle.Ticks, idle.Ticks / 6));
+        if (now - grant.LastSeenAt >= touchThrottle)
         {
             try
             {
-                await grants.TouchAsync(tokenHash, now, TouchThrottle, cancellationToken);
+                await grants.TouchAsync(tokenHash, now, touchThrottle, cancellationToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -164,15 +191,36 @@ internal sealed class AppIdentityService(
             }
         }
 
-        return new AppSessionValidationResult(
+        return (new AppSessionValidationResult(
             true,
             grant.AppId,
             user.Id,
             user.Email,
             user.DisplayName,
             user.Role,
-            grant.AbsoluteExpiresAt, grant.ActiveUntil,
-            (app.RequiredCorePermissions?.Count ?? 0) + (app.OptionalCorePermissions?.Count ?? 0) + (app.GrantedCorePermissions?.Count ?? 0) > 0);
+            grant.AbsoluteExpiresAt, grant.AuthorityVersion == 1 ? null : grant.ActiveUntil,
+            grant.AuthorityVersion != 1 && (app.RequiredCorePermissions?.Count ?? 0) + (app.OptionalCorePermissions?.Count ?? 0) + (app.GrantedCorePermissions?.Count ?? 0) > 0,
+            parent is not null && grant.AuthorityVersion == 1 ? new AppContinuityInfo(1,
+                parent.Kind is null ? "browser" : "native", grant.Id, grant.AbsoluteExpiresAt, settings.AuthLifetimes.ContinuityCheckSeconds(parent.Kind)) : null), null);
+    }
+
+    // Only explicitly scope-aware dispatchers may accept background authority.
+    internal async Task<AppSessionValidationResult> RequireOperationHashAsync(string hash, string appId,
+        Func<BackgroundScope, bool> permits, CancellationToken ct, bool requireActivity = true)
+    {
+        var grant = await grants.TryResolveAsync(hash, ct);
+        if (grant?.BackgroundGrantId is null) return requireActivity ? await RequireActivityHashAsync(hash, appId, ct)
+            : await RevalidateHashAsync(hash, appId, ct);
+        var authority = await RevalidateAuthorityAsync(hash, appId, ct, allowBackground: true);
+        await RequireBackgroundOperationAsync(authority.Background!.Value, permits, ct);
+        return authority.Actor;
+    }
+
+    internal async Task RequireBackgroundOperationAsync((BackgroundGrant Grant, BackgroundScope Scope) validated,
+        Func<BackgroundScope, bool> permits, CancellationToken ct)
+    {
+        if (!permits(validated.Scope)) throw BackgroundGrantService.Error("This operation exceeds the selected background scope.");
+        await background!.AuditAsync(validated.Grant, "dispatch", ct);
     }
 
     private async Task<AppIdentityTokenResult> CreateGrantAsync(
@@ -187,11 +235,15 @@ internal sealed class AppIdentityService(
         var absoluteExpiresAt = now.Add(absolute);
         var token = CreateGrantToken();
         DateTimeOffset? activeUntil = null;
-        if (activityAuthorized)
+        var parent = issuedVia == AppGrantIssuedVia.Code && authorizingSessionId is not null
+            ? await TryLivePrincipalAsync(authorizingSessionId, user.Id, cancellationToken) : null;
+        if (authorizingSessionId is not null && parent is null)
         {
-            await RequireLiveAuthorizingSessionAsync(authorizingSessionId, user.Id, cancellationToken);
-            activeUntil = now.Add(settings.AuthLifetimes.EffectiveActivityWindow);
+            var original = (await users.ReadAsync(cancellationToken)).Sessions.FirstOrDefault(s => s.Id == authorizingSessionId && s.UserId == user.Id);
+            throw new AppIdentityException(original is null || original.RevokedAt is not null ? "token_revoked" : "token_expired",
+                "The authorizing session is no longer live or cannot establish app continuity.");
         }
+        if (parent is not null) absoluteExpiresAt = PrincipalDeadline(parent, now);
         var record = new AppSessionGrantRecord(
             Id: CreateOpaqueToken(),
             AppId: app.Id,
@@ -204,15 +256,15 @@ internal sealed class AppIdentityService(
             RevokedAt: null,
             AuthorizingSessionId: authorizingSessionId,
             AuthRevision: user.AuthRevision,
-            ActiveUntil: activeUntil);
+            ActiveUntil: activeUntil, AuthorityVersion: parent is null ? 0 : 1, Installation: app.InstalledAt);
         await grants.AppendAsync(record, now, cancellationToken);
         if (authorizingSessionId is not null)
         {
             // Check after the write so logout cannot finish its cascade before a racing exchange
             // appends the grant. Expiry alone does not revoke identity; explicit logout does.
-            var parent = (await users.ReadAsync(cancellationToken)).Sessions.FirstOrDefault(session =>
+            var storedParent = (await users.ReadAsync(cancellationToken)).Sessions.FirstOrDefault(session =>
                 string.Equals(session.Id, authorizingSessionId, StringComparison.Ordinal) && session.UserId == user.Id);
-            if (parent is null || parent.RevokedAt is not null)
+            if (storedParent is null || storedParent.RevokedAt is not null)
             {
                 // An expired parent can be pruned by a later login. Refuse this in-flight sign-in
                 // without treating that normal cleanup as a logout of its established app grants.
@@ -220,7 +272,8 @@ internal sealed class AppIdentityService(
                 throw new AppIdentityException("token_revoked", "The Core session authorizing this app sign-in has been revoked.");
             }
         }
-        return new AppIdentityTokenResult(token, "Bearer", absoluteExpiresAt, (int)absolute.TotalSeconds, activeUntil);
+        return new AppIdentityTokenResult(token, "Bearer", absoluteExpiresAt, (int)(absoluteExpiresAt - now).TotalSeconds, activeUntil,
+            parent is null ? null : new AppContinuityInfo(1, parent.Kind is null ? "browser" : "native", record.Id, absoluteExpiresAt, settings.AuthLifetimes.ContinuityCheckSeconds(parent.Kind)));
     }
 
     internal Task<AppSessionValidationResult> RequireActivityAsync(string token, string appId, CancellationToken ct)
@@ -230,6 +283,7 @@ internal sealed class AppIdentityService(
     {
         var actor = await RevalidateHashAsync(hash, appId, ct);
         var grant = await grants.TryResolveAsync(hash, ct);
+        if (actor.Continuity is not null) return actor;
         if (grant?.ActiveUntil is not { } until || until <= clock.UtcNow)
             throw new AppIdentityException("reauth_required", "Renew app activity through Core before continuing.");
         await RequireLiveAuthorizingSessionAsync(grant.AuthorizingSessionId, actor.UserId, ct);
@@ -240,9 +294,23 @@ internal sealed class AppIdentityService(
     {
         var actor = await RevalidateHashAsync(hash, appId, ct);
         var grant = await grants.TryResolveAsync(hash, ct);
-        await RequireLiveAuthorizingSessionAsync(grant?.AuthorizingSessionId, actor.UserId, ct);
+        if (actor.Continuity is null)
+            await RequireLiveAuthorizingSessionAsync(grant?.AuthorizingSessionId, actor.UserId, ct);
         return actor;
     }
+
+    internal async Task<AuthSessionRecord?> TryLivePrincipalAsync(string id, string userId, CancellationToken ct)
+    {
+        var state = await users.ReadAsync(ct);
+        var parent = state.Sessions.FirstOrDefault(s => s.Id == id && s.UserId == userId);
+        if (parent is null || parent.Audience is not null || parent.GrantId is not null || (parent.Scopes?.Count ?? 0) != 0
+            || (parent.Kind is null ? parent.BrowserOrigin is null : parent.Kind is not (AccessTokenKinds.Device or AccessTokenKinds.Manual))
+            || !CoreSessionAuthorization.IsSessionLive(parent, clock.UtcNow, settings.AuthLifetimes.IdleFor(parent.Kind))) return null;
+        return parent;
+    }
+
+    private DateTimeOffset PrincipalDeadline(AuthSessionRecord parent, DateTimeOffset now)
+        => parent.ExpiresAt == DateTimeOffset.MaxValue ? now.Add(settings.AuthLifetimes.AppGrantAbsolute) : parent.ExpiresAt;
 
     internal async Task<AuthSessionRecord> RequireLiveAuthorizingSessionAsync(string? id, string userId, CancellationToken ct)
     {
@@ -386,7 +454,7 @@ internal sealed class AppIdentityService(
 
 internal sealed record AppAuthorizeResult(string Code, string RedirectUri, DateTimeOffset ExpiresAt);
 
-internal sealed record AppIdentityTokenResult(string AccessToken, string TokenType, DateTimeOffset ExpiresAt, int ExpiresInSeconds, DateTimeOffset? ActiveUntil = null);
+internal sealed record AppIdentityTokenResult(string AccessToken, string TokenType, DateTimeOffset ExpiresAt, int ExpiresInSeconds, DateTimeOffset? ActiveUntil = null, AppContinuityInfo? Continuity = null);
 
 internal sealed record AppSessionValidationResult(
     bool Active,
@@ -395,7 +463,9 @@ internal sealed record AppSessionValidationResult(
     string? Email,
     string? DisplayName,
     string HostRole,
-    DateTimeOffset ExpiresAt, DateTimeOffset? ActiveUntil = null, bool ActivityRequired = false);
+    DateTimeOffset ExpiresAt, DateTimeOffset? ActiveUntil = null, bool ActivityRequired = false, AppContinuityInfo? Continuity = null);
+
+internal sealed record AppContinuityInfo(int Version, string Mode, string GrantId, DateTimeOffset ExpiresAt, double CheckAfterSeconds);
 
 internal sealed class AppIdentityException(string code, string message) : Exception(message)
 {

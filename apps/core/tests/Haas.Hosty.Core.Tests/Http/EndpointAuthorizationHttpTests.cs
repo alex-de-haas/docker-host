@@ -21,6 +21,8 @@ public sealed class EndpointAuthorizationHttpTests
         // Auth handshake and login surface — public by definition. (Logout is intentionally NOT here:
         // it now requires CSRF, so it answers 403 to an anonymous caller like any other mutation.)
         "/api/auth/csrf",
+        // Public inert frame; only its separate cookie/CSRF POST can maintain a session.
+        "/api/auth/apps/continuity/frame",
         "/api/auth/session",
         "/api/auth/bootstrap",
         "/api/auth/recovery",

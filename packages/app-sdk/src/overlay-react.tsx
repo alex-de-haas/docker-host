@@ -36,7 +36,9 @@ function sessionReady(session: Snapshot | null): boolean {
 }
 
 /** Mount once around protected content. Presentation and recovery belong to Hosty. */
-export function HostyOverlay({ children, probePath = "/api/hosty/session", appCodePath = "/api/auth/app-code", uiPath, panelLayout = "auto" }: {
+export function HostyOverlay({ children, probePath = "/api/hosty/session", appCodePath = "/api/auth/app-code", uiPath, panelLayout = "auto", localContent }: {
+  /** Explicitly public/local content available during an outage; never put protected actor data here. */
+  localContent?: ReactNode;
   children: ReactNode; probePath?: string; appCodePath?: string; uiPath?: string; panelLayout?: "auto" | "slot" | "none";
 }) {
   const actor = useRef<string | null>(null);
@@ -84,7 +86,7 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
     if (session?.setup === "ready") setReviewing(false);
   }, [session?.setup]);
   useEffect(() => {
-    // No keepalive polling. Focus and a pending Core review are the only readiness refreshes.
+    // Continuous sessions own their maintenance; this also observes pending permission reviews.
     let loading = false;
     const refresh = () => {
       if (loading || !actor.current || activity.pending || (activity.needed && !renewedAwaitingReadiness.current)) return;
@@ -148,11 +150,14 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
     action = activity.renew; actionLabel = "Renew access";
   }
 
+  const localOffline = (identity.ui.kind === "unavailable" || (identity.ui.kind === "active" && session?.setup === "unavailable"))
+    && localContent !== undefined;
   return <>
+    {localOffline && <div data-hosty-local-content><p role="status">Hosty is unavailable. Local content remains available.</p>{localContent}</div>}
     <div data-hosty-content hidden={!ready} inert={!ready} style={ready ? { display: "contents" } : { display: "none" }}>
       <HostyUiRoot uiPath={uiPath} panelLayout={panelLayout} active={ready}>{mounted.current ? children : null}</HostyUiRoot>
     </div>
-    {!ready && <OverlaySurface pending={pending} title={title} message={message} action={action} actionLabel={actionLabel} reviewUrl={reviewUrl} />}
+    {!ready && !localOffline && <OverlaySurface pending={pending} title={title} message={message} action={action} actionLabel={actionLabel} reviewUrl={reviewUrl} />}
   </>;
 }
 

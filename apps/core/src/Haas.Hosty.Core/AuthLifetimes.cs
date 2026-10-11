@@ -40,6 +40,10 @@ internal sealed record AuthLifetimes(
     public TimeSpan IdleFor(string? kind)
         => AccessTokenKinds.IsAccessToken(kind) ? AccessTokenIdle : CoreSessionIdle;
 
+    // Leave room for positive browser jitter and one missed check within either idle window.
+    public double ContinuityCheckSeconds(string? kind)
+        => Math.Min(300, Math.Min(AppGrantIdle.TotalSeconds, IdleFor(kind).TotalSeconds) / 3);
+
     public static AuthLifetimes FromEnvironment()
         => new(
             AppGrantIdle: ReadHours("HOSTY_AUTH_APP_GRANT_IDLE_HOURS", Defaults.AppGrantIdle),

@@ -100,7 +100,7 @@ internal static class CoreSettingsEndpoints
     private static CoreSettingsResponse Build(CoreSettingsService settings, CorePublicOriginResolver origins)
     {
         var rows = new List<CoreSettingSummary>();
-        foreach (var row in settings.GetAuthRows())
+        foreach (var row in settings.GetAuthRows().Where(r => r.Definition.Key != "HOSTY_AUTH_APP_ACTIVITY_HOURS"))
         {
             rows.Add(new CoreSettingSummary(
                 row.Definition.Key,
@@ -198,7 +198,10 @@ internal static class CoreSettingsEndpoints
             Unit: null,
             Options: [new CoreSettingOption("false", "Off"), new CoreSettingOption("true", "On")]));
 
-        return new CoreSettingsResponse(rows);
+        return new CoreSettingsResponse(rows, settings.GetAuthRows()
+            .Where(r => r.Definition.Key is "HOSTY_AUTH_APP_ACTIVITY_HOURS" or "HOSTY_AUTH_SYSTEM_GRANT_IDLE_HOURS" or "HOSTY_AUTH_SYSTEM_GRANT_ABSOLUTE_HOURS"
+                or "HOSTY_AUTH_APP_GRANT_IDLE_HOURS" or "HOSTY_AUTH_APP_GRANT_ABSOLUTE_HOURS")
+            .Select(r => $"{r.Definition.Key}={CoreSettingsService.FormatHours(r.EffectiveHours)}h is preserved. Continuous grants use common app idle policy and the parent principal's absolute deadline (common app maximum for a native principal without a deadline). Hourly activity and system-app lifetime overrides apply only to legacy grants.").ToArray());
     }
 }
 
@@ -217,7 +220,7 @@ internal sealed record CoreSettingSummary(
     // Choices for a select-typed setting, or null for free-form inputs.
     IReadOnlyList<CoreSettingOption>? Options = null);
 
-internal sealed record CoreSettingsResponse(IReadOnlyList<CoreSettingSummary> Settings);
+internal sealed record CoreSettingsResponse(IReadOnlyList<CoreSettingSummary> Settings, IReadOnlyList<string>? AuthenticationDiagnostics = null);
 
 // A null or blank value for a key clears its override (falls back to env/default).
 internal sealed record CoreSettingsUpdateRequest(IReadOnlyDictionary<string, string?>? Settings);

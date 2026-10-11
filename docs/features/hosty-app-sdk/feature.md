@@ -1,6 +1,6 @@
 ---
 created: 2026-07-15
-updated: 2026-10-08
+updated: 2026-10-11
 summary: The shared app-side Host integration published as an npm package and a NuGet package.
 components: [packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -8,7 +8,7 @@ components: [packages/app-sdk, packages/app-sdk-dotnet]
 # Hosty App SDK
 
 Shared Host integration for runtime apps, in two published packages: **`@hosty-sdk/app`** on npmjs
-(TypeScript) and **`HostySdk.App`** on NuGet (.NET, 0.6.0). They own the app half of the
+(TypeScript) and **`HostySdk.App`** on NuGet (.NET, 0.9.0). They own the app half of the
 [auth session lifecycle](../auth-session-lifecycle/feature.md) contract — session classification,
 recovery, Core revalidation, launch-mode awareness — plus the app secrets client, delegated-token
 validation, and (TypeScript only) the theme protocol between a shell and the pages it embeds.
@@ -25,6 +25,20 @@ is what the `misconfigured` state exists to prevent.
 Installation also has a pure client/state flow, a React dialog and an app-local server adapter.
 [App installation](../app-installation-sdk/feature.md) owns their permission and Core confirmation
 contract; none depends on the default Shell or its embedding messages.
+
+## Continuous access
+
+The SDK carries Core's versioned continuity metadata through standard session adapters. The browser
+coordinator performs correlated Core-frame maintenance, same-actor app probes, outage backoff and
+coalesced pre-request checks. Server revalidation cannot keep a browser principal alive. Explicit
+local/public content can remain usable through `HostyOverlay.localContent` while the protected root
+is gated. Older Core metadata preserves the legacy activity behavior.
+
+TypeScript `BackgroundGrantClient` (`/background/server`) and .NET `HostyBackgroundClient` acquire
+short request credentials for an explicitly reviewed grant/scope. Both coalesce issuance, refresh
+before expiry and never replay ambiguous writes. See
+[Continuous App Access](../continuous-app-access/feature.md) for scope, maintenance, migration,
+revocation and upgrade-order contracts.
 
 ## Packages And Slices
 

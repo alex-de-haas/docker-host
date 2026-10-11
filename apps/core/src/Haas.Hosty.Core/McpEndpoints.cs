@@ -12,6 +12,20 @@ namespace Haas.Hosty.Core;
 // session. Delegated/facade credentials remain read-only even when the actor is an administrator.
 internal static class McpEndpoints
 {
+    internal static bool HasAppToolPermission(AppRecord caller, string name) => ToolPermission(name) is { } permission
+        && AppManagementAuthorization.HasPermission(caller, permission);
+    private static string? ToolPermission(string name) => name switch
+    {
+        "list_apps" or "get_app" => CoreAppPermissions.ReadApps,
+        "get_host_status" or "get_core_operation" or "get_core_development" => CoreAppPermissions.ReadCore,
+        "tail_app_logs" => CoreAppPermissions.AppLogs,
+        "search_audit" => CoreAppPermissions.CoreLogs,
+        "start_app" or "stop_app" or "restart_app" => CoreAppPermissions.AppLifecycle,
+        "plan_app_update" or "apply_app_update" => CoreAppPermissions.Install,
+        "restart_core" => CoreAppPermissions.CoreLifecycle,
+        _ => null,
+    };
+
     public static void Map(WebApplication app)
     {
         // Under /api on purpose: Core's guardrail tests require every /api route to reject anonymous
@@ -74,17 +88,9 @@ internal static class McpEndpoints
                             if (body.RootElement.TryGetProperty("method", out var method) && method.GetString() == "tools/call")
                             {
                                 var name = body.RootElement.GetProperty("params").GetProperty("name").GetString();
-                                var permission = name switch
-                                {
-                                    "list_apps" or "get_app" => CoreAppPermissions.ReadApps,
-                                    "get_host_status" or "get_core_operation" or "get_core_development" => CoreAppPermissions.ReadCore,
-                                    "tail_app_logs" => CoreAppPermissions.AppLogs,
-                                    "search_audit" => CoreAppPermissions.CoreLogs,
-                                    "start_app" or "stop_app" or "restart_app" => CoreAppPermissions.AppLifecycle,
-                                    "plan_app_update" or "apply_app_update" => CoreAppPermissions.Install,
-                                    "restart_core" => CoreAppPermissions.CoreLifecycle,
-                                    _ => null,
-                                };
+                                if (actor.AllowedTools is { } allowed && !allowed.Contains(name ?? "", StringComparer.Ordinal))
+                                    return CoreJson.Json(new ErrorResponse("background_scope_denied", "This tool exceeds the background grant."), 403);
+                                var permission = ToolPermission(name ?? "");
                                 if (permission is null || !Has(permission))
                                     return CoreJson.Json(new ErrorResponse("app_permission_required", "The assistant lacks the Core permission for this tool."), 403);
                             }

@@ -2,11 +2,12 @@ import { ProviderClient, type ProviderServerOptions } from "@hosty-sdk/app/provi
 import { ProviderError } from "@hosty-sdk/app/providers";
 import type { AppSessionStatus, SessionRecoveryParams } from "./session-types.js";
 import type { PermissionNoticeState } from "./permission-types.js";
+import type { AppContinuity } from "./continuity.js";
 
 /** Framework-neutral server adapter. Call with an already authenticated app session, never request data. */
 export type HostySessionInput = {
   status: AppSessionStatus;
-  identity?: { userId: string; hostRole: string | null; activeUntil?: string | null; activityRequired?: boolean };
+  identity?: { userId: string; hostRole: string | null; activeUntil?: string | null; activityRequired?: boolean; continuity?: AppContinuity };
   error?: { code: string; message: string; status: number | null };
 };
 

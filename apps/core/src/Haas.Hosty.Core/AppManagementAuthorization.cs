@@ -52,8 +52,10 @@ internal static class AppManagementAuthorization
             return Denied("app_service_token_invalid", "An app service token is required.", 401);
         try
         {
-            var actor = await services.GetRequiredService<AppIdentityService>()
-                .RevalidateAsync(request.Headers[IdentityHeader].ToString(), appId, ct);
+            var identity = services.GetRequiredService<AppIdentityService>();
+            var authority = await identity.RevalidateAuthorityAsync(
+                AppIdentityService.HashToken(request.Headers[IdentityHeader].ToString()), appId, ct, allowBackground: true);
+            var actor = authority.Actor;
             var app = await services.GetRequiredService<AppRegistryStore>().GetAppAsync(appId, ct);
             if (app is null) return Denied("app_access_denied", "The calling app is no longer installed.");
             var connectionSelection = request.Method == "GET" && route is "/api/source-connections" or "/api/source-connections/" or "/api/apps/{appId}/source-access";
@@ -61,8 +63,11 @@ internal static class AppManagementAuthorization
                 !(p == CoreAppPermissions.Sources && connectionSelection && HasPermission(app, CoreAppPermissions.SourceConnections))).ToArray();
             if (missing.Length > 0)
                 return Denied("app_permission_required", $"The calling app requires: {string.Join(", ", missing.Select(p => p == CoreAppPermissions.Sources && connectionSelection ? "sources.connections or apps.sources.full" : p))}.");
-            if (permissions.Length > 0)
-                await services.GetRequiredService<AppIdentityService>().RequireActivityAsync(request.Headers[IdentityHeader].ToString(), appId, ct);
+
+            if (authority.Background is { } background)
+                await identity.RequireBackgroundOperationAsync(background, scope => BackgroundGrantService.AllowsRoute(scope, request), ct);
+            else if (permissions.Length > 0)
+                await identity.RequireActivityAsync(request.Headers[IdentityHeader].ToString(), appId, ct);
             var state = await services.GetRequiredService<UserDirectoryStore>().ReadAsync(ct);
             var user = state.Users.FirstOrDefault(u => u.Id == actor.UserId && !u.Disabled);
             if (user is null) return Denied("user_disabled", "The acting user is unavailable.");

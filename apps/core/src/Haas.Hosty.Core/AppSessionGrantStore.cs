@@ -67,6 +67,32 @@ internal sealed class AppSessionGrantStore(CoreDataPaths paths)
         }
     }
 
+    // Upgrade only a still-live legacy grant. Concurrent logout wins; a stale caller cannot
+    // overwrite revocation or another successful migration.
+    internal async Task<AppSessionGrantRecord> UpgradeContinuityAsync(string hash, DateTimeOffset installation,
+        DateTimeOffset deadline, DateTimeOffset now, TimeSpan legacyIdle, CancellationToken ct)
+    {
+        await mutex.WaitAsync(ct);
+        try
+        {
+            var state = await ReadAsync(ct);
+            var current = state.Grants.FirstOrDefault(g => g.TokenHash == hash)
+                ?? throw new AppIdentityException("token_invalid", "App session no longer exists.");
+            if (current.RevokedAt is not null) throw new AppIdentityException("token_revoked", "App session was revoked.");
+            if (current.AbsoluteExpiresAt <= now || current.LastSeenAt.Add(legacyIdle) <= now)
+                throw new AppIdentityException("token_expired", "App session has expired.");
+            if (current.AuthorityVersion == 1) return current;
+            var upgraded = current with { AuthorityVersion = 1, Installation = installation,
+                AbsoluteExpiresAt = deadline, ActiveUntil = null };
+            await JsonStorage.WriteAsync(StatePath, state with
+            {
+                Grants = state.Grants.Select(g => g.TokenHash == hash ? upgraded : g).ToArray(),
+            }, restrictToOwner: true, ct);
+            return upgraded;
+        }
+        finally { mutex.Release(); }
+    }
+
     // Reject only a newly issued grant whose authorizing session disappeared during exchange.
     // Older identity grants remain independent of an expired parent's retention in the session store.
     public async Task RevokeByIdAsync(string grantId, DateTimeOffset now, CancellationToken cancellationToken = default)
@@ -148,4 +174,6 @@ internal sealed record AppSessionGrantRecord(
     DateTimeOffset? RevokedAt,
     string? AuthorizingSessionId,
     string? AuthRevision = null,
-    DateTimeOffset? ActiveUntil = null);
+    DateTimeOffset? ActiveUntil = null,
+    int AuthorityVersion = 0, DateTimeOffset? Installation = null,
+    string? BackgroundGrantId = null, string? BackgroundScopeId = null);

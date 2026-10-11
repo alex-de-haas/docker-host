@@ -159,6 +159,12 @@ async function route(
     const [session, recovery] = await Promise.all([
       resolveAppSession(readAppCredential(request)), getAppRecoveryParams(),
     ]);
+    const credential = readAppCredential(request);
+    if (session.status === "active" && session.identity.hostRole === "host.admin" && credential) {
+      // A same-actor probe after recovery updates all live runs, including those whose UI is closed.
+      // Updating credentials neither starts a turn nor resends a message; transport retry stays with the manager.
+      await manager.refreshActorCredentials(session.identity.userId, credential).catch(() => undefined);
+    }
     const result = await createHostySessionResponse(session, recovery, { administratorOnly: true });
     response.setHeader("Cache-Control", "no-store");
     sendJson(response, result.status, await result.json());
@@ -178,7 +184,7 @@ async function route(
     response.setHeader("Cache-Control", "no-store");
     const session = await resolveAppSession(readAppCredential(request));
     sendJson(response, 200, { status: session.status === "active" && session.identity.hostRole !== "host.admin" ? "forbidden" : session.status,
-      ...(session.status === "active" ? { activeUntil: session.identity.activeUntil, activityRequired: session.identity.activityRequired } : {}),
+      ...(session.status === "active" ? { userId: session.identity.userId, activeUntil: session.identity.activeUntil, activityRequired: session.identity.activityRequired, continuity: session.identity.continuity } : {}),
       ...(session.status !== "active" && session.error ? { error: session.error } : {}),
       recovery: await getAppRecoveryParams() });
     return;
@@ -533,6 +539,7 @@ async function route(
     if (actor.via !== "app-session" || !credential)
       throw new AppContextError(401, "reauth_required", "Sign in through Core to refresh this conversation.");
     await manager.refreshSessionCredentials(sessionId, actor.userId, credential);
+    await manager.refreshActorCredentials(actor.userId, credential);
     response.setHeader("Cache-Control", "no-store");
     sendJson(response, 200, { updated: true }); return;
   }

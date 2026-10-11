@@ -85,6 +85,25 @@ public sealed class CoreSettingsControlHttpTests
         Assert.Equal(HttpStatusCode.BadRequest, unknown.StatusCode);
     }
 
+    [Fact]
+    public async Task ContinuousMigrationKeepsCustomLegacyValuesAndReportsThemWithoutHourlyControl()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        using var client = CreateAuthorizedClient(harness);
+        using var put = await client.PutAsJsonAsync("/control/v1/settings", new { settings = new Dictionary<string, string?> {
+            ["HOSTY_AUTH_APP_ACTIVITY_HOURS"] = "2", ["HOSTY_AUTH_SYSTEM_GRANT_IDLE_HOURS"] = "12",
+            ["HOSTY_AUTH_SYSTEM_GRANT_ABSOLUTE_HOURS"] = "48", ["HOSTY_AUTH_APP_GRANT_ABSOLUTE_HOURS"] = "240" } });
+        put.EnsureSuccessStatusCode();
+        var body = await put.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.DoesNotContain(body.GetProperty("settings").EnumerateArray(), row => row.GetProperty("key").GetString() == "HOSTY_AUTH_APP_ACTIVITY_HOURS");
+        var diagnostics = body.GetProperty("authenticationDiagnostics").EnumerateArray().Select(x => x.GetString()).ToArray();
+        Assert.Contains(diagnostics, text => text!.Contains("HOSTY_AUTH_APP_ACTIVITY_HOURS=2h", StringComparison.Ordinal));
+        Assert.Contains(diagnostics, text => text!.Contains("HOSTY_AUTH_SYSTEM_GRANT_IDLE_HOURS=12h", StringComparison.Ordinal));
+        Assert.Contains(diagnostics, text => text!.Contains("HOSTY_AUTH_APP_GRANT_ABSOLUTE_HOURS=240h", StringComparison.Ordinal));
+        var files = Directory.GetFiles(harness.Services.GetRequiredService<HostyCoreRuntimeConfig>().DataRoot, "settings.json", SearchOption.AllDirectories);
+        Assert.Contains(files, file => File.ReadAllText(file).Contains("HOSTY_AUTH_APP_ACTIVITY_HOURS", StringComparison.Ordinal));
+    }
+
     private static HttpClient CreateAuthorizedClient(CoreHttpHarness harness)
     {
         var client = harness.CreateClient();

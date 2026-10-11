@@ -178,6 +178,15 @@ export class SessionManager {
     });
   }
 
+  /** Refresh every already-live conversation owned by this actor; never starts or replays a turn. */
+  async refreshActorCredentials(userId: string, credential: string): Promise<void> {
+    const results = await Promise.allSettled([...this.live.values()]
+      .filter(s => s.record.createdBy === userId && (s.credential !== credential || s.workspaceCredential !== credential))
+      .map(s => this.refreshSessionCredentials(s.record.id, userId, credential)));
+    const failure = results.find(r => r.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
+  }
+
   async discoverMcpTools(credential: string): Promise<string[]> {
     const unavailable: string[] = [];
     if (this.development?.available) await this.mcpPolicy.catalog(DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, developmentTools());

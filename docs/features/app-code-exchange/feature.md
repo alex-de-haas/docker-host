@@ -1,6 +1,6 @@
 ---
 created: 2026-10-05
-updated: 2026-10-08
+updated: 2026-10-11
 summary: Authorization codes require target-app service identity and private S256 proof, with browser-origin and nonce-bound sign-in attempts.
 components: [apps/core, apps/cli, packages/app-sdk, apps/shell, apps/harness, apps/shell-swift]
 ---
@@ -50,7 +50,7 @@ request URL nor a sibling app's parent-Domain cookie supplies this proof. Bodies
 entries are pruned without evicting other live attempts. JavaScript and working Core-origin
 sessionStorage are required; there is no nonce-cookie fallback for this transport.
 
-Silent initiation requires an iframe and establishes identity without privileged activity. Missing
+Silent initiation requires an iframe and establishes continuous app authority under a live Core session. Missing
 Core session returns a state-bound login-required callback. A known same-app silent intent whose
 nonce is unavailable also returns only that credential-free error to its frozen callback; this
 restores popup fallback when third-party cookies are blocked. Other missing-nonce contexts return
@@ -75,9 +75,9 @@ request-body logging. Existing grants, assignments, auth revisions, parent-sessi
 permission checks and lifetime rules remain enforced.
 
 Authenticated `/authorize` and `/launch-code` issuers require a challenge and S256 method. Cookie
-callers retain CSRF requirements. Generic/native initial issuance remains identity-only. Native
-in-place renewal uses `interactiveRenewal: true` only with a live primary Core session bearer;
-device, app-service and scoped/delegated credentials cannot use it to establish privileged activity.
+callers retain CSRF requirements. Live browser or unscoped native device/manual principals establish
+continuous app authority. Native in-place renewal accepts `interactiveRenewal: true` with those live
+principals; app-service and scoped/delegated credentials cannot establish interactive authority.
 
 ## App-owned proof lifecycle
 

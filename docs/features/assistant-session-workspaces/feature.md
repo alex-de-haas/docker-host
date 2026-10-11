@@ -1,6 +1,6 @@
 ---
 created: 2026-09-27
-updated: 2026-10-09
+updated: 2026-10-11
 summary: Session-owned logical workspaces group repository worktrees with compatible Git operations and a separately authorized inspection API.
 components: [apps/core, apps/harness, apps/workspaces]
 ---
@@ -43,7 +43,7 @@ review. Install Core before updating Harness to the canonical name. `apps.source
 authorize workspace operations. The manifest schema version is unchanged.
 
 Assistant requests use `/api/internal/apps/{assistant}/sessions/{session}/workspaces` with the app
-service bearer and `X-Hosty-User-Token`: a browser app identity with current app activity and a live
+service bearer and `X-Hosty-User-Token`: a browser app identity with continuous authority and a live
 authorizing Core sign-in. The conversation ID scopes ownership; it requires no separate approval.
 Delegated and read-only MCP credentials do not authorize preparation.
 Core checks the persisted permission and the user's current administrator/access state on every

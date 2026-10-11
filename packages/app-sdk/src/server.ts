@@ -1,6 +1,7 @@
 // Server slice: Next route-handler factories and Core revalidation. Never reaches a client
 // bundle — the service token lives here.
 import "server-only";
+import { readAppContinuity, type AppContinuity } from "./continuity";
 import { createHostySessionResponse } from "./session-server";
 import { createHostyUiResponse } from "./ui-server";
 import { resolveAppAuthProtocol, appAuthProtocolMinimum, isValidCodeVerifier, type AppAuthProtocol } from "./app-code";
@@ -48,6 +49,7 @@ export interface HostIdentity {
   expiresAt: string | null;
   activeUntil?: string | null;
   activityRequired?: boolean;
+  continuity?: AppContinuity;
 }
 
 /** Structured detail for a failed resolution: the Core HTTP status (null when Core was
@@ -308,6 +310,7 @@ async function revalidateWithCore(
     expiresAt,
     activeUntil: readString(payload.activeUntil),
     activityRequired: payload.activityRequired === true,
+    continuity: readAppContinuity(payload.continuity),
   };
 
   const expiresAtMs = expiresAt ? Date.parse(expiresAt) : Number.NaN;

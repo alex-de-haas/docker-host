@@ -191,8 +191,8 @@ Owner clarification, 2026-10-11: [SDK UI composition](../sdk-ui-composition/plan
 navigation/tool defaults and host-selected placement, including desktop windows. Provider defaults
 do not select a conversation, force a new conversation or imply one assistant per app window.
 This plan preserves the current Plans new-discussion operation; adding context to an existing
-conversation would need an explicit domain contract. [Continuous app access](../continuous-app-access/plan.md)
-owns the proposed replacement for hourly renewal, independently of selection and placement.
+conversation would need an explicit domain contract. [Continuous app access](../continuous-app-access/feature.md)
+provides silent session maintenance in place of hourly renewal, independently of selection and placement.
 
 | Owner | Deliverables owned here or there |
 | --- | --- |

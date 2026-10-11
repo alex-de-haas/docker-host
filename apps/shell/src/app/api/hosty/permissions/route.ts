@@ -12,6 +12,7 @@ export async function GET(request: Request) {
     const appAuthProtocol = await getAppAuthProtocol();
     return Response.json({ ...await readOwnPermissionNotice(role, { appId: process.env.HOSTY_APP_ID ?? config.appIdFallback }, request.signal),
       appAuthProtocol, recovery: { appId, corePublicOrigin: getCoreOrigin(), appAuthProtocol },
+      continuity: session.status === "active" ? session.identity.continuity : undefined,
       activeUntil: session.status === "active" ? session.identity.activeUntil : null,
       activityRequired: session.status === "active" ? session.identity.activityRequired : false },
       { headers: { "Cache-Control": "no-store" } });

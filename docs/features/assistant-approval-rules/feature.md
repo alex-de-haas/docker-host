@@ -1,6 +1,6 @@
 ---
 created: 2026-09-29
-updated: 2026-10-08
+updated: 2026-10-11
 summary: A shared per-tool MCP policy for Claude and Codex with Ask, Run unprompted and Disabled controls.
 components: [apps/harness, apps/core]
 ---
@@ -18,7 +18,7 @@ tools appear as a separate Core development group. Native filesystem/shell permi
 Refreshing tools does not require selecting or creating a conversation. Harness asks Core to read
 catalogs for its permitted targets using the current administrator's active app identity. Core mediates
 only initialization and tool listing and does not return its restricted discovery credential. This
-creates no execution authority: actual tool calls still require current assistant app activity, a live Core sign-in and the
+creates no execution authority: actual tool calls still require current assistant app authority, a live Core sign-in and the
 existing target/operation grants. No separate conversation approval is required.
 
 Rules are keyed by provider/tool and bound to installation/interface identity and tool definition.

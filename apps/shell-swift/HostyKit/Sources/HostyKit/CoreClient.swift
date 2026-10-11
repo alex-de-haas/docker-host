@@ -35,6 +35,7 @@ public actor CoreClient {
     private let session: URLSession
     private let appAuthSession: URLSession
     private var observedAppAuthProtocol2 = false
+    private var sessionContinuityVersion: Int?
     private let decoder = JSONDecoder.core
     private var sessionID: String?
 
@@ -266,6 +267,7 @@ public actor CoreClient {
             guard metadata.version == 2 else {
                 throw CoreError.invalidResponse("The host uses an unsupported app sign-in protocol.")
             }
+            sessionContinuityVersion = metadata.sessionContinuityVersion
             observedAppAuthProtocol2 = true
             return 2
         } catch CoreError.http(let status, _) where status == 404 && !observedAppAuthProtocol2 {
@@ -281,6 +283,12 @@ public actor CoreClient {
             else { throw CoreError.invalidResponse("The host could not confirm a supported app sign-in protocol.") }
             return 1
         }
+    }
+
+    /// Capability is read from this Core; absence preserves the old explicit-renewal behavior.
+    public func supportsAppContinuity() async throws -> Bool {
+        _ = try await appAuthProtocol()
+        return sessionContinuityVersion == 1
     }
 
     /// Uses the native Core session for an attempt already created by the approved app document.
@@ -307,7 +315,7 @@ public actor CoreClient {
         return try decode(await send(request, transport: appAuthSession))
     }
 
-    private struct AppAuthProtocolMetadata: Decodable { let version: Int }
+    private struct AppAuthProtocolMetadata: Decodable { let version: Int; let sessionContinuityVersion: Int? }
 
     // MARK: - Events
 

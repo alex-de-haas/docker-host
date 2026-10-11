@@ -14,7 +14,7 @@ public sealed class SilentAppSignInHttpTests
     private static readonly string State = new('a', 64);
 
     [Fact]
-    public async Task SilentOpen_LiveSessionReturnsBoundIdentityOnlyCode_AndLogoutRevokesGrant()
+    public async Task SilentOpen_LiveSessionReturnsContinuousAuthority_AndLogoutRevokesGrant()
     {
         await using var host = await CoreHttpHarness.StartAsync();
         await SeedAsync(host);
@@ -44,8 +44,7 @@ public sealed class SilentAppSignInHttpTests
         var token = (await exchanged.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("accessToken").GetString()!;
         var identity = host.Services.GetRequiredService<AppIdentityService>();
         Assert.Null((await identity.RevalidateAsync(token, AppId)).ActiveUntil);
-        Assert.Equal("reauth_required", (await Assert.ThrowsAsync<AppIdentityException>(() =>
-            identity.RequireActivityAsync(token, AppId, default))).Code);
+        Assert.NotNull((await identity.RequireActivityAsync(token, AppId, default)).Continuity);
 
         using var logout = new HttpRequestMessage(HttpMethod.Post, "/api/auth/logout");
         logout.Headers.Add("Cookie", $"hosty_session={SessionId}; hosty_csrf=logout-csrf");
@@ -85,11 +84,11 @@ public sealed class SilentAppSignInHttpTests
 
         Assert.Equal(HttpStatusCode.Unauthorized, exchanged.StatusCode);
         Assert.Equal("token_revoked", (await exchanged.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
-        Assert.NotNull(Assert.Single((await host.Services.GetRequiredService<AppSessionGrantStore>().ReadAsync()).Grants).RevokedAt);
+        Assert.Empty((await host.Services.GetRequiredService<AppSessionGrantStore>().ReadAsync()).Grants);
     }
 
     [Fact]
-    public async Task SilentOpen_ParentExpiryDoesNotRevokeIdentityOnlyCodeOrGrant()
+    public async Task SilentOpen_ParentExpiryPreventsCodeExchange()
     {
         await using var host = await CoreHttpHarness.StartAsync();
         await SeedAsync(host);
@@ -106,16 +105,12 @@ public sealed class SilentAppSignInHttpTests
         using var app = host.CreateClient();
         app.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(AppId));
         using var exchanged = await app.PostAsJsonAsync("/api/auth/apps/token", new { code, codeVerifier = AuthCodeProof.Verifier });
-        exchanged.EnsureSuccessStatusCode();
-        var token = (await exchanged.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("accessToken").GetString()!;
-        var identity = await host.Services.GetRequiredService<AppIdentityService>().RevalidateAsync(token, AppId);
-
-        Assert.True(identity.Active);
-        Assert.Null(identity.ActiveUntil);
+        Assert.Equal(HttpStatusCode.Unauthorized, exchanged.StatusCode);
+        Assert.Empty((await host.Services.GetRequiredService<AppSessionGrantStore>().ReadAsync()).Grants);
     }
 
     [Fact]
-    public async Task SilentOpen_ParentExpiryPrunedByLoginDoesNotRevokeAnEstablishedGrant()
+    public async Task SilentOpen_PrunedExpiredParentInvalidatesEstablishedGrant()
     {
         await using var host = await CoreHttpHarness.StartAsync();
         await SeedAsync(host);
@@ -152,12 +147,11 @@ public sealed class SilentAppSignInHttpTests
 
         using var delayedExchange = await app.PostAsJsonAsync("/api/auth/apps/token", new { code = delayedCode, codeVerifier = AuthCodeProof.Verifier });
         Assert.Equal(HttpStatusCode.Unauthorized, delayedExchange.StatusCode);
-        var identity = await host.Services.GetRequiredService<AppIdentityService>().RevalidateAsync(olderToken, AppId);
-        Assert.True(identity.Active);
-        Assert.Null(identity.ActiveUntil);
+        Assert.Equal("token_expired", (await Assert.ThrowsAsync<AppIdentityException>(() =>
+            host.Services.GetRequiredService<AppIdentityService>().RevalidateAsync(olderToken, AppId))).Code);
         var grants = (await host.Services.GetRequiredService<AppSessionGrantStore>().ReadAsync()).Grants;
-        Assert.Null(grants.Single(grant => grant.TokenHash == AppIdentityService.HashToken(olderToken)).RevokedAt);
-        Assert.Single(grants, grant => grant.RevokedAt is not null);
+        Assert.Single(grants); // The delayed exchange is refused before storing another grant.
+
     }
 
     [Theory]

@@ -1,6 +1,6 @@
 ---
 created: 2026-09-29
-updated: 2026-10-10
+updated: 2026-10-11
 summary: Apps discover and call confirmed speech-to-text and assistant providers with short-lived Core credentials.
 components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/whisper, apps/harness]
 ---
@@ -159,10 +159,10 @@ an unavailable provider and a message being sent. Discovery failures do not impl
 
 ## Assistant Activity Authority
 
-Assistant-provider issuance requires the consumer's current browser-established
-[activity window](../app-activity-window/feature.md) and live parent Core session. Provider token
-validation rechecks that activity; a delegated credential cannot replace it. Harness also uses its own app activity and live Core sign-in for MCP and workspace/publication tool
-calls; conversations require no additional consent.
+Assistant-provider issuance requires the consumer's current interactive authority and live principal,
+or an explicitly scoped [background grant](../continuous-app-access/feature.md). Provider token
+validation rechecks that source online. Harness uses its own continuous sign-in for interactive MCP
+and workspace/publication calls; conversations require no additional consent.
 
 ## Testing Expectations
 

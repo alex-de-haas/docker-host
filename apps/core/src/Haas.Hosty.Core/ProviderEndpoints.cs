@@ -92,15 +92,16 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
         string? userId = null;
         if (!string.IsNullOrEmpty(userCredential))
         {
-            if (kind == "assistant")
+            var delegatedClaims = delegated.ValidateToken(userCredential, caller.Id);
+            if (delegatedClaims is not null && kind != "assistant") userId = delegatedClaims.Sub;
+            else
             {
-                if (!userCredential.StartsWith("hostyg_", StringComparison.Ordinal))
-                    throw new AppIdentityException("reauth_required", "Assistant requests require browser-established app activity.");
-                await identity.RequireActivityAsync(userCredential, caller.Id, ct);
+                var actor = await identity.RequireOperationHashAsync(AppIdentityService.HashToken(userCredential), caller.Id,
+                    s => s.Kind == "provider" && s.TargetAppId == provider.Id && s.ProviderKind == kind && s.Key == input.Key,
+                    ct, requireActivity: kind == "assistant");
+                userId = actor.UserId;
                 activityHash = AppIdentityService.HashToken(userCredential);
             }
-            var delegatedClaims = delegated.ValidateToken(userCredential, caller.Id);
-            userId = delegatedClaims is not null ? delegatedClaims.Sub : (await identity.RevalidateAsync(userCredential, caller.Id, ct)).UserId;
             await identity.RequireAccessibleUserAsync(caller.Id, userId, ct);
         }
         if (kind == "assistant")
@@ -133,10 +134,12 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
             || claims.Expires <= clock.UtcNow.ToUnixTimeSeconds() || claims.ProviderInstalledAt != provider.InstalledAt
             || claims.ProviderRevision != provider.PermissionRevision)
             throw new AppIdentityException("token_invalid", "Provider credential expired or does not match this interface.");
-        if (claims.Kind == "assistant")
+        if (claims.Kind == "assistant" || claims.ActivityGrantHash is not null)
         {
             if (claims.ActivityGrantHash is null) throw new AppIdentityException("reauth_required", "Renew assistant authority through Core.");
-            var actor = await identity.RequireActivityHashAsync(claims.ActivityGrantHash, claims.Caller, ct);
+            var actor = await identity.RequireOperationHashAsync(claims.ActivityGrantHash, claims.Caller,
+                s => s.Kind == "provider" && s.TargetAppId == provider.Id && s.ProviderKind == input.Kind && s.Key == input.Key,
+                ct, requireActivity: claims.Kind == "assistant");
             if (actor.UserId != claims.UserId) throw new AppIdentityException("token_invalid", "Provider actor changed.");
         }
         var caller = await apps.GetAppAsync(claims.Caller, ct);
