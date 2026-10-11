@@ -14,7 +14,7 @@ export type UiHostSnapshot = { bootstrap: UiBootstrap | null; catalog: UiPanel[]
 type Frame = { element: HTMLIFrameElement; surface: UiFrameSurface; generation: string; nonce: string | null;
   connected: boolean; actor: string | null; live: boolean; cleanup: () => void; waitForReadiness: () => void;
   onConnection?: (connected: boolean) => void; view: UiViewDescriptor; chrome: UiChromeOverrides; policyRevision: number; composition: boolean };
-type Ledger = { input: string; result?: PresentationResult; pending?: Promise<PresentationResult>; frame?: Frame };
+type Ledger = { input: string; result?: PresentationResult; pending?: Promise<PresentationResult>; frame?: Frame; openingSurface?: UiFrameSurface };
 function immutable<T>(value: T): T {
   if (value && typeof value === "object" && !Object.isFrozen(value)) {
     for (const child of Object.values(value)) immutable(child);
@@ -316,6 +316,7 @@ export class UiHost implements UiClient {
         state.selectedId = tool.presentationId; state.expanded = true;
         this.update({ tools: this.snapshot.tools.map(t => t.presentationId === tool.presentationId ? { ...t, focusedAt: ++this.focusSequence } : t) });
         this.publishWorkspaces(); state.renderer?.focus(tool.presentationId);
+        entry.openingSurface = resolved.surface;
         return { status: "opened", requestId: id, target: resolved.target, readiness: tool.readiness, presentationId: tool.presentationId };
       } catch (error) { return failure(id, error); }
     })();
@@ -423,7 +424,8 @@ export class UiHost implements UiClient {
         check();
         if (!current.available) return { status: "blocked", requestId: id, code: current.state };
         const tool = this.snapshot.tools.find(t => t.presentationId === result.presentationId);
-        if (tool && JSON.stringify(tool.resolved.surface) !== JSON.stringify(current.surface))
+        // Navigation changes the live document, not the destination accepted by this request.
+        if (tool && (!tool.resolved.surface || JSON.stringify(entry?.openingSurface) !== JSON.stringify(current.surface)))
           return { status: "blocked", requestId: id, code: "destination_changed" };
         return { ...result, readiness: tool && tool.currentRoute === result.target.route ? tool.readiness : result.readiness };
       }
