@@ -105,7 +105,7 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
       frameLayer: layer,
       async present(instance) { return layer.ensure(instance.presentationId) ? "accepted" : "unavailable"; },
       focus(id) { presentationElement(id)?.querySelector<HTMLIFrameElement>("iframe")?.focus(); },
-      collapse() {}, release(id) { layer.release(id); },
+      collapse() { if (chooserRef.current?.open) chooserRef.current.close(); setChooser(false); }, release(id) { layer.release(id); },
       async showToolPicker(signal) {
         const dialog = chooserRef.current;
         if (signal.aborted || !dialog?.isConnected) return "unavailable";
@@ -127,7 +127,8 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
     const onModal = (event: Event) => {
       const kind = (event as CustomEvent).detail;
       if (kind !== `picker:${workspaceId}`) setChooser(false);
-      if (kind === "navigation" || layout === "responsive" && size < 900 && kind !== `tools:${workspaceId}`) host?.collapseWorkspace(workspaceId);
+      if (kind === "navigation" || layout === "responsive" && size < 900 && kind !== `tools:${workspaceId}` && kind !== `picker:${workspaceId}`)
+        host?.collapseWorkspace(workspaceId);
     };
     window.addEventListener("hosty:ui:modal", onModal); return () => window.removeEventListener("hosty:ui:modal", onModal);
   }, [host, workspaceId, size, layout]);

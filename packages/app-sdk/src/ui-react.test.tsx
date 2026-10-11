@@ -104,6 +104,25 @@ it("acknowledges a visible chooser and does not reopen it when the request is re
   await act(async () => { expect(await ui.openToolPicker({ requestId })).toMatchObject({ status: "accepted" }); });
   expect(dialog.open).toBe(false);
 });
+it.each([600, 1200].flatMap(width => ["collapse", "policy"].map(reason => ({ width, reason }))))(
+  "closes the picker on $reason at width $width and allows a fresh opening", async ({ width, reason }) => {
+    vi.stubGlobal("innerWidth", width);
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", { configurable: true, value(this: HTMLDialogElement) { this.open = true; } });
+    Object.defineProperty(HTMLDialogElement.prototype, "close", { configurable: true, value(this: HTMLDialogElement) { this.open = false; } });
+    await render();
+    await act(async () => { expect(await ui.openToolPicker({ requestId: createPresentationRequestId() })).toMatchObject({ status: "accepted" }); });
+    const dialog = element.querySelector<HTMLDialogElement>("dialog.hosty-tool-chooser")!;
+    expect(dialog.open).toBe(true);
+    await act(async () => {
+      if (reason === "policy") host!.setViewChrome("root", { tools: { enabled: false } });
+      else host!.collapseWorkspace("default");
+    });
+    expect(dialog.open).toBe(false);
+    await act(async () => host!.setViewChrome("root", {}));
+    expect(dialog.open).toBe(false);
+    await act(async () => { expect(await ui.openToolPicker({ requestId: createPresentationRequestId() })).toMatchObject({ status: "accepted" }); });
+    expect(dialog.open).toBe(true);
+  });
 afterEach(async () => { await act(async () => root.unmount()); element.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 async function render(layout: "auto" | "slot" | "none" = "auto") {
   await act(async () => root.render(<HostyUiRoot panelLayout={layout}>{layout === "slot" ? <HostyPanelWorkspace><Document /></HostyPanelWorkspace> : <Document />}</HostyUiRoot>));
