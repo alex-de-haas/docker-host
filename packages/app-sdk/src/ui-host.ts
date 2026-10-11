@@ -80,6 +80,10 @@ export class UiHost implements UiClient {
     this.active = active; this.activityReady = false;
     this.activityGeneration++; for (const state of this.workspaces.values()) state.generation++;
     this.invalidateRendererWork();
+    if (!active) {
+      for (const state of this.workspaces.values()) { state.expanded = false; state.renderer?.collapse(); }
+      this.publishWorkspaces();
+    }
     this.composition.resetNavigation(); this.actions.clear();
     this.refreshing = null; this.toolQueues.clear();
     for (const [key, entry] of this.ledger) if (entry.pending || entry.frame) this.ledger.delete(key);

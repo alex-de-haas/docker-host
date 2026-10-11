@@ -48,6 +48,35 @@ function frame(surface = resolved.surface!, view?: UiViewDescriptor) {
 }
 
 describe("panel host authority and replay", () => {
+  it.each([false, true])("hides external workspace content during activity loss (picker open: %s)", async picker => {
+    host = createUiHost(); const h = host, regions = [document.createElement("aside"), document.createElement("aside")];
+    const chooser = document.createElement("div"); chooser.hidden = true; document.body.append(chooser);
+    const release = vi.fn();
+    ["default", "floating"].forEach((workspaceId, index) => {
+      const region = regions[index]!; region.hidden = true; document.body.append(region);
+      h.registerWorkspace({ workspaceId, renderer: { present: async () => "accepted", release,
+        focus() { region.hidden = false; }, collapse() { region.hidden = true; chooser.hidden = true; },
+        showToolPicker: async () => { chooser.hidden = false; return "accepted"; } } });
+    });
+    await h.refresh();
+    for (const workspaceId of ["default", "floating"]) {
+      h.setPlacementResolver(() => ({ workspaceId }));
+      expect(await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() })).toMatchObject({ status: "opened" });
+    }
+    const ids = h.getSnapshot().tools.map(tool => tool.presentationId);
+    if (picker) expect(await h.openToolPicker({ requestId: createPresentationRequestId() })).toMatchObject({ status: "accepted" });
+    expect(regions.every(region => !region.hidden)).toBe(true); expect(chooser.hidden).toBe(!picker);
+    h.setActive(false);
+    expect(regions.every(region => region.hidden)).toBe(true); expect(chooser.hidden).toBe(true);
+    expect(h.getSnapshot().workspaces?.every(workspace => !workspace.expanded)).toBe(true);
+    expect(h.getEnvironment()).toMatchObject({ connection: "blocked", code: "activity_required" });
+    h.setExpanded(true); expect(regions.every(region => region.hidden)).toBe(true);
+    h.setActive(true); await h.refresh();
+    expect(regions.every(region => region.hidden)).toBe(true); expect(chooser.hidden).toBe(true);
+    expect(h.getSnapshot().tools.map(tool => tool.presentationId)).toEqual(ids); expect(release).not.toHaveBeenCalled();
+    h.setExpanded(true);
+    expect(regions[0]!.hidden).toBe(false); expect(regions[1]!.hidden).toBe(true);
+  });
   it.each(["ready", "blocked"] as const)("returns current %s readiness after delayed renderer placement", async state => {
     host = createUiHost(); const h = host; let finish!: (value: "accepted") => void;
     h.registerWorkspace({ workspaceId: "default", renderer: {

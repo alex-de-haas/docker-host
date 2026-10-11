@@ -184,7 +184,9 @@ update that policy. `getViewChrome(viewId)` returns a copy of the effective per-
 
 Reopening a selected workspace calls its renderer's `focus`; successful movement of its selected
 tool calls the source renderer's `collapse`. External renderers receive these visibility transitions
-without a snapshot subscription. Movement requires matching renderer `frameLayer` identity. One move per presentation runs at a time. Supersession, close and activity changes abort
+without a snapshot subscription. Suspending host activity also collapses every renderer-owned
+workspace and chooser. Recovery under the same actor retains tools but leaves them collapsed until
+explicitly reopened. Movement requires matching renderer `frameLayer` identity. One move per presentation runs at a time. Supersession, close and activity changes abort
 the pending renderer operation; refusal or supersession restores the retained frame through its
 current owning renderer before returning failure. Concurrent attention, readiness or catalog updates
 do not cancel a retained presentation; movement checks its ID and workspace ownership, and commits
@@ -256,7 +258,9 @@ shell, and this API does not add context to an existing assistant conversation.
   movement rejection, plus successful movement during ordinary metadata refresh. External renderer
   visibility tests cover default/named workspace reopening and selected/non-selected tool movement.
   Opening and rail selection return current readiness after delayed placement/resolution; tests cover
-  ready/auth-required reports received during the wait, including the opening event. Pending opening
+  ready/auth-required reports received during the wait, including the opening event. Activity-loss
+  tests verify both rendered tools and choosers hide across workspaces, remain collapsed on recovery
+  under the same actor, and preserve retained presentations for explicit reopening. Pending opening
   and picker tests verify cancellation on collapse, newer opening/picker and activity changes,
   including progress of the next queued opening. Workspace removal during bootstrap/panel resolution
   prevents orphaned tools and stale openings after re-registration; pending pickers also retire.
@@ -311,7 +315,7 @@ Verification recorded on 2026-10-11:
 | `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --artifacts-path "$PWD/build/ui-composition" --verbosity quiet` | 3,139 passed; 4 opt-in Docker/VPN integration tests skipped because their fixtures were not enabled |
 | Core build and `UiPanelHttpTests` after the icon-origin fix | Build passed; 31 HTTP tests passed |
 | `npm run core:aot` | Native AOT publish passed for osx-arm64 with no trim/AOT warnings |
-| `npm test --workspace=@hosty-sdk/app` | 635 passed |
+| `npm test --workspace=@hosty-sdk/app` | 637 passed |
 | `npm test` in Shell / Plans / Harness / Marketplace / Workspaces / Demo / Telemetry UI | 191 Node + 244 component / 117 / 536 / 111 / 7 / 4 / 10 passed |
 | `npm run build --workspace=@hosty-sdk/app` and overlay upgrade contract script | Passed, including optional Next export and unchanged consumer compatibility |
 | `npm run build -- --webpack` in all seven affected web apps | Passed; affected app lint checks passed with no errors |
