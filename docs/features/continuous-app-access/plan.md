@@ -64,13 +64,27 @@ there is no shorter absolute cap chosen by the manifest's `system` flag. Existin
 remain 7 idle days and 30 absolute days, configurable by the operator. This proposal does not
 silently make the primary browser session permanent.
 
-Authenticated browser-origin app use, including SDK maintenance while a document is mounted,
-touches the app grant and parent session's idle activity through an app-bound Core operation.
-Only validate-then-touch is allowed: an expired/revoked parent or grant cannot revive itself.
-The app's backend authenticates the request with its own service identity and that user's app
-grant; Core rechecks the user, installation, assignment and permissions. Generic backend token
-introspection does not count as browser activity. A heartbeat is a convenience signal, not proof
-of human presence or permission for additional operations.
+App-bound maintenance may validate and touch the app grant, but must never extend the parent
+Core session. The app's backend authenticates this operation with its own service identity and
+that user's app grant; Core rechecks the user, installation, assignment and permissions. Retaining
+both credentials after a browser request does not give the backend authority to keep the parent
+alive. Generic introspection, provider/MCP calls and background revalidation cannot touch it either.
+
+Parent idle maintenance is a separate browser-to-Core operation. A Core-owned browser frame makes
+a same-origin POST using the primary session cookie and Core-owned origin/CSRF proof. Bind it to
+the app's installed origin and the exact authorizing session/actor, using the existing app-intent
+validation pattern. An app/backend-supplied Origin header, launch intent or app grant is insufficient
+without that Core browser session proof. Keep the cookie and proof inside the isolated Core origin;
+the frame returns only bounded status/deadline information, never a reusable keepalive credential.
+The app backend cannot independently replay those results to extend the parent after tabs close.
+
+Both paths validate before touching: an expired/revoked parent or grant cannot revive itself.
+A browser heartbeat proves access to the existing browser session, not human presence or permission
+for additional operations. This maintenance is silent and requires no periodic confirmation.
+Where browser cookie/framing policy prevents the Core-owned path, keep using the app grant within
+the parent's actual remaining lifetime; do not substitute backend-only parent maintenance or
+report the unavailable maintenance transport as expired identity. Genuine parent expiry still
+requires normal recovery. Closing a tab does not revoke an otherwise-live session immediately.
 
 SDK maintenance runs on mount, at a bounded interval (proposed five minutes with jitter), on
 focus/visibility return and network recovery, and before a protected request when validation is
@@ -184,7 +198,7 @@ where Core or another enforcing service actually checks them.
 ## Deliverables
 
 - [ ] D1. Finalize and approve the authority-source, common lifetime, maintenance, background grant, migration and error contracts; inventory every activity check and every first-party renewal consumer.
-- [ ] D2. Implement Core continuous browser/native app authorization, validated idle maintenance and capability negotiation; remove the separate activity gate for supported sources while preserving expiry, revocation and effective permission checks.
+- [ ] D2. Implement Core continuous browser/native app authorization, browser-proven parent idle maintenance separated from app-bound grant maintenance, and capability negotiation; remove the separate activity gate for supported sources while preserving expiry, revocation and effective permission checks.
 - [ ] D3. Implement silent browser/server SDK maintenance and credential reacquisition, migrate first-party consumers including Harness live runs and native Shell, and separate transient outage from authentication recovery and explicitly local content.
 - [ ] D4. Implement explicit Core background grants, scope-preserving credential issuance and list/revoke controls through settings and control/CLI, with audited lifecycle and no implicit conversion of browser sessions.
 - [ ] D5. Implement and test persisted/settings migration and mixed-version behavior, including custom lifetimes, live legacy activity-expired grants, missing provenance, restart durability and reinstall invalidation.
@@ -200,6 +214,14 @@ where Core or another enforcing service actually checks them.
   Use short configured clocks/test clocks instead of pretending a brief browser run proves hours.
 - Verify initial silent sign-in, five-minute maintenance, coalescing and server refresh under
   expired request credentials; no duplicate mutation, handoff, conversation or agent message occurs.
+- After legitimate browser use, retain only the app service credential and user app grant in a
+  backend test client, close all browser contexts and advance the clock. Repeated app maintenance,
+  introspection and provider calls must not move the parent's last-use time or prevent its idle
+  expiry. Replaying frame status/intent data or forging an Origin header cannot extend it either.
+- Verify that the Core-owned browser maintenance path can touch only its matching live parent,
+  rejects absent browser proof and actor/session substitution, and never exceeds the absolute cap.
+  Block its cookies or framing: preserve still-valid app access without backend substitution,
+  confirmation loops or a false logout, then require recovery at actual parent expiry.
 - Verify explicit logout, user switch, revoke-all, account disable, role/assignment loss, optional
   permission removal and uninstall/reinstall. Test existing read-cache bounds and write-time checks.
 - A small background fixture completes a scoped operation after all tabs close and ordinary browser
