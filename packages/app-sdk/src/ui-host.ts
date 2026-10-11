@@ -43,6 +43,7 @@ export class UiHost implements UiClient {
   private readonly ledger = new Map<string, Ledger>();
   private readonly toolQueues = new Map<string, Promise<PresentationResult>>();
   private readonly moves = new Map<string, AbortController>();
+  private readonly rendererWork = new Map<AbortController, { check: () => void; frame?: Frame }>();
   readonly composition: UiCompositionModel;
   private readonly workspaces = new Map<string, UiWorkspace>([[DEFAULT_WORKSPACE, workspace(DEFAULT_WORKSPACE)]]);
   private placement?: UiPlacementResolver;
@@ -76,6 +77,7 @@ export class UiHost implements UiClient {
     for (const move of this.moves.values()) move.abort();
     this.active = active; this.activityReady = false;
     this.activityGeneration++; for (const state of this.workspaces.values()) state.generation++;
+    this.invalidateRendererWork();
     this.composition.resetNavigation(); this.actions.clear();
     this.refreshing = null; this.toolQueues.clear();
     for (const [key, entry] of this.ledger) if (entry.pending || entry.frame) this.ledger.delete(key);
@@ -169,6 +171,7 @@ export class UiHost implements UiClient {
     if (previous === next) return true;
     if (!previous.renderer?.frameLayer || previous.renderer.frameLayer !== next.renderer.frameLayer) return false;
     const activity = this.activityGeneration, generation = ++next.generation, renderer = next.renderer;
+    this.invalidateRendererWork();
     const moved = { ...tool, workspaceId }, controller = new AbortController();
     const retainedSource = () => this.snapshot.tools.find(t => t.presentationId === id && t.workspaceId === tool.workspaceId && t.resolved.surface);
     this.moves.set(id, controller);
@@ -208,7 +211,19 @@ export class UiHost implements UiClient {
   private emit(event: UiEvent) { if (!this.disposed) for (const listener of this.events) listener(event); }
   private update(patch: Partial<UiHostSnapshot>) {
     if (this.disposed) return;
-    this.snapshot = immutable({ ...this.snapshot, ...patch }); for (const listener of this.listeners) listener();
+    this.snapshot = immutable({ ...this.snapshot, ...patch }); this.invalidateRendererWork();
+    for (const listener of this.listeners) listener();
+  }
+  private invalidateRendererWork() {
+    for (const [controller, work] of this.rendererWork) if (!controller.signal.aborted) {
+      try { work.check(); } catch { controller.abort(); }
+    }
+  }
+  private async runRenderer<T>(check: () => void, perform: (signal: AbortSignal) => Promise<T>, frame?: Frame): Promise<T> {
+    check(); const controller = new AbortController(); this.rendererWork.set(controller, { check, frame });
+    try { const result = await perform(controller.signal); check(); return result; }
+    catch (error) { check(); throw error; }
+    finally { this.rendererWork.delete(controller); }
   }
   private setEnvironment(connection: UiEnvironment["connection"], code?: string) {
     this.environment = { mode: "standalone", connection, ...(code ? { code } : {}) };
@@ -307,6 +322,7 @@ export class UiHost implements UiClient {
       if (options.reuse === "new" && destination.presentationId) throw new UiError("invalid_presentation", "A new presentation cannot reuse an instance.");
     } catch (error) { return Promise.resolve(failure(id, error)); }
     const state = this.workspaces.get(destination.workspaceId)!, selection = ++state.generation;
+    this.invalidateRendererWork();
     const entry: Ledger = { input, frame };
     const currentSource = () => !frame || frame.live && frame.connected && source === `${frame.surface.appId}:${frame.generation}:${frame.nonce}`;
     const queueKey = `${destination.workspaceId}:${panelKey(target.panel)}`, previous = this.toolQueues.get(queueKey);
@@ -336,11 +352,13 @@ export class UiHost implements UiClient {
         const tool: UiTool = old ?? { key: panelKey(target.panel), presentationId: createPresentationRequestId(), workspaceId: state.workspaceId,
           target: resolved.target, panelSurface: resolved.surface, resolved, readiness: insecure ? "unreported" : "loading", attention: 0, currentRoute: resolved.target.route ?? null, focusedAt: 0 };
         if (!old) this.update({ tools: [...this.snapshot.tools, tool] });
+        const renderer = state.renderer!;
         try {
-          if (await state.renderer!.present(tool, new AbortController().signal) !== "accepted") throw new UiError("presentation_unavailable", "The workspace could not present this tool.");
+          const checkRenderer = () => { check(); if (state.renderer !== renderer) throw new UiError("presentation_superseded", "The workspace renderer changed."); };
+          if (await this.runRenderer(checkRenderer, signal => renderer.present(tool, signal), frame) !== "accepted") throw new UiError("presentation_unavailable", "The workspace could not present this tool.");
           check();
         } catch (error) {
-          if (!old) { state.renderer?.release(tool.presentationId); this.update({ tools: this.snapshot.tools.filter(t => t.presentationId !== tool.presentationId) }); }
+          if (!old) { renderer.release(tool.presentationId); this.update({ tools: this.snapshot.tools.filter(t => t.presentationId !== tool.presentationId) }); }
           throw error;
         }
         state.selectedId = tool.presentationId; state.expanded = true;
@@ -406,12 +424,18 @@ export class UiHost implements UiClient {
   private pickTools(options: UiActionOptions, frame?: Frame) {
     return this.action("picker", null, options, async check => {
       this.requireTools(frame);
-      const own = await this.bootstrap(); check(); this.requireTools(frame);
+      const state = this.workspaces.get(frame?.view.workspaceId ?? DEFAULT_WORKSPACE), renderer = state?.renderer;
+      if (!state || !renderer) throw new UiError("presentation_unavailable", "A tool chooser is not available here.");
+      const selection = ++state.generation; this.invalidateRendererWork();
+      const checkRenderer = () => {
+        check(); this.requireTools(frame);
+        if (selection !== state.generation || renderer !== state.renderer) throw new UiError("presentation_superseded", "A newer action replaced this chooser.");
+      };
+      const own = await this.bootstrap(); checkRenderer();
       if (!own.canHost) throw new UiError("app_permission_required", "Allow this app to discover tools.");
-      const renderer = this.workspaces.get(frame?.view.workspaceId ?? DEFAULT_WORKSPACE)?.renderer;
-      if (!renderer || await renderer.showToolPicker(new AbortController().signal) !== "accepted")
+      if (await this.runRenderer(checkRenderer, signal => renderer.showToolPicker(signal), frame) !== "accepted")
         throw new UiError("presentation_unavailable", "A tool chooser is not available here.");
-      check(); this.requireTools(frame);
+      checkRenderer();
     }, frame);
   }
   private navigateFrame(entryKey: string, options: UiActionOptions, frame: Frame) {
@@ -471,6 +495,7 @@ export class UiHost implements UiClient {
         this.requireTools();
         const state = this.workspaces.get(workspaceId)!;
         const selection = ++state.generation;
+        this.invalidateRendererWork();
         const generation = this.activityGeneration, own = await this.bootstrap();
         if (!own.canHost) throw new UiError("app_permission_required", "Allow this app to host tools.");
         const resolved = await uiRequest<UiResolvedPanel>(this.path, "panels/resolve", opened.target);
@@ -506,6 +531,7 @@ export class UiHost implements UiClient {
   reportSurfaceState = (_state: { route: string; state: "ready" | "blocked"; code?: string }) => {};
 
   private forgetFrameRequests(frame: Frame) {
+    for (const [controller, work] of this.rendererWork) if (work.frame === frame) controller.abort();
     for (const [key, entry] of this.ledger) if (entry.frame === frame) this.ledger.delete(key);
     for (const [key, entry] of this.actions) if (entry.frame === frame) this.actions.delete(key);
   }

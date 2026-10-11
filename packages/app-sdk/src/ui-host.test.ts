@@ -715,6 +715,31 @@ describe("embedded panel discovery", () => {
 });
 
 describe("composition presentation instances", () => {
+  it.each(["presentation", "picker"].flatMap(kind => ["collapse", "opening", "activity", "picker"].map(action => ({ kind, action }))))(
+    "aborts pending $kind renderer work on $action and frees the opening queue", async ({ kind, action }) => {
+      host = createUiHost(); const h = host; let signal!: AbortSignal;
+      const waitForAbort = (value: AbortSignal) => {
+        signal = value;
+        return new Promise<"accepted">((_resolve, reject) => value.addEventListener("abort", () => reject(new Error("Renderer cancelled")), { once: true }));
+      };
+      const present = vi.fn(async (_tool: unknown, _signal: AbortSignal) => "accepted" as const);
+      const showToolPicker = vi.fn(async (_signal: AbortSignal) => "accepted" as const);
+      if (kind === "presentation") present.mockImplementationOnce((_tool, value) => waitForAbort(value));
+      else showToolPicker.mockImplementationOnce(waitForAbort);
+      h.registerWorkspace({ workspaceId: "default", renderer: { present, showToolPicker, focus() {}, collapse() {}, release() {} } });
+      await h.refresh();
+      const pending = kind === "presentation" ? h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() })
+        : h.openToolPicker({ requestId: createPresentationRequestId() });
+      await vi.waitFor(() => expect(signal).toBeDefined());
+      const next = action === "opening" ? h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() })
+        : action === "picker" ? h.openToolPicker({ requestId: createPresentationRequestId() }) : null;
+      if (action === "collapse") h.collapseWorkspace("default");
+      if (action === "activity") h.setActive(false);
+      expect(await pending).toMatchObject({ status: "blocked", code: action === "activity" ? "activity_required" : "presentation_superseded" });
+      expect(signal.aborted).toBe(true);
+      if (next) expect(await next).toMatchObject({ status: action === "opening" ? "opened" : "accepted" });
+      expect(h.getSnapshot().tools).toHaveLength(action === "opening" ? 1 : 0);
+    });
   it.each([false, true])("replays the accepted presentation after navigation (different endpoint: %s)", async differentEndpoint => {
     const h = await start(), requestId = createPresentationRequestId();
     const opened = await h.openSurface(target, { placement: "side", requestId });

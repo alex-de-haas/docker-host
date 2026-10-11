@@ -176,6 +176,9 @@ do not cancel a retained presentation; movement checks its ID and workspace owne
 the latest metadata. A closed instance is released instead of restored.
 If that renderer also refuses restoration, the inconsistent presentation is closed. Renderer release
 operations must tolerate an already released ID when cleaning up a cancelled in-flight operation.
+Pending openings and tool pickers receive a renderer cancellation signal when a newer workspace
+action, collapse, source loss or activity change supersedes them. A compliant renderer releases
+its pending work on cancellation, allowing the next opening in the same panel queue to proceed.
 The React renderer keeps iframe containers in one stable DOM layer and positions them
 over workspace viewports; movement, switching, collapse and resize never reparent the iframe.
 
@@ -230,7 +233,10 @@ shell, and this API does not add context to an existing assistant conversation.
   routes, renewed readiness within the resolved navigation route tree and Escape dismissal. Non-React
   renderer fixtures verify frame release on actor/Core/installation changes, authority loss and disposal.
   Delayed-renderer tests cover move supersession/refusal/close, rollback, cancellation and concurrent
-  movement rejection, plus successful movement during ordinary metadata refresh. Closed-request replay still checks origin, endpoint and frame-policy changes.
+  movement rejection, plus successful movement during ordinary metadata refresh. Pending opening
+  and picker tests verify cancellation on collapse, newer opening/picker and activity changes,
+  including progress of the next queued opening. Closed-request replay still checks origin, endpoint
+  and frame-policy changes.
 - Plans component tests use a real SDK host to close and reopen a finalized discussion through both
   visible actions, retain its conversation target and replay a later uncertain opening without
   repeating the assistant handoff.
@@ -259,7 +265,7 @@ Verification recorded on 2026-10-11:
 | `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --artifacts-path "$PWD/build/ui-composition" --verbosity quiet` | 3,139 passed; 4 opt-in Docker/VPN integration tests skipped because their fixtures were not enabled |
 | Core build and `UiPanelHttpTests` after the icon-origin fix | Build passed; 31 HTTP tests passed |
 | `npm run core:aot` | Native AOT publish passed for osx-arm64 with no trim/AOT warnings |
-| `npm test --workspace=@hosty-sdk/app` | 569 passed |
+| `npm test --workspace=@hosty-sdk/app` | 577 passed |
 | `npm test` in Shell / Plans / Harness / Marketplace / Workspaces / Demo / Telemetry UI | 191 Node + 238 component / 117 / 536 / 111 / 7 / 4 / 10 passed |
 | `npm run build --workspace=@hosty-sdk/app` and overlay upgrade contract script | Passed, including optional Next export and unchanged consumer compatibility |
 | `npm run build -- --webpack` in all seven affected web apps | Passed; affected app lint checks passed with no errors |
@@ -267,8 +273,8 @@ Verification recorded on 2026-10-11:
 | `node scripts/check-versions.mjs`, `node scripts/docs-index.mjs --check`, `git diff --check` | Passed |
 
 Browser acceptance was repeated for Shell and standalone on the implementation builds. The later
-navigation review fixes were verified with component/host/overlay and Plans integration regressions, the full
-SDK suite and the SDK build; the complete browser matrix was not repeated for that fix. The test
+review fixes were verified with component/host/overlay and Plans integration regressions, the full
+SDK suite and the SDK build; the complete browser matrix was not repeated after those fixes. The test
 Core and its apps were stopped afterward; the operator instance was not used for lifecycle changes.
 Core restore reported NU1900 because the NuGet vulnerability feed was unavailable; package restore,
 compilation, tests and native publish completed. This run does not establish a fresh dependency audit.
