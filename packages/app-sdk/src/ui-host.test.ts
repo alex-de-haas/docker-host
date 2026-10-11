@@ -825,7 +825,7 @@ describe("composition presentation instances", () => {
     expect(await current.movePresentation(result.presentationId!, "floating")).toBe(true);
     expect(current.getSnapshot().tools[0]).toMatchObject({ presentationId: result.presentationId, workspaceId: "floating" });
   });
-  it.each(["superseded", "refused", "closed"])("restores external renderer placement after a %s pending move", async outcome => {
+  it.each(["superseded", "refused", "closed", "metadata"])("coordinates external renderer placement during a pending move (%s)", async outcome => {
     host = createUiHost(); const h = host, layer = {}, frames = new Map<string, HTMLIFrameElement>();
     let finish!: (result: "accepted" | "unavailable") => void, signal!: AbortSignal;
     const present = async (tool: { presentationId: string; workspaceId: string }) => {
@@ -851,11 +851,18 @@ describe("composition presentation instances", () => {
     expect(await h.movePresentation(id, "floating")).toBe(false);
     if (outcome === "closed") h.closePresentation(id);
     else if (outcome === "superseded") h.collapseWorkspace("floating");
-    if (outcome !== "refused") expect(signal.aborted).toBe(true);
+    else if (outcome === "metadata") {
+      h.setAttention(id, 3); panels = [{ ...catalog, state: "degraded", available: false }]; await h.refresh();
+      expect(signal.aborted).toBe(false);
+    }
+    if (outcome === "closed" || outcome === "superseded") expect(signal.aborted).toBe(true);
     finish(outcome === "refused" ? "unavailable" : "accepted");
-    expect(await moving).toBe(false);
+    expect(await moving).toBe(outcome === "metadata");
     if (outcome === "closed") {
       expect(frames.size).toBe(0); expect(frame.isConnected).toBe(false); expect(h.getSnapshot().tools).toHaveLength(0);
+    } else if (outcome === "metadata") {
+      expect(h.getSnapshot().tools[0]).toMatchObject({ presentationId: id, workspaceId: "floating", attention: 3, resolved: { state: "degraded" } });
+      expect(frame.dataset.workspace).toBe("floating"); expect(frame.contentWindow).toBe(context);
     } else {
       expect(h.getSnapshot().tools[0]!.workspaceId).toBe("default"); expect(frame.dataset.workspace).toBe("default");
       expect(frame.contentWindow).toBe(context); expect(renderer.focus).toHaveBeenLastCalledWith(id);

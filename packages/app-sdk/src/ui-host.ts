@@ -170,17 +170,18 @@ export class UiHost implements UiClient {
     if (!previous.renderer?.frameLayer || previous.renderer.frameLayer !== next.renderer.frameLayer) return false;
     const activity = this.activityGeneration, generation = ++next.generation, renderer = next.renderer;
     const moved = { ...tool, workspaceId }, controller = new AbortController();
+    const retainedSource = () => this.snapshot.tools.find(t => t.presentationId === id && t.workspaceId === tool.workspaceId && t.resolved.surface);
     this.moves.set(id, controller);
     const stop = this.subscribeSnapshot(() => {
-      if (!this.snapshot.tools.includes(tool) || generation !== next.generation || renderer !== next.renderer) controller.abort();
+      if (!retainedSource() || generation !== next.generation || renderer !== next.renderer) controller.abort();
     });
     try {
       if (await renderer.present(moved, controller.signal) !== "accepted") throw new Error("Movement was refused.");
       this.checkActivity(activity); this.requireTools();
-      if (controller.signal.aborted || !this.snapshot.tools.includes(tool) || generation !== next.generation || renderer !== next.renderer)
+      if (controller.signal.aborted || !retainedSource() || generation !== next.generation || renderer !== next.renderer)
         throw new Error("Movement was superseded.");
       stop(); previous.generation++;
-      this.update({ tools: this.snapshot.tools.map(t => t === tool ? moved : t) });
+      this.update({ tools: this.snapshot.tools.map(t => t.presentationId === id ? { ...t, workspaceId } : t) });
       if (previous.selectedId === id) { previous.selectedId = null; previous.expanded = false; }
       for (const frame of this.frames) if (frame.view.presentationId === id) frame.view = { ...frame.view, workspaceId };
       this.focusPresentation(id); return true;
