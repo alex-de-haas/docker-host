@@ -34,6 +34,7 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
   const running = useRef(false);
   const requests = useRef(new Map<string, { requestId: string; installationId: string }>());
   const results = useRef(new Map<string, NonNullable<typeof completed>>());
+  const acceptedPresentations = useRef(new Set<string>());
   const version = detail && discussionVersion(detail, workspaceId);
   const sourceKey = JSON.stringify([detail?.repository.id, detail?.path, workspaceId, version?.document.content]);
   const selected = options?.providers.find(item => `${item.appId}:${item.key}` === selection)
@@ -62,15 +63,24 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
   }, [epoch]);
 
   useEffect(() => ui.subscribe(event => {
-    if (event.type === "presentation" && event.value.requestId === completed?.presentationId) setPresentation(event.value);
+    if (event.type === "presentation" && event.value.requestId === completed?.presentationId) {
+      if (event.value.status === "opened") acceptedPresentations.current.add(event.value.requestId);
+      setPresentation(event.value);
+    }
   }), [ui, completed?.presentationId]);
 
   async function present(value: NonNullable<typeof completed>, generation = context.current) {
     if (!generation || context.current !== generation || value.contextKey !== contextKey) return;
+    if (acceptedPresentations.current.has(value.presentationId)) {
+      const previous = value;
+      value = { ...value, presentationId: createPresentationRequestId() };
+      for (const [key, cached] of results.current) if (cached === previous) results.current.set(key, value);
+    }
     setCompleted(value);
     setPresentation(null);
     if (!value.result.target) return;
     const result = await ui.openSurface(value.result.target, { placement: "side", requestId: value.presentationId });
+    if (result.status === "opened") acceptedPresentations.current.add(value.presentationId);
     if (context.current === generation) setPresentation(result);
   }
 

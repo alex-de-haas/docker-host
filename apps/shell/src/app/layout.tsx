@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { Suspense } from "react";
-import { HostyOverlay } from "@hosty-sdk/app/react";
+import { HostyNextOverlay as HostyOverlay } from "@hosty-sdk/app/next";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ShellClient } from "./shell-client";
@@ -40,7 +40,7 @@ export default async function RootLayout({
       <body>
         <ThemeProvider>
           <Suspense fallback={<div className="min-h-dvh bg-muted/30" />}>
-            <HostyOverlay panelLayout="slot"><ShellClient
+            <HostyOverlay navigation={{ renderer: "custom" }} panelLayout="slot"><ShellClient
               coreOrigin={getCoreOrigin()}
               shellAppId={getShellAppId()}
               initialSidebarCompact={readChromePref(cookieStore.get(SIDEBAR_COMPACT_PREF_KEY)?.value)}

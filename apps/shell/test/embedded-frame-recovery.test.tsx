@@ -8,7 +8,7 @@ import { ShellRightPanel } from "../src/app/shell/surfaces/shell-right-panel";
 import type { AppSurfaceTab } from "../src/app/shell/surfaces/app-surface-tabs";
 import type { EmbeddedWorkspace } from "../src/app/shell/types";
 
-vi.mock("../src/app/shell/shell-context", () => ({ useShellState: () => ({ state: { apps: [{
+vi.mock("../src/app/shell/shell-context", () => ({ useShellActions: () => ({ launchAppPage: vi.fn() }), useShellState: () => ({ state: { apps: [{
   id: "tool", installationId: "installed", entryEndpoint: "web", embeddedUrl: "http://tool.test/",
   framePolicy: { microphone: false, popupEscape: false },
 }] } }) }));

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { HostyNavigationBoundary } from "@hosty-sdk/app/react";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
 import { ArrowLeft, ArrowUpRight, FolderGit2, GitBranch, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -50,7 +51,7 @@ export function WorkspacesWorkbench() {
   const items = filterWorkspaces(data?.workspaces ?? [], search, filter);
   const workspace = data?.workspaces.find(w => w.id === selected);
   return <main className="mx-auto max-w-[1680px] px-4 py-5 text-sm sm:px-6">
-    <header className="hosty-shell-chrome mb-5 flex items-center gap-3"><FolderGit2 className="size-7" /><div><h1 className="text-xl font-semibold tracking-tight">Workspaces</h1><p className="text-muted-foreground">Sessions, repositories and the work in progress.</p></div></header>
+    <HostyNavigationBoundary><header className="mb-5 flex items-center gap-3"><FolderGit2 className="size-7" /><div><h1 className="text-xl font-semibold tracking-tight">Workspaces</h1><p className="text-muted-foreground">Sessions, repositories and the work in progress.</p></div></header></HostyNavigationBoundary>
     <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><p className="text-muted-foreground">{data ? `${data.workspaces.length} workspaces · ${data.workspaces.reduce((n, w) => n + w.worktrees.length, 0)} worktrees` : "Workspace inventory"}</p><Button variant="outline" size="sm" onClick={() => setEpoch(n => n + 1)}><RefreshCw className="size-4" />Refresh view</Button></div>
     {error ? <Message error>{error}</Message> : !data ? <Message>Reading workspace inventory…</Message> : <div className="grid min-h-[65vh] gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
       <aside className={`min-w-0 space-y-3 ${selected ? "hidden lg:block" : ""}`} aria-label="Workspace inventory">

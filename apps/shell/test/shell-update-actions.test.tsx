@@ -94,6 +94,17 @@ function overrideRequests(override: (path: string, init?: RequestInit) => Respon
   fixture.read.mockImplementation(async (url: string, init?: RequestInit) => override(new URL(url).pathname, init) ?? fallback(url, init));
 }
 
+it.each(["stopped", "starting", "ready"])("reports whether Shell accepts a workspace launch for a %s service", async state => {
+  const app: CoreApp = { ...target, runtimeState: state === "stopped" ? "stopped" : "running",
+    health: { status: state === "starting" ? "starting" : "healthy", services: [], observedAt: "2026-10-11T00:00:00Z" } };
+  apps = [app]; await mount(); fixture.router.push.mockClear();
+  let result: boolean | undefined;
+  await act(async () => { result = await actions.launchAppPage(app, { label: "Page", path: "/page", redirectUri: "https://routine.test/page" }); });
+  expect(result).toBe(state === "ready");
+  if (state === "ready") expect(fixture.router.push).toHaveBeenCalledWith(expect.stringContaining("app=routine.app"));
+  else { expect(fixture.router.push).not.toHaveBeenCalled(); expect(shell.state.error).toContain(state === "starting" ? "is starting" : "must be running"); }
+});
+
 it.each([400, 409].flatMap(status => ["update_plan_expired", "update_plan_stale", "update_plan_digest_mismatch"].map(code => [status, code] as const)))(
   "refreshes the actual row transport's HTTP %i %s refusal once and queues the new digest", async (status, code) => {
     let attempts = 0;

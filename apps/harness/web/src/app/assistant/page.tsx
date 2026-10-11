@@ -1,4 +1,5 @@
 "use client";
+import { HostyNavigationBoundary } from "@hosty-sdk/app/react";
 import { SessionAutonomy } from "@/components/session-autonomy";
 import { useHostyUi } from "@hosty-sdk/app/ui/react";
 import { AssistantActivity } from "@/components/assistant-activity";
@@ -678,8 +679,8 @@ export default function AssistantPage() {
           </>
         ) : (
           <>
-            <Sparkles className="hosty-shell-chrome h-4 w-4 shrink-0" aria-hidden />
-            <span className="hosty-shell-chrome text-sm font-medium">Assistant</span>
+            <HostyNavigationBoundary><Sparkles className="h-4 w-4 shrink-0" aria-hidden />
+            <span className="text-sm font-medium">Assistant</span></HostyNavigationBoundary>
             <StatusBadge value={status} />
             {session && (
               <AppContextPicker key={session.id} ref={contextPickerRef} opener={addButtonRef} compact side="bottom" session={session} busy={sending || mentionSaving || providerSaving} onBusyChange={setContextSaving} running={running}

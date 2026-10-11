@@ -25,9 +25,9 @@ export type UiEnvironment = {
 };
 export type SurfaceReadiness = "loading" | "auth-required" | "ready" | "unreported";
 export type PresentationResult =
-  | { status: "opened"; requestId: string; target: PanelTarget; readiness: SurfaceReadiness }
+  | { status: "opened"; requestId: string; target: PanelTarget; readiness: SurfaceReadiness; presentationId?: string }
   | { status: "blocked" | "unsupported" | "rejected" | "uncertain" | "unknown"; requestId: string; code: string };
-export type PresentationOptions = { placement: "side"; requestId: string; signal?: AbortSignal };
+export type PresentationOptions = { placement: "side"; requestId: string; signal?: AbortSignal; reuse?: "exact" | "new" };
 export type UiEvent = { type: "environment"; value: UiEnvironment } | { type: "presentation"; value: PresentationResult };
 
 /** UI endpoints preserve typed operational failures without hiding identity refusals. */
@@ -70,3 +70,28 @@ export function buildSurfaceOpenUrl(coreOrigin: string, destination: AppSurfaceR
   url.searchParams.set("route", destination.route);
   return url.href;
 }
+
+export const UI_COMPOSITION_CAPABILITY = "ui.composition.v1";
+export type UiChromeOverrides = { navigation?: "show" | "hide"; tools?: { enabled?: boolean; launcher?: "show" | "hide" } };
+export type UiChromePolicy = Readonly<{ navigation: "show" | "hide"; tools: Readonly<{ enabled: boolean; launcher: "show" | "hide"; owner: "local" | "host" | "unavailable" }> }>;
+export type UiChromeSource = "host" | "url" | "app" | "legacy" | "default";
+export type UiChromeSnapshot = UiChromePolicy & Readonly<{
+  revision: number; hostRevision: number; rootDisabled: boolean; stale: boolean;
+  connection: UiEnvironment["connection"]; capabilities: readonly string[];
+  sources: Readonly<{ navigation: UiChromeSource; enabled: UiChromeSource; launcher: UiChromeSource }>;
+}>;
+export type UiNavigationTarget = { appId: string; installationId: string; entryKey: string };
+export type UiNavigationEntry = Readonly<{ key: string; label: string; icon: string | null; endpoint: string | null;
+  origin: string | null; route: string | null; available: boolean; state: string; standaloneHref: string | null }>;
+export type UiNavigationCatalog = Readonly<{ appId: string; installationId: string; revision: string; entries: readonly UiNavigationEntry[] }>;
+export type UiNavigationSnapshot = Readonly<{ status: "loading" | "ready" | "unavailable"; catalog: UiNavigationCatalog | null;
+  entries: readonly UiNavigationEntry[]; activeKey: string | null; code?: string }>;
+export type UiResolvedNavigation = { target: UiNavigationTarget; surface: UiFrameSurface | null;
+  available: boolean; state: string; standaloneHref: string | null };
+export type UiActionOptions = { requestId: string; signal?: AbortSignal };
+export type UiActionResult = { status: "accepted"; requestId: string }
+  | { status: "blocked" | "unsupported" | "rejected" | "uncertain" | "unknown"; requestId: string; code: string };
+export type UiNavigationResult = UiActionResult;
+export type UiToolPickerResult = UiActionResult;
+export type UiRouterAdapter = { endpoint?: string; getRoute(): string; subscribe(listener: () => void): () => void;
+  navigate(route: string): void | Promise<void> };

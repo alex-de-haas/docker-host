@@ -4,7 +4,10 @@ import { UiHostContext } from "./ui-context";
 import { appendThemeLaunchParams, parseActiveFrameAskAssistant, parseActiveFrameAttention, parseActiveFrameAuthRequired, parseActiveFramePermissionReview } from "./embedder";
 import { createShellThemeMessage, type HostyResolvedTheme, type HostyThemePreference } from "./theme";
 import { permissionReviewUrl } from "./permissions";
+import { withChromeHints } from "./ui-composition";
+import type { UiViewDescriptor } from "./ui-workspaces";
 import type { UiFrameSurface } from "./ui-types";
+import { createPresentationRequestId } from "./ui";
 
 export function parseFrameMcpReview(event: { source: unknown; origin: string; data: unknown }, frame: unknown, src: string, appId: string) {
   if (!frame || event.source !== frame || !event.data || typeof event.data !== "object") return null;
@@ -19,6 +22,7 @@ export function frameSandbox(policy: UiFrameSurface["framePolicy"]) {
 }
 
 export type HostyAppFrameProps = {
+  view?: UiViewDescriptor;
   surface: UiFrameSurface; title: string; src?: string; className?: string;
   theme?: HostyResolvedTheme; themePreference?: HostyThemePreference;
   standaloneHref?: string | null;
@@ -30,7 +34,11 @@ export type HostyAppFrameProps = {
 
 /** Shared frame coordinator. No delegated-token responder and no authority inferred from messages. */
 export function HostyAppFrame(props: HostyAppFrameProps) {
-  const { surface, title, className, standaloneHref, theme, themePreference } = props;
+  const { title, className, standaloneHref, theme, themePreference } = props;
+  const inputId = JSON.stringify([props.surface, props.src]);
+  const [destination, setDestination] = useState<{ inputId: string; surface: UiFrameSurface } | null>(null);
+  const surface = destination?.inputId === inputId ? destination.surface : props.surface;
+  const [defaultViewId] = useState(createPresentationRequestId);
   const host = useContext(UiHostContext);
   const ref = useRef<HTMLIFrameElement>(null);
   const callbacks = useRef(props); callbacks.current = props;
@@ -46,17 +54,38 @@ export function HostyAppFrame(props: HostyAppFrameProps) {
     return () => observer.disconnect();
   }, []);
   const resolvedTheme = theme ?? appearance.theme, preference = themePreference ?? appearance.preference;
-  const source = props.src ?? new URL(surface.route, surface.origin).href;
+  const source = destination?.inputId === inputId ? new URL(surface.route, surface.origin).href
+    : props.src ?? new URL(surface.route, surface.origin).href;
   // Theme changes are messages; they must not replace a document with an unsent draft.
-  const [launch] = useState(() => {
+  const [launch, setLaunch] = useState(() => {
     const url = new URL(source); url.searchParams.set("hosty_launch", "embedded");
-    return appendThemeLaunchParams(url.href, resolvedTheme, preference);
+    return appendThemeLaunchParams(withChromeHints(url.href, host?.getViewChrome?.(props.view?.viewId ?? defaultViewId)
+      ?? props.view?.chrome ?? { navigation: "hide", tools: { launcher: "hide" } }), resolvedTheme, preference);
   });
   const frameId = JSON.stringify([surface, source]);
   useLayoutEffect(() => {
     const frame = ref.current; if (!frame || !host) return;
-    return host.registerFrame(frame, surface, ready => setConnection(current => ({ ready, generation: current.generation + (ready ? 1 : 0) })));
-  }, [host, frameId]); // Caller keys the frame by this immutable surface.
+    const view = callbacks.current.view;
+    return host.registerFrame(frame, surface, ready => setConnection(current => ({ ready, generation: current.generation + (ready ? 1 : 0) })),
+      { viewId: defaultViewId, workspaceId: "default", chrome: { navigation: "hide", tools: { launcher: "hide" } }, ...view,
+        navigate: next => {
+          const current = callbacks.current;
+          if (current.view?.navigate) return current.view.navigate(next);
+          // Replace the document through React so every message handler follows its verified origin.
+          const url = new URL(next.route, next.origin); url.searchParams.set("hosty_launch", "embedded");
+          setLoaded(false); setReview(null);
+          setDestination({ inputId: JSON.stringify([current.surface, current.src]), surface: { ...next, panelId: surface.panelId } });
+          setLaunch(appendThemeLaunchParams(withChromeHints(url.href, host.getViewChrome(current.view?.viewId ?? defaultViewId)
+            ?? current.view?.chrome ?? { navigation: "hide", tools: { launcher: "hide" } }), resolvedTheme, preference));
+        } });
+  }, [host, frameId]);
+  const policy = JSON.stringify(props.view?.chrome ?? {});
+  const previousPolicy = useRef({ viewId: props.view?.viewId, policy });
+  useEffect(() => {
+    const previous = previousPolicy.current; previousPolicy.current = { viewId: props.view?.viewId, policy };
+    if (host && props.view && ref.current && previous.viewId === props.view.viewId && previous.policy !== policy)
+      host.setViewChrome(props.view.viewId, JSON.parse(policy));
+  }, [host, props.view?.viewId, policy]);
   useEffect(() => {
     if (loaded) ref.current?.contentWindow?.postMessage(createShellThemeMessage(resolvedTheme, preference), surface.origin);
   }, [loaded, resolvedTheme, preference, surface.origin]);
@@ -80,8 +109,13 @@ export function HostyAppFrame(props: HostyAppFrameProps) {
     window.addEventListener("message", handle); return () => window.removeEventListener("message", handle);
   }, [host, frameId, source, surface]);
   const outboundReady = host ? connection.ready : loaded;
+  const sent = useRef<string | null>(null);
   useEffect(() => {
-    if (outboundReady && props.outbound) ref.current?.contentWindow?.postMessage(props.outbound.message, surface.origin);
+    if (outboundReady && props.outbound) {
+      const key = `${connection.generation}:${props.outbound.nonce}`;
+      if (sent.current === key) return;
+      ref.current?.contentWindow?.postMessage(props.outbound.message, surface.origin); sent.current = key;
+    }
   }, [outboundReady, connection.generation, props.outbound?.nonce, surface.origin]);
   const insecure = typeof window !== "undefined" && window.location.protocol === "https:" && new URL(surface.origin).protocol === "http:";
   if (insecure) return <div role="status" className="hosty-panel-notice"><strong>{title} needs HTTPS to appear here</strong>

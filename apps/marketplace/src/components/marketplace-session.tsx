@@ -1,6 +1,6 @@
 "use client";
 
-import { HostyOverlay } from "@hosty-sdk/app/react";
+import { HostyNextOverlay as HostyOverlay } from "@hosty-sdk/app/next";
 import { Storefront } from "./storefront";
 
 export function MarketplaceSession() {

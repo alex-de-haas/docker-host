@@ -8,9 +8,10 @@ import { DiscussPlan } from "./discuss-plan";
 import { discussionVersion } from "@/lib/discussion";
 import { parseSourceDocument } from "@/lib/parser";
 import type { PlanDetail, WorkspacePlan } from "@/lib/types";
+import { createUiHost } from "@hosty-sdk/app/ui/host";
 
 const fetch = vi.hoisted(() => vi.fn());
-const presentation = vi.hoisted(() => ({ openSurface: vi.fn(), subscribe: () => () => {} }));
+const presentation = vi.hoisted(() => ({ openSurface: vi.fn(), subscribe: vi.fn() }));
 vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => presentation }));
 const target = { panel: { appId: "assistant", installationId: "installed-1", panelId: "assistant" }, route: "/assistant?session=existing" };
 const result = { url: "https://core.example/open-discussion", target, conversationId: "existing" };
@@ -29,6 +30,7 @@ const response = (body: unknown, ok = true) => ({ ok, json: async () => body });
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.stubGlobal("crypto", webcrypto); vi.stubGlobal("TextEncoder", TextEncoder);
   sessionStorage.clear(); fetch.mockReset(); presentation.openSurface.mockReset();
+  presentation.subscribe.mockReset().mockImplementation(() => () => {});
   presentation.openSurface.mockImplementation(async (_target, options) => ({ status: "opened", requestId: options.requestId, target, readiness: "ready" }));
   fetch.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === "POST"
     ? response(result) : response(options));
@@ -151,6 +153,60 @@ describe("discuss document action", () => {
     expect(fetch.mock.calls.filter(call => call[1]?.method === "POST")).toHaveLength(1);
     expect(window.open).not.toHaveBeenCalled();
     expect(container.querySelector("a")?.rel).toBe("noopener noreferrer");
+  });
+  it.each(["Retry opening", "Discuss with Assistant"])("reopens an explicitly closed panel through %s without another handoff", async action => {
+    const metadata = { version: 1, coreOrigin: "https://core.example", userId: "admin", canHost: true, pinnedOpen: true,
+      app: { appId: "plans", installationId: "plans-1", origins: [window.location.origin] } };
+    const surface = { ...target.panel, endpoint: "web", route: target.route, origin: "https://assistant.example",
+      framePolicy: { microphone: false, popupEscape: false } };
+    fetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("bootstrap")) return Response.json(metadata);
+      if (url.endsWith("panels/resolve")) return Response.json({ target, surface, available: true, state: "running", standaloneHref: result.url });
+      if (url.includes("/api/hosty/ui/")) return Response.json({ panels: [] });
+      return response(init?.method === "POST" ? result : options);
+    });
+    const host = createUiHost(), frames = new Map<string, HTMLIFrameElement>();
+    host.registerWorkspace({ workspaceId: "default", renderer: {
+      async present(tool) { if (!frames.has(tool.presentationId)) { const frame = window.document.createElement("iframe");
+        window.document.body.append(frame); frames.set(tool.presentationId, frame); } return "accepted"; },
+      focus() {}, collapse() {}, showToolPicker: async () => "accepted",
+      release(id) { frames.get(id)?.remove(); frames.delete(id); },
+    } });
+    presentation.openSurface.mockImplementation(host.openSurface);
+    try {
+      await host.refresh(); await render(); await act(async () => button().click());
+      expect(frames.size).toBe(1);
+      const first = host.getSnapshot().tools[0]!, firstRequest = presentation.openSurface.mock.calls[0][1].requestId;
+      host.closePresentation(first.presentationId); expect(frames.size).toBe(0);
+      await act(async () => (action === "Discuss with Assistant" ? button()
+        : Array.from(container.querySelectorAll("button")).find(item => item.textContent === action)!).click());
+      expect(frames.size).toBe(1);
+      expect(presentation.openSurface.mock.calls[1][1].requestId).not.toBe(firstRequest);
+      const reopened = host.getSnapshot().tools[0]!;
+      expect(reopened.presentationId).not.toBe(first.presentationId); expect(reopened.target).toEqual(target);
+      // A later lost acknowledgement must still replay its pending request, even after reopening.
+      presentation.openSurface.mockImplementationOnce(async (nextTarget, nextOptions) => {
+        await host.openSurface(nextTarget, nextOptions);
+        return { status: "uncertain", requestId: nextOptions.requestId, code: "presentation_unknown" };
+      });
+      await act(async () => button().click());
+      await act(async () => Array.from(container.querySelectorAll("button")).find(item => item.textContent === "Retry opening")!.click());
+      expect(presentation.openSurface.mock.calls[3][1].requestId).toBe(presentation.openSurface.mock.calls[2][1].requestId);
+      expect(host.getSnapshot().tools[0]!.presentationId).toBe(reopened.presentationId); expect(frames.size).toBe(1);
+      expect(fetch.mock.calls.filter(([url, init]) => url === "/api/assistant" && init?.method === "POST")).toHaveLength(1);
+      expect(window.open).not.toHaveBeenCalled();
+    } finally { host.dispose(); for (const frame of frames.values()) frame.remove(); }
+  });
+  it("uses a fresh request after an uncertain opening is acknowledged by a late event", async () => {
+    let notify!: (event: unknown) => void;
+    presentation.subscribe.mockImplementation(listener => { notify = listener; return () => {}; });
+    presentation.openSurface.mockResolvedValueOnce({ status: "uncertain", code: "presentation_unknown" });
+    await render(); await act(async () => button().click());
+    const requestId = presentation.openSurface.mock.calls[0][1].requestId;
+    await act(async () => notify({ type: "presentation", value: { status: "opened", requestId, target, readiness: "ready" } }));
+    await act(async () => Array.from(container.querySelectorAll("button")).find(item => item.textContent === "Retry opening")!.click());
+    expect(presentation.openSurface.mock.calls[1][1].requestId).not.toBe(requestId);
+    expect(fetch.mock.calls.filter(call => call[1]?.method === "POST")).toHaveLength(1);
   });
   it("starts a new request only after an explicit action when a handoff is closed", async () => {
     fetch.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === "POST"

@@ -42,10 +42,16 @@ explicit finalized handoff to be recreated at another provider. D3 owns the reve
 The SDK's standalone opened-tool rail and Add tool chooser use window-local state, with no persisted
 hide/pin setting. That scope does not require this plan's cross-host preference decision first.
 
-[SDK UI composition](../sdk-ui-composition/plan.md), proposed 2026-10-11, owns explicit launch/host
+[SDK UI composition](../sdk-ui-composition/feature.md), implemented 2026-10-11, owns explicit launch/host
 navigation and tool policy, including standalone defaults. Its enabled/launcher fields are not
 persisted hide/restore preferences. This plan remains their sole owner and must not infer global
 preferences from one shell's layout, one app window or a URL hint.
+
+Composition distinguishes an installed panel declaration (`PanelRef`) from each retained view of
+it (`presentationId`). Hide/restore preferences remain keyed by `PanelRef`, not by a conversation
+or window-local presentation ID. Hiding a launcher or disabling requests from one source view is
+not a persisted decision to hide that panel; it must not change these preferences or close shared
+presentations. This plan still owns the explicit-open/reveal decision for a persisted hidden entry.
 
 ## Deliverables
 

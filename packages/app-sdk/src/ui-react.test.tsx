@@ -2,10 +2,11 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { HostyPanelWorkspace, HostyUiRoot, useHostyUiHost } from "./ui-react";
+import { HostyPanelWorkspace, HostyUiRoot, HostyNavigationBoundary, useHostyUiHost } from "./ui-react";
 import { createPresentationRequestId, ui } from "./ui";
 import type { UiHost } from "./ui-host";
 import type { UiBootstrap, UiPanel } from "./ui-types";
+import { HostyAppFrame } from "./ui-frame";
 vi.mock("./browser-auth", () => ({ appFetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
 let root: Root, element: HTMLDivElement, host: UiHost | null;
 let resize: () => void;
@@ -20,12 +21,14 @@ const catalog: UiPanel[] = ["assistant", "notes"].map(id => ({ panel: { appId: i
   endpoint: "web", route: "/panel", origin: `https://${id}.test`, label: id, appName: id, icon: null, available: true, state: "running", canStart: false, framePolicy: policy }));
 function Document() { host = useHostyUiHost(); return <textarea aria-label="Document draft" defaultValue="Keep this selection" />; }
 beforeEach(() => {
+  document.documentElement.removeAttribute("data-hosty-chrome-hints");
   catalogGate = null;
   resolutionGate = null;
   refuseResolution = false;
   listedPanels = catalog;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { resize = callback; } observe() {} disconnect() {} });
+  const observers = new Set<() => void>(); resize = () => { for (const callback of observers) callback(); };
+  vi.stubGlobal("ResizeObserver", class { constructor(private callback: () => void) {} observe() { observers.add(this.callback); } disconnect() { observers.delete(this.callback); } });
   vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
     if (path.includes("bootstrap")) return Response.json(metadata);
     if (!path.endsWith("resolve")) { await catalogGate; return Response.json({ panels: listedPanels }); }
@@ -40,6 +43,86 @@ beforeEach(() => {
   }));
   host = null; element = document.createElement("div"); document.body.append(element); root = createRoot(element);
 });
+it("retains iframe identity across same-panel instances and movement to another workspace", async () => {
+  await act(async () => root.render(<HostyUiRoot panelLayout="slot">
+    <HostyPanelWorkspace><Document /></HostyPanelWorkspace>
+    <HostyPanelWorkspace workspaceId="floating" layout="dock"><span>Window</span></HostyPanelWorkspace>
+  </HostyUiRoot>));
+  await act(async () => host!.refresh());
+  const target = { panel: catalog[0]!.panel, route: "/panel?session=one" };
+  await act(async () => { await host!.openSurface(target, { placement: "side", requestId: createPresentationRequestId() }); });
+  const first = host!.getSnapshot().tools[0]!, frame = element.querySelector("iframe")!, context = frame.contentWindow;
+  const parent = frame.parentElement;
+  await act(async () => { await host!.openSurface({ ...target, route: "/panel?session=two" }, { placement: "side", requestId: createPresentationRequestId() }); });
+  expect(element.querySelectorAll("iframe")).toHaveLength(2);
+  expect(element.querySelector('select[aria-label="Tool instance"]')?.children).toHaveLength(2);
+  await act(async () => { expect(await host!.movePresentation(first.presentationId, "floating")).toBe(true); });
+  expect(frame.parentElement).toBe(parent); expect(frame.contentWindow).toBe(context); expect(frame.isConnected).toBe(true);
+  await act(async () => host!.setViewChrome("root", { tools: { enabled: false } }));
+  expect(host!.getSnapshot().workspaces?.every(w => !w.expanded)).toBe(true); expect(element.querySelectorAll("iframe")).toHaveLength(2);
+  await act(async () => host!.setViewChrome("root", {}));
+  expect(host!.getSnapshot().workspaces?.every(w => !w.expanded)).toBe(true);
+  await act(async () => host!.closePresentation(first.presentationId));
+  expect(frame.isConnected).toBe(false); expect(element.querySelectorAll("iframe")).toHaveLength(1);
+});
+it("hides custom navigation without losing its component state or retaining keyboard focus", async () => {
+  await act(async () => root.render(<HostyUiRoot navigation={{ renderer: "custom" }}>
+    <HostyNavigationBoundary><input aria-label="Navigation state" defaultValue="Keep this" /></HostyNavigationBoundary><Document />
+  </HostyUiRoot>));
+  const input = element.querySelector<HTMLInputElement>('input[aria-label="Navigation state"]')!;
+  input.focus(); expect(document.activeElement).toBe(input);
+  await act(async () => host!.setViewChrome("root", { navigation: "hide" }));
+  expect(input.closest("[data-hosty-navigation-boundary]")?.hasAttribute("hidden")).toBe(true);
+  expect(document.activeElement).toBe(element.querySelector("[data-hosty-content]"));
+  await act(async () => host!.setViewChrome("root", {}));
+  expect(element.querySelector("input")).toBe(input); expect(input.value).toBe("Keep this");
+});
+it("preserves view overrides through remounting and still applies explicit prop policy changes", async () => {
+  const panel = catalog[0]!, surface = { ...panel.panel, endpoint: panel.endpoint, origin: panel.origin!, route: panel.route, framePolicy: policy };
+  const show = (key: string, chrome = {}) => root.render(<HostyUiRoot panelLayout="none"><Document />
+    <HostyAppFrame key={key} surface={surface} title="App" view={{ viewId: "stable-app", workspaceId: "default", chrome }} />
+  </HostyUiRoot>);
+  await act(async () => show("first"));
+  const override = { navigation: "show" as const, tools: { enabled: false } };
+  await act(async () => host!.setViewChrome("stable-app", override));
+  await act(async () => show("replacement"));
+  expect(host!.getViewChrome("stable-app")).toEqual(override);
+  const url = new URL(element.querySelector("iframe")!.src);
+  expect(url.searchParams.get("hosty_navigation")).toBe("show");
+  expect(url.searchParams.get("hosty_tools")).toBe("disabled");
+  await act(async () => show("replacement", { navigation: "hide" }));
+  expect(host!.getViewChrome("stable-app")).toEqual({ navigation: "hide" });
+});
+it("acknowledges a visible chooser and does not reopen it when the request is replayed", async () => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", { configurable: true, value: function (this: HTMLDialogElement) { this.open = true; } });
+  Object.defineProperty(HTMLDialogElement.prototype, "close", { configurable: true, value: function (this: HTMLDialogElement) { this.open = false; } });
+  await render(); const requestId = createPresentationRequestId();
+  await act(async () => { expect(await ui.openToolPicker({ requestId })).toMatchObject({ status: "accepted" }); });
+  const dialog = element.querySelector<HTMLDialogElement>("dialog.hosty-tool-chooser")!; expect(dialog.open).toBe(true);
+  await act(async () => dialog.querySelector<HTMLButtonElement>('button[aria-label="Close tool chooser"]')!.click());
+  expect(dialog.open).toBe(false);
+  await act(async () => { expect(await ui.openToolPicker({ requestId })).toMatchObject({ status: "accepted" }); });
+  expect(dialog.open).toBe(false);
+});
+it.each([600, 1200].flatMap(width => ["collapse", "policy"].map(reason => ({ width, reason }))))(
+  "closes the picker on $reason at width $width and allows a fresh opening", async ({ width, reason }) => {
+    vi.stubGlobal("innerWidth", width);
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", { configurable: true, value(this: HTMLDialogElement) { this.open = true; } });
+    Object.defineProperty(HTMLDialogElement.prototype, "close", { configurable: true, value(this: HTMLDialogElement) { this.open = false; } });
+    await render();
+    await act(async () => { expect(await ui.openToolPicker({ requestId: createPresentationRequestId() })).toMatchObject({ status: "accepted" }); });
+    const dialog = element.querySelector<HTMLDialogElement>("dialog.hosty-tool-chooser")!;
+    expect(dialog.open).toBe(true);
+    await act(async () => {
+      if (reason === "policy") host!.setViewChrome("root", { tools: { enabled: false } });
+      else host!.collapseWorkspace("default");
+    });
+    expect(dialog.open).toBe(false);
+    await act(async () => host!.setViewChrome("root", {}));
+    expect(dialog.open).toBe(false);
+    await act(async () => { expect(await ui.openToolPicker({ requestId: createPresentationRequestId() })).toMatchObject({ status: "accepted" }); });
+    expect(dialog.open).toBe(true);
+  });
 afterEach(async () => { await act(async () => root.unmount()); element.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 async function render(layout: "auto" | "slot" | "none" = "auto") {
   await act(async () => root.render(<HostyUiRoot panelLayout={layout}>{layout === "slot" ? <HostyPanelWorkspace><Document /></HostyPanelWorkspace> : <Document />}</HostyUiRoot>));
@@ -56,6 +139,97 @@ async function connectTool(frame: HTMLIFrameElement, post: ReturnType<typeof vi.
   await act(async () => send(accept));
   return { offer, accept, send };
 }
+it.each([false, true])("keeps frame integrations on the resolved origin after navigation (retained tool: %s)", async retained => {
+  const panel = catalog[0]!, authRequired = vi.fn(), open = vi.spyOn(window, "open").mockReturnValue(null);
+  const initial = { ...panel.panel, endpoint: panel.endpoint, origin: panel.origin!, route: panel.route, framePolicy: policy };
+  const next = { ...initial, origin: "https://other-endpoint.test", endpoint: "backend", route: "/people", framePolicy: { ...policy, microphone: true } };
+  await render("slot");
+  if (retained) await act(async () => { await host!.selectPanel(panel.panel); });
+  const presentationId = host!.getSnapshot().tools[0]?.presentationId;
+  const command = { type: "test:command" };
+  const show = () => root.render(<HostyUiRoot panelLayout="slot"><HostyPanelWorkspace onAuthRequired={authRequired}
+    outbound={retained ? { target: { panel: panel.panel }, presentationId, message: command, nonce: 1 } : null}>
+    <Document />{!retained && <HostyAppFrame surface={{ ...initial }} title="App view" view={{ viewId: "app", workspaceId: "default" }}
+      onAuthRequired={authRequired} outbound={{ message: command, nonce: 1 }} />}
+  </HostyPanelWorkspace></HostyUiRoot>);
+  await act(async () => show());
+  const frame = element.querySelector("iframe")!, parent = frame.parentElement;
+  const send = (data: object, origin: string) => window.dispatchEvent(new MessageEvent("message", { source: frame.contentWindow, origin, data }));
+  const connect = async (origin: string, post: ReturnType<typeof vi.spyOn>) => {
+    await act(async () => send({ type: "hosty:ui:probe", version: 1, versions: [1], childNonce: crypto.randomUUID(), capabilities: ["ui.composition.v1"] }, origin));
+    const offer = post.mock.calls.filter(([message]) => message.type === "hosty:ui:offer").at(-1)![0];
+    await act(async () => send({ ...offer, type: "hosty:ui:accept", coreOrigin: metadata.coreOrigin, userId: metadata.userId,
+      appId: panel.panel.appId, installationId: panel.panel.installationId }, origin));
+    return offer;
+  };
+  const post = vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
+  const offer = await connect(initial.origin, post);
+  const viewId = retained ? `tool-${presentationId}` : "app";
+  const chrome = { navigation: "show" as const, tools: { enabled: false, launcher: "show" as const } };
+  await act(async () => host!.setViewChrome(viewId, chrome));
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) => String(args[0]).endsWith("navigation/resolve")
+    ? Response.json({ available: true, surface: next, state: "running" }) : originalFetch(...args));
+  await act(async () => send({ ...offer, type: "hosty:ui:navigate", requestId: createPresentationRequestId(), entryKey: "other" }, initial.origin));
+  await act(async () => show()); // An unrelated parent render must keep the new document and handlers.
+  expect(element.querySelector("iframe")).toBe(frame); expect(frame.parentElement).toBe(parent);
+  expect(new URL(frame.src).origin).toBe(next.origin);
+  expect(new URL(frame.src).searchParams.get("hosty_navigation")).toBe("show");
+  expect(new URL(frame.src).searchParams.get("hosty_tools")).toBe("disabled");
+  expect(new URL(frame.src).searchParams.get("hosty_tool_launcher")).toBe("show");
+  expect(frame.getAttribute("allow")).toContain("microphone");
+  if (retained) expect(host!.getSnapshot().tools[0]).toMatchObject({ presentationId, currentRoute: next.route,
+    readiness: "loading", resolved: { surface: next } });
+  const nextPost = vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
+  await act(async () => frame.dispatchEvent(new Event("load")));
+  const nextOffer = await connect(next.origin, nextPost);
+  expect(nextPost.mock.calls.filter(([message]) => message.type === "hosty:ui:connected").at(-1)![0].chrome).toEqual(chrome);
+  expect(nextPost).toHaveBeenCalledWith(command, next.origin);
+  expect(nextPost.mock.calls.some(([message, origin]) => message.type === "hosty:shell-theme" && origin === next.origin)).toBe(true);
+  await act(async () => {
+    send({ type: "hosty:request-permission-review" }, initial.origin);
+    send({ type: "hosty:auth-required", appId: panel.panel.appId }, initial.origin);
+  });
+  expect(open).not.toHaveBeenCalled(); expect(authRequired).not.toHaveBeenCalled();
+  await act(async () => {
+    send({ type: "hosty:request-permission-review" }, next.origin);
+    send({ type: "hosty:auth-required", appId: panel.panel.appId }, next.origin);
+    send({ ...nextOffer, type: "hosty:ui:route", route: next.route }, next.origin);
+    send({ ...nextOffer, type: "hosty:ui:surface-state", route: next.route, state: "ready" }, next.origin);
+  });
+  expect(open).toHaveBeenCalledWith(`https://core.test/install/permissions/${panel.panel.appId}`, "_blank", "noopener,noreferrer");
+  expect(authRequired).toHaveBeenCalledWith(panel.panel.appId);
+  if (retained) {
+    expect(host!.getSnapshot().tools[0]).toMatchObject({ currentRoute: next.route, readiness: "ready" });
+    const dismiss = vi.fn(); window.addEventListener("hosty:ui:drawer-dismiss", dismiss);
+    try {
+      await act(async () => send({ ...nextOffer, type: "hosty:ui:dismiss" }, next.origin));
+      expect(dismiss).toHaveBeenCalledWith(expect.objectContaining({ detail: "default" }));
+    } finally { window.removeEventListener("hosty:ui:drawer-dismiss", dismiss); }
+    const nextSrc = frame.src, nextContext = frame.contentWindow;
+    await act(async () => host!.setExpanded(false));
+    await act(async () => { expect(await host!.selectPanel(panel.panel)).toMatchObject({ status: "opened", presentationId }); });
+    const resolutions = vi.mocked(fetch).mock.calls.filter(([path]) => String(path).endsWith("panels/resolve"));
+    expect(JSON.parse(resolutions.at(-1)![1]!.body as string).route).toBe(initial.route);
+    await act(async () => host!.refresh());
+    expect(host!.getSnapshot().tools[0]!.resolved.surface).toEqual(next);
+    expect(element.querySelector("iframe")).toBe(frame); expect(frame.src).toBe(nextSrc); expect(frame.contentWindow).toBe(nextContext);
+    const refreshedOffer = await connect(next.origin, nextPost);
+    await act(async () => {
+      send({ ...refreshedOffer, type: "hosty:ui:route", route: "/outside" }, next.origin);
+      send({ ...refreshedOffer, type: "hosty:ui:surface-state", route: "/outside", state: "ready" }, next.origin);
+    });
+    expect(host!.getSnapshot().tools[0]).toMatchObject({ currentRoute: null, readiness: "unreported" });
+    await act(async () => {
+      send({ ...refreshedOffer, type: "hosty:ui:route", route: "/people/detail" }, next.origin);
+      send({ ...refreshedOffer, type: "hosty:ui:surface-state", route: "/people/detail", state: "ready" }, next.origin);
+    });
+    expect(host!.getSnapshot().tools[0]).toMatchObject({ currentRoute: "/people/detail", readiness: "ready" });
+    listedPanels = [{ ...panel, origin: "https://replacement.test" }];
+    await act(async () => host!.refresh());
+    expect(host!.getSnapshot().tools[0]!.resolved).toMatchObject({ surface: null, state: "destination_changed" });
+  }
+});
 it("retains the document and each opened tool across switching, collapse, replay and the drawer breakpoint", async () => {
   await render(); expect(element.querySelectorAll("iframe")).toHaveLength(0);
   const documentDraft = element.querySelector("textarea")!; documentDraft.setSelectionRange(2, 6);
@@ -113,7 +287,7 @@ it("removes panel chrome for an older app adapter without remounting the protect
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({}, { status: 404 })));
   await act(async () => host!.refresh());
   expect(element.querySelector("textarea")).toBe(documentDraft);
-  expect((element.querySelector("nav") as HTMLElement).style.display).toBe("none");
+  expect((element.querySelector(".hosty-panel-rail") as HTMLElement).style.display).toBe("none");
   expect((element.querySelector(".hosty-panel-workspace") as HTMLElement).style.display).toBe("contents");
 });
 it("delivers commands only to the exact panel among retained frames from the same app", async () => {
@@ -213,6 +387,32 @@ it("retries refused restoration only after fresh catalog metadata", async () => 
   expect(host!.getSnapshot().selected).toEqual(catalog[0]!.panel);
   expect(requests()).toHaveLength(2);
   expect(element.querySelector("aside")!.hidden).toBe(false);
+});
+it.each(["close", "collapse"])("reopens a catalog workspace after repeated %s actions", async action => {
+  await mountRestoration();
+  for (let cycle = 0; cycle < 2; cycle++) {
+    const frame = element.querySelector("iframe")!, id = host!.getSnapshot().selectedPresentationId;
+    expect(frame).not.toBeNull();
+    await act(async () => {
+      if (action === "close") [...element.querySelectorAll("button")].find(button => button.textContent === "Close this tool view")!.click();
+      else host!.setExpanded(false);
+    });
+    expect(element.querySelector("aside")!.hidden).toBe(true);
+    expect(host!.getSnapshot().expanded).toBe(false);
+    if (action === "close") expect(host!.getSnapshot().tools).toHaveLength(0);
+    await act(async () => host!.setExpanded(true));
+    expect(element.querySelector("aside")!.hidden).toBe(false);
+    expect(host!.getSnapshot().selected).toEqual(catalog[0]!.panel);
+    expect(host!.getSnapshot().tools).toHaveLength(1);
+    if (action === "close") {
+      expect(element.querySelector("iframe")).not.toBe(frame);
+      expect(host!.getSnapshot().selectedPresentationId).not.toBe(id);
+    } else {
+      expect(element.querySelector("iframe")).toBe(frame);
+      expect(host!.getSnapshot().selectedPresentationId).toBe(id);
+    }
+  }
+  expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("resolve"))).toHaveLength(action === "close" ? 3 : 1);
 });
 it("does not retry refused restoration after the operator collapses", async () => {
   refuseResolution = true; await mountRestoration();

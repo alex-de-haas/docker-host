@@ -434,9 +434,10 @@ Decisions 1–5: 2026-08-19.
     manifest-driven SDK menu and a visibility boundary for custom navigation. A desktop shell may
     keep navigation in each app window while sharing an assistant window or dock; do not impose
     one assistant per app, a fixed desktop layout or conversation-selection behavior in the SDK.
-    [SDK UI composition](features/sdk-ui-composition/plan.md) owns the new mechanisms, extending
-    decision 27's shipped panel system. The owner requested documents first and deferred UI
-    implementation; the new plan remains Draft alongside the coordinated defaults/UI-client plans.
+    [SDK UI composition](features/sdk-ui-composition/feature.md) implements the mechanisms, extending
+    decision 27's panel system. After the documentation-first pass and continuous-access work,
+    the owner approved implementation on 2026-10-11. The coordinated defaults/UI-client plans
+    retain their own approval and deliverables.
 
 34. **Continuous trusted-app access and explicit unattended authority (2026-10-11).** Remove the
     product requirement for routine hourly Renew access while a trusted app remains in use.
@@ -511,7 +512,7 @@ the manifest contract. Two standing consequences:
 [workspaces-app](features/workspaces-app/feature.md) ·
 [default-applications](features/default-applications/plan.md) ·
 [sdk-panel-system](features/sdk-panel-system/feature.md) ·
-[sdk-ui-composition](features/sdk-ui-composition/plan.md) ·
+[sdk-ui-composition](features/sdk-ui-composition/feature.md) ·
 [continuous-app-access](features/continuous-app-access/feature.md) ·
 [replaceable-ui-clients](features/replaceable-ui-clients/plan.md) ·
 [plan-provider-interface](features/plan-provider-interface/plan.md) ·

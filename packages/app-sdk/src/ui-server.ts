@@ -1,5 +1,5 @@
 import type { ProviderServerOptions } from "@hosty-sdk/app/providers/server";
-import { UiError, type PanelTarget, type UiBootstrap, type UiPanel, type UiResolvedPanel } from "@hosty-sdk/app/ui/types";
+import { UiError, type PanelTarget, type UiBootstrap, type UiPanel, type UiResolvedPanel, type UiNavigationCatalog, type UiNavigationTarget, type UiResolvedNavigation } from "@hosty-sdk/app/ui/types";
 
 /** Server transport for generic UI metadata. Credentials never appear in returned metadata. */
 export class UiServerClient {
@@ -32,6 +32,12 @@ export class UiServerClient {
   async listPanels(token: string, signal?: AbortSignal): Promise<UiPanel[]> {
     return (await this.request<{ panels: UiPanel[] }>("panels", token, undefined, signal)).panels;
   }
+  navigation(token: string, signal?: AbortSignal): Promise<UiNavigationCatalog> {
+    return this.request("navigation", token, undefined, signal);
+  }
+  resolveNavigation(target: UiNavigationTarget, token: string, signal?: AbortSignal): Promise<UiResolvedNavigation> {
+    return this.request("navigation/resolve", token, target, signal);
+  }
   resolvePanel(target: PanelTarget, token: string, signal?: AbortSignal): Promise<UiResolvedPanel> {
     return this.request("panels/resolve", token, target, signal);
   }
@@ -62,11 +68,15 @@ export async function createHostyUiResponse(request: Request, context: UiAuthent
       result = await client.bootstrap({ parentOrigin: url.searchParams.get("parentOrigin") ?? undefined }, context.token, request.signal);
     } else if (request.method === "GET" && route === "panels") {
       result = { panels: await client.listPanels(context.token, request.signal) };
-    } else if (request.method === "POST" && route === "panels/resolve") {
+    } else if (request.method === "GET" && route === "navigation") {
+      if (url.search) throw new UiError("ui_request_invalid", "Unexpected navigation parameters.", 400);
+      result = await client.navigation(context.token, request.signal);
+    } else if (request.method === "POST" && (route === "panels/resolve" || route === "navigation/resolve")) {
       if (!sameOrigin(request) || request.headers.get("content-type")?.split(";", 1)[0]?.trim() !== "application/json")
         throw new UiError("origin_denied", "Open panels from this application page.", 403);
       const body = await boundedBody(request);
-      result = await client.resolvePanel(JSON.parse(body), context.token, request.signal);
+      result = route === "panels/resolve" ? await client.resolvePanel(JSON.parse(body), context.token, request.signal)
+        : await client.resolveNavigation(JSON.parse(body), context.token, request.signal);
     } else throw new UiError("ui_route_not_found", "Unknown panel operation.", 404);
     return Response.json(result, { headers: responseHeaders });
   } catch (error) {

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { launchModeBootstrapScript } from "@hosty-sdk/app";
+import { launchModeBootstrapScript, chromeBootstrapScript } from "@hosty-sdk/app";
 import { HostLaunchBridge, HostThemeBridge } from "@hosty-sdk/app/react";
 import { themeBootstrapScript } from "@hosty-sdk/app/theme";
 import "./globals.css";
@@ -18,7 +18,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <head>
         {/* Ahead of any body markup, so chrome a shell already renders is never painted, and the
             first paint is already in the shell's theme. */}
-        <script dangerouslySetInnerHTML={{ __html: launchModeBootstrapScript }} />
+        <script dangerouslySetInnerHTML={{ __html: chromeBootstrapScript() }} /><script dangerouslySetInnerHTML={{ __html: launchModeBootstrapScript }} />
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
       </head>
       <body>

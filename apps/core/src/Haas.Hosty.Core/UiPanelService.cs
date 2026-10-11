@@ -22,7 +22,7 @@ internal sealed record UiResolvedPanel(UiPanelTarget Target, UiFrameSurface? Sur
     string State, string? StandaloneHref);
 
 /// <summary>Stateless, actor-scoped UI discovery. A browser handshake never becomes API authority.</summary>
-internal sealed class UiPanelService(AppRegistryStore apps, AppIdentityService identity,
+internal sealed partial class UiPanelService(AppRegistryStore apps, AppIdentityService identity,
     UserDirectoryStore users, CorePublicOriginResolver coreOrigins)
 {
     internal static bool CanHost(AppRecord app) => AppManagementAuthorization.HasPermission(app, CoreAppPermissions.ReadPanels)
@@ -113,7 +113,7 @@ internal sealed class UiPanelService(AppRegistryStore apps, AppIdentityService i
     private static string SurfaceState(AppRecord app, AppSurfaceSummary panel)
         => SurfaceState(app, panel.Service, panel.EmbeddedUrl);
 
-    private static string SurfaceState(AppRecord app, string? serviceName, string? url)
+    internal static string SurfaceState(AppRecord app, string? serviceName, string? url)
     {
         if (app.RuntimeState is "starting" or "stopping") return app.RuntimeState;
         var service = app.Health?.Services.FirstOrDefault(s => s.Service == serviceName);
@@ -169,6 +169,14 @@ internal static class UiPanelEndpoints
             ProviderAccessService access, AppIdentityService identity, UiPanelService ui) =>
             await Handle(context, appId, access, identity, async (caller, userId) =>
                 CoreJson.Json(await ui.ListAsync(caller, userId, context.RequestAborted))));
+        app.MapGet(root + "/navigation", async (string appId, HttpContext context,
+            ProviderAccessService access, AppIdentityService identity, UiPanelService ui) =>
+            await Handle(context, appId, access, identity, async (caller, userId) =>
+                CoreJson.Json(await ui.NavigationAsync(caller, userId, context.RequestAborted))));
+        app.MapPost(root + "/navigation/resolve", async (string appId, UiNavigationTarget target, HttpContext context,
+            ProviderAccessService access, AppIdentityService identity, UiPanelService ui) =>
+            await Handle(context, appId, access, identity, async (caller, userId) =>
+                CoreJson.Json(await ui.ResolveNavigationAsync(caller, userId, target, context.RequestAborted))));
         app.MapPost(root + "/panels/resolve", async (string appId, UiPanelTarget target, HttpContext context,
             ProviderAccessService access, AppIdentityService identity, UiPanelService ui) =>
             await Handle(context, appId, access, identity, async (caller, userId) =>

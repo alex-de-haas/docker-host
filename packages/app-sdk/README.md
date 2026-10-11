@@ -11,6 +11,9 @@ npm install @hosty-sdk/app
 | --- | --- | --- |
 | `@hosty-sdk/app` | anywhere | status taxonomy, recovery decision, `hosty:auth-required` and `hosty:request-delegated-token` schemas, URL/env helpers |
 | `@hosty-sdk/app/server` | server only | Core revalidation with caching, cookie helpers, the app-code route factory, the app secrets client |
+| `@hosty-sdk/app/next` | Next client | `HostyNextOverlay`, `HostyNextNavigationBridge` for App Router navigation |
+| `@hosty-sdk/app/ui` | client | policy/navigation snapshots, replayable navigation, chooser and presentation operations |
+| `@hosty-sdk/app/ui/react` | React client | navigation boundaries/hooks, app frames and retained panel workspaces |
 | `@hosty-sdk/app/react` | client | `<HostyOverlay />` — shared loading, identity, required setup and recovery UI; legacy bridges remain available |
 | `@hosty-sdk/app/session/server` | server | Framework-neutral session response adapter for authenticated Node servers |
 | `@hosty-sdk/app/embedder` | client | theme sender and legacy embedder message parsers; Shell no longer mints app credentials |
@@ -23,8 +26,8 @@ Minimal Next.js wiring (the configuration object stays server-side):
 
 ```tsx
 // app/layout.tsx — inside the body and the existing theme/launch providers
-import { HostyOverlay } from "@hosty-sdk/app/react";
-// <HostyOverlay>{children}</HostyOverlay>
+import { HostyNextOverlay } from "@hosty-sdk/app/next";
+// <HostyNextOverlay>{children}</HostyNextOverlay>
 
 // lib/hosty.ts
 export const hostyConfig = {
@@ -48,8 +51,9 @@ export const POST = createAppCodeRouteHandler(hostyConfig);
 
 Replace the protected scope's `AppIdentityBridge`, `AppActivityBridge`, custom sign-in rendering
 and `MissingPermissionsNotice` with one `HostyOverlay`. Keep public routes outside that scope.
-Existing launch/theme bridges and bootstrap scripts stay in place. The only optional overlay props
-are `probePath` and `appCodePath` for existing route names; it has no visual customization API.
+Existing launch/theme bridges stay in place for transport compatibility; add the composition
+bootstrap below. `probePath` and `appCodePath` support existing route names. `chrome`, `navigation`
+and `panelLayout` configure UI composition without replacing authentication/recovery rendering.
 API routes and server-rendered data still enforce their own authorization. The overlay delays
 protected client mounting; it is not a server data-access boundary.
 
@@ -323,13 +327,14 @@ client's user-token input. Keep tokens server-side. See
 [Continuous App Access](../../docs/features/continuous-app-access/feature.md) for creation, logout,
 revocation, exact MCP tools and installation boundaries. Background grants do not create a scheduler.
 
-## Shared panels (Core 0.129.0 / SDK 0.25.0)
+## Shared panels (Core 0.131.0 / SDK 0.27.0)
 
 `HostyOverlay` composes one UI owner per top-level browser document. Its default
 `panelLayout="auto"` adds an opened-tool rail, an **Add tool** chooser and a resizable
 workspace. In a directly embedded app it delegates presentation to the verified parent
-and renders no local rail. Use `panelLayout="slot"` with exactly one
-`HostyPanelWorkspace` inside your chrome, or `"none"` for a custom controller renderer.
+and renders no local rail. Use `panelLayout="slot"` with a `HostyPanelWorkspace` per workspace
+ID inside your chrome, or `"none"` with an explicitly registered custom renderer. Without a renderer,
+disable local tools; an opening otherwise fails with `presentation_unavailable`.
 Panel hosting requires reviewed optional `apps.panels.read` (or existing `apps.read`);
 participating as a child does not require catalog access.
 
@@ -343,7 +348,7 @@ export const POST = handler;
 
 Non-Next servers use `createHostyUiResponse` from `@hosty-sdk/app/ui/server` with their
 revalidated own app-user session/token. `UiServerClient` provides only `bootstrap`,
-`listPanels` and `resolvePanel`; never expose a generic Core proxy or caller-supplied credentials.
+`listPanels`, `resolvePanel`, `navigation` and `resolveNavigation`; never expose a generic Core proxy or caller-supplied credentials.
 Both server adapters return `no-store` metadata. The React root's `uiPath` defaults to
 `/api/hosty/ui` and must be a same-origin path.
 
@@ -394,3 +399,137 @@ peer metadata. Matching opaque Core/user contexts prevents accidental account mi
 between cooperating apps; it is not attestation of app code or delegated API authority.
 Every target API still authorizes its own session. Older surfaces remain `unreported`.
 See [the panel contract and verification](../../docs/features/sdk-panel-system/feature.md).
+
+## Navigation and UI composition
+
+Supply identical root defaults to the before-paint bootstrap and overlay. Omitted defaults show
+navigation and enable the standalone tool rail/chooser. Hints and verified host policy can override
+each leaf independently; neither framing nor copied launch-mode storage hides the new navigation.
+
+```tsx
+// app/layout.tsx
+import { chromeBootstrapScript } from "@hosty-sdk/app";
+import { HostyNextOverlay } from "@hosty-sdk/app/next";
+
+const chrome = { navigation: "show" as const, tools: { enabled: true, launcher: "show" as const } };
+// In <head>, before hydration and the legacy launch bridge:
+// <script dangerouslySetInnerHTML={{ __html: chromeBootstrapScript(chrome) }} />
+// In <body>, around protected app content:
+// <HostyNextOverlay chrome={chrome}>{children}</HostyNextOverlay>
+```
+
+For React without Next, use `HostyOverlay` and optionally pass
+`navigation={{ renderer: "standard", router }}`. A router implements `getRoute(): string`,
+`subscribe(listener): () => void` and `navigate(relativeRoute): void | Promise<void>`; optional
+`endpoint` disambiguates several endpoint names on the same origin. Without an adapter the SDK
+uses document navigation. The Next entry is optional and does not add Next to plain SDK consumers.
+
+The standard renderer uses only manifest `ui.navigation`. Own navigation needs ordinary app access,
+not `apps.panels.read`. Unavailable metadata has a retry state; an empty declaration adds no menu.
+Same-endpoint links use cached validated metadata and the app router; endpoint changes revalidate
+through Core and replace the same host view. Modified clicks use pinned standalone links.
+
+For custom navigation, suppress the automatic menu and wrap only page navigation/branding:
+
+```tsx
+import { HostyNavigationBoundary, useHostyChrome, useHostyNavigation } from "@hosty-sdk/app/ui/react";
+
+// <HostyNextOverlay navigation={{ renderer: "custom" }}>
+//   <HostyNavigationBoundary><MyPageNavigation /></HostyNavigationBoundary>
+//   <ProjectSelector />  // Contextual controls stay reachable when navigation is hidden.
+//   {children}
+// </HostyNextOverlay>
+```
+
+The boundary retains component state while hidden and moves hidden focus to the content landmark.
+Alternatively place `HostyNavigation` at a custom location. Framework-neutral renderers subscribe
+to `ui.getChrome/subscribeChrome` and `ui.getNavigation/subscribeNavigation`, then apply equivalent
+hidden/inert/focus behavior. Snapshots are immutable. `tools.owner` is derived by the SDK; it is not
+a configurable default or URL field.
+
+```ts
+const result = await ui.navigate(entry.key, { requestId: crypto.randomUUID() });
+const picker = await ui.openToolPicker({ requestId: crypto.randomUUID() });
+// accepted means navigation was accepted / the chooser became visible.
+// Retain request IDs for uncertain retries; an accepted replay does not repeat the action.
+```
+
+Document hints are `hosty_navigation=show|hide`, `hosty_tools=enabled|disabled` and
+`hosty_tool_launcher=show|hide`. The SDK removes them from the visible URL, preserving history
+state. They are not persisted. Verified host overrides take precedence, then hints, app defaults,
+the current document's legacy launch fallback for navigation, and standalone defaults. Hints grant
+no access or hosting authority. Hiding a launcher permits programmatic presentation; disabling
+tools rejects new requests. A root disable applies to every source and collapses retained tools.
+
+### Host views and retained tools
+
+`HostyAppFrame` accepts a view descriptor. A desktop host can choose different policy from Shell:
+
+```tsx
+<HostyAppFrame surface={validatedSurface} title="Plans"
+  view={{ viewId: "plans-window-1", workspaceId: "default",
+    chrome: { navigation: "show", tools: { enabled: true, launcher: "hide" } },
+    navigate: surface => replaceWindowSurface(surface) }} />
+```
+
+Omit `navigate` for the SDK's plain iframe replacement, or use it to update the host's route/window
+model. Key a replaced React frame by its immutable surface; live `chrome` updates keep that key.
+One top-level coordinator handles direct app/tool children. It never delegates credentials.
+
+Panel declarations and presentations have different identities. `PanelRef` identifies a manifest
+tool. `openSurface` returns an SDK `presentationId`; its `requestId` identifies only the operation.
+Default `reuse: "exact"` focuses the matching target in the destination workspace. A distinct route
+retains another frame; `reuse: "new"` creates another even for the same route. Rails have one item
+per declaration and an instance switcher. Replaying a closed presentation's operation does not
+resurrect it; use a new request to reopen. Domain sessions remain owned by the app.
+
+```ts
+const opened = await ui.openSurface(target, {
+  placement: "side", requestId: crypto.randomUUID(), reuse: "exact",
+});
+// A host may satisfy "side" with a dock or tool window.
+```
+
+Hosts use `useHostyUiHost()` or `createUiHost()`:
+
+```ts
+host.setViewChrome("plans-window-1", { navigation: "show", tools: { launcher: "hide" } });
+host.setPlacementResolver(({ source, target, presentations }) => ({ workspaceId: "shared" }));
+host.focusPresentation(presentationId);
+host.collapseWorkspace("shared");
+await host.movePresentation(presentationId, "floating");
+host.closePresentation(presentationId); // Does not delete the conversation.
+```
+
+Register destinations before their views. React's `<HostyPanelWorkspace workspaceId="shared">`
+implements the renderer; `panelLayout="slot"` lets the host place multiple named workspaces.
+`layout="dock"` keeps dock geometry inside an independent tool window. The default `responsive`
+layout switches to a drawer in a narrow region. Keep populated workspaces mounted until their
+presentations are moved or explicitly closed.
+
+Non-React hosts call `registerWorkspace({ workspaceId, renderer })`. A renderer implements async
+`present(instance, signal)` and `showToolPicker(signal)` returning `accepted | unavailable`, plus
+`focus(id)`, `collapse()` and `release(id)`. Acceptance requires an attached visible destination,
+not a promise of later UI. Matching `frameLayer` object identities allow movement; the renderer
+must preserve iframe DOM parent and browsing context, changing geometry instead of reparenting.
+The supplied React renderer does this. A failed move leaves the original presentation in place.
+
+A placement resolver can nominate `presentationId` together with its actual workspace, but only
+an exact resolved target is accepted. Requests are ordered per destination before asynchronous
+resolution; a newer selection or collapse supersedes older work. Closing an app view cancels its
+unaccepted requests and preserves accepted shared presentations. All browser IDs and ledgers are
+local to the document; Core stores no browser workspace/session registry.
+
+### Compatibility and migration
+
+Both peers negotiate `ui.composition.v1` inside the existing verified wire-v1 handshake. New/old
+peers keep legacy openings without new options. Explicit reuse, remote navigation or picker calls
+to old hosts return `unsupported_composition`; the SDK does not silently discard those options.
+Host loss preserves stale policy and exposes reconnect/separate recovery, without taking local
+ownership. Silent session renewal preserves same-actor frames and drafts.
+
+Remove `hosty-shell-chrome`/`data-hosty-launch` visibility CSS when adopting navigation boundaries.
+Keep launch/auth exports for older hosts and native transport. Native clients send explicit hidden
+navigation/launcher and disabled tools until they provide a panel host. `panelLayout="none"` is a
+rendering choice, not a disable policy: explicitly disable local tools or register a renderer.
+See [UI composition and browser acceptance](../../docs/features/sdk-ui-composition/feature.md).

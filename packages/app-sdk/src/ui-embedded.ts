@@ -1,12 +1,17 @@
+import { activeNavigationKey, UiCompositionModel } from "./ui-composition";
+import { UI_COMPOSITION_CAPABILITY, type UiChromeOverrides, type UiActionOptions, type UiActionResult } from "./ui-types";
 import { createPresentationRequestId, type UiClient } from "./ui";
 import { UiError, type PanelTarget, type PresentationOptions, type PresentationResult, type UiBootstrap, type UiEnvironment, type UiEvent } from "./ui-types";
-import { DISCOVERY_TIMEOUT, failure, readUiMessage, uiRequest, validId, validTarget, waitForPresentation, type UiMessage } from "./ui-transport";
+import { canonicalSurfaceRoute, DISCOVERY_TIMEOUT, failure, readUiMessage, uiRequest, validId, validTarget, waitForPresentation, type UiMessage } from "./ui-transport";
 
-type PendingRequest = { input: string | null; operation: Promise<PresentationResult>;
-  resolve: (result: PresentationResult) => void; waiters: number; sent: boolean };
+type UiResult = PresentationResult | UiActionResult;
+type PendingRequest = { kind: "action" | "presentation"; input: string | null; operation: Promise<UiResult>;
+  resolve: (result: UiResult) => void; waiters: number; sent: boolean };
 
 /** Direct-child transport. Discovery carries no identity and never creates a fallback host. */
 export class EmbeddedUiClient implements UiClient {
+  readonly composition: UiCompositionModel;
+  private readonly localActions = new Map<string, { key: string; result: Promise<UiActionResult>; pending: boolean }>();
   private environment: UiEnvironment = { mode: "embedded", connection: "connecting" };
   private nonce = createPresentationRequestId();
   private readonly listeners = new Set<(event: UiEvent) => void>();
@@ -22,7 +27,16 @@ export class EmbeddedUiClient implements UiClient {
   private readonly onMessage = (event: MessageEvent) => { void this.receive(event); };
   private readonly onFocus = () => { void this.recheck(); };
   private readonly onKey = (event: KeyboardEvent) => { if (this.active && !event.defaultPrevented && event.key === "Escape") this.post({ type: "hosty:ui:dismiss" }); };
-  constructor(private readonly path: string) {
+  constructor(private readonly path: string, chrome: UiChromeOverrides = {}) {
+    this.composition = new UiCompositionModel(path, "embedded", chrome);
+    this.composition.attachRouter();
+    this.composition.subscribeNavigation(() => {
+      if (this.getChrome().capabilities.includes(UI_COMPOSITION_CAPABILITY) && this.environment.connection === "connected") {
+        const route = this.composition.currentRoute();
+        if (this.state && canonicalSurfaceRoute(this.state.route) === canonicalSurfaceRoute(route)) this.reportSurfaceState(this.state);
+        else this.reportRoute(route);
+      }
+    });
     window.addEventListener("message", this.onMessage);
     window.addEventListener("focus", this.onFocus);
     window.addEventListener("keydown", this.onKey);
@@ -30,10 +44,14 @@ export class EmbeddedUiClient implements UiClient {
     if (window.parent !== window.top) this.setEnvironment("unsupported", "unsupported_nesting");
   }
   getEnvironment = () => this.environment;
+  getChrome = () => this.composition.getChrome();
+  subscribeChrome = (listener: () => void) => this.composition.subscribeChrome(listener);
+  getNavigation = () => this.composition.getNavigation();
+  subscribeNavigation = (listener: () => void) => this.composition.subscribeNavigation(listener);
   setActive(active: boolean) {
     if (this.active === active) return;
     if (!active) this.post({ type: "hosty:ui:auth-required" });
-    this.active = active;
+    this.active = active; this.composition.resetNavigation(); this.localActions.clear();
     this.channel = null; this.verifying = null; this.nonce = createPresentationRequestId();
     clearTimeout(this.deadline); this.retries.forEach(clearTimeout);
     if (!active) {
@@ -56,11 +74,12 @@ export class EmbeddedUiClient implements UiClient {
   private setEnvironment(connection: UiEnvironment["connection"], code?: string) {
     if (this.disposed) return;
     this.environment = { mode: "embedded", connection, ...(code ? { code } : {}) };
+    this.composition.setEnvironment(this.environment);
     this.emit({ type: "environment", value: this.environment });
   }
   private probe() {
     if (this.active && !this.disposed && window.parent === window.top && !this.channel)
-      window.parent.postMessage({ type: "hosty:ui:probe", version: 1, versions: [1], childNonce: this.nonce }, "*");
+      window.parent.postMessage({ type: "hosty:ui:probe", version: 1, versions: [1], capabilities: [UI_COMPOSITION_CAPABILITY], childNonce: this.nonce }, "*");
   }
   private discover() {
     clearTimeout(this.deadline); this.retries.forEach(clearTimeout);
@@ -116,7 +135,7 @@ export class EmbeddedUiClient implements UiClient {
         if (previous && (previous.origin !== event.origin || previous.hostWindowId !== msg.hostWindowId || previous.generation !== msg.generation))
           this.retirePending();
         this.channel = { origin: event.origin, hostWindowId: msg.hostWindowId, generation: msg.generation, own };
-        this.post({ type: "hosty:ui:accept", coreOrigin: own.coreOrigin, userId: own.userId, appId: own.app.appId, installationId: own.app.installationId });
+        this.post({ type: "hosty:ui:accept", capabilities: [UI_COMPOSITION_CAPABILITY], coreOrigin: own.coreOrigin, userId: own.userId, appId: own.app.appId, installationId: own.app.installationId });
       } catch (error) {
         if (this.disposed || !this.active || this.verifying !== key) return;
         const code = error instanceof UiError ? error.code : "ui_unavailable";
@@ -132,22 +151,31 @@ export class EmbeddedUiClient implements UiClient {
         this.setEnvironment("blocked", "actor_mismatch"); return;
       }
       clearTimeout(this.deadline); this.setEnvironment("connected");
+      if (Array.isArray(msg.capabilities) && msg.capabilities.includes(UI_COMPOSITION_CAPABILITY)) {
+        this.composition.setHostPolicy(channel.generation, msg.revision as number, msg.chrome as UiChromeOverrides, msg.rootDisabled === true, msg.endpoint as string);
+      } else this.composition.setLegacyHost();
+      void this.composition.refreshNavigation();
       if (this.state) this.reportSurfaceState(this.state);
       return;
     }
     if (this.environment.connection !== "connected") return;
-    if (msg.type === "hosty:ui:result" && validId(msg.requestId) && validResult(msg.result, msg.requestId)) {
-      const result = msg.result;
-      this.pending.get(msg.requestId)?.resolve(result);
-      this.emit({ type: "presentation", value: result });
+    if (msg.type === "hosty:ui:chrome" && this.getChrome().capabilities.includes(UI_COMPOSITION_CAPABILITY)) {
+      this.composition.setHostPolicy(channel.generation, msg.revision as number, msg.chrome as UiChromeOverrides, msg.rootDisabled === true, msg.endpoint as string); return;
+    }
+    if ((msg.type === "hosty:ui:result" || msg.type === "hosty:ui:action-result") && validId(msg.requestId) && validResult(msg.result, msg.requestId)) {
+      const result = msg.result, pending = this.pending.get(msg.requestId);
+      if (result.status === "accepted" && pending?.kind !== "action" || result.status === "opened" && pending?.kind === "action") return;
+      pending?.resolve(result);
+      if (result.status !== "accepted") this.emit({ type: "presentation", value: result });
     }
   }
-  private async request(requestId: string, message: Record<string, unknown>, signal?: AbortSignal): Promise<PresentationResult> {
+  private async request(requestId: string, message: Record<string, unknown>, signal?: AbortSignal): Promise<UiResult> {
     if (!validId(requestId)) return { status: "rejected", requestId, code: "invalid_presentation" };
     if (!this.active) return { status: "blocked", requestId, code: "activity_required" };
     if (signal?.aborted) return { status: "uncertain", requestId, code: "presentation_unknown" };
     const target = message.target as PanelTarget | undefined;
-    const input = target ? JSON.stringify([target.panel.appId, target.panel.installationId, target.panel.panelId, target.route ?? null]) : null;
+    const input = message.type === "hosty:ui:status" ? null : JSON.stringify([message.type, target?.panel ?? null, target?.route ?? null, message.reuse ?? "exact", message.entryKey ?? null]);
+    if (this.localActions.has(requestId)) return { status: "rejected", requestId, code: "request_conflict" };
     const existing = this.pending.get(requestId);
     if (existing) {
       if (input !== null && existing.input !== null && input !== existing.input)
@@ -161,10 +189,11 @@ export class EmbeddedUiClient implements UiClient {
       }
       return this.wait(requestId, existing, signal);
     }
-    if (this.pending.size >= 4) return { status: "blocked", requestId, code: "presentation_busy" };
-    let settle!: (result: PresentationResult) => void;
-    const operation = new Promise<PresentationResult>(resolve => { settle = resolve; });
-    const entry: PendingRequest = { input, operation, waiters: 0, sent: false, resolve: result => {
+    if (this.pending.size + [...this.localActions.values()].filter(value => value.pending).length >= 4)
+      return { status: "blocked", requestId, code: "presentation_busy" };
+    let settle!: (result: UiResult) => void;
+    const operation = new Promise<UiResult>(resolve => { settle = resolve; });
+    const entry: PendingRequest = { kind: message.type === "hosty:ui:picker" || message.type === "hosty:ui:navigate" ? "action" : "presentation", input, operation, waiters: 0, sent: false, resolve: result => {
       if (this.pending.get(requestId) === entry) this.pending.delete(requestId);
       settle(result);
     } };
@@ -178,7 +207,7 @@ export class EmbeddedUiClient implements UiClient {
     });
     return this.wait(requestId, entry, signal);
   }
-  private wait(requestId: string, entry: PendingRequest, signal?: AbortSignal): Promise<PresentationResult> {
+  private wait(requestId: string, entry: PendingRequest, signal?: AbortSignal): Promise<UiResult> {
     entry.waiters++;
     return waitForPresentation(entry.operation, requestId, signal).finally(() => {
       // Ending a caller's wait does not cancel a sent message. Keep its reservation until
@@ -186,25 +215,78 @@ export class EmbeddedUiClient implements UiClient {
       if (--entry.waiters === 0 && !entry.sent && this.pending.get(requestId) === entry) this.pending.delete(requestId);
     });
   }
-  openSurface = (target: PanelTarget, options: PresentationOptions) => validTarget(target) && options.placement === "side"
-    ? this.request(options.requestId, { type: "hosty:ui:open", target, placement: "side" }, options.signal)
-    : Promise.resolve({ status: "rejected", requestId: options.requestId, code: "invalid_presentation" } as PresentationResult);
-  getPresentation = (requestId: string, options?: { signal?: AbortSignal }) => this.request(requestId, { type: "hosty:ui:status" }, options?.signal);
+  openSurface = (target: PanelTarget, options: PresentationOptions): Promise<PresentationResult> => {
+    if (!this.getChrome().tools.enabled) return Promise.resolve({ status: "blocked", requestId: options.requestId, code: "tools_disabled" });
+    if (options.reuse !== undefined && !this.getChrome().capabilities.includes(UI_COMPOSITION_CAPABILITY))
+      return Promise.resolve({ status: "unsupported", requestId: options.requestId, code: "unsupported_composition" });
+    return validTarget(target) && options.placement === "side"
+      ? this.request(options.requestId, { type: "hosty:ui:open", target, placement: "side", ...(options.reuse ? { reuse: options.reuse } : {}) }, options.signal) as Promise<PresentationResult>
+      : Promise.resolve({ status: "rejected", requestId: options.requestId, code: "invalid_presentation" });
+  };
+  getPresentation = (requestId: string, options?: { signal?: AbortSignal }) => this.request(requestId, { type: "hosty:ui:status" }, options?.signal) as Promise<PresentationResult>;
+  openToolPicker = (options: UiActionOptions): Promise<UiActionResult> => {
+    if (!this.getChrome().tools.enabled) return Promise.resolve({ status: "blocked", requestId: options.requestId, code: "tools_disabled" });
+    if (!this.getChrome().capabilities.includes(UI_COMPOSITION_CAPABILITY))
+      return Promise.resolve({ status: "unsupported", requestId: options.requestId, code: "unsupported_composition" });
+    return this.request(options.requestId, { type: "hosty:ui:picker" }, options.signal) as Promise<UiActionResult>;
+  };
+  navigate = (entryKey: string, options: UiActionOptions): Promise<UiActionResult> => {
+    const id = options.requestId, existing = this.localActions.get(id);
+    if (!validId(id)) return Promise.resolve({ status: "rejected", requestId: id, code: "invalid_presentation" });
+    if (existing) return existing.key === entryKey ? waitForPresentation(existing.result, id, options.signal) : Promise.resolve({ status: "rejected", requestId: id, code: "request_conflict" });
+    const entry = this.getNavigation().entries.find(e => e.key === entryKey);
+    if (!entry?.route) return Promise.resolve({ status: "blocked", requestId: id, code: "destination_changed" });
+    if (!this.composition.isLocalEntry(entry)) {
+      if (!this.getChrome().capabilities.includes(UI_COMPOSITION_CAPABILITY))
+        return Promise.resolve({ status: "unsupported", requestId: id, code: "unsupported_composition" });
+      return this.request(id, { type: "hosty:ui:navigate", entryKey }, options.signal) as Promise<UiActionResult>;
+    }
+    if (this.pending.has(id)) return Promise.resolve({ status: "rejected", requestId: id, code: "request_conflict" });
+    if (this.pending.size + [...this.localActions.values()].filter(value => value.pending).length >= 4)
+      return Promise.resolve({ status: "blocked", requestId: id, code: "presentation_busy" });
+    const nonce = this.nonce;
+    const operation = Promise.resolve().then(async (): Promise<UiActionResult> => {
+      try {
+        if (!this.active || this.disposed || nonce !== this.nonce) throw new UiError("activity_required", "Sign in to navigate.");
+        if (options.signal?.aborted) return { status: "uncertain", requestId: id, code: "presentation_unknown" };
+        await this.composition.navigateLocal(entry);
+        if (!this.active || this.disposed || nonce !== this.nonce) throw new UiError("activity_required", "Sign in to navigate.");
+        return { status: "accepted", requestId: id };
+      } catch (error) { return failure(id, error) as UiActionResult; }
+    });
+    const action = { key: entryKey, result: operation, pending: true };
+    this.localActions.set(id, action);
+    void operation.finally(() => {
+      action.pending = false;
+      for (const [key, value] of this.localActions) {
+        if (this.localActions.size <= 256) break;
+        if (!value.pending) this.localActions.delete(key);
+      }
+    });
+    return waitForPresentation(operation, id, options.signal);
+  };
+  private reportRoute(route: string) {
+    const entryKey = activeNavigationKey(this.getNavigation().entries, this.composition.currentEndpoint(), route);
+    this.post({ type: "hosty:ui:route", route, ...(entryKey ? { entryKey } : {}) });
+  }
   reportSurfaceState = (state: { route: string; state: "ready" | "blocked"; code?: string }) => {
     this.state = state;
-    if (this.environment.connection === "connected") this.post({ type: "hosty:ui:surface-state", ...state });
+    if (this.environment.connection === "connected") {
+      if (this.getChrome().capabilities.includes(UI_COMPOSITION_CAPABILITY)) this.reportRoute(state.route);
+      this.post({ type: "hosty:ui:surface-state", ...state });
+    }
   };
   dispose = () => {
-    this.disposed = true; clearTimeout(this.deadline); this.retries.forEach(clearTimeout);
+    this.disposed = true; this.composition.dispose(); this.localActions.clear(); clearTimeout(this.deadline); this.retries.forEach(clearTimeout);
     window.removeEventListener("message", this.onMessage); window.removeEventListener("focus", this.onFocus); window.removeEventListener("keydown", this.onKey);
     for (const [id, entry] of this.pending) entry.resolve(failure(id, new UiError("host_unavailable", "Host disconnected.")));
     this.pending.clear(); this.listeners.clear();
   };
 }
 
-function validResult(value: unknown, id: string): value is PresentationResult {
+function validResult(value: unknown, id: string): value is UiResult {
   if (!value || typeof value !== "object") return false;
-  const v = value as Partial<PresentationResult>;
-  return v.requestId === id && (v.status === "opened" ? validTarget(v.target) && ["loading", "ready", "unreported", "auth-required"].includes(v.readiness!)
-    : ["blocked", "unsupported", "rejected", "uncertain", "unknown"].includes(v.status!) && "code" in v && typeof v.code === "string");
+  const v = value as Partial<UiResult>;
+  return v.requestId === id && (v.status === "accepted" || (v.status === "opened" ? validTarget(v.target) && ["loading", "ready", "unreported", "auth-required"].includes(v.readiness!)
+    : ["blocked", "unsupported", "rejected", "uncertain", "unknown"].includes(v.status!) && "code" in v && typeof v.code === "string"));
 }

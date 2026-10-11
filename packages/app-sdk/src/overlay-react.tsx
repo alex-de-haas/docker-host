@@ -7,6 +7,7 @@ import { useAppActivity } from "./activity-react";
 import { APP_SESSION_ENDED, APP_SESSION_RESTORED, APP_ACTIVITY_RENEWED, acceptAppAuthProtocol } from "./browser-auth";
 import { buildCoreOpenUrl, readRecoveryParams } from "./index";
 import { permissionReviewUrl, requestPermissionReview, type PermissionNoticeState } from "./permissions";
+import type { UiChromeOverrides, UiRouterAdapter } from "./ui-types";
 import { HostyUiRoot } from "./ui-react";
 
 type Setup = "ready" | "missing" | "unsupported" | "unavailable" | "incompatible";
@@ -36,9 +37,9 @@ function sessionReady(session: Snapshot | null): boolean {
 }
 
 /** Mount once around protected content. Presentation and recovery belong to Hosty. */
-export function HostyOverlay({ children, probePath = "/api/hosty/session", appCodePath = "/api/auth/app-code", uiPath, panelLayout = "auto", localContent }: {
+export function HostyOverlay({ children, probePath = "/api/hosty/session", appCodePath = "/api/auth/app-code", uiPath, panelLayout = "auto", localContent, chrome, navigation }: {
   /** Explicitly public/local content available during an outage; never put protected actor data here. */
-  localContent?: ReactNode;
+  localContent?: ReactNode; chrome?: UiChromeOverrides; navigation?: { renderer: "standard" | "custom"; router?: UiRouterAdapter };
   children: ReactNode; probePath?: string; appCodePath?: string; uiPath?: string; panelLayout?: "auto" | "slot" | "none";
 }) {
   const actor = useRef<string | null>(null);
@@ -155,7 +156,7 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
   return <>
     {localOffline && <div data-hosty-local-content><p role="status">Hosty is unavailable. Local content remains available.</p>{localContent}</div>}
     <div data-hosty-content hidden={!ready} inert={!ready} style={ready ? { display: "contents" } : { display: "none" }}>
-      <HostyUiRoot uiPath={uiPath} panelLayout={panelLayout} active={ready}>{mounted.current ? children : null}</HostyUiRoot>
+      <HostyUiRoot chrome={chrome} navigation={navigation} uiPath={uiPath} panelLayout={panelLayout} active={ready}>{mounted.current ? children : null}</HostyUiRoot>
     </div>
     {!ready && !localOffline && <OverlaySurface pending={pending} title={title} message={message} action={action} actionLabel={actionLabel} reviewUrl={reviewUrl} />}
   </>;

@@ -97,12 +97,13 @@ Discovery and readiness are bounded. A known host whose verification times out r
 an unsupported legacy host permits compatibility rendering without a nested panel host. Readiness
 is separate from successful placement: `loading`, `auth-required`, `ready` or `unreported`. Only a
 matching declared installation, endpoint and route can report ready. Route comparison removes only
-SDK-owned `hosty_launch`, `hosty_theme` and `hosty_theme_preference` parameters and normalizes query
+SDK-owned launch, theme and composition parameters and normalizes query
 encoding on both sides; app parameters, their order, the path and fragment still participate. A blank/CSP-refused or
 older surface remains unreported and exposes explicit separate opening.
 
-Presentation IDs are caller-generated UUIDs, distinct from handoff IDs. The host keeps a bounded
-window-local ledger scoped to source document and serializes operations per tool. Matching replay
+Request IDs are caller-generated UUIDs, distinct from handoff IDs. Presentation IDs identify
+SDK-created retained instances. The host keeps a bounded window-local ledger scoped to source
+document and orders selection per destination workspace. Matching replay
 revalidates authority and reuses the frame; conflicting payloads fail. Status rechecks the target.
 An aborted/timed-out wait is uncertain, not cancellation; retry/status uses the same ID. Message
 size and concurrent-request limits bound work. Core restart requires no browser-lease restoration.
@@ -122,13 +123,14 @@ An explicit retry revalidates and can open the same target.
 `HostyOverlay` owns one coordinator. Its `panelLayout` modes are:
 
 - `auto`: the standard standalone document/tool layout; embedded participation suppresses it.
-- `slot`: composition at exactly one `HostyPanelWorkspace`, used inside Shell's outer chrome.
+- `slot`: composition at named `HostyPanelWorkspace` slots, one renderer per workspace ID.
 - `none`: no local panel layout, retaining embedded participation and readiness reporting.
 
 The framework-neutral `ui` facade and `useHostyUi()` expose `getEnvironment`, `subscribe`,
-`openSurface`, `getPresentation` and `reportSurfaceState`. `createUiHost` exposes the same client
+`openSurface`, `getPresentation` and `reportSurfaceState`, plus chrome/navigation snapshots,
+`navigate` and `openToolPicker` from [UI composition](../sdk-ui-composition/feature.md). `createUiHost` exposes the same client
 contract plus catalog/tool snapshots, frame registration, selection and layout control. A second
-live host or duplicate workspace slot is an integration error. Older app adapters receive no new
+live host or duplicate renderer for one workspace ID is an integration error. Older app adapters receive no new
 panel chrome. See the [SDK integration examples](../../../packages/app-sdk/README.md).
 
 `resolveAssistantPresentation(provider, result, { expectedProvider })` is a pure mapper. It checks
@@ -159,11 +161,15 @@ existing same-actor frames and drafts remain mounted.
 Standalone shows opened tools and Add tool; the chooser lists accessible declared panels before
 any discussion. Shell uses the catalog rail, including on Dashboard/settings, and retains its icon
 renderer and layout cookies. Neither layout adds provider defaults or fleet management to Plans.
-Demo App participates as a panel but uses `panelLayout="none"` in its own document: its manifest
-does not request the permissions to host other tools.
+Demo App explicitly disables local tools in its ordinary `panelLayout="none"` root. Its
+`/composition` conformance fixture enables two app windows and shared workspaces using reviewed
+optional panel access.
 
-Frames mount lazily, one per opened tool, and survive collapse, tool switching and central Shell
-navigation. Hidden frames are inert. Document state and unsent composer state remain local to their
+Frames mount lazily per presentation instance and survive collapse, tool switching and central
+Shell navigation. Exact targets reuse a matching instance; distinct routes and explicit new-instance
+requests retain separate frames. One rail item per declaration exposes an instance switcher.
+[UI composition](../sdk-ui-composition/feature.md) specifies workspace placement, live navigation/tool
+policy, stable-frame movement and explicit close behavior. Hidden frames are inert. Document state and unsent composer state remain local to their
 mounted views. Stop/removal, lost access, changed installation/origin/path or policy invalidate the
 affected surface; transient readiness loss, including `starting` and `stopping`, retains the existing
 frame until a completed stop or an independently invalidated identity, destination or policy. No automatic provider substitution or app
@@ -181,6 +187,8 @@ does not loop on unrelated state updates. A notification's
 assistant-session link takes precedence over this default restoration. Shell observes the independent
 panel catalog and consumes the link only after successful placement; a refusal retains the link for
 retry on refreshed metadata. Stale completion after leaving the link cannot consume a newer URL.
+Legacy assistant-session notifications allocate an instance before sending their session command;
+the outbound message names that presentation so it cannot retarget another retained draft.
 Shell chrome reads expansion from the host snapshot. Cookie or legacy localStorage preferences
 initialize the host once; an explicit session link defers default expansion until its placement.
 The top-strip toggle follows SDK changes and its first click acts on the actual host state.
@@ -213,10 +221,12 @@ Returning to the original source can explicitly reuse the cached finalized resul
 and malformed persisted intents are retained and refused without sending a handoff; only Start a
 new discussion replaces them with a new installation-bound request.
 
-The normal path calls `openSurface` with a presentation UUID. It opens Shell's panel when embedded
+The normal path calls `openSurface` with a request UUID. It opens Shell's panel when embedded
 and the local SDK host when standalone, without reserving a popup. Plans distinguishes successful
-placement from provider-reported readiness. Retry opening reuses the completed result; Open
-separately is an explicit noopener link. Neither action repeats uploads/finalization or submits
+placement from provider-reported readiness. Retry opening reuses the completed discussion result. An uncertain opening reuses its pending
+request ID; after an acknowledged opening, a later explicit action uses a fresh request so a closed
+presentation can reopen, while exact target reuse preserves a still-open frame. Open separately
+is an explicit noopener link. Neither action repeats uploads/finalization or submits
 the prepared draft. Harness reports readiness only after loading the exact requested session,
 including requests delivered by Shell messages to the default assistant route. A failed or mismatched
 session fetch cannot report a previously attached session as ready for that request.
