@@ -3,6 +3,7 @@ import { useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExtern
 import { ui, createPresentationRequestId } from "./ui";
 import { INITIAL_CHROME, INITIAL_NAVIGATION } from "./ui-composition";
 import { UiCompositionContext } from "./ui-context";
+import { UI_COMPOSITION_CAPABILITY } from "./ui-types";
 export function useHostyChrome() { return useSyncExternalStore(ui.subscribeChrome, ui.getChrome, () => INITIAL_CHROME); }
 export function useHostyNavigation() { return useSyncExternalStore(ui.subscribeNavigation, ui.getNavigation, () => INITIAL_NAVIGATION); }
 export function HostyNavigationBoundary({ children, className }: { children: ReactNode; className?: string }) {
@@ -13,7 +14,8 @@ export function HostyNavigationBoundary({ children, className }: { children: Rea
 }
 export function HostyToolLauncher() {
   const chrome = useHostyChrome(), [error, setError] = useState<string | null>(null);
-  if (chrome.tools.owner === "local" || !chrome.tools.enabled || chrome.tools.launcher === "hide") return null;
+  if (chrome.tools.owner === "local" || !chrome.tools.enabled || chrome.tools.launcher === "hide"
+    || !chrome.capabilities.includes(UI_COMPOSITION_CAPABILITY)) return null;
   return <div className="hosty-child-tools"><button type="button" disabled={chrome.tools.owner !== "host"} onClick={async () => {
     const result = await ui.openToolPicker({ requestId: createPresentationRequestId() });
     setError(result.status === "accepted" ? null : "Tools are unavailable. Reconnect to your host or open the app separately.");

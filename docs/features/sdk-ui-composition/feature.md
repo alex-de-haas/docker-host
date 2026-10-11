@@ -111,7 +111,9 @@ router without patching global history. The plain SDK has no Next runtime depend
 `ui.navigate(entryKey, { requestId, signal? })` and
 `ui.openToolPicker({ requestId, signal? })` return `accepted` or a typed failure. Picker acceptance
 means the chooser is visible, not that a tool or provider operation was selected. A visible child
-launcher delegates to the host's chooser; it creates no nested catalog/rail. Replayed accepted
+launcher delegates to the host's chooser; it creates no nested catalog/rail. The delegated launcher
+is hidden until composition support is negotiated, including with legacy hosts. A disconnected
+previously negotiated host retains a disabled launcher. Replayed accepted
 requests neither navigate twice nor reopen a dismissed chooser. IDs share generation-scoped
 conflict and concurrency bounds with presentation requests. Timeout/abort after dispatch is
 uncertain, not cancellation.
@@ -250,6 +252,8 @@ shell, and this API does not add context to an existing assistant conversation.
 - Plans component tests use a real SDK host to close and reopen a finalized discussion through both
   visible actions, retain its conversation target and replay a later uncertain opening without
   repeating the assistant handoff.
+- Launcher integration verifies the real embedded handshake: no control for a legacy host, working
+  delegation after composition negotiation, and a disabled control after disconnection.
 - Overlay integration tests cover focus return to the inner app-content landmark when hiding
   custom, standard and drawer navigation, bypassing the non-focusable authentication wrapper.
 - Shell integration mounts workspace, settings and right-panel frames for the same app against a
@@ -277,7 +281,7 @@ Verification recorded on 2026-10-11:
 | `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --artifacts-path "$PWD/build/ui-composition" --verbosity quiet` | 3,139 passed; 4 opt-in Docker/VPN integration tests skipped because their fixtures were not enabled |
 | Core build and `UiPanelHttpTests` after the icon-origin fix | Build passed; 31 HTTP tests passed |
 | `npm run core:aot` | Native AOT publish passed for osx-arm64 with no trim/AOT warnings |
-| `npm test --workspace=@hosty-sdk/app` | 596 passed |
+| `npm test --workspace=@hosty-sdk/app` | 597 passed |
 | `npm test` in Shell / Plans / Harness / Marketplace / Workspaces / Demo / Telemetry UI | 191 Node + 239 component / 117 / 536 / 111 / 7 / 4 / 10 passed |
 | `npm run build --workspace=@hosty-sdk/app` and overlay upgrade contract script | Passed, including optional Next export and unchanged consumer compatibility |
 | `npm run build -- --webpack` in all seven affected web apps | Passed; affected app lint checks passed with no errors |
