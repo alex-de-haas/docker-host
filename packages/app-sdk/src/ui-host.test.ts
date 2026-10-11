@@ -680,13 +680,17 @@ describe("composition presentation instances", () => {
     const h = await start(), requestId = createPresentationRequestId();
     const opened = await h.openSurface(target, { placement: "side", requestId });
     expect(opened.status).toBe("opened"); if (opened.status !== "opened") return;
-    const next = { ...resolved.surface!, route: "/assistant?session=other",
+    const next = { ...resolved.surface!, route: "/people",
       ...(differentEndpoint ? { endpoint: "other", origin: "https://other.test" } : {}) };
     const f = frame(resolved.surface!, { viewId: "tool-view", workspaceId: "default", presentationId: opened.presentationId, navigate: vi.fn() });
     f.send({ type: "hosty:ui:probe", childNonce: f.offer.childNonce, versions: [1], capabilities: ["ui.composition.v1"] });
     f.send({ ...f.offer, type: "hosty:ui:accept", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: panel.appId, installationId: panel.installationId });
-    fetcher.mockImplementation(async (path: string) => Response.json(path.endsWith("navigation/resolve")
-      ? { available: true, surface: next, state: "running" } : path.endsWith("panels/resolve") ? resolution : metadata));
+    fetcher.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path.endsWith("panels/resolve") && JSON.parse(init!.body as string).route !== target.route)
+        return Response.json({ code: "destination_invalid" }, { status: 400 });
+      return Response.json(path.endsWith("navigation/resolve") ? { available: true, surface: next, state: "running" }
+        : path.endsWith("panels/resolve") ? resolution : metadata);
+    });
     f.send({ ...f.offer, type: "hosty:ui:navigate", requestId: createPresentationRequestId(), entryKey: "entry" });
     await vi.waitFor(() => expect(h.getSnapshot().tools[0]!.resolved.surface).toEqual(next));
     expect(await h.getPresentation(requestId)).toMatchObject({ status: "opened", presentationId: opened.presentationId, target });
@@ -694,6 +698,9 @@ describe("composition presentation instances", () => {
     expect(await h.openSurface(target, { placement: "side", requestId })).toMatchObject({ status: "opened", presentationId: opened.presentationId });
     expect(h.getSnapshot().expanded).toBe(true); expect(h.getSnapshot().tools).toHaveLength(1);
     expect(h.getSnapshot().tools[0]!.resolved.surface).toEqual(next);
+    h.setExpanded(false);
+    expect(await h.selectPanel(panel)).toMatchObject({ status: "opened", presentationId: opened.presentationId });
+    expect(h.getSnapshot().expanded).toBe(true); expect(h.getSnapshot().tools[0]!.resolved.surface).toEqual(next);
     resolution = { ...resolution, surface: { ...resolution.surface!, origin: "https://replaced.test" } };
     expect(await h.getPresentation(requestId)).toMatchObject({ status: "blocked", code: "destination_changed" });
     resolution = { ...resolved, available: false, state: "access_unavailable" };

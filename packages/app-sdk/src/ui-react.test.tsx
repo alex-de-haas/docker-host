@@ -152,11 +152,36 @@ it.each([false, true])("keeps frame integrations on the resolved origin after na
   await act(async () => {
     send({ type: "hosty:request-permission-review" }, next.origin);
     send({ type: "hosty:auth-required", appId: panel.panel.appId }, next.origin);
+    send({ ...nextOffer, type: "hosty:ui:route", route: next.route }, next.origin);
     send({ ...nextOffer, type: "hosty:ui:surface-state", route: next.route, state: "ready" }, next.origin);
   });
   expect(open).toHaveBeenCalledWith(`https://core.test/install/permissions/${panel.panel.appId}`, "_blank", "noopener,noreferrer");
   expect(authRequired).toHaveBeenCalledWith(panel.panel.appId);
-  if (retained) expect(host!.getSnapshot().tools[0]!.readiness).toBe("ready");
+  if (retained) {
+    expect(host!.getSnapshot().tools[0]).toMatchObject({ currentRoute: next.route, readiness: "ready" });
+    const nextSrc = frame.src, nextContext = frame.contentWindow;
+    await act(async () => host!.setExpanded(false));
+    await act(async () => { expect(await host!.selectPanel(panel.panel)).toMatchObject({ status: "opened", presentationId }); });
+    const resolutions = vi.mocked(fetch).mock.calls.filter(([path]) => String(path).endsWith("panels/resolve"));
+    expect(JSON.parse(resolutions.at(-1)![1]!.body as string).route).toBe(initial.route);
+    await act(async () => host!.refresh());
+    expect(host!.getSnapshot().tools[0]!.resolved.surface).toEqual(next);
+    expect(element.querySelector("iframe")).toBe(frame); expect(frame.src).toBe(nextSrc); expect(frame.contentWindow).toBe(nextContext);
+    const refreshedOffer = await connect(next.origin, nextPost);
+    await act(async () => {
+      send({ ...refreshedOffer, type: "hosty:ui:route", route: "/outside" }, next.origin);
+      send({ ...refreshedOffer, type: "hosty:ui:surface-state", route: "/outside", state: "ready" }, next.origin);
+    });
+    expect(host!.getSnapshot().tools[0]).toMatchObject({ currentRoute: null, readiness: "unreported" });
+    await act(async () => {
+      send({ ...refreshedOffer, type: "hosty:ui:route", route: "/people/detail" }, next.origin);
+      send({ ...refreshedOffer, type: "hosty:ui:surface-state", route: "/people/detail", state: "ready" }, next.origin);
+    });
+    expect(host!.getSnapshot().tools[0]).toMatchObject({ currentRoute: "/people/detail", readiness: "ready" });
+    listedPanels = [{ ...panel, origin: "https://replacement.test" }];
+    await act(async () => host!.refresh());
+    expect(host!.getSnapshot().tools[0]!.resolved).toMatchObject({ surface: null, state: "destination_changed" });
+  }
 });
 it("retains the document and each opened tool across switching, collapse, replay and the drawer breakpoint", async () => {
   await render(); expect(element.querySelectorAll("iframe")).toHaveLength(0);

@@ -8,7 +8,7 @@ import { UiError, panelKey, routeWithin, type PanelRef, type PanelTarget, type P
   type UiBootstrap, type UiEnvironment, type UiEvent, type UiFrameSurface, type UiPanel, type UiResolvedPanel, type SurfaceReadiness } from "./ui-types";
 import { canonicalSurfaceRoute, DISCOVERY_TIMEOUT, failure, readUiMessage, uiPath, uiRequest, validId, validTarget, waitForPresentation, type UiMessage } from "./ui-transport";
 
-export type UiTool = UiPresentation;
+export type UiTool = UiPresentation & { panelSurface: UiFrameSurface; navigationRoot?: string };
 export type UiHostSnapshot = { bootstrap: UiBootstrap | null; catalog: UiPanel[]; tools: UiTool[];
   selected: PanelRef | null; selectedPresentationId?: string | null; workspaces?: UiWorkspaceSnapshot[]; expanded: boolean; width: number; error: { code: string; message: string } | null };
 type Frame = { element: HTMLIFrameElement; surface: UiFrameSurface; generation: string; nonce: string | null;
@@ -225,7 +225,7 @@ export class UiHost implements UiClient {
         this.update({ tools: this.snapshot.tools.map(tool => {
           const entry = allowed.get(panelKey(tool.target.panel));
           const invalid = !entry || !["running", "degraded", "unavailable", "starting", "stopping"].includes(entry.state);
-          const surface = tool.resolved.surface;
+          const surface = tool.resolved.surface && tool.panelSurface;
           const changed = entry && surface && JSON.stringify(entry.framePolicy) !== JSON.stringify(surface.framePolicy);
           const moved = entry && surface && (entry.origin !== surface.origin || entry.endpoint !== surface.endpoint
             || !routeWithin(surface.route, entry.route));
@@ -304,7 +304,7 @@ export class UiHost implements UiClient {
         const old = options.reuse === "new" ? undefined : preferred ?? this.snapshot.tools.filter(matches).sort((a, b) => b.focusedAt - a.focusedAt)[0];
         const insecure = window.location.protocol === "https:" && new URL(resolved.surface.origin).protocol === "http:";
         const tool: UiTool = old ?? { key: panelKey(target.panel), presentationId: createPresentationRequestId(), workspaceId: state.workspaceId,
-          target: resolved.target, resolved, readiness: insecure ? "unreported" : "loading", attention: 0, currentRoute: resolved.target.route ?? null, focusedAt: 0 };
+          target: resolved.target, panelSurface: resolved.surface, resolved, readiness: insecure ? "unreported" : "loading", attention: 0, currentRoute: resolved.target.route ?? null, focusedAt: 0 };
         if (!old) this.update({ tools: [...this.snapshot.tools, tool] });
         try {
           if (await state.renderer!.present(tool, new AbortController().signal) !== "accepted") throw new UiError("presentation_unavailable", "The workspace could not present this tool.");
@@ -398,7 +398,8 @@ export class UiHost implements UiClient {
         frame.element.src = withChromeHints(new URL(resolved.surface.route, resolved.surface.origin).href, frame.chrome);
       }
       if (frame.view.presentationId) this.update({ tools: this.snapshot.tools.map(tool => tool.presentationId === frame.view.presentationId
-        ? { ...tool, resolved: { ...tool.resolved, surface: resolved.surface }, currentRoute: resolved.surface!.route, readiness: "loading" } : tool) });
+        ? { ...tool, resolved: { ...tool.resolved, surface: resolved.surface }, navigationRoot: resolved.surface!.route,
+          currentRoute: resolved.surface!.route, readiness: "loading" } : tool) });
     }, frame);
   }
 
@@ -442,12 +443,12 @@ export class UiHost implements UiClient {
         const selection = ++state.generation;
         const generation = this.activityGeneration, own = await this.bootstrap();
         if (!own.canHost) throw new UiError("app_permission_required", "Allow this app to host tools.");
-        const resolved = await uiRequest<UiResolvedPanel>(this.path, "panels/resolve", { ...opened.target, route: opened.currentRoute ?? opened.target.route });
+        const resolved = await uiRequest<UiResolvedPanel>(this.path, "panels/resolve", opened.target);
         this.checkActivity(generation);
         this.requireTools();
         if (selection !== state.generation) throw new UiError("presentation_superseded", "A newer action replaced this opening.");
         if (!resolved.available || !resolved.surface) throw new UiError(resolved.state, "The tool is unavailable.");
-        const surface = opened.resolved.surface;
+        const surface = opened.panelSurface;
         if (surface.appId !== resolved.surface.appId || surface.installationId !== resolved.surface.installationId
           || surface.origin !== resolved.surface.origin || surface.endpoint !== resolved.surface.endpoint
           || JSON.stringify(surface.framePolicy) !== JSON.stringify(resolved.surface.framePolicy)) {
@@ -571,7 +572,9 @@ export class UiHost implements UiClient {
     if (frame.composition && msg.type === "hosty:ui:route") {
       const route = canonicalSurfaceRoute(msg.route);
       const declared = this.snapshot.catalog.find(p => p.panel.appId === frame.surface.appId && p.panel.panelId === frame.surface.panelId);
-      const currentRoute = route && declared && routeWithin(route, declared.route) ? route : null;
+      const tool = this.snapshot.tools.find(t => t.presentationId === frame.view.presentationId);
+      const root = tool?.navigationRoot ?? declared?.route;
+      const currentRoute = route && root && routeWithin(route, root) ? route : null;
       if (frame.view.presentationId) this.update({ tools: this.snapshot.tools.map(t => t.presentationId === frame.view.presentationId && t.currentRoute !== currentRoute
         ? { ...t, currentRoute, readiness: "unreported" } : t) });
       return;

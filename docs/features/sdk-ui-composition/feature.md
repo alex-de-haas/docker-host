@@ -158,7 +158,11 @@ Core resolution. Selection ordering is reserved before asynchronous work and sup
 destination workspace. Collapse or a newer request prevents a late result from stealing selection.
 Closing a source retires its unaccepted requests while preserving accepted shared tools. Manifest
 navigation updates the retained presentation and React frame coordinator together, so the new
-document uses its resolved origin and frame policy for messages and access-review requests.
+document uses its resolved origin and frame policy for messages and access-review requests. The
+accepted panel surface remains separate from that live document: rail selection and catalog refresh
+revalidate the panel declaration, while route/readiness reports use the host-resolved navigation root.
+A verified manifest page outside the opening panel route survives collapse, refocus and refresh;
+reports outside its resolved route tree remain unreported.
 
 Renderers implement `present`, `focus`, `collapse`, `release` and `showToolPicker`. An accepted
 presentation requires a real attached destination, frame or explicit loading/unavailable state.
@@ -208,7 +212,9 @@ shell, and this API does not add context to an existing assistant conversation.
   navigation tests verify the updated surface, frame policy, theme, commands and permission-review
   routing for both app views and retained tools; messages from the previous origin are rejected.
   Replay tests retain the same instance after same-endpoint and cross-endpoint navigation, while
-  actual destination replacement and revoked access still block the original request.
+  actual destination replacement and revoked access still block the original request. The sequence
+  includes route reports before readiness, collapse/rail selection, catalog refresh, rejected foreign
+  routes and renewed readiness within the resolved navigation route tree.
 - Overlay integration tests cover focus return to the inner app-content landmark when hiding
   custom, standard and drawer navigation, bypassing the non-focusable authentication wrapper.
 - App and native tests cover explicit launch policy, route synchronization, notification routing
