@@ -13,6 +13,7 @@ export type UiHostSnapshot = { bootstrap: UiBootstrap | null; catalog: UiPanel[]
   selected: PanelRef | null; selectedPresentationId?: string | null; workspaces?: UiWorkspaceSnapshot[]; expanded: boolean; width: number; error: { code: string; message: string } | null };
 type Frame = { element: HTMLIFrameElement; surface: UiFrameSurface; generation: string; nonce: string | null;
   connected: boolean; actor: string | null; live: boolean; cleanup: () => void; waitForReadiness: () => void;
+  routeReport?: { route: string | null; pending?: Promise<void> };
   onConnection?: (connected: boolean) => void; view: UiViewDescriptor; chrome: UiChromeOverrides; policyRevision: number; composition: boolean };
 type Ledger = { input: string; result?: PresentationResult; pending?: Promise<PresentationResult>; frame?: Frame; openingSurface?: UiFrameSurface };
 function immutable<T>(value: T): T {
@@ -531,6 +532,7 @@ export class UiHost implements UiClient {
   reportSurfaceState = (_state: { route: string; state: "ready" | "blocked"; code?: string }) => {};
 
   private forgetFrameRequests(frame: Frame) {
+    frame.routeReport = undefined;
     for (const [controller, work] of this.rendererWork) if (work.frame === frame) controller.abort();
     for (const [key, entry] of this.ledger) if (entry.frame === frame) this.ledger.delete(key);
     for (const [key, entry] of this.actions) if (entry.frame === frame) this.actions.delete(key);
@@ -581,6 +583,36 @@ export class UiHost implements UiClient {
       else if (key.startsWith("local:")) this.emit({ type: "presentation", value: entry.result });
     }
   }
+  private reportRoute(frame: Frame, value: unknown, entryKey: unknown) {
+    if (!frame.view.presentationId) return;
+    const route = canonicalSurfaceRoute(value);
+    if (frame.routeReport?.route === route && frame.routeReport.pending) return;
+    const report: NonNullable<Frame["routeReport"]> = { route }; frame.routeReport = report;
+    const tool = this.snapshot.tools.find(t => t.presentationId === frame.view.presentationId);
+    const declared = this.snapshot.catalog.find(p => p.panel.appId === frame.surface.appId && p.panel.panelId === frame.surface.panelId);
+    const roots = [tool?.navigationRoot, declared?.origin === frame.surface.origin && declared.endpoint === frame.surface.endpoint ? declared.route : undefined];
+    const currentRoute = route && roots.some(root => root && routeWithin(route, root)) ? route : null;
+    this.update({ tools: this.snapshot.tools.map(t => t.presentationId === frame.view.presentationId && t.currentRoute !== currentRoute
+      ? { ...t, currentRoute, readiness: "unreported" } : t) });
+    if (currentRoute || !route || typeof entryKey !== "string" || !entryKey || entryKey.length > 256) return;
+    const activity = this.activityGeneration, generation = frame.generation, nonce = frame.nonce, surface = frame.surface;
+    report.pending = (async () => {
+      try {
+        const resolved = await uiRequest<UiResolvedNavigation>(this.path, "navigation/resolve", {
+          appId: surface.appId, installationId: surface.installationId, entryKey,
+        });
+        this.checkActivity(activity);
+        if (!frame.live || !frame.connected || frame.generation !== generation || frame.nonce !== nonce || frame.routeReport !== report
+          || frame.actor !== this.snapshot.bootstrap?.userId) return;
+        const next = resolved.surface;
+        if (!resolved.available || !next || next.appId !== surface.appId || next.installationId !== surface.installationId
+          || next.origin !== surface.origin || next.endpoint !== surface.endpoint || !routeWithin(route, next.route)
+          || JSON.stringify(next.framePolicy) !== JSON.stringify(surface.framePolicy)) return;
+        this.update({ tools: this.snapshot.tools.map(t => t.presentationId === frame.view.presentationId
+          ? { ...t, navigationRoot: next.route, currentRoute: route, readiness: "unreported" } : t) });
+      } catch { /* Local navigation remains usable when its host cannot verify new metadata. */ }
+    })().finally(() => { report.pending = undefined; });
+  }
   private async receive(event: MessageEvent) {
     if (!this.active || !this.activityReady || this.disposed) return;
     const msg = readUiMessage(event.data); if (!msg) return;
@@ -626,14 +658,15 @@ export class UiHost implements UiClient {
       return;
     }
     if (frame.composition && msg.type === "hosty:ui:route") {
-      const route = canonicalSurfaceRoute(msg.route);
-      const declared = this.snapshot.catalog.find(p => p.panel.appId === frame.surface.appId && p.panel.panelId === frame.surface.panelId);
-      const tool = this.snapshot.tools.find(t => t.presentationId === frame.view.presentationId);
-      const root = tool?.navigationRoot ?? declared?.route;
-      const currentRoute = route && root && routeWithin(route, root) ? route : null;
-      if (frame.view.presentationId) this.update({ tools: this.snapshot.tools.map(t => t.presentationId === frame.view.presentationId && t.currentRoute !== currentRoute
-        ? { ...t, currentRoute, readiness: "unreported" } : t) });
+      this.reportRoute(frame, msg.route, msg.entryKey);
       return;
+    }
+    if (msg.type === "hosty:ui:surface-state" && frame.routeReport?.pending) {
+      const report = frame.routeReport;
+      if (canonicalSurfaceRoute(msg.route) !== report.route) return;
+      await report.pending;
+      if (!this.active || this.disposed || !frame.live || !frame.connected || frame.routeReport !== report
+        || source !== `${frame.surface.appId}:${frame.generation}:${frame.nonce}`) return;
     }
     if (msg.type === "hosty:ui:open" && validId(msg.requestId)) {
       const result = await this.open(msg.target as PanelTarget, { placement: msg.placement as "side", requestId: msg.requestId, reuse: frame.composition ? msg.reuse as PresentationOptions["reuse"] : undefined }, source, frame);

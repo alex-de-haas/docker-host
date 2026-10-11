@@ -1,8 +1,8 @@
-import { UiCompositionModel } from "./ui-composition";
+import { activeNavigationKey, UiCompositionModel } from "./ui-composition";
 import { UI_COMPOSITION_CAPABILITY, type UiChromeOverrides, type UiActionOptions, type UiActionResult } from "./ui-types";
 import { createPresentationRequestId, type UiClient } from "./ui";
 import { UiError, type PanelTarget, type PresentationOptions, type PresentationResult, type UiBootstrap, type UiEnvironment, type UiEvent } from "./ui-types";
-import { DISCOVERY_TIMEOUT, failure, readUiMessage, uiRequest, validId, validTarget, waitForPresentation, type UiMessage } from "./ui-transport";
+import { canonicalSurfaceRoute, DISCOVERY_TIMEOUT, failure, readUiMessage, uiRequest, validId, validTarget, waitForPresentation, type UiMessage } from "./ui-transport";
 
 type UiResult = PresentationResult | UiActionResult;
 type PendingRequest = { kind: "action" | "presentation"; input: string | null; operation: Promise<UiResult>;
@@ -31,8 +31,11 @@ export class EmbeddedUiClient implements UiClient {
     this.composition = new UiCompositionModel(path, "embedded", chrome);
     this.composition.attachRouter();
     this.composition.subscribeNavigation(() => {
-      if (this.getChrome().capabilities.includes(UI_COMPOSITION_CAPABILITY) && this.environment.connection === "connected")
-        this.post({ type: "hosty:ui:route", route: this.composition.currentRoute() });
+      if (this.getChrome().capabilities.includes(UI_COMPOSITION_CAPABILITY) && this.environment.connection === "connected") {
+        const route = this.composition.currentRoute();
+        if (this.state && canonicalSurfaceRoute(this.state.route) === canonicalSurfaceRoute(route)) this.reportSurfaceState(this.state);
+        else this.reportRoute(route);
+      }
     });
     window.addEventListener("message", this.onMessage);
     window.addEventListener("focus", this.onFocus);
@@ -262,10 +265,14 @@ export class EmbeddedUiClient implements UiClient {
     });
     return waitForPresentation(operation, id, options.signal);
   };
+  private reportRoute(route: string) {
+    const entryKey = activeNavigationKey(this.getNavigation().entries, this.composition.currentEndpoint(), route);
+    this.post({ type: "hosty:ui:route", route, ...(entryKey ? { entryKey } : {}) });
+  }
   reportSurfaceState = (state: { route: string; state: "ready" | "blocked"; code?: string }) => {
     this.state = state;
     if (this.environment.connection === "connected") {
-      if (this.getChrome().capabilities.includes(UI_COMPOSITION_CAPABILITY)) this.post({ type: "hosty:ui:route", route: state.route });
+      if (this.getChrome().capabilities.includes(UI_COMPOSITION_CAPABILITY)) this.reportRoute(state.route);
       this.post({ type: "hosty:ui:surface-state", ...state });
     }
   };

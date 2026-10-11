@@ -164,7 +164,12 @@ document uses its resolved origin and frame policy for messages and access-revie
 accepted panel surface remains separate from that live document: rail selection and catalog refresh
 revalidate the panel declaration, while route/readiness reports use the host-resolved navigation root.
 A verified manifest page outside the opening panel route survives collapse, refocus and refresh;
-reports outside its resolved route tree remain unreported.
+reports outside its resolved route tree remain unreported. Same-endpoint route reports include the
+matching manifest entry key. The host resolves an unfamiliar root through Core, bound to the
+registered app and installation, and accepts it only for the same origin, endpoint and frame policy.
+Readiness waits for that validation; superseded reports and closed sources cannot apply late results.
+The existing panel root remains valid on its original endpoint, so local back-navigation preserves
+readiness and exact reuse. Local routing itself does not wait for this host metadata check.
 
 Renderers implement `present`, `focus`, `collapse`, `release` and `showToolPicker`. An accepted
 presentation requires a real attached destination, frame or explicit loading/unavailable state.
@@ -238,6 +243,8 @@ shell, and this API does not add context to an existing assistant conversation.
   including progress of the next queued opening. Closed-request replay still checks origin, endpoint
   and frame-policy changes. Delayed same-endpoint router tests cover deactivation, disposal and
   renewed request-ID reuse in both host and embedded clients; retired navigation cannot report success.
+  Same-endpoint navigation covers manifest-key reports, delayed readiness, invalid destinations, stale
+  validation, source closure, return to the panel root and exact reuse without frame navigation.
 - Plans component tests use a real SDK host to close and reopen a finalized discussion through both
   visible actions, retain its conversation target and replay a later uncertain opening without
   repeating the assistant handoff.
@@ -266,7 +273,7 @@ Verification recorded on 2026-10-11:
 | `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --artifacts-path "$PWD/build/ui-composition" --verbosity quiet` | 3,139 passed; 4 opt-in Docker/VPN integration tests skipped because their fixtures were not enabled |
 | Core build and `UiPanelHttpTests` after the icon-origin fix | Build passed; 31 HTTP tests passed |
 | `npm run core:aot` | Native AOT publish passed for osx-arm64 with no trim/AOT warnings |
-| `npm test --workspace=@hosty-sdk/app` | 583 passed |
+| `npm test --workspace=@hosty-sdk/app` | 592 passed |
 | `npm test` in Shell / Plans / Harness / Marketplace / Workspaces / Demo / Telemetry UI | 191 Node + 238 component / 117 / 536 / 111 / 7 / 4 / 10 passed |
 | `npm run build --workspace=@hosty-sdk/app` and overlay upgrade contract script | Passed, including optional Next export and unchanged consumer compatibility |
 | `npm run build -- --webpack` in all seven affected web apps | Passed; affected app lint checks passed with no errors |

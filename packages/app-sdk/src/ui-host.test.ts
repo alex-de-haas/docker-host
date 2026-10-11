@@ -554,6 +554,25 @@ describe("embedded panel discovery", () => {
     expect(await child!.openToolPicker({ requestId: createPresentationRequestId() })).toMatchObject({ code: "unsupported_composition" });
     expect(f.parent.postMessage.mock.calls.length).toBe(count);
   });
+  it("reports the local manifest key and republishes readiness when metadata arrives", async () => {
+    const f = await connect(); let route = "/people/one";
+    await child!.composition.refreshNavigation();
+    const entries = [{ key: "people", route: "/people", endpoint: "web", origin: window.location.origin,
+      label: "People", icon: null, available: true, state: "running", standaloneHref: "https://core.test/open" }];
+    fetcher.mockImplementation(async (path: string) => Response.json(path.endsWith("navigation")
+      ? { appId: "plans", installationId: "plans-1", revision: "r1", entries } : metadata));
+    child!.composition.attachRouter({ endpoint: "web", getRoute: () => route, navigate: async value => { route = value; }, subscribe: () => () => {} });
+    f.send({ ...f.offer, type: "hosty:ui:connected", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: "host", installationId: "host-1",
+      capabilities: ["ui.composition.v1"], revision: 1, chrome: {}, endpoint: "web" });
+    child!.reportSurfaceState({ route, state: "ready" });
+    await child!.composition.refreshNavigation();
+    const messages = f.parent.postMessage.mock.calls.map(([message]) => message);
+    expect(messages.slice(-2)).toMatchObject([{ type: "hosty:ui:route", route: "/people/one", entryKey: "people" },
+      { type: "hosty:ui:surface-state", route: "/people/one", state: "ready" }]);
+    expect(await child!.navigate("people", { requestId: createPresentationRequestId() })).toMatchObject({ status: "accepted" });
+    expect(f.parent.postMessage.mock.calls.at(-1)![0]).toMatchObject({ type: "hosty:ui:route", route: "/people", entryKey: "people" });
+    expect(messages.some(message => message.type === "hosty:ui:navigate")).toBe(false);
+  });
   it("rejects inactive calls without I/O and requires a fresh handshake after renewal", async () => {
     const f = await connect(); child!.setActive(false);
     const calls = fetcher.mock.calls.length, posts = f.parent.postMessage.mock.calls.length;
@@ -749,6 +768,49 @@ describe("embedded panel discovery", () => {
 });
 
 describe("composition presentation instances", () => {
+  it.each(["valid", "origin", "endpoint", "policy", "installation", "unavailable", "stale-route", "closed-source"])(
+    "validates local manifest route roots before readiness: %s", async outcome => {
+      const h = await start(), opened = await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+      expect(opened.status).toBe("opened"); if (opened.status !== "opened") return;
+      const navigate = vi.fn();
+      const f = frame(resolved.surface!, { viewId: "local-tool", workspaceId: "default", presentationId: opened.presentationId, navigate });
+      f.send({ type: "hosty:ui:probe", childNonce: f.offer.childNonce, versions: [1], capabilities: ["ui.composition.v1"] });
+      f.send({ ...f.offer, type: "hosty:ui:accept", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: panel.appId, installationId: panel.installationId });
+      let finish!: (value: Response) => void;
+      const previous = fetcher.getMockImplementation()!;
+      fetcher.mockImplementation((path: string, ...args: unknown[]) => path.endsWith("navigation/resolve")
+        ? new Promise<Response>(resolve => { finish = resolve; }) : previous(path, ...args));
+      f.send({ ...f.offer, type: "hosty:ui:route", route: "/people/one", entryKey: "people", appId: "forged" });
+      f.send({ ...f.offer, type: "hosty:ui:surface-state", route: "/people/one", state: "ready" });
+      await vi.waitFor(() => expect(finish).toBeDefined());
+      expect(h.getSnapshot().tools[0]).toMatchObject({ currentRoute: null, readiness: "unreported" });
+      expect(JSON.parse(fetcher.mock.calls.find(([path]) => path.endsWith("navigation/resolve"))![1].body))
+        .toEqual({ appId: panel.appId, installationId: panel.installationId, entryKey: "people" });
+      const next = { ...resolved.surface!, route: "/people" };
+      if (outcome === "origin") next.origin = "https://foreign.test";
+      if (outcome === "endpoint") next.endpoint = "other";
+      if (outcome === "policy") next.framePolicy = { ...policy, microphone: false };
+      if (outcome === "installation") next.installationId = "replacement";
+      if (outcome === "stale-route") f.send({ ...f.offer, type: "hosty:ui:route", route: "/assistant/new" });
+      if (outcome === "closed-source") f.release();
+      finish(Response.json({ available: outcome !== "unavailable", surface: next, state: "running" }));
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(navigate).not.toHaveBeenCalled();
+      expect(h.getSnapshot().tools[0]!.resolved.surface).toEqual(resolved.surface);
+      if (outcome === "valid") {
+        expect(h.getSnapshot().tools[0]).toMatchObject({ currentRoute: "/people/one", navigationRoot: "/people", readiness: "ready" });
+        h.collapseWorkspace("default");
+        expect(await h.selectPanel(panel)).toMatchObject({ status: "opened", presentationId: opened.presentationId });
+        f.send({ ...f.offer, type: "hosty:ui:route", route: "/people/two" });
+        f.send({ ...f.offer, type: "hosty:ui:surface-state", route: "/people/two", state: "ready" });
+        expect(h.getSnapshot().tools[0]).toMatchObject({ currentRoute: "/people/two", readiness: "ready" });
+        f.send({ ...f.offer, type: "hosty:ui:route", route: target.route });
+        f.send({ ...f.offer, type: "hosty:ui:surface-state", route: target.route, state: "ready" });
+        expect(h.getSnapshot().tools[0]).toMatchObject({ currentRoute: target.route, readiness: "ready" });
+        expect(await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() }))
+          .toMatchObject({ status: "opened", presentationId: opened.presentationId });
+      } else expect(h.getSnapshot().tools[0]).toMatchObject({ currentRoute: outcome === "stale-route" ? "/assistant/new" : null, readiness: "unreported" });
+    });
   it.each(["presentation", "picker"].flatMap(kind => ["collapse", "opening", "activity", "picker"].map(action => ({ kind, action }))))(
     "aborts pending $kind renderer work on $action and frees the opening queue", async ({ kind, action }) => {
       host = createUiHost(); const h = host; let signal!: AbortSignal;
