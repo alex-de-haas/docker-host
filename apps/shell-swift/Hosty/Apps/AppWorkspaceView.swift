@@ -205,9 +205,9 @@ struct AppWorkspaceView: View {
                 session.workspaces.finishSignIn(attempt, appID: app.id)
                 return
             }
-            if confirmationClient == nil {
-                // Public app navigation proves origin and correlation, never user interaction.
-                // Every privileged renewal requires a fresh, separate normal Core login.
+            let continuous = (try? await session.client.supportsAppContinuity()) == true
+            if confirmationClient == nil && !continuous {
+                // Old Core still requires explicit renewal. New Core validates the live device principal.
                 renewalAttempt = attempt
                 renewalLoginError = nil
                 renewalLoginGeneration = UUID()

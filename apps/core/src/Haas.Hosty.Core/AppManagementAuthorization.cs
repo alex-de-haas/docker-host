@@ -53,7 +53,7 @@ internal static class AppManagementAuthorization
         try
         {
             var actor = await services.GetRequiredService<AppIdentityService>()
-                .RevalidateAsync(request.Headers[IdentityHeader].ToString(), appId, ct);
+                .RevalidateHashAsync(AppIdentityService.HashToken(request.Headers[IdentityHeader].ToString()), appId, ct, allowBackground: true);
             var app = await services.GetRequiredService<AppRegistryStore>().GetAppAsync(appId, ct);
             if (app is null) return Denied("app_access_denied", "The calling app is no longer installed.");
             var connectionSelection = request.Method == "GET" && route is "/api/source-connections" or "/api/source-connections/" or "/api/apps/{appId}/source-access";
@@ -61,8 +61,10 @@ internal static class AppManagementAuthorization
                 !(p == CoreAppPermissions.Sources && connectionSelection && HasPermission(app, CoreAppPermissions.SourceConnections))).ToArray();
             if (missing.Length > 0)
                 return Denied("app_permission_required", $"The calling app requires: {string.Join(", ", missing.Select(p => p == CoreAppPermissions.Sources && connectionSelection ? "sources.connections or apps.sources.full" : p))}.");
-            if (permissions.Length > 0)
-                await services.GetRequiredService<AppIdentityService>().RequireActivityAsync(request.Headers[IdentityHeader].ToString(), appId, ct);
+
+            await services.GetRequiredService<AppIdentityService>().RequireOperationHashAsync(
+                AppIdentityService.HashToken(request.Headers[IdentityHeader].ToString()), appId,
+                scope => BackgroundGrantService.AllowsRoute(scope, request), ct, requireActivity: permissions.Length > 0);
             var state = await services.GetRequiredService<UserDirectoryStore>().ReadAsync(ct);
             var user = state.Users.FirstOrDefault(u => u.Id == actor.UserId && !u.Disabled);
             if (user is null) return Denied("user_disabled", "The acting user is unavailable.");

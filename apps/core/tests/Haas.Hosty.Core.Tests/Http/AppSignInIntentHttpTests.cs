@@ -1373,8 +1373,8 @@ public sealed class AppSignInIntentHttpTests
 
     [Theory]
     [InlineData("cookie", 403)]
-    [InlineData("manual", 403)]
-    [InlineData("device", 403)]
+    [InlineData("manual", 200)]
+    [InlineData("device", 200)]
     [InlineData("oauth", 403)]
     [InlineData("scoped", 403)]
     [InlineData("legacy", 403)]
@@ -1414,11 +1414,11 @@ public sealed class AppSignInIntentHttpTests
         using var response = await client.PostAsJsonAsync($"/api/apps/{AppId}/launch-code", new
         { redirectUri = AppOrigin + "/callback", codeChallenge = AuthCodeProof.Challenge, codeChallengeMethod = "S256", interactiveRenewal = true });
         Assert.Equal(status, (int)response.StatusCode);
-        Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
+        if (status != 200) Assert.Empty((await host.Services.GetRequiredService<AppAuthCodeStore>().ReadAsync()).Codes);
     }
 
     [Theory]
-    [InlineData("expires", "reauth_required")]
+    [InlineData("expires", "token_expired")]
     [InlineData("logout", "token_revoked")]
     [InlineData("recovery", "token_revoked")]
     [InlineData("unassigned", "app_access_denied")]
@@ -1437,7 +1437,8 @@ public sealed class AppSignInIntentHttpTests
         Assert.Equal(SessionId, stored.AuthorizingSessionId);
         var identity = host.Services.GetRequiredService<AppIdentityService>();
         var grant = await identity.ExchangeCodeAsync(code, AppId, AuthCodeProof.Verifier);
-        Assert.True(grant.ActiveUntil > clock.UtcNow);
+        Assert.Null(grant.ActiveUntil);
+        Assert.NotNull(grant.Continuity);
         await identity.RequireActivityAsync(grant.AccessToken, AppId, default);
         if (change == "logout")
         {
@@ -1454,14 +1455,38 @@ public sealed class AppSignInIntentHttpTests
             Assignments = change == "unassigned" ? [] : state.Assignments,
         });
         Assert.Equal(expected, (await Assert.ThrowsAsync<AppIdentityException>(() => identity.RequireActivityAsync(grant.AccessToken, AppId, default))).Code);
-        if (change == "expires") Assert.True((await identity.RevalidateAsync(grant.AccessToken, AppId)).Active);
+        if (change == "expires") await Assert.ThrowsAsync<AppIdentityException>(() => identity.RevalidateAsync(grant.AccessToken, AppId));
+    }
+
+    [Theory]
+    [InlineData("device")]
+    [InlineData("manual")]
+    public async Task NativeContinuousGrantUsesDeviceAuthorityAndStopsAtRevocation(string kind)
+    {
+        var clock = new Clock();
+        await using var host = await HostAsync(clock);
+        var users = host.Services.GetRequiredService<UserDirectoryStore>();
+        await users.UpdateAsync(s => s with { Sessions = s.Sessions.Select(x => x with { Kind = kind, BrowserOrigin = null }).ToArray() });
+        using var native = Browser(host);
+        native.DefaultRequestHeaders.Authorization = new("Bearer", SessionId);
+        using var response = await native.PostAsJsonAsync($"/api/apps/{AppId}/launch-code", new
+        { redirectUri = AppOrigin + "/callback", codeChallenge = AuthCodeProof.Challenge, codeChallengeMethod = "S256", interactiveRenewal = true });
+        response.EnsureSuccessStatusCode();
+        var code = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString()!;
+        var identity = host.Services.GetRequiredService<AppIdentityService>();
+        var grant = await identity.ExchangeCodeAsync(code, AppId, AuthCodeProof.Verifier);
+        Assert.Equal("native", grant.Continuity!.Mode);
+        clock.UtcNow = clock.UtcNow.AddHours(2);
+        Assert.False((await identity.RequireActivityAsync(grant.AccessToken, AppId, default)).ActivityRequired);
+        await users.UpdateAsync(s => s with { Sessions = s.Sessions.Select(x => x with { RevokedAt = clock.UtcNow }).ToArray() });
+        await Assert.ThrowsAsync<AppIdentityException>(() => identity.RequireActivityAsync(grant.AccessToken, AppId, default));
     }
 
     [Theory]
     [InlineData("/api/auth/apps/authorize", false)]
     [InlineData("/api/auth/apps/authorize", true)]
     [InlineData("/api/apps/example.app/launch-code", false)]
-    public async Task GenericAuthenticatedLaunch_RemainsIdentityOnly(string route, bool interactiveRenewal)
+    public async Task AuthenticatedLaunchUsesLivePrincipalWithoutSeparateActivity(string route, bool interactiveRenewal)
     {
         await using var host = await HostAsync();
         using var native = Browser(host);
@@ -1473,7 +1498,7 @@ public sealed class AppSignInIntentHttpTests
         var identity = host.Services.GetRequiredService<AppIdentityService>();
         var grant = await identity.ExchangeCodeAsync(code, AppId, AuthCodeProof.Verifier);
         Assert.Null(grant.ActiveUntil);
-        Assert.Equal("reauth_required", (await Assert.ThrowsAsync<AppIdentityException>(() => identity.RequireActivityAsync(grant.AccessToken, AppId, default))).Code);
+        Assert.NotNull((await identity.RequireActivityAsync(grant.AccessToken, AppId, default)).Continuity);
     }
 
     private static HttpClient Browser(CoreHttpHarness host, string origin = "http://127.0.0.1:7070")

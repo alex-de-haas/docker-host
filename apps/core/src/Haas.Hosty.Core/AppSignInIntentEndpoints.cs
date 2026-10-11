@@ -494,4 +494,4 @@ internal static class AppSignInIntentEndpoints
     }
 }
 
-internal sealed record AppAuthProtocolResponse(int Version);
+internal sealed record AppAuthProtocolResponse(int Version, int SessionContinuityVersion = 1);

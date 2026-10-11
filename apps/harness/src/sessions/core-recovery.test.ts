@@ -49,4 +49,21 @@ describe("active harness during Core reconnect", () => {
       expect(stop).not.toHaveBeenCalled();
     } finally { await manager.shutdown(); rmSync(directory, { recursive: true, force: true }); }
   });
+  it("restores every live conversation for the actor without starting a new turn or changing another actor", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "hosty-actor-recovery-"));
+    const adapter = new FakeHarnessAdapter();
+    const start = vi.spyOn(adapter, "start");
+    const manager = new SessionManager(new SessionStore(directory), adapter, new AuditReporter(null, null, "hosty.harness"), directory);
+    try {
+      const first = await manager.createSession({ createdBy: "admin" });
+      const second = await manager.createSession({ createdBy: "admin" });
+      await manager.createSession({ createdBy: "other" });
+      const update = vi.spyOn(manager, "refreshSessionCredentials");
+      await manager.refreshActorCredentials("admin", "hostyg_new");
+      expect(update.mock.calls.map(c => c[0]).sort()).toEqual([first.id, second.id].sort());
+      await manager.refreshActorCredentials("admin", "hostyg_new");
+      expect(update).toHaveBeenCalledTimes(2); expect(start).not.toHaveBeenCalled();
+    } finally { await manager.shutdown(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
 });

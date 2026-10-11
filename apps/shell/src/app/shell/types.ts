@@ -496,6 +496,7 @@ export type CoreSettingItem = Pick<CoreSetting, "key" | "type" | "label" | "desc
 
 export type CoreSettingsState = {
   settings: CoreSettingItem[];
+  authenticationDiagnostics?: string[];
 };
 
 export type CoreBackup = {

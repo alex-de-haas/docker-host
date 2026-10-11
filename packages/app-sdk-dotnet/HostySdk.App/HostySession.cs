@@ -11,7 +11,7 @@ public sealed record HostySession(
     string? Email,
     string? DisplayName,
     string HostRole,
-    DateTimeOffset ExpiresAt);
+    DateTimeOffset ExpiresAt, HostyContinuity? Continuity = null);
 
 /// <summary>
 /// Turns a forwarded app identity token into a validated <see cref="HostySession"/> by
@@ -24,3 +24,6 @@ public interface IHostyIdentityValidator
 {
     Task<HostySession?> ValidateAsync(string accessToken, CancellationToken cancellationToken);
 }
+
+/// <summary>Core-advertised continuous authority; missing metadata preserves the legacy policy.</summary>
+public sealed record HostyContinuity(int Version, string Mode, string GrantId, DateTimeOffset ExpiresAt, int CheckAfterSeconds);

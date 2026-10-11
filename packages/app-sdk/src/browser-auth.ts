@@ -1,3 +1,6 @@
+import { ensureAppContinuity } from "@hosty-sdk/app/continuity/browser";
+export { APP_CONTINUITY_UPDATED } from "@hosty-sdk/app/continuity/browser";
+export { readAppContinuity, type AppContinuity } from "@hosty-sdk/app/continuity";
 import { sha256 } from "@noble/hashes/sha2.js";
 import type { AppAuthProtocol } from "./app-code";
 
@@ -230,6 +233,8 @@ export async function appFetch(input: string | URL, init: RequestInit = {}, reco
   // SDK identity/protocol probes use recover=false so that validation itself can proceed.
   if (recover && renewal && activityConfig?.validateSession && !await waitForActivity(init.signal))
     return Response.json({ code: "reauth_required", message: "Hosty access has not been restored." }, { status: 401 });
+  if (recover && !await ensureAppContinuity())
+    return Response.json({ code: "session_unavailable", message: "Hosty access could not be verified." }, { status: 503 });
   const current = grant?.origin === url.origin ? grant : null;
   const headers = new Headers(init.headers);
   if (current) headers.set("authorization", `Bearer ${current.token}`);

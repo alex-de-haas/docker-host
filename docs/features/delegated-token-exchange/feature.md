@@ -1,6 +1,6 @@
 ---
 created: 2026-08-15
-updated: 2026-10-08
+updated: 2026-10-11
 summary: Core grants individual assistants access to selected MCP targets through administrator-configured delegation.
 components: [apps/core, apps/harness]
 ---
@@ -16,7 +16,7 @@ The [agent directory](../agent-mcp-directory/feature.md) exposes and edits these
 
 `POST /api/internal/apps/{appId}/mcp/token` authenticates the assistant with its service bearer and
 the acting user with `X-Hosty-User-Token`, an app grant issued to that same assistant. The body names
-`targetAppId` and a conversation `sessionId`. Core checks current browser-established app activity
+`targetAppId` and a conversation `sessionId`. Core checks current browser/native app authority
 and the live authorizing Core sign-in, app grant, confirmed assistant role/interface, explicit target
 relationship, both installation identities, global offer and user access to the target. Core MCP
 also requires the current user to be an administrator.

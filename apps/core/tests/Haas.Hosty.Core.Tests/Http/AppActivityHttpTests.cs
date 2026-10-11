@@ -13,7 +13,7 @@ public sealed class AppActivityHttpTests
     [InlineData("window")]
     [InlineData("parent-expired")]
     [InlineData("parent-removed")]
-    public async Task ManagementExpiresWithoutRevokingIdentity_AndBrowserExchangeRestoresIt(string cause)
+    public async Task ContinuousManagementSurvivesHour_AndEndsWithParent(string cause)
     {
         var clock = new Clock();
         await using var host = await CoreHttpHarness.StartAsync(clock);
@@ -21,7 +21,8 @@ public sealed class AppActivityHttpTests
         var identity = host.Services.GetRequiredService<AppIdentityService>();
         var token = client.DefaultRequestHeaders.GetValues(AppManagementAuthorization.IdentityHeader).Single();
         var initial = await identity.RequireActivityAsync(token, "console", default);
-        Assert.Equal(clock.UtcNow.AddHours(1), initial.ActiveUntil);
+        Assert.Null(initial.ActiveUntil);
+        Assert.NotNull(initial.Continuity);
         clock.UtcNow = clock.UtcNow.AddMinutes(45);
         await identity.RevalidateAsync(token, "console");
         Assert.Equal(initial.ActiveUntil, (await identity.RevalidateAsync(token, "console")).ActiveUntil);
@@ -29,11 +30,17 @@ public sealed class AppActivityHttpTests
         if (cause == "window") clock.UtcNow = clock.UtcNow.AddMinutes(16);
         else await host.Services.GetRequiredService<UserDirectoryStore>().UpdateAsync(s => s with {
             Sessions = cause == "parent-removed" ? [] : s.Sessions.Select(x => x with { ExpiresAt = clock.UtcNow }).ToArray() });
+        if (cause == "window")
+        {
+            (await client.GetAsync("/api/apps")).EnsureSuccessStatusCode();
+            Assert.True((await identity.RevalidateAsync(token, "console")).Active);
+            return;
+        }
         var denied = await client.GetAsync("/api/apps");
         Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
-        Assert.Equal("reauth_required", (await denied.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
-        Assert.True((await identity.RevalidateAsync(token, "console")).Active);
-        (await client.GetAsync("/api/profile")).EnsureSuccessStatusCode();
+        Assert.Equal("token_expired", (await denied.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+        await Assert.ThrowsAsync<AppIdentityException>(() => identity.RevalidateAsync(token, "console"));
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/profile")).StatusCode);
         var renewed = await BrowserAuthorityFixture.Grant(host, "console", "actor", "operator");
         client.DefaultRequestHeaders.Remove(AppManagementAuthorization.IdentityHeader);
         client.DefaultRequestHeaders.Add(AppManagementAuthorization.IdentityHeader, renewed.AccessToken);
@@ -58,8 +65,10 @@ public sealed class AppActivityHttpTests
         var issued = await access.IssueAsync(caller, "assistant", new(target.Id), token, default);
         await access.ValidateAsync(target, new(issued.Token, "assistant"), default);
         clock.UtcNow = clock.UtcNow.AddSeconds(61);
-        Assert.Equal("reauth_required", (await Assert.ThrowsAsync<AppIdentityException>(() => access.IssueAsync(caller, "assistant", new(target.Id), token, default))).Code);
-        Assert.Equal("reauth_required", (await Assert.ThrowsAsync<AppIdentityException>(() => access.ValidateAsync(target, new(issued.Token, "assistant"), default))).Code);
+        await access.IssueAsync(caller, "assistant", new(target.Id), token, default);
+        await access.ValidateAsync(target, new(issued.Token, "assistant"), default);
+        await host.Services.GetRequiredService<UserDirectoryStore>().UpdateAsync(s => s with { Sessions = [] });
+        Assert.Equal("token_expired", (await Assert.ThrowsAsync<AppIdentityException>(() => access.ValidateAsync(target, new(issued.Token, "assistant"), default))).Code);
         var fresh = await BrowserAuthorityFixture.Grant(host, caller.Id, "actor", "operator");
         await access.IssueAsync(caller, "assistant", new(target.Id), fresh.AccessToken, default);
     }
@@ -71,7 +80,7 @@ public sealed class AppActivityHttpTests
         using var client = await AppManagementHttpTests.CreateAppClient(host, "console", [CoreAppPermissions.ReadApps]);
         var identity = host.Services.GetRequiredService<AppIdentityService>();
         var now = host.Services.GetRequiredService<IClock>().UtcNow;
-        await host.Services.GetRequiredService<AppAuthCodeStore>().AppendCodeAsync(new("generic", "console", "actor", "http://app.test", now, now.AddMinutes(1), null, "operator", CodeChallenge: AuthCodeProof.Challenge), now);
+        await host.Services.GetRequiredService<AppAuthCodeStore>().AppendCodeAsync(new("generic", "console", "actor", "http://app.test", now, now.AddMinutes(1), null, null, CodeChallenge: AuthCodeProof.Challenge), now);
         foreach (var grant in new[] { await identity.ExchangeCodeAsync("generic", "console", AuthCodeProof.Verifier), await identity.CreateLaunchTokenAsync("console", "actor") })
         {
             Assert.Null(grant.ActiveUntil);
@@ -109,7 +118,7 @@ public sealed class AppActivityHttpTests
         foreach (var session in new[] { "session-one", "session-two" })
         {
             var child = await mcp.IssueAsync("assistant", "hosty:core", serviceToken, grant.AccessToken, default, session);
-            Assert.Equal(grant.ActiveUntil, child.ExpiresAt);
+            Assert.Equal(clock.UtcNow.AddMinutes(5), child.ExpiresAt);
             Assert.NotNull(await mcp.ValidateAsync(child.Token, "hosty:core", default));
             children.Add(child.Token);
             (await service.GetAsync(Workspace(session))).EnsureSuccessStatusCode();
@@ -122,10 +131,16 @@ public sealed class AppActivityHttpTests
             "parent-revoked" => s with { RevokedAt = clock.UtcNow },
             _ => s with { LastSeenAt = clock.UtcNow.AddYears(-1) },
         }).ToArray() });
+        if (cause == "activity")
+        {
+            foreach (var token in children) Assert.NotNull(await mcp.ValidateAsync(token, "hosty:core", default));
+            foreach (var session in new[] { "session-one", "session-two" }) (await service.GetAsync(Workspace(session))).EnsureSuccessStatusCode();
+            return;
+        }
         foreach (var token in children) Assert.Null(await mcp.ValidateAsync(token, "hosty:core", default));
         foreach (var session in new[] { "session-one", "session-two" })
         {
-            Assert.Equal("reauth_required", (await Assert.ThrowsAsync<AppIdentityException>(() =>
+            Assert.Equal("token_expired", (await Assert.ThrowsAsync<AppIdentityException>(() =>
                 mcp.IssueAsync("assistant", "hosty:core", serviceToken, grant.AccessToken, default, session))).Code);
             Assert.Equal(HttpStatusCode.Unauthorized, (await service.GetAsync(Workspace(session))).StatusCode);
         }
@@ -161,6 +176,6 @@ public sealed class AppActivityHttpTests
         var diagnostic = await identity.CreateLaunchTokenAsync(assistant.Id, "actor");
         Assert.Equal("reauth_required", (await Assert.ThrowsAsync<AppIdentityException>(() => Require(diagnostic.AccessToken))).Code);
         await apps.UpsertAppAsync(assistant with { InstalledAt = DateTimeOffset.UtcNow.AddMinutes(1) });
-        Assert.Equal("token_invalid", (await Assert.ThrowsAsync<AppIdentityException>(() => Require(grant.AccessToken))).Code);
+        Assert.Equal("token_revoked", (await Assert.ThrowsAsync<AppIdentityException>(() => Require(grant.AccessToken))).Code);
     }
 }

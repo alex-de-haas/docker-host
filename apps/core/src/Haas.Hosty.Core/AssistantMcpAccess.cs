@@ -7,7 +7,7 @@ namespace Haas.Hosty.Core;
 internal sealed record AssistantMcpTokenRequest(string TargetAppId, string? SessionId = null);
 internal sealed record AssistantMcpClaims(string Caller, string Audience, string UserId, string GrantHash,
     DateTimeOffset CallerInstallation, DateTimeOffset? TargetInstallation, string GrantRevision, long Expires, string? SessionId = null, string? LeaseRevision = null, bool DiscoveryOnly = false);
-internal sealed record AssistantMcpActor(string UserId, string Role, AppRecord Caller, bool DiscoveryOnly = false);
+internal sealed record AssistantMcpActor(string UserId, string Role, AppRecord Caller, bool DiscoveryOnly = false, IReadOnlyList<string>? AllowedTools = null);
 
 // A separate signed format is never accepted by session, delegated-token or app API validators.
 // Receiving MCP handlers introspect every call, so policy and parent-session revocation apply online.
@@ -46,9 +46,14 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
     {
         if (!services.ValidateToken(callerId, serviceToken ?? ""))
             throw new AppIdentityException("token_invalid", "The assistant's service token is required.");
-        if (!discoveryOnly && string.IsNullOrWhiteSpace(sessionId)) throw new AppIdentityException("reauth_required", "An assistant session ID is required.");
-        var actor = discoveryOnly ? await identity.RequireActivityAsync(userToken, callerId, ct)
-            : await authority.RequireAsync(callerId, sessionId!, AppIdentityService.HashToken(userToken), ct);
+        var hash = AppIdentityService.HashToken(userToken);
+        var source = await grants.TryResolveAsync(hash, ct);
+        var isBackground = source?.BackgroundGrantId is not null;
+        if (!discoveryOnly && !isBackground && string.IsNullOrWhiteSpace(sessionId)) throw new AppIdentityException("reauth_required", "An assistant session ID is required.");
+        var actor = isBackground
+            ? await identity.RequireOperationHashAsync(hash, callerId, s => s.Kind == "mcp" && s.TargetAppId == targetId, ct)
+            : discoveryOnly ? await identity.RequireActivityAsync(userToken, callerId, ct)
+            : await authority.RequireAsync(callerId, sessionId!, hash, ct);
         if (discoveryOnly && actor.HostRole != "host.admin")
             throw new AppIdentityException("admin_required", "Catalog settings require an administrator.");
         var link = await RequireLinkAsync(callerId, targetId, ct);
@@ -60,6 +65,7 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
         var expires = clock.UtcNow.AddMinutes(5);
         if (actor.ActiveUntil is { } activeUntil && activeUntil < expires) expires = activeUntil;
         if (discoveryOnly) expires = clock.UtcNow.AddSeconds(30);
+        if (parent.AbsoluteExpiresAt < expires) expires = parent.AbsoluteExpiresAt;
         var claims = new AssistantMcpClaims(callerId, targetId, actor.UserId, grantHash,
             link.Caller.InstalledAt, link.Target?.InstalledAt, link.Grant.Revision, expires.ToUnixTimeSeconds(), sessionId, DiscoveryOnly: discoveryOnly);
         var data = Prefix + Encode(JsonSerializer.SerializeToUtf8Bytes(claims, CoreJson.TypeInfo<AssistantMcpClaims>()));
@@ -80,22 +86,29 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
             var link = await RequireLinkAsync(claims.Caller, audience, ct);
             if (link.Caller.InstalledAt != claims.CallerInstallation || link.Target?.InstalledAt != claims.TargetInstallation
                 || link.Grant.Revision != claims.GrantRevision) return null;
-            if (claims.DiscoveryOnly)
-            {
-                var active = await identity.RequireActivityHashAsync(claims.GrantHash, claims.Caller, ct);
-                if (active.HostRole != "host.admin") return null;
-            }
+            var source = await grants.TryResolveAsync(claims.GrantHash, ct);
+            BackgroundScope? scope = null;
+            AppSessionValidationResult actor;
+            if (source?.BackgroundGrantId is not null)
+                actor = await identity.RequireOperationHashAsync(claims.GrantHash, claims.Caller,
+                    s => { scope = s; return s.Kind == "mcp" && s.TargetAppId == audience; }, ct);
             else
             {
-                if (claims.SessionId is null) return null;
-                // Credentials issued under the retired conversation-lease model must be reminted.
-                if (claims.LeaseRevision is not null) return null;
-                await authority.RequireAsync(claims.Caller, claims.SessionId, claims.GrantHash, ct);
+                if (claims.DiscoveryOnly)
+                {
+                    var active = await identity.RequireActivityHashAsync(claims.GrantHash, claims.Caller, ct);
+                    if (active.HostRole != "host.admin") return null;
+                }
+                else
+                {
+                    if (claims.SessionId is null || claims.LeaseRevision is not null) return null;
+                    await authority.RequireAsync(claims.Caller, claims.SessionId, claims.GrantHash, ct);
+                }
+                actor = await identity.RevalidateHashAsync(claims.GrantHash, claims.Caller, ct);
             }
-            var actor = await identity.RevalidateHashAsync(claims.GrantHash, claims.Caller, ct);
             if (actor.UserId != claims.UserId) return null;
             await RequireTargetUserAsync(audience, actor, ct);
-            return new(actor.UserId, actor.HostRole ?? "", link.Caller, claims.DiscoveryOnly);
+            return new(actor.UserId, actor.HostRole ?? "", link.Caller, claims.DiscoveryOnly, scope?.Actions);
         }
         catch (Exception ex) when (ex is FormatException or JsonException or CryptographicException or ArgumentException or AppIdentityException)
         { return null; }
@@ -122,6 +135,6 @@ internal static class AssistantMcpEndpoints
             return CoreJson.Json(await access.IssueAsync(appId, input.TargetAppId, CoreSessionAuthorization.ReadBearerToken(request),
                 request.Headers["X-Hosty-User-Token"].ToString(), ct, input.SessionId));
         }
-        catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code is "token_invalid" or "reauth_required" ? 401 : 403); }
+        catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), AuthEndpoints.MapIdentityErrorStatus(ex.Code)); }
     });
 }

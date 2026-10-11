@@ -37,6 +37,15 @@ async function render(children: ReactNode = <input aria-label="Draft" defaultVal
 }
 
 describe("HostyOverlay", () => {
+  it("keeps explicitly local content usable during an outage without revealing protected content", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }));
+    await act(async () => root.render(<HostyOverlay localContent={<input aria-label="Local note" defaultValue="Offline draft" />}>
+      <input aria-label="Private document" defaultValue="Private" />
+    </HostyOverlay>));
+    expect(node.querySelector<HTMLInputElement>('[aria-label="Local note"]')?.value).toBe("Offline draft");
+    expect(node.querySelector('[aria-label="Private document"]')).toBeNull();
+    expect(document.querySelector("dialog[open]")).toBeNull();
+  });
   it("opens only the connected portal after layout effects resume with retained state", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(active("missing"))));
     const renderMode = (mode: "visible" | "hidden") => act(async () => root.render(

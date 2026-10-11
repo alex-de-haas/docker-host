@@ -42,6 +42,10 @@ public sealed class AppManagementHttpTests
             var installed = (await apps.GetAppAsync("example.console"))!;
             using var client = await CreateAppClient(host, installed.Id, []);
             await apps.UpsertAppAsync(installed with { GrantedCorePermissions = [] });
+            // CreateAppClient installed a fixture record; bind to the actual installed generation.
+            var bound = await BrowserAuthorityFixture.Grant(host, installed.Id, "actor", "operator");
+            client.DefaultRequestHeaders.Remove(AppManagementAuthorization.IdentityHeader);
+            client.DefaultRequestHeaders.Add(AppManagementAuthorization.IdentityHeader, bound.AccessToken);
             await lifecycle.StartAsync(installed.Id);
             Assert.True(AppRuntimeStates.IsUp((await apps.GetAppAsync(installed.Id))!.RuntimeState));
             await AssertError(await client.GetAsync("/api/apps"), HttpStatusCode.Forbidden, "app_permission_required");

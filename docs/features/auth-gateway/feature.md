@@ -1,6 +1,6 @@
 ---
 created: 2026-05-13
-updated: 2026-10-08
+updated: 2026-10-11
 summary: Core owns user authentication, app assignments, identity issuance and scoped directory access, while apps own their sessions.
 components: [apps/core, packages/app-sdk]
 ---
@@ -149,8 +149,7 @@ Direct endpoint probes against an app origin can pass the app identity token thr
 App grants are opaque `hostyg_` credentials backed by hash-only Core records. Revalidation checks
 user enablement, app access and the auth revision, slides the idle window and respects absolute
 expiry. `expiresInSeconds` describes the remaining absolute lifetime; app cookies derive their
-`Max-Age` from it. Explicit Core logout revokes the grants it authorized. Ordinary Core-session
-expiry does not end established app identity. See [session lifecycles](../auth-session-lifecycle/feature.md).
+`Max-Age` from it. Explicit Core logout revokes the grants it authorized. Continuous app identity also requires its live authorizing principal; parent expiry ends access. See [session lifecycles](../auth-session-lifecycle/feature.md).
 
 The app validates its own grant, writes an app-origin HttpOnly cookie and returns the grant to its
 own browser transport. Embedded SDK documents also retain it in app-origin `sessionStorage` for the
@@ -162,9 +161,9 @@ precedence over a stale app cookie. The Harness server keeps credentials out of 
 
 Explicit `token_invalid`, `token_revoked`, `token_expired` and `token_app_mismatch` rejection, or
 `forgetAppGrant`, clears the in-memory and stored grant. `reauth_required` retains it: app identity
-and privileged [activity](../app-activity-window/feature.md) are separate. Silent codes establish
-identity only. Privileged Core calls still need the app's confirmed permissions, current user and
-activity window; the app-owned popup renews activity without giving Shell target-app authority.
+and privileged [activity](../app-activity-window/feature.md) remain separate only for legacy grants.
+Silent codes establish continuous authority under the live Core principal and current app permissions.
+Normal recovery gives Shell no target-app authority.
 
 Apps classify Core 401 as recoverable, 403 as terminal denied access, and network/503 failures as
 unavailable. Recovery never auto-redirects a denied user or deletes a cookie on a transient outage.

@@ -1,5 +1,5 @@
 ---
-status: Ready
+status: In Progress
 created: 2026-10-11
 updated: 2026-10-11
 summary: Replace hourly app activity renewal with continuous authorized sessions and separately revocable background delegation.
@@ -290,13 +290,20 @@ on an isolated Core. Background verification uses a scoped fixture, never produc
 ## Deliverables
 
 - [x] D1. Finalize and approve the authority-source, common lifetime, maintenance, background grant, migration and error contracts; inventory every activity check and every first-party renewal consumer.
-- [ ] D2. Implement Core continuous browser/native app authorization, browser-proven parent idle maintenance separated from app-bound grant maintenance, and capability negotiation; remove the separate activity gate for supported sources while preserving expiry, revocation and effective permission checks.
-- [ ] D3. Implement silent browser/server SDK maintenance and credential reacquisition, migrate first-party consumers including Harness live runs and native Shell, and separate transient outage from authentication recovery and explicitly local content.
-- [ ] D4. Implement explicit Core background grants, scope-preserving credential issuance and list/revoke controls through settings and control/CLI, with audited lifecycle and no implicit conversion of browser sessions.
-- [ ] D5. Implement and test persisted/settings migration and mixed-version behavior, including custom lifetimes, live legacy activity-expired grants, missing provenance, restart durability and reinstall invalidation.
+- [x] D2. Implement Core continuous browser/native app authorization, browser-proven parent idle maintenance separated from app-bound grant maintenance, and capability negotiation; remove the separate activity gate for supported sources while preserving expiry, revocation and effective permission checks.
+- [x] D3. Implement silent browser/server SDK maintenance and credential reacquisition, migrate first-party consumers including Harness live runs and native Shell, and separate transient outage from authentication recovery and explicitly local content.
+- [x] D4. Implement explicit Core background grants, scope-preserving credential issuance and list/revoke controls through settings and control/CLI, with audited lifecycle and no implicit conversion of browser sessions.
+- [x] D5. Implement and test persisted/settings migration and mixed-version behavior, including custom lifetimes, live legacy activity-expired grants, missing provenance, restart durability and reinstall invalidation.
 - [ ] D6. Verify the matrix below with clock-controlled tests and an isolated Core-managed browser/background fixture, update current feature/SDK documentation, remove this plan at completion and regenerate the index.
 
 ## Verification
+
+Implementation checks are green for D2–D5. D6 remains open for the existing Plans → assistant
+acceptance in both presentations and final PR validation. The isolated Plans installation needs
+its optional panel-read grant for the standalone acceptance; automatic approval review requested
+explicit owner confirmation because UI composition implementation is deferred. No panel API or
+layout changes are included. Shell/standalone token outage recovery and the real background
+logout/closed-browser/revoke fixture already pass.
 
 - In an isolated Core with normal password setup/login, open Plans and its assistant in Shell and
   standalone, plus several app tabs. Cross the former one-hour deadline without user interaction:

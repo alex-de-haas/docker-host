@@ -65,6 +65,7 @@ internal sealed partial class CoreSettingsCommand(CommandContext context)
         }
 
         context.Console.Write(table);
+        foreach (var diagnostic in document.AuthenticationDiagnostics ?? []) context.Console.WriteLine(diagnostic);
         return 0;
     }
 
@@ -165,7 +166,7 @@ internal sealed partial class CoreSettingsCommand(CommandContext context)
 
     internal sealed record SettingOption(string Value, string Label);
 
-    internal sealed record SettingsDocument(IReadOnlyList<SettingRow> Settings);
+    internal sealed record SettingsDocument(IReadOnlyList<SettingRow> Settings, IReadOnlyList<string>? AuthenticationDiagnostics = null);
 
     internal sealed record SettingsUpdateRequest(IReadOnlyDictionary<string, string?> Settings);
 }

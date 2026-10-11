@@ -1,6 +1,6 @@
 ---
 created: 2026-07-13
-updated: 2026-10-08
+updated: 2026-10-11
 summary: The identity error contract, opaque app session grants, sliding lifetimes and session recovery through Core login.
 components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -53,12 +53,16 @@ internal sealed record AppSessionGrantRecord(
     string AppId,
     string UserId,
     string TokenHash,               // SHA-256; the raw hostyg_ value is returned once, never stored
-    string IssuedVia,               // "code" (browser exchange) | "cli-diagnostic"
+    string IssuedVia,               // "code", "cli-diagnostic", or "background"
     DateTimeOffset CreatedAt,
     DateTimeOffset LastSeenAt,
     DateTimeOffset AbsoluteExpiresAt,
     DateTimeOffset? RevokedAt,
-    string? AuthorizingSessionId);  // audit + explicit-logout cascade only
+    string? AuthorizingSessionId,   // live source for continuous interactive authority
+    string? AuthRevision = null,
+    DateTimeOffset? ActiveUntil = null,
+    int AuthorityVersion = 0, DateTimeOffset? Installation = null,
+    string? BackgroundGrantId = null, string? BackgroundScopeId = null);
 ```
 
 - The raw token is 256 bits of randomness behind a `hostyg_` prefix (`AppIdentityService`), returned
@@ -68,10 +72,11 @@ internal sealed record AppSessionGrantRecord(
   `RequireAccessibleUserAsync` policy checks as before (user disabled, app assignment, role,
   system-app admin), and slides the idle window by advancing `LastSeenAt` — throttled to one write per
   5 minutes, because revalidation runs on every server render and the store is a rewritten JSON file.
-- **Grants outlive the authorizing Core session.** Tying them to session liveness would kill every app
-  session with the Core session and defeat the feature. `AuthorizingSessionId` drives a cascade only on
-  *explicit* logout (`RevokeByAuthorizingSessionAsync`, also used when an access token is revoked), not
-  on session expiry. Admin-side revocation works through the policy re-check on every revalidation.
+- Continuous browser/native grants require a live authorizing principal and pin their installation.
+  Revalidation touches only the app grant; browser-proven maintenance separately touches the parent.
+  [Continuous App Access](../continuous-app-access/feature.md) defines migration and the distinct,
+  explicitly authorized background source. Legacy grants without provenance retain finite identity
+  policy and cannot gain privileged authority by inference.
 - Expired and revoked grants are pruned opportunistically on write; revoked records linger 7 days so
   revocation is observable in diagnostics.
 - App grant response bodies, revalidation and app-cookie mechanics retain their shapes.
@@ -84,10 +89,9 @@ internal sealed record AppSessionGrantRecord(
 ## Assistant Tool Grants
 
 [Assistant activity authorization](../app-activity-window/feature.md#assistant-activity-authorization)
-uses the same browser-established app activity as other privileged app operations. Chats require no
-separate approval. Tool access ends when app activity or its authorizing Core session expires or is
-revoked, even while identity-only app access remains valid. Normal browser recovery supplies the new
-credential to an existing conversation. Native approval mode does not grant or renew Core authority.
+uses current app authority and the live browser/native principal. Chats require no separate approval
+or hourly renewal. Explicit background delegation has its own exact target/tool scope. Normal
+recovery refreshes all live conversations of the same actor without starting another run.
 
 ## Account Recovery Revocation
 
@@ -150,8 +154,10 @@ daily-login problem without buying real security.
 
 | Credential | Idle | Absolute | Environment override |
 | --- | --- | --- | --- |
-| Regular app grant | 7 days | 30 days | `HOSTY_AUTH_APP_GRANT_IDLE_HOURS` / `HOSTY_AUTH_APP_GRANT_ABSOLUTE_HOURS` |
-| System-app grant | 3 days | 14 days | `HOSTY_AUTH_SYSTEM_GRANT_IDLE_HOURS` / `HOSTY_AUTH_SYSTEM_GRANT_ABSOLUTE_HOURS` |
+| Legacy regular app grant | 7 days | 30 days | `HOSTY_AUTH_APP_GRANT_IDLE_HOURS` / `HOSTY_AUTH_APP_GRANT_ABSOLUTE_HOURS` |
+| Legacy system-app grant | 3 days | 14 days | `HOSTY_AUTH_SYSTEM_GRANT_IDLE_HOURS` / `HOSTY_AUTH_SYSTEM_GRANT_ABSOLUTE_HOURS` |
+| Continuous browser/native app grant | Common app idle (7 days) | Parent deadline; common app maximum if native principal has none | Common app idle and principal policy |
+| Background request credential | — | 5 minutes, bounded by delegation expiry | Explicit delegation |
 | CLI-diagnostic grant | 12 hours (fixed) | 12 hours | `HOSTY_AUTH_CLI_GRANT_HOURS` |
 | Core browser session | 7 days | 30 days | `HOSTY_AUTH_CORE_SESSION_IDLE_HOURS` / `HOSTY_AUTH_CORE_SESSION_ABSOLUTE_HOURS` |
 | Access token | 90 days | — | `HOSTY_AUTH_ACCESS_TOKEN_IDLE_HOURS` |
@@ -235,8 +241,8 @@ or ask Shell for a user token.
 Silent initiation submits the app-owned intent form with `prompt=none`, a public S256 challenge
 and random 256-bit state from an iframe. After validating its nonce, Core returns a state-bound
 code for a live session, `login_required` for missing identity or `access_denied` for denied access.
-The frame never receives the password form. Silent codes establish identity without activity and
-retain explicit-logout provenance.
+The frame never receives the password form. Silent codes establish continuous identity/authority
+under a live Core session, with current app permissions and explicit-logout provenance.
 
 Popup initiation submits the same form with `responseMode=web_message` from the synchronously opened
 app-owned popup. Core validates Origin/navigation and its nonce before login or code issuance, then
@@ -271,8 +277,8 @@ browser acceptance are tracked in [local browser origins](../local-browser-origi
 - Browser app tokens are never signed for app-local verification. Signed short-TTL tokens stay reserved
   for delegated agent-bridge tokens, per the token rule in
   [ai-agent-bridge](../ai-agent-bridge/feature.md#token-mechanics).
-- Grant validity is never coupled to Core session liveness; `AuthorizingSessionId` cascades only on
-  explicit logout or admin revoke.
+- Continuous interactive grants require live authorizing-session provenance. Background work needs
+  explicit delegation, and backend-only child revalidation cannot maintain the browser parent.
 - Core session cookies are never forwarded to app origins or gateway targets
   ([auth and gateway model](../auth-gateway/feature.md)).
 - The Shell embed iframe sandbox keeps `allow-top-navigation*` off.
@@ -286,10 +292,10 @@ browser acceptance are tracked in [local browser origins](../local-browser-origi
 
 ## Privileged App Activity
 
-Long-lived app identity does not keep privileged actions authorized indefinitely. The separate
-[app activity window](../app-activity-window/feature.md) requires browser-established activity and
-a live authorizing Core session. Its expiry returns `reauth_required` without revoking identity.
-SDK popup renewal preserves the existing document and drafts.
+[Continuous App Access](../continuous-app-access/feature.md) removes the independent hourly deadline
+for supported browser/native sessions. Current permissions and principal lifetime remain enforced.
+Legacy `ActiveUntil`/`reauth_required` handling remains compatible with older Core versions; popup
+recovery preserves the document and drafts.
 
 ## Testing Expectations
 
@@ -304,7 +310,8 @@ SDK popup renewal preserves the existing document and drafts.
   token* refused as an access token rather than as a session.
 - The idle slide is throttled — repeated revalidation inside the throttle window writes once — and a
   grant that keeps being used never crosses its absolute cap.
-- Explicit logout revokes the session's grants; session *expiry* does not.
+- Explicit logout revokes interactive descendants; parent expiry also invalidates continuous grants.
+  Deliberately authorized background delegation survives ordinary logout, but not explicit revocation.
 - Account recovery rejects previously issued app codes and grants, including legacy records without
   an authorization revision and delayed writes carrying the previous revision. Fresh authorization
   succeeds, and both recovery revocation and new sessions survive a Core restart.
@@ -324,6 +331,6 @@ SDK popup renewal preserves the existing document and drafts.
 - Embedded sign-in rejects messages from a foreign window, mismatched Core origin or initiation state.
 - Exercise popup blocking/cancellation, code replay, foreign app audience, and recovery with iframe cookies unavailable.
 - Silent frame sign-in requires state and iframe navigation, returns state-bound code or login/denial
-  errors without framing Core login, establishes no activity, and participates in explicit logout.
+  errors without framing Core login, establishes continuous authority for granted operations, and participates in explicit logout.
 - Embedded grants survive frame recreation in the same tab and are removed on identity rejection;
   standalone persistence, `localStorage` use and navigation after mounted expiry are excluded.

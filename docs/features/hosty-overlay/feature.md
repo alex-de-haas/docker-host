@@ -1,6 +1,6 @@
 ---
 created: 2026-10-08
-updated: 2026-10-10
+updated: 2026-10-11
 summary: SDK-owned React overlay combines session and required-permission readiness, hides blocked content and preserves same-user state through recovery.
 components: [packages/app-sdk, apps/shell, apps/marketplace, apps/plans, apps/demo-app, apps/harness, apps/telemetry-ui]
 ---
@@ -107,8 +107,9 @@ does not navigate Shell. Failed or cancelled recovery keeps content blocked.
 `detail.userId` and no credential. Applications do not need to subscribe. Generic draft snapshots,
 persistent cache cleanup and restoration after a document reload are outside this component.
 
-Identity still has its existing sliding idle and absolute limits; local editing alone does not
-renew it. Privileged activity has its existing fixed deadline. See
+Identity retains sliding idle and absolute limits. An open document silently maintains supported
+continuous sessions; older Core retains its fixed activity deadline. The optional `localContent`
+slot exposes explicitly public/local UI during an outage outside the protected root. See
 [session lifecycle](../auth-session-lifecycle/feature.md) and [activity window](../app-activity-window/feature.md).
 Element picking, screenshots and assistant evidence belong to
 [App Feedback Inbox](../app-feedback-inbox/plan.md), separately from this overlay.

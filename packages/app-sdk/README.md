@@ -69,8 +69,8 @@ After first mount, blocked content and app portals become hidden and inert while
 remains mounted. Same-user renewal restores it. A different stable user ID reloads the app document
 and refuses to replay old pending requests. `APP_SESSION_RESTORED` from `/browser-auth` is an optional
 DOM notification with `detail.userId`; it contains no credential. There is no generic draft persistence
-across reloads or cache-clearing framework. Existing identity idle/absolute lifetimes and fixed
-privileged activity windows still apply.
+across reloads or cache-clearing framework. Current user/app permissions and the authorizing principal's idle/absolute lifetime still apply.
+Core 0.130.0 advertises continuous app sessions; older servers retain their actual activity policy.
 
 Compatible SDK updates change standard presentation and recovery after a dependency update and
 rebuild, without editing this wiring. New mandatory Core capabilities can require upgrading Core.
@@ -289,16 +289,39 @@ reads or `mcp:invoke` for assistant mutations, then apply your application's use
 Do not cache validation. Keep `introspectScopedToken` on ordinary APIs: it does not opt into accepting
 MCP-only credentials. Neither token permits skipping the application's own authorization.
 
-## Privileged activity renewal
+## Continuous app access (Core 0.130.0 / SDK 0.26.0)
 
-Identity probes used by `AppIdentityBridge` pass `activeUntil` and `activityRequired` through from
-`resolveAppSession().identity`. Keep app APIs on `appFetch`; a 401 can then request a user-click
-Core popup, exchange a code on the same origin and retry once without replacing mounted content.
-For another UI framework, use `configureAppActivity` with an app-owned `exchangeCode` function,
-listen for `APP_SESSION_ENDED`, and call `renewAppActivity` directly from a click. Do not navigate
-or reload to renew access. `appActivityNeedsRenewal()` supports proactive click renewal near expiry.
-See [the activity contract](../../docs/features/app-activity-window/feature.md), including the
-separate Core-approved assistant session leases.
+Pass `continuity`, `activeUntil` and `activityRequired` from Core revalidation through custom identity
+probes. Standard SDK adapters do this automatically. `HostyOverlay` / `useAppIdentity` maintain a
+live browser parent through a Core-owned frame and refresh the app-local probe. Checks coalesce,
+run on mount/return/network recovery, and repeat at a jittered five-minute interval. App backends
+cannot keep the browser parent alive with app credentials alone.
+
+Keep protected client requests on `appFetch`. An outage returns 503 without clearing identity or
+replaying a mutation. Real expiry uses normal recovery, preserving same-user state. Optional
+`<HostyOverlay localContent={<LocalNotes />}>…</HostyOverlay>` places explicitly local/public
+content outside the protected root during an outage; do not place private actor-bound data there.
+
+For another framework, use `configureAppContinuity` / `ensureAppContinuity` from
+`@hosty-sdk/app/continuity/browser`, with validated metadata from `/continuity` and a probe that
+checks the same actor. The probe must bypass maintenance (`appFetch(path, init, false)`) to avoid
+recursion. Clean up the coordinator on unmount. `APP_CONTINUITY_UPDATED` reports silent success;
+`APP_ACTIVITY_RENEWED` continues to mean explicit recovery. Do not replay handoffs/messages on either.
+Missing continuity metadata keeps older Core's `configureAppActivity`/click renewal behavior.
+
+Server-only unattended work requires an explicit Core grant:
+
+```ts
+import { BackgroundGrantClient } from "@hosty-sdk/app/background/server";
+const background = new BackgroundGrantClient(grantId, "health"); // HOSTY_* service configuration
+const response = await background.core("/api/apps/example.target/health");
+```
+
+The client coalesces credential issuance and refreshes before expiry. It sends each operation once;
+Core enforces the immutable selected scope online. `token()` can supply the existing provider/MCP
+client's user-token input. Keep tokens server-side. See
+[Continuous App Access](../../docs/features/continuous-app-access/feature.md) for creation, logout,
+revocation, exact MCP tools and installation boundaries. Background grants do not create a scheduler.
 
 ## Shared panels (Core 0.129.0 / SDK 0.25.0)
 

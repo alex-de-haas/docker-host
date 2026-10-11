@@ -4,6 +4,8 @@
 // cards. Prop-less by design: the app id and browser-reachable Core origin arrive in the
 // probe response's `recovery` field (request-time values, never build-time props).
 
+import { readAppContinuity, type AppContinuity } from "./continuity";
+import { configureAppContinuity } from "./continuity-browser";
 import { AppActivityBridge } from "./activity-react";
 import { AuthNotice, AuthNoticeButton, authNoticeActionStyle } from "./auth-notice";
 import { useEffect, useRef, useState } from "react";
@@ -250,10 +252,21 @@ export function useAppIdentity({
   const silentError = useRef<"login_required" | "access_denied" | null>(null);
   const returnedLegacyAttempt = useRef<{ appId: string; coreOrigin: string; protocolRequired: boolean } | null>(null);
   const upgradedAttempt = useRef(false);
-  const [activity, setActivity] = useState<{ openUrl: string; appAuthProtocol: AppAuthProtocol; activeUntil?: string | null; activityRequired?: boolean } | null>(null);
+  const [activity, setActivity] = useState<{ openUrl: string; appAuthProtocol: AppAuthProtocol; activeUntil?: string | null; activityRequired?: boolean; continuity?: AppContinuity } | null>(null);
   const exchangeRef = useRef<{ path: string; revision: number; response: Promise<Response> } | null>(null);
   const onSessionRef = useRef(onSession);
   useEffect(() => { onSessionRef.current = onSession; }, [onSession]);
+
+  const continuity = activity?.continuity;
+  const continuityActor = (session as { userId?: string } | null)?.userId;
+  useEffect(() => {
+    if (!continuity || !activity?.openUrl || !continuityActor) return;
+    return configureAppContinuity({ coreOrigin: new URL(activity.openUrl).origin, authority: continuity,
+      probe: async () => {
+        const next = await refreshRef.current() as { status?: string; userId?: string } | null;
+        return next?.status === "active" && next.userId === continuityActor;
+      } });
+  }, [continuity?.grantId, activity?.openUrl, continuityActor]);
 
   useEffect(() => {
     let cancelled = false;
@@ -275,7 +288,7 @@ export function useAppIdentity({
       let openUrl: string | null = null;
       let appId: string | null = null;
       let protocol: AppAuthProtocol | null = null;
-      let activityMetadata: { activeUntil?: string | null; activityRequired?: boolean } | null = null;
+      let activityMetadata: { activeUntil?: string | null; activityRequired?: boolean; continuity?: AppContinuity } | null = null;
       let rejectionCode: unknown;
       let sessionBody: unknown = null;
       const revision = appGrantRevision();
@@ -295,7 +308,7 @@ export function useAppIdentity({
         appId = recovery.appId;
         openUrl = appId ? buildCoreOpenUrl(recovery.corePublicOrigin, appId, window.location) : null;
         protocol = openUrl ? acceptAppAuthProtocol(new URL(openUrl).origin, recovery.appAuthProtocol) : recovery.appAuthProtocol;
-        activityMetadata = body as { activeUntil?: string | null; activityRequired?: boolean };
+        activityMetadata = body as { activeUntil?: string | null; activityRequired?: boolean; continuity?: AppContinuity };
       } catch {
         // A failed or timed-out probe (Core unreachable) classifies as unavailable below.
         status = null;
@@ -312,7 +325,7 @@ export function useAppIdentity({
       }
       forgetRejectedAppGrant(rejectionCode, revision);
       if (openUrl && protocol) setActivity({ openUrl, appAuthProtocol: protocol,
-        activeUntil: activityMetadata?.activeUntil, activityRequired: activityMetadata?.activityRequired });
+        activeUntil: activityMetadata?.activeUntil, activityRequired: activityMetadata?.activityRequired, continuity: readAppContinuity(activityMetadata?.continuity) });
 
       const initialLoad = firstProbe.current;
       firstProbe.current = false;
@@ -461,6 +474,7 @@ export function useAppIdentity({
       window.removeEventListener(APP_SESSION_ENDED, recover);
     };
   }, [probePath, appCodePath]);
+
 
   return { ui, session, activity, hasBeenActive: wasActive.current, refresh: () => refreshRef.current() };
 }

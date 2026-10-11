@@ -317,6 +317,14 @@ struct CoreClientTests {
             #expect(!String(decoding: body, as: UTF8.self).contains("codeVerifier"))
         }
 
+        @Test("App continuity is capability negotiated, including older Core")
+        func continuousAppAuthority() async throws {
+            StubURLProtocol.install([StubURLProtocol.stub(json: #"{"version":2,"sessionContinuityVersion":1}"#)])
+            #expect(try await client().supportsAppContinuity())
+            StubURLProtocol.install([StubURLProtocol.stub(json: #"{"version":2}"#)])
+            #expect(try await client().supportsAppContinuity() == false)
+        }
+
         @Test("Only explicit native renewal requests interactive activity")
         func interactiveNativeRenewal() async throws {
             StubURLProtocol.install([
