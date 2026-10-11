@@ -8,7 +8,7 @@ export function useHostyNavigation() { return useSyncExternalStore(ui.subscribeN
 export function HostyNavigationBoundary({ children, className }: { children: ReactNode; className?: string }) {
   const chrome = useHostyChrome(), ref = useRef<HTMLDivElement>(null), hidden = chrome.navigation === "hide";
   const focused = useRef(false);
-  useLayoutEffect(() => { if (hidden && focused.current) { document.querySelector<HTMLElement>("[data-hosty-content]")?.focus(); focused.current = false; } }, [hidden]);
+  useLayoutEffect(() => { if (hidden && focused.current) { document.querySelector<HTMLElement>('[data-hosty-content][tabindex="-1"]')?.focus(); focused.current = false; } }, [hidden]);
   return <div ref={ref} onFocusCapture={() => { focused.current = true; }} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) focused.current = false; }} className={className} data-hosty-navigation-boundary hidden={hidden} inert={hidden} style={hidden ? { display: "none" } : { display: "contents" }}>{children}</div>;
 }
 export function HostyToolLauncher() {
@@ -33,7 +33,7 @@ export function HostyNavigation({ className = "" }: { className?: string }) {
     if (expanded && narrow && chrome.navigation === "show") { window.dispatchEvent(new CustomEvent("hosty:ui:modal", { detail: "navigation" })); dialog.current?.showModal(); }
     else { if (dialog.current?.open) { dialog.current.close();
       if (chrome.navigation === "show") opener.current?.focus();
-      else document.querySelector<HTMLElement>("[data-hosty-content]")?.focus();
+      else document.querySelector<HTMLElement>('[data-hosty-content][tabindex="-1"]')?.focus();
     } }
   }, [expanded, narrow, chrome.navigation]);
   const empty = model.status === "ready" && !model.entries.length;
