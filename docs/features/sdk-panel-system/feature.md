@@ -1,6 +1,6 @@
 ---
 created: 2026-10-10
-updated: 2026-10-10
+updated: 2026-10-11
 summary: Shared SDK panels compose app-owned tools beside documents in Shell and standalone, with verified peers and pinned presentation targets.
 components: [packages/app-sdk, apps/core, apps/shell, apps/plans, apps/harness, apps/demo-app]
 ---
@@ -28,7 +28,9 @@ digits or hyphens, unique within the app. The `legacy-` prefix is reserved. Core
 from the effective endpoint and normalized route using SHA-256; identical legacy declarations
 coalesce. Relabeling, icon changes and reordering preserve identity. Changing a legacy route or
 adding an explicit ID changes identity without aliases or index migration. Explicit IDs survive
-route changes, but an old deep link must still fit the newly declared route.
+route changes, but an old deep link must still fit the newly declared route. Selecting a panel whose
+retained surface was invalidated resolves its current default route through Core. Valid retained
+surfaces keep their deep route; explicit pinned presentation retries never substitute a new route.
 
 ## Core And Server Adapters
 
@@ -77,6 +79,8 @@ data. It verifies the observed parent origin through its own authenticated serve
 its actor/Core/installation metadata. The host independently binds the exact registered window,
 origin and surface. Subsequent messages use the exact origin, host-window ID, frame generation and
 child nonce. Navigation replaces the generation and invalidates that document's request ledger.
+Host activity renewal and a changed child nonce also discard frame-owned ledger entries, so old
+readiness results cannot be posted through a fresh channel or settle a reused request ID.
 
 Cooperating SDK surfaces compare both Core and actor identity before mounting protected content.
 An account mismatch blocks the child and offers reconnection. Target authentication stays inside
@@ -261,6 +265,9 @@ feature does not confer that deferred designation. Current CSP refusal has expli
   verification, identical replay, independent aborts, late status replies after timeout/abort,
 queued-open timeouts, channel renewal and status/open ordering. Selection tests cover
   collapse during bootstrap/resolve, out-of-order selections, queued routes and delayed restoration.
+  Channel-renewal tests reuse a request ID while an old route reports readiness and assert that only
+  the new result arrives. Selection tests cover moved route/origin/endpoint defaults, strict pinned
+  route refusal and preservation of deep routes on valid retained surfaces.
 - Plans/Harness/Shell tests preserve source hashes, complete attachments, provider freezing,
   idempotent handoff recovery, review routing and existing assistant entry points. Plans tests cover
   completed results across provider reinstall, including navigation-only destinations and explicit

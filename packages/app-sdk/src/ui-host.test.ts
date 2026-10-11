@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createUiHost, type UiHost } from "./ui-host";
 import { createPresentationRequestId } from "./ui";
 import { EmbeddedUiClient } from "./ui-embedded";
-import type { UiBootstrap, UiPanel, UiResolvedPanel } from "./ui-types";
+import { routeWithin, type UiBootstrap, type UiPanel, type UiResolvedPanel } from "./ui-types";
 
 vi.mock("./browser-auth", () => ({ appFetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
 const panel = { appId: "assistant", installationId: "install-1", panelId: "chat" };
@@ -42,6 +42,61 @@ function frame(surface = resolved.surface!) {
 }
 
 describe("panel host authority and replay", () => {
+  it.each(["host activity", "child authentication"])("does not send old ledger results after %s renewal", async renewal => {
+    const h = await start();
+    await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    const f = frame(), requestId = createPresentationRequestId();
+    f.send({ ...f.offer, type: "hosty:ui:open", requestId, target, placement: "side" });
+    await vi.waitFor(() => expect(f.post.mock.calls.some(([m]) => m.type === "hosty:ui:result" && m.requestId === requestId)).toBe(true));
+    if (renewal === "host activity") { h.setActive(false); h.setActive(true); await h.refresh(); }
+    else f.send({ ...f.offer, type: "hosty:ui:auth-required" });
+    f.send({ type: "hosty:ui:probe", childNonce: createPresentationRequestId(), versions: [1] });
+    const offer = f.post.mock.calls.filter(([m]) => m.type === "hosty:ui:offer").at(-1)![0];
+    f.send({ ...offer, type: "hosty:ui:accept", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: panel.appId, installationId: panel.installationId });
+    const next = { ...target, route: "/assistant?session=new" };
+    let finish!: (response: Response) => void;
+    fetcher.mockImplementation(async (path: string) => path.endsWith("resolve")
+      ? new Promise<Response>(resolve => { finish = resolve; }) : Response.json(metadata));
+    f.post.mockClear();
+    f.send({ ...offer, type: "hosty:ui:open", requestId, target: next, placement: "side" });
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    f.send({ ...offer, type: "hosty:ui:surface-state", route: target.route, state: "ready" });
+    expect(f.post.mock.calls.filter(([m]) => m.type === "hosty:ui:result" && m.requestId === requestId)).toHaveLength(0);
+    finish(Response.json({ ...resolved, target: next, surface: { ...resolved.surface!, route: next.route } }));
+    await vi.waitFor(() => expect(f.post.mock.calls.filter(([m]) => m.type === "hosty:ui:result" && m.requestId === requestId)).toHaveLength(1));
+    expect(f.post.mock.calls.find(([m]) => m.type === "hosty:ui:result")![0]).toMatchObject({
+      generation: offer.generation, childNonce: offer.childNonce, result: { status: "opened", target: next },
+    });
+  });
+  it.each([{ route: "/assistant-v2" }, { origin: "https://moved.test" }, { endpoint: "new-web" }])(
+    "selects the current default after a panel destination moves: %j", async change => {
+      const h = await start();
+      await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+      const current = { ...catalog, ...change }; panels = [current]; await h.refresh();
+      expect(h.getSnapshot().tools[0]!.resolved).toMatchObject({ surface: null, state: "destination_changed" });
+      fetcher.mockImplementation(async (path: string, init?: RequestInit) => {
+        if (!path.endsWith("resolve")) return Response.json(metadata);
+        const requested = JSON.parse(init!.body as string);
+        if (requested.route && !routeWithin(requested.route, current.route))
+          return Response.json({ code: "destination_invalid" }, { status: 400 });
+        const route = requested.route ?? current.route;
+        return Response.json({ ...resolved, target: { panel, route }, surface: {
+          ...resolved.surface!, route, origin: current.origin, endpoint: current.endpoint,
+        } });
+      });
+      if (change.route) expect(await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() }))
+        .toMatchObject({ status: "blocked", code: "destination_invalid" });
+      expect(await h.selectPanel(panel)).toMatchObject({ status: "opened", target: { panel, route: current.route } });
+      expect(JSON.parse(fetcher.mock.calls.at(-1)![1].body)).toEqual({ panel });
+    });
+  it("preserves a deep route while the retained panel surface remains valid", async () => {
+    const h = await start();
+    await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    panels = [{ ...catalog, state: "unavailable", available: false }]; await h.refresh();
+    expect(h.getSnapshot().tools[0]!.resolved.surface).not.toBeNull();
+    expect(await h.selectPanel(panel)).toMatchObject({ status: "opened", target });
+    expect(JSON.parse(fetcher.mock.calls.at(-1)![1].body)).toEqual(target);
+  });
   it.each([
     ["hosty_launch=native", "/assistant?session=one+two#turn", "ready"],
     ["hosty_launch=embedded&hosty_launch=native", "/assistant?session=one%20two#turn", "ready"],

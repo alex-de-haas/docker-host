@@ -50,7 +50,7 @@ export class UiHost implements UiClient {
     this.active = active; this.activityReady = false;
     this.activityGeneration++; this.selectionGeneration++;
     this.refreshing = null; this.toolQueues.clear();
-    for (const [key, entry] of this.ledger) if (entry.pending) this.ledger.delete(key);
+    for (const [key, entry] of this.ledger) if (entry.pending || entry.frame) this.ledger.delete(key);
     for (const frame of this.frames) {
       frame.connected = false; frame.actor = null; frame.nonce = null;
       frame.onConnection?.(false);
@@ -225,7 +225,7 @@ export class UiHost implements UiClient {
   }
   selectPanel = async (ref: PanelRef) => {
     const opened = this.snapshot.tools.find(t => t.key === panelKey(ref));
-    return this.openSurface(opened?.target ?? { panel: ref }, { placement: "side", requestId: createPresentationRequestId() });
+    return this.openSurface(opened?.resolved.surface ? opened.target : { panel: ref }, { placement: "side", requestId: createPresentationRequestId() });
   };
   setExpanded = (expanded: boolean) => {
     if (expanded && (!this.active || !this.activityReady)) return;
@@ -236,10 +236,13 @@ export class UiHost implements UiClient {
   setAttention = (panel: PanelRef, attention: number) => this.update({ tools: this.snapshot.tools.map(t => t.key === panelKey(panel) ? { ...t, attention: Math.max(0, Math.floor(attention)) } : t) });
   reportSurfaceState = (_state: { route: string; state: "ready" | "blocked"; code?: string }) => {};
 
+  private forgetFrameRequests(frame: Frame) {
+    for (const [key, entry] of this.ledger) if (entry.frame === frame) this.ledger.delete(key);
+  }
   registerFrame = (element: HTMLIFrameElement, surface: UiFrameSurface, onConnection?: (connected: boolean) => void): (() => void) => {
     const frame: Frame = { element, surface, onConnection, generation: createPresentationRequestId(), nonce: null, connected: false, actor: null, live: true, cleanup: () => {}, waitForReadiness: () => {} };
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const forget = () => { for (const [key, entry] of this.ledger) if (entry.frame === frame) this.ledger.delete(key); };
+    const forget = () => this.forgetFrameRequests(frame);
     frame.waitForReadiness = () => {
       clearTimeout(timer); timer = setTimeout(() => {
         const tool = this.snapshot.tools.find(t => t.target.panel.panelId === frame.surface.panelId && t.target.panel.appId === frame.surface.appId);
@@ -285,7 +288,10 @@ export class UiHost implements UiClient {
     const own = this.snapshot.bootstrap;
     if (!frame || !own?.canHost) return;
     if (msg.type === "hosty:ui:probe" && validId(msg.childNonce) && Array.isArray(msg.versions) && msg.versions.includes(1)) {
-      if (frame.nonce !== msg.childNonce) { frame.connected = false; frame.actor = null; frame.onConnection?.(false); }
+      if (frame.nonce !== msg.childNonce) {
+        this.forgetFrameRequests(frame);
+        frame.connected = false; frame.actor = null; frame.onConnection?.(false);
+      }
       frame.nonce = msg.childNonce;
       this.post(frame, { type: "hosty:ui:offer" }); return;
     }
