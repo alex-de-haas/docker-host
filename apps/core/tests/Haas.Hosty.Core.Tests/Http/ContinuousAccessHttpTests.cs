@@ -63,6 +63,46 @@ public sealed class ContinuousAccessHttpTests
     }
 
     [Theory]
+    [InlineData(180, true)]
+    [InlineData(30, true)]
+    [InlineData(1.5, true)]
+    [InlineData(180, false)]
+    [InlineData(30, false)]
+    [InlineData(1.5, false)]
+    public async Task ShortIdlePolicyAdvertisesAndMaintainsBeforeEitherDeadline(double seconds, bool shortParent)
+    {
+        var clock = new Clock();
+        await using var host = await CoreHttpHarness.StartAsync(clock);
+        using var app = await AppManagementHttpTests.CreateAppClient(host, "console", []);
+        await host.Services.GetRequiredService<CoreSettingsService>().UpdateAsync(new Dictionary<string, string?>
+        {
+            ["HOSTY_AUTH_CORE_SESSION_IDLE_HOURS"] = CoreSettingsService.FormatHours((shortParent ? seconds : 600) / 3600),
+            ["HOSTY_AUTH_APP_GRANT_IDLE_HOURS"] = CoreSettingsService.FormatHours((shortParent ? 600 : seconds) / 3600),
+        });
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        await apps.UpsertAppAsync((await apps.GetAppAsync("console"))! with { Endpoints = [new("http", "http", "http://app.test", true)] });
+        var identity = host.Services.GetRequiredService<AppIdentityService>();
+        var token = app.DefaultRequestHeaders.GetValues(AppManagementAuthorization.IdentityHeader).Single();
+        var info = (await identity.RevalidateAsync(token, "console")).Continuity!;
+        Assert.Equal(seconds / 3, info.CheckAfterSeconds, 6);
+        using var browser = host.CreateClient(); browser.BaseAddress = new("http://localhost:7070");
+        browser.DefaultRequestHeaders.Add("Cookie", "hosty_session=operator; hosty_csrf=proof");
+        browser.DefaultRequestHeaders.Add("Origin", "http://localhost:7070");
+        browser.DefaultRequestHeaders.Add("X-Hosty-CSRF", "proof");
+        var started = clock.UtcNow;
+        for (var check = 0; check < 16; check++)
+        {
+            using var response = await browser.PostAsJsonAsync("/api/auth/apps/continuity/maintain",
+                new { grantId = info.GrantId, origin = "http://app.test" });
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+            Assert.NotNull((await identity.RevalidateAsync(token, "console")).Continuity);
+            clock.UtcNow += TimeSpan.FromSeconds(info.CheckAfterSeconds * 1.1); // Maximum positive SDK jitter.
+        }
+        Assert.True(clock.UtcNow - started > TimeSpan.FromSeconds(seconds * 5));
+        Assert.NotNull((await identity.RevalidateAsync(token, "console")).Continuity);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task MigrationRemovesElapsedActivityOnlyForLiveIdentity(bool expiredIdentity)
@@ -248,6 +288,32 @@ public sealed class ContinuousAccessHttpTests
         }
         Assert.False(otherStream.Reader.Completion.IsCompleted);
         Assert.True(otherStream.Reader.TryRead(out _));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("original-revision")]
+    public async Task BrowserCreationCannotAdoptRevisionFromConcurrentRevokeAll(string? revision)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        using var app = await AppManagementHttpTests.CreateAppClient(host, "console", [CoreAppPermissions.ReadApps]);
+        var users = host.Services.GetRequiredService<UserDirectoryStore>();
+        await users.UpdateAsync(state => state with { Users = state.Users.Select(u => u with { AuthRevision = revision }).ToArray() });
+        var actor = (await users.ReadAsync()).Users.Single(); // Snapshot returned by BrowserActorAsync before revoke-all.
+        using var browser = host.CreateClient(); browser.BaseAddress = new("http://localhost:7070");
+        browser.DefaultRequestHeaders.Add("Cookie", "hosty_session=operator; hosty_csrf=proof");
+        browser.DefaultRequestHeaders.Add("Origin", "http://localhost:7070");
+        browser.DefaultRequestHeaders.Add("X-Hosty-CSRF", "proof");
+        using var revoked = await browser.PostAsJsonAsync("/api/auth/background-grants/revoke-all-authorizations", new { });
+        revoked.EnsureSuccessStatusCode();
+        var grants = host.Services.GetRequiredService<BackgroundGrantService>();
+        var request = new BackgroundGrantRequest("console", "Read health", [new("health", "core", "console", ["health"])]);
+        await Assert.ThrowsAsync<AppIdentityException>(() => grants.CreateAsync(actor, request, default));
+        Assert.Empty((await grants.ReadAsync(default))!.Grants);
+        // A separately authorized local control operation can deliberately create new authority afterward.
+        var fresh = await grants.CreateAsync(actor.Id, request, default);
+        Assert.NotEqual(actor.AuthRevision, fresh.AuthRevision);
+        Assert.NotNull(await grants.IssueAsync("console", new(fresh.Id, "health"), default));
     }
 
     [Fact]

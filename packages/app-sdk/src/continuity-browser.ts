@@ -11,7 +11,7 @@ let valid = true;
 export async function ensureAppContinuity(force = false): Promise<boolean> {
   if (!owner) return true;
   if (pending) return pending;
-  if (!force && Date.now() - checkedAt < 30_000) return valid;
+  if (!force && Date.now() - checkedAt < Math.min(30_000, owner.authority.checkAfterSeconds * 1000)) return valid;
   const current = owner;
   pending = (async () => {
     // Browser policy may refuse the frame. Only the app's authoritative probe decides access.
@@ -39,7 +39,7 @@ export function configureAppContinuity(config: Owner): () => void {
     if (disposed || version !== scheduleVersion) return;
     failures = ok ? 0 : Math.min(4, failures + 1);
     const seconds = ok ? config.authority.checkAfterSeconds : Math.min(300, 15 * 2 ** failures);
-    timer = setTimeout(() => { void schedule(); }, seconds * 1000 * (0.9 + Math.random() * 0.2));
+    timer = setTimeout(() => { void schedule(true); }, seconds * 1000 * (0.9 + Math.random() * 0.2));
   };
   const wake = () => { void schedule(); };
   const online = () => { void schedule(true); };

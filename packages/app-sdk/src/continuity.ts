@@ -8,6 +8,6 @@ export function readAppContinuity(value: unknown): AppContinuity | undefined {
   if (v?.version !== 1 || !["browser", "native"].includes(v.mode ?? "") ||
       typeof v.grantId !== "string" || !v.grantId || v.grantId.length > 128 ||
       typeof v.expiresAt !== "string" || !Number.isFinite(Date.parse(v.expiresAt)) ||
-      typeof v.checkAfterSeconds !== "number" || !Number.isFinite(v.checkAfterSeconds)) return;
-  return { ...v, checkAfterSeconds: Math.max(60, Math.min(300, v.checkAfterSeconds)) } as AppContinuity;
+      typeof v.checkAfterSeconds !== "number" || !Number.isFinite(v.checkAfterSeconds) || v.checkAfterSeconds <= 0) return;
+  return { ...v, checkAfterSeconds: Math.min(300, v.checkAfterSeconds) } as AppContinuity;
 }

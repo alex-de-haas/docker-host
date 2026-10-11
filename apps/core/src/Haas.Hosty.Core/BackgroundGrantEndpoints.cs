@@ -11,7 +11,7 @@ internal static class BackgroundGrantEndpoints
             CoreJson.Json((await grants.ReadAsync(ctx.RequestAborted))?.Grants.Where(g => g.UserId == user.Id).ToArray() ?? [])))
             .WithMetadata(new DisableCorsAttribute());
         app.MapPost(route, (HttpContext ctx, BackgroundGrantRequest input, BackgroundGrantService grants) => BrowserAsync(ctx,
-            async user => CoreJson.Json(await grants.CreateAsync(user.Id, input, ctx.RequestAborted))))
+            async user => CoreJson.Json(await grants.CreateAsync(user, input, ctx.RequestAborted))))
             .WithMetadata(new DisableCorsAttribute());
         app.MapDelete(route + "/{id}", (string id, HttpContext ctx, BackgroundGrantService grants) => BrowserAsync(ctx, async user =>
         {

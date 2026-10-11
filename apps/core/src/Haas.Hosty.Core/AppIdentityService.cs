@@ -14,8 +14,7 @@ internal sealed class AppIdentityService(
 {
     private static readonly TimeSpan AuthCodeLifetime = TimeSpan.FromMinutes(5);
     // The idle window slides on use, but rewriting the grant store on every server render is wasteful, so
-    // LastSeenAt is only advanced once per this window. Idle TTLs are days, so minutes of imprecision are
-    // irrelevant.
+    // LastSeenAt is advanced at most once per this window, shortened for custom idle timeouts.
     private static readonly TimeSpan TouchThrottle = TimeSpan.FromMinutes(5);
 
     private const string GrantTokenPrefix = "hostyg_";
@@ -178,11 +177,12 @@ internal sealed class AppIdentityService(
 
         // Fast path: skip the store round-trip (read + mutex) on the common throttled case. TouchAsync
         // re-checks the throttle under the lock, so a racing writer cannot cause a double advance.
-        if (now - grant.LastSeenAt >= TouchThrottle)
+        var touchThrottle = TimeSpan.FromTicks(Math.Min(TouchThrottle.Ticks, idle.Ticks / 6));
+        if (now - grant.LastSeenAt >= touchThrottle)
         {
             try
             {
-                await grants.TouchAsync(tokenHash, now, TouchThrottle, cancellationToken);
+                await grants.TouchAsync(tokenHash, now, touchThrottle, cancellationToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -201,7 +201,7 @@ internal sealed class AppIdentityService(
             grant.AbsoluteExpiresAt, grant.AuthorityVersion == 1 ? null : grant.ActiveUntil,
             grant.AuthorityVersion != 1 && (app.RequiredCorePermissions?.Count ?? 0) + (app.OptionalCorePermissions?.Count ?? 0) + (app.GrantedCorePermissions?.Count ?? 0) > 0,
             parent is not null && grant.AuthorityVersion == 1 ? new AppContinuityInfo(1,
-                parent.Kind is null ? "browser" : "native", grant.Id, grant.AbsoluteExpiresAt, 300) : null), null);
+                parent.Kind is null ? "browser" : "native", grant.Id, grant.AbsoluteExpiresAt, settings.AuthLifetimes.ContinuityCheckSeconds(parent.Kind)) : null), null);
     }
 
     // Only explicitly scope-aware dispatchers may accept background authority.
@@ -273,7 +273,7 @@ internal sealed class AppIdentityService(
             }
         }
         return new AppIdentityTokenResult(token, "Bearer", absoluteExpiresAt, (int)(absoluteExpiresAt - now).TotalSeconds, activeUntil,
-            parent is null ? null : new AppContinuityInfo(1, parent.Kind is null ? "browser" : "native", record.Id, absoluteExpiresAt, 300));
+            parent is null ? null : new AppContinuityInfo(1, parent.Kind is null ? "browser" : "native", record.Id, absoluteExpiresAt, settings.AuthLifetimes.ContinuityCheckSeconds(parent.Kind)));
     }
 
     internal Task<AppSessionValidationResult> RequireActivityAsync(string token, string appId, CancellationToken ct)
@@ -465,7 +465,7 @@ internal sealed record AppSessionValidationResult(
     string HostRole,
     DateTimeOffset ExpiresAt, DateTimeOffset? ActiveUntil = null, bool ActivityRequired = false, AppContinuityInfo? Continuity = null);
 
-internal sealed record AppContinuityInfo(int Version, string Mode, string GrantId, DateTimeOffset ExpiresAt, int CheckAfterSeconds);
+internal sealed record AppContinuityInfo(int Version, string Mode, string GrantId, DateTimeOffset ExpiresAt, double CheckAfterSeconds);
 
 internal sealed class AppIdentityException(string code, string message) : Exception(message)
 {

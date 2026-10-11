@@ -43,9 +43,11 @@ app service credential and user app grant cannot keep the parent browser session
 
 ## Browser maintenance
 
-The SDK owns one coordinator per document. It checks on mount, at a five-minute interval with
-jitter, on focus/visibility/online return and before a protected request when validation is older
-than 30 seconds. Concurrent checks coalesce; a burst of wake events schedules one next timer.
+The SDK owns one coordinator per document. It checks on mount and at an advertised interval with
+jitter: at most five minutes, shortened to one third of the smaller app/parent idle timeout.
+Fractional seconds are supported for short custom settings. It also checks on focus/visibility/online
+return and before a protected request when validation is older than 30 seconds or the advertised
+interval, whichever is shorter. Each scheduled heartbeat bypasses that freshness cache. Concurrent checks coalesce; a burst of wake events schedules one next timer.
 Timers are advisory; the server decides validity.
 
 For browser sessions, a transient Core-owned iframe uses
@@ -53,7 +55,8 @@ For browser sessions, a transient Core-owned iframe uses
 origin, isolated Core cookie host and correlation input. The frame performs a same-origin
 `POST /api/auth/apps/continuity/maintain` with Core's primary cookie, exact Origin and CSRF proof.
 The request must match the grant's authorizing browser session and actor. Validation precedes a
-throttled idle touch; it never changes absolute expiry or revives expired authority.
+throttled idle touch; both parent and app touch throttles shrink with their idle timeouts. It never
+changes absolute expiry or revives expired authority.
 
 The frame returns only correlated status. No cookie, token or keepalive proof reaches the app or
 Shell. Source/origin/state checks and a four-second timeout bound the exchange. Cookie or framing
@@ -88,7 +91,9 @@ and changed revisions stop dispatch too.
 
 Records in `core/auth/background-grants.json` pin the owner, consuming installation, label,
 immutable scopes, creation time, optional expiry and revocation. Changes use revoke-and-create.
-Every issuance and dispatch rechecks current permissions, roles and target/consumer installations.
+Browser creation retains its authenticated actor revision and checks it against the current owner;
+a request racing revoke-all cannot adopt the new revision and create usable authority. Every
+issuance and dispatch rechecks current permissions, roles and target/consumer installations.
 Updates cannot enlarge saved scopes. Background access is currently administrator-owned; it does
 not change ordinary-user Harness access.
 
@@ -183,6 +188,8 @@ behavior; the browser clock advance is not evidence of elapsed server time or ph
 
 - Clock-controlled Core tests cross the former hour, separate child use from browser-parent idle
   maintenance, reject absent/wrong cookie/CSRF proof, and enforce parent/device expiry and revocation.
+- Test custom idle timeouts below five minutes, compatible touch throttles, fractional SDK intervals
+  and creation authorized before revoke-all but resumed after it.
 - Test durable legacy migration, elapsed activity versus expired identity, custom retained settings,
   missing provenance, account changes, installations and permissions.
 - Test Core/provider/MCP background scope after ordinary logout, exact tool names, catalog-only

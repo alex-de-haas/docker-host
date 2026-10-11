@@ -26,4 +26,4 @@ public interface IHostyIdentityValidator
 }
 
 /// <summary>Core-advertised continuous authority; missing metadata preserves the legacy policy.</summary>
-public sealed record HostyContinuity(int Version, string Mode, string GrantId, DateTimeOffset ExpiresAt, int CheckAfterSeconds);
+public sealed record HostyContinuity(int Version, string Mode, string GrantId, DateTimeOffset ExpiresAt, double CheckAfterSeconds);

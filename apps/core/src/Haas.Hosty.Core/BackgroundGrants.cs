@@ -34,11 +34,21 @@ internal sealed class BackgroundGrantService(CoreDataPaths paths, AppRegistrySto
             ["restart"] = ("POST /api/apps/{appId}/restart", CoreAppPermissions.AppLifecycle),
         };
 
-    internal async Task<BackgroundGrant> CreateAsync(string owner, BackgroundGrantRequest input, CancellationToken ct)
+    internal Task<BackgroundGrant> CreateAsync(string owner, BackgroundGrantRequest input, CancellationToken ct)
+        => CreateAsync(owner, input, ct, null);
+
+    // Preserve the browser authorization snapshot: never adopt a revision created by concurrent revoke-all.
+    internal Task<BackgroundGrant> CreateAsync(HostUserRecord actor, BackgroundGrantRequest input, CancellationToken ct)
+        => CreateAsync(actor.Id, input, ct, actor);
+
+    private async Task<BackgroundGrant> CreateAsync(string owner, BackgroundGrantRequest input, CancellationToken ct,
+        HostUserRecord? actor)
     {
         var directory = await users.ReadAsync(ct);
         var user = directory.Users.FirstOrDefault(u => u.Id == owner || u.Email == owner);
         if (user is null || user.Disabled || !AppAccessPolicy.IsAdmin(user)) Deny("An enabled administrator must own the delegation.");
+        if (actor is not null && user!.AuthRevision != actor.AuthRevision)
+            Deny("The authorizing browser account changed. Sign in again.");
         if (string.IsNullOrWhiteSpace(input.AppId) || input.AppId.Length > 256
             || string.IsNullOrWhiteSpace(input.Label) || input.Label.Length > 120 || input.Scopes is not { Count: > 0 and <= 32 }
             || input.Scopes.Any(s => s is null || s.Id is not { Length: > 0 and <= 64 }
@@ -60,6 +70,11 @@ internal sealed class BackgroundGrantService(CoreDataPaths paths, AppRegistrySto
         await mutex.WaitAsync(ct);
         try
         {
+            var currentUser = (await users.ReadAsync(ct)).Users.FirstOrDefault(u => u.Id == grant.UserId);
+            if (currentUser is null || currentUser.Disabled || !AppAccessPolicy.IsAdmin(currentUser)
+                || currentUser.AuthRevision != grant.AuthRevision)
+                Deny("The owner's authorization changed.");
+            // A later revision change still invalidates this pinned grant, even if it races the write.
             var state = await ReadAsync(ct) ?? new(1, []);
             await JsonStorage.WriteAsync(Path, state with { Grants = state.Grants.Append(grant).ToArray() }, true, ct);
         }

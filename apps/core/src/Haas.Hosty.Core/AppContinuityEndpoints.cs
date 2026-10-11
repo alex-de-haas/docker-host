@@ -89,7 +89,8 @@ internal static class AppContinuityEndpoints
                 throw new AppIdentityException("token_expired", "The authorizing browser session has ended.");
             await identity.RevalidateHashAsync(grant.TokenHash, grant.AppId, ct);
             var now = clock.UtcNow;
-            if (now - (parent.LastSeenAt ?? parent.CreatedAt) >= TimeSpan.FromMinutes(1))
+            var touchThrottle = TimeSpan.FromTicks(Math.Min(TimeSpan.FromMinutes(1).Ticks, lifetimes.CoreSessionIdle.Ticks / 6));
+            if (now - (parent.LastSeenAt ?? parent.CreatedAt) >= touchThrottle)
                 await users.UpdateAsync(directory => directory with
                 {
                     Sessions = directory.Sessions.Select(s => s.Id == parent.Id && s.UserId == grant.UserId

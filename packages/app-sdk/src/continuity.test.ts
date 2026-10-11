@@ -69,8 +69,23 @@ it("refuses protected dispatch during outage and recovers without replay on netw
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
 
+it.each([60, 10, 0.5])("maintains short idle policies on every advertised timer (%s seconds)", async seconds => {
+  vi.useFakeTimers(); vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const probe = vi.fn().mockResolvedValue(true);
+  const short = readAppContinuity({ ...authority, checkAfterSeconds: seconds })!;
+  expect(short.checkAfterSeconds).toBe(seconds);
+  cleanup = configureAppContinuity({ coreOrigin: "http://core.localhost", authority: short, probe });
+  const first = ensureAppContinuity(); reply(); await first;
+  await vi.advanceTimersByTimeAsync(seconds * 1000);
+  expect(document.querySelector("iframe")).not.toBeNull();
+  const second = ensureAppContinuity(); reply(); await second;
+  expect(probe).toHaveBeenCalledTimes(2);
+});
+
 it("does not invent continuity for old servers and clamps advertised timer values", () => {
   vi.useFakeTimers(); expect(readAppContinuity(undefined)).toBeUndefined();
+  expect(readAppContinuity({ ...authority, checkAfterSeconds: 0 })).toBeUndefined();
+  expect(readAppContinuity({ ...authority, checkAfterSeconds: -1 })).toBeUndefined();
   expect(readAppContinuity({ ...authority, version: 2 })).toBeUndefined();
   expect(readAppContinuity({ ...authority, checkAfterSeconds: 10000 })?.checkAfterSeconds).toBe(300);
 });
