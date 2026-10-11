@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-08
-updated: 2026-10-10
+updated: 2026-10-11
 summary: Proposed shared defaults for host UI and assistants, with personal overrides, explicit migration and no silent replacement of selected providers.
 components: [apps/core, apps/cli, apps/shell, apps/plans, packages/app-sdk]
 ---
@@ -187,16 +187,26 @@ provider installation frozen before prepare. Panel opening and separate-open lin
 to that installation, and the current host rechecks access. The standalone tool chooser changes
 presentation only: choosing/opening a tool never saves or overrides an assistant default.
 
+Owner clarification, 2026-10-11: [SDK UI composition](../sdk-ui-composition/plan.md) owns explicit
+navigation/tool defaults and host-selected placement, including desktop windows. Provider defaults
+do not select a conversation, force a new conversation or imply one assistant per app window.
+This plan preserves the current Plans new-discussion operation; adding context to an existing
+conversation would need an explicit domain contract. [Continuous app access](../continuous-app-access/plan.md)
+owns the proposed replacement for hourly renewal, independently of selection and placement.
+
 | Owner | Deliverables owned here or there |
 | --- | --- |
 | This plan | Shared store/API/revisions and host control commands, assistant selection, personal migration, settings container, resolver SDK and Shell/Plans selection integration |
 | [SDK panel system](../sdk-panel-system/feature.md) | Generic placement/host protocol and renderer, Shell/standalone composition, first Plans → assistant discussion beside its document, presentation retry and explicit separate opening |
+| [SDK UI composition](../sdk-ui-composition/plan.md) | Explicit navigation/tool policy, standalone defaults, standard/custom navigation and host renderer/view mechanisms |
 | [UI-client plan](../replaceable-ui-clients/plan.md) | Confirmed `ui-client` role, UI eligibility/resolution adapter, navigation/links, Core recovery page, UI settings row, UI recovery through shared CLI, manifest rollout and legacy UI migration |
 | Existing identity/readiness features | App authentication, assignments, grants, Core confirmation and readiness observations; reuse without redesign |
 
-Recommended order: complete the SDK panel scenario with today's explicit provider selection, then
-implement this shared-default foundation and complete assistant selection journey as this feature's
-single PR. The panel feature does not depend on this Draft or invent temporary default storage.
+The SDK panel scenario already ships with explicit provider selection. The owner prioritizes
+continuous access next and defers composition implementation. Implement this shared-default
+foundation and complete assistant selection journey as this feature's single PR after its own
+approval; neither new Draft is an implementation prerequisite for default resolution.
+The panel feature does not depend on this Draft or invent temporary default storage.
 This feature subsequently replaces Shell/Plans selection policy while reusing its presentation API.
 The UI-client feature consumes both in its own complete PR; these are separate features, not phase
 splits. Only advertise/render the UI category after its adapter is present. Do not create a temporary

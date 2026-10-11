@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-27
-updated: 2026-10-10
+updated: 2026-10-11
 summary: Let users hide app-provided panel entries in Shell and restore them later.
 components: [apps/shell]
 ---
@@ -41,6 +41,11 @@ SDK host alone does not make local Shell preferences global. Hiding a tool must 
 explicit finalized handoff to be recreated at another provider. D3 owns the reveal/restore policy.
 The SDK's standalone opened-tool rail and Add tool chooser use window-local state, with no persisted
 hide/pin setting. That scope does not require this plan's cross-host preference decision first.
+
+[SDK UI composition](../sdk-ui-composition/plan.md), proposed 2026-10-11, owns explicit launch/host
+navigation and tool policy, including standalone defaults. Its enabled/launcher fields are not
+persisted hide/restore preferences. This plan remains their sole owner and must not infer global
+preferences from one shell's layout, one app window or a URL hint.
 
 ## Deliverables
 
