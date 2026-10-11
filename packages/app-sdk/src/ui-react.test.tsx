@@ -388,6 +388,32 @@ it("retries refused restoration only after fresh catalog metadata", async () => 
   expect(requests()).toHaveLength(2);
   expect(element.querySelector("aside")!.hidden).toBe(false);
 });
+it.each(["close", "collapse"])("reopens a catalog workspace after repeated %s actions", async action => {
+  await mountRestoration();
+  for (let cycle = 0; cycle < 2; cycle++) {
+    const frame = element.querySelector("iframe")!, id = host!.getSnapshot().selectedPresentationId;
+    expect(frame).not.toBeNull();
+    await act(async () => {
+      if (action === "close") [...element.querySelectorAll("button")].find(button => button.textContent === "Close this tool view")!.click();
+      else host!.setExpanded(false);
+    });
+    expect(element.querySelector("aside")!.hidden).toBe(true);
+    expect(host!.getSnapshot().expanded).toBe(false);
+    if (action === "close") expect(host!.getSnapshot().tools).toHaveLength(0);
+    await act(async () => host!.setExpanded(true));
+    expect(element.querySelector("aside")!.hidden).toBe(false);
+    expect(host!.getSnapshot().selected).toEqual(catalog[0]!.panel);
+    expect(host!.getSnapshot().tools).toHaveLength(1);
+    if (action === "close") {
+      expect(element.querySelector("iframe")).not.toBe(frame);
+      expect(host!.getSnapshot().selectedPresentationId).not.toBe(id);
+    } else {
+      expect(element.querySelector("iframe")).toBe(frame);
+      expect(host!.getSnapshot().selectedPresentationId).toBe(id);
+    }
+  }
+  expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("resolve"))).toHaveLength(action === "close" ? 3 : 1);
+});
 it("does not retry refused restoration after the operator collapses", async () => {
   refuseResolution = true; await mountRestoration();
   await act(async () => host!.setExpanded(false));

@@ -151,7 +151,8 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
     const restore = () => {
       const current = host.getSnapshot();
       const slot = current.workspaces?.find(w => w.workspaceId === workspaceId);
-      if (!slot?.expanded) { attemptedCatalog = null; return; }
+      if (!slot?.expanded) { completed = false; attemptedCatalog = null; return; }
+      if (completed && !slot.selectedId) { completed = false; attemptedCatalog = null; }
       if (!live || pending || completed || slot.selectedId || current.catalog === attemptedCatalog) return;
       const first = current.catalog.find(panel => panel.available);
       if (!first) return;

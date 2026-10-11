@@ -254,7 +254,9 @@ shell, and this API does not add context to an existing assistant conversation.
   movement rejection, plus successful movement during ordinary metadata refresh. Pending opening
   and picker tests verify cancellation on collapse, newer opening/picker and activity changes,
   including progress of the next queued opening. Workspace removal during bootstrap/panel resolution
-  prevents orphaned tools and stale openings after re-registration; pending pickers also retire. Closed-request replay still checks origin, endpoint
+  prevents orphaned tools and stale openings after re-registration; pending pickers also retire.
+  Catalog restoration supports repeated close/reopen cycles while collapse/reopen retains the same
+  iframe and does not request another resolution. Closed-request replay still checks origin, endpoint
   and frame-policy changes. Delayed same-endpoint router tests cover deactivation, disposal and
   renewed request-ID reuse in both host and embedded clients; retired navigation cannot report success.
   Same-endpoint navigation covers manifest-key reports, delayed readiness, invalid destinations, stale
@@ -304,7 +306,7 @@ Verification recorded on 2026-10-11:
 | `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --artifacts-path "$PWD/build/ui-composition" --verbosity quiet` | 3,139 passed; 4 opt-in Docker/VPN integration tests skipped because their fixtures were not enabled |
 | Core build and `UiPanelHttpTests` after the icon-origin fix | Build passed; 31 HTTP tests passed |
 | `npm run core:aot` | Native AOT publish passed for osx-arm64 with no trim/AOT warnings |
-| `npm test --workspace=@hosty-sdk/app` | 625 passed |
+| `npm test --workspace=@hosty-sdk/app` | 627 passed |
 | `npm test` in Shell / Plans / Harness / Marketplace / Workspaces / Demo / Telemetry UI | 191 Node + 244 component / 117 / 536 / 111 / 7 / 4 / 10 passed |
 | `npm run build --workspace=@hosty-sdk/app` and overlay upgrade contract script | Passed, including optional Next export and unchanged consumer compatibility |
 | `npm run build -- --webpack` in all seven affected web apps | Passed; affected app lint checks passed with no errors |
