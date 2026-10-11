@@ -82,7 +82,9 @@ with optional expiry or an explicit until-revoked choice. Creation requires the 
 isolated Core browser session, exact Origin and CSRF proof; app credentials cannot create authority.
 Ordinary logout ends interactive descendants but preserves deliberately authorized background work.
 **Revoke all my authorizations** revokes sessions, OAuth grants and background grants and changes the
-account authorization revision. Disabled/removed accounts and changed revisions stop dispatch too.
+account authorization revision. It also closes that user's already-open Core event streams across
+browser, device, manual and OAuth sessions. Other users' streams stay open. Disabled/removed accounts
+and changed revisions stop dispatch too.
 
 Records in `core/auth/background-grants.json` pin the owner, consuming installation, label,
 immutable scopes, creation time, optional expiry and revocation. Changes use revoke-and-create.

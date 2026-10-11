@@ -219,11 +219,35 @@ public sealed class ContinuousAccessHttpTests
         var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
         var source = await host.Services.GetRequiredService<BackgroundGrantService>().IssueAsync("console", new(id, "health"), default);
         var original = app.DefaultRequestHeaders.GetValues(AppManagementAuthorization.IdentityHeader).Single();
+        var users = host.Services.GetRequiredService<UserDirectoryStore>();
+        await users.UpdateAsync(state => state with
+        {
+            Users = [.. state.Users, state.Users.Single() with { Id = "other", Email = "other@example.test" }],
+            Sessions = [.. state.Sessions, parent with { Id = "device", Kind = AccessTokenKinds.Device },
+                parent with { Id = "manual", Kind = AccessTokenKinds.Manual },
+                parent with { Id = "oauth", Kind = AccessTokenKinds.OAuth }, parent with { Id = "other-session", UserId = "other" }],
+        });
+        var events = host.Services.GetRequiredService<CoreEventHub>();
+        using var primaryStream = events.Subscribe(parent.UserId, true, parent.Id);
+        using var deviceStream = events.Subscribe(parent.UserId, true, "device");
+        using var manualStream = events.Subscribe(parent.UserId, true, "manual");
+        using var oauthStream = events.Subscribe(parent.UserId, true, "oauth");
+        using var otherStream = events.Subscribe("other", true, "other-session");
         (await browser.PostAsJsonAsync("/api/auth/background-grants/revoke-all-authorizations", new { })).EnsureSuccessStatusCode();
         var identity = host.Services.GetRequiredService<AppIdentityService>();
         await Assert.ThrowsAsync<AppIdentityException>(() => identity.RevalidateAsync(original, "console"));
         await Assert.ThrowsAsync<AppIdentityException>(() => identity.RequireOperationHashAsync(AppIdentityService.HashToken(source.AccessToken), "console", _ => true, default));
-        Assert.All((await host.Services.GetRequiredService<UserDirectoryStore>().ReadAsync()).Sessions, session => Assert.NotNull(session.RevokedAt));
+        var sessions = (await users.ReadAsync()).Sessions;
+        Assert.All(sessions.Where(s => s.UserId == parent.UserId), session => Assert.NotNull(session.RevokedAt));
+        Assert.Null(sessions.Single(s => s.Id == "other-session").RevokedAt);
+        events.PublishAppEvent(CoreEventHub.AppChanged, "console");
+        foreach (var stream in new[] { primaryStream, deviceStream, manualStream, oauthStream })
+        {
+            Assert.True(stream.Reader.Completion.IsCompleted);
+            Assert.False(stream.Reader.TryRead(out _));
+        }
+        Assert.False(otherStream.Reader.Completion.IsCompleted);
+        Assert.True(otherStream.Reader.TryRead(out _));
     }
 
     [Fact]

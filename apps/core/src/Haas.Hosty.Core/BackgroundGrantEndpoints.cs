@@ -19,14 +19,15 @@ internal static class BackgroundGrantEndpoints
             return Results.NoContent();
         })).WithMetadata(new DisableCorsAttribute());
         app.MapPost(route + "/revoke-all-authorizations", (HttpContext ctx, BackgroundGrantService grants,
-            UserDirectoryStore users, OAuthStore oauth, IClock clock) => BrowserAsync(ctx, async user =>
+            UserDirectoryStore users, OAuthStore oauth, CoreEventHub events, IClock clock) => BrowserAsync(ctx, async user =>
         {
             // AuthRevision ends every issued child credential as well as devices/OAuth and browser authority.
-            await users.UpdateAsync(state => state with
+            var sessionIds = await users.UpdateAsync(state => (state with
             {
                 Users = state.Users.Select(u => u.Id == user.Id ? u with { AuthRevision = Guid.NewGuid().ToString("N"), UpdatedAt = clock.UtcNow } : u).ToArray(),
                 Sessions = state.Sessions.Select(s => s.UserId == user.Id ? s with { RevokedAt = clock.UtcNow } : s).ToArray(),
-            }, ctx.RequestAborted);
+            }, state.Sessions.Where(s => s.UserId == user.Id).Select(s => s.Id).ToArray()), ctx.RequestAborted);
+            foreach (var sessionId in sessionIds) events.CloseSession(sessionId);
             await oauth.UpdateAsync<object?>(state => (state with
             {
                 Grants = state.Grants.Select(g => g.UserId == user.Id ? g with { RevokedAt = clock.UtcNow } : g).ToArray(),
