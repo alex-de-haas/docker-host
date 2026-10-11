@@ -768,6 +768,35 @@ describe("embedded panel discovery", () => {
 });
 
 describe("composition presentation instances", () => {
+  it.each([false, true].flatMap(reused => ["removed", "origin", "policy", "unavailable", "attention"].map(change => ({ reused, change }))))(
+    "rechecks a pending renderer destination after $change (reused: $reused)", async ({ reused, change }) => {
+      host = createUiHost(); const h = host;
+      const present = vi.fn(async (_tool: unknown, _signal: AbortSignal) => "accepted" as const);
+      h.registerWorkspace({ workspaceId: "default", renderer: { present, focus() {}, collapse() {}, release() {}, showToolPicker: async () => "accepted" } });
+      await h.refresh();
+      if (reused) { await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() }); h.collapseWorkspace("default"); }
+      let signal!: AbortSignal, finish!: (value: "accepted") => void;
+      present.mockImplementationOnce((_tool, abort) => {
+        signal = abort;
+        return new Promise((resolve, reject) => { finish = resolve; abort.addEventListener("abort", () => reject(new Error("Cancelled")), { once: true }); });
+      });
+      const opening = h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+      await vi.waitFor(() => expect(signal).toBeDefined());
+      if (change === "removed") panels = [];
+      if (change === "origin") panels = [{ ...catalog, origin: "https://replacement.test" }];
+      if (change === "policy") panels = [{ ...catalog, framePolicy: { ...policy, microphone: false } }];
+      if (change === "unavailable") panels = [{ ...catalog, available: false, state: "unavailable" }];
+      if (change === "attention") h.setAttention(h.getSnapshot().tools[0]!.presentationId, 3);
+      await h.refresh();
+      if (change === "attention") {
+        expect(signal.aborted).toBe(false); finish("accepted");
+        expect(await opening).toMatchObject({ status: "opened" }); expect(h.getSnapshot().tools[0]!.attention).toBe(3);
+      } else {
+        expect(signal.aborted).toBe(true);
+        expect(await opening).toMatchObject({ status: "blocked", code: change === "unavailable" ? "unavailable" : "destination_changed" });
+        expect(h.getSnapshot().expanded).toBe(false); expect(h.getSnapshot().tools).toHaveLength(reused ? 1 : 0);
+      }
+    });
   it.each(["inactive", "renewed", "reconnected", "closed-source"])("rejects custom navigation after its source becomes %s", async boundary => {
     const h = await start(), opened = await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
     expect(opened.status).toBe("opened"); if (opened.status !== "opened") return;
@@ -1046,6 +1075,34 @@ describe("composition presentation instances", () => {
     if (action === "move") expect(await next).toBe(true);
     else expect(await next).toMatchObject({ status: action === "opening" ? "opened" : "accepted" });
     expect(h.getSnapshot().tools.find(tool => tool.presentationId === firstId)?.workspaceId).toBe("floating");
+  });
+  it.each(["collapse", "opening", "picker"])("cancels pending rollback on a newer source %s without cancelling that action", async action => {
+    host = createUiHost(); const h = host, layer = {};
+    let originalId = "", rollbackSignal!: AbortSignal, cancel!: () => void;
+    const cancelled = new Promise<void>(resolve => { cancel = resolve; });
+    const renderer = { frameLayer: layer, focus() {}, collapse() {}, release() {}, showToolPicker: async () => "accepted" as const };
+    h.registerWorkspace({ workspaceId: "default", renderer: { ...renderer, present: async (tool, signal) => {
+      if (!originalId) return "accepted";
+      if (tool.presentationId === originalId) {
+        rollbackSignal = signal;
+        return new Promise(resolve => signal.addEventListener("abort", () => { cancel(); resolve("unavailable"); }, { once: true }));
+      }
+      await cancelled; return "accepted";
+    }, showToolPicker: async () => { await cancelled; return "accepted"; } } });
+    h.registerWorkspace({ workspaceId: "floating", renderer: { ...renderer, present: async () => "unavailable" } });
+    await h.refresh();
+    const opened = await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    if (opened.status !== "opened") throw new Error(opened.code); originalId = opened.presentationId!;
+    const moving = h.movePresentation(originalId, "floating");
+    await vi.waitFor(() => expect(rollbackSignal).toBeDefined());
+    const next = action === "opening" ? h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() })
+      : action === "picker" ? h.openToolPicker({ requestId: createPresentationRequestId() }) : null;
+    if (action === "collapse") h.collapseWorkspace("default");
+    await vi.waitFor(() => expect(rollbackSignal.aborted).toBe(true));
+    expect(await moving).toBe(false);
+    if (next) expect(await next).toMatchObject({ status: action === "opening" ? "opened" : "accepted" });
+    expect(h.getSnapshot().tools.some(tool => tool.presentationId === originalId)).toBe(false);
+    expect(h.getSnapshot().tools).toHaveLength(action === "opening" ? 1 : 0);
   });
   it("does not acknowledge an absent renderer or retarget a preferred mismatching instance", async () => {
     host = createUiHost(); await host.refresh();

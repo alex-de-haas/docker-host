@@ -152,16 +152,18 @@ export class UiHost implements UiClient {
     const state = this.workspaces.get(id); if (!state) return;
     state.generation++; state.expanded = false; state.renderer?.collapse(); this.publishWorkspaces();
   };
-  closePresentation = (id: string) => {
+  closePresentation = (id: string) => { this.releasePresentation(id); };
+  private releasePresentation(id: string, supersede = true) {
     const tool = this.snapshot.tools.find(t => t.presentationId === id); if (!tool) return;
     this.moves.get(id)?.abort();
     const state = this.workspaces.get(tool.workspaceId)!;
     for (const frame of this.frames) if (frame.view.presentationId === id) frame.cleanup();
-    state.generation++; state.renderer?.release(id);
+    if (supersede) state.generation++;
+    state.renderer?.release(id);
     this.update({ tools: this.snapshot.tools.filter(t => t !== tool) });
     if (state.selectedId === id) { state.selectedId = null; state.expanded = false; }
     this.publishWorkspaces();
-  };
+  }
   private resetPresentations() {
     for (const tool of this.snapshot.tools) this.closePresentation(tool.presentationId);
     for (const state of this.workspaces.values()) {
@@ -200,13 +202,20 @@ export class UiHost implements UiClient {
       const retained = this.snapshot.tools.find(t => t.presentationId === id);
       if (!retained) { renderer.release(id); return false; }
       const state = this.workspaces.get(retained.workspaceId)!, restore = state.renderer;
+      const restorationGeneration = state.generation;
       const rollback = new AbortController(); this.moves.set(id, rollback);
+      this.rendererWork.set(rollback, { check: () => {
+        if (rollback.signal.aborted || restorationGeneration !== state.generation || restore !== state.renderer
+          || !this.snapshot.tools.some(t => t.presentationId === id && t.workspaceId === retained.workspaceId))
+          throw new Error("Restoration was superseded.");
+      } });
       try {
         if (!restore || await restore.present(retained, rollback.signal) !== "accepted") throw new Error("Restoration was refused.");
         if (!this.snapshot.tools.some(t => t.presentationId === id)) { restore.release(id); return false; }
         if (this.active && this.getChrome().tools.enabled && state.expanded && state.selectedId) restore.focus(state.selectedId);
         else restore.collapse();
-      } catch { this.closePresentation(id); }
+      } catch { this.releasePresentation(id, restorationGeneration === state.generation); }
+      finally { this.rendererWork.delete(rollback); }
       return false;
     } finally { stop(); this.moves.delete(id); }
   };
@@ -348,7 +357,7 @@ export class UiHost implements UiClient {
         check();
         const resolved = await uiRequest<UiResolvedPanel>(this.path, "panels/resolve", target); check();
         if (!resolved.available || !resolved.surface) throw new UiError(resolved.state || "destination_unavailable", "The selected panel is unavailable.");
-        const matches = (tool: UiTool) => tool.workspaceId === state.workspaceId && panelKey(tool.target.panel) === panelKey(resolved.target.panel)
+        const matches = (tool: UiTool) => !this.moves.has(tool.presentationId) && tool.workspaceId === state.workspaceId && panelKey(tool.target.panel) === panelKey(resolved.target.panel)
           && tool.resolved.surface?.origin === resolved.surface!.origin && tool.resolved.surface?.endpoint === resolved.surface!.endpoint
           && canonicalSurfaceRoute(tool.currentRoute) === canonicalSurfaceRoute(resolved.target.route)
           && JSON.stringify(tool.resolved.surface?.framePolicy) === JSON.stringify(resolved.surface!.framePolicy);
@@ -361,7 +370,13 @@ export class UiHost implements UiClient {
         if (!old) this.update({ tools: [...this.snapshot.tools, tool] });
         const renderer = state.renderer!;
         try {
-          const checkRenderer = () => { check(); if (state.renderer !== renderer) throw new UiError("presentation_superseded", "The workspace renderer changed."); };
+          const checkRenderer = () => {
+            check(); if (state.renderer !== renderer) throw new UiError("presentation_superseded", "The workspace renderer changed.");
+            const current = this.snapshot.tools.find(t => t.presentationId === tool.presentationId);
+            if (!current?.resolved.surface || JSON.stringify(current.resolved.surface) !== JSON.stringify(tool.resolved.surface))
+              throw new UiError("destination_changed", "The presentation destination changed.");
+            if (!current.resolved.available) throw new UiError(current.resolved.state, "The presentation is unavailable.");
+          };
           if (await this.runRenderer(checkRenderer, signal => renderer.present(tool, signal), frame) !== "accepted") throw new UiError("presentation_unavailable", "The workspace could not present this tool.");
           check();
         } catch (error) {

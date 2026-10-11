@@ -187,9 +187,14 @@ do not cancel a retained presentation; movement checks its ID and workspace owne
 the latest metadata. A closed instance is released instead of restored.
 If that renderer also refuses restoration, the inconsistent presentation is closed. Renderer release
 operations must tolerate an already released ID when cleaning up a cancelled in-flight operation.
+Rollback placement also observes source-workspace supersession. If cancellation prevents restoration,
+cleanup does not invalidate the newer action. Exact openings exclude instances currently moving or
+restoring, so a new opening does not inherit an instance whose placement is being retired.
 Pending openings and tool pickers receive a renderer cancellation signal when a newer workspace
 action, collapse, source loss or activity change supersedes them. A compliant renderer releases
 its pending work on cancellation, allowing the next opening in the same panel queue to proceed.
+While a renderer is pending, opening also revalidates the retained destination and availability; a
+changed catalog cannot turn an invalidated frame into an accepted opening.
 The React renderer keeps iframe containers in one stable DOM layer and positions them
 over workspace viewports; movement, switching, collapse and resize never reparent the iframe.
 
@@ -255,6 +260,9 @@ shell, and this API does not add context to an existing assistant conversation.
   reconnection or closure; synchronous React navigation still updates its surface before replacement.
   Competing move/open/picker requests abort prior destination movement even before a snapshot changes.
   View overrides survive endpoint navigation and component remounting, while explicit prop changes apply.
+  Pending new/reused openings cover declaration removal, origin/policy changes, unavailability and
+  harmless attention changes. Rollback cancellation covers newer collapse/open/picker actions and
+  confirms cleanup does not supersede the newer request.
 - Plans component tests use a real SDK host to close and reopen a finalized discussion through both
   visible actions, retain its conversation target and replay a later uncertain opening without
   repeating the assistant handoff.
@@ -289,7 +297,7 @@ Verification recorded on 2026-10-11:
 | `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --artifacts-path "$PWD/build/ui-composition" --verbosity quiet` | 3,139 passed; 4 opt-in Docker/VPN integration tests skipped because their fixtures were not enabled |
 | Core build and `UiPanelHttpTests` after the icon-origin fix | Build passed; 31 HTTP tests passed |
 | `npm run core:aot` | Native AOT publish passed for osx-arm64 with no trim/AOT warnings |
-| `npm test --workspace=@hosty-sdk/app` | 601 passed |
+| `npm test --workspace=@hosty-sdk/app` | 614 passed |
 | `npm test` in Shell / Plans / Harness / Marketplace / Workspaces / Demo / Telemetry UI | 191 Node + 244 component / 117 / 536 / 111 / 7 / 4 / 10 passed |
 | `npm run build --workspace=@hosty-sdk/app` and overlay upgrade contract script | Passed, including optional Next export and unchanged consumer compatibility |
 | `npm run build -- --webpack` in all seven affected web apps | Passed; affected app lint checks passed with no errors |
