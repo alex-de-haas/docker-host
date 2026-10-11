@@ -174,7 +174,12 @@ over workspace viewports; movement, switching, collapse and resize never reparen
 `HostyPanelWorkspace` defaults to the `default` workspace, with `workspaceId` for additional areas.
 `layout="responsive"` selects dock/drawer geometry; `layout="dock"` supports host-owned tool windows.
 There is one rail entry per declaration and an instance switcher when several views exist.
-Closing a view releases only that frame, not the conversation or background work. Separate opening
+Closing a view releases only that frame, not the conversation or background work. Actor, Core,
+installation and catalog-authority changes release every renderer-owned presentation before resetting
+workspace state; disposing the host releases them as well. Escape identifies the selected retained
+presentation even after its live route changes. After an acknowledged opening, an explicit Plans
+retry uses a fresh presentation request and exact target reuse, allowing a closed tool to reopen
+without repeating the discussion handoff. Uncertain openings keep their pending request ID. Separate opening
 keeps the domain target without transferring unsent drafts. Catalog access/installation/destination
 or frame-policy changes invalidate stale frames. Rail selection also revalidates before focusing.
 
@@ -214,7 +219,11 @@ shell, and this API does not add context to an existing assistant conversation.
   Replay tests retain the same instance after same-endpoint and cross-endpoint navigation, while
   actual destination replacement and revoked access still block the original request. The sequence
   includes route reports before readiness, collapse/rail selection, catalog refresh, rejected foreign
-  routes and renewed readiness within the resolved navigation route tree.
+  routes, renewed readiness within the resolved navigation route tree and Escape dismissal. Non-React
+  renderer fixtures verify frame release on actor/Core/installation changes, authority loss and disposal.
+- Plans component tests use a real SDK host to close and reopen a finalized discussion through both
+  visible actions, retain its conversation target and replay a later uncertain opening without
+  repeating the assistant handoff.
 - Overlay integration tests cover focus return to the inner app-content landmark when hiding
   custom, standard and drawer navigation, bypassing the non-focusable authentication wrapper.
 - App and native tests cover explicit launch policy, route synchronization, notification routing
@@ -240,15 +249,15 @@ Verification recorded on 2026-10-11:
 | `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --artifacts-path "$PWD/build/ui-composition" --verbosity quiet` | 3,139 passed; 4 opt-in Docker/VPN integration tests skipped because their fixtures were not enabled |
 | Core build and `UiPanelHttpTests` after the icon-origin fix | Build passed; 31 HTTP tests passed |
 | `npm run core:aot` | Native AOT publish passed for osx-arm64 with no trim/AOT warnings |
-| `npm test --workspace=@hosty-sdk/app` | 557 passed |
-| `npm test` in Shell / Plans / Harness / Marketplace / Workspaces / Demo / Telemetry UI | 191 Node + 238 component / 114 / 536 / 111 / 7 / 4 / 10 passed |
+| `npm test --workspace=@hosty-sdk/app` | 562 passed |
+| `npm test` in Shell / Plans / Harness / Marketplace / Workspaces / Demo / Telemetry UI | 191 Node + 238 component / 117 / 536 / 111 / 7 / 4 / 10 passed |
 | `npm run build --workspace=@hosty-sdk/app` and overlay upgrade contract script | Passed, including optional Next export and unchanged consumer compatibility |
 | `npm run build -- --webpack` in all seven affected web apps | Passed; affected app lint checks passed with no errors |
 | `swift test --scratch-path /tmp/hosty-ui-composition-swift` in `apps/shell-swift/HostyKit` | 183 passed; native launch helper coverage, without a WKWebView runtime session |
 | `node scripts/check-versions.mjs`, `node scripts/docs-index.mjs --check`, `git diff --check` | Passed |
 
 Browser acceptance was repeated for Shell and standalone on the implementation builds. The later
-navigation review fixes were verified with seven component/host/overlay regressions, the full
+navigation review fixes were verified with component/host/overlay and Plans integration regressions, the full
 SDK suite and the SDK build; the complete browser matrix was not repeated for that fix. The test
 Core and its apps were stopped afterward; the operator instance was not used for lifecycle changes.
 Core restore reported NU1900 because the NuGet vulnerability feed was unavailable; package restore,

@@ -159,6 +159,11 @@ it.each([false, true])("keeps frame integrations on the resolved origin after na
   expect(authRequired).toHaveBeenCalledWith(panel.panel.appId);
   if (retained) {
     expect(host!.getSnapshot().tools[0]).toMatchObject({ currentRoute: next.route, readiness: "ready" });
+    const dismiss = vi.fn(); window.addEventListener("hosty:ui:drawer-dismiss", dismiss);
+    try {
+      await act(async () => send({ ...nextOffer, type: "hosty:ui:dismiss" }, next.origin));
+      expect(dismiss).toHaveBeenCalledWith(expect.objectContaining({ detail: "default" }));
+    } finally { window.removeEventListener("hosty:ui:drawer-dismiss", dismiss); }
     const nextSrc = frame.src, nextContext = frame.contentWindow;
     await act(async () => host!.setExpanded(false));
     await act(async () => { expect(await host!.selectPanel(panel.panel)).toMatchObject({ status: "opened", presentationId }); });

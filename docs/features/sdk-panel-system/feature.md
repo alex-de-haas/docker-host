@@ -223,8 +223,10 @@ new discussion replaces them with a new installation-bound request.
 
 The normal path calls `openSurface` with a request UUID. It opens Shell's panel when embedded
 and the local SDK host when standalone, without reserving a popup. Plans distinguishes successful
-placement from provider-reported readiness. Retry opening reuses the completed result; Open
-separately is an explicit noopener link. Neither action repeats uploads/finalization or submits
+placement from provider-reported readiness. Retry opening reuses the completed discussion result. An uncertain opening reuses its pending
+request ID; after an acknowledged opening, a later explicit action uses a fresh request so a closed
+presentation can reopen, while exact target reuse preserves a still-open frame. Open separately
+is an explicit noopener link. Neither action repeats uploads/finalization or submits
 the prepared draft. Harness reports readiness only after loading the exact requested session,
 including requests delivered by Shell messages to the default assistant route. A failed or mismatched
 session fetch cannot report a previously attached session as ready for that request.

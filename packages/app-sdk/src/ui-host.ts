@@ -145,11 +145,19 @@ export class UiHost implements UiClient {
   closePresentation = (id: string) => {
     const tool = this.snapshot.tools.find(t => t.presentationId === id); if (!tool) return;
     const state = this.workspaces.get(tool.workspaceId)!;
+    for (const frame of this.frames) if (frame.view.presentationId === id) frame.cleanup();
     state.generation++; state.renderer?.release(id);
     this.update({ tools: this.snapshot.tools.filter(t => t !== tool) });
     if (state.selectedId === id) { state.selectedId = null; state.expanded = false; }
     this.publishWorkspaces();
   };
+  private resetPresentations() {
+    for (const tool of this.snapshot.tools) this.closePresentation(tool.presentationId);
+    for (const state of this.workspaces.values()) {
+      state.selectedId = null; state.expanded = false; state.generation++; state.renderer?.collapse();
+    }
+    this.publishWorkspaces();
+  }
   movePresentation = async (id: string, workspaceId: string): Promise<boolean> => {
     this.requireTools();
     const tool = this.snapshot.tools.find(t => t.presentationId === id), next = this.workspaces.get(workspaceId);
@@ -193,7 +201,7 @@ export class UiHost implements UiClient {
     const previous = this.snapshot.bootstrap;
     if (previous && (previous.userId !== value.userId || previous.coreOrigin !== value.coreOrigin || previous.app.installationId !== value.app.installationId)) {
       this.ledger.clear(); this.actions.clear(); this.toolQueues.clear(); this.composition.resetNavigation();
-      for (const state of this.workspaces.values()) { state.selectedId = null; state.expanded = false; state.generation++; }
+      this.resetPresentations();
       for (const frame of this.frames) {
         frame.connected = false; frame.actor = null; frame.nonce = null;
         frame.onConnection?.(false);
@@ -214,7 +222,7 @@ export class UiHost implements UiClient {
         const own = await this.bootstrap(generation, true);
         this.checkActivity(generation, true);
         void this.composition.refreshNavigation();
-        if (!own.canHost) { this.activityReady = true; this.setEnvironment("unsupported", "app_permission_required"); this.update({ catalog: [], tools: [], selected: null, expanded: false }); return; }
+        if (!own.canHost) { this.resetPresentations(); this.activityReady = true; this.setEnvironment("unsupported", "app_permission_required"); this.update({ catalog: [], tools: [], selected: null, expanded: false }); return; }
         const catalog = await uiRequest<{ panels: UiPanel[] }>(this.path, "panels");
         this.checkActivity(generation, true);
         if (!Array.isArray(catalog.panels)) throw new UiError("ui_response_invalid", "Invalid panel catalog.");
@@ -594,11 +602,14 @@ export class UiHost implements UiClient {
       else if (msg.state === "auth-required" || msg.state === "blocked") this.reportFrame(frame, "auth-required");
     } else if (msg.type === "hosty:ui:dismiss") {
       const selected = this.snapshot.tools.find(t => t.presentationId === this.workspaces.get(frame.view.workspaceId)?.selectedId);
-      if (selected?.resolved.surface?.appId === frame.surface.appId && selected.target.panel.panelId === frame.surface.panelId && selected.target.route === frame.surface.route)
+      if (selected && (frame.view.presentationId ? selected.presentationId === frame.view.presentationId
+        : selected.resolved.surface?.appId === frame.surface.appId && selected.target.panel.panelId === frame.surface.panelId && selected.target.route === frame.surface.route))
         window.dispatchEvent(new CustomEvent("hosty:ui:drawer-dismiss", { detail: frame.view.workspaceId }));
     }
   }
   dispose = () => {
+    if (this.disposed) return;
+    this.resetPresentations();
     this.disposed = true; this.composition.dispose(); this.actions.clear(); for (const frame of this.frames) frame.cleanup();
     window.removeEventListener("message", this.onMessage); window.removeEventListener("focus", this.onFocus);
     this.listeners.clear(); this.events.clear(); this.ledger.clear();

@@ -48,6 +48,34 @@ function frame(surface = resolved.surface!, view?: UiViewDescriptor) {
 }
 
 describe("panel host authority and replay", () => {
+  it.each(["actor", "core", "installation", "permission", "dispose"])("releases non-React rendered frames at the %s boundary", async boundary => {
+    host = createUiHost(); const h = host, releases = [vi.fn(), vi.fn()];
+    const mounted = new Map<string, HTMLIFrameElement>();
+    ["default", "floating"].forEach((workspaceId, index) => h.registerWorkspace({ workspaceId, renderer: {
+      async present(tool) { const element = document.createElement("iframe"); document.body.append(element); mounted.set(tool.presentationId, element); return "accepted"; },
+      focus() {}, collapse() {}, showToolPicker: async () => "accepted",
+      release(id) { releases[index]!(id); mounted.get(id)?.remove(); mounted.delete(id); },
+    } }));
+    await h.refresh();
+    for (const workspaceId of ["default", "floating"]) {
+      h.setPlacementResolver(() => ({ workspaceId }));
+      await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    }
+    expect(document.querySelectorAll("iframe")).toHaveLength(2);
+    if (boundary === "dispose") h.dispose();
+    else {
+      if (boundary === "actor") metadata = { ...metadata, userId: "bob" };
+      if (boundary === "core") metadata = { ...metadata, coreOrigin: "https://other-core.test" };
+      if (boundary === "installation") metadata = { ...metadata, app: { ...metadata.app, installationId: "replacement" } };
+      if (boundary === "permission") metadata = { ...metadata, canHost: false };
+      await h.refresh();
+    }
+    expect(document.querySelectorAll("iframe")).toHaveLength(0); expect(mounted.size).toBe(0);
+    releases.forEach(release => expect(release).toHaveBeenCalledOnce());
+    expect(h.getSnapshot().tools).toHaveLength(0);
+    expect(h.getSnapshot().workspaces?.every(workspace => !workspace.expanded && workspace.selectedId === null)).toBe(true);
+    h.dispose(); releases.forEach(release => expect(release).toHaveBeenCalledOnce());
+  });
   it.each(["host activity", "child authentication"])("does not send old ledger results after %s renewal", async renewal => {
     const h = await start();
     await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
