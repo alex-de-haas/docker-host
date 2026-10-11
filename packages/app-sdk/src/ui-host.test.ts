@@ -927,7 +927,7 @@ describe("composition presentation instances", () => {
     const f = frame(resolved.surface!, { viewId: "app-window", workspaceId: "default", navigate });
     f.send({ type: "hosty:ui:probe", childNonce: f.offer.childNonce, versions: [1], capabilities: ["ui.composition.v1"] });
     f.send({ ...f.offer, type: "hosty:ui:accept", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: panel.appId, installationId: panel.installationId });
-    const next = { ...resolved.surface!, endpoint: "other", origin: "https://other.test", route: "/people" };
+    const next = { ...resolved.surface!, endpoint: "other", route: "/people" };
     fetcher.mockImplementation(async (path: string) => Response.json(path.endsWith("navigation/resolve") ? { available: true, surface: next, state: "running" } : metadata));
     const requestId = createPresentationRequestId(), message = { ...f.offer, type: "hosty:ui:navigate", requestId, entryKey: "entry", appId: "forged", installationId: "forged" };
     f.send(message); await vi.waitFor(() => expect(navigate).toHaveBeenCalledOnce());
@@ -935,6 +935,35 @@ describe("composition presentation instances", () => {
     expect(JSON.parse(fetcher.mock.calls.find(([path]) => path.endsWith("navigation/resolve"))![1].body)).toEqual({ appId: panel.appId, installationId: panel.installationId, entryKey: "entry" });
     f.send(message); await vi.waitFor(() => expect(f.post.mock.calls.filter(([m]) => m.type === "hosty:ui:action-result")).toHaveLength(2));
     expect(navigate).toHaveBeenCalledOnce();
+  });
+  it.each([false, true])("reconnects a custom-navigated document with its resolved authority (new origin: %s)", async crossOrigin => {
+    const h = await start(), opened = await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });
+    if (opened.status !== "opened") throw new Error(opened.code);
+    const next = { ...resolved.surface!, endpoint: "other", route: "/people", origin: crossOrigin ? "https://other.test" : resolved.surface!.origin };
+    const navigate = vi.fn(async () => { f.element.src = new URL(next.route, next.origin).href; });
+    const f = frame(resolved.surface!, { viewId: "custom-navigation", workspaceId: "default", presentationId: opened.presentationId, navigate });
+    f.send({ type: "hosty:ui:probe", childNonce: f.offer.childNonce, versions: [1], capabilities: ["ui.composition.v1"] });
+    f.send({ ...f.offer, type: "hosty:ui:accept", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: panel.appId, installationId: panel.installationId });
+    const previous = fetcher.getMockImplementation()!;
+    fetcher.mockImplementation((path: string, ...args: unknown[]) => path.endsWith("navigation/resolve")
+      ? Promise.resolve(Response.json({ available: true, surface: next, state: "running" })) : previous(path, ...args));
+    f.send({ ...f.offer, type: "hosty:ui:navigate", requestId: createPresentationRequestId(), entryKey: "people" });
+    await vi.waitFor(() => expect(h.getSnapshot().tools[0]!.resolved.surface).toEqual(next));
+    const post = vi.spyOn(f.element.contentWindow!, "postMessage").mockImplementation(() => {});
+    f.element.dispatchEvent(new Event("load")); post.mockClear();
+    const probe = { type: "hosty:ui:probe", childNonce: createPresentationRequestId(), versions: [1], capabilities: ["ui.composition.v1"] };
+    if (crossOrigin) { f.send(probe); expect(post).not.toHaveBeenCalled(); }
+    f.send(probe, next.origin);
+    const offer = post.mock.calls.find(([message]) => message.type === "hosty:ui:offer")![0];
+    expect(offer.generation).not.toBe(f.offer.generation);
+    f.send({ ...offer, type: "hosty:ui:accept", coreOrigin: metadata.coreOrigin, userId: metadata.userId,
+      appId: panel.appId, installationId: panel.installationId }, next.origin);
+    expect(post.mock.calls.find(([message]) => message.type === "hosty:ui:connected")).toMatchObject([
+      { endpoint: next.endpoint, route: next.route, code: null }, next.origin,
+    ]);
+    f.send({ ...offer, type: "hosty:ui:route", route: next.route }, next.origin);
+    f.send({ ...offer, type: "hosty:ui:surface-state", route: next.route, state: "ready" }, next.origin);
+    expect(h.getSnapshot().tools[0]).toMatchObject({ presentationId: opened.presentationId, readiness: "ready" });
   });
   it("retires pending requests from a closed source while preserving shared presentations", async () => {
     const h = await start(); await h.openSurface(target, { placement: "side", requestId: createPresentationRequestId() });

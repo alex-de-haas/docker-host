@@ -470,6 +470,7 @@ export class UiHost implements UiClient {
         const navigation = frame.view.navigate(resolved.surface);
         if (navigation) await navigation;
         check();
+        frame.surface = { ...resolved.surface, panelId: frame.surface.panelId };
       } else {
         this.forgetFrameRequests(frame); frame.onConnection?.(false);
         frame.surface = { ...resolved.surface, panelId: frame.surface.panelId };
