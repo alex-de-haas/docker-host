@@ -60,8 +60,8 @@ Approximate share of a typical screen: ~70% white and mist, ~20% ink, ~7% blue, 
 status color, at most 1% signal.
 
 Hosty Blue stays the action color for now (owner decision, 2026-10-12). The `Accent` artboard keeps
-four candidates — Iris `#5B5BD6`, Cobalt `#2F5BD3`, Ink, Lagoon `#0B7C86` — for the per-user accent
-setting listed under open questions.
+four candidates — Iris `#5B5BD6`, Sapphire `#2F5BD3`, Ink, Lagoon `#0B7C86` — for the per-user
+accent setting tracked in [Accent Presets](../accent-presets/plan.md), which is on hold.
 
 ### Ink scale (cool neutrals, hue 215°)
 
@@ -379,7 +379,7 @@ the deliverable that changes it.
 - [Replaceable UI Clients](../replaceable-ui-clients/plan.md) D8 owns showing confirmed role badges
   from Core facts for all installed apps. This plan supplies only the role icon set and the chip
   (D18); D8 decides where role data comes from and when it appears.
-- [Core App Shell](../core-app-shell/feature.md) documents the dashboard table and a sky-coloured
+- [Core App Shell](../core-app-shell/feature.md) documents the dashboard table and a sky-colored
   spinner for transitions; D6 and D7 change both.
 - [Core Event Bus](../core-event-bus/feature.md) gains a `tool.activity.changed` event; its
   hint-not-fact contract is unchanged.
@@ -426,9 +426,6 @@ the deliverable that changes it.
   its own minimum in its manifest instead of the 560 px default?
 - Is ⌘J the assistant shortcut?
 - May a user pin one tool as a fifth phone tab?
-- Per-user accent presets — parked by the owner on 2026-10-12. Presets only (no free color), stored
-  like the light/dark theme; embedded apps would need the `@hosty-sdk/app/theme` protocol to carry
-  an accent field. Not part of this plan unless it is brought in as a deliverable.
 
 ## Verification
 
