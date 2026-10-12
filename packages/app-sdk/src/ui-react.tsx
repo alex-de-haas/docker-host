@@ -76,6 +76,8 @@ export type HostyPanelWorkspaceProps = {
   workspaceId?: string;
   /** A host-owned tool window can keep dock geometry even in a narrow container. */
   layout?: "responsive" | "dock";
+  /** Keep a visible dismiss control in drawers; hosts with a tool rail can omit it in docks. */
+  minimizeControl?: "always" | "drawer";
   children: ReactNode; railMode?: "opened" | "catalog"; className?: string;
   initialWidth?: number; initialExpanded?: boolean; onWidthChange?: (width: number) => void; onExpandedChange?: (expanded: boolean) => void;
   onStartApp?: (appId: string) => void | Promise<void>;
@@ -85,7 +87,7 @@ export type HostyPanelWorkspaceProps = {
 };
 
 /** A single retained frame tree for dock and drawer; only CSS placement changes at the breakpoint. */
-export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE, layout = "responsive", railMode = "opened", className = "", initialWidth, initialExpanded,
+export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE, layout = "responsive", minimizeControl = "always", railMode = "opened", className = "", initialWidth, initialExpanded,
   onWidthChange, onExpandedChange, onStartApp, onAskAssistant, onAuthRequired, outbound, renderIcon }: HostyPanelWorkspaceProps) {
   const host = useHostyUiHost();
   const layer = useContext(UiFrameLayerContext), chrome = useHostyChrome();
@@ -94,7 +96,7 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
   const unsupported = state.error?.code.startsWith("unsupported") === true;
   const workspace = state.workspaces?.find(w => w.workspaceId === workspaceId);
   const workspaceTools = state.tools.filter(t => t.workspaceId === workspaceId);
-  const root = useRef<HTMLDivElement>(null), content = useRef<HTMLDivElement>(null), body = useRef<HTMLElement>(null), close = useRef<HTMLButtonElement>(null);
+  const root = useRef<HTMLDivElement>(null), content = useRef<HTMLDivElement>(null), body = useRef<HTMLElement>(null), minimize = useRef<HTMLButtonElement>(null);
   const opener = useRef<HTMLElement | null>(null), panelOpener = useRef<HTMLElement | null>(null);
   const [size, setSize] = useState(1200), [chooser, setChooser] = useState(false), [error, setError] = useState<string | null>(null);
   const chooserRef = useRef<HTMLDialogElement>(null);
@@ -188,7 +190,7 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
     if (!expanded || !drawer) return;
     window.dispatchEvent(new CustomEvent("hosty:ui:modal", { detail: `tools:${workspaceId}` }));
     opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    close.current?.focus();
+    minimize.current?.focus();
     const dismiss = (event: Event) => { if ((event as CustomEvent).detail === workspaceId) host?.setExpanded(false, workspaceId); };
     window.addEventListener("hosty:ui:drawer-dismiss", dismiss);
     return () => { window.removeEventListener("hosty:ui:drawer-dismiss", dismiss); if (opener.current?.isConnected) opener.current.focus(); };
@@ -258,7 +260,9 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
         }} />
       <header><strong>{selected?.label ?? "Tool"}</strong>
         {tool?.resolved.standaloneHref && <a href={tool.resolved.standaloneHref} target="_blank" rel="noopener noreferrer" title="Open separately" aria-label="Open separately">↗</a>}
-        <button ref={close} type="button" onClick={() => host?.setExpanded(false, workspaceId)} aria-label="Return to document" title="Return to document">×</button>
+        {(drawer || minimizeControl === "always") && <button ref={minimize} type="button" onClick={() => host?.setExpanded(false, workspaceId)} aria-label="Minimize panel" title="Minimize panel (keep tool open)">
+          <span aria-hidden="true">−</span>
+        </button>}
       </header>
       {tool?.resolved.state === "degraded" && <div className="hosty-panel-state" role="status">This app’s health check is failing. Its page may still work.</div>}
       {tool?.readiness === "unreported" && <div className="hosty-panel-state" role="status">This tool has not confirmed that it loaded. If the page is blank or refuses to connect, use <a href={tool.resolved.standaloneHref ?? undefined} target="_blank" rel="noopener noreferrer">Open separately</a>.</div>}
@@ -268,9 +272,8 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
           {workspaceTools.filter(t => t.key === tool.key).map((item, index) => <option key={item.presentationId} value={item.presentationId}>{selected?.label ?? "Tool"} {index + 1}</option>)}
         </select>
       </label>}
-      {tool && <button type="button" className="hosty-panel-state" onClick={() => host?.closePresentation(tool.presentationId)}>Close this tool view</button>}
       <div ref={viewport} className="hosty-panel-viewport" aria-owns={tool ? `hosty-presentation-${tool.presentationId}` : undefined} />
-      {drawer && expanded && <span tabIndex={0} aria-hidden="true" className="hosty-panel-focus-guard" onFocus={() => close.current?.focus()} />}
+      {drawer && expanded && <span tabIndex={0} aria-hidden="true" className="hosty-panel-focus-guard" onFocus={() => minimize.current?.focus()} />}
     </aside>
     <dialog ref={chooserRef} className="hosty-tool-chooser" onCancel={() => setChooser(false)} aria-label="Add tool">
       <header><strong>Add tool</strong><button type="button" onClick={() => setChooser(false)} aria-label="Close tool chooser">×</button></header>
@@ -293,8 +296,8 @@ const styles = `
 .hosty-panel-viewport{flex:1;min-height:0;min-width:0}
 .hosty-app-layout{display:flex;width:100%;height:100%;min-width:0;min-height:0}.hosty-app-content{flex:1;min-width:0;min-height:0;overflow:auto}
 
-.hosty-panel-workspace{--hp-bg:#f8f9fb;--hp-fg:#20242c;--hp-muted:#606875;--hp-border:#e0e4eb;display:flex;position:relative;min-width:0;min-height:0;width:100%;height:100dvh;overflow:hidden;background:var(--hp-bg);color:var(--hp-fg)}
-html.dark .hosty-panel-workspace,html[data-hosty-theme=dark] .hosty-panel-workspace{--hp-bg:#14171c;--hp-fg:#f0f2f5;--hp-muted:#a2aab7;--hp-border:#323843}
+.hosty-panel-workspace{--hp-bg:var(--hosty-panel-background,#f8f9fb);--hp-fg:var(--hosty-panel-foreground,#20242c);--hp-muted:var(--hosty-panel-muted,#606875);--hp-border:var(--hosty-panel-border,#e0e4eb);display:flex;position:relative;min-width:0;min-height:0;width:100%;height:100dvh;overflow:hidden;background:var(--hp-bg);color:var(--hp-fg)}
+html.dark .hosty-panel-workspace,html[data-hosty-theme=dark] .hosty-panel-workspace{--hp-bg:var(--hosty-panel-background,#14171c);--hp-fg:var(--hosty-panel-foreground,#f0f2f5);--hp-muted:var(--hosty-panel-muted,#a2aab7);--hp-border:var(--hosty-panel-border,#323843)}
 .hosty-panel-document{flex:1;min-width:0;min-height:0;overflow:auto}.hosty-panel-rail{order:3;flex:0 0 48px;display:flex;flex-direction:column;align-items:center;gap:8px;padding:10px 0;border-left:1px solid var(--hp-border);overflow:auto}
 .hosty-panel-workspace button,.hosty-panel-workspace a{font:inherit}.hosty-panel-rail button,.hosty-panel-body header button,.hosty-panel-body header a,.hosty-tool-chooser header button{position:relative;display:grid;place-items:center;flex-shrink:0;border:1px solid transparent;border-radius:8px;width:32px;height:32px;padding:0;background:transparent;color:inherit;font:500 13px system-ui;cursor:pointer;text-decoration:none}
 .hosty-panel-rail button:hover,.hosty-panel-rail button[aria-expanded=true]{border-color:var(--hp-border);background:color-mix(in srgb,var(--hp-fg) 8%,transparent)}

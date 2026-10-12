@@ -207,4 +207,11 @@
   .dashboard-service-endpoints { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-.hosty-panel-workspace.hosty-shell-panels { height: 100%; border-radius: 12px; }
+.hosty-panel-workspace.hosty-shell-panels {
+  --hosty-panel-background: var(--sidebar);
+  --hosty-panel-foreground: var(--sidebar-foreground);
+  --hosty-panel-muted: var(--muted-foreground);
+  --hosty-panel-border: var(--sidebar-border);
+  height: 100%;
+  border-radius: 12px;
+}
