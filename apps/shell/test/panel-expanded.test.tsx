@@ -202,6 +202,8 @@ it.each(["disabled", "hidden"])("honors %s tool chrome and restores the rail whe
   await render(false);
   await act(async () => { expect(await ui.openToolPicker({ requestId: createPresentationRequestId() })).toMatchObject({ status: "accepted" }); });
   await act(async () => host!.setViewChrome("root", { tools: mode === "disabled" ? { enabled: false } : { launcher: "hide" } }));
+  expect(toggle(false)).toBeNull();
+  expect(toggle(true)).toBeNull();
   expect(container.querySelector('nav[aria-label="Tools"]')?.hasAttribute("hidden")).toBe(true);
   expect(container.querySelector('#right-panel')?.hasAttribute("hidden")).toBe(true);
   if (mode === "disabled") {

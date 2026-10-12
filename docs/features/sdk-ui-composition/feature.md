@@ -264,8 +264,8 @@ Shell supplies frame-scoped styles for access-review links and HTTPS recovery no
 of the standalone SDK workspace stylesheet. Access-review links overlay the frame without changing
 its layout or identity. Shell shows recovery guidance when a retained presentation loses its allowed surface. Focus moves
 to a selected tool after its frame mounts and returns to the document control on collapse.
-Shell honors negotiated tool chrome: disabled tools hide the rail and picker; a hidden launcher
-hides the rail while preserving permitted SDK-driven tool operations. Hidden panel layout keeps
+Shell honors negotiated tool chrome: disabled tools hide the rail, top-strip toggle and picker; a hidden launcher
+hides the rail and top-strip toggle while preserving permitted SDK-driven tool operations. Hidden panel layout keeps
 retained frames mounted and releases its workspace width.
 Initial collapsed registration does not overwrite a saved open preference while an explicit
 assistant link is pending; only expansion transitions persist the preference.
