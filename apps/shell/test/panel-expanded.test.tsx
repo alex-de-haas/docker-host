@@ -71,6 +71,7 @@ it("shows the real collapsed state during a delayed/refused session link and ope
   expect(toggle(false)?.getAttribute("aria-pressed")).toBe("false");
   await act(async () => { release(); await host!.refresh(); });
   expect(host!.getSnapshot().selected).toBeNull();
+  expect(persisted).not.toHaveBeenCalled();
   expect(toggle(false)?.getAttribute("aria-pressed")).toBe("false");
   refused = false;
   await act(async () => toggle(false).click());

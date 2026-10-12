@@ -79,7 +79,15 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, onExpandedCh
     };
   }, [host, initialWidth]);
   const workspaceExpanded = workspace?.expanded;
-  useEffect(() => { if (workspaceExpanded !== undefined) preferences.current?.(workspaceExpanded); }, [workspaceExpanded]);
+  const lastExpanded = useRef(false);
+  useEffect(() => {
+    // Registration starts collapsed even when an explicit assistant link defers an open preference.
+    // Only persist transitions, never this initial value.
+    if (workspaceExpanded !== undefined && workspaceExpanded !== lastExpanded.current) {
+      lastExpanded.current = workspaceExpanded;
+      preferences.current?.(workspaceExpanded);
+    }
+  }, [workspaceExpanded]);
   useEffect(() => { if (picker) window.dispatchEvent(new CustomEvent("hosty:ui:modal", { detail: "picker:default" })); }, [picker]);
   useLayoutEffect(() => {
     const element = root.current; if (!element) return;

@@ -262,6 +262,8 @@ shell, and this API does not add context to an existing assistant conversation.
 
 Shell shows recovery guidance when a retained presentation loses its allowed surface. Focus moves
 to a selected tool after its frame mounts and returns to the document control on collapse.
+Initial collapsed registration does not overwrite a saved open preference while an explicit
+assistant link is pending; only expansion transitions persist the preference.
 
 ## Testing Expectations
 
