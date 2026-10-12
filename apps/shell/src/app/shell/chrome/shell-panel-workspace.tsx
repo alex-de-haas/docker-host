@@ -16,6 +16,14 @@ import { ShellWorkspaceSplit } from "./shell-workspace-split";
 
 const empty: UiHostSnapshot = { bootstrap: null, catalog: [], tools: [], selected: null, expanded: false, width: 360, error: null };
 const noop = () => () => {};
+// HostyAppFrame supplies transport and recovery content; Shell supplies its presentation styles.
+const frameStyles = `
+[data-shell-panel-frame]{position:relative}
+[data-shell-panel-frame]>iframe{display:block}
+[data-shell-panel-frame]>.hosty-panel-review{position:absolute;top:8px;right:8px;z-index:2;padding:10px;background:var(--background);color:var(--foreground);border:1px solid var(--border);border-radius:8px;font-size:14px}
+[data-shell-panel-frame]>.hosty-panel-notice{padding:24px;font-size:14px;line-height:1.5}
+[data-shell-panel-frame]>.hosty-panel-notice a{text-decoration:underline}
+`;
 type Props = Pick<HostyAppFrameProps, "onAskAssistant" | "onAuthRequired"> & {
   children: ReactNode;
   initialWidth?: number;
@@ -168,7 +176,7 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, onExpandedCh
         <select aria-label="Tool instance" className="min-w-0 rounded-md border bg-background p-1" value={tool?.presentationId} onChange={event => host?.focusPresentation(event.target.value)}>
           {siblings.map((item, index) => <option key={item.presentationId} value={item.presentationId}>{selected?.label} {index + 1}</option>)}
         </select></label>}
-      {tools.map(item => <div key={item.presentationId} ref={element => {
+      {tools.map(item => <div data-shell-panel-frame key={item.presentationId} ref={element => {
         if (element) { frames.current.set(item.presentationId, element); }
         else frames.current.delete(item.presentationId);
       }} hidden={!expanded || item !== tool} inert={!expanded || item !== tool} className="min-h-0 flex-1 overflow-hidden">
@@ -195,6 +203,7 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, onExpandedCh
     </nav></TooltipProvider>
   </div>;
   return <div ref={root} className="h-full min-h-0 min-w-0" data-shell-panel-layout={narrow ? "drawer" : "dock"}>
+    <style>{frameStyles}</style>
     <ShellWorkspaceSplit panel={panel} showPanel={railVisible || expanded} expanded={expanded && !narrow} initialPanelWidth={initialWidth} onWidthChange={width => host?.setWidth(width)}>
       <div className="h-full min-h-0" inert={narrow && expanded}>{children}</div>
     </ShellWorkspaceSplit>

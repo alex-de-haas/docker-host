@@ -260,7 +260,9 @@ routing. [Panel visibility](../app-ui-surfaces/plan.md) owns persisted declarati
 None of those features is required to use this contract. The fixture is not a production desktop
 shell, and this API does not add context to an existing assistant conversation.
 
-Shell shows recovery guidance when a retained presentation loses its allowed surface. Focus moves
+Shell supplies frame-scoped styles for access-review links and HTTPS recovery notices, independently
+of the standalone SDK workspace stylesheet. Access-review links overlay the frame without changing
+its layout or identity. Shell shows recovery guidance when a retained presentation loses its allowed surface. Focus moves
 to a selected tool after its frame mounts and returns to the document control on collapse.
 Shell honors negotiated tool chrome: disabled tools hide the rail and picker; a hidden launcher
 hides the rail while preserving permitted SDK-driven tool operations. Hidden panel layout keeps

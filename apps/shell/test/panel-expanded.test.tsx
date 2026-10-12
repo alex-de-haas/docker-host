@@ -212,3 +212,22 @@ it.each(["disabled", "hidden"])("honors %s tool chrome and restores the rail whe
   expect(container.querySelector('nav[aria-label="Tools"]')?.hasAttribute("hidden")).toBe(false);
   expect(container.querySelector('#right-panel')?.hasAttribute("hidden")).toBe(false);
 });
+
+
+it("keeps frame access-review links out of document flow without SDK workspace styles", async () => {
+  vi.stubGlobal("open", vi.fn());
+  await render(false);
+  await act(async () => { await host!.selectPanel(panels[1].panel); });
+  const frame = container.querySelector<HTMLIFrameElement>('iframe[title="assistant"]')!;
+  await act(async () => window.dispatchEvent(new MessageEvent("message", {
+    source: frame.contentWindow, origin: panels[1].origin!,
+    data: { type: "hosty:request-permission-review" },
+  })));
+  const link = container.querySelector<HTMLAnchorElement>('a.hosty-panel-review')!;
+  expect(link).not.toBeNull();
+  expect(link.href).toContain("https://core.test/");
+  expect(getComputedStyle(link).position).toBe("absolute");
+  expect(getComputedStyle(frame.parentElement!).position).toBe("relative");
+  expect(getComputedStyle(frame).display).toBe("block");
+  expect(container.querySelector('iframe[title="assistant"]')).toBe(frame);
+});
