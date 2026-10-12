@@ -178,10 +178,10 @@ host-scoped. Separate opening preserves provider-persisted context, without prom
 unsent edits between windows.
 The standard header provides a minimize control (`−`) that preserves the mounted frame. Shell
 omits it in docked panels, where selecting the active rail icon minimizes the panel; its header
-retains the title and Open separately action. Responsive drawers keep a visible minimize control
+retains the title and Open separately action. The SDK drawer keeps a minimize control; Shell’s drawer provides Return to document
 because the rail is inert while the drawer is open. Other host layouts can release a selected view
-through `UiHost.closePresentation`; the standard header has no close control. Shell uses its own
-palette for the workspace and panel chrome.
+through `UiHost.closePresentation`; the standard header has no close control. Shell renders its own ReUI workspace, rail and picker through the headless SDK workspace contract.
+It reuses the SDK frame transport and retains the unchanged authorization overlay.
 Retained frames receive current availability and runtime metadata, so degradation warnings appear
 and disappear with the catalog without navigating the iframe.
 
@@ -204,10 +204,13 @@ Shell retires obsolete or reinstallation-mismatched pending handoff records with
 The next operator retry creates a new request for the current installation; it never moves the old
 discussion. Completing an older request cannot erase the replacement's pending intent.
 
-At 900 CSS pixels of inner workspace width the layout docks: a 48-pixel rail, 12-pixel gap, default
-360-pixel body, 280–800 bounds and at least 480 pixels reserved for the document. Below that it uses
-a drawer up to 440 pixels wide. Constraints do not overwrite the preferred width. Arrow keys resize
-in 16-pixel steps; Home/double-click reset. Rail arrow/Home/End keys move focus. The drawer makes
+The standard SDK renderer docks at 900 CSS pixels of inner workspace width: a 48-pixel rail,
+12-pixel gap, default 360-pixel body, 280–800 bounds and at least 480 pixels reserved for the
+document. Shell uses its own ReUI split layout and document-dependent width constraints, described
+in [Shell Panel Resize](../shell-panel-resize/feature.md). Both renderers use a drawer up to
+440 pixels wide below the docking breakpoint. Constraints do not overwrite the preferred width.
+Arrow keys resize in SDK-defined steps for the standard renderer; Shell uses its ReUI separator
+keyboard controls and double-click reset. Rail arrow/Home/End keys move focus. The drawer makes
 covered content inert, traps focus and restores it on dismissal; an unhandled Escape inside a
 cooperating child is forwarded through its verified channel. Breakpoints change CSS placement,
 not iframe identity.
@@ -305,7 +308,7 @@ queued-open timeouts, channel renewal and status/open ordering. Selection tests 
   Shortcut tests verify that a non-assistant first catalog entry is never selected, including delayed
   metadata, and that toggling the selected assistant closed creates no new placement. Shell chrome
   tests cover delayed/refused links, cookie/legacy preference migration and the first toggle in both
-  directions against the actual SDK workspace. HTTPS Shell frame tests preserve explicit standalone
+  directions against the Shell renderer connected to the real SDK host. HTTPS Shell frame tests preserve explicit standalone
   recovery for HTTP workspace, settings and legacy panel surfaces while continuing to embed HTTPS.
   Frame policy tests cover older-Core speech/install grants, missing/unrelated grants and the
   precedence of explicit Core policy over fallback grants.

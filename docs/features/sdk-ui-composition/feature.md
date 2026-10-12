@@ -209,9 +209,10 @@ over workspace viewports; movement, switching, collapse and resize never reparen
 There is one rail entry per declaration and an instance switcher when several views exist.
 The header has no close control or separate close status row. Its `minimizeControl` defaults to
 `"always"`, exposing a minimize control (`−`, retaining its tool) with an accessible name and hover
-description. Shell uses `minimizeControl="drawer"`: docked headers retain only the title and Open
-separately action, and the active rail icon toggles the panel. Responsive drawers retain the minimize
-control because their rail is inert. Other host layouts can close a
+description. Hosts using the standard renderer can limit this control to drawers with
+`minimizeControl="drawer"`. Shell uses its own ReUI renderer: docked headers retain only the title
+and Open separately action, the active rail icon toggles the panel, and narrow drawers provide
+Return to document. Other host layouts can close a
 view through `UiHost.closePresentation`, releasing only that frame, not the conversation or background work. Actor, Core,
 installation and catalog-authority changes release every renderer-owned presentation before resetting
 workspace state; disposing the host releases them as well. Escape identifies the selected retained
@@ -223,8 +224,17 @@ or frame-policy changes invalidate stale frames. Rail selection also revalidates
 
 Workspace colors accept `--hosty-panel-background`, `--hosty-panel-foreground`,
 `--hosty-panel-muted` and `--hosty-panel-border` CSS properties. SDK light/dark colors remain the
-fallback. Shell maps these properties to its own theme tokens, so the document background, resize
-gutter, panel header and rail match the surrounding shell in both themes.
+fallback. Shell does not mount this standard workspace component. Its `ShellPanelWorkspace`
+registers the default workspace through `UiHost.registerWorkspace`, retains tool frames using
+`HostyAppFrame`, and owns the ReUI rail, picker, header, responsive drawer and bordered document
+container. `ShellWorkspaceSplit` provides Shell resizing and preference persistence. This changes
+presentation only: host verification, panel targets, context delivery and the authorization overlay
+remain SDK-owned. Standalone keeps the standard SDK workspace.
+
+Workspaces, Marketplace and Telemetry UI mount the SDK UI server adapter as well as the overlay.
+Their `/api/hosty/ui/[...action]` GET/POST routes require an active administrator session and forward
+only the bounded SDK operations to Core. This lets embedded clients accept live Shell policy and
+standalone clients load navigation metadata.
 
 ## Negotiation And Migration
 

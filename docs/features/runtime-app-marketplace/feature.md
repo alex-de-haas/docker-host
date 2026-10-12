@@ -1,6 +1,6 @@
 ---
 created: 2026-06-25
-updated: 2026-10-06
+updated: 2026-10-12
 summary: The optional Marketplace app that owns catalog discovery and requests Core-confirmed installations.
 components: [apps/marketplace]
 ---
@@ -76,7 +76,7 @@ Catalog entries do not contain inline `feeds[]`, resolved manifests, installed v
 
 The Marketplace manifest declares a strict `ui.entrypoint` and administrator navigation. Shell lists it through the generic System Apps UI and opens it in the existing app-origin iframe flow. Core issues a one-time app authorization code; Marketplace exchanges it, creates its own HTTP-only app session, and revalidates identity using the standard runtime-app service token contract.
 
-Every Marketplace API route is gated on that identity: the shared authorization check requires an `active` session whose `hostRole` is `host.admin`, and it runs before the route resolves any data. A missing token is `401 app_identity_required`, an active non-admin is `403 system_app_admin_required`, and an unreachable or misconfigured Core is `503`. The gate covers the catalog routes and the two installed-state routes alike — the installed-app id roster and per-app update availability are host state, so they never leave the Marketplace origin without an administrator session, and an unauthorized request is refused before Marketplace spends its service token on Core.
+Marketplace catalog and installed-state API routes are gated on that identity: the shared authorization check requires an `active` session whose `hostRole` is `host.admin`, and it runs before the route resolves any data. A missing token is `401 app_identity_required`, an active non-admin is `403 system_app_admin_required`, and an unreachable or misconfigured Core is `503`. The gate covers the catalog routes and the two installed-state routes alike — the installed-app id roster and per-app update availability are host state, so they never leave the Marketplace origin without an administrator session, and an unauthorized request is refused before Marketplace spends its service token on Core.
 
 Storefront clients treat those refusals as missing data rather than errors: an unauthorized installed-state response leaves the installed set empty and update availability at "no update", so the catalog still renders without install badges. This is the same degradation Marketplace applies when Core is unreachable.
 
@@ -141,9 +141,18 @@ hide a previously loaded catalog, while a transient catalog-fetch error can reta
 cards. Refresh after an expired session restarts identity recovery. A ready but empty catalog and a
 search with no matches have distinct empty states.
 
+The app exposes the SDK GET/POST adapter at `/api/hosty/ui/[...action]` behind the existing
+administrator session gate. It supplies host verification, navigation metadata and tool resolution,
+so Shell policy hides app navigation after reloads and standalone navigation finishes loading.
+These SDK routes reject missing identity with HTTP 401 and non-administrator identity with
+HTTP 403 (`admin_required`) before requesting UI metadata from Core.
+
 ## Testing Expectations
 
-- **Route authorization.** Every API route on the Marketplace origin is covered by a test that calls
+- SDK UI routes cover authenticated bootstrap/navigation/panels reads, same-origin navigation
+  resolution, and rejection of anonymous, non-administrator and cross-origin requests.
+
+- **Route authorization.** Every catalog and installed-state API route on the Marketplace origin is covered by a test that calls
   the handler without a session and asserts `401 app_identity_required`, and the installed-state
   routes additionally assert that no upstream Core call is attempted — the regression guard for the
   "it only proxies, so it needs no gate" class of mistake that left the installed-app roster and

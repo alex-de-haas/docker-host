@@ -1,6 +1,6 @@
 ---
 created: 2026-06-28
-updated: 2026-10-01
+updated: 2026-10-12
 summary: OpenTelemetry from apps flows to a collector, an SQLite-backed telemetry backend and the telemetry UI app.
 components: [apps/telemetry, apps/telemetry-backend, apps/telemetry-ui, apps/core]
 ---
@@ -404,7 +404,14 @@ lack of auth. Closing that gap is [plan.md](plan.md)'s first deliverable.
 - `apps/shell/src/app/shell/dialogs/app-details-dialog.tsx` — the per-app Console logs dialog, opened
   from `installed-apps-page.tsx` and gated on the `logs` capability.
 
+The app exposes the SDK GET/POST adapter at `/api/hosty/ui/[...action]` behind the existing
+administrator session gate. It supplies host verification, navigation metadata and tool resolution,
+so Shell policy hides app navigation after reloads and standalone navigation finishes loading.
+
 ## Testing Expectations
+
+- SDK UI routes cover authenticated bootstrap/navigation/panels reads, same-origin navigation
+  resolution, and rejection of anonymous, non-administrator and cross-origin requests.
 
 - **Collector config and bootstrap.** The provisioner writes the config and creates the logs, traces,
   and store subdirectories, keyed off the `otlp-collector` capability rather than an app id.

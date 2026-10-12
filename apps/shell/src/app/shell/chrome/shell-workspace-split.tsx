@@ -5,11 +5,12 @@ import { useGroupRef, usePanelRef } from "react-resizable-panels";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { PANEL_RAIL_WIDTH, DEFAULT_RIGHT_PANEL_WIDTH, RIGHT_PANEL_WIDTH_PREF_KEY, WORKSPACE_PANEL_GAP, panelWidthBounds } from "./panel-width";
 
-export function ShellWorkspaceSplit({ children, panel, expanded, initialPanelWidth }: {
+export function ShellWorkspaceSplit({ children, panel, expanded, initialPanelWidth, onWidthChange }: {
   children: ReactNode;
   panel: ReactNode;
   expanded: boolean;
   initialPanelWidth: number;
+  onWidthChange?: (width: number) => void;
 }) {
   const groupRef = useRef<HTMLDivElement>(null);
   const groupApi = useGroupRef();
@@ -44,6 +45,7 @@ export function ShellWorkspaceSplit({ children, panel, expanded, initialPanelWid
   const rememberWidth = (width: number) => {
     const rounded = Math.round(width);
     setPreferredWidth(rounded);
+    onWidthChange?.(rounded);
     document.cookie = `${RIGHT_PANEL_WIDTH_PREF_KEY}=${rounded}; path=/; max-age=31536000; samesite=lax`;
   };
 

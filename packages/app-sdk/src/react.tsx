@@ -260,16 +260,17 @@ export function useAppIdentity({
   useEffect(() => { onSessionRef.current = onSession; }, [onSession]);
 
   const continuity = activity?.continuity;
+  const continuityCoreOrigin = activity?.openUrl ? new URL(activity.openUrl).origin : null;
   const continuityActor = (session as { userId?: string } | null)?.userId;
   useEffect(() => {
-    if (!continuity || !activity?.openUrl || !continuityActor) return;
-    return configureAppContinuity({ coreOrigin: new URL(activity.openUrl).origin, authority: continuity,
+    if (!continuity || !continuityCoreOrigin || !continuityActor) return;
+    return configureAppContinuity({ coreOrigin: continuityCoreOrigin, authority: continuity,
       probe: async () => {
         const next = await refreshRef.current() as { status?: string; userId?: string; hosty?: { version?: number; setup?: string } } | null;
         return next?.status === "active" && next.userId === continuityActor
           && (!next.hosty || (next.hosty.version === 1 && next.hosty.setup === "ready"));
       } });
-  }, [continuity?.grantId, activity?.openUrl, continuityActor]);
+  }, [continuity?.grantId, continuityCoreOrigin, continuityActor]);
 
   useEffect(() => {
     let cancelled = false;
@@ -277,7 +278,16 @@ export function useAppIdentity({
     const controller = new AbortController();
     if (initialGrantPresent.current === null) initialGrantPresent.current = restoreAppGrant();
 
-    async function probeAndRecover(): Promise<unknown> {
+    let pendingProbe: Promise<unknown> | null = null;
+    // Focus, continuity maintenance and setup review can request the same identity at once.
+    // Share its result: a superseded successful probe must not look like an access outage.
+    function probeAndRecover(): Promise<unknown> {
+      if (pendingProbe) return pendingProbe;
+      pendingProbe = runProbeAndRecover().finally(() => { pendingProbe = null; });
+      return pendingProbe;
+    }
+
+    async function runProbeAndRecover(): Promise<unknown> {
       const sequence = ++probeSequence;
       // Dedicated controller + setTimeout instead of AbortSignal.any/timeout, which are not
       // available in every browser (a synchronous throw here would stop the bridge from
@@ -324,7 +334,7 @@ export function useAppIdentity({
       }
       if (revision !== appGrantRevision()) {
         initialGrantPresent.current ||= restoreAppGrant();
-        return probeAndRecover();
+        return runProbeAndRecover();
       }
       forgetRejectedAppGrant(rejectionCode, revision);
       if (openUrl && protocol) setActivity({ openUrl, appAuthProtocol: protocol,

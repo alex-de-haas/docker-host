@@ -1,9 +1,11 @@
 import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { HostyPanelWorkspace, HostyUiRoot, useHostyUiHost } from "@hosty-sdk/app/ui/react";
+import { HostyUiRoot, useHostyUiHost } from "@hosty-sdk/app/ui/react";
+import { ui, createPresentationRequestId } from "@hosty-sdk/app/ui";
 import type { UiHost } from "@hosty-sdk/app/ui/host";
 import type { UiBootstrap, UiPanel } from "@hosty-sdk/app/ui/types";
+import { ShellPanelWorkspace } from "../src/app/shell/chrome/shell-panel-workspace";
 import { usePanelExpanded } from "../src/app/shell/chrome/use-panel-expanded";
 import { ShellTopStrip } from "../src/app/shell/chrome/shell-top-strip";
 import { useAssistantSessionLink } from "../src/app/shell/assistant/use-assistant-session-link";
@@ -17,6 +19,7 @@ const panels: UiPanel[] = ["notes", "assistant"].map(appId => ({ panel: { appId,
   endpoint: "web", route: "/panel", origin: `https://${appId}.test`, label: appId, appName: appId, icon: null,
   available: true, state: "running", canStart: false, framePolicy: policy }));
 let root: Root, container: HTMLDivElement, host: UiHost | null;
+let resizeWorkspace: () => void;
 let catalogGate: Promise<void> | null, resolutionGate: Promise<void> | null, refused: boolean;
 const persisted = vi.fn();
 function Shell({ initialOpen, link }: { initialOpen: boolean | null; link: boolean }) {
@@ -27,7 +30,7 @@ function Shell({ initialOpen, link }: { initialOpen: boolean | null; link: boole
   return <>
     <ShellTopStrip title="Plans" navigationWidth={60} leftRailExpanded={false} onToggleLeftRail={() => {}}
       rightRailExpanded={expanded} onToggleRightRail={() => panelHost?.setExpanded(!expanded)} showNotifications={false} onBrandClick={() => {}} />
-    <HostyPanelWorkspace railMode="catalog" onExpandedChange={persisted}><div>Document</div></HostyPanelWorkspace>
+    <ShellPanelWorkspace onExpandedChange={persisted}><div>Document</div></ShellPanelWorkspace>
   </>;
 }
 async function render(initialOpen: boolean | null, link = false) {
@@ -38,7 +41,12 @@ beforeEach(() => {
   host = null; catalogGate = null; resolutionGate = null; refused = false; persisted.mockReset(); localStorage.clear();
   document.cookie = `${RIGHT_PANEL_OPEN_PREF_KEY}=; max-age=0; path=/`;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  resizeWorkspace = () => {};
+  vi.stubGlobal("ResizeObserver", class {
+    constructor(private callback: () => void) {}
+    observe(element: HTMLElement) { if (element.hasAttribute("data-shell-panel-layout")) resizeWorkspace = this.callback; }
+    disconnect() {}
+  });
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("bootstrap")) return Response.json(bootstrap);
     if (url.endsWith("panels")) { await catalogGate; return Response.json({ panels }); }
@@ -115,4 +123,43 @@ it("performs one resolution for the first top-strip opening after catalog discov
   expect(requests()).toHaveLength(1);
   expect(host!.getSnapshot().selected).toEqual(panels[0].panel);
   expect(container.querySelector("aside")?.hidden).toBe(false);
+});
+
+it("retains tool frames across rail toggles, switching and the drawer breakpoint", async () => {
+  const originalWidth = window.innerWidth;
+  await render(false);
+  await act(async () => { await host!.selectPanel(panels[1].panel); });
+  const assistant = container.querySelector<HTMLIFrameElement>('iframe[title="assistant"]')!;
+  expect(assistant).not.toBeNull();
+  expect(container.querySelector(".hosty-panel-workspace")).toBeNull();
+  expect(container.querySelector('#workspace')?.firstElementChild?.className).toContain("border");
+  expect(container.querySelector('[aria-label="Open separately"]')).not.toBeNull();
+  expect(container.querySelector('[aria-label="Minimize panel"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Close tool"]')).toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="assistant"]')!.click());
+  expect(host!.getSnapshot().expanded).toBe(false);
+  expect(container.querySelector('iframe[title="assistant"]')).toBe(assistant);
+  await act(async () => { await host!.selectPanel(panels[0].panel); });
+  expect(container.querySelector('iframe[title="assistant"]')).toBe(assistant);
+  await act(async () => { await host!.selectPanel(panels[1].panel); });
+  try {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 600 });
+    await act(async () => resizeWorkspace());
+    expect(container.querySelector('[data-shell-panel-layout="drawer"]')).not.toBeNull();
+    expect(container.querySelector('aside[role="dialog"]')?.getAttribute("aria-modal")).toBe("true");
+    expect(container.querySelector('nav[aria-label="Tools"]')?.hasAttribute("inert")).toBe(true);
+    expect(container.querySelector('iframe[title="assistant"]')).toBe(assistant);
+    await act(async () => container.querySelector("aside")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(host!.getSnapshot().expanded).toBe(false);
+    expect(container.querySelector('iframe[title="assistant"]')).toBe(assistant);
+  } finally { Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth }); }
+});
+it("serves SDK picker requests with the Shell dialog and releases SDK-closed presentations", async () => {
+  await render(false);
+  await act(async () => { expect(await ui.openToolPicker({ requestId: createPresentationRequestId() })).toMatchObject({ status: "accepted" }); });
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Open a tool beside your document");
+  await act(async () => { await host!.selectPanel(panels[0].panel); });
+  const id = host!.getSnapshot().tools[0].presentationId;
+  await act(async () => host!.closePresentation(id));
+  expect(container.querySelector('iframe[title="notes"]')).toBeNull();
 });
