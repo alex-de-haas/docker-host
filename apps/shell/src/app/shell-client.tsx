@@ -2184,7 +2184,7 @@ export function ShellClient({
         </aside>
         {narrowViewport && mobileSidebarOpen && <div aria-hidden />}
 
-        <HostyPanelWorkspace railMode="catalog" className="hosty-shell-panels" initialWidth={initialRightPanelWidth}
+        <HostyPanelWorkspace railMode="catalog" minimizeControl="drawer" className="hosty-shell-panels" initialWidth={initialRightPanelWidth}
           renderIcon={panel => <AppIcon src={null} name={panel.icon} fallback={PanelsTopLeft} className="size-4" />}
           onExpandedChange={open => persistChromePref(RIGHT_PANEL_OPEN_PREF_KEY, open)}
           onWidthChange={width => { document.cookie = `${RIGHT_PANEL_WIDTH_PREF_KEY}=${Math.round(width)}; path=/; max-age=31536000; samesite=lax`; }}

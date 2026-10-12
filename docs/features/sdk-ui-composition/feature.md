@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-updated: 2026-10-11
+updated: 2026-10-12
 summary: Explicit navigation and tool policy, manifest navigation, and retained tool instances shared by Shell, desktop hosts and standalone apps.
 components: [packages/app-sdk, apps/core, apps/shell, apps/plans, apps/demo-app, apps/harness, apps/workspaces, apps/marketplace, apps/telemetry-ui, apps/shell-swift]
 ---
@@ -207,7 +207,12 @@ over workspace viewports; movement, switching, collapse and resize never reparen
 `HostyPanelWorkspace` defaults to the `default` workspace, with `workspaceId` for additional areas.
 `layout="responsive"` selects dock/drawer geometry; `layout="dock"` supports host-owned tool windows.
 There is one rail entry per declaration and an instance switcher when several views exist.
-Closing a view releases only that frame, not the conversation or background work. Actor, Core,
+The header has no close control or separate close status row. Its `minimizeControl` defaults to
+`"always"`, exposing a minimize control (`−`, retaining its tool) with an accessible name and hover
+description. Shell uses `minimizeControl="drawer"`: docked headers retain only the title and Open
+separately action, and the active rail icon toggles the panel. Responsive drawers retain the minimize
+control because their rail is inert. Other host layouts can close a
+view through `UiHost.closePresentation`, releasing only that frame, not the conversation or background work. Actor, Core,
 installation and catalog-authority changes release every renderer-owned presentation before resetting
 workspace state; disposing the host releases them as well. Escape identifies the selected retained
 presentation even after its live route changes. After an acknowledged opening, an explicit Plans
@@ -215,6 +220,11 @@ retry uses a fresh presentation request and exact target reuse, allowing a close
 without repeating the discussion handoff. Uncertain openings keep their pending request ID. Separate opening
 keeps the domain target without transferring unsent drafts. Catalog access/installation/destination
 or frame-policy changes invalidate stale frames. Rail selection also revalidates before focusing.
+
+Workspace colors accept `--hosty-panel-background`, `--hosty-panel-foreground`,
+`--hosty-panel-muted` and `--hosty-panel-border` CSS properties. SDK light/dark colors remain the
+fallback. Shell maps these properties to its own theme tokens, so the document background, resize
+gutter, panel header and rail match the surrounding shell in both themes.
 
 ## Negotiation And Migration
 

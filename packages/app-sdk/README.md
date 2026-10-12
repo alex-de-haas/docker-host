@@ -338,6 +338,17 @@ disable local tools; an opening otherwise fails with `presentation_unavailable`.
 Panel hosting requires reviewed optional `apps.panels.read` (or existing `apps.read`);
 participating as a child does not require catalog access.
 
+Panel headers expose **Minimize panel (keep tool open)** (`−`) without a close button.
+Hosts with a tool rail can set `minimizeControl="drawer"` on `HostyPanelWorkspace` to omit the
+minimize button in docked panels and use the active rail icon to toggle them. Responsive drawers
+keep a visible minimize button because the rail is inert while a drawer is open. The default
+`minimizeControl="always"` retains the button in standalone layouts.
+Custom host layouts can use `UiHost.closePresentation(presentationId)` to release a tool view;
+this does not end its conversation or background work.
+To match host chrome, set `--hosty-panel-background`, `--hosty-panel-foreground`,
+`--hosty-panel-muted` and `--hosty-panel-border` on the workspace or an ancestor.
+These overrides apply in both themes; omitted properties retain the SDK light/dark defaults.
+
 ```ts
 // app/api/hosty/ui/[...action]/route.ts — own app configuration/session only
 import { createHostyUiRouteHandler } from "@hosty-sdk/app/server";

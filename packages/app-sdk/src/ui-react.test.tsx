@@ -353,10 +353,10 @@ it("holds commands until verified sign-in and redelivers after renewal without a
   expect(element.querySelector("iframe")).toBe(frame);
 });
 
-async function mountRestoration() {
+async function mountRestoration(minimizeControl: "always" | "drawer" = "always") {
   const changed = vi.fn();
   await act(async () => root.render(<HostyUiRoot panelLayout="slot"><HostyPanelWorkspace railMode="catalog"
-    initialExpanded initialWidth={420} onExpandedChange={changed}><Document /></HostyPanelWorkspace></HostyUiRoot>));
+    minimizeControl={minimizeControl} initialExpanded initialWidth={420} onExpandedChange={changed}><Document /></HostyPanelWorkspace></HostyUiRoot>));
   return changed;
 }
 it("restores the open preference once the delayed catalog supplies a tool", async () => {
@@ -388,19 +388,29 @@ it("retries refused restoration only after fresh catalog metadata", async () => 
   expect(requests()).toHaveLength(2);
   expect(element.querySelector("aside")!.hidden).toBe(false);
 });
-it.each(["close", "collapse"])("reopens a catalog workspace after repeated %s actions", async action => {
-  await mountRestoration();
+it.each(["close", "collapse", "rail"])("reopens a catalog workspace after repeated %s actions", async action => {
+  await mountRestoration(action === "rail" ? "drawer" : "always");
   for (let cycle = 0; cycle < 2; cycle++) {
     const frame = element.querySelector("iframe")!, id = host!.getSnapshot().selectedPresentationId;
     expect(frame).not.toBeNull();
     await act(async () => {
-      if (action === "close") [...element.querySelectorAll("button")].find(button => button.textContent === "Close this tool view")!.click();
-      else host!.setExpanded(false);
+      expect(element.querySelector("button.hosty-panel-state")).toBeNull();
+      expect(element.querySelector('header button[aria-label="Close tool view"]')).toBeNull();
+      if (action === "close") host!.closePresentation(id!);
+      else if (action === "rail") {
+        expect(element.querySelector('header button[aria-label="Minimize panel"]')).toBeNull();
+        expect(element.querySelector('header a[aria-label="Open separately"]')).not.toBeNull();
+        element.querySelector<HTMLButtonElement>('.hosty-panel-rail button[aria-label="assistant"]')!.click();
+      }
+      else element.querySelector<HTMLButtonElement>('header button[aria-label="Minimize panel"]')!.click();
     });
     expect(element.querySelector("aside")!.hidden).toBe(true);
     expect(host!.getSnapshot().expanded).toBe(false);
     if (action === "close") expect(host!.getSnapshot().tools).toHaveLength(0);
-    await act(async () => host!.setExpanded(true));
+    await act(async () => {
+      if (action === "rail") element.querySelector<HTMLButtonElement>('.hosty-panel-rail button[aria-label="assistant"]')!.click();
+      else host!.setExpanded(true);
+    });
     expect(element.querySelector("aside")!.hidden).toBe(false);
     expect(host!.getSnapshot().selected).toEqual(catalog[0]!.panel);
     expect(host!.getSnapshot().tools).toHaveLength(1);
@@ -412,7 +422,15 @@ it.each(["close", "collapse"])("reopens a catalog workspace after repeated %s ac
       expect(host!.getSnapshot().selectedPresentationId).toBe(id);
     }
   }
-  expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("resolve"))).toHaveLength(action === "close" ? 3 : 1);
+  expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("resolve"))).toHaveLength(action === "collapse" ? 1 : 3);
+  if (action === "rail") {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 899 } as DOMRect);
+    await act(async () => resize());
+    const minimize = element.querySelector<HTMLButtonElement>('header button[aria-label="Minimize panel"]')!;
+    expect(document.activeElement).toBe(minimize);
+    await act(async () => minimize.click());
+    expect(element.querySelector("aside")!.hidden).toBe(true);
+  }
 });
 it("does not retry refused restoration after the operator collapses", async () => {
   refuseResolution = true; await mountRestoration();

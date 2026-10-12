@@ -1,6 +1,6 @@
 ---
 created: 2026-10-10
-updated: 2026-10-11
+updated: 2026-10-12
 summary: Shared SDK panels compose app-owned tools beside documents in Shell and standalone, with verified peers and pinned presentation targets.
 components: [packages/app-sdk, apps/core, apps/shell, apps/plans, apps/harness, apps/demo-app]
 ---
@@ -176,6 +176,12 @@ frame until a completed stop or an independently invalidated identity, destinati
 startup occurs. Reload clears the window-local tool selection; width/open preferences remain
 host-scoped. Separate opening preserves provider-persisted context, without promising transfer of
 unsent edits between windows.
+The standard header provides a minimize control (`−`) that preserves the mounted frame. Shell
+omits it in docked panels, where selecting the active rail icon minimizes the panel; its header
+retains the title and Open separately action. Responsive drawers keep a visible minimize control
+because the rail is inert while the drawer is open. Other host layouts can release a selected view
+through `UiHost.closePresentation`; the standard header has no close control. Shell uses its own
+palette for the workspace and panel chrome.
 Retained frames receive current availability and runtime metadata, so degradation warnings appear
 and disappear with the catalog without navigating the iframe.
 
