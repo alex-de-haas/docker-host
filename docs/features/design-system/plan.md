@@ -1,0 +1,449 @@
+---
+status: Draft
+created: 2026-10-12
+updated: 2026-10-12
+summary: Hosty's visual language, Ink and Signal, with its color, type, icon and ReUI token rules, and the Shell layouts built from it, including tools at narrow widths and on phones.
+components: [apps/shell, packages/app-sdk, apps/core, apps/harness, assets/hosty-brand, apps/plans, apps/workspaces, apps/telemetry, apps/demo-app]
+---
+
+# Design System
+
+## Goal
+
+Give Hosty one visual language that reads as calm and corporate without being grey and gloomy,
+and apply it to Shell. Chrome stays ink and white; color is spent on what is alive on a host — app
+tiles, status and data. The same rules must hold from a wide desktop to a Shell window squeezed
+beside an agent and to a phone.
+
+## Source
+
+The design lives on a Design canvas: <https://claude.ai/artifact/4LypxfZnHz2E7fxhXti4th>. The canvas
+is the single source for the visuals and keeps its own version history; it is private to the owner
+until shared from its page. This document carries every value and rule needed to implement it.
+
+| Artboard | Covers |
+| --- | --- |
+| `Main` | Cover and the four principles |
+| `Color`, `Accent` | Palette, ink scale, status, app spectrum; accent candidates |
+| `Type` | Type scale and voice |
+| `Iconography`, `Roles` | Mark, tiles, interface icons; provider role icons |
+| `Components`, `Tokens` | ReUI components in light and dark; CSS variables |
+| `Motif` | Node motif, loader, empty state, motion |
+| `Shell`, `AppDetail`, `DataGrid` | Dashboard with tools, dark app detail, table page |
+| `PanelOptions`, `ShellNarrow` | The fit rule for tools, Shell in a 900 px window |
+| `PhonePeek`, `PhoneSheet`, `PhoneTools`, `PhoneKeyboard`, `PhoneManyTools` | Phone: tab bar, open tool, tool list, keyboard and long dialog, many tools |
+
+## Principles
+
+1. **Calm chrome, lively content.** Navigation, panels and text stay ink and white. Color belongs to
+   app tiles, status and charts.
+2. **One blue for action.** Hosty Blue marks what can be done. One primary button per view; the rest
+   are outline or ghost.
+3. **Signal means live.** Cyan appears only where something is happening now: an app starting, a
+   stream, a tool at work. Nothing live, no cyan — and never in charts.
+4. **Nodes and wires.** The H-graph mark is the house motif: rounded squares joined by lines, used for
+   loaders, empty states and diagrams.
+
+## Color
+
+### Core
+
+| Name | Hex | Use |
+| --- | --- | --- |
+| Ink | `#0F1B2D` | Text, dark surfaces, the mark (17.4:1 on white) |
+| Mist | `#F6F8FB` | Light canvas; cards sit on it in pure white |
+| Hosty Blue | `#1C68FF` | Primary action, links, focus, selection (white text 4.7:1) |
+| Signal | `#28D5E5` | Live state only; fills carry ink text (9.7:1) |
+| Signal strong | `#0891A1` | Signal dots, rings and progress on light surfaces (3.8:1 on white) |
+
+Approximate share of a typical screen: ~70% white and mist, ~20% ink, ~7% blue, ~2% app and
+status color, at most 1% signal.
+
+Hosty Blue stays the action color for now (owner decision, 2026-10-12). The `Accent` artboard keeps
+four candidates — Iris `#5B5BD6`, Cobalt `#2F5BD3`, Ink, Lagoon `#0B7C86` — for the per-user accent
+setting listed under open questions.
+
+### Ink scale (cool neutrals, hue 215°)
+
+| Step | Hex | Use |
+| --- | --- | --- |
+| 50 | `#F6F8FB` | Canvas, sidebar |
+| 100 | `#EEF2F7` | Muted, hover |
+| 200 | `#DFE5EE` | Border |
+| 300 | `#C3CDDB` | Input border |
+| 400 | `#93A3BA` | Muted text on dark; disabled on light (2.9:1) |
+| 500 | `#6E7F98` | Icons only (4.1:1 on white — not for text) |
+| 600 | `#5A6A82` | Muted text on light — the lightest text allowed (5.4:1) |
+| 700 | `#3A4B66` | Secondary body text |
+| 800 | `#26364F` | Border on dark |
+| 900 | `#17253B` | Card on dark |
+| 950 | `#0F1B2D` | Text; dark canvas |
+
+### Status
+
+Four meanings, never mixed: **info** tells, **needs you** asks, **failed** reports an error, and
+**working** shows activity. A waiting approval is "needs you", not info.
+
+| State | Solid | Soft | Text | Meaning |
+| --- | --- | --- | --- | --- |
+| Running | `#16A34A` | `#E8F7EE` | `#0F6B33` | Healthy and serving |
+| Working | `#0891A1` (dark: `#28D5E5`) | `#E3FAFC` | `#08707D` | Starting, updating, a tool at work (signal) |
+| Stopped | `#93A3BA` | `#EEF2F7` | `#5A6A82` | Intentionally off, not an error |
+| Info | `#1C68FF` | `#E8F0FF` | `#1449C2` | An update or a result; never requires action |
+| Needs you | `#F59E0B` | `#FEF3DC` | `#8A5300` | A decision or a fix: approval, degraded app, missing configuration |
+| Failed | `#D93036` | `#FDECEC` | `#B4232A` | Error: crashed, unreachable, refused |
+
+Color never carries a state alone. The normal state — running and healthy — is the only one shown as
+a bare dot, with its name in the tooltip and accessible label. Every other state carries a text
+label, and where there is no room for one, its own shape: a diamond for "needs you", an alert icon
+for "failed", a hollow ring for "no connection", and for "working" a pulse that becomes a static outer
+ring when motion is reduced. No two states differ by color alone.
+
+### App spectrum
+
+Tiles and charts only — never buttons, text or chrome. Every color carries a white glyph at 3:1 or
+better. Hosty Blue is not in the spectrum: a blue tile means the platform itself.
+
+| Name | Hex | Assigned to |
+| --- | --- | --- |
+| Cobalt | `#2449A7` | Plans |
+| Violet | `#7C3AED` | Telemetry |
+| Fuchsia | `#A21CAF` | Demo App |
+| Ember | `#C2410C` | Harness |
+| Amber | `#B45309` | free |
+| Green | `#15803D` | free |
+| Teal | `#0D9488` | Marketplace |
+| Slate | `#334155` | Shell |
+| Graphite | `#1E2A3B` | Workspaces |
+
+## Typography
+
+Geist for the interface, Geist Mono for anything a machine wrote — IDs, ports, versions, paths, logs.
+Weights 400 and 600 do most of the work; 500 is for buttons and badges.
+
+| Token | Size / line | Weight | Tracking |
+| --- | --- | --- | --- |
+| display | 48 / 52 | 600 | −3.5% |
+| h1 | 30 / 38 | 600 | −2% |
+| h2 | 22 / 30 | 600 | −1.5% |
+| h3 | 17 / 24 | 600 | −1% |
+| body-lg | 16 / 26 | 400 | 0 |
+| body (default) | 14 / 22 | 400 | 0 |
+| small | 13 / 20 | 400 | 0, muted |
+| overline | 11 / 16 | 600 | +8%, uppercase |
+| mono | 13 / 20 | Geist Mono 400 | 0 |
+
+Sentence case everywhere; uppercase only for the overline. Numbers that change use `tabular-nums`.
+Body lines stop at about 72 characters. Phone inputs use 16 px so mobile browsers do not zoom.
+
+### Voice
+
+Friendly, not cute. Say what happened, then what to do; name the app, the port or the path. Examples
+in designs set the standard too: an assistant proposes an action only for a problem that is still
+happening.
+
+| Do | Don't |
+| --- | --- |
+| Core restarted. 9 apps reconnected. | Woohoo! Everything is back online!! |
+| Telemetry can't reach port 4318. Check that the collector is running. | Oops, something went wrong. |
+| Remove Marketplace? Its data stays in `~/.hosty/apps`. | Are you sure? |
+
+## Logo and icons
+
+- **Mark.** The H-graph from [`assets/hosty-brand`](../../../assets/hosty-brand/README.md), unchanged:
+  ink on light, off-white on dark, white on the blue brand tile. Clear space is one node width. Below
+  20 px use the favicon cut. No gradients, no spectrum colors, no heavier stroke, no rotation.
+- **Wordmark.** Geist 600, shipped as outlined paths; the current lockups ask the system for Inter.
+- **App tiles.** One construction for every app: 100 × 100 grid, corner radius 22, glyph inside the
+  central 56 × 56, white stroke 6 with round caps and joins, one spectrum color, at most one detail in
+  a light tint of it.
+- **Interface icons.** Lucide at 16, 20 or 24 px, stroke 2, never filled, inheriting text color —
+  muted at rest, ink when active. App navigation icons ship in `currentColor`; Shell tints them.
+- **Tool icons.** A tool shows its manifest Lucide icon on a neutral tile, with the owning app's
+  spectrum color as a small corner badge.
+
+### Provider roles
+
+Hosty does not divide apps into system and ordinary, and no design shows a "System" label. An app is
+described by the roles it provides; each role has one icon, used wherever the app appears.
+
+| Role | Icon (Lucide) | Provided today by |
+| --- | --- | --- |
+| `ui-client` | `app-window` | Shell, once [replaceable UI clients](../replaceable-ui-clients/plan.md) ships the role |
+| `assistant` | `bot` | Harness |
+| `speech-to-text` | `audio-lines` | Whisper |
+| `otlp-collector` | `radar` | Telemetry |
+| language model (planned) | `cpu` | reserved |
+| `text-to-speech` (planned) | `volume-2` | reserved |
+
+- Roles come from Core's confirmed roles, not from what a manifest requests.
+- Role icons are ink on mist in a 20 px chip; spectrum color stays on the app tile.
+- Rows show icons only, with "Provides: …" as tooltip and accessible label; app details show icon
+  and name. At most three icons, then `+N`; an app without roles shows none.
+- Lifecycle warnings speak in roles: "Stopping Harness leaves the host without an assistant."
+
+## Components
+
+ReUI components unchanged, dressed by tokens. Controls are 36 px tall (32 small, 40 large; 44 px
+touch targets on phones) with an 8 px radius; popovers use 10 px and cards 14 px. Borders separate;
+shadows only lift what floats. Focus is a blue border plus a 3 px ring at about 30% opacity.
+Disabled is 45% opacity. Dark mode lifts surfaces with a lighter fill rather than a shadow.
+
+## Tokens
+
+ReUI reads the standard shadcn CSS variables, so the theme is a values swap in `globals.css`. Note that
+shadcn's `--accent` is the hover background, not the brand color; the brand color is `--primary`.
+
+| Variable | Light (`:root`) | Dark (`.dark`) |
+| --- | --- | --- |
+| `--background` | `#F6F8FB` | `#0F1B2D` |
+| `--foreground` | `#0F1B2D` | `#F1F5FA` |
+| `--card` | `#FFFFFF` | `#17253B` |
+| `--card-foreground` | `#0F1B2D` | `#F1F5FA` |
+| `--popover` | `#FFFFFF` | `#1C2B44` |
+| `--popover-foreground` | `#0F1B2D` | `#F1F5FA` |
+| `--primary` | `#1C68FF` | `#1C68FF` |
+| `--primary-foreground` | `#FFFFFF` | `#FFFFFF` |
+| `--secondary` | `#EEF2F7` | `#26364F` |
+| `--secondary-foreground` | `#0F1B2D` | `#F1F5FA` |
+| `--muted` | `#EEF2F7` | `#1C2B44` |
+| `--muted-foreground` | `#5A6A82` | `#93A3BA` |
+| `--accent` | `#EEF2F7` | `#22324B` |
+| `--accent-foreground` | `#0F1B2D` | `#F1F5FA` |
+| `--destructive` | `#D93036` | `#D93036` |
+| `--border` | `#DFE5EE` | `#26364F` |
+| `--input` | `#C3CDDB` | `#2E3F5C` |
+| `--ring` | `#1C68FF` | `#4D8BFF` |
+| `--sidebar` | `#F6F8FB` | `#0B1524` |
+| `--sidebar-foreground` | `#3A4B66` | `#B8C4D6` |
+| `--sidebar-accent` | `#E8F0FF` | `#16294A` |
+| `--sidebar-accent-foreground` | `#1449C2` | `#8DB4FF` |
+| `--sidebar-border` | `#DFE5EE` | `#1A2A42` |
+| `--chart-1` … `--chart-5` | `#1C68FF` `#7C3AED` `#C026D3` `#F59E0B` `#64748B` | `#4D8BFF` `#A78BFA` `#E879F9` `#FBBF24` `#94A3B8` |
+
+Charts never use signal cyan; a chart line is history, not live activity.
+
+Hosty additions:
+
+| Variable | Light | Dark |
+| --- | --- | --- |
+| `--signal` / `--signal-foreground` / `--signal-text` | `#28D5E5` / `#0F1B2D` / `#08707D` | `#28D5E5` / `#0F1B2D` / `#67E8F9` |
+| `--signal-strong` | `#0891A1` | `#28D5E5` |
+| `--success` / `--success-soft` / `--success-text` | `#16A34A` / `#E8F7EE` / `#0F6B33` | `#22C55E` / success at 16% / `#4ADE80` |
+| `--warning` / `--warning-text` | `#F59E0B` / `#8A5300` | `#F59E0B` / `#FBBF24` |
+| `--info` / `--info-text` | `#1C68FF` / `#1449C2` | `#4D8BFF` / `#8DB4FF` |
+| `--destructive-soft` / `--destructive-text` | `#FDECEC` / `#B4232A` | red at 18% / `#FF8A8E` |
+
+```css
+@theme inline {
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+  --color-signal: var(--signal);
+  --color-signal-strong: var(--signal-strong);
+  --color-signal-text: var(--signal-text);
+  --color-success-soft: var(--success-soft);
+  --color-success-text: var(--success-text);
+  /* warning, info and destructive the same way */
+}
+```
+
+Radius: `--radius: 0.625rem` (sm 6, md 8, lg 10, xl 14). Spacing on a 4 px base: 4, 8, 12, 16, 20,
+24, 32, 40, 48. Elevation: card `0 1px 2px` at 6% ink, dropdown `0 4px 14px -4px` at 16%, dialog
+`0 14px 34px -8px` at 24%.
+
+## Motif and motion
+
+- **Node field.** A 70 px grid of 22 px nodes joined by 2.5 px wires, at most four colored nodes;
+  backdrop for headers, onboarding and empty states.
+- **Loader.** Signal travels the H: corner, corner, center, corner, corner.
+- **Empty state.** Dashed nodes are slots waiting to be filled; one sentence of help, one primary
+  button.
+- **Motion.** Hover and press 120 ms ease-out, color only. Menus 150 ms fade plus 4 px. Panels and
+  sheets 220 ms `cubic-bezier(.2,.8,.2,1)`. Toasts 240 ms in, 160 ms out. The live pulse loops at
+  1.6 s and only on working states. `prefers-reduced-motion` keeps fades and stops movement and loops;
+  the working dot then keeps a static outer ring so it still differs from a plain dot.
+- **Avoid.** Gradient washes and glows, frosted glass, 3D or stock illustration, emoji as icons.
+
+## Shell layout
+
+### Dashboard
+
+- No visible column-header row. Each row: tile, name followed by its provider role icons, and
+  version · runtime on a second line; status; resources as one line (`7.8% · 412 MB`); actions.
+- An available update shows in the version, not as an icon: `0.6.1 → 0.7.0` with the new version in
+  Info blue. The Update action stays with the row's actions on the right.
+- Status shows only a dot while running; a label appears only off-normal (Updating 64%, Degraded,
+  Stopped), plus the hand icon for manual start.
+- Actions: More (⋯) always; one contextual action when needed (Start, Update, Logs, Configure);
+  Restart and Logs appear on hover or focus.
+- Core is the first row with the blue platform tile; listen address, public origin, ingress, data root
+  and runtime host expand under it. App rows expand into per-service status, endpoint and resources.
+- Header: filters as text toggles with counts (All, Running, In progress, Attention, Updates), the
+  aggregate resources with a sparkline, search, Check updates and the single primary Install app.
+- Compact layout, selected by the page's own width: list rows, filters in a menu, icon-only Install,
+  resources hidden until a row expands.
+
+### Data-grid pages
+
+Table pages share one pattern, built on ReUI Data Grid (TanStack Table): a toolbar with search,
+status filters with counts, dashed facet filters, a density toggle (48 / 36 px rows), a column chooser
+and one primary action; sortable headers with an arrow on the active column; checkbox selection with a
+select-all mixed state and a floating ink bulk-action bar at the bottom; mono for IDs and dates; status
+as dot and text; inactive rows in muted text, never lighter than `#5A6A82`; row actions on hover; a
+footer with count, rows per page and pagination.
+
+### Tools at every width
+
+There is no permanent right rail. The assistant has a top-strip button with a status dot; every other
+`ui.panels` tool is listed in one Tools menu.
+
+**Hide is not close.** The panel header carries Open separately and Hide. Hide, the top-strip button
+and switching tools keep every opened tool mounted with its frame, unsent draft, scroll position and
+selected conversation, as Shell does today on collapse. Ending a tool instance is a separate action in
+the tool's own menu. The same state survives every layout change: dock to sheet, sheet to phone,
+rotation and back.
+
+**The fit rule.** Layout follows what still fits in Shell's own width, so a window beside an agent
+behaves like a tablet. Each page has a minimum width — Dashboard 440 px in its compact layout,
+Settings and embedded apps 560 px — and the tool panel needs at least 320 px (360 px by default).
+
+| When this fits | Navigation | Page | Tool |
+| --- | --- | --- | --- |
+| Full navigation + page minimum + tool | Full | Full | Docked, resizable |
+| Icon rail + page minimum + tool minimum | Icon rail while a tool is open | Compact layout | Docked |
+| Not even that | Icon rail or menu button | Keeps its layout | Sheet over the page, ≥ 320 px |
+| Shell narrower than 600 px | Bottom tab bar | Full width | Bottom sheet |
+
+So a 900 px window docks the assistant beside the Dashboard (56 + 440 + 320 px fit) but slides it over
+Settings (56 + 560 + 320 px do not).
+
+**Activity.** Each tool reports one state — idle, working, needs you or failed — with an optional
+count and label. Reports travel through Core, never only through the tool's frame, so a tool that was
+never opened on this device, and a phone, still see them:
+
+- **Identity.** One report per user and tool: the Core user id plus the panel reference the SDK
+  already uses (app id, installation id, panel id). A reinstall starts empty; an app may report only
+  for users assigned to it, as with notifications.
+- **Producer.** The app posts with its service credential to a Core internal endpoint for its own
+  panels; the SDK wraps it in a server helper.
+- **Freshness.** Working is presence: it expires after the report's time-to-live (60 s by default,
+  at most 300 s) unless renewed, and then reads as idle. Needs you and failed stay until the app
+  replaces or clears them, or the installation goes away. Core keeps reports in memory; after a Core
+  restart apps re-report on reconnect, and the SDK helper resends the current state.
+- **Delivery.** Core publishes a `tool.activity.changed` hint on the existing event bus; Shell
+  re-reads the user's activity list, following the bus's hint-not-fact contract.
+- **No connection.** When Core's readiness reports the providing service as stopped or unreachable,
+  the tool shows "no connection" with the time of its last report instead of its last known state.
+- **Aggregation.** Shell sums the states by priority: failed, then needs you, then working, so a
+  decision is never hidden behind another tool's background work.
+- **First provider.** Harness: needs you with a count while approvals are pending, working while a
+  run executes, failed when a run fails.
+
+### Phone
+
+- A bottom tab bar holds Dashboard, Apps, Tools and Settings; notifications stay in the top bar.
+- App rows keep the runtime status first and append an update after it — "● Running · 0.6.1 →
+  0.7.0" — so an available update never hides whether the app is running.
+- Tools opens the last-used tool as a sheet above the tab bar; tapping Tools again hides it.
+- The sheet header always shows the tool's name, an **All tools** button and Hide.
+- All tools groups tools as Needs you, Working, No connection, then a four-column grid of every tool
+  with search and Edit (pin and reorder).
+- The Tools tab carries a count of tools that need the user, colored by the most severe (red for a
+  failure, amber for a decision); with nothing to decide, a signal dot shows that something works.
+- With the keyboard open the tab bar gives way and Shell sizes the sheet and the tool frame to the
+  visible viewport above the keyboard.
+- Everything inside the frame belongs to the tool. For the assistant, Harness owns the approval
+  content, pins a pending decision under its own header with a Review action however long the
+  conversation, and keeps its composer at the bottom of the frame. Shell owns only the sheet, its
+  header, its heights and Hide.
+
+## Interactions With Existing Features
+
+Implementing this plan changes documented behavior; each owning `feature.md` follows in the same PR as
+the deliverable that changes it.
+
+- [Resizable Shell Panel](../shell-panel-resize/feature.md) and
+  [App UI Surfaces](../app-ui-surfaces/feature.md) describe a 48 px right rail whose selected icon
+  collapses the panel, headers with only Open separately, and a drawer below 900 px of workspace
+  width. D11 and D12 replace the rail with the top-strip launcher, add Hide, and replace the fixed
+  breakpoint with the fit rule. Their retained-frame behavior is kept and extended to the phone.
+- [SDK UI Composition](../sdk-ui-composition/feature.md) and
+  [SDK Panel System](../sdk-panel-system/feature.md) let a child hide the tool launcher or disable
+  tools; today that hides the rail and the top-strip toggle. The new Assistant button and Tools menu
+  must honor the same negotiation. The SDK reports surface readiness and attention but has no shared
+  "working" state; D15 adds the activity contract.
+- [Shell Navigation](../shell-navigation/feature.md) switches to a 60 px rail below 768 px with a
+  top-bar toggle and marks system apps with a badge in the sidebar. D12 and D13 replace the phone
+  behavior with the tab bar, and the design removes the System badge everywhere, in line with the
+  move away from a system/ordinary split.
+- [Replaceable UI Clients](../replaceable-ui-clients/plan.md) D8 owns showing confirmed role badges
+  from Core facts for all installed apps. This plan supplies only the role icon set and the chip
+  (D18); D8 decides where role data comes from and when it appears.
+- [Core App Shell](../core-app-shell/feature.md) documents the dashboard table and a sky-coloured
+  spinner for transitions; D6 and D7 change both.
+- [Core Event Bus](../core-event-bus/feature.md) gains a `tool.activity.changed` event; its
+  hint-not-fact contract is unchanged.
+- [Notifications](../notifications/feature.md) remain the durable channel; a tool activity state is
+  live presence, not a notification. [Shell Operation Feedback](../shell-operation-feedback/feature.md)
+  keeps its placement.
+- [Assistant Entry Points](../assistant-entry-points/feature.md) and
+  [Assistant Approval Rules](../assistant-approval-rules/feature.md) stay owned by Harness; D17 adds
+  the pinned pending decision inside Harness's own panel UI and makes Harness the first activity
+  provider.
+
+## Deliverables
+
+### Phase 1 — Foundations
+
+- [ ] D1. Replace Shell's neutral shadcn values in `apps/shell/src/app/globals.css` with the light and dark tokens above, including signal, signal strong and the three-tone status tokens.
+- [ ] D2. Load Geist and Geist Mono in Shell and use them for `--font-sans` and `--font-mono`.
+- [ ] D3. Outline the wordmark in Geist 600 in `assets/hosty-brand`, regenerate the lockups with `build-assets.mjs`, and record the ink scale and status colors in `brand-tokens.json` and the brand README.
+- [ ] D4. Redraw the Plans and Workspaces tile icons on the shared 100-unit grid (radius 22, stroke 6) and map Demo App to its spectrum color.
+- [ ] D5. Ship the Telemetry and Demo App navigation icons in `currentColor` instead of hard-coded colors.
+- [ ] D6. Use the four status meanings across Shell — info blue, needs you amber (including pending approvals), failed red, working signal (replacing the sky spinner) — and keep cyan out of charts.
+- [ ] D16. Contrast pass on Shell: no text lighter than `#5A6A82` on light surfaces, `#6E7F98` and `#93A3BA` only for icons and disabled states, signal marks on light in `#0891A1`, and every state except the normal running dot carrying a label or its own shape, including the static ring for working under reduced motion.
+
+### Phase 2 — Shell pages
+
+- [ ] D7. Rework the Dashboard rows as described under Dashboard: no header row, role icons instead of the System badge, version and runtime under the name with an available update as `current → new`, status label only off-normal, single-line resources, hover actions plus one contextual action.
+- [ ] D8. Add the Dashboard compact layout, selected by container width.
+- [ ] D9. Build the data-grid page pattern on ReUI Data Grid and apply it first to Settings › Security › Access tokens.
+- [ ] D10. Replace generic loaders and empty states with the H-graph loader and node empty states.
+- [ ] D18. Add the provider role icon set and its chip (icon-only in rows, icon and name in app details) for `ui-client`, `assistant`, `speech-to-text` and `otlp-collector`, with the reserved icons for planned roles, and remove every "System" label from Shell.
+
+### Phase 3 — Tools and small screens
+
+- [ ] D11. Replace the permanent right tool rail with the top-strip Assistant button and Tools menu; panel headers get Open separately and Hide, which keeps frames, drafts, scroll and the selected conversation, while ending a tool instance moves to the tool's menu.
+- [ ] D12. Apply the fit rule with page minimums (Dashboard 440 px, Settings and embedded apps 560 px) and a 320 px tool minimum: navigation folds to its rail first, then the tool becomes a sheet over the page; drafts, scroll and the selected conversation survive every dock, sheet and phone transition.
+- [ ] D13. Add the phone layout below 600 px: bottom tab bar, last-tool sheet that a second tap hides, an always-visible All tools button, the grouped tool list with search, the Tools badge, and a sheet and frame sized to the visible viewport while the keyboard is open.
+- [ ] D14. Show tools everywhere with their Lucide icon and the owning app's color badge.
+- [ ] D15. Build the tool activity contract through Core as described under Activity: per-user reports keyed by the panel reference, an app-authenticated internal endpoint with an SDK server helper, time-to-live for working, re-reporting after a Core restart, a `tool.activity.changed` bus hint, "no connection" from Core readiness, and Shell's priority aggregation.
+- [ ] D17. In Harness, pin a pending approval under its panel header with a Review action, keep its composer at the bottom of its frame on phones, and report its activity through D15 as the first provider.
+
+## Open Questions
+
+- The page minimums: are Dashboard 440 px and Settings 560 px right, and may an embedded app declare
+  its own minimum in its manifest instead of the 560 px default?
+- Is ⌘J the assistant shortcut?
+- May a user pin one tool as a fifth phone tab?
+- Per-user accent presets — parked by the owner on 2026-10-12. Presets only (no free color), stored
+  like the light/dark theme; embedded apps would need the `@hosty-sdk/app/theme` protocol to carry
+  an accent field. Not part of this plan unless it is brought in as a deliverable.
+
+## Verification
+
+- `node scripts/docs-index.mjs --check` passes.
+- Per deliverable: Shell lint, type-check build and tests; affected app and SDK builds; version bumps
+  per AGENTS.md for every shipped artifact.
+- Contrast checks for every text and status token pair in light and dark, and every state checked
+  with `prefers-reduced-motion` and in grayscale to confirm it differs by more than color.
+- Activity: a pending Harness approval reaches the Tools badge on a second device that never opened
+  the assistant, survives another tool's background work, comes back after a Core restart, and turns
+  into "no connection" when Harness stops.
+- Browser checks through Core-managed Shell in light and dark at both sides of every layout switch:
+  599/600 px, and the widths where each page's minimum plus the tool minimum stops fitting with the
+  full sidebar and with the rail (for the Dashboard and Settings). No overlap between navigation, page
+  and tool at any width.
+- Phone checks on iOS Safari and Android Chrome: keyboard open with a long conversation, a pending
+  decision while another tool works, 16 or more tools, rotation, and a hidden tool keeping its draft
+  across dock, sheet and phone transitions.
