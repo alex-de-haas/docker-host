@@ -196,3 +196,19 @@ it.each(["access", "policy", "origin", "stopped"])("explains a retained panel in
   await act(async () => container.querySelector<HTMLButtonElement>('aside button[aria-label="Choose another tool"]')!.click());
   expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Add tool");
 });
+
+
+it.each(["disabled", "hidden"])("honors %s tool chrome and restores the rail when enabled", async mode => {
+  await render(false);
+  await act(async () => { expect(await ui.openToolPicker({ requestId: createPresentationRequestId() })).toMatchObject({ status: "accepted" }); });
+  await act(async () => host!.setViewChrome("root", { tools: mode === "disabled" ? { enabled: false } : { launcher: "hide" } }));
+  expect(container.querySelector('nav[aria-label="Tools"]')?.hasAttribute("hidden")).toBe(true);
+  expect(container.querySelector('#right-panel')?.hasAttribute("hidden")).toBe(true);
+  if (mode === "disabled") {
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    await act(async () => { expect((await ui.openToolPicker({ requestId: createPresentationRequestId() })).status).not.toBe("accepted"); });
+  }
+  await act(async () => host!.setViewChrome("root", {}));
+  expect(container.querySelector('nav[aria-label="Tools"]')?.hasAttribute("hidden")).toBe(false);
+  expect(container.querySelector('#right-panel')?.hasAttribute("hidden")).toBe(false);
+});

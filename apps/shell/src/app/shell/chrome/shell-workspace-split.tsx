@@ -5,9 +5,10 @@ import { useGroupRef, usePanelRef } from "react-resizable-panels";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { PANEL_RAIL_WIDTH, DEFAULT_RIGHT_PANEL_WIDTH, RIGHT_PANEL_WIDTH_PREF_KEY, WORKSPACE_PANEL_GAP, panelWidthBounds } from "./panel-width";
 
-export function ShellWorkspaceSplit({ children, panel, expanded, initialPanelWidth, onWidthChange }: {
+export function ShellWorkspaceSplit({ children, panel, expanded, initialPanelWidth, onWidthChange, showPanel = true }: {
   children: ReactNode;
   panel: ReactNode;
+  showPanel?: boolean;
   expanded: boolean;
   initialPanelWidth: number;
   onWidthChange?: (width: number) => void;
@@ -17,7 +18,7 @@ export function ShellWorkspaceSplit({ children, panel, expanded, initialPanelWid
   const panelRef = usePanelRef();
   const [preferredWidth, setPreferredWidth] = useState(initialPanelWidth);
   const [groupWidth, setGroupWidth] = useState(0);
-  const visible = Boolean(panel);
+  const visible = Boolean(panel) && showPanel;
   const bounds = panelWidthBounds(groupWidth);
   const railWidth = groupWidth > 0 ? Math.min(PANEL_RAIL_WIDTH, Math.max(0, groupWidth - WORKSPACE_PANEL_GAP)) : PANEL_RAIL_WIDTH;
 
@@ -65,17 +66,17 @@ export function ShellWorkspaceSplit({ children, panel, expanded, initialPanelWid
         style={{ overflow: "hidden" }} className="rounded-xl border bg-background shadow-xs">
         {children}
       </ResizablePanel>
-      {visible && <>
-        <ResizableHandle aria-label="Resize right panel" disabled={!expanded} aria-hidden={!expanded}
-          style={{ width: WORKSPACE_PANEL_GAP, pointerEvents: expanded ? undefined : "none" }}
+      {panel && <>
+        <ResizableHandle hidden={!visible} aria-label="Resize right panel" disabled={!expanded} aria-hidden={!expanded}
+          style={{ display: visible ? undefined : "none", width: WORKSPACE_PANEL_GAP, pointerEvents: expanded ? undefined : "none" }}
           className="shrink-0 bg-transparent after:inset-y-auto after:h-8 after:rounded-full after:bg-transparent hover:after:bg-border focus-visible:after:bg-ring active:after:bg-ring"
           title="Drag to resize. Double-click to reset width."
           disableDoubleClick onDoubleClick={() => {
             panelRef.current?.resize(DEFAULT_RIGHT_PANEL_WIDTH + PANEL_RAIL_WIDTH);
             rememberWidth(DEFAULT_RIGHT_PANEL_WIDTH);
           }} />
-        <ResizablePanel id="right-panel" panelRef={panelRef} defaultSize={expanded ? preferredWidth + PANEL_RAIL_WIDTH : railWidth}
-          minSize={expanded ? bounds.panelMin : railWidth} maxSize={expanded ? groupWidth > 0 ? bounds.panelMax : "100%" : railWidth}
+        <ResizablePanel id="right-panel" hidden={!visible} panelRef={panelRef} defaultSize={!visible ? 0 : expanded ? preferredWidth + PANEL_RAIL_WIDTH : railWidth}
+          minSize={!visible ? 0 : expanded ? bounds.panelMin : railWidth} maxSize={!visible ? 0 : expanded ? groupWidth > 0 ? bounds.panelMax : "100%" : railWidth}
           style={{ overflow: "hidden" }} className="rounded-xl border bg-background shadow-xs"
           groupResizeBehavior="preserve-pixel-size">
           {panel}

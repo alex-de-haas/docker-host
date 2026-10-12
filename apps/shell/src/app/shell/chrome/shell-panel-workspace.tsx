@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ExternalLink, PanelsTopLeft, Plus, ArrowLeft } from "lucide-react";
-import { HostyAppFrame, useHostyUiHost, type HostyAppFrameProps } from "@hosty-sdk/app/ui/react";
+import { HostyAppFrame, useHostyUiHost, useHostyChrome, type HostyAppFrameProps } from "@hosty-sdk/app/ui/react";
 import type { UiHostSnapshot, UiWorkspaceRenderer } from "@hosty-sdk/app/ui/host";
 import { panelKey, type PanelTarget, type UiPanel } from "@hosty-sdk/app/ui/types";
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,10 @@ type Props = Pick<HostyAppFrameProps, "onAskAssistant" | "onAuthRequired"> & {
 /** Shell owns all chrome; the SDK owns authority, presentation identity and frame transport. */
 export function ShellPanelWorkspace({ children, initialWidth = 360, onExpandedChange, onStartApp, onAskAssistant, onAuthRequired, outbound }: Props) {
   const host = useHostyUiHost();
+  const chrome = useHostyChrome();
   const state = useSyncExternalStore(host?.subscribeSnapshot ?? noop, host?.getSnapshot ?? (() => empty), () => empty);
+  const toolsEnabled = chrome.tools.enabled && !state.error?.code.startsWith("unsupported");
+  const railVisible = toolsEnabled && chrome.tools.launcher !== "hide";
   const workspace = state.workspaces?.find(w => w.workspaceId === "default");
   const tools = state.tools.filter(t => t.workspaceId === "default");
   const tool = tools.find(t => t.presentationId === workspace?.selectedId);
@@ -177,7 +180,7 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, onExpandedCh
       </div>)}
       {narrow && <span tabIndex={0} className="sr-only" onFocus={() => dismiss.current?.focus()} />}
     </aside>
-    <TooltipProvider delayDuration={350}><nav aria-label="Tools" inert={narrow && expanded} className={cn("flex w-12 shrink-0 flex-col items-center gap-1 overflow-y-auto py-2", expanded && !narrow && "border-l")}>
+    <TooltipProvider delayDuration={350}><nav aria-label="Tools" hidden={!railVisible} style={!railVisible ? { display: "none" } : undefined} inert={!railVisible || narrow && expanded} className={cn("flex w-12 shrink-0 flex-col items-center gap-1 overflow-y-auto py-2", expanded && !narrow && "border-l")}>
       {state.catalog.map((item, index) => <Tooltip key={panelKey(item.panel)}><TooltipTrigger asChild>
         <Button variant="ghost" size="icon" aria-label={item.label} aria-controls={bodyId} aria-expanded={expanded && tool?.key === panelKey(item.panel)}
           className={cn("relative size-9 rounded-lg", expanded && tool?.key === panelKey(item.panel) && "bg-muted shadow-xs ring-1 ring-border")}
@@ -192,10 +195,10 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, onExpandedCh
     </nav></TooltipProvider>
   </div>;
   return <div ref={root} className="h-full min-h-0 min-w-0" data-shell-panel-layout={narrow ? "drawer" : "dock"}>
-    <ShellWorkspaceSplit panel={panel} expanded={expanded && !narrow} initialPanelWidth={initialWidth} onWidthChange={width => host?.setWidth(width)}>
+    <ShellWorkspaceSplit panel={panel} showPanel={railVisible || expanded} expanded={expanded && !narrow} initialPanelWidth={initialWidth} onWidthChange={width => host?.setWidth(width)}>
       <div className="h-full min-h-0" inert={narrow && expanded}>{children}</div>
     </ShellWorkspaceSplit>
-    <Dialog open={picker} onOpenChange={open => { setPicker(open); if (open) window.dispatchEvent(new CustomEvent("hosty:ui:modal", { detail: "picker:default" })); }}>
+    <Dialog open={picker && toolsEnabled} onOpenChange={open => { setPicker(open); if (open) window.dispatchEvent(new CustomEvent("hosty:ui:modal", { detail: "picker:default" })); }}>
       <DialogContent><DialogHeader><DialogTitle>Add tool</DialogTitle><DialogDescription>Open a tool beside your document.</DialogDescription></DialogHeader>
         {(error || state.error) && <Alert role="status"><AlertDescription>{error ?? state.error?.message}</AlertDescription></Alert>}
         {!state.catalog.length && <p className="text-sm text-muted-foreground">No tools are available for your account.</p>}
