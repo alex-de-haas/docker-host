@@ -31,6 +31,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount()); node.remove(); cancelActivityRenewal(); forgetAppGrant();
   vi.unstubAllGlobals(); vi.restoreAllMocks(); sessionStorage.clear();
+  window.history.replaceState(null, "", "/");
 });
 async function render(children: ReactNode = <input aria-label="Draft" defaultValue="Unsaved work" />) {
   await act(async () => root.render(<StrictMode><HostyOverlay>{children}</HostyOverlay></StrictMode>));
@@ -57,6 +58,33 @@ describe("HostyOverlay", () => {
     const response = await appFetch("/api/write", { method: "POST", body: "draft" });
     expect(response.status).toBe(503);
     expect(fetcher.mock.calls.every(args => String(args[0]).includes("/api/hosty/session"))).toBe(true);
+  });
+  it.each([false, true])("shares the continuity and overlay focus probe (route changed: %s)", async routeChanged => {
+    const session = { ...active(), continuity: { version: 1, mode: "native", grantId: "reference",
+      expiresAt: "2030-01-01T00:00:00Z", checkAfterSeconds: 300 } };
+    const waiting: Array<(response: Response) => void> = [];
+    let hold = false;
+    const fetcher = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).includes("/api/hosty/session")) {
+        if (hold) return new Promise<Response>(resolve => waiting.push(resolve));
+        return Promise.resolve(Response.json(session));
+      }
+      return Promise.resolve(Response.json({ ok: true }));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    await render();
+    if (routeChanged) window.history.replaceState(null, "", "/dashboard?view=apps");
+    hold = true;
+    // Force continuity to check again without waiting for the normal cache interval.
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      window.dispatchEvent(new Event("focus"));
+    });
+    await act(async () => { for (const resolve of waiting) resolve(Response.json(session)); });
+    const response = await appFetch("/api/apps");
+    expect(response.status).toBe(200);
+    expect(waiting).toHaveLength(1);
+    expect(fetcher).toHaveBeenCalledWith("/api/apps", expect.anything());
   });
   it("opens only the connected portal after layout effects resume with retained state", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(active("missing"))));

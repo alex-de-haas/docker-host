@@ -1,9 +1,11 @@
 import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { HostyPanelWorkspace, HostyUiRoot, useHostyUiHost } from "@hosty-sdk/app/ui/react";
+import { HostyUiRoot, useHostyUiHost } from "@hosty-sdk/app/ui/react";
+import { ui, createPresentationRequestId } from "@hosty-sdk/app/ui";
 import type { UiHost } from "@hosty-sdk/app/ui/host";
 import type { UiBootstrap, UiPanel } from "@hosty-sdk/app/ui/types";
+import { ShellPanelWorkspace } from "../src/app/shell/chrome/shell-panel-workspace";
 import { usePanelExpanded } from "../src/app/shell/chrome/use-panel-expanded";
 import { ShellTopStrip } from "../src/app/shell/chrome/shell-top-strip";
 import { useAssistantSessionLink } from "../src/app/shell/assistant/use-assistant-session-link";
@@ -17,6 +19,8 @@ const panels: UiPanel[] = ["notes", "assistant"].map(appId => ({ panel: { appId,
   endpoint: "web", route: "/panel", origin: `https://${appId}.test`, label: appId, appName: appId, icon: null,
   available: true, state: "running", canStart: false, framePolicy: policy }));
 let root: Root, container: HTMLDivElement, host: UiHost | null;
+let resizeWorkspace: () => void;
+let catalog: UiPanel[];
 let catalogGate: Promise<void> | null, resolutionGate: Promise<void> | null, refused: boolean;
 const persisted = vi.fn();
 function Shell({ initialOpen, link }: { initialOpen: boolean | null; link: boolean }) {
@@ -27,7 +31,7 @@ function Shell({ initialOpen, link }: { initialOpen: boolean | null; link: boole
   return <>
     <ShellTopStrip title="Plans" navigationWidth={60} leftRailExpanded={false} onToggleLeftRail={() => {}}
       rightRailExpanded={expanded} onToggleRightRail={() => panelHost?.setExpanded(!expanded)} showNotifications={false} onBrandClick={() => {}} />
-    <HostyPanelWorkspace railMode="catalog" onExpandedChange={persisted}><div>Document</div></HostyPanelWorkspace>
+    <ShellPanelWorkspace onExpandedChange={persisted}><div>Document</div></ShellPanelWorkspace>
   </>;
 }
 async function render(initialOpen: boolean | null, link = false) {
@@ -35,13 +39,18 @@ async function render(initialOpen: boolean | null, link = false) {
 }
 const toggle = (open: boolean) => container.querySelector<HTMLButtonElement>(`button[aria-label="${open ? "Hide" : "Show"} the panel"]`)!;
 beforeEach(() => {
-  host = null; catalogGate = null; resolutionGate = null; refused = false; persisted.mockReset(); localStorage.clear();
+  catalog = panels; host = null; catalogGate = null; resolutionGate = null; refused = false; persisted.mockReset(); localStorage.clear();
   document.cookie = `${RIGHT_PANEL_OPEN_PREF_KEY}=; max-age=0; path=/`;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  resizeWorkspace = () => {};
+  vi.stubGlobal("ResizeObserver", class {
+    constructor(private callback: () => void) {}
+    observe(element: HTMLElement) { if (element.hasAttribute("data-shell-panel-layout")) resizeWorkspace = this.callback; }
+    disconnect() {}
+  });
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("bootstrap")) return Response.json(bootstrap);
-    if (url.endsWith("panels")) { await catalogGate; return Response.json({ panels }); }
+    if (url.endsWith("panels")) { await catalogGate; return Response.json({ panels: catalog }); }
     if (url.endsWith("resolve")) {
       await resolutionGate;
       if (refused) return Response.json({ code: "access_unavailable" }, { status: 403 });
@@ -62,6 +71,7 @@ it("shows the real collapsed state during a delayed/refused session link and ope
   expect(toggle(false)?.getAttribute("aria-pressed")).toBe("false");
   await act(async () => { release(); await host!.refresh(); });
   expect(host!.getSnapshot().selected).toBeNull();
+  expect(persisted).not.toHaveBeenCalled();
   expect(toggle(false)?.getAttribute("aria-pressed")).toBe("false");
   refused = false;
   await act(async () => toggle(false).click());
@@ -115,4 +125,111 @@ it("performs one resolution for the first top-strip opening after catalog discov
   expect(requests()).toHaveLength(1);
   expect(host!.getSnapshot().selected).toEqual(panels[0].panel);
   expect(container.querySelector("aside")?.hidden).toBe(false);
+});
+
+it("retains tool frames across rail toggles, switching and the drawer breakpoint", async () => {
+  const originalWidth = window.innerWidth;
+  await render(false);
+  await act(async () => { await host!.selectPanel(panels[1].panel); });
+  const assistant = container.querySelector<HTMLIFrameElement>('iframe[title="assistant"]')!;
+  expect(assistant).not.toBeNull();
+  expect(container.querySelector(".hosty-panel-workspace")).toBeNull();
+  expect(container.querySelector('#workspace')?.firstElementChild?.className).toContain("border");
+  expect(container.querySelector('[aria-label="Open separately"]')).not.toBeNull();
+  expect(container.querySelector('[aria-label="Minimize panel"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Close tool"]')).toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="assistant"]')!.click());
+  expect(host!.getSnapshot().expanded).toBe(false);
+  expect(container.querySelector('iframe[title="assistant"]')).toBe(assistant);
+  await act(async () => { await host!.selectPanel(panels[0].panel); });
+  expect(container.querySelector('iframe[title="assistant"]')).toBe(assistant);
+  await act(async () => { await host!.selectPanel(panels[1].panel); });
+  try {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 600 });
+    await act(async () => resizeWorkspace());
+    expect(container.querySelector('[data-shell-panel-layout="drawer"]')).not.toBeNull();
+    expect(container.querySelector('aside[role="dialog"]')?.getAttribute("aria-modal")).toBe("true");
+    expect(container.querySelector('nav[aria-label="Tools"]')?.hasAttribute("inert")).toBe(true);
+    expect(container.querySelector('iframe[title="assistant"]')).toBe(assistant);
+    await act(async () => container.querySelector("aside")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(host!.getSnapshot().expanded).toBe(false);
+    expect(container.querySelector('iframe[title="assistant"]')).toBe(assistant);
+  } finally { Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth }); }
+});
+it("serves SDK picker requests with the Shell dialog and releases SDK-closed presentations", async () => {
+  await render(false);
+  await act(async () => { expect(await ui.openToolPicker({ requestId: createPresentationRequestId() })).toMatchObject({ status: "accepted" }); });
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Open a tool beside your document");
+  await act(async () => { await host!.selectPanel(panels[0].panel); });
+  const id = host!.getSnapshot().tools[0].presentationId;
+  await act(async () => host!.closePresentation(id));
+  expect(container.querySelector('iframe[title="notes"]')).toBeNull();
+});
+
+
+it("focuses a newly opened tool after its frame mounts", async () => {
+  await render(false);
+  const opener = toggle(false);
+  opener.focus();
+  await act(async () => { await host!.selectPanel(panels[1].panel); });
+  const assistant = container.querySelector<HTMLIFrameElement>('iframe[title="assistant"]');
+  expect(assistant).not.toBeNull();
+  expect(document.activeElement).toBe(assistant);
+  await act(async () => host!.collapseWorkspace("default"));
+  expect(document.activeElement).toBe(opener);
+});
+
+it.each(["access", "policy", "origin", "stopped"])("explains a retained panel invalidated by %s", async reason => {
+  await render(false);
+  await act(async () => { await host!.selectPanel(panels[1].panel); });
+  const id = host!.getSnapshot().tools[0].presentationId;
+  catalog = reason === "access" ? [panels[0]] : panels.map(panel => panel === panels[1] ? {
+    ...panel,
+    ...(reason === "policy" ? { framePolicy: { ...policy, microphone: true } } : {}),
+    ...(reason === "origin" ? { origin: "https://replacement.test" } : {}),
+    ...(reason === "stopped" ? { state: "stopped", available: false } : {}),
+  } : panel);
+  await act(async () => host!.refresh());
+  expect(host!.getSnapshot().tools[0]).toMatchObject({ presentationId: id, resolved: { surface: null } });
+  expect(container.querySelector('iframe[title="assistant"]')).toBeNull();
+  expect(container.querySelector('aside [role="status"]')?.textContent).toContain("This tool is no longer available");
+  await act(async () => container.querySelector<HTMLButtonElement>('aside button[aria-label="Choose another tool"]')!.click());
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Add tool");
+});
+
+
+it.each(["disabled", "hidden"])("honors %s tool chrome and restores the rail when enabled", async mode => {
+  await render(false);
+  await act(async () => { expect(await ui.openToolPicker({ requestId: createPresentationRequestId() })).toMatchObject({ status: "accepted" }); });
+  await act(async () => host!.setViewChrome("root", { tools: mode === "disabled" ? { enabled: false } : { launcher: "hide" } }));
+  expect(toggle(false)).toBeNull();
+  expect(toggle(true)).toBeNull();
+  expect(container.querySelector('nav[aria-label="Tools"]')?.hasAttribute("hidden")).toBe(true);
+  expect(container.querySelector('#right-panel')?.hasAttribute("hidden")).toBe(true);
+  if (mode === "disabled") {
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    await act(async () => { expect((await ui.openToolPicker({ requestId: createPresentationRequestId() })).status).not.toBe("accepted"); });
+  }
+  await act(async () => host!.setViewChrome("root", {}));
+  expect(container.querySelector('nav[aria-label="Tools"]')?.hasAttribute("hidden")).toBe(false);
+  expect(container.querySelector('#right-panel')?.hasAttribute("hidden")).toBe(false);
+});
+
+
+it("keeps frame access-review links out of document flow without SDK workspace styles", async () => {
+  vi.stubGlobal("open", vi.fn());
+  await render(false);
+  await act(async () => { await host!.selectPanel(panels[1].panel); });
+  const frame = container.querySelector<HTMLIFrameElement>('iframe[title="assistant"]')!;
+  await act(async () => window.dispatchEvent(new MessageEvent("message", {
+    source: frame.contentWindow, origin: panels[1].origin!,
+    data: { type: "hosty:request-permission-review" },
+  })));
+  const link = container.querySelector<HTMLAnchorElement>('a.hosty-panel-review')!;
+  expect(link).not.toBeNull();
+  expect(link.href).toContain("https://core.test/");
+  expect(getComputedStyle(link).position).toBe("absolute");
+  expect(getComputedStyle(frame.parentElement!).position).toBe("relative");
+  expect(getComputedStyle(frame).display).toBe("block");
+  expect(container.querySelector('iframe[title="assistant"]')).toBe(frame);
 });

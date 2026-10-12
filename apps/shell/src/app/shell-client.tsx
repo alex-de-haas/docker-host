@@ -11,8 +11,7 @@ import { useAppUpdateNotifications } from "./shell/update-notifications";
 
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LoaderCircle, PanelsTopLeft } from "lucide-react";
-import { AppIcon } from "./shell/app-icon";
+import { LoaderCircle } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { toast, AssistantFeedbackContext, errorReportText, type ErrorReport } from "@/components/reui/operation-toast";
@@ -38,9 +37,9 @@ import { useAssistantPresentation } from "./shell/assistant/use-assistant-presen
 import { assistantMessageFor, assistantSupportsContext, createAppSession, createErrorSession, createHandoff, pendingAssistantIntent, toggleAssistantPanel } from "./shell/assistant/assistant-client";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
 import { ShellTopStrip } from "./shell/chrome/shell-top-strip";
-import { HostyPanelWorkspace, useHostyUiHost } from "@hosty-sdk/app/ui/react";
+import { useHostyUiHost } from "@hosty-sdk/app/ui/react";
+import { ShellPanelWorkspace } from "./shell/chrome/shell-panel-workspace";
 import type { PanelTarget } from "@hosty-sdk/app/ui";
-import { RIGHT_PANEL_WIDTH_PREF_KEY } from "./shell/chrome/panel-width";
 import { usePanelExpanded } from "./shell/chrome/use-panel-expanded";
 import { getAppPanelTabs, getAppSettingsTabs, resolveSettingsSurface } from "./shell/surfaces/app-surface-tabs";
 import { ShellActionsContext, ShellStateContext } from "./shell/shell-context";
@@ -356,7 +355,7 @@ export function ShellClient({
         const appsResponse = await fetchCore(`${coreOrigin}/api/apps`, { credentials: "include", cache: "no-store" });
         redirectToCoreLoginIfAuthRequired(appsResponse, coreOrigin);
         if (!appsResponse.ok) {
-          throw new Error(`Apps API returned ${appsResponse.status}.`);
+          throw new Error(`Could not load apps: ${await readCoreError(appsResponse)}`);
         }
 
         apps = (await appsResponse.json()) as AppsResponse;
@@ -2184,10 +2183,8 @@ export function ShellClient({
         </aside>
         {narrowViewport && mobileSidebarOpen && <div aria-hidden />}
 
-        <HostyPanelWorkspace railMode="catalog" minimizeControl="drawer" className="hosty-shell-panels" initialWidth={initialRightPanelWidth}
-          renderIcon={panel => <AppIcon src={null} name={panel.icon} fallback={PanelsTopLeft} className="size-4" />}
+        <ShellPanelWorkspace initialWidth={initialRightPanelWidth}
           onExpandedChange={open => persistChromePref(RIGHT_PANEL_OPEN_PREF_KEY, open)}
-          onWidthChange={width => { document.cookie = `${RIGHT_PANEL_WIDTH_PREF_KEY}=${Math.round(width)}; path=/; max-age=31536000; samesite=lax`; }}
           onStartApp={canManageApps ? startAppById : undefined} onAskAssistant={assistantAvailable ? askAssistant : undefined}
           onAuthRequired={handleSurfaceAuthRequired}
           outbound={assistantMessageFor(assistantAsk, activeUserId, assistantAsk?.appId, assistantIds)}>
@@ -2224,7 +2221,7 @@ export function ShellClient({
               )}
             </main>
           </div>
-        </HostyPanelWorkspace>
+        </ShellPanelWorkspace>
       </div>
 
         {installOpen && <SourceInstallDialog

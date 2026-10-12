@@ -1,13 +1,13 @@
 ---
 created: 2026-10-09
-updated: 2026-10-09
+updated: 2026-10-12
 summary: Read-only inspection of session workspaces, repository worktrees, source changes, application bindings and recorded pull-request evidence.
 components: [apps/workspaces, apps/core, apps/harness, apps/shell]
 ---
 
 # Workspaces App
 
-Hosty Workspaces (`hosty.workspaces`, version `0.1.0`) is an ordinary runtime app. It consumes
+Hosty Workspaces (`hosty.workspaces`, version `0.2.1`) is an ordinary runtime app. It consumes
 Core's [workspace inspection contract](../assistant-session-workspaces/feature.md) under the
 reviewed `apps.workspaces.read` permission and the current administrator's app identity. It has
 no provider interface, MCP surface, source mutation controls or conversation storage.
@@ -67,7 +67,14 @@ mode. Standalone entry displays the app title; embedded/native entry hides dupli
 The server forwards only its service token and this app's current user credential to the bounded
 Core read routes. It cannot forward arbitrary Core paths or source mutation requests.
 
+The app exposes the SDK GET/POST adapter at `/api/hosty/ui/[...action]` behind the existing
+administrator session gate. It supplies host verification, navigation metadata and tool resolution,
+so Shell policy hides app navigation after reloads and standalone navigation finishes loading.
+
 ## Testing Expectations
+
+- SDK UI routes cover authenticated bootstrap/navigation/panels reads, same-origin navigation
+  resolution, and rejection of anonymous, non-administrator and cross-origin requests.
 
 - Run app lint, production build and Vitest coverage for filtering, clean/unknown/history states,
   path-boundary app mapping, safe links, stale PR evidence and invalid deep links.

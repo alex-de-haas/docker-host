@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-updated: 2026-10-11
+updated: 2026-10-12
 summary: Silent maintenance of browser and native app sessions, with separately authorized and revocable background delegation.
 components: [apps/core, apps/cli, packages/app-sdk, packages/app-sdk-dotnet, apps/shell, apps/shell-swift, apps/harness, apps/plans]
 ---
@@ -48,6 +48,10 @@ jitter: at most five minutes, shortened to one third of the smaller app/parent i
 Fractional seconds are supported for short custom settings. It also checks on focus/visibility/online
 return and before a protected request when validation is older than 30 seconds or the advertised
 interval, whichever is shorter. Each scheduled heartbeat bypasses that freshness cache. Concurrent checks coalesce; a burst of wake events schedules one next timer.
+Identity probes requested by continuity maintenance, overlay focus and setup review share the same
+in-flight result. Navigation changes only the sign-in return address; it does not replace the
+continuity owner while a probe is running. A failed or superseded credential still requires a new
+authoritative check before protected requests proceed.
 Timers are advisory; the server decides validity.
 
 For browser sessions, a transient Core-owned iframe uses
@@ -185,6 +189,9 @@ Clock-controlled server tests establish actual authority deadlines, migration an
 behavior; the browser clock advance is not evidence of elapsed server time or physical device sleep.
 
 ## Testing Expectations
+
+- Concurrent continuity and overlay focus checks share an identity probe, including after route
+  changes; successful validation allows protected dispatch without a synthetic HTTP 503.
 
 - Clock-controlled Core tests cross the former hour, separate child use from browser-parent idle
   maintenance, reject absent/wrong cookie/CSRF proof, and enforce parent/device expiry and revocation.

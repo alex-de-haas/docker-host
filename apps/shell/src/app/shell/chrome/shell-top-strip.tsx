@@ -1,5 +1,6 @@
 "use client";
 
+import { useHostyChrome } from "@hosty-sdk/app/ui/react";
 import { PanelLeft, PanelRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -35,6 +36,8 @@ export function ShellTopStrip({
   /** The mark doubles as the way home, which is what it did in the sidebar header it came from. */
   onBrandClick: () => void;
 }) {
+  const chrome = useHostyChrome();
+  const showPanelToggle = chrome.tools.enabled && chrome.tools.launcher !== "hide";
   return (
     <header className="flex h-12 shrink-0 items-center pr-3 text-sidebar-foreground">
       <div className="shrink-0 pl-5" style={{ width: navigationWidth }}>
@@ -73,7 +76,7 @@ export function ShellTopStrip({
         {showNotifications && <NotificationBell />}
         <ThemeMenuButton />
 
-        {rightRailExpanded !== null && (
+        {showPanelToggle && rightRailExpanded !== null && (
           <Button
             type="button"
             variant="ghost"

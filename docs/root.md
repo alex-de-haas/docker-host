@@ -160,7 +160,7 @@ Plans: 9 In Progress · 1 Blocked · 37 Draft · 7 On Hold.
 - [Shell Access And System Apps](features/shell-access-and-system-apps/feature.md) — Assignments apply equally to system and ordinary apps, and management views are administrator-only.
 - [Shell Navigation](features/shell-navigation/feature.md) — Shell's three destinations, Dashboard, Settings and Apps, with the route table and the sidebar.
 - [Shell operation feedback](features/shell-operation-feedback/feature.md) — Shell separates confirmations, transient operation results and persistent diagnostics.
-- [Resizable Shell Panel](features/shell-panel-resize/feature.md) — Shared SDK dock and drawer resizing with Shell width/open preferences and retained app frames.
+- [Resizable Shell Panel](features/shell-panel-resize/feature.md) — Shell-owned ReUI document and panel containers with persistent resizing, responsive drawers and retained SDK app frames.
 - [Source Providers](features/source-providers/feature.md) — Core owns a typed source-provider registry with built-in GitHub, owner-scoped connections and Shell account management.
 - [Swift Shell](features/swift-shell/feature.md) — A native SwiftUI client for iOS, iPadOS and macOS that manages a host's installed apps.
 - [Telemetry Over MCP](features/telemetry-mcp/feature.md) — Stored logs, traces and resource metrics exposed as an MCP interface behind a scoped credential.
