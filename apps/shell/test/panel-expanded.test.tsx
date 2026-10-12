@@ -20,6 +20,7 @@ const panels: UiPanel[] = ["notes", "assistant"].map(appId => ({ panel: { appId,
   available: true, state: "running", canStart: false, framePolicy: policy }));
 let root: Root, container: HTMLDivElement, host: UiHost | null;
 let resizeWorkspace: () => void;
+let catalog: UiPanel[];
 let catalogGate: Promise<void> | null, resolutionGate: Promise<void> | null, refused: boolean;
 const persisted = vi.fn();
 function Shell({ initialOpen, link }: { initialOpen: boolean | null; link: boolean }) {
@@ -38,7 +39,7 @@ async function render(initialOpen: boolean | null, link = false) {
 }
 const toggle = (open: boolean) => container.querySelector<HTMLButtonElement>(`button[aria-label="${open ? "Hide" : "Show"} the panel"]`)!;
 beforeEach(() => {
-  host = null; catalogGate = null; resolutionGate = null; refused = false; persisted.mockReset(); localStorage.clear();
+  catalog = panels; host = null; catalogGate = null; resolutionGate = null; refused = false; persisted.mockReset(); localStorage.clear();
   document.cookie = `${RIGHT_PANEL_OPEN_PREF_KEY}=; max-age=0; path=/`;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   resizeWorkspace = () => {};
@@ -49,7 +50,7 @@ beforeEach(() => {
   });
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("bootstrap")) return Response.json(bootstrap);
-    if (url.endsWith("panels")) { await catalogGate; return Response.json({ panels }); }
+    if (url.endsWith("panels")) { await catalogGate; return Response.json({ panels: catalog }); }
     if (url.endsWith("resolve")) {
       await resolutionGate;
       if (refused) return Response.json({ code: "access_unavailable" }, { status: 403 });
@@ -162,4 +163,35 @@ it("serves SDK picker requests with the Shell dialog and releases SDK-closed pre
   const id = host!.getSnapshot().tools[0].presentationId;
   await act(async () => host!.closePresentation(id));
   expect(container.querySelector('iframe[title="notes"]')).toBeNull();
+});
+
+
+it("focuses a newly opened tool after its frame mounts", async () => {
+  await render(false);
+  const opener = toggle(false);
+  opener.focus();
+  await act(async () => { await host!.selectPanel(panels[1].panel); });
+  const assistant = container.querySelector<HTMLIFrameElement>('iframe[title="assistant"]');
+  expect(assistant).not.toBeNull();
+  expect(document.activeElement).toBe(assistant);
+  await act(async () => host!.collapseWorkspace("default"));
+  expect(document.activeElement).toBe(opener);
+});
+
+it.each(["access", "policy", "origin", "stopped"])("explains a retained panel invalidated by %s", async reason => {
+  await render(false);
+  await act(async () => { await host!.selectPanel(panels[1].panel); });
+  const id = host!.getSnapshot().tools[0].presentationId;
+  catalog = reason === "access" ? [panels[0]] : panels.map(panel => panel === panels[1] ? {
+    ...panel,
+    ...(reason === "policy" ? { framePolicy: { ...policy, microphone: true } } : {}),
+    ...(reason === "origin" ? { origin: "https://replacement.test" } : {}),
+    ...(reason === "stopped" ? { state: "stopped", available: false } : {}),
+  } : panel);
+  await act(async () => host!.refresh());
+  expect(host!.getSnapshot().tools[0]).toMatchObject({ presentationId: id, resolved: { surface: null } });
+  expect(container.querySelector('iframe[title="assistant"]')).toBeNull();
+  expect(container.querySelector('aside [role="status"]')?.textContent).toContain("This tool is no longer available");
+  await act(async () => container.querySelector<HTMLButtonElement>('aside button[aria-label="Choose another tool"]')!.click());
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Add tool");
 });

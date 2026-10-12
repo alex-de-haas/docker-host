@@ -35,6 +35,7 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, onExpandedCh
   const selected = state.catalog.find(p => panelKey(p.panel) === tool?.key);
   const [picker, setPicker] = useState(false), [error, setError] = useState<string | null>(null);
   const [narrow, setNarrow] = useState(false);
+  const [focusRequest, setFocusRequest] = useState<{ id: string } | null>(null);
   const root = useRef<HTMLDivElement>(null), body = useRef<HTMLElement>(null), dismiss = useRef<HTMLButtonElement>(null);
   const frames = useRef(new Map<string, HTMLDivElement>());
   const opener = useRef<HTMLElement | null>(null);
@@ -49,7 +50,7 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, onExpandedCh
         // The mounted Shell slot owns the retained frame tree populated by the host snapshot.
         return !signal.aborted && root.current?.isConnected ? "accepted" : "unavailable";
       },
-      focus(id) { frames.current.get(id)?.querySelector("iframe")?.focus(); },
+      focus(id) { setFocusRequest({ id }); },
       collapse() { setPicker(false); },
       release() { /* React removes frames when the host removes their presentation. */ },
       async showToolPicker(signal) {
@@ -98,6 +99,14 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, onExpandedCh
     window.addEventListener("hosty:ui:drawer-dismiss", close);
     return () => window.removeEventListener("hosty:ui:drawer-dismiss", close);
   }, [host, narrow, expanded]);
+  const selectedPresentationId = tool?.presentationId;
+  useEffect(() => {
+    // Host acceptance can precede React's frame commit. Retry after mounting and readiness,
+    // after the layout effect has recorded the document element to restore on collapse.
+    if (expanded && selectedPresentationId && focusRequest?.id === selectedPresentationId) {
+      frames.current.get(selectedPresentationId)?.querySelector<HTMLIFrameElement>("iframe")?.focus();
+    }
+  }, [expanded, selectedPresentationId, tool?.readiness, focusRequest]);
   useEffect(() => {
     const modal = (event: Event) => {
       const kind = (event as CustomEvent).detail;
@@ -114,7 +123,9 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, onExpandedCh
     if (result.status === "opened") { setError(null); setPicker(false); }
     else setError(panel.available ? "Could not open this tool. Try again." : `${panel.appName} is ${panel.state}.`);
   }
-  const notice = tool?.readiness === "auth-required" ? "Check access in the tool below, then retry opening the discussion."
+  const unavailable = !!tool && !tool.resolved.surface;
+  const notice = unavailable ? "This tool is no longer available in this view. Its access, configuration or runtime may have changed. Choose a tool to reopen it with current settings."
+    : tool?.readiness === "auth-required" ? "Check access in the tool below, then retry opening the discussion."
     : tool?.readiness === "unreported" ? "This tool has not confirmed that it loaded. If it stays blank, open it separately."
     : tool?.resolved.state === "degraded" ? "This app’s health check is failing. Its page may still work." : null;
   const siblings = tools.filter(t => t.key === tool?.key);
@@ -139,7 +150,9 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, onExpandedCh
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{selected?.label ?? "Tool"}</span>
         {tool?.resolved.standaloneHref && <Button variant="ghost" size="icon" asChild><a href={tool.resolved.standaloneHref} target="_blank" rel="noopener noreferrer" aria-label="Open separately" title="Open separately"><ExternalLink /></a></Button>}
       </header>
-      {notice && <Alert className="m-2 w-auto" role="status"><AlertDescription>{notice}</AlertDescription></Alert>}
+      {notice && <Alert className="m-2 w-auto" role="status"><AlertDescription>{notice}
+        {unavailable && <Button variant="outline" size="sm" aria-label="Choose another tool" onClick={() => { setPicker(true); void host?.refresh(); }}>Choose tool</Button>}
+      </AlertDescription></Alert>}
       {siblings.length > 1 && <label className="flex items-center gap-2 border-b p-2 text-sm">Open views
         <select aria-label="Tool instance" className="min-w-0 rounded-md border bg-background p-1" value={tool?.presentationId} onChange={event => host?.focusPresentation(event.target.value)}>
           {siblings.map((item, index) => <option key={item.presentationId} value={item.presentationId}>{selected?.label} {index + 1}</option>)}

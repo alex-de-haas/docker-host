@@ -260,6 +260,9 @@ routing. [Panel visibility](../app-ui-surfaces/plan.md) owns persisted declarati
 None of those features is required to use this contract. The fixture is not a production desktop
 shell, and this API does not add context to an existing assistant conversation.
 
+Shell shows recovery guidance when a retained presentation loses its allowed surface. Focus moves
+to a selected tool after its frame mounts and returns to the document control on collapse.
+
 ## Testing Expectations
 
 - Core tests cover own-navigation access without a catalog grant, foreign access and installation
