@@ -3,7 +3,7 @@ status: Draft
 created: 2026-10-12
 updated: 2026-10-13
 summary: Hosty's visual language — ink acts, lime answers — with its color, type, mark and ReUI token rules, and the Shell layouts built from it, including tools at narrow widths and on phones.
-components: [apps/shell, packages/app-sdk, apps/core, apps/harness, assets/hosty-brand, apps/plans, apps/workspaces, apps/telemetry, apps/demo-app]
+components: [apps/shell, apps/shell-swift, packages/app-sdk, apps/core, apps/harness, assets/hosty-brand, apps/plans, apps/workspaces, apps/telemetry, apps/demo-app]
 ---
 
 # Design System
@@ -62,7 +62,8 @@ Approximate share of a typical screen: ~70% white and mist, ~20% ink, ~5% lime a
 interaction, and ~2% app and status color.
 
 Owner decision, 2026-10-13: ink is the action color and lime the interaction color, in both themes.
-Hosty Blue `#1C68FF` remains only as Info and for links (`#1449C2` on light, `#8DB4FF` on dark); a sky
+Hosty Blue `#1C68FF` remains only as Info, for links (`#1449C2` on light, `#8DB4FF` on dark) and as the
+first chart color, `--chart-1`, because charts are data, not brand; a sky
 blue `#00BBFF` tried the same day was dropped, and so was the cyan signal color: work now shows in Info
 blue with motion, so the brand is ink, white and lime. The per-user accent setting stays parked in
 [Accent Presets](../accent-presets/plan.md).
@@ -206,8 +207,10 @@ rather than a shadow.
 - **Buttons.** The primary button is ink with white text, near-white with ink text in dark. Default
   and outline buttons turn lime with ink text on hover and press; on touch, press stands in for
   hover. Danger stays red and darkens on hover.
-- **Focus.** A 3 px lime ring that always sits against an ink edge: inputs take an ink border on focus
-  (lime in dark), and buttons carry the ring directly on their edge.
+- **Focus.** A 3 px lime ring that always sits against an ink edge, so the indicator keeps 3:1 even
+  though lime on white is only 1.5:1: inputs take an ink border on focus (lime in dark), the ink
+  primary button carries the ring directly on its edge, and on light surfaces outline and ghost
+  buttons, which have no ink edge, first take a 2 px ink ring with the lime halo outside it.
 - **Selection.** Checked checkboxes and switches are lime with an ink check or knob; text selection is
   lime with ink text. Menu items, ghost hover and active navigation highlight in lime soft with ink
   text; a selected table row takes a lime wash and a selected tab a 3 px lime underline.
@@ -291,6 +294,8 @@ Radius: `--radius: 0.625rem` (sm 6, md 8, lg 10, xl 14). Spacing on a 4 px base:
   colors, lime for the platform, Info blue for what works; backdrop for headers, onboarding and empty
   states.
 - **Loader.** Lime travels the H cell by cell: down the left column, through the Core, up the right.
+  The loader is the mark in motion, so its cells light in the mark's lime; status dots, labels and
+  rings for the working state stay Info blue.
 - **Empty state.** Dashed cells are slots waiting to be filled; the lime cell in the Core spot is the
   action. One sentence of help, one primary button.
 - **Motion.** Hover and press 120 ms ease-out, color only. Menus 150 ms fade plus 4 px. Panels and
@@ -431,9 +436,9 @@ the deliverable that changes it.
 
 ### Phase 1 — Foundations
 
-- [ ] D1. Replace Shell's neutral shadcn values in `apps/shell/src/app/globals.css` with the light and dark tokens above — the ink primary, the lime brand and lime soft accent, and the three-tone status tokens — and give buttons, inputs, checkboxes and switches the lime hover, focus and selection states described under Components.
+- [ ] D1. Replace Shell's neutral shadcn values in `apps/shell/src/app/globals.css` with the light and dark tokens above — the ink primary, the lime brand and lime soft accent, and the three-tone status tokens — and give buttons, inputs, checkboxes, switches, tabs (the line variant in `components/ui/tabs.tsx`) and progress bars the lime hover, focus, selection and progress states described under Components.
 - [ ] D2. Load Geist and Geist Mono in Shell and use them for `--font-sans` and `--font-mono`.
-- [ ] D3. Replace the H-graph with the grid mark in `assets/hosty-brand` — light, dark, the ink-tile app icon and the favicon cut — outline the wordmark in Geist 600, regenerate the lockups with `build-assets.mjs`, and record the ink scale, lime brand and status colors in `brand-tokens.json` and the brand README.
+- [ ] D3. Replace the H-graph with the grid mark in `assets/hosty-brand` — light, dark, the ink-tile app icon and the favicon cut — outline the wordmark in Geist 600, regenerate the lockups and app icons with `build-assets.mjs` — which also rewrites Shell's public icons and the `apps/shell-swift` AppIcon set, so both ship with version bumps (`MARKETING_VERSION` for the Swift client) — and record the ink scale, lime brand and status colors in `brand-tokens.json` and the brand README.
 - [ ] D4. Redraw the Plans and Workspaces tile icons on the shared 100-unit grid (radius 22, stroke 6) and map Demo App to its spectrum color.
 - [ ] D5. Ship the Telemetry and Demo App navigation icons in `currentColor` instead of hard-coded colors.
 - [ ] D6. Use the four status meanings across Shell — info blue, needs you amber (including pending approvals), failed red, working as an Info-blue pulse or ring with a label and a lime progress bar (replacing the sky spinner) — and keep lime out of charts.
