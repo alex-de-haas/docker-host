@@ -26,7 +26,7 @@ blue era and are no longer on the canvas; new candidates would be drawn as brand
 - Presets only, never a free color, with lime as the default.
 - A preset is a bundle, not one value: `--brand`, `--brand-foreground`, `--brand-strong`, `--ring`,
   `--accent` and `--sidebar-accent` with their foregrounds, and the selection wash, each pair
-  contrast-checked. No preset may sit next to the cyan signal or the status colors.
+  contrast-checked. No preset may sit next to the status colors.
 - The choice is a personal preference stored like the theme preference and applied with a
   `data-accent` attribute on the document root.
 - Embedded apps receive it through the `@hosty-sdk/app/theme` protocol, beside the existing

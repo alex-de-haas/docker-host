@@ -27,7 +27,6 @@ until shared from its page. This document carries every value and rule needed to
 | `Color`, `Accent` | Palette, ink scale, status, app spectrum; ink acts, lime answers |
 | `Type` | Type scale and voice |
 | `Iconography`, `Roles` | Mark, tiles, interface icons; provider role icons |
-| `LogoOnSky`, `MarkSimplify`, `GridCorners` | Decision record for the mark; their sky tiles are superseded |
 | `Components`, `Tokens` | ReUI components in light and dark; CSS variables |
 | `Motif` | Cell motif, loader, empty state, motion |
 | `Shell`, `AppDetail`, `DataGrid` | Dashboard with tools, dark app detail, table page |
@@ -41,8 +40,8 @@ until shared from its page. This document carries every value and rule needed to
 2. **Ink acts, lime answers.** Primary buttons are ink. Lime appears only in answer to the person —
    hover, press, focus and selection — and in the Core cell of the mark. One primary button per view;
    the rest are outline or ghost.
-3. **Signal means live.** Cyan appears only where something is happening now: an app starting, a
-   stream, a tool at work. Nothing live, no cyan — and never in charts.
+3. **Work is motion, not color.** An app starting or a tool at work shows a pulse, a turning ring or
+   a filling bar in ink with a label; no color is reserved for it.
 4. **Cells.** The mark is seven square cells; the same cells build the motif, the loader, empty states
    and diagrams.
 
@@ -54,18 +53,18 @@ until shared from its page. This document carries every value and rule needed to
 | --- | --- | --- |
 | Ink | `#0F1B2D` | Text, dark surfaces, the mark, the primary action (17.4:1 on white) |
 | Mist | `#F6F8FB` | Light canvas; cards sit on it in pure white |
+| White | `#FFFFFF` | Cards, popovers and fields on the mist canvas |
 | Lime | `#A3E635` | Brand: hover and press, focus ring, checked and selected fills, text selection, the Core cell of the mark. The same in both themes; carries ink text (11.5:1); never text, icons or hairlines on light (1.5:1 on white) |
 | Lime strong | `#65A30D` | Small lime marks on light: the active-navigation marker, the mark's Core cell without a tile (3.1:1 on white) |
 | Lime soft | `#ECFCCB` | Highlight under ink text: menu items, ghost hover, active navigation (dark: `#273B2E`) |
-| Signal | `#28D5E5` | Live state only; fills carry ink text (9.7:1) |
-| Signal strong | `#0891A1` | Signal dots, rings and progress on light surfaces (3.8:1 on white) |
 
 Approximate share of a typical screen: ~70% white and mist, ~20% ink, ~5% lime and only on
-interaction, ~2% app and status color, at most 1% signal.
+interaction, and ~2% app and status color.
 
 Owner decision, 2026-10-13: ink is the action color and lime the interaction color, in both themes.
 Hosty Blue `#1C68FF` remains only as Info and for links (`#1449C2` on light, `#8DB4FF` on dark); a sky
-blue `#00BBFF` tried the same day was dropped. The per-user accent setting stays parked in
+blue `#00BBFF` tried the same day was dropped, and so was the cyan signal color: work shows as motion
+in ink, so the brand is ink, white and lime. The per-user accent setting stays parked in
 [Accent Presets](../accent-presets/plan.md).
 
 ### Ink scale (cool neutrals, hue 215°)
@@ -92,7 +91,7 @@ Four meanings, never mixed: **info** tells, **needs you** asks, **failed** repor
 | State | Solid | Soft | Text | Meaning |
 | --- | --- | --- | --- | --- |
 | Running | `#16A34A` | `#E8F7EE` | `#0F6B33` | Healthy and serving |
-| Working | `#0891A1` (dark: `#28D5E5`) | `#E3FAFC` | `#08707D` | Starting, updating, a tool at work (signal) |
+| Working | `#0F1B2D` (dark: `#F1F5FA`) | `#EEF2F7` | `#0F1B2D` | Starting, updating, a tool at work: a pulse, ring or bar in ink with a label |
 | Stopped | `#93A3BA` | `#EEF2F7` | `#5A6A82` | Intentionally off, not an error |
 | Info | `#1C68FF` | `#E8F0FF` | `#1449C2` | An update or a result; never requires action |
 | Needs you | `#F59E0B` | `#FEF3DC` | `#8A5300` | A decision or a fix: approval, degraded app, missing configuration |
@@ -246,7 +245,7 @@ ink action color; lime itself is the Hosty addition `--brand`.
 | `--sidebar-border` | `#DFE5EE` | `#1A2A42` |
 | `--chart-1` … `--chart-5` | `#1C68FF` `#7C3AED` `#C026D3` `#F59E0B` `#64748B` | `#4D8BFF` `#A78BFA` `#E879F9` `#FBBF24` `#94A3B8` |
 
-Charts never use signal cyan; a chart line is history, not live activity.
+Charts never use lime; it belongs to interaction.
 
 Hosty additions:
 
@@ -254,8 +253,6 @@ Hosty additions:
 | --- | --- | --- |
 | `--brand` / `--brand-foreground` | `#A3E635` / `#0F1B2D` | `#A3E635` / `#0F1B2D` |
 | `--brand-strong` | `#65A30D` | `#A3E635` |
-| `--signal` / `--signal-foreground` / `--signal-text` | `#28D5E5` / `#0F1B2D` / `#08707D` | `#28D5E5` / `#0F1B2D` / `#67E8F9` |
-| `--signal-strong` | `#0891A1` | `#28D5E5` |
 | `--success` / `--success-soft` / `--success-text` | `#16A34A` / `#E8F7EE` / `#0F6B33` | `#22C55E` / success at 16% / `#4ADE80` |
 | `--warning` / `--warning-text` | `#F59E0B` / `#8A5300` | `#F59E0B` / `#FBBF24` |
 | `--info` / `--info-text` | `#1C68FF` / `#1449C2` | `#4D8BFF` / `#8DB4FF` |
@@ -268,9 +265,6 @@ Hosty additions:
   --color-brand: var(--brand);
   --color-brand-foreground: var(--brand-foreground);
   --color-brand-strong: var(--brand-strong);
-  --color-signal: var(--signal);
-  --color-signal-strong: var(--signal-strong);
-  --color-signal-text: var(--signal-text);
   --color-success-soft: var(--success-soft);
   --color-success-text: var(--success-text);
   /* warning, info and destructive the same way */
@@ -291,14 +285,14 @@ Radius: `--radius: 0.625rem` (sm 6, md 8, lg 10, xl 14). Spacing on a 4 px base:
 ## Motif and motion
 
 - **Cell field.** A 70 px grid of 22 px square cells, no wires, at most four colored cells — app
-  colors, lime for the platform, cyan for what works; backdrop for headers, onboarding and empty
+  colors, lime for the platform, ink for what works; backdrop for headers, onboarding and empty
   states.
-- **Loader.** Signal travels the H cell by cell: down the left column, through the Core, up the right.
+- **Loader.** Lime travels the H cell by cell: down the left column, through the Core, up the right.
 - **Empty state.** Dashed cells are slots waiting to be filled; the lime cell in the Core spot is the
   action. One sentence of help, one primary button.
 - **Motion.** Hover and press 120 ms ease-out, color only. Menus 150 ms fade plus 4 px. Panels and
-  sheets 220 ms `cubic-bezier(.2,.8,.2,1)`. Toasts 240 ms in, 160 ms out. The live pulse loops at
-  1.6 s and only on working states. `prefers-reduced-motion` keeps fades and stops movement and loops;
+  sheets 220 ms `cubic-bezier(.2,.8,.2,1)`. Toasts 240 ms in, 160 ms out. The working pulse loops
+  at 1.6 s, in ink, and only on working states. `prefers-reduced-motion` keeps fades and stops movement and loops;
   the working dot then keeps a static outer ring so it still differs from a plain dot.
 - **Avoid.** Gradient washes and glows, frosted glass, 3D or stock illustration, emoji as icons.
 
@@ -387,7 +381,8 @@ never opened on this device, and a phone, still see them:
 - All tools groups tools as Needs you, Working, No connection, then a four-column grid of every tool
   with search and Edit (pin and reorder).
 - The Tools tab carries a count of tools that need the user, colored by the most severe (red for a
-  failure, amber for a decision); with nothing to decide, a signal dot shows that something works.
+  failure, amber for a decision); with nothing to decide the tab carries no badge, and working tools
+  show their pulse in the list.
 - With the keyboard open the tab bar gives way and Shell sizes the sheet and the tool frame to the
   visible viewport above the keyboard.
 - Everything inside the frame belongs to the tool. For the assistant, Harness owns the approval
@@ -433,13 +428,13 @@ the deliverable that changes it.
 
 ### Phase 1 — Foundations
 
-- [ ] D1. Replace Shell's neutral shadcn values in `apps/shell/src/app/globals.css` with the light and dark tokens above — the ink primary, the lime brand and lime soft accent, signal, signal strong and the three-tone status tokens — and give buttons, inputs, checkboxes and switches the lime hover, focus and selection states described under Components.
+- [ ] D1. Replace Shell's neutral shadcn values in `apps/shell/src/app/globals.css` with the light and dark tokens above — the ink primary, the lime brand and lime soft accent, and the three-tone status tokens — and give buttons, inputs, checkboxes and switches the lime hover, focus and selection states described under Components.
 - [ ] D2. Load Geist and Geist Mono in Shell and use them for `--font-sans` and `--font-mono`.
 - [ ] D3. Replace the H-graph with the grid mark in `assets/hosty-brand` — light, dark, the ink-tile app icon and the favicon cut — outline the wordmark in Geist 600, regenerate the lockups with `build-assets.mjs`, and record the ink scale, lime brand and status colors in `brand-tokens.json` and the brand README.
 - [ ] D4. Redraw the Plans and Workspaces tile icons on the shared 100-unit grid (radius 22, stroke 6) and map Demo App to its spectrum color.
 - [ ] D5. Ship the Telemetry and Demo App navigation icons in `currentColor` instead of hard-coded colors.
-- [ ] D6. Use the four status meanings across Shell — info blue, needs you amber (including pending approvals), failed red, working signal (replacing the sky spinner) — and keep cyan out of charts.
-- [ ] D16. Contrast pass on Shell: no text lighter than `#5A6A82` on light surfaces, `#6E7F98` and `#93A3BA` only for icons and disabled states, signal marks on light in `#0891A1`, no `primary`-colored text, borders or dots (they move to `--brand-strong` or Info blue), and every state except the normal running dot carrying a label or its own shape, including the static ring for working under reduced motion.
+- [ ] D6. Use the four status meanings across Shell — info blue, needs you amber (including pending approvals), failed red, working as an ink pulse, ring or bar with a label (replacing the sky spinner) — and keep lime out of charts.
+- [ ] D16. Contrast pass on Shell: no text lighter than `#5A6A82` on light surfaces, `#6E7F98` and `#93A3BA` only for icons and disabled states, no `primary`-colored text, borders or dots (they move to `--brand-strong` or Info blue), and every state except the normal running dot carrying a label or its own shape, including the static ring for working under reduced motion.
 
 ### Phase 2 — Shell pages
 
