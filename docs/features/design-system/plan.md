@@ -40,8 +40,8 @@ until shared from its page. This document carries every value and rule needed to
 2. **Ink acts, lime answers.** Primary buttons are ink. Lime appears only in answer to the person —
    hover, press, focus and selection — and in the Core cell of the mark. One primary button per view;
    the rest are outline or ghost.
-3. **Work moves in blue.** An app starting or a tool at work shows a pulse, a turning ring or a
-   filling bar in Info blue with a label; there is no separate live color.
+3. **Work moves in blue.** An app starting or a tool at work shows a pulse or a turning ring in Info
+   blue with a label, and its progress bar fills in lime; there is no separate live color.
 4. **Cells.** The mark is seven square cells; the same cells build the motif, the loader, empty states
    and diagrams.
 
@@ -54,7 +54,7 @@ until shared from its page. This document carries every value and rule needed to
 | Ink | `#0F1B2D` | Text, dark surfaces, the mark, the primary action (17.4:1 on white) |
 | Mist | `#F6F8FB` | Light canvas; cards sit on it in pure white |
 | White | `#FFFFFF` | Cards, popovers and fields on the mist canvas |
-| Lime | `#A3E635` | Brand: hover and press, focus ring, checked and selected fills, text selection, the Core cell of the mark. The same in both themes; carries ink text (11.5:1); never text, icons or hairlines on light (1.5:1 on white) |
+| Lime | `#A3E635` | Brand: hover and press, focus ring, checked and selected fills, text selection, progress bar fills, the Core cell of the mark. The same in both themes; carries ink text (11.5:1); never text, icons or hairlines on light (1.5:1 on white) |
 | Lime strong | `#65A30D` | Small lime marks on light: the active-navigation marker, the mark's Core cell without a tile (3.1:1 on white) |
 | Lime soft | `#ECFCCB` | Highlight under ink text: menu items, ghost hover, active navigation (dark: `#273B2E`) |
 
@@ -91,7 +91,7 @@ Four meanings, never mixed: **info** tells, **needs you** asks, **failed** repor
 | State | Solid | Soft | Text | Meaning |
 | --- | --- | --- | --- | --- |
 | Running | `#16A34A` | `#E8F7EE` | `#0F6B33` | Healthy and serving |
-| Working | `#1C68FF` (dark: `#4D8BFF`) | `#E8F0FF` | `#1449C2` | Starting, updating, a tool at work: Info blue with a pulse, ring or bar and a label |
+| Working | `#1C68FF` (dark: `#4D8BFF`) | `#E8F0FF` | `#1449C2` | Starting, updating, a tool at work: Info blue with a pulse or ring and a label; its progress bar fills lime |
 | Stopped | `#93A3BA` | `#EEF2F7` | `#5A6A82` | Intentionally off, not an error |
 | Info | `#1C68FF` | `#E8F0FF` | `#1449C2` | An update or a result; never requires action |
 | Needs you | `#F59E0B` | `#FEF3DC` | `#8A5300` | A decision or a fix: approval, degraded app, missing configuration |
@@ -211,6 +211,8 @@ rather than a shadow.
 - **Selection.** Checked checkboxes and switches are lime with an ink check or knob; text selection is
   lime with ink text. Menu items, ghost hover and active navigation highlight in lime soft with ink
   text; a selected table row takes a lime wash and a selected tab a 3 px lime underline.
+- **Progress.** Progress bars fill with lime on a neutral track (`#EEF2F7`, dark `#26364F`) in both
+  themes; the label next to the bar carries the value.
 - **Links.** Info blue, underlined.
 
 ## Tokens
@@ -434,7 +436,7 @@ the deliverable that changes it.
 - [ ] D3. Replace the H-graph with the grid mark in `assets/hosty-brand` — light, dark, the ink-tile app icon and the favicon cut — outline the wordmark in Geist 600, regenerate the lockups with `build-assets.mjs`, and record the ink scale, lime brand and status colors in `brand-tokens.json` and the brand README.
 - [ ] D4. Redraw the Plans and Workspaces tile icons on the shared 100-unit grid (radius 22, stroke 6) and map Demo App to its spectrum color.
 - [ ] D5. Ship the Telemetry and Demo App navigation icons in `currentColor` instead of hard-coded colors.
-- [ ] D6. Use the four status meanings across Shell — info blue, needs you amber (including pending approvals), failed red, working as an Info-blue pulse, ring or bar with a label (replacing the sky spinner) — and keep lime out of charts.
+- [ ] D6. Use the four status meanings across Shell — info blue, needs you amber (including pending approvals), failed red, working as an Info-blue pulse or ring with a label and a lime progress bar (replacing the sky spinner) — and keep lime out of charts.
 - [ ] D16. Contrast pass on Shell: no text lighter than `#5A6A82` on light surfaces, `#6E7F98` and `#93A3BA` only for icons and disabled states, no `primary`-colored text, borders or dots (they move to `--brand-strong` or Info blue), and every state except the normal running dot carrying a label or its own shape, including the static ring for working under reduced motion.
 
 ### Phase 2 — Shell pages
