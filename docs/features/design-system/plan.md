@@ -40,8 +40,8 @@ until shared from its page. This document carries every value and rule needed to
 2. **Ink acts, lime answers.** Primary buttons are ink. Lime appears only in answer to the person —
    hover, press, focus and selection — and in the Core cell of the mark. One primary button per view;
    the rest are outline or ghost.
-3. **Work is motion, not color.** An app starting or a tool at work shows a pulse, a turning ring or
-   a filling bar in ink with a label; no color is reserved for it.
+3. **Work moves in blue.** An app starting or a tool at work shows a pulse, a turning ring or a
+   filling bar in Info blue with a label; there is no separate live color.
 4. **Cells.** The mark is seven square cells; the same cells build the motif, the loader, empty states
    and diagrams.
 
@@ -63,8 +63,8 @@ interaction, and ~2% app and status color.
 
 Owner decision, 2026-10-13: ink is the action color and lime the interaction color, in both themes.
 Hosty Blue `#1C68FF` remains only as Info and for links (`#1449C2` on light, `#8DB4FF` on dark); a sky
-blue `#00BBFF` tried the same day was dropped, and so was the cyan signal color: work shows as motion
-in ink, so the brand is ink, white and lime. The per-user accent setting stays parked in
+blue `#00BBFF` tried the same day was dropped, and so was the cyan signal color: work now shows in Info
+blue with motion, so the brand is ink, white and lime. The per-user accent setting stays parked in
 [Accent Presets](../accent-presets/plan.md).
 
 ### Ink scale (cool neutrals, hue 215°)
@@ -91,7 +91,7 @@ Four meanings, never mixed: **info** tells, **needs you** asks, **failed** repor
 | State | Solid | Soft | Text | Meaning |
 | --- | --- | --- | --- | --- |
 | Running | `#16A34A` | `#E8F7EE` | `#0F6B33` | Healthy and serving |
-| Working | `#0F1B2D` (dark: `#F1F5FA`) | `#EEF2F7` | `#0F1B2D` | Starting, updating, a tool at work: a pulse, ring or bar in ink with a label |
+| Working | `#1C68FF` (dark: `#4D8BFF`) | `#E8F0FF` | `#1449C2` | Starting, updating, a tool at work: Info blue with a pulse, ring or bar and a label |
 | Stopped | `#93A3BA` | `#EEF2F7` | `#5A6A82` | Intentionally off, not an error |
 | Info | `#1C68FF` | `#E8F0FF` | `#1449C2` | An update or a result; never requires action |
 | Needs you | `#F59E0B` | `#FEF3DC` | `#8A5300` | A decision or a fix: approval, degraded app, missing configuration |
@@ -101,7 +101,8 @@ Color never carries a state alone. The normal state — running and healthy — 
 a bare dot, with its name in the tooltip and accessible label. Every other state carries a text
 label, and where there is no room for one, its own shape: a diamond for "needs you", an alert icon
 for "failed", a hollow ring for "no connection", and for "working" a pulse that becomes a static outer
-ring when motion is reduced. No two states differ by color alone.
+ring when motion is reduced. No two states differ by color alone: working shares Info's blue and is
+told apart by its motion and label.
 
 ### App spectrum
 
@@ -285,14 +286,14 @@ Radius: `--radius: 0.625rem` (sm 6, md 8, lg 10, xl 14). Spacing on a 4 px base:
 ## Motif and motion
 
 - **Cell field.** A 70 px grid of 22 px square cells, no wires, at most four colored cells — app
-  colors, lime for the platform, ink for what works; backdrop for headers, onboarding and empty
+  colors, lime for the platform, Info blue for what works; backdrop for headers, onboarding and empty
   states.
 - **Loader.** Lime travels the H cell by cell: down the left column, through the Core, up the right.
 - **Empty state.** Dashed cells are slots waiting to be filled; the lime cell in the Core spot is the
   action. One sentence of help, one primary button.
 - **Motion.** Hover and press 120 ms ease-out, color only. Menus 150 ms fade plus 4 px. Panels and
   sheets 220 ms `cubic-bezier(.2,.8,.2,1)`. Toasts 240 ms in, 160 ms out. The working pulse loops
-  at 1.6 s, in ink, and only on working states. `prefers-reduced-motion` keeps fades and stops movement and loops;
+  at 1.6 s, in Info blue, and only on working states. `prefers-reduced-motion` keeps fades and stops movement and loops;
   the working dot then keeps a static outer ring so it still differs from a plain dot.
 - **Avoid.** Gradient washes and glows, frosted glass, 3D or stock illustration, emoji as icons.
 
@@ -433,7 +434,7 @@ the deliverable that changes it.
 - [ ] D3. Replace the H-graph with the grid mark in `assets/hosty-brand` — light, dark, the ink-tile app icon and the favicon cut — outline the wordmark in Geist 600, regenerate the lockups with `build-assets.mjs`, and record the ink scale, lime brand and status colors in `brand-tokens.json` and the brand README.
 - [ ] D4. Redraw the Plans and Workspaces tile icons on the shared 100-unit grid (radius 22, stroke 6) and map Demo App to its spectrum color.
 - [ ] D5. Ship the Telemetry and Demo App navigation icons in `currentColor` instead of hard-coded colors.
-- [ ] D6. Use the four status meanings across Shell — info blue, needs you amber (including pending approvals), failed red, working as an ink pulse, ring or bar with a label (replacing the sky spinner) — and keep lime out of charts.
+- [ ] D6. Use the four status meanings across Shell — info blue, needs you amber (including pending approvals), failed red, working as an Info-blue pulse, ring or bar with a label (replacing the sky spinner) — and keep lime out of charts.
 - [ ] D16. Contrast pass on Shell: no text lighter than `#5A6A82` on light surfaces, `#6E7F98` and `#93A3BA` only for icons and disabled states, no `primary`-colored text, borders or dots (they move to `--brand-strong` or Info blue), and every state except the normal running dot carrying a label or its own shape, including the static ring for working under reduced motion.
 
 ### Phase 2 — Shell pages
