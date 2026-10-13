@@ -297,8 +297,9 @@ Radius: `--radius: 0.625rem` (sm 6, md 8, lg 10, xl 14). Spacing on a 4 px base:
   colors, lime for the platform, Info blue for what works; backdrop for headers, onboarding and empty
   states.
 - **Loader.** Lime travels the H cell by cell: down the left column, through the Core, up the right.
-  The loader is the mark in motion, so its cells light in the mark's lime; status dots, labels and
-  rings for the working state stay Info blue.
+  The loader is the mark in motion, so its cells light in the mark's lime; on light surfaces each lit
+  cell keeps a lime-strong `#5A9A0A` edge so the shape holds 3:1, and on dark it is plain lime.
+  Status dots, labels and rings for the working state stay Info blue.
 - **Empty state.** Dashed cells are slots waiting to be filled; the lime cell in the Core spot is the
   action. One sentence of help, one primary button.
 - **Motion.** Hover and press 120 ms ease-out, color only. Menus 150 ms fade plus 4 px. Panels and
@@ -442,7 +443,7 @@ the deliverable that changes it.
 - [ ] D1. Replace Shell's neutral shadcn values in `apps/shell/src/app/globals.css` with the light and dark tokens above — the ink primary, the lime brand and lime soft accent, and the three-tone status tokens — and give buttons, inputs, checkboxes, switches, tabs (the line variant in `components/ui/tabs.tsx`) and progress bars the lime hover, focus, selection and progress states described under Components, with the ink-edge focus treatment applied to every `--ring` consumer in Shell (16 components today, including `shell-top-strip.tsx`, `shell-sidebar.tsx`, `ui/dialog.tsx` and `ui/resizable.tsx`).
 - [ ] D2. Load Geist and Geist Mono in Shell and use them for `--font-sans` and `--font-mono`.
 - [ ] D3. Replace the H-graph with the grid mark in `assets/hosty-brand` — light, dark, the ink-tile app icon and the favicon cut — outline the wordmark in Geist 600, regenerate the lockups and app icons with `build-assets.mjs` — which also rewrites Shell's public icons and the `apps/shell-swift` AppIcon set, so both ship with version bumps (`MARKETING_VERSION` for the Swift client) — redraw the hand-coded copies of the mark in Shell's `chrome/brand-mark.tsx` and the SDK's `overlay-react.tsx` (with an `@hosty-sdk/app` version bump), and record the ink scale, lime brand and status colors in `brand-tokens.json` and the brand README.
-- [ ] D4. Redraw the Plans and Workspaces tile icons on the shared 100-unit grid (radius 22, stroke 6) and map Demo App to its spectrum color.
+- [ ] D4. Redraw the Plans and Workspaces tile icons on the shared 100-unit grid (radius 22, stroke 6) and map Demo App to its spectrum color, redrawing its icon — `apps/demo-app/assets/icon.svg` still draws the retired H-graph — as a glyph of its own, with a Demo App version bump.
 - [ ] D5. Ship the Telemetry and Demo App navigation icons in `currentColor` instead of hard-coded colors.
 - [ ] D6. Use the four status meanings across Shell — info blue, needs you amber (including pending approvals), failed red, working as an Info-blue pulse or ring with a label and a lime progress bar (replacing the sky spinner) — and keep lime out of charts.
 - [ ] D16. Contrast pass on Shell: no text lighter than `#5A6A82` on light surfaces, `#6E7F98` and `#93A3BA` only for icons and disabled states, no `primary`-colored text, borders or dots (they move to `--brand-strong` or Info blue), and every state except the normal running dot carrying a label or its own shape, including the static ring for working under reduced motion.
@@ -476,8 +477,8 @@ the deliverable that changes it.
 - `node scripts/docs-index.mjs --check` passes.
 - Per deliverable: Shell lint, type-check build and tests; affected app and SDK builds; version bumps
   per AGENTS.md for every shipped artifact.
-- Lime never appears as text, an icon or a hairline on a light surface, and every lime fill carries
-  ink.
+- Lime never appears as text, an icon or a hairline on a light surface; every lime fill there carries
+  ink or a lime-strong edge (progress bars excepted, whose label carries the value).
 - Contrast checks for every text and status token pair in light and dark, and every state checked
   with `prefers-reduced-motion` and in grayscale to confirm it differs by more than color.
 - Activity: a pending Harness approval reaches the Tools badge on a second device that never opened
