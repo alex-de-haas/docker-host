@@ -1,8 +1,8 @@
 ---
 status: On Hold
 created: 2026-10-12
-updated: 2026-10-12
-summary: A per-user accent preset chosen like the light or dark theme and carried to embedded apps; parked while Hosty Blue stays the action color.
+updated: 2026-10-13
+summary: A per-user brand color preset chosen like the light or dark theme and carried to embedded apps; parked while ink and lime stay fixed.
 components: [apps/shell, packages/app-sdk]
 ---
 
@@ -10,22 +10,23 @@ components: [apps/shell, packages/app-sdk]
 
 ## Goal
 
-Let each user pick Hosty's action color from a few prepared presets, the way they pick the light or
-dark theme today, and have embedded apps follow the choice.
+Let each user pick Hosty's brand color — the lime that answers hover, focus and selection — from a few
+prepared presets, the way they pick the light or dark theme today, and have embedded apps follow the
+choice.
 
 ## Status
 
-On hold since 2026-10-12: the owner keeps Hosty Blue `#1C68FF` as the only action color for now. The
-candidates are drawn on the `Accent` artboard of the Design canvas described in
-[Design System](../design-system/plan.md).
+On hold since 2026-10-12. On 2026-10-13 the owner made ink the action color and lime `#A3E635` the
+interaction color for everyone (see [Design System](../design-system/plan.md)); `--primary` stays ink
+whatever the preset. The earlier candidates — Iris, Sapphire, Ink, Lagoon — were action colors for the
+blue era and are no longer on the canvas; new candidates would be drawn as brand colors.
 
 ## Target Behavior
 
-- Presets only, never a free color: Hosty Blue (default), Iris `#5B5BD6`, Sapphire `#2F5BD3`, Ink
-  `#0F1B2D` and Lagoon `#0B7C86`.
-- A preset is a bundle, not one value: `--primary`, `--ring`, `--sidebar-accent` and its foreground,
-  `--chart-1`, and the soft and wash tints, each pair contrast-checked. Lagoon sits next to the cyan
-  signal, so its bundle also moves the signal to lime `#A3E635`.
+- Presets only, never a free color, with lime as the default.
+- A preset is a bundle, not one value: `--brand`, `--brand-foreground`, `--brand-strong`, `--ring`,
+  `--accent` and `--sidebar-accent` with their foregrounds, and the selection wash, each pair
+  contrast-checked. No preset may sit next to the cyan signal or the status colors.
 - The choice is a personal preference stored like the theme preference and applied with a
   `data-accent` attribute on the document root.
 - Embedded apps receive it through the `@hosty-sdk/app/theme` protocol, beside the existing
@@ -38,7 +39,7 @@ candidates are drawn on the `Accent` artboard of the Design canvas described in
 
 ## Open Questions
 
-- Which presets ship besides Hosty Blue?
+- Which brand presets ship besides lime?
 
 ## Verification
 
