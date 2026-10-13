@@ -37,9 +37,10 @@ until shared from its page. This document carries every value and rule needed to
 
 1. **Calm chrome, lively content.** Navigation, panels and text stay ink and white. Color belongs to
    app tiles, status and charts.
-2. **Ink acts, lime answers.** Primary buttons are ink. Lime appears only in answer to the person —
-   hover, press, focus and selection — and in the Core cell of the mark. One primary button per view;
-   the rest are outline or ghost.
+2. **Ink acts, lime answers.** Primary buttons are ink. Lime appears in answer to the person —
+   hover, press, focus and selection — and, by owner decision, in two fixed places: progress bar
+   fills, whoever started the work, and the Core cell of the mark. One primary button per view; the
+   rest are outline or ghost.
 3. **Work moves in blue.** An app starting or a tool at work shows a pulse or a turning ring in Info
    blue with a label, and its progress bar fills in lime; there is no separate live color.
 4. **Cells.** The mark is seven square cells; the same cells build the motif, the loader, empty states
