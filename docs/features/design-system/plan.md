@@ -214,7 +214,8 @@ rather than a shadow.
   controls, resize handles — first takes a 2 px ink ring with the lime halo outside it.
 - **Selection.** Checked checkboxes and switches are lime with an ink check or knob; text selection is
   lime with ink text. Menu items, ghost hover and active navigation highlight in lime soft with ink
-  text; a selected table row takes a lime wash and a selected tab a 3 px lime underline.
+  text; a selected table row takes a lime wash, and a selected tab a 3 px underline in lime strong on
+  light (3.2:1 on Mist) and lime on dark.
 - **Progress.** Progress bars fill with lime on a neutral track (`#EEF2F7`, dark `#26364F`) in both
   themes; the label next to the bar carries the value.
 - **Links.** Info blue, underlined.
