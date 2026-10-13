@@ -55,7 +55,7 @@ until shared from its page. This document carries every value and rule needed to
 | Mist | `#F6F8FB` | Light canvas; cards sit on it in pure white |
 | White | `#FFFFFF` | Cards, popovers and fields on the mist canvas |
 | Lime | `#A3E635` | Brand: hover and press, focus ring, checked and selected fills, text selection, progress bar fills, the Core cell of the mark. The same in both themes; carries ink text (11.5:1); never text, icons or hairlines on light (1.5:1 on white) |
-| Lime strong | `#65A30D` | Small lime marks on light: the active-navigation marker, the mark's Core cell without a tile (3.1:1 on white) |
+| Lime strong | `#5A9A0A` | Small lime marks on light: the active-navigation marker, the mark's Core cell without a tile (3.5:1 on white, 3.2:1 on mist and lime soft) |
 | Lime soft | `#ECFCCB` | Highlight under ink text: menu items, ghost hover, active navigation (dark: `#273B2E`) |
 
 Approximate share of a typical screen: ~70% white and mist, ~20% ink, ~5% lime and only on
@@ -159,7 +159,7 @@ happening.
 
 - **Mark.** Seven square cells on a 3 × 3 grid spell an H: two hosts and the Core between them. On
   the 100-unit grid the cells are 22 units with 7-unit gaps, starting at 10, with sharp corners. Six
-  cells are ink on light and white on dark; the Core cell is lime `#A3E635`, or `#65A30D` on a light
+  cells are ink on light and white on dark; the Core cell is lime `#A3E635`, or `#5A9A0A` on a light
   surface without a tile. The mark never sits on a colored tile. It replaces the H-graph in
   [`assets/hosty-brand`](../../../assets/hosty-brand/README.md). Clear space is one cell. Below 20 px
   use the favicon cut, scaled ×1.16 with the gaps kept open. No gradients, no spectrum colors, no
@@ -209,8 +209,9 @@ rather than a shadow.
   hover. Danger stays red and darkens on hover.
 - **Focus.** A 3 px lime ring that always sits against an ink edge, so the indicator keeps 3:1 even
   though lime on white is only 1.5:1: inputs take an ink border on focus (lime in dark), the ink
-  primary button carries the ring directly on its edge, and on light surfaces outline and ghost
-  buttons, which have no ink edge, first take a 2 px ink ring with the lime halo outside it.
+  primary button carries the ring directly on its edge, and on light surfaces every other focus
+  indicator without an ink edge — outline and ghost buttons, sidebar and top-strip items, dialog
+  controls, resize handles — first takes a 2 px ink ring with the lime halo outside it.
 - **Selection.** Checked checkboxes and switches are lime with an ink check or knob; text selection is
   lime with ink text. Menu items, ghost hover and active navigation highlight in lime soft with ink
   text; a selected table row takes a lime wash and a selected tab a 3 px lime underline.
@@ -258,7 +259,7 @@ Hosty additions:
 | Variable | Light | Dark |
 | --- | --- | --- |
 | `--brand` / `--brand-foreground` | `#A3E635` / `#0F1B2D` | `#A3E635` / `#0F1B2D` |
-| `--brand-strong` | `#65A30D` | `#A3E635` |
+| `--brand-strong` | `#5A9A0A` | `#A3E635` |
 | `--success` / `--success-soft` / `--success-text` | `#16A34A` / `#E8F7EE` / `#0F6B33` | `#22C55E` / success at 16% / `#4ADE80` |
 | `--warning` / `--warning-text` | `#F59E0B` / `#8A5300` | `#F59E0B` / `#FBBF24` |
 | `--info` / `--info-text` | `#1C68FF` / `#1449C2` | `#4D8BFF` / `#8DB4FF` |
@@ -436,7 +437,7 @@ the deliverable that changes it.
 
 ### Phase 1 — Foundations
 
-- [ ] D1. Replace Shell's neutral shadcn values in `apps/shell/src/app/globals.css` with the light and dark tokens above — the ink primary, the lime brand and lime soft accent, and the three-tone status tokens — and give buttons, inputs, checkboxes, switches, tabs (the line variant in `components/ui/tabs.tsx`) and progress bars the lime hover, focus, selection and progress states described under Components.
+- [ ] D1. Replace Shell's neutral shadcn values in `apps/shell/src/app/globals.css` with the light and dark tokens above — the ink primary, the lime brand and lime soft accent, and the three-tone status tokens — and give buttons, inputs, checkboxes, switches, tabs (the line variant in `components/ui/tabs.tsx`) and progress bars the lime hover, focus, selection and progress states described under Components, with the ink-edge focus treatment applied to every `--ring` consumer in Shell (16 components today, including `shell-top-strip.tsx`, `shell-sidebar.tsx`, `ui/dialog.tsx` and `ui/resizable.tsx`).
 - [ ] D2. Load Geist and Geist Mono in Shell and use them for `--font-sans` and `--font-mono`.
 - [ ] D3. Replace the H-graph with the grid mark in `assets/hosty-brand` — light, dark, the ink-tile app icon and the favicon cut — outline the wordmark in Geist 600, regenerate the lockups and app icons with `build-assets.mjs` — which also rewrites Shell's public icons and the `apps/shell-swift` AppIcon set, so both ship with version bumps (`MARKETING_VERSION` for the Swift client) — and record the ink scale, lime brand and status colors in `brand-tokens.json` and the brand README.
 - [ ] D4. Redraw the Plans and Workspaces tile icons on the shared 100-unit grid (radius 22, stroke 6) and map Demo App to its spectrum color.
