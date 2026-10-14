@@ -218,6 +218,102 @@ public sealed class CoreEnvironmentTests
         Assert.Equal("finished", (await f.Service.CommandAsync(owner, item.Id, "finish",
             new(Guid.NewGuid().ToString(), item.Revision), default)).State);
     }
+    [Fact]
+    public async Task Finish_DockerUnavailable_ReplaysOriginalRequestAfterRestartAndRetainsReservation()
+    {
+        using var f = new Fixture(); var item = await f.Command(await f.Create(), "start");
+        var request = new CoreEnvironmentCommand(Guid.NewGuid().ToString(), item.Revision);
+        f.Runtime.FailStop = true;
+        item = await f.Service.CommandAsync(f.Actor, item.Id, "finish", request, default);
+        Assert.Equal("cleanup-failed", item.State);
+        Assert.Equal("cleanup-failed", (await f.Service.ReadAsync(f.Actor, item.Id, default)).State);
+        var other = await f.Create();
+        Assert.Equal("environment_capacity", (await Assert.ThrowsAsync<SandboxException>(() => f.Create())).Code);
+        await Assert.ThrowsAsync<SandboxException>(() => f.Command(item, "start"));
+        var replacement = new CoreEnvironmentService(f.Store, f.Runtime, new Clock());
+        await replacement.ReconcileAsync(default);
+        f.Runtime.FailStop = false;
+        var finished = await replacement.CommandAsync(f.Actor, item.Id, "finish", request, default);
+        Assert.Equal("finished", finished.State); Assert.Equal("succeeded", finished.Operations.Last().State);
+        Assert.False(Directory.Exists(item.DataRoot));
+        Assert.Equal(finished.Revision, (await replacement.CommandAsync(f.Actor, item.Id, "finish", request, default)).Revision);
+        Assert.NotNull(await f.Create());
+    }
+    [Fact]
+    public async Task Finish_PartialRootDeletion_ResumesWithoutIdentityButStillRejectsChangedIdentity()
+    {
+        using var f = new Fixture(); var item = await f.Create();
+        var request = new CoreEnvironmentCommand(Guid.NewGuid().ToString(), item.Revision);
+        f.Runtime.FailStop = true;
+        item = await f.Service.CommandAsync(f.Actor, item.Id, "finish", request, default);
+        var record = (await f.Store.ReadAsync(item.Id, default))!;
+        await f.Store.WriteAsync(record with { RootDeletionStarted = true, CleanupOwners = [item.Id] }, default);
+        File.WriteAllText(Path.Combine(item.DataRoot!, "remaining-data"), "synthetic");
+        File.WriteAllText(CoreInstanceId.BuildPath(item.DataRoot!), new string('a', 32));
+        f.Runtime.FailStop = false;
+        Assert.Equal("cleanup-failed", (await f.Service.CommandAsync(f.Actor, item.Id, "finish", request, default)).State);
+        File.Delete(CoreInstanceId.BuildPath(item.DataRoot!));
+        var replacement = new CoreEnvironmentService(f.Store, f.Runtime, new Clock());
+        await replacement.ReconcileAsync(default);
+        Assert.Equal("finished", (await replacement.CommandAsync(f.Actor, item.Id, "finish", request, default)).State);
+        Assert.False(Directory.Exists(item.DataRoot));
+    }
+    [Fact]
+    public async Task Replay_FailedSupersededStart_DoesNotRestartANewerStoppedGeneration()
+    {
+        using var f = new Fixture(); var item = await f.Create();
+        var request = new CoreEnvironmentCommand(Guid.NewGuid().ToString(), item.Revision);
+        f.Runtime.FailBuild = true; item = await f.Service.CommandAsync(f.Actor, item.Id, "start", request, default);
+        f.Runtime.FailBuild = false; item = await f.Command(item, "start"); item = await f.Command(item, "stop");
+        Assert.Equal("stopped", (await f.Service.CommandAsync(f.Actor, item.Id, "start", request, default)).State);
+        Assert.Equal(1, f.Runtime.Starts);
+    }
+    [Fact]
+    public async Task Limits_AggregateReservationsSurviveStoppedFailedAndNestedCores()
+    {
+        using var f = new Fixture();
+        var input = new CoreEnvironmentCreate(Guid.NewGuid().ToString(), "Large", Limits: new(MemoryBytes: 6442450944));
+        var child = await f.Service.CreateAsync(f.Actor, input, default);
+        Assert.Equal(6442450944, child.Limits!.MemoryBytes);
+        Assert.Equal("environment_resource_capacity", (await Assert.ThrowsAsync<SandboxException>(() => f.Create())).Code);
+        var config = new HostyCoreRuntimeConfig(child.DataRoot!, child.DataRoot!, "", 7070, "http://localhost:7070", null, "localhost", null, false);
+        var nested = new CoreEnvironmentService(new(CoreDataPaths.FromConfig(config)), f.Runtime, new Clock());
+        Assert.Equal("environment_resource_capacity", (await Assert.ThrowsAsync<SandboxException>(() => nested.CreateAsync(f.Actor,
+            new(Guid.NewGuid().ToString(), "Nested"), default))).Code);
+        Assert.Equal("finished", (await f.Command(child, "finish")).State); Assert.NotNull(await f.Create());
+    }
+    [Fact]
+    public async Task Limits_SoftDiskStopsWithoutDeletingData_UnknownInventoryRetainsState()
+    {
+        using var f = new Fixture(); var item = await f.Command(await f.Create(), "start");
+        f.Runtime.Usage = new(10737418241, 100, 200, "observed", DateTimeOffset.UtcNow);
+        await f.Service.ObserveResourcesAsync(default);
+        var record = (await f.Store.ReadAsync(item.Id, default))!;
+        Assert.Equal("quota-exceeded", record.State); Assert.True(Directory.Exists(item.DataRoot));
+        Assert.Equal(10737418241, record.Usage!.OwnedDiskBytes);
+        f.Runtime.FailObservation = true; await f.Service.ObserveResourcesAsync(default);
+        record = (await f.Store.ReadAsync(item.Id, default))!;
+        Assert.Equal("unknown", record.Usage!.State); Assert.Equal("quota-exceeded", record.State);
+    }
+    [Fact]
+    public async Task ClosingManagedRoot_CannotBeStartedByAnotherProcess()
+    {
+        using var f = new Fixture(); var item = await f.Create(); f.Runtime.FailStop = true; item = await f.Command(item, "finish");
+        var config = new HostyCoreRuntimeConfig(item.DataRoot!, item.DataRoot!, "", 7070, "http://localhost:7070", null, "localhost", null, false);
+        Assert.Contains("closing", Assert.Throws<CoreRootLockedException>(() => CoreRootLock.Acquire(config)).Message);
+    }
+    [Fact]
+    public async Task Create_InterruptedIdentityWrite_ReplaysWithoutAllocatingAnotherRoot()
+    {
+        using var f = new Fixture(); var input = new CoreEnvironmentCreate(Guid.NewGuid().ToString(), "QA");
+        var child = await f.Service.CreateAsync(f.Actor, input, default);
+        File.Delete(Path.Combine(child.DataRoot!, "core/distribution-apps.json"));
+        var identity = CoreInstanceId.BuildPath(child.DataRoot!); File.Delete(identity);
+        File.WriteAllText(identity + "." + Guid.NewGuid().ToString("N") + ".tmp", child.Id[..10]);
+        var replay = await f.Service.CreateAsync(f.Actor, input, default);
+        Assert.Equal(child.Id, replay.Id); Assert.Equal(child.Id, File.ReadAllText(identity));
+        Assert.Single(await f.Store.ListAsync(default));
+    }
     private sealed class Clock : IClock { public DateTimeOffset UtcNow => DateTimeOffset.UtcNow; }
     private sealed class Fixture : IDisposable
     {
@@ -239,6 +335,9 @@ public sealed class CoreEnvironmentTests
     private sealed class FakeRuntime : ICoreEnvironmentRuntime
     {
         public void ExitAll() => live.Clear();
+        public CoreEnvironmentUsage? Usage; public bool FailObservation;
+        public Task<CoreEnvironmentUsage?> InspectResourcesAsync(CoreEnvironmentRecord record, string root, CancellationToken ct)
+            => FailObservation ? throw new IOException("Docker unavailable") : Task.FromResult(Usage);
         public int Starts; public bool FailStop; public bool FailBuild; public List<bool> Removals = [];
         private readonly Dictionary<string, CoreEnvironmentProcess> live = [];
         public TaskCompletionSource<string>? Preparation;

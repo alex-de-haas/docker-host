@@ -229,8 +229,27 @@ reads its journal; it does not guess a successful outcome. Admission permits two
 descendants across the root environment tree. A root-owned
 file lock serializes allocation across parent/child processes, including after restart. Nested
 creation consumes the same count as direct creation; failed/stopped environments retain capacity
-until Finish. This count bound is not a CPU/RAM/disk quota or a limit across independently installed
-primary Core roots.
+until Finish. The same tree also reserves an aggregate **8 GiB app-container memory, 4 CPUs,
+1,024 PIDs and 20 GiB owned disk**. A default child reserves 4 GiB/2 CPUs/512 PIDs/10 GiB;
+`limits` on create can select a different share within the pool. Descendants, stopped children and
+failed cleanup retain their reservations. Independent primary Core installations are outside this pool.
+
+Within a managed child, Docker app admission holds a persistent allocation lock, inventories existing
+containers, and refuses unknown/unbounded capacity before network/build/container creation. Each app
+receives 2 GiB/1 CPU/256 PIDs by default, divided across its selected services; the environment's
+`applicationMemoryBytes`, `applicationCpus` and `applicationPids` configure that share. Docker enforces
+memory plus equal swap ceiling, CPU and PID limits from creation. Verified adoption requires matching
+limits. Existing offline app sandboxes and their browser/probe overhead also use the child's budget.
+Legacy containers without verified ceilings require recreation rather than silent adoption.
+
+Resource observations report container working memory, native Core RSS and owned disk usage separately.
+Owned disk includes regular files without following symlinks, labelled container writable layers and
+named volumes; descendant roots have their own reservation. Every 15 seconds the parent observes usage,
+stops an environment that exceeds its soft disk quota, and retains its data and reservation. Docker
+unavailability produces an explicit unknown observation. Container logs are bounded to three 10 MiB
+files. Borrowed mounts, shared images/BuildKit cache and native Core/source-build/local-command processes
+are not hard-capped by these Docker limits. Native RSS is measured; this is not a total host-memory or
+hard filesystem quota. Selected child builds require Core 0.133.0 or newer for this resource contract.
 
 Setup uses ordinary Core bootstrap and password login with explicitly supplied test credentials.
 The resulting child session stays private in the parent-owned child root. The JSON API transport
@@ -242,17 +261,28 @@ An operator signs into the child Core normally; Harness lists Core and running a
 Stop preserves users and data. Normal parent shutdown stops owned children and their apps;
 `keep-apps` preserves them for adoption. Parent SIGKILL does not immediately stop children: the
 replacement parent reconciles persisted PID/start identities and child control discovery. Interrupted
-operations retain an explicit failed outcome for inspection and a deliberate retry. Finish uses a
+operations retain an explicit failed outcome for inspection and a deliberate retry using the **same
+request UUID and original arguments**. Successful or superseded operations do not rerun. Shell and
+Workspaces preserve a failed Finish request across refresh instead of discarding its replay identity.
+Finish closes the managed root and descendants to new starts. It journals the cleanup-owner inventory
+and a root-deletion checkpoint outside the deleted tree, so interruption after removal of the identity
+file remains recoverable; a changed identity still blocks deletion. Finish uses a
 bounded graceful stop, verified-process fallback and an exclusive Core root lock before cleanup.
 It also traverses recorded descendants, removes containers/networks/volumes bearing the full owned
-instance label, deletes the temporary root, and releases worktree consumers. Failed cleanup retains
-the root and a retryable error. A finished operation receipt remains for replay. Borrowed source,
+instance label, deletes the temporary root, and releases worktree consumers. Fresh Docker inventories must confirm resource removal. Dependency networks carry full instance/app
+ownership labels. Legacy unlabelled networks remain an explicit repair error rather than being deleted
+by name or silently omitted. Failed cleanup retains the root and a retryable error. A finished operation receipt remains for replay. Borrowed source,
 external mount targets, exported evidence and shared Docker images remain outside deletion.
 
 This is the approved trusted-Core development model. The child receives the shared local Docker
 endpoint and normal internet access; it is not a hostile-code isolation boundary. Modified Core code
 can control Docker on this host. Existing single-app offline sandboxes retain the narrower contract
 above. Explicit mount/connection/app-install approvals remain ordinary child Core operations.
+
+The [recovery and quota acceptance](../../reviews/2026-10-14-sandbox-recovery-and-quotas.md) verifies
+published Media/Transcode artifacts, product-created Docker ceilings, actual Docker Desktop loss,
+explicit app recovery, same-request Finish and parent SIGKILL during root deletion. It also checks
+soft-disk stopping, old-Core refusal, complete fixture cleanup and full original media hashes.
 
 The [manager acceptance](../../reviews/2026-10-14-child-core-manager.md) verifies two app-bearing
 children, normal browser login, source and native release launch, a nested child, worktree retention,
@@ -349,6 +379,11 @@ Regression coverage rejects app source paths outside attached session worktrees,
 symlink escapes, and a project replaced by a link before start. Exercise concurrent parent/child
 allocation against one root budget, reconstruction after restart, and capacity release after Finish.
 Build retention tests cover repeated failures, live process/runner references and unused preparation.
+Recovery tests cover a partially written allocation identity, same-request Finish after Docker loss or
+parent restart, partial root deletion, superseded replay, and refusal to reopen a closing root. Quota
+tests cover aggregate sibling/nested reservations, unknown Docker, unbounded existing containers,
+per-service division, soft-disk stop and preservation of borrowed data. UI tests retain the original
+Finish request after failure and refresh.
 The local review acceptance runs a real child plus grandchild, rejects a third allocation at either
 level, performs three child restarts with two retained ready generations, and verifies that Finish
 removes the subtree and restores both capacity slots.

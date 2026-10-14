@@ -1872,6 +1872,9 @@ internal sealed class DockerRuntimeAdapter(
         if (dockerCoreListener is not null) await dockerCoreListener.EnsureReadyAsync(cancellationToken);
         var endpoints = new List<AppEndpointContract>();
         var services = OrderServices(context.Manifest.Services);
+        using var admission = await CoreEnvironmentResources.AdmitAsync(config, runner, context.App.Id, services.Count, cancellationToken,
+            replacementServices: services.Select(s => s.Key).ToHashSet(StringComparer.Ordinal),
+            totalServices: context.AllServices.Count(s => s.Runtime.Type == "docker"));
         var resolvedLocks = new Dictionary<string, ArtifactLock>(StringComparer.Ordinal);
 
         MaybeAdviseWslMirroredNetworking(context, services);
@@ -1882,7 +1885,15 @@ internal sealed class DockerRuntimeAdapter(
         var dependencyNetwork = RequiresUserNetwork(context.AllServices) ? BuildNetworkName(config.InstanceId, context.App.Id) : null;
         if (dependencyNetwork is not null)
         {
-            _ = await RunDockerAsync(["network", "create", dependencyNetwork], ignoreFailures: true, cancellationToken);
+            var network = await runner.RunAsync(["network", "create", "--label", "hosty.instance=" + config.InstanceId,
+                "--label", "hosty.app.id=" + context.App.Id, dependencyNetwork], cancellationToken: cancellationToken);
+            if (network.ExitCode != 0)
+            {
+                var owner = await runner.RunAsync(["network", "inspect", "--format", "{{ index .Labels \"hosty.instance\" }}|{{ index .Labels \"hosty.app.id\" }}", dependencyNetwork], cancellationToken: cancellationToken);
+                if (owner.ExitCode != 0 || owner.StandardOutput.Trim() != config.InstanceId + "|" + context.App.Id
+                    && !(config.InstanceId.Length == 0 && owner.StandardOutput.Trim() is "|" or "<no value>|<no value>"))
+                    throw new AppLifecycleException("runtime_network_unverified", "Cannot verify the app network owner: " + network.StandardError);
+            }
         }
 
         // Track containers this start actually created so a later service failing can unwind them (C-H5):
@@ -1911,7 +1922,7 @@ internal sealed class DockerRuntimeAdapter(
             // through to the normal recreate path below. Adopted
             // containers are intentionally NOT added to startedContainers: this start did not create
             // them, so a later sibling's failure must not tear a healthy running service down.
-            if (service.Runtime.SourceMount is null && await TryAdoptRunningContainerAsync(context.App.Id, containerName, service.Image, existingLock, cancellationToken))
+            if (service.Runtime.SourceMount is null && (admission is null || await admission.MatchesAsync(runner, containerName, cancellationToken)) && await TryAdoptRunningContainerAsync(context.App.Id, containerName, service.Image, existingLock, cancellationToken))
             {
                 resolvedLocks[service.Key] = existingLock!;
                 AppendServiceEndpoints(endpoints, service, AssignServicePorts(context, service, hostNetwork), config);
@@ -1990,6 +2001,7 @@ internal sealed class DockerRuntimeAdapter(
 
             // Privileged extras (validated + install-review gated): Linux capabilities and host
             // device nodes, e.g. NET_ADMIN + /dev/net/tun for an in-container VPN.
+            if (admission is not null) runArgs.AddRange(admission.Arguments);
             runArgs.AddRange(BuildPrivilegedArguments(service.Runtime));
             runArgs.AddRange(BuildHealthcheckArguments(service.Runtime));
 
@@ -2532,8 +2544,9 @@ internal sealed class DockerRuntimeAdapter(
     private async Task<bool> IsContainerRunningAsync(string containerName, CancellationToken cancellationToken)
     {
         var inspect = await RunRawAsync(["inspect", "--format", "{{.State.Running}}", containerName], cancellationToken);
-        return inspect.ExitCode == 0 &&
-            string.Equals(inspect.StandardOutput.Trim(), "true", StringComparison.OrdinalIgnoreCase);
+        if (inspect.ExitCode != 0 && !inspect.StandardError.Contains("No such", StringComparison.OrdinalIgnoreCase))
+            throw new AppLifecycleException("docker_state_unknown", "Docker is unavailable; the container cannot be reported stopped.");
+        return inspect.ExitCode == 0 && string.Equals(inspect.StandardOutput.Trim(), "true", StringComparison.OrdinalIgnoreCase);
     }
 
     // True when a Core-owned container of this name is already running the exact image the app's lock

@@ -38,6 +38,10 @@ internal sealed partial class SandboxDockerRuntime(IDockerCommandRunner docker, 
         await admission.WaitAsync(ct);
         try
         {
+            var requested = instance.Request.Limits ?? new();
+            using var environmentBudget = await CoreEnvironmentResources.AdmitAsync(config, docker, "sandbox:" + instance.Id, 1, ct,
+                new(ApplicationMemoryBytes: requested.MemoryBytes + 268435456 + 67108864, ApplicationCpus: requested.Cpus + .35,
+                    ApplicationPids: requested.Pids + 80));
             var policy = await JsonStorage.ReadAsync<SandboxRuntimePolicy>(Path.Combine(store.Root, "runtime.json"), ct)
                 ?? throw Error("sandbox_runtime_not_prepared", "Prepare the trusted sandbox relay image and runtime policy first.");
             if (!OperatingSystem.IsMacOS() || policy.MaxRunningInstances is < 1 or > 2 || policy.ReservedAgentBytes is < 0 or > 4294967296)
@@ -244,6 +248,8 @@ internal sealed partial class SandboxDockerRuntime(IDockerCommandRunner docker, 
         await admission.WaitAsync(ct);
         try
         {
+            using var environmentBudget = await CoreEnvironmentResources.AdmitAsync(config, docker, "browser:" + jobId, 1, ct,
+                new(ApplicationMemoryBytes: 1610612736 + 67108864, ApplicationCpus: 1.1, ApplicationPids: 272));
             var policy = await JsonStorage.ReadAsync<SandboxRuntimePolicy>(Path.Combine(store.Root, "runtime.json"), ct)
                 ?? throw Error("sandbox_runtime_not_prepared", "Prepare the trusted browser runtime first.");
             if (!ValidImage(policy.BrowserImage) || instance.BrowserProxy is null)

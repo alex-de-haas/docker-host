@@ -1327,6 +1327,14 @@ public sealed class DockerRuntimeAdapterTests
     }
 
     [Fact]
+    public async Task StopAsync_DaemonUnavailable_DoesNotReportStopped()
+    {
+        var runner = new FakeDockerCommandRunner(_ => new DockerCommandResult(1, "", "Cannot connect to Docker daemon"));
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => CreateAdapter(runner).StopAsync(CreateDockerContext(CreateDockerAppRecord(null, null))));
+        Assert.Equal("docker_state_unknown", error.Code);
+    }
+
+    [Fact]
     public async Task StopAsync_ContainerStopped_ReturnsStopped()
     {
         var runner = new FakeDockerCommandRunner(args =>

@@ -1,6 +1,6 @@
 import { coreEnvironmentActions, type CoreEnvironmentAction } from "@hosty-sdk/app/sandbox/server";
 const descriptions: Record<CoreEnvironmentAction, string> = {
-  "environment-create": "Allocate a fresh child Core with separate users, data, ports and the shared Docker engine. No workspace is required. Supply label, requestId, mode current (prepared parent build), release (installed parent binary) or source (absolute Core projectPath). Does not start it. No production credentials or data are copied.",
+  "environment-create": "Allocate a fresh child Core with separate users, data, ports and the shared Docker engine. No workspace is required. Supply label, requestId, mode current (prepared parent build), release (installed parent binary) or source (absolute Core projectPath). Does not start it. Optional limits reserves memoryBytes, cpus, pids and diskBytes across the root tree; applicationMemoryBytes/applicationCpus/applicationPids are divided between each app’s services. No production credentials or data are copied.",
   "environment-list": "List this session's child Core environments; also recovers associations after an uncertain create response.",
   "environment-status": "Observe environmentId, revision, process identity, errors and local Core preview URL. Verify running before use.",
   "environment-start": "Start environmentId using requestId and expectedRevision. Source builds finish before launch; wait for running and inspect errors.",
@@ -13,6 +13,7 @@ const descriptions: Record<CoreEnvironmentAction, string> = {
 export const coreEnvironmentTools = () => coreEnvironmentActions.map(action => ({ name: action.replaceAll("-", "_"), description: descriptions[action],
   inputSchema: { type: "object", properties: {
     ...Object.fromEntries(["environmentId", "requestId", "label", "projectPath", "email", "displayName", "password", "path", "workspaceId"].map(k => [k, { type: "string" }])),
+    limits: { type: "object", properties: Object.fromEntries(["memoryBytes", "cpus", "pids", "diskBytes", "applicationMemoryBytes", "applicationCpus", "applicationPids"].map(k => [k, { type: "number" }])), additionalProperties: false },
     worktreeIds: { type: "array", items: { type: "string" }, maxItems: 16 },
     mode: { type: "string", enum: ["current", "release", "source"] }, expectedRevision: { type: "integer", minimum: 1 },
     method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE"] }, body: { type: "object", additionalProperties: true },

@@ -71,7 +71,7 @@ internal sealed class CoreEnvironmentStore(CoreDataPaths paths)
             {
                 if (record.State == "finished") continue;
                 result.Add(record);
-                if (result.Count >= 2) return result;
+                if (result.Count > 128) throw new SandboxException("environment_capacity", "Environment tree exceeds the supported bound.", 409);
                 owner.VerifyRoot(record);
                 pending.Enqueue(AtRoot(owner.Root(record.Id)));
             }
@@ -82,8 +82,13 @@ internal sealed class CoreEnvironmentStore(CoreDataPaths paths)
         var root = Root(record.Id);
         if (!Directory.Exists(root)) return;
         var identity = CoreInstanceId.BuildPath(root);
-        if (!File.Exists(identity) || File.ReadAllText(identity).Trim() != record.Id)
+        if ((!File.Exists(identity) && !record.RootDeletionStarted) || (File.Exists(identity) && File.ReadAllText(identity).Trim() != record.Id))
             throw new SandboxException("environment_owner_mismatch", "The environment root no longer has its recorded Core identity.", 409);
+    }
+    internal async Task<string[]> CleanupOwnersAsync(CoreEnvironmentRecord record, CancellationToken ct)
+    {
+        var children = await AtRoot(Root(record.Id)).ListUnfinishedTreeAsync(ct);
+        return children.Select(r => r.Id).Append(record.Id).Distinct(StringComparer.Ordinal).ToArray();
     }
     public void DeleteRoot(CoreEnvironmentRecord record)
     {

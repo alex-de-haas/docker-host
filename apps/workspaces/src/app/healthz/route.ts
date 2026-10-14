@@ -1,1 +1,1 @@
-export function GET() { return Response.json({ status: "ok", appId: "hosty.workspaces", version: "0.3.1" }); }
+export function GET() { return Response.json({ status: "ok", appId: "hosty.workspaces", version: "0.3.2" }); }

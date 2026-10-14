@@ -82,3 +82,23 @@ it("submits ordinary child setup credentials without persisting them in replay s
   expect(sessionStorage.length).toBe(0);
   expect((form.elements.namedItem("password") as HTMLInputElement).value).toBe("");
 });
+it("retains a failed Finish across refresh and reuses its original request after Docker recovers", async () => {
+  let savedBody: Record<string, unknown> | undefined, failed = false, finished = false;
+  const request = vi.fn(async (path: string, body?: unknown) => {
+    if (body) {
+      if (!savedBody) { savedBody = body as Record<string, unknown>; failed = true; return { ...item, state: "cleanup-failed", error: "Docker unavailable" }; }
+      finished = true; return { ...item, state: "finished" };
+    }
+    return path.endsWith("/apps") ? { state: "ready", apps: [] } : { environments: finished ? [] : [{ ...item,
+      state: failed ? "cleanup-failed" : "running", error: failed ? "Docker unavailable" : undefined,
+      operations: failed ? [{ id: savedBody!.requestId, kind: "finish", state: "failed" }] : [] }] };
+  });
+  await render(request as EnvironmentRequest); await click("Delete sandbox"); await click("Delete permanently");
+  expect(JSON.parse(sessionStorage.getItem(storageKey)!).body).toEqual(savedBody);
+  await click("Refresh sandboxes");
+  await act(async () => root.render(null)); await render(request as EnvironmentRequest);
+  await click("Retry same request");
+  const mutations = request.mock.calls.filter(([, body]) => body);
+  expect(mutations).toHaveLength(2); expect(mutations[1]).toEqual(mutations[0]);
+  expect(sessionStorage.getItem(storageKey)).toBeNull(); expect(container.textContent).toContain("Sandbox deleted");
+});
