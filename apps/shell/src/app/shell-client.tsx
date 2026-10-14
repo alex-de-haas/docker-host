@@ -852,11 +852,11 @@ export function ShellClient({
 
   const switchAppRuntime = useCallback(
     async (app: CoreApp, targetRuntime: string) => {
-      if (!targetRuntime || targetRuntime === app.selectedRuntime) {
+      const currentApp = state.apps.find(candidate => candidate.id === app.id) ?? app;
+      if (!targetRuntime || targetRuntime === currentApp.selectedRuntime) {
         return;
       }
 
-      const currentApp = state.apps.find(candidate => candidate.id === app.id) ?? app;
       if (appActionActivations.current.has(app.id) || isAppBusy(currentApp.runtimeState) || currentApp.operationStatus === "updating") return;
       appActionActivations.current.add(app.id);
 
@@ -883,10 +883,24 @@ export function ShellClient({
           toast.info("Switching Shell runtime", { description: "Waiting for the selected runtime, then reloading this page…" });
           const outcome = await waitForShellRuntimeSwitch({ coreOrigin, shellAppId, targetRuntime: plan.targetRuntime });
           if (outcome.kind === "failed") throw new Error(outcome.message);
-          if (outcome.kind === "settled" && await waitForOwnOrigin()) window.location.reload();
-          else toast.warning("Shell runtime switch is not confirmed yet", {
-            description: "Check Shell with `hosty apps list`. If it is stopped, start it with `hosty apps start hosty.shell`, then reload this page.",
-          });
+          if (outcome.kind === "settled") {
+            // Confirmation is newer than any app-list read already in flight.
+            const appsReadId = ++appsReadSequence.current;
+            setState(current => ({ ...current, ...reconcileAppList(current, {
+              apps: current.apps.map(item => item.id === app.id
+                ? { ...item, selectedRuntime: plan.targetRuntime } : item),
+              updateCheck: current.updateCheck,
+            }, appsReadId) }));
+            invalidateUpdateStatus(app.id);
+            if (await waitForOwnOrigin()) window.location.reload();
+            else toast.warning("Runtime switched; Shell page is not answering yet", {
+              description: "Core confirmed the selected runtime is running. Reload this page once the Shell browser address is reachable again.",
+            });
+          } else {
+            toast.warning("Shell runtime switch is not confirmed yet", {
+              description: "Check Shell with `hosty apps list`. If it is stopped, start it with `hosty apps start hosty.shell`, then reload this page.",
+            });
+          }
           return;
         }
         await refresh();

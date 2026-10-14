@@ -343,3 +343,35 @@ it("keeps ordinary runtime-switch errors visible and successful switches refresh
   await act(async () => actions.switchAppRuntime(target, "docker"));
   expect(fixture.toast.success).toHaveBeenCalledWith("Runtime switched", expect.objectContaining({ description: "Routine app: dev to docker" }));
 });
+
+it("keeps a confirmed runtime switch distinct from an unreachable Shell page", async () => {
+  const self = { ...target, id: "hosty.shell", selectedRuntime: "dev" };
+  apps = [self];
+  fixture.switchSettle.mockResolvedValue({ kind: "settled" });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 503 })));
+  await mount();
+  const oldAppsRead = deferred<Response>();
+  overrideRequests(path => path === "/api/apps" ? oldAppsRead.promise : undefined);
+  let oldRefresh!: Promise<void>;
+  await act(async () => { oldRefresh = actions.refresh(); });
+  await act(async () => {
+    const switching = actions.switchAppRuntime(self, "docker");
+    await vi.advanceTimersByTimeAsync(90_000);
+    await switching;
+  });
+  expect(fixture.toast.warning).toHaveBeenCalledExactlyOnceWith("Runtime switched; Shell page is not answering yet", {
+    description: "Core confirmed the selected runtime is running. Reload this page once the Shell browser address is reachable again.",
+  });
+  expect(fixture.toast.error).not.toHaveBeenCalled();
+  expect(shell.state.apps.find(app => app.id === self.id)?.selectedRuntime).toBe("docker");
+  await act(async () => { oldAppsRead.resolve(Response.json({ apps: [self] })); await oldRefresh; });
+  expect(shell.state.apps.find(app => app.id === self.id)?.selectedRuntime).toBe("docker");
+  // A caller can still hold the old row object after the completed action releases its guard.
+  await act(async () => actions.switchAppRuntime(self, "docker"));
+  expect(callsTo("/api/apps/hosty.shell/switch-runtime/plan")).toHaveLength(1);
+  expect(callsTo("/api/apps/hosty.shell/switch-runtime")).toHaveLength(1);
+  // A later authoritative read can still reflect a different operator's subsequent switch.
+  overrideRequests(path => path === "/api/apps" ? Response.json({ apps: [self] }) : undefined);
+  await act(async () => actions.refresh());
+  expect(shell.state.apps.find(app => app.id === self.id)?.selectedRuntime).toBe("dev");
+});
