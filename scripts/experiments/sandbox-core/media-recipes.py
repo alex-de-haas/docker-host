@@ -24,12 +24,16 @@ def main():
     parser.add_argument('--transcode-source', required=True, type=Path)
     parser.add_argument('--output-dir', required=True, type=Path)
     args = parser.parse_args()
+    sources = (args.media_source.resolve(), args.transcode_source.resolve())
     output = args.output_dir.resolve()
+    repository = Path(__file__).resolve().parents[3]
+    if any(output.is_relative_to(root) for root in (repository, *sources)):
+        parser.error('Output must be outside the repository and both source checkouts.')
     if output.exists():
         parser.error('Use a new output directory; existing evidence is not overwritten.')
     prepared = []
     inventory = []
-    for source in (args.media_source.resolve(), args.transcode_source.resolve()):
+    for source in sources:
         manifest = json.loads((source / 'manifest.json').read_text())
         for key in ('source', 'agent', 'catalogMetadata'):
             manifest.pop(key, None)
@@ -53,6 +57,7 @@ def main():
             service['runtimes'] = {'docker': runtime}
             for port in runtime.get('ports', []):
                 port.pop('hostPort', None)
+                port.pop('localPort', None)
                 if port.get('expose') == 'host':
                     port['expose'] = 'loopback'
             inventory.append({'appId': manifest['id'], 'service': service['key'],
@@ -61,8 +66,6 @@ def main():
                               'sourceRevision': (image.get('Config', {}).get('Labels') or {}).get('org.opencontainers.image.revision')})
         prepared.append((source, manifest))
     output.mkdir(parents=True, mode=0o700)
-    for item in inventory:
-        docker('tag', item['imageId'], item['fixtureTag'])
     for source, manifest in prepared:
         destination = output / manifest['id']
         destination.mkdir()
@@ -77,7 +80,10 @@ def main():
             target = destination / asset
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, target)
+    # Persist the complete cleanup inventory before the first Docker mutation.
     (output / 'images.json').write_text(json.dumps(inventory, indent=2) + '\n')
+    for item in inventory:
+        docker('tag', item['imageId'], item['fixtureTag'])
     print(f'Prepared {len(prepared)} recipes and {len(inventory)} fixture image tags in {output}')
 
 
