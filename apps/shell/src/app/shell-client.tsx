@@ -852,11 +852,11 @@ export function ShellClient({
 
   const switchAppRuntime = useCallback(
     async (app: CoreApp, targetRuntime: string) => {
-      if (!targetRuntime || targetRuntime === app.selectedRuntime) {
+      const currentApp = state.apps.find(candidate => candidate.id === app.id) ?? app;
+      if (!targetRuntime || targetRuntime === currentApp.selectedRuntime) {
         return;
       }
 
-      const currentApp = state.apps.find(candidate => candidate.id === app.id) ?? app;
       if (appActionActivations.current.has(app.id) || isAppBusy(currentApp.runtimeState) || currentApp.operationStatus === "updating") return;
       appActionActivations.current.add(app.id);
 
@@ -884,6 +884,10 @@ export function ShellClient({
           const outcome = await waitForShellRuntimeSwitch({ coreOrigin, shellAppId, targetRuntime: plan.targetRuntime });
           if (outcome.kind === "failed") throw new Error(outcome.message);
           if (outcome.kind === "settled") {
+            // Keep Core's confirmed selection even if the document never becomes reachable.
+            setState(current => ({ ...current, apps: current.apps.map(item => item.id === app.id
+              ? { ...item, selectedRuntime: plan.targetRuntime } : item) }));
+            invalidateUpdateStatus(app.id);
             if (await waitForOwnOrigin()) window.location.reload();
             else toast.warning("Runtime switched; Shell page is not answering yet", {
               description: "Core confirmed the selected runtime is running. Reload this page once the Shell browser address is reachable again.",

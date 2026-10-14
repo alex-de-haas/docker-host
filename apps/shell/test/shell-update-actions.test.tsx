@@ -359,5 +359,9 @@ it("keeps a confirmed runtime switch distinct from an unreachable Shell page", a
     description: "Core confirmed the selected runtime is running. Reload this page once the Shell browser address is reachable again.",
   });
   expect(fixture.toast.error).not.toHaveBeenCalled();
+  expect(shell.state.apps.find(app => app.id === self.id)?.selectedRuntime).toBe("docker");
+  // A caller can still hold the old row object after the completed action releases its guard.
+  await act(async () => actions.switchAppRuntime(self, "docker"));
+  expect(callsTo("/api/apps/hosty.shell/switch-runtime/plan")).toHaveLength(1);
   expect(callsTo("/api/apps/hosty.shell/switch-runtime")).toHaveLength(1);
 });
