@@ -551,7 +551,9 @@ function SettingsForm({
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    onConfigure(app, buildAppSettingsPayload(settings, draft), autostartDraft);
+    // Browser addresses are edited by the endpoint control with its own stale-address check.
+    // Resending hidden/read-only values here turns an ordinary save into an unreviewed rename.
+    onConfigure(app, buildAppSettingsPayload(appSettings, draft), autostartDraft);
   };
 
   return (

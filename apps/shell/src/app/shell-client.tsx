@@ -5,6 +5,7 @@ import { fetchCore } from "./shell/core-transport.js";
 
 
 import { waitForShellUpdateToSettle } from "./shell/self-update";
+import { waitForShellRuntimeSwitch } from "./shell/self-runtime-switch";
 import { isAppBusy, isAppUp } from "./shell/runtime-states";
 import { isRoutineUpdate } from "./shell/update-feedback";
 import { useAppUpdateNotifications } from "./shell/update-notifications";
@@ -855,6 +856,10 @@ export function ShellClient({
         return;
       }
 
+      const currentApp = state.apps.find(candidate => candidate.id === app.id) ?? app;
+      if (appActionActivations.current.has(app.id) || isAppBusy(currentApp.runtimeState) || currentApp.operationStatus === "updating") return;
+      appActionActivations.current.add(app.id);
+
       const actionKey = `${app.id}:switch-runtime:${targetRuntime}`;
       setBusyAction(actionKey);
       setState((current) => ({ ...current, error: null }));
@@ -863,10 +868,27 @@ export function ShellClient({
         // twins (C-M9); sendCsrfJson attaches it and throws on !ok.
         const planResponse = await sendCsrfJson(appEndpoint(app, "/switch-runtime/plan"), { targetRuntime });
         const plan = (await planResponse.json()) as CoreRuntimeSwitchPlan;
-        await sendCsrfJson(appEndpoint(app, "/switch-runtime"), {
-          targetRuntime: plan.targetRuntime,
-          planDigest: plan.planDigest,
-        });
+        try {
+          await sendCsrfJson(appEndpoint(app, "/switch-runtime"), {
+            targetRuntime: plan.targetRuntime,
+            planDigest: plan.planDigest,
+          });
+        } catch (error) {
+          const connectionLost = error instanceof TypeError || (error instanceof CoreRequestError &&
+            (error.code === "core_unavailable" || error.code === "core_request_timeout"));
+          if (app.id !== shellAppId || !connectionLost) throw error;
+          // Core owns completion once stopping begins. Never replay an uncertain mutation.
+        }
+        if (app.id === shellAppId) {
+          toast.info("Switching Shell runtime", { description: "Waiting for the selected runtime, then reloading this page…" });
+          const outcome = await waitForShellRuntimeSwitch({ coreOrigin, shellAppId, targetRuntime: plan.targetRuntime });
+          if (outcome.kind === "failed") throw new Error(outcome.message);
+          if (outcome.kind === "settled" && await waitForOwnOrigin()) window.location.reload();
+          else toast.warning("Shell runtime switch is not confirmed yet", {
+            description: "Check Shell with `hosty apps list`. If it is stopped, start it with `hosty apps start hosty.shell`, then reload this page.",
+          });
+          return;
+        }
         await refresh();
         invalidateUpdateStatus(app.id);
         toast.success("Runtime switched", {
@@ -881,10 +903,11 @@ export function ShellClient({
         toast.error("Runtime switch failed", { description: message, appId: app.id });
         void refreshApps();
       } finally {
+        appActionActivations.current.delete(app.id);
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [appEndpoint, invalidateUpdateStatus, refresh, refreshApps, sendCsrfJson],
+    [appEndpoint, coreOrigin, invalidateUpdateStatus, refresh, refreshApps, sendCsrfJson, shellAppId, state.apps],
   );
 
   const loadAppBackups = useCallback(
