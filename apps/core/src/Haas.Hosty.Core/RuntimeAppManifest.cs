@@ -1890,8 +1890,11 @@ internal sealed class DockerRuntimeAdapter(
             if (network.ExitCode != 0)
             {
                 var owner = await runner.RunAsync(["network", "inspect", "--format", "{{ index .Labels \"hosty.instance\" }}|{{ index .Labels \"hosty.app.id\" }}", dependencyNetwork], cancellationToken: cancellationToken);
+                // Before ownership labels, every instance used this exact app network name. Reuse
+                // those networks on upgrade without deleting live endpoints or asserting ownership
+                // for Finish; destructive cleanup still requires the full instance label.
                 if (owner.ExitCode != 0 || owner.StandardOutput.Trim() != config.InstanceId + "|" + context.App.Id
-                    && !(config.InstanceId.Length == 0 && owner.StandardOutput.Trim() is "|" or "<no value>|<no value>"))
+                    && owner.StandardOutput.Trim() is not ("|" or "<no value>|<no value>"))
                     throw new AppLifecycleException("runtime_network_unverified", "Cannot verify the app network owner: " + network.StandardError);
             }
         }

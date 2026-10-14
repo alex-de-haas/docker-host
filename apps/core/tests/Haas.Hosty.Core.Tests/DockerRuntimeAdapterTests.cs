@@ -309,6 +309,42 @@ public sealed class DockerRuntimeAdapterTests
             "hosty-0123456789ab-com-example-app-web",
             DockerRuntimeAdapter.BuildContainerName("0123456789abcdef0123456789abcdef", "com.example.app", "web"));
 
+    [Theory]
+    [InlineData("|", true)]
+    [InlineData("<no value>|<no value>", true)]
+    [InlineData("0123456789abcdef0123456789abcdef|com.example.app", true)]
+    [InlineData("another-instance|com.example.app", false)]
+    [InlineData("0123456789abcdef0123456789abcdef|another-app", false)]
+    [InlineData("0123456789abcdef0123456789abcdef|", false)]
+    public async Task StartAsync_NonDefaultInstance_ReusesLegacyNetworkButRejectsConflictingOwner(string owner, bool allowed)
+    {
+        const string instance = "0123456789abcdef0123456789abcdef";
+        var runner = new FakeDockerCommandRunner(args => args switch
+        {
+            ["network", "create", ..] => new(1, "", "network already exists"),
+            ["network", "inspect", ..] => new(0, owner, ""),
+            ["pull", ..] => new(0, "Digest: sha256:" + new string('a', 64), ""),
+            _ => new(0, "", ""),
+        });
+        var context = CreateMultiServiceDockerContext("api", "web");
+        context = context with { Manifest = context.Manifest with { Services = context.Manifest.Services
+            .Select(s => s.Key == "web" ? s with { DependsOn = [new("api", null)] } : s).ToArray() } };
+        var adapter = CreateAdapter(runner, instanceId: instance);
+        if (allowed)
+        {
+            await adapter.StartAsync(context);
+            Assert.Equal(2, runner.Commands.Count(c => c[0] == "run"));
+        }
+        else
+        {
+            var error = await Assert.ThrowsAsync<AppLifecycleException>(() => adapter.StartAsync(context));
+            Assert.Equal("runtime_network_unverified", error.Code);
+            Assert.False(runner.Ran("run"));
+        }
+        Assert.Equal(DockerRuntimeAdapter.BuildNetworkName(instance, context.App.Id), runner.Find("network", "inspect")![^1]);
+        Assert.False(runner.Ran("network", "rm"));
+    }
+
     [Fact]
     public void RequiresUserNetwork_OnlyWhenAServiceDependsOnAnother()
     {

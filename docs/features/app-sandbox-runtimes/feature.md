@@ -270,8 +270,10 @@ file remains recoverable; a changed identity still blocks deletion. Finish uses 
 bounded graceful stop, verified-process fallback and an exclusive Core root lock before cleanup.
 It also traverses recorded descendants, removes containers/networks/volumes bearing the full owned
 instance label, deletes the temporary root, and releases worktree consumers. Fresh Docker inventories must confirm resource removal. Dependency networks carry full instance/app
-ownership labels. Legacy unlabelled networks remain an explicit repair error rather than being deleted
-by name or silently omitted. Failed cleanup retains the root and a retryable error. A finished operation receipt remains for replay. Borrowed source,
+ownership labels. App start preserves upgrade compatibility by reusing an unlabelled legacy network
+at its exact derived name, including on non-default roots, without deleting its endpoints. A conflicting
+owner label is refused. Finish still reports legacy unlabelled networks as an explicit repair error
+rather than deleting them by name or silently omitting them. Failed cleanup retains the root and a retryable error. A finished operation receipt remains for replay. Borrowed source,
 external mount targets, exported evidence and shared Docker images remain outside deletion.
 
 This is the approved trusted-Core development model. The child receives the shared local Docker
