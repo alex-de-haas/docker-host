@@ -94,4 +94,39 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Null(results[0].Observation);
         Assert.NotNull(results[1].Observation);
     }
+    [Fact]
+    public async Task ExternalPublication_BoundsEachBatchAndRotatesWithoutDroppingPreviousObservations()
+    {
+        var f = await ExternalPublicationFixture();
+        var w = f.W with { PullRequests = Enumerable.Range(1, 25).Select(n => $"https://github.com/owner/repo/pull/{n}").ToArray() };
+        await JsonStorage.WriteAsync(Path.Combine(f.F.Paths.CoreRoot, "development/workspaces", w.Id + ".json"), w);
+        await f.Service.RefreshExternalReferencesAsync(default);
+        Assert.Equal(10, f.Provider.Observed);
+        Assert.Equal(10, (await f.Service.ReadExternalReferencesAsync(w, "admin", default)).Count(p => p.Observation is not null));
+        await f.Service.RefreshExternalReferencesAsync(default);
+        Assert.Equal(20, f.Provider.ObservedNumbers.Distinct().Count());
+        Assert.Equal(20, (await f.Service.ReadExternalReferencesAsync(w, "admin", default)).Count(p => p.Observation is not null));
+        await f.Service.RefreshExternalReferencesAsync(default);
+        Assert.Equal(30, f.Provider.Observed); Assert.Equal(25, f.Provider.ObservedNumbers.Distinct().Count());
+        Assert.All(await f.Service.ReadExternalReferencesAsync(w, "admin", default), p => Assert.NotNull(p.Observation));
+    }
+
+    [Fact]
+    public async Task ExternalPublication_OverallDeadlineCancelsSlowProviderAndNextCycleAdvances()
+    {
+        var f = await ExternalPublicationFixture();
+        var w = f.W with { PullRequests = ["https://github.com/owner/repo/pull/1", "https://github.com/owner/repo/pull/2"] };
+        await JsonStorage.WriteAsync(Path.Combine(f.F.Paths.CoreRoot, "development/workspaces", w.Id + ".json"), w);
+        f.Provider.DelayedNumber = 1; f.Provider.ObservationDelay = Timeout.InfiniteTimeSpan;
+        await f.Service.RefreshExternalReferencesAsync(default, TimeSpan.FromMilliseconds(250)).WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal([1], f.Provider.ObservedNumbers);
+        var first = (await f.Service.ReadExternalReferencesAsync(w, "admin", default))[0];
+        Assert.Null(first.Observation); Assert.Contains("timed out", first.Unavailable);
+        await f.Service.RefreshExternalReferencesAsync(default, TimeSpan.FromMilliseconds(250)).WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(2, f.Provider.ObservedNumbers[1]);
+        Assert.NotNull((await f.Service.ReadExternalReferencesAsync(w, "admin", default))[1].Observation);
+        using var canceled = new CancellationTokenSource(); canceled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => f.Service.RefreshExternalReferencesAsync(canceled.Token));
+    }
+
 }

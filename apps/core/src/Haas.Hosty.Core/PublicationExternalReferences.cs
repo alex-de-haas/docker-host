@@ -66,54 +66,67 @@ internal sealed partial class PublicationService
         { return Unavailable("PR observation is unavailable; the next refresh will retry."); }
     }
 
-    internal async Task RefreshExternalReferencesAsync(CancellationToken ct)
+    private int externalObservationCursor;
+    internal async Task RefreshExternalReferencesAsync(CancellationToken ct, TimeSpan? maximumDuration = null)
     {
-        await externalObservationGate.WaitAsync(ct);
+        if (!await externalObservationGate.WaitAsync(0, ct)) return;
+        using var cycle = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cycle.CancelAfter(maximumDuration ?? TimeSpan.FromSeconds(10));
         try
         {
-            foreach (var tree in (await workspaces.ListAsync(null, true, ct)).Workspaces.Where(w => w.Owner.IsExternal && w.PullRequests.Length > 0))
+            var jobs = (await workspaces.ListAsync(null, true, cycle.Token)).Workspaces
+                .Where(w => w.Owner.IsExternal).OrderBy(w => w.Id, StringComparer.Ordinal)
+                .SelectMany(tree => tree.PullRequests.Where(SafeReference).Distinct(StringComparer.Ordinal)
+                    .OrderBy(url => url, StringComparer.Ordinal).Select(url => (Tree: tree, Url: url))).ToArray();
+            // One global request budget, with rotation so a slow or large workspace cannot starve
+            // references later in the list. Ordinary publications run before this bounded batch.
+            for (var attempt = 0; attempt < Math.Min(10, jobs.Length) && !cycle.IsCancellationRequested; attempt++)
             {
+                var (tree, url) = jobs[externalObservationCursor % jobs.Length];
+                externalObservationCursor = (externalObservationCursor + 1) % jobs.Length;
                 try
                 {
-                    var binding = await ExternalConnection(tree, ct);
+                    var binding = await ExternalConnection(tree, cycle.Token);
                     var provider = binding.Source.Publication!;
-                    var results = new List<InspectionPullRequest>();
-                    foreach (var url in tree.PullRequests.Where(SafeReference).Distinct(StringComparer.Ordinal))
+                    InspectionPullRequest result;
+                    try
                     {
-                        try
-                        {
-                            var uri = new Uri(url);
-                            if (!int.TryParse(uri.AbsolutePath.Split('/').Last(), out var number) || number <= 0 ||
-                                !string.Equals(provider.PullRequestUrl(binding.Repository, number), url, StringComparison.OrdinalIgnoreCase))
-                                throw new PublicationException("pr_mismatch", "The PR URL does not match this workspace's source repository.");
-                            var record = new PublicationRecord { WorkspaceId = tree.Id, Owner = tree.Owner,
-                                Repository = binding.Repository, HeadRepository = binding.Repository,
-                                ConnectionId = binding.Connection.Id, Provider = binding.Source.Descriptor.Id,
-                                Branch = tree.Branch, TargetBranch = tree.TargetBranch, Number = number, Url = url };
-                            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                            timeout.CancelAfter(TimeSpan.FromSeconds(20));
-                            var observation = await connections.UseForSourceAsync(tree.Owner.UserId, binding.Connection.Id,
-                                c => provider.ObserveAsync(c, record, timeout.Token), timeout.Token);
-                            // The existing provider correlates repository, head branch and base branch.
-                            // A remote push advances the observation; it never changes local workspace HEAD.
-                            results.Add(new(url, observation.Head, observation with { Reviews = null }, null));
-                        }
-                        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-                        { results.Add(new(url, null, null, "Provider observation timed out; the next refresh will retry.")); }
-                        catch (Exception ex) when (ex is PublicationException or UserConnectionException or HttpRequestException or JsonException)
-                        { results.Add(new(url, null, null, ex is PublicationException ? ex.Message : "Provider state is unavailable. Check the source connection; the next refresh will retry.")); }
+                        var uri = new Uri(url);
+                        if (!int.TryParse(uri.AbsolutePath.Split('/').Last(), out var number) || number <= 0 ||
+                            !string.Equals(provider.PullRequestUrl(binding.Repository, number), url, StringComparison.OrdinalIgnoreCase))
+                            throw new PublicationException("pr_mismatch", "The PR URL does not match this workspace's source repository.");
+                        var record = new PublicationRecord { WorkspaceId = tree.Id, Owner = tree.Owner,
+                            Repository = binding.Repository, HeadRepository = binding.Repository,
+                            ConnectionId = binding.Connection.Id, Provider = binding.Source.Descriptor.Id,
+                            Branch = tree.Branch, TargetBranch = tree.TargetBranch, Number = number, Url = url };
+                        var observation = await connections.UseForSourceAsync(tree.Owner.UserId, binding.Connection.Id,
+                            c => provider.ObserveAsync(c, record, cycle.Token), cycle.Token);
+                        result = new(url, observation.Head, observation with { Reviews = null }, null);
                     }
-                    // Recheck access after network I/O; reads also revalidate before showing cached facts.
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                    { result = new(url, null, null, "Provider observation timed out; the next refresh will retry."); }
+                    catch (Exception ex) when (ex is PublicationException or UserConnectionException or HttpRequestException or JsonException)
+                    { result = new(url, null, null, ex is PublicationException ? ex.Message : "Provider state is unavailable. Check the source connection; the next refresh will retry."); }
+                    // Finish local persistence even when the provider budget expired. Do not extend
+                    // it with another network request. Reads independently revalidate access too.
                     var current = await workspaces.Read(tree.Id, tree.Owner, ct);
                     var finalBinding = await ExternalConnection(current, ct);
                     if (finalBinding.Connection.Id != binding.Connection.Id) continue;
+                    var previous = await JsonStorage.ReadAsync<ExternalPublicationSnapshot>(ExternalPath(tree.Id), ct);
+                    var retained = previous is not null && previous.WorkspaceId == tree.Id && previous.Owner.SameIdentity(tree.Owner)
+                        && previous.Repository == binding.Repository && previous.ConnectionId == binding.Connection.Id
+                        ? previous.PullRequests : [];
+                    var results = current.PullRequests.Where(SafeReference).Distinct(StringComparer.Ordinal)
+                        .Select(reference => reference == url ? result : retained.FirstOrDefault(p => p.Url == reference)
+                            ?? new(reference, null, null, "Waiting for the next provider observation.")).ToArray();
                     await JsonStorage.WriteAsync(ExternalPath(tree.Id), new ExternalPublicationSnapshot(tree.Id,
-                        tree.Owner, binding.Repository, binding.Connection.Id, results.Where(p => current.PullRequests.Contains(p.Url)).ToArray()), restrictToOwner: true);
+                        tree.Owner, binding.Repository, binding.Connection.Id, results), restrictToOwner: true);
                 }
                 catch (Exception ex) when (ex is PublicationException or UserConnectionException or AppLifecycleException or IOException or JsonException)
                 { /* Unavailable ownership/source/credentials are explained by the read projection. */ }
             }
         }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { /* Yield the observer when this batch's deadline expires. */ }
         finally { externalObservationGate.Release(); }
     }
 

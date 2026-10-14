@@ -10,6 +10,9 @@ public sealed partial class CoreLifecycleServiceTests
         public string? RepositoryOverride;
         public int Observed;
         public int? FailedNumber;
+        public List<int?> ObservedNumbers { get; } = [];
+        public int? DelayedNumber;
+        public TimeSpan ObservationDelay;
         public string NormalizeRepository(string url) => RepositoryOverride ?? GitHubPublicationProvider.Repository(url);
         public string PullRequestUrl(string repository, int number) => $"https://github.com/{repository}/pull/{number}";
         public string Head = "";
@@ -28,11 +31,12 @@ public sealed partial class CoreLifecycleServiceTests
             if (LoseCreate) { LoseCreate = false; throw new HttpRequestException("Lost provider response"); }
             return Task.FromResult(Reference!);
         }
-        public Task<PublicationObservation> ObserveAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
+        public async Task<PublicationObservation> ObserveAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
         {
-            Observed++;
+            Observed++; ObservedNumbers.Add(r.Number);
+            if (r.Number == DelayedNumber) await Task.Delay(ObservationDelay, ct);
             if (r.Number == FailedNumber) throw new PublicationException("pr_mismatch", "The PR branch does not match this workspace.");
-            return Task.FromResult(new PublicationObservation(DateTimeOffset.UtcNow, State, Head, "main", "merge-sha", MergeState: "CLEAN", ReviewDecision: "APPROVED", Complete: Complete, Checks: [new("CI", "SUCCESS")], Reviews: [new("thread", "file.cs", 1, false, ["private review body"])]));
+            return new PublicationObservation(DateTimeOffset.UtcNow, State, Head, "main", "merge-sha", MergeState: "CLEAN", ReviewDecision: "APPROVED", Complete: Complete, Checks: [new("CI", "SUCCESS")], Reviews: [new("thread", "file.cs", 1, false, ["private review body"])]);
         }
         public Task MergeAsync(UserProviderConnection c, PublicationRecord r, string head, string method, CancellationToken ct) { Assert.Equal(Head, head); State = "merged"; Merged++; return Task.CompletedTask; }
         public Task ReadyAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct) => Task.CompletedTask;

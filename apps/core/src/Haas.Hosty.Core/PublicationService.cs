@@ -330,12 +330,12 @@ internal sealed class PublicationObserver(PublicationService service, ILogger<Pu
         {
             try
             {
-                await service.RefreshExternalReferencesAsync(stoppingToken);
                 foreach (var r in (await service.ListAsync(null, stoppingToken)).Publications)
                 {
                     try { await service.ObserveAsync(r.WorkspaceId, null, stoppingToken); await service.CleanupAsync(r.WorkspaceId, stoppingToken); }
                     catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning("Cannot observe publication {WorkspaceId}: {ErrorType}", r.WorkspaceId, ex.GetType().Name); }
                 }
+                await service.RefreshExternalReferencesAsync(stoppingToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning("Cannot list publications: {ErrorType}", ex.GetType().Name); }
         } while (await timer.WaitForNextTickAsync(stoppingToken));

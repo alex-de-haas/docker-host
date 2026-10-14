@@ -55,7 +55,11 @@ app navigation and has no workspace source access.
 
 ## Pull Request Observation
 
-Recorded external PR URLs are observed by Core's existing publication observer every 30 seconds.
+Core's existing 30-second publication observer handles ordinary publications first, then refreshes
+at most ten external PR references within a ten-second provider deadline. A rotating cursor carries
+remaining references into later cycles, including after a slow request. Previously observed facts
+remain available with their original timestamps until their turn; a timeout replaces only that
+reference's facts with an explicit unavailable result.
 The read-only path reuses the source provider's PR/check/review query; it never creates publication
 commands, merges, pushes, resolves review threads or schedules source cleanup.
 
