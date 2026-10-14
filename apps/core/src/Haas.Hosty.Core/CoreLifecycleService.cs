@@ -31,7 +31,7 @@ internal sealed partial class CoreLifecycleService(
     // allocation; production DI always supplies it. When absent, install skips reservation and ports are
     // resolved at first start as before. See RuntimePortAllocator.
     RuntimePortAllocator? portAllocator = null,
-    // Application lifetime for updates and the stop/start portion of restarts. Losing the triggering
+    // Application lifetime for updates and the stop/start portion of restarts/runtime switches. Losing the triggering
     // request must not strand an app after stopping it. Optional only for unit fixtures; production
     // DI always supplies it. When absent, these operations run unlinked from any token.
     IHostApplicationLifetime? hostLifetime = null,
@@ -2564,9 +2564,15 @@ internal sealed partial class CoreLifecycleService(
         var app = await RequireAppAsync(appId, cancellationToken);
         var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
         var wasRunning = AppRuntimeStates.IsUp(app.RuntimeState);
+        var stopContext = wasRunning ? await CreateRuntimeContextAsync(app, currentSelection, cancellationToken) : null;
+        // Like restart, an admitted switch belongs to Core once mutation begins. Stopping Shell
+        // disconnects the proxy carrying this request; that must not cancel persistence or startup.
+        // Caller cancellation still governs lock acquisition, plan validation and stop preparation.
+        cancellationToken.ThrowIfCancellationRequested();
+        cancellationToken = hostLifetime?.ApplicationStopping ?? CancellationToken.None;
         if (wasRunning)
         {
-            await ResolveAdapter(currentSelection.RuntimeProfile.Type).StopAsync(await CreateRuntimeContextAsync(app, currentSelection, cancellationToken), cancellationToken);
+            await ResolveAdapter(currentSelection.RuntimeProfile.Type).StopAsync(stopContext!, cancellationToken);
             _ = await apps.UpdateAppAsync(appId, current => current with { RuntimeState = "stopped" }, cancellationToken);
         }
 

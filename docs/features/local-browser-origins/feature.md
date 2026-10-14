@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-10-08
+updated: 2026-10-14
 summary: Core derives local browser addresses under hosty.localhost without stored public origins or DNS.
 components: [apps/core, apps/shell, packages/app-sdk]
 ---
@@ -26,6 +26,11 @@ The Local provider editor stores this label and supports reset to the generated 
 local names across apps, even when hidden behind an external origin. Core and generated labels are
 reserved, and private endpoints cannot receive local labels. Renaming is an explicit operator action;
 upgrades preserve existing generated names and manual full origins.
+
+Shell's app settings form submits only the editable app settings and autostart preference.
+It omits hidden local-name settings and read-only public origins, including when saved from the
+Public origins tab. The endpoint browser-address control owns address changes and supplies Core's
+expected-current-address precondition, so ordinary settings saves do not trigger rename validation.
 
 A valid explicit app `HOSTY_PUBLIC_ORIGIN_<ENDPOINT>` takes precedence. Clearing it restores the
 local default. Core resolves the persisted setting, environment baseline, then listen address,
@@ -192,6 +197,10 @@ including a verified-frame embedding path. See [permission management](../app-pe
 for the launch authority audit and notice behavior.
 
 ## Testing Expectations
+
+- Shell settings submissions cover autostart-only edits, app-setting edits and saving after switching
+  to Public origins; they omit local names, public origins and untouched secrets while preserving
+  app-owned settings. The endpoint editor still supplies its stale-address precondition.
 
 - Keep generated names injective, label lengths bounded and instance identity stable.
 - Preserve explicit origins exactly, internal transport and publication ownership; clearing settings
