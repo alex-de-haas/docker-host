@@ -235,7 +235,9 @@ until Finish. The same tree also reserves an aggregate **8 GiB app-container mem
 failed cleanup retain their reservations. Independent primary Core installations are outside this pool.
 
 Within a managed child, Docker app admission holds a persistent allocation lock, inventories existing
-containers, and refuses unknown/unbounded capacity before network/build/container creation. Each app
+containers, and refuses unknown/unbounded capacity before network/build/container creation.
+Concurrent app starts wait for the allocation lock through the bounded pull/build/start window;
+cancellation releases the wait, and an exhausted deadline returns an explicit admission-busy error. Each app
 receives 2 GiB/1 CPU/256 PIDs by default, divided across its selected services; the environment's
 `applicationMemoryBytes`, `applicationCpus` and `applicationPids` configure that share. Docker enforces
 memory plus equal swap ceiling, CPU and PID limits from creation. Verified adoption requires matching

@@ -66,7 +66,9 @@ internal static class CoreEnvironmentResources
         var record = await ManagedAsync(config, ct);
         if (record is null) return null;
         var store = new CoreEnvironmentStore(CoreDataPaths.FromConfig(config));
-        var gate = await store.LockAllocationAsync(ct);
+        // Keep inventory and creation atomic across slow pulls/builds, but let concurrent starts
+        // wait through the bounded lifecycle operation rather than fail after ten seconds.
+        var gate = await store.LockAllocationAsync(ct, TimeSpan.FromMinutes(8));
         try
         {
             record = (await ManagedAsync(config, ct))!;

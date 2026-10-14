@@ -47,18 +47,20 @@ internal sealed class CoreEnvironmentStore(CoreDataPaths paths)
     }
     private string DataRoot => paths.DataRoot;
 
-    internal async Task<FileStream> LockAllocationAsync(CancellationToken ct)
+    internal async Task<FileStream> LockAllocationAsync(CancellationToken ct, TimeSpan? maxWait = null)
     {
         var file = Path.Combine(RegistryRoot, "allocation.lock");
         if (CoreDataPaths.ContainsSymbolicLink(paths.DataRoot, file))
             throw new SandboxException("environment_path_invalid", "Environment allocation storage must not contain symbolic links.");
         Directory.CreateDirectory(RegistryRoot);
-        var deadline = DateTime.UtcNow.AddSeconds(10);
+        var deadline = DateTime.UtcNow.Add(maxWait ?? TimeSpan.FromSeconds(10));
         while (true)
         {
             ct.ThrowIfCancellationRequested();
             try { return new FileStream(file, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
             catch (IOException) when (DateTime.UtcNow < deadline) { await Task.Delay(50, ct); }
+            catch (IOException ex)
+            { throw new SandboxException("environment_allocation_busy", "Environment resource admission is busy or unavailable; retry after the active start completes. " + ex.Message, 409); }
         }
     }
 

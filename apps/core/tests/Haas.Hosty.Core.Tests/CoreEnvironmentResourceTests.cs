@@ -56,6 +56,33 @@ public sealed class CoreEnvironmentResourceTests
         }
         finally { Directory.Delete(root, true); }
     }
+    [Fact]
+    public async Task Admission_WaitsForSlowConcurrentStartAndCanBeCancelled()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
+        try
+        {
+            var config = new HostyCoreRuntimeConfig(root, root, "", 7070, "http://localhost:7070", null, "localhost", null, false);
+            var parent = new CoreEnvironmentStore(CoreDataPaths.FromConfig(config)); var id = Guid.NewGuid().ToString("N");
+            Directory.CreateDirectory(Path.Combine(parent.Root(id), "core")); File.WriteAllText(CoreInstanceId.BuildPath(parent.Root(id)), id);
+            await parent.WriteAsync(new(id, new("admin", null, null), new(Guid.NewGuid().ToString(), "QA"), "hash", 7071, 1, "running", DateTimeOffset.UtcNow), default);
+            config = config with { DataRoot = parent.Root(id), InstanceId = id };
+            var runner = new Runner();
+            using var first = await CoreEnvironmentResources.AdmitAsync(config, runner, "media", 2, default);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var next = CoreEnvironmentResources.AdmitAsync(config, runner, "another", 1, deadline.Token);
+            // Cross the old fixed ten-second failure threshold while a pull/build holds admission.
+            await Task.Delay(TimeSpan.FromSeconds(11), deadline.Token);
+            Assert.False(next.IsCompleted);
+            using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => CoreEnvironmentResources.AdmitAsync(config, runner, "cancelled", 1, cancel.Token));
+            first!.Dispose();
+            using var admitted = await next;
+            Assert.NotNull(admitted);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     private sealed class Runner : IDockerCommandRunner
     {
         public string App = "other"; public long Memory = 2147483648; public bool Fail; public List<string[]> Commands = [];
