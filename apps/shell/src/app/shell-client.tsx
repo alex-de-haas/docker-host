@@ -884,9 +884,13 @@ export function ShellClient({
           const outcome = await waitForShellRuntimeSwitch({ coreOrigin, shellAppId, targetRuntime: plan.targetRuntime });
           if (outcome.kind === "failed") throw new Error(outcome.message);
           if (outcome.kind === "settled") {
-            // Keep Core's confirmed selection even if the document never becomes reachable.
-            setState(current => ({ ...current, apps: current.apps.map(item => item.id === app.id
-              ? { ...item, selectedRuntime: plan.targetRuntime } : item) }));
+            // Confirmation is newer than any app-list read already in flight.
+            const appsReadId = ++appsReadSequence.current;
+            setState(current => ({ ...current, ...reconcileAppList(current, {
+              apps: current.apps.map(item => item.id === app.id
+                ? { ...item, selectedRuntime: plan.targetRuntime } : item),
+              updateCheck: current.updateCheck,
+            }, appsReadId) }));
             invalidateUpdateStatus(app.id);
             if (await waitForOwnOrigin()) window.location.reload();
             else toast.warning("Runtime switched; Shell page is not answering yet", {

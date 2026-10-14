@@ -350,6 +350,10 @@ it("keeps a confirmed runtime switch distinct from an unreachable Shell page", a
   fixture.switchSettle.mockResolvedValue({ kind: "settled" });
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 503 })));
   await mount();
+  const oldAppsRead = deferred<Response>();
+  overrideRequests(path => path === "/api/apps" ? oldAppsRead.promise : undefined);
+  let oldRefresh!: Promise<void>;
+  await act(async () => { oldRefresh = actions.refresh(); });
   await act(async () => {
     const switching = actions.switchAppRuntime(self, "docker");
     await vi.advanceTimersByTimeAsync(90_000);
@@ -360,8 +364,14 @@ it("keeps a confirmed runtime switch distinct from an unreachable Shell page", a
   });
   expect(fixture.toast.error).not.toHaveBeenCalled();
   expect(shell.state.apps.find(app => app.id === self.id)?.selectedRuntime).toBe("docker");
+  await act(async () => { oldAppsRead.resolve(Response.json({ apps: [self] })); await oldRefresh; });
+  expect(shell.state.apps.find(app => app.id === self.id)?.selectedRuntime).toBe("docker");
   // A caller can still hold the old row object after the completed action releases its guard.
   await act(async () => actions.switchAppRuntime(self, "docker"));
   expect(callsTo("/api/apps/hosty.shell/switch-runtime/plan")).toHaveLength(1);
   expect(callsTo("/api/apps/hosty.shell/switch-runtime")).toHaveLength(1);
+  // A later authoritative read can still reflect a different operator's subsequent switch.
+  overrideRequests(path => path === "/api/apps" ? Response.json({ apps: [self] }) : undefined);
+  await act(async () => actions.refresh());
+  expect(shell.state.apps.find(app => app.id === self.id)?.selectedRuntime).toBe("dev");
 });

@@ -214,7 +214,7 @@ Core and combined-Host self-runtime changes are different from Shell-only change
 
 Shell also exposes Hosty Shell runtime switching in the Installed Apps System Apps table when Core reports multiple runtime profiles. System apps also use the ordinary lifecycle controls; stopping Shell interrupts its UI.
 
-For its own runtime switch, Shell waits for Core to report the requested runtime running after startup, then reloads the page. A dropped apply response does not trigger a second apply or an immediate failure message. Explicit Core refusals still appear as errors; an unconfirmed switch times out with CLI recovery instructions. If Core confirms the target is running but the browser-address probe times out, Shell retains the confirmed runtime selection, reports a completed switch with an unreachable page and asks the operator to reload when it becomes reachable. Selecting that same runtime again, including from a stale row reference, does not submit another switch. Concurrent lifecycle clicks for the same app are suppressed while the switch is pending.
+For its own runtime switch, Shell waits for Core to report the requested runtime running after startup, then reloads the page. A dropped apply response does not trigger a second apply or an immediate failure message. Explicit Core refusals still appear as errors; an unconfirmed switch times out with CLI recovery instructions. If Core confirms the target is running but the browser-address probe times out, Shell retains the confirmed runtime selection, reports a completed switch with an unreachable page and asks the operator to reload when it becomes reachable. App-list responses from reads started before confirmation cannot restore the previous runtime; later authoritative reads remain accepted. Selecting that same runtime again, including from a stale row reference, does not submit another switch. Concurrent lifecycle clicks for the same app are suppressed while the switch is pending.
 
 ## Source Selection Authority
 
@@ -239,7 +239,7 @@ runtime switches and normal lifecycle operations keep their existing authorizati
 ## Testing Expectations
 
 - A runtime switch survives caller disconnection during stop, persists the selected runtime, preserves its backup and starts the target. A target startup failure still rolls back after disconnection. Pre-admission cancellation leaves the running app intact; Core shutdown cancels the operation.
-- Shell self-switch recovery waits through the old runtime, proxy outages and target startup, without replaying apply. Explicit refusals, persisted rollback and bounded timeout remain distinct from a confirmed target startup.
+- Shell self-switch recovery waits through the old runtime, proxy outages and target startup, without replaying apply. Explicit refusals, persisted rollback and bounded timeout remain distinct from a confirmed target startup. A confirmed switch with an unreachable page retains its selection across older in-flight app-list responses, prevents duplicate switches from stale row references and accepts later authoritative reads.
 
 - Changing the selected profile's development flag in either direction appears in the update plan and requires review, even alongside a version bump.
 - `source-override` records the folder's commit as the override's own and leaves the reviewed pin unchanged, including for a folder nested inside a repository; clearing the override drops both.
