@@ -25,6 +25,95 @@ beforeEach(async () => {
 afterEach(async () => { await manager.shutdown(); vi.restoreAllMocks(); await rm(dir, { recursive: true, force: true }); });
 const finish = async (id: string) => { starts.at(-1)!.onEvent({ type: "result", status: "success" }); await vi.waitFor(async () => expect((await manager.getSession(id))?.status).toBe("idle")); };
 describe("development session coordination", () => {
+  it("recovers child Core creation without a workspace and keeps setup secrets out of session records", async () => {
+    const record = await manager.createSession({ createdBy: "admin" });
+    const input = { requestId: "a".repeat(32), label: "Independent QA" };
+    const environment = { id: "b".repeat(32), label: "Independent QA", state: "stopped", context: { sessionId: record.id } };
+    const call = vi.spyOn(client, "environment").mockRejectedValueOnce(new Error("response lost"));
+    await expect(manager.workspaceAction(record.id, "environment-create", input, "token", "admin")).rejects.toThrow("response lost");
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("pending");
+    await manager.shutdown(); manager = build();
+    call.mockResolvedValue({ environments: [environment] });
+    await manager.workspaceAction(record.id, "environment-list", {}, "fresh-token", "admin");
+    call.mockResolvedValue(environment);
+    await manager.workspaceAction(record.id, "environment-create", input, "fresh-token", "admin");
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("observed");
+    call.mockResolvedValue({ status: 200 });
+    await manager.workspaceAction(record.id, "environment-setup", { environmentId: environment.id, email: "test@example.test", password: "private-test-password" }, "fresh-token", "admin");
+    expect(JSON.stringify(await store.readRecord(record.id))).not.toContain("private-test-password");
+    expect(client.call).not.toHaveBeenCalled();
+    const other = await manager.createSession({ createdBy: "admin" });
+    await expect(manager.workspaceAction(other.id, "environment-status", { environmentId: environment.id }, "token", "admin")).rejects.toThrow("not associated");
+    await expect(manager.workspaceAction(record.id, "environment-status", { environmentId: environment.id }, "token", "other")).rejects.toThrow("another user");
+  });
+
+  it("keeps Finish available when child Core outcomes exhaust the pending journal", async () => {
+    const record = await manager.createSession({ createdBy: "admin" });
+    const environment = { id: "b".repeat(32), state: "running", context: { sessionId: record.id } };
+    const call = vi.spyOn(client, "environment").mockResolvedValue({ environments: [environment] });
+    await manager.workspaceAction(record.id, "environment-list", {}, "token", "admin");
+    call.mockRejectedValue(new Error("response lost"));
+    for (let i = 0; i < 32; i++) await expect(manager.workspaceAction(record.id, "environment-stop",
+      { environmentId: environment.id, requestId: `request-${i}`, expectedRevision: 1 }, "token", "admin")).rejects.toThrow("response lost");
+    await expect(manager.workspaceAction(record.id, "environment-stop", { environmentId: environment.id, requestId: "overflow" }, "token", "admin")).rejects.toThrow("Observe pending");
+    call.mockResolvedValue({ ...environment, state: "finished" });
+    await expect(manager.workspaceAction(record.id, "environment-finish", { environmentId: environment.id,
+      requestId: "finish", expectedRevision: 1 }, "token", "admin")).resolves.toMatchObject({ state: "finished" });
+  });
+
+  it("plans artifact QA without a worktree and recovers the same preparation after reconnect", async () => {
+    const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+    const plan = { id: "b".repeat(32), digest: "c".repeat(64), inputDigest: "d".repeat(64), request: { appId: "notes" },
+      blockers: [], expiresAt: new Date(Date.now() + 600000).toISOString() };
+    const sandbox = vi.spyOn(client, "sandbox").mockResolvedValueOnce(plan).mockRejectedValueOnce(new Error("response lost"));
+    await manager.workspaceAction(record.id, "sandbox-plan", { appId: "notes", profile: "sandbox", source: { kind: "appArtifact" } }, "token", "admin");
+    expect(sandbox).toHaveBeenCalledWith("token", "sandbox-plan", expect.objectContaining({ context: { sessionId: record.id } }));
+    expect(client.call).not.toHaveBeenCalled();
+    const input = { requestId: "a".repeat(32), planId: plan.id, digest: plan.digest };
+    await expect(manager.workspaceAction(record.id, "sandbox-prepare", input, "token", "admin")).rejects.toThrow("response lost");
+    expect((await store.readRecord(record.id))!.sandboxOperations?.[0]?.state).toBe("pending");
+    expect(JSON.stringify(await store.readRecord(record.id))).not.toContain('"token"');
+    await manager.shutdown(); manager = build();
+    sandbox.mockResolvedValue({ id: "e".repeat(32), appId: "notes", state: "prepared" });
+    await manager.workspaceAction(record.id, "sandbox-prepare", input, "fresh-token", "admin");
+    expect(sandbox).toHaveBeenLastCalledWith("fresh-token", "sandbox-prepare", input);
+    expect((await store.readRecord(record.id))!.sandboxOperations?.[0]?.state).toBe("observed");
+    const other = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+    await expect(manager.workspaceAction(other.id, "sandbox-status", { runtimeInstanceId: "e".repeat(32) }, "token", "admin")).rejects.toThrow("not associated");
+  });
+  it("can cancel and inspect a private browser job while its response remains pending", async () => {
+    const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+    const instance = { id: "e".repeat(32), appId: "notes", state: "ready", context: { sessionId: record.id } };
+    let complete!: (value: unknown) => void;
+    const pending = new Promise(resolve => { complete = resolve; });
+    const sandbox = vi.spyOn(client, "sandbox").mockImplementation(async (_credential, action) => {
+      if (action === "sandbox-list") return { instances: [instance] };
+      if (action === "sandbox-browser") return pending;
+      return instance;
+    });
+    await manager.workspaceAction(record.id, "sandbox-list", {}, "token", "admin");
+    const browser = manager.workspaceAction(record.id, "sandbox-browser", { runtimeInstanceId: instance.id, requestId: "browser-job" }, "token", "admin");
+    try {
+      await vi.waitFor(() => expect(sandbox).toHaveBeenCalledWith("token", "sandbox-browser", expect.anything()));
+      await expect(manager.workspaceAction(record.id, "sandbox-status", { runtimeInstanceId: instance.id }, "token", "other")).rejects.toThrow("another user");
+      const cancel = manager.workspaceAction(record.id, "sandbox-browser-cancel", {
+        runtimeInstanceId: instance.id, requestId: "cancel-job", jobId: "browser-job", expectedRevision: 1,
+      }, "token", "admin");
+      await vi.waitFor(() => expect(sandbox).toHaveBeenCalledWith("token", "sandbox-browser-cancel", expect.anything()));
+      await cancel;
+      expect((await store.readRecord(record.id))!.sandboxOperations?.find(o => o.input.requestId === "browser-job")?.state).toBe("pending");
+    } finally { complete({ state: "failed", errorCode: "sandbox_browser_cancelled" }); await browser; }
+    expect((await store.readRecord(record.id))!.sandboxOperations?.every(o => o.state === "observed")).toBe(true);
+  });
+  it("accepts only this session's attached worktree for source sandbox plans", async () => {
+    const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+    const input = { appId: "notes", profile: "sandbox-dev", source: { kind: "worktree", worktreeId: tree.id } };
+    await expect(manager.workspaceAction(record.id, "sandbox-plan", input, "token", "admin")).rejects.toThrow("registered app worktree");
+    await manager.workspaceAction(record.id, "prepare", { appId: "notes" }, "token", "admin");
+    const sandbox = vi.spyOn(client, "sandbox").mockResolvedValue({ id: "plan", expiresAt: new Date(Date.now() + 60000).toISOString() });
+    await manager.workspaceAction(record.id, "sandbox-plan", input, "token", "admin");
+    expect(sandbox).toHaveBeenCalledWith("token", "sandbox-plan", expect.objectContaining({ source: input.source, context: { sessionId: record.id, workspaceId: undefined } }));
+  });
   it("does not allocate for conversation and includes the instructions on subsequent turns", async () => {
     const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
     await manager.postMessage(record.id, "hello", "credential"); await finish(record.id);

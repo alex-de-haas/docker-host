@@ -30,6 +30,11 @@ export interface SessionRecord {
   autonomy?: SessionAutonomy;
   developmentWorkspaces?: import("./development.js").DevelopmentWorkspace[];
   developmentLease?: string;
+  coreEnvironments?: import("@hosty-sdk/app/sandbox/server").CoreEnvironment[];
+  coreEnvironmentOperations?: { action: string; input: Record<string, unknown>; state: "pending" | "observed" }[];
+  sandboxPlans?: import("@hosty-sdk/app/sandbox/server").SandboxPlan[];
+  sandboxInstances?: import("@hosty-sdk/app/sandbox/server").SandboxInstance[];
+  sandboxOperations?: { action: string; input: Record<string, unknown>; state: "pending" | "observed" }[];
   handoffPending?: boolean;
   handoffDraft?: { text: string; attachments: { name: string; size: number }[] };
   handoffDispatch?: { id: string; state: "queued" | "running" | "completed" | "failed" | "unknown"; error?: string };

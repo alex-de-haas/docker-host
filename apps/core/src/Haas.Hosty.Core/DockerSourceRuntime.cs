@@ -10,6 +10,8 @@ internal sealed record RuntimeSourceMountManifest
     public string Mode { get => field ?? "ro"; init; } = "ro";
     // Relative paths overlaid with Core-owned volumes, keeping Linux build outputs off the host.
     public IReadOnlyList<string> Caches { get => field ?? []; init; } = [];
+    // Individual generated files use private service caches while source stays read-only.
+    public IReadOnlyList<string> GeneratedFiles { get => field ?? []; init; } = [];
 }
 
 internal sealed record RuntimeDockerBuildManifest
@@ -73,8 +75,13 @@ internal static class DockerSourceRuntime
         if (mount.Mode is not ("ro" or "rw")) Error("Source access mode must be ro or rw.");
         if (string.IsNullOrWhiteSpace(runtime.Command)) Error("Source execution requires a command.");
         if (runtime.WorkingDirectory is { } cwd && !SafeRelative(cwd)) Error("Working directory must be relative to the source mount.");
-        if (mount.Caches is null || mount.Caches.Any(path => !SafeRelative(path) || path == ".") || mount.Caches.Distinct(StringComparer.Ordinal).Count() != mount.Caches.Count)
+        if (mount.Caches.Any(path => !SafeRelative(path) || path == ".") || mount.Caches.Distinct(StringComparer.Ordinal).Count() != mount.Caches.Count)
             Error("Cache paths must be distinct relative directories inside the source mount.");
+        if (mount.GeneratedFiles.Count > 16 || mount.GeneratedFiles.Any(path => !SafeRelative(path) || path == ".") ||
+            mount.GeneratedFiles.Distinct(StringComparer.Ordinal).Count() != mount.GeneratedFiles.Count ||
+            mount.GeneratedFiles.Any(file => mount.Caches.Any(cache => file == cache || file.StartsWith(cache + "/", StringComparison.Ordinal) || cache.StartsWith(file + "/", StringComparison.Ordinal))) ||
+            mount.GeneratedFiles.Any(file => mount.GeneratedFiles.Any(other => file != other && file.StartsWith(other + "/", StringComparison.Ordinal))))
+            Error("Generated files must be distinct contained file paths without overlapping cache directories or files.");
     }
 
     internal static bool SafeRelative(string path)
@@ -142,7 +149,7 @@ internal static class DockerSourceRuntime
         return (id, existing ?? new ArtifactLock("development-image", id, reference, null, null, DateTimeOffset.UtcNow));
     }
 
-    private static void PrepareCacheMountpoints(string source, IReadOnlyList<string> caches)
+    internal static void PrepareCacheMountpoints(string source, IReadOnlyList<string> caches)
     {
         // runc cannot create a nested volume's mountpoint after its parent bind is read-only.
         // Prepare empty host directories only; volume-nocopy keeps build output inside Docker.
@@ -182,8 +189,46 @@ internal static class DockerSourceRuntime
         }
     }
 
+    internal static async Task<IReadOnlyList<string>> PrepareGeneratedFilesAsync(RuntimeLifecycleContext context,
+        RuntimeSelectedService service, string source, RuntimeSourceMountManifest mount, CancellationToken ct)
+    {
+        if (mount.GeneratedFiles.Count == 0) return [];
+        var errors = new List<AppManifestValidationError>();
+        Validate(service.Key, context.Manifest.RuntimeProfile, service.Runtime, errors);
+        if (errors.Count != 0) throw new AppLifecycleException("docker_source_generated_file_invalid", "Invalid generated-file declaration.");
+        var files = mount.GeneratedFiles.Select(relative => (Relative: relative, Source: ContainedPath(source, relative))).ToArray();
+        // Validate the complete set before creating mountpoints or touching a cache.
+        foreach (var file in files)
+            if (CoreDataPaths.ContainsSymbolicLink(source, file.Source) || Directory.Exists(file.Source) ||
+                !Directory.Exists(System.IO.Path.GetDirectoryName(file.Source)))
+                throw new AppLifecycleException("docker_source_generated_file_invalid", "Generated file mountpoints must be regular files in existing source directories without symbolic links.");
+        var cacheRoot = System.IO.Path.Combine(context.AppCachePath ?? System.IO.Path.Combine(context.AppRoot, "cache"), "source-files");
+        var args = new List<string>();
+        foreach (var file in files)
+        {
+            var key = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(service.Key + "|" + file.Relative))).ToLowerInvariant();
+            var overlay = System.IO.Path.Combine(cacheRoot, key);
+            if (CoreDataPaths.ContainsSymbolicLink(context.AppRoot, overlay) || Directory.Exists(overlay) || overlay.Contains(','))
+                throw new AppLifecycleException("docker_source_generated_file_invalid", "The generated-file cache must stay in the owned app cache without symbolic links.");
+            Directory.CreateDirectory(cacheRoot);
+            if (!File.Exists(file.Source))
+            {
+                await using var placeholder = new FileStream(file.Source, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+            }
+            if (!File.Exists(overlay))
+                await File.WriteAllBytesAsync(overlay, await File.ReadAllBytesAsync(file.Source, ct), ct);
+            // These non-secret generated files are mounted individually into a container whose
+            // UID need not match Core. The enclosing private app cache stays host-owned.
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(overlay, UnixFileMode.UserRead | UnixFileMode.UserWrite |
+                    UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.OtherRead | UnixFileMode.OtherWrite);
+            args.AddRange(["--mount", $"type=bind,source={overlay},target={mount.Target.TrimEnd('/')}/{file.Relative}"]);
+        }
+        return args;
+    }
+
     internal static async Task<Launch?> PrepareAsync(RuntimeLifecycleContext context, RuntimeSelectedService service,
-        IDockerCommandRunner runner, CancellationToken cancellationToken)
+        IDockerCommandRunner runner, CancellationToken cancellationToken, string instanceId = "")
     {
         if (service.Runtime.SourceMount is not { } mount) return null;
         var path = ResolveSourcePath(context, mount);
@@ -205,8 +250,21 @@ internal static class DockerSourceRuntime
             args.Add("--mount");
             var name = DockerRuntimeAdapter.BuildContainerName("", context.App.Id, service.Key) + "-dev-" +
                 Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(context.AppRoot + "|" + mount.Caches[index])))[..16].ToLowerInvariant();
+            if (!string.IsNullOrEmpty(instanceId))
+            {
+                var inspect = await runner.RunAsync(["volume", "inspect", "--format", "{{ index .Labels \"hosty.instance\" }}", name], null, cancellationToken);
+                if (inspect.ExitCode != 0)
+                {
+                    var created = await runner.RunAsync(["volume", "create", "--label", "hosty.instance=" + instanceId,
+                        "--label", "hosty.app.id=" + context.App.Id, name], null, cancellationToken);
+                    if (created.ExitCode != 0) throw new AppLifecycleException("docker_source_cache_failed", created.StandardError);
+                }
+                else if (inspect.StandardOutput.Trim() != instanceId)
+                    throw new AppLifecycleException("docker_source_cache_owner", "The source cache volume belongs to another instance or predates ownership labels; explicitly remove the old cache before starting.");
+            }
             args.Add($"type=volume,source={name},target={mount.Target.TrimEnd('/')}/{mount.Caches[index]},volume-nocopy");
         }
+        args.AddRange(await PrepareGeneratedFilesAsync(context, service, path, mount, cancellationToken));
         // This is CMD, not an entrypoint override: VPN/firewall initialization still executes first.
         var command = string.IsNullOrWhiteSpace(service.Runtime.Setup) ? service.Runtime.Command! : $"({service.Runtime.Setup}) && {service.Runtime.Command}";
         return new(args, ["/bin/sh", "-lc", command]);

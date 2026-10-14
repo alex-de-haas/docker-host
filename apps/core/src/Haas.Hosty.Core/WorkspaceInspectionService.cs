@@ -53,7 +53,7 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
         }
     }
 
-    private async Task<DevelopmentWorkspace> RequireAsync(string workspaceId, string id, string userId, CancellationToken ct)
+    internal async Task<DevelopmentWorkspace> RequireAsync(string workspaceId, string id, string userId, CancellationToken ct)
     {
         var tree = await workspaces.Read(id, null, ct);
         if (tree.WorkspaceId != workspaceId) throw DevelopmentWorkspaceService.Error("not_found", "Worktree is not in this workspace.");
@@ -139,6 +139,8 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
 
     private async Task<InspectionPullRequest[]> PullRequestsAsync(DevelopmentWorkspace tree, string userId, CancellationToken ct)
     {
+        if (tree.Owner.IsExternal && publications is not null)
+            return await publications.ReadExternalReferencesAsync(tree, userId, ct);
         var result = tree.PullRequests.Where(SafeUrl).Distinct(StringComparer.Ordinal).ToDictionary(url => url,
             url => new InspectionPullRequest(url, null, null, "No verified provider observation."), StringComparer.Ordinal);
         if (publications is null || users is null || connections is null) return result.Values.ToArray();

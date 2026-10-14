@@ -265,6 +265,30 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
         }, ct);
     }
 
+    internal async Task SetSandboxConsumerAsync(string id, string sandboxId, bool acquire, CancellationToken ct)
+    {
+        SandboxValidation.Id(sandboxId);
+        var workspace = await Read(id, null, ct);
+        await Locked(Hash(OwnerIdentity(workspace.Owner)), async () =>
+        {
+            var current = await Read(id, null, ct);
+            if (acquire)
+            {
+                if (current.State != "active" || current.Operations.Any(o => o.State == "pending"))
+                    throw Error("not_active", "Cannot attach a sandbox while the source is being changed or released.");
+                await ValidateTree(current, ct);
+                await WorkspaceGrantAsync(current, ct);
+            }
+            // Release follows verified sandbox shutdown. It must also work after source grant
+            // revocation or Git damage; neither condition authorizes deleting the worktree.
+            current = current with { SandboxConsumers = acquire
+                ? current.SandboxConsumers.Append(sandboxId).Distinct().ToArray()
+                : current.SandboxConsumers.Where(value => value != sandboxId).ToArray() };
+            await Save(current);
+            return current;
+        }, ct);
+    }
+
     public async Task<DevelopmentWorkspace> CommandAsync(string id, WorkspaceOwner? owner, string kind, WorkspaceCommand input, CancellationToken ct)
     {
         var workspace = await Read(id, owner, ct);
@@ -429,7 +453,7 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
     }
     private async Task CheckCleanup(DevelopmentWorkspace w, CancellationToken ct)
     {
-        if (w.Leases.Length > 0) throw Error("in_use", "An assistant or consumer still holds an activity lease.");
+        if (w.Leases.Length > 0 || w.SandboxConsumers.Length > 0) throw Error("in_use", "An activity lease or a persistent sandbox consumer still references this worktree.");
         if (w.Observation is not { State: "ok", Conflict: false, Local: { Files.Count: 0, Truncated: false } })
             throw Error("dirty", "Workspace has changes, conflicts or unavailable status.");
         await CheckConsumers(w, ct);
@@ -439,7 +463,7 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
     }
     private async Task CheckConsumers(DevelopmentWorkspace w, CancellationToken ct)
     {
-        if (w.Leases.Length > 0) throw Error("in_use", "An assistant or consumer still holds an activity lease.");
+        if (w.Leases.Length > 0 || w.SandboxConsumers.Length > 0) throw Error("in_use", "An activity lease or a persistent sandbox consumer still references this worktree.");
         foreach (var process in processes?.Snapshot() ?? [])
         {
             if (IsUnder(w.Path, process.Value.WorkingDirectory) && !process.Value.Process.HasExited)

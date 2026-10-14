@@ -53,6 +53,8 @@ internal sealed record DevelopmentWorkspace
     public WorkspaceApp[] Apps { get; init; } = [];
     public WorkspaceOperation[] Operations { get; init; } = [];
     public string[] Leases { get; init; } = [];
+    // Only Core resource owners can release persistent consumer references.
+    public string[] SandboxConsumers { get; init; } = [];
     public string[] PullRequests { get; init; } = [];
     public WorkspaceObservation? Observation { get; init; }
 }

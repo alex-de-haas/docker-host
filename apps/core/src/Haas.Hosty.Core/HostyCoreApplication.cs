@@ -155,6 +155,23 @@ internal static class HostyCoreApplication
         // Shared docker CLI runner so the runtime adapter and the telemetry scrape loop go through one
         // instance; the adapter's optional ctor param picks this up via DI in production.
         builder.Services.AddSingleton<IDockerCommandRunner, ProcessDockerCommandRunner>();
+        builder.Services.AddHttpClient();
+        builder.Services.AddSingleton<CoreEnvironmentStore>();
+        builder.Services.AddSingleton<ICoreEnvironmentRuntime, CoreEnvironmentRuntime>();
+        builder.Services.AddSingleton<CoreEnvironmentService>();
+        builder.Services.AddSingleton<CoreEnvironmentAuthorization>();
+        builder.Services.AddSingleton<CoreEnvironmentAccess>();
+        builder.Services.AddSingleton<SandboxStore>();
+        builder.Services.AddSingleton<ISandboxInputs, SandboxInputs>();
+        builder.Services.AddSingleton<SandboxServiceCredentials>();
+        builder.Services.AddSingleton<SandboxDockerRuntime>();
+        builder.Services.AddSingleton<ISandboxRuntime>(sp => sp.GetRequiredService<SandboxDockerRuntime>());
+        builder.Services.AddSingleton<SandboxBrowser>();
+        builder.Services.AddSingleton<SandboxService>();
+        builder.Services.AddSingleton<SandboxOperations>();
+        builder.Services.AddSingleton<SandboxAuthorization>();
+        builder.Services.AddSingleton<SandboxRealm>();
+        builder.Services.AddHostedService<SandboxSupervisor>();
         // Fast path for the reviewed-update plan's registry digest lookups: a direct registry HTTP
         // probe, roughly 7x quicker than the `docker buildx imagetools inspect` it fronts. Redirects
         // are not followed — a manifest probe must not be bounced to an unvetted host — and anything
@@ -213,6 +230,7 @@ internal static class HostyCoreApplication
                 ForwardedHeaders.XForwardedProto;
         });
         builder.Services.AddHostedService<ControlDiscoveryWriter>();
+        builder.Services.AddHostedService<CoreEnvironmentSupervisor>();
     }
 
     public static void MapEndpoints(WebApplication app)
@@ -225,6 +243,9 @@ internal static class HostyCoreApplication
         app.Use(AppManagementAuthorization.InvokeAsync);
         InstallationApprovalEndpoints.Map(app);
         ProviderEndpoints.Map(app);
+        CoreEnvironmentEndpoints.Map(app);
+        SandboxEndpoints.Map(app);
+        SandboxAuthEndpoints.Map(app);
         UiPanelEndpoints.Map(app);
 
         app.MapGet("/healthz", () => CoreJson.Json(new HealthResponse("ok")));

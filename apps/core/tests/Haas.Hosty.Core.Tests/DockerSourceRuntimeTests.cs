@@ -127,6 +127,56 @@ public sealed class DockerSourceRuntimeTests : IDisposable
         Assert.Equal("docker_dev_build_requires_review", error.Code);
     }
 
+    [Fact]
+    public async Task GeneratedFiles_KeepSourceReadOnlyAndIsolateServiceCachesAcrossRestart()
+    {
+        var source = Path.Combine(root, "next-env.d.ts");
+        await File.WriteAllTextAsync(source, "source declaration");
+        var context = Context with { AppRoot = root, AppCachePath = Path.Combine(root, "owned-cache"),
+            Manifest = Context.Manifest with { RuntimeProfile = new() { Type = "docker", Development = true } } };
+        var service = SourceService(new() { GeneratedFiles = ["next-env.d.ts"] });
+        var first = await DockerSourceRuntime.PrepareAsync(context, service, new Runner(), default);
+        var bind = Assert.Single(first!.Arguments, value => value.EndsWith("target=/workspace/next-env.d.ts", StringComparison.Ordinal));
+        var overlay = bind.Split("source=")[1].Split(",target=")[0];
+        Assert.Contains("readonly", first.Arguments[1]);
+        Assert.Equal("source declaration", await File.ReadAllTextAsync(overlay));
+        if (!OperatingSystem.IsWindows()) Assert.True(File.GetUnixFileMode(overlay).HasFlag(UnixFileMode.OtherWrite));
+        await File.WriteAllTextAsync(overlay, "generated runtime declaration");
+        var restarted = await DockerSourceRuntime.PrepareAsync(context, service, new Runner(), default);
+        Assert.Equal(first.Arguments, restarted!.Arguments);
+        Assert.Equal("generated runtime declaration", await File.ReadAllTextAsync(overlay));
+        Assert.Equal("source declaration", await File.ReadAllTextAsync(source));
+        var sibling = await DockerSourceRuntime.PrepareAsync(context, service with { Key = "frontend" }, new Runner(), default);
+        Assert.DoesNotContain(bind, sibling!.Arguments);
+    }
+
+    [Theory]
+    [InlineData("../escape", "cache")]
+    [InlineData("cache/file", "cache")]
+    [InlineData("cache", "cache/nested")]
+    public void GeneratedFiles_RejectTraversalAndOverlappingCaches(string file, string cache)
+    {
+        var errors = new List<AppManifestValidationError>();
+        DockerSourceRuntime.Validate("engine", new() { Type = "docker", Development = true },
+            SourceService(new() { GeneratedFiles = [file], Caches = [cache] }).Runtime, errors);
+        Assert.NotEmpty(errors);
+    }
+
+    [Fact]
+    public async Task GeneratedFiles_RejectSymlinksBeforeCreatingAnyMountpoint()
+    {
+        var link = Path.Combine(root, "escape");
+        File.CreateSymbolicLink(link, Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString()));
+        var context = Context with { Manifest = Context.Manifest with { RuntimeProfile = new() { Type = "docker", Development = true } } };
+        try
+        {
+            await Assert.ThrowsAsync<AppLifecycleException>(() => DockerSourceRuntime.PrepareAsync(context,
+                SourceService(new() { GeneratedFiles = ["placeholder", "escape"] }), new Runner(), default));
+            Assert.False(File.Exists(Path.Combine(root, "placeholder")));
+        }
+        finally { File.Delete(link); }
+    }
+
     private sealed class Runner(bool remote = false) : IDockerCommandRunner
     {
         public int Builds { get; private set; }

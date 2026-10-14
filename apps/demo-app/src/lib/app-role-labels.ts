@@ -2,6 +2,8 @@ import type { DemoAppRoleSource } from "./app-roles";
 
 export function roleSourceLabel(source: DemoAppRoleSource) {
   switch (source) {
+    case "sandbox-scenario":
+      return "Sandbox test scenario";
     case "stored":
       return "App store";
     case "host-admin-bootstrap":

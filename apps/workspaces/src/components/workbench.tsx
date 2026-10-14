@@ -1,4 +1,6 @@
 "use client";
+import { WorkspaceEnvironments } from "./workspace-environments";
+import { WorkspaceSandboxes } from "./workspace-sandboxes";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { HostyNavigationBoundary } from "@hosty-sdk/app/react";
@@ -81,6 +83,8 @@ function WorkspaceDetails({ workspace: w, selectedTree, epoch, now }: { workspac
     <Button className="lg:hidden" variant="ghost" size="sm" onClick={() => navigate("/")}><ArrowLeft className="size-4" />All workspaces</Button>
     <header className="flex flex-wrap items-start justify-between gap-4"><div className="min-w-0"><h2 className="text-xl font-semibold">{w.owner.label}</h2><p className="mt-1 break-all text-muted-foreground">{w.owner.kind === "external" ? "External work reference" : "Session"}: {w.owner.reference}</p><p className="mt-1 break-all font-mono text-xs text-muted-foreground">Workspace {w.id}</p></div>
       {session && <Button variant="outline" asChild><a href={session} target="_blank" rel="noreferrer">Open session<ArrowUpRight className="size-4" /></a></Button>}</header>
+    <WorkspaceEnvironments workspace={w} />
+    <WorkspaceSandboxes workspaceId={w.id} />
     {w.owner.sessionUnavailable && <Message>{w.owner.sessionUnavailable}</Message>}
     <div className="flex flex-wrap gap-2" role="group" aria-label="Repository worktrees">{w.worktrees.map(t => <Button key={t.id} variant={tree?.id === t.id ? "secondary" : "outline"} aria-pressed={tree?.id === t.id}
       title={t.repository} onClick={() => navigate(workspaceLink(w.id, t.id))}><GitBranch className="size-4" /><span className="max-w-56 truncate">{repositoryName(t.repository)}</span><span className="text-xs text-muted-foreground">{t.state}</span></Button>)}</div>
@@ -138,9 +142,9 @@ function DiffView({ tree, path, view, epoch }: { tree: Worktree; path: string; v
 function Pr({ pr, now, head }: { pr: PullRequest; now: number; head?: string | null }) {
   const o = pr.observation;
   return <section className="space-y-3 rounded-lg border p-4"><a href={safeLink(pr.url, true)} target="_blank" rel="noreferrer" className="inline-flex max-w-full items-center gap-2 break-all font-medium underline underline-offset-4">{pr.url}<ArrowUpRight className="size-4 shrink-0" /></a>
-    <div className="flex flex-wrap gap-2"><Badge variant="outline">{o ? o.draft ? "Draft" : o.state : "Provider state unknown"}</Badge><Badge variant="outline">{isStale(o?.at, now) ? "Stale / unobserved" : "Recently observed"}</Badge></div>
+    <div className="flex flex-wrap gap-2"><Badge variant="outline">{o ? o.state === "open" && o.draft ? "Draft" : o.state : "Not observed"}</Badge><Badge variant="outline">{!o ? "Awaiting provider data" : isStale(o.at, now) ? "Stale" : "Recently observed"}</Badge></div>
     {pr.unavailable && <p className="text-muted-foreground">{pr.unavailable}</p>}{o?.error && <p className="text-destructive">{o.error}</p>}
     {pr.publishedHead && <p className="text-xs text-muted-foreground">Published HEAD {short(pr.publishedHead)}{head !== pr.publishedHead ? " · differs from this worktree" : ""}</p>}
-    {o && <><p className="text-xs text-muted-foreground">Observed {time(o.at)} · Review: {o.reviewDecision || "unknown"} · {o.unresolvedThreads} unresolved threads</p><ul className="divide-y">{o.checks?.map((c, i) => <li key={c.name + i} className="flex justify-between gap-4 py-2"><span>{c.name}</span><span>{c.state}</span></li>)}</ul>{!o.checks?.length && <p className="text-muted-foreground">No check results recorded.</p>}</>}
+    {o && <><p className="text-xs text-muted-foreground">Observed {time(o.at)} · Review: {o.reviewDecision || "No review decision"} · {o.unresolvedThreads} unresolved threads</p><ul className="divide-y">{o.checks?.map((c, i) => <li key={c.name + i} className="flex justify-between gap-4 py-2"><span>{c.name}</span><span>{c.state}</span></li>)}</ul>{!o.checks?.length && <p className="text-muted-foreground">No check results recorded.</p>}</>}
   </section>;
 }

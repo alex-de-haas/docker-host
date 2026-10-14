@@ -1,3 +1,4 @@
+import type { SandboxIdentityContext } from "./sandbox-identity.js";
 import type { ProviderServerOptions } from "@hosty-sdk/app/providers/server";
 import { UiError, type PanelTarget, type UiBootstrap, type UiPanel, type UiResolvedPanel, type UiNavigationCatalog, type UiNavigationTarget, type UiResolvedNavigation } from "@hosty-sdk/app/ui/types";
 
@@ -44,7 +45,7 @@ export class UiServerClient {
 }
 
 const responseHeaders = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" };
-type UiAuthenticatedContext = { session: { status: "active"; identity: { hostRole: string | null } } | { status: "not-present" | "expired" | "forbidden" | "unavailable" | "misconfigured" }; token: string | null };
+type UiAuthenticatedContext = { session: { status: "active"; identity: { hostRole: string | null; sandbox?: SandboxIdentityContext } } | { status: "not-present" | "expired" | "forbidden" | "unavailable" | "misconfigured" }; token: string | null };
 
 /** A fixed Web Request/Response adapter; never a caller-chosen Core proxy. */
 export async function createHostyUiResponse(request: Request, context: UiAuthenticatedContext,
@@ -57,6 +58,8 @@ export async function createHostyUiResponse(request: Request, context: UiAuthent
     }
     if (options.administratorOnly && context.session.identity.hostRole !== "host.admin")
       throw new UiError("admin_required", "This application requires administrator access.", 403);
+    if (context.session.identity.sandbox)
+      throw new UiError("unsupported_sandbox_ui", "Global application panels are unavailable inside this sandbox profile.", 409);
     const url = new URL(request.url);
     const prefix = (options.uiPath ?? "/api/hosty/ui").replace(/\/$/, "");
     const route = url.pathname.startsWith(prefix + "/") ? url.pathname.slice(prefix.length + 1) : "";

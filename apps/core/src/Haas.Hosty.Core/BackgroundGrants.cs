@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Routing;
 namespace Haas.Hosty.Core;
 
 internal sealed record BackgroundScope(string Id, string Kind, string TargetAppId, IReadOnlyList<string> Actions,
-    string? ProviderKind = null, string? Key = null, DateTimeOffset? Installation = null);
+    string? ProviderKind = null, string? Key = null, DateTimeOffset? Installation = null, SandboxBackgroundPolicy? Sandbox = null);
 internal sealed record BackgroundGrant(string Id, string UserId, string? AuthRevision, string AppId,
     DateTimeOffset Installation, string Label, IReadOnlyList<BackgroundScope> Scopes,
     DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt = null);
@@ -120,6 +120,18 @@ internal sealed class BackgroundGrantService(CoreDataPaths paths, AppRegistrySto
             Deny("Name exact actions without wildcards.");
         switch (scope.Kind)
         {
+            case "sandbox":
+                if (target is null || scope.Actions.Count == 0 || scope.Sandbox is not { } sandbox
+                    || sandbox.InputDigest is null || sandbox.Limits is null || sandbox.InputDigest.Length != 64 || sandbox.InputDigest.Any(c => !char.IsAsciiHexDigit(c))
+                    || sandbox.SourceKind is not ("appArtifact" or "worktree")
+                    || (sandbox.SourceKind == "worktree" && (sandbox.WorktreeId is null
+                        || !AppManagementAuthorization.HasPermission(caller, CoreAppPermissions.Sources)))
+                    || scope.Actions.Any(action => !SandboxAuthorization.Actions.Contains(action, StringComparer.Ordinal)
+                        || !AppManagementAuthorization.HasPermission(caller, action is "read" or "export"
+                            ? CoreAppPermissions.SandboxesRead : CoreAppPermissions.SandboxesManage)))
+                    Deny("Sandbox actions exceed this app's reviewed targets, inputs or permissions.");
+                _ = SandboxValidation.Limits(scope.Sandbox!.Limits);
+                break;
             case "core":
                 if (target is null || scope.Actions.Count == 0 || scope.Actions.Any(a => !CoreActions.TryGetValue(a, out var policy)
                     || !AppManagementAuthorization.HasPermission(caller, policy.Permission))) Deny("Core actions exceed this app's current grants.");

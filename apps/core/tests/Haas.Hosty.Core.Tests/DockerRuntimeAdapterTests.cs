@@ -6,6 +6,28 @@ namespace Haas.Hosty.Core.Tests;
 public sealed class DockerRuntimeAdapterTests
 {
     [Fact]
+    public async Task StartAsync_LocalOnlyImage_PinsContentIdAndRestartsWithoutFollowingTag()
+    {
+        var digest = "sha256:" + new string('d', 64);
+        var runner = new FakeDockerCommandRunner(args => args switch
+        {
+            ["pull", ..] => new DockerCommandResult(1, "", "local image"),
+            ["image", "inspect", "--format", "{{.Id}}", ..] => new DockerCommandResult(0, digest, ""),
+            ["image", "inspect", ..] => new DockerCommandResult(0, "[{}]", ""),
+            _ => new DockerCommandResult(0, "", ""),
+        });
+        var result = await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", locks: null)));
+        Assert.Equal("local-image", result.ArtifactLocks!["app"].Kind);
+        Assert.Equal(digest, result.ArtifactLocks["app"].ImageDigest);
+        Assert.Equal(digest, runner.Find("run")![^1]);
+        var restart = new FakeDockerCommandRunner(args => args is ["image", "inspect", ..]
+            ? new DockerCommandResult(0, "[{}]", "") : new DockerCommandResult(0, "", ""));
+        await CreateAdapter(restart).StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", result.ArtifactLocks)));
+        Assert.DoesNotContain(restart.Commands, c => c[0] == "pull");
+        Assert.Equal(digest, restart.Find("run")![^1]);
+    }
+
+    [Fact]
     public async Task GetLogsAsync_IncludesCompilerErrorsWrittenToStandardError()
     {
         var runner = new FakeDockerCommandRunner(_ => new DockerCommandResult(0, "restore complete\n", "watch: build failed\n"));
@@ -1242,7 +1264,7 @@ public sealed class DockerRuntimeAdapterTests
         var runner = new FakeDockerCommandRunner(args =>
             args is ["inspect", "--format", _, ..] && args[2].Contains("hosty.app.id", StringComparison.Ordinal)
                 ? new DockerCommandResult(0, "some.other.app", "")
-                : new DockerCommandResult(0, "", ""));
+                : new DockerCommandResult(0, args[0] == "pull" ? "Digest: sha256:" + new string('a', 64) : "", ""));
 
         await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord(updatePolicy: null, locks: null)));
 
@@ -1257,6 +1279,8 @@ public sealed class DockerRuntimeAdapterTests
         {
             switch (args[0])
             {
+                case "pull":
+                    return new DockerCommandResult(0, "Digest: sha256:" + new string('a', 64), "");
                 case "run":
                     var runName = args[args.ToList().IndexOf("--name") + 1];
                     if (runName.EndsWith("-worker", StringComparison.Ordinal))
@@ -1454,7 +1478,7 @@ public sealed class DockerRuntimeAdapterTests
         : IDockerCommandRunner
     {
         private readonly Func<IReadOnlyList<string>, DockerCommandResult> responder =
-            responder ?? (_ => new DockerCommandResult(0, "", ""));
+            responder ?? (args => new DockerCommandResult(0, args[0] == "pull" ? "Digest: sha256:" + new string('a', 64) : "", ""));
 
         public List<IReadOnlyList<string>> Commands { get; } = [];
 

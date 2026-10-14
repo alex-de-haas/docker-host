@@ -1347,6 +1347,25 @@ public sealed class AppManifestServiceTests
         Assert.Equal("app", selection.CacheTarget?.Service);
     }
 
+    [Theory]
+    [InlineData("data")]
+    [InlineData("cache")]
+    public async Task LoadAsync_ProfileStorageTargetWinsOverEarlierTypeFallback(string area)
+    {
+        var path = await WriteRawManifestAsync("""
+            {"schemaVersion":"app.0.1","id":"com.example.notes","name":"Notes","version":"1.0.0",
+             "runtimeProfiles":[{"key":"sandbox","type":"docker","default":true}],
+             "services":[{"key":"app","runtimes":{"sandbox":{"type":"docker","image":"example/notes:1"}}}],
+             "__AREA__":{"enabled":true,"targets":[
+               {"runtime":"docker","service":"app","containerPath":"/fallback"},
+               {"runtime":"sandbox","containerPath":"/isolated"}]}}
+            """.Replace("__AREA__", area));
+        var selection = await new AppManifestService().LoadAsync(path);
+        var target = area == "data" ? selection.DataTarget : selection.CacheTarget;
+        Assert.Equal("/isolated", target?.ContainerPath);
+        Assert.Null(target?.Service);
+    }
+
     [Fact]
     public async Task LoadAsync_SelectsExplicitCacheTarget()
     {

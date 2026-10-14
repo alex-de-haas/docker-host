@@ -69,3 +69,9 @@ packages/*/dist/
 # tracked. The files still exist locally and agents working inside an app directory still read them.
 apps/*/AGENTS.md
 apps/*/CLAUDE.md
+
+# Raw sandbox experiment outputs belong in the local experiment directory.
+/docs/features/app-sandbox-runtimes/*-evidence.json
+/docs/features/app-sandbox-runtimes/*-logs.zip
+/docs/features/app-sandbox-runtimes/*-source.patch
+/docs/features/assistant-runtime-containment/*-evidence.json

@@ -127,7 +127,7 @@ internal sealed class LocalPasswordAuthService(
         }
     }
 
-    private static bool VerifyPassword(string? password, LocalPasswordCredentialRecord credential)
+    internal static bool VerifyPassword(string? password, LocalPasswordCredentialRecord credential)
     {
         if (string.IsNullOrEmpty(password) ||
             !string.Equals(credential.Algorithm, Algorithm, StringComparison.Ordinal) ||

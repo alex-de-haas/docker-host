@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-11
+updated: 2026-10-14
 ---
 
 # Hosty Platform Vision
@@ -350,7 +350,8 @@ Decisions 1–5: 2026-08-19.
     excluding original sources and other workspaces. [Agent isolation](features/assistant-runtime-containment/plan.md)
     owns the source/Git metadata boundary; [lifecycle controls](features/workspace-lifecycle-controls/plan.md)
     owns revocation, verified execution stop and safe cleanup. App Sandbox testing and agent switching
-    remain separate deferred work. This direction is not implementation approval.
+    remain separate deferred work. Decision 35 later prioritizes a shared host boundary before
+    this stricter session boundary. This direction is not implementation approval.
 
 27. **One SDK panel system for Shell and standalone (2026-10-10).** Share panel hosting and
     presentation across the two modes. Shell owns composition for its window, including its own
@@ -414,8 +415,8 @@ Decisions 1–5: 2026-08-19.
 
 32. **Separate agent isolation from permission choices (2026-10-10).** The owner requested plan
     consolidation without implementation. [Agent Session Containment](features/assistant-runtime-containment/plan.md)
-    remains On Hold and owns individual session execution boundaries, authorized workspace/Git
-    access, credentials, network/native-tool enforcement and runtime stop evidence. A Docker profile
+    at that point remained On Hold and owned individual session execution boundaries, authorized
+    workspace/Git access, credentials, network/native-tool enforcement and runtime stop evidence. A Docker profile
     for the whole Harness app is not a substitute for isolation between sessions.
     [Approval Rules](features/assistant-approval-rules/plan.md) remains Draft and owns grant scope,
     lifetime, confirmation rules, visible revocation and decision audit. Existing MCP rules and
@@ -427,6 +428,8 @@ Decisions 1–5: 2026-08-19.
     App Sandbox and ordinary-user MCP-only acceptance keep their separate owners. Retired approval
     deliverable IDs are transferred with traceability, not marked complete or reused. Historical
     native-sandbox experiments are regression inputs, not proof of current-version containment.
+    Decision 35 revises the first milestone and returns containment to Draft planning; it retains
+    the stricter session requirements as unfinished work.
 
 33. **Explicit SDK composition across shells (2026-10-11).** Framing and presentation are separate.
     A plain standalone tab defaults to visible app navigation and access to authorized tools;
@@ -450,6 +453,133 @@ Decisions 1–5: 2026-08-19.
     those grants. Container-based isolation and honest disclosure of unrestricted local commands
     remain separate from authentication UX. SDK UI composition remains deferred. Verification uses
     an isolated instance; this direction does not authorize changes to the operator's live grants.
+
+35. **Protect the host before separating agent sessions (2026-10-13).** Prefer one shared
+    administrator agent container for the initial local demonstration, with access to its dedicated
+    data, explicitly shared worktrees and selected sandbox seed folders. It must not inherit
+    unrelated host paths, production app data or unrestricted host control. Cross-workspace source
+    visibility is an accepted initial limitation. Compare native, shared and per-session execution
+    for startup/resource cost before selecting more isolation; one active agent without queueing
+    suffices for the first demonstration. This revises decisions 26/32's sequencing, not the meaning
+    of session isolation or decision 28's ordinary-user gate. [Containment](features/assistant-runtime-containment/plan.md)
+    returns to Draft and tracks the shared milestone separately from its retained session target.
+    Broad coordinator credentials must remain outside model-accessible execution. The
+    [delivery plan](features/hosty-delivery-readiness/plan.md) records the November 5 target and open
+    technical decisions; planning direction is not implementation approval.
+
+36. **Sandbox instances belong to workspaces and use real Core users (2026-10-13).** Reuse
+    [Docker source development](features/mixed-development-runtimes/feature.md) for additional
+    app instances, with live source reload where the stack supports it, separate empty/synthetic
+    data and instance-specific resources. A workspace may contain several app instances beside the
+    normal installed apps. The agent can prepare test data only in the selected sandbox data area.
+    Core remains the real identity provider; preview users are real Core users, while sandbox
+    credentials, permissions, discovery and data stay separate from the installed app. This replaces
+    Sandbox's synthetic-users-only assumption and removes production-data snapshot import.
+    [Sandbox](features/app-sandbox-runtimes/plan.md) returns to Draft and owns runtime identity,
+    lifecycle, local operator preview and Playwright testing. Core orchestration with Workspaces/Shell
+    as clients is the proposed ownership split, still subject to the instance-contract design.
+    Local preview is required first; remote preview remains optional. A live-data trial belongs to
+    [Development Controls](features/app-development-controls/plan.md) and requires a separate
+    operator action; passing tests or merging source does not trigger it. Existing workspace/Git/PR
+    mechanisms compose with this journey, including commit/push, CI and review. No implementation
+    or live-environment mutation is authorized by this direction.
+
+    Follow-up on 2026-10-13: the owner approves the local network/resource profile and agent-created
+    sandbox-only users with configurable roles and permissions, including administrators that
+    cannot act outside their sandbox. The approved
+    [identity contract](features/app-sandbox-runtimes/plan.md#real-operators-sandbox-users-and-instance-authority)
+    retains real Core operator preview and adds a separately typed, Core-managed test realm per
+    runtime instance. This revises the real-users-only testing assumption, not global Core login
+    or administrative authority. The owner clarifies that users and temporary resources belong to
+    the sandbox: technical stop/restart preserves them, and Finish sandbox deletes the realm,
+    credentials, data, caches and temporary artifacts. Source worktrees remain independent; reports
+    survive only when explicitly exported. The Sandbox plan is Ready after this approval;
+    implementation and verification remain unfinished. Other owning plans retain their own status.
+    Decision 40 below supersedes mandatory workspace ownership with independent Core sandbox APIs.
+
+37. **Collect durable observations, then review and optionally delegate (2026-10-13).** Extend
+    decision 11: users and administrators can accumulate small app/element comments and submit a
+    collection. Preserve unsent drafts and evidence across navigation/reload with visible save state.
+    Prefer Feedback/Comments as working vocabulary rather than requiring formal issues. Administrators
+    approve/dismiss, select and amend; dispatch is a separate action. They may send one batch to one
+    session or explicitly let the assistant organize it into several tasks/sessions. Independent
+    repositories can proceed in parallel; independent changes to one repository may use separate
+    worktrees/PRs with overlap/merge-order handling. Every item keeps provenance and partial outcomes.
+    [Feedback Inbox](features/app-feedback-inbox/plan.md) owns intake/grouping/dispatch integration;
+    [Bridge D11](features/ai-agent-bridge/plan.md#step-11--durable-jobs-and-notifications) retains general
+    execution/delegation. Feedback remains optional for the local demonstration, and neither
+    reporting nor approval alone launches an agent or grants source access.
+
+38. **Adopt the design incrementally while preserving functionality (2026-10-13).** The owner
+    continues refining the visual references. Start with finished colors, typography, logos and
+    common styling, then apply prepared Shell layouts and extend their patterns elsewhere.
+    A mockup is not an exhaustive feature specification: absent actions, states or permissions
+    must not disappear from the product. [Design System](features/design-system/plan.md) owns the
+    parity inventory and verification along with its existing visual deliverables. Readiness of
+    individual references does not approve all remaining layout/activity decisions or promise
+    completion in a single session.
+
+39. **Keep agent execution and application sandboxes separate (2026-10-13).** The owner confirms
+    that an agent worker runs in its own container and each sandbox app executes in separate
+    runtime containers. Core or a trusted launcher owns creation; source and selected synthetic
+    seed access connect the worker to an instance without exposing Docker control or the agent's
+    provider home. One shared agent worker remains sufficient for the first milestone; this does
+    not require one agent container per session. The two dated container experiments exercised
+    agent commands, including application compilation/tests in the second run, but no app server.
+    Their memory results do not measure a running agent-plus-app pair. General build placement is
+    still open under [Containment D9](features/assistant-runtime-containment/plan.md); separate
+    runtime, reload, preview and browser acceptance remain under
+    [Sandbox](features/app-sandbox-runtimes/plan.md). Recording this distinction approves no new
+    implementation or experiment.
+
+40. **Sandbox is an independent Core capability (2026-10-13).** The owner requires a permissioned
+    API usable by any authorized app, including QA and recurring performance-test workflows without
+    code changes. Core owns instances, resource/input authorization, temporary users/data, preview
+    and complete cleanup. Workspace/worktree and Harness-session integration is optional client
+    context, not the service's owner or a mandatory creation dependency. Reviewed worktree inputs
+    retain their source leases; pinned app artifacts support runs without workspaces. Callers own
+    schedules, scenarios and exported results. Unattended execution requires an explicit revocable
+    sandbox grant; current background installed-app actions do not implicitly authorize it.
+    [Sandbox D1/D2/D6/D12](features/app-sandbox-runtimes/plan.md#deliverables) owns this boundary and
+    independent-client acceptance. This refines decision 36 and the Ready plan without adding a
+    scheduler or autonomous optimizer to Core; implementation and verification remain outstanding.
+
+41. **Sandbox separates app data while allowing approved integrations (2026-10-14).** The owner
+    defines a practical development/test environment, not malware containment. Internet is a required
+    capability; offline remains a selectable profile. Operators can persist approval for internet,
+    selected installed/shared providers, shared-folder mounts and specific Core operations so agents
+    work autonomously within that scope. Separate instance IDs/data/cache/credentials remain the
+    baseline; read-only mounts are enforced, and shared database resources require real provider-side
+    separation. Multi-app dependency scenarios and an authorized sandbox creating other sandboxes
+    are valid uses of the independent API. Reuse Core's existing permission, dependency and mount
+    mechanisms and keep code small; avoid a parallel identity system or universal proxy framework.
+    Public production URLs may be reachable with internet access; existing endpoint authentication
+    and explicit grants, not the word sandbox, determine authority. Dependency discovery currently
+    does not supply universal peer authorization. These qualifications refine decisions 35/36/40.
+    [Sandbox D13-D17](features/app-sandbox-runtimes/plan.md#permission-extension-owner-revision-2026-10-14)
+    owns the extension and its checks. The current verified implementation is still the offline profile.
+
+42. **Prefer dedicated sandbox dependencies and explore scoped Core state (2026-10-14).** In the
+    later discussion the owner prefers separate dependency app instances over sharing installed
+    Transcode Engine/database services; approved shared mounts and internet remain useful exceptions.
+    Test-user roles are limited to assigned app instances. The owner proposes disposable Core data
+    namespaces for workspace, session, key and child-sandbox operations. The implementation proposal
+    distinguishes an environment from its individual app instances, scopes both users and service
+    principals, and cleans up owned resources rather than everything created by one user. Host-only
+    operations and app-owned records need explicit treatment. This refines decision 41; it does not
+    approve a blanket migration of all Core APIs or claim those namespaces already exist.
+    [Sandbox D14/D16-D19](features/app-sandbox-runtimes/plan.md#environment-scope-later-owner-discussion-2026-10-14)
+    owns the contract review and implementation; shared installed providers stay deferred under D14.
+
+43. **Use trusted same-host test Core instances with shared Docker (2026-10-14).** The owner selects
+    separate Core processes, ports, browser origins and data roots on the same machine, without a VM
+    or mandatory Docker API broker. This supersedes decision 42's proposed token-scoped Core stores
+    and extra sandbox role distinctions. Each instance uses normal users/roles and can run modified
+    Core source together with its test apps. Core is trusted; shared Docker authority is accepted,
+    and operators requiring a physical boundary use a separate host. The primary Core should own
+    environment lifecycle and cleanup, including graceful child stops. Process parentage alone does
+    not implement that guarantee. The owner authorizes the local experiment now; its result and the
+    remaining parent manager are tracked by [sandbox D18-D21](features/app-sandbox-runtimes/plan.md#same-host-core-environments-owner-decision-2026-10-14).
 
 ## Expectations And Later Directions
 

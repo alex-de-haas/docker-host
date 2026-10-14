@@ -1,0 +1,7 @@
+seccomp.json is derived from Microsoft Playwright v1.64.0 utils/docker/seccomp_profile.json.
+Source: https://raw.githubusercontent.com/microsoft/playwright/v1.64.0/utils/docker/seccomp_profile.json
+Upstream SHA-256: cc3e61cabda6bbc1e53e54d27ba4d55a9d3be829b6dd1a596f4a7b31b1cc7849
+License: Apache-2.0; see LICENSE.playwright.
+Hosty modification: append a chroot allow rule for Chromium startup inside its own user namespace.
+The outer container retains cap-drop ALL. Upstream user namespace rules are retained.
+This is not an unconfined seccomp profile.

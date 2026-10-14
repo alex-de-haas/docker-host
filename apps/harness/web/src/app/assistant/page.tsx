@@ -8,6 +8,7 @@ import type { SessionActivity } from "../../../../src/harness/activity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SpeechInput } from "@/components/speech-input";
 import { SessionCredentials } from "@/components/session-credentials";
+import { SessionSandboxes } from "@/components/session-sandboxes";
 import { SessionWorkspaces } from "@/components/session-workspaces";
 import { SessionProvider } from "@/components/session-provider";
 import { AppMentionInput, type AppMentionInputHandle } from "@/components/app-mention-input";
@@ -698,6 +699,7 @@ export default function AssistantPage() {
       </header>
 
       {!showSessions && session && <SessionCredentials key={session.id} sessionId={session.id} />}
+      {!showSessions && session && <SessionSandboxes key={`sandbox-${session.id}`} sessionId={session.id} />}
       {!showSessions && session && <SessionWorkspaces key={session.id} session={session} running={running} />}
       {error && <div className="shrink-0 p-3" role="alert"><InlineError message={error} /></div>}
 

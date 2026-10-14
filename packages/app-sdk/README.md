@@ -544,3 +544,17 @@ Keep launch/auth exports for older hosts and native transport. Native clients se
 navigation/launcher and disabled tools until they provide a panel host. `panelLayout="none"` is a
 rendering choice, not a disable policy: explicitly disable local tools or register a renderer.
 See [UI composition and browser acceptance](../../docs/features/sdk-ui-composition/feature.md).
+
+## Child Core sandbox controls
+
+`@hosty-sdk/app/sandbox/react` exports `CoreEnvironmentPanel` for operator-facing child Core
+management. Supply an authenticated `EnvironmentRequest` transport, a tab-local replay storage key
+and optionally a workspace with its active worktrees. Shell and Workspaces use this shared panel
+for create/start, current/source Core selection, normal test-account setup, app status, preview and
+confirmed deletion. The component does not grant authority: Core independently checks the optional
+`core.environments.inspect/operate` grants, administrator identity and workspace source access.
+
+`@hosty-sdk/app/sandbox/server` provides the server-side clients for independent app sandboxes and
+child Core environments. Caller-owned `core.environments.read/manage` authority remains distinct
+from the operator panel's cross-caller permissions. See the
+[sandbox contract](../../docs/features/app-sandbox-runtimes/feature.md) for lifecycle and cleanup rules.
