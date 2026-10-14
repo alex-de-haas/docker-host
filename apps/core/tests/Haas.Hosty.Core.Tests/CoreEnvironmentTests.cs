@@ -196,6 +196,28 @@ public sealed class CoreEnvironmentTests
         Assert.NotNull(await TryCreate(replacement));
         Assert.NotNull(await TryCreate(replacement));
     }
+    [Fact]
+    public async Task OperatorAccess_AllowsOwnAppsButRejectsAnotherAdministratorsEnvironments()
+    {
+        using var f = new Fixture(); var item = await f.Create();
+        var owner = new SandboxActor(f.Actor.UserId);
+        var other = new SandboxActor("another-admin");
+        Assert.Equal(item.Id, (await f.Service.ReadAsync(owner, item.Id, default)).Id);
+        Assert.Single((await f.Service.ListAsync(owner, default)).Environments);
+        Assert.Empty((await f.Service.ListAsync(other, default)).Environments);
+        Assert.Equal("environment_forbidden", (await Assert.ThrowsAsync<SandboxException>(
+            () => f.Service.ReadAsync(other, item.Id, default))).Code);
+        foreach (var kind in new[] { "start", "stop", "restart", "finish" })
+            await Assert.ThrowsAsync<SandboxException>(() => f.Service.CommandAsync(other, item.Id, kind,
+                new(Guid.NewGuid().ToString(), item.Revision), default));
+        var access = new CoreEnvironmentAccess(f.Store, f.Service);
+        await Assert.ThrowsAsync<SandboxException>(() => access.SetupAsync(other, item.Id,
+            new("other@example.test", "Other", "unused-password"), default));
+        await Assert.ThrowsAsync<SandboxException>(() => access.SendAsync(other, item.Id, new("GET", "/api/apps"), default));
+        Assert.Empty(f.Runtime.Removals); Assert.True(Directory.Exists(item.DataRoot));
+        Assert.Equal("finished", (await f.Service.CommandAsync(owner, item.Id, "finish",
+            new(Guid.NewGuid().ToString(), item.Revision), default)).State);
+    }
     private sealed class Clock : IClock { public DateTimeOffset UtcNow => DateTimeOffset.UtcNow; }
     private sealed class Fixture : IDisposable
     {

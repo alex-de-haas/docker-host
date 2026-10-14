@@ -37,13 +37,22 @@ public sealed class CoreEnvironmentHttpTests
     {
         await using var host = await CoreHttpHarness.StartAsync();
         var service = host.Services.GetRequiredService<CoreEnvironmentService>();
-        var child = await service.CreateAsync(new("admin", "other.app", DateTimeOffset.UnixEpoch),
+        var child = await service.CreateAsync(new("actor", "other.app", DateTimeOffset.UnixEpoch),
             new(Guid.NewGuid().ToString(), "Other app sandbox"), default);
         using var client = await AppManagementHttpTests.CreateAppClient(host, "hosty.workspaces", [CoreAppPermissions.WorkspacesRead]);
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/core-environments")).StatusCode);
+        var now = host.Services.GetRequiredService<IClock>().UtcNow;
+        await host.Services.GetRequiredService<UserDirectoryStore>().UpdateAsync(s => s with {
+            Users = [.. s.Users, new("other-admin", "other@example.test", "Other admin", "host.admin", false, now, now)] });
+        var foreign = await service.CreateAsync(new("other-admin", "other.app", DateTimeOffset.UnixEpoch),
+            new(Guid.NewGuid().ToString(), "Another administrator sandbox"), default);
         var apps = host.Services.GetRequiredService<AppRegistryStore>();
         var record = (await apps.GetAppAsync("hosty.workspaces"))!;
         await apps.UpsertAppAsync(record with { GrantedCorePermissions = [CoreAppPermissions.CoreEnvironmentsInspect] });
+        var visible = await client.GetFromJsonAsync<CoreEnvironmentList>("/api/core-environments");
+        Assert.Equal(child.Id, Assert.Single(visible!.Environments).Id);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/core-environments/" + foreign.Id)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/core-environments/" + foreign.Id + "/apps")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/core-environments/" + child.Id)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/core-environments/" + child.Id + "/apps")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/core-environments/" + child.Id + "/operations/finish",
@@ -54,6 +63,8 @@ public sealed class CoreEnvironmentHttpTests
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/core-environments/" + child.Id + "/api",
             new CoreEnvironmentApiRequest("GET", "/api/apps"))).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/core-environments", new CoreEnvironmentCreate(Guid.NewGuid().ToString(), "Denied"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/core-environments/" + foreign.Id + "/operations/finish",
+            new CoreEnvironmentCommand(Guid.NewGuid().ToString(), foreign.Revision))).StatusCode);
         var finished = await client.PostAsJsonAsync("/api/core-environments/" + child.Id + "/operations/finish",
             new CoreEnvironmentCommand(Guid.NewGuid().ToString(), child.Revision));
         finished.EnsureSuccessStatusCode();

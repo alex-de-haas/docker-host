@@ -217,6 +217,11 @@ outputs are not guessed to be safe to delete; Finish removes them with their own
 The empty distribution catalog suppresses automatic Shell installation and its fixed-port collision.
 Explicitly installed apps still follow their ordinary port and permission contracts.
 
+Operator inspection/control spans applications belonging to the same administrator, but never
+exposes or mutates another administrator's child Core. App callers additionally require their own
+installation ownership. Unowned build generations use nonpositive PID markers, which never count
+as live processes on any supported operating system.
+
 Collection create/list, status, `/{id}/operations/{start|stop|restart|finish}`, `/{id}/setup` and
 `/{id}/api` support the complete local lifecycle. Create and lifecycle operations use persisted
 request UUIDs, input fingerprints and expected revisions. Reconnect repeats the original request or

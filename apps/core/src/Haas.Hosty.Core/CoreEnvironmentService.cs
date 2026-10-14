@@ -21,7 +21,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
     internal async Task<CoreEnvironmentRecord> RequireAsync(SandboxActor actor, string id, CancellationToken ct)
     {
         var record = await store.ReadAsync(id, ct) ?? throw new SandboxException("environment_not_found", "Environment not found.", 404);
-        if (!record.Owner.SameOwner(actor) && actor.AppId is not null)
+        if (record.Owner.UserId != actor.UserId || actor.AppId is not null && !record.Owner.SameOwner(actor))
             throw new SandboxException("environment_forbidden", "The environment belongs to another caller.", 403);
         return record;
     }
@@ -29,7 +29,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
     {
         var records = await store.ListAsync(ct);
         var observed = new List<CoreEnvironmentView>();
-        foreach (var record in records.Where(r => actor.AppId is null || r.Owner.SameOwner(actor)))
+        foreach (var record in records.Where(r => r.Owner.UserId == actor.UserId && (actor.AppId is null || r.Owner.SameOwner(actor))))
         {
             var gate = Gate(record.Id);
             if (!await gate.WaitAsync(0, ct)) { observed.Add(View((await store.ReadAsync(record.Id, ct))!)); continue; }

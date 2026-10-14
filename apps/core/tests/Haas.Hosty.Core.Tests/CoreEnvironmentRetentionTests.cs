@@ -13,6 +13,12 @@ public sealed class CoreEnvironmentRetentionTests : IDisposable
     private static CoreEnvironmentRecord Record(string mode = "release", string? project = null) => new(Guid.NewGuid().ToString("N"), new("admin", null, null),
         new(Guid.NewGuid().ToString(), "Build", mode, project), "hash", 7070, 1, "stopped", DateTimeOffset.UtcNow);
 
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(0)]
+    public void UnownedGeneration_IsNeverALiveProcess(int pid)
+        => Assert.False(CoreBuildRetention.IsAlive(pid, DateTimeOffset.MinValue));
+
     [Fact]
     public async Task FailedPreparation_RetainsOnlyLatestDiagnosticGenerationWithoutParentLifetimePinning()
     {
