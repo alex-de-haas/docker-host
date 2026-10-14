@@ -208,14 +208,24 @@ consumers until Finish; they remain outside the temporary root.
 `current` copies the parent's prepared executable closure; `release` copies its installed native
 Core binary; `source` builds an absolute selected Core project into a child-owned output directory.
 A source restart builds before stopping the previous process, preserving it on compilation failure.
+App-authorized source projects must remain inside an attached worktree owned by that session,
+without symlinks; this is checked again before start/restart. Direct operator source selection
+retains its explicit host-path authority. Child generations use the existing Core build retention:
+active processes and runners, the latest two ready outputs and latest failed diagnostic output
+are retained. Failed preparation no longer pins outputs to the long-lived parent. Unmarked legacy
+outputs are not guessed to be safe to delete; Finish removes them with their owned root.
 The empty distribution catalog suppresses automatic Shell installation and its fixed-port collision.
 Explicitly installed apps still follow their ordinary port and permission contracts.
 
 Collection create/list, status, `/{id}/operations/{start|stop|restart|finish}`, `/{id}/setup` and
 `/{id}/api` support the complete local lifecycle. Create and lifecycle operations use persisted
 request UUIDs, input fingerprints and expected revisions. Reconnect repeats the original request or
-reads its journal; it does not guess a successful outcome. Admission permits two unfinished direct
-children per Core. This is a count limit, not a global recursive CPU/RAM/disk budget.
+reads its journal; it does not guess a successful outcome. Admission permits two unfinished
+descendants across the root environment tree. A root-owned
+file lock serializes allocation across parent/child processes, including after restart. Nested
+creation consumes the same count as direct creation; failed/stopped environments retain capacity
+until Finish. This count bound is not a CPU/RAM/disk quota or a limit across independently installed
+primary Core roots.
 
 Setup uses ordinary Core bootstrap and password login with explicitly supplied test credentials.
 The resulting child session stays private in the parent-owned child root. The JSON API transport
@@ -318,6 +328,13 @@ not evidence of successful browser authentication. Keep every unmet case in the 
 
 Child Core coverage also checks source-build failure before stop, full-journal Finish, corrupted discovery,
 cross-owner denial, ordinary permission approval, borrowed-source preservation and descendant cleanup.
+Regression coverage rejects app source paths outside attached session worktrees, path-prefix and
+symlink escapes, and a project replaced by a link before start. Exercise concurrent parent/child
+allocation against one root budget, reconstruction after restart, and capacity release after Finish.
+Build retention tests cover repeated failures, live process/runner references and unused preparation.
+The local review acceptance runs a real child plus grandchild, rejects a third allocation at either
+level, performs three child restarts with two retained ready generations, and verifies that Finish
+removes the subtree and restores both capacity slots.
 The separate [real-agent acceptance](../../reviews/2026-10-14-child-core-agent-acceptance.md) uses
 Codex through the actual Harness adapter, with the agent creating, configuring, installing into and
 finishing its child. It verifies ordinary browser password login and install confirmation, a worktree

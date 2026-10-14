@@ -11,32 +11,74 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
     private static string BinaryName => OperatingSystem.IsWindows() ? "hosty-core.exe" : "hosty-core";
     public async Task<string> PrepareAsync(CoreEnvironmentRecord record, string root, CancellationToken ct)
     {
-        var generation = Path.Combine(root, "core", "environment-builds", Guid.NewGuid().ToString("N"));
+        var generation = Path.Combine(root, "core", "builds", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(generation);
-        if (record.Request.Mode == "source")
+        CoreBuildRetention.Mark(generation, "building", record.Request.ProjectPath);
+        try
         {
-            var start = new ProcessStartInfo("dotnet") { WorkingDirectory = Path.GetDirectoryName(record.Request.ProjectPath)! };
-            foreach (var arg in new[] { "build", record.Request.ProjectPath!, "--configuration", "Debug", "--artifacts-path", generation, "--nologo" }) start.ArgumentList.Add(arg);
-            var result = await ProcessRunner.RunAsync(start, TimeSpan.FromMinutes(5), ct, 65536);
-            await File.WriteAllTextAsync(Path.Combine(generation, "build.log"), result.StandardOutput + result.StandardError, ct);
-            if (result.ExitCode != 0 || result.TimedOut)
-                throw new SandboxException("environment_build_failed", "Core source build failed; the running child is preserved. See " + Path.Combine(generation, "build.log"), 409);
-            var binary = Path.Combine(generation, "bin", Path.GetFileNameWithoutExtension(record.Request.ProjectPath)!, "debug", BinaryName);
-            if (!File.Exists(binary)) throw new SandboxException("environment_build_missing", "The selected project did not produce hosty-core.", 409);
-            return binary;
+            if (record.Request.Mode == "source")
+            {
+                var start = new ProcessStartInfo("dotnet") { WorkingDirectory = Path.GetDirectoryName(record.Request.ProjectPath)! };
+                foreach (var arg in new[] { "build", record.Request.ProjectPath!, "--configuration", "Debug", "--artifacts-path", generation, "--nologo" }) start.ArgumentList.Add(arg);
+                var result = await ProcessRunner.RunAsync(start, TimeSpan.FromMinutes(5), ct, 65536);
+                await File.WriteAllTextAsync(Path.Combine(generation, "build.log"), result.StandardOutput + result.StandardError, ct);
+                if (result.ExitCode != 0 || result.TimedOut)
+                    throw new SandboxException("environment_build_failed", "Core source build failed; the running child is preserved. See " + Path.Combine(generation, "build.log"), 409);
+                var binary = Path.Combine(generation, "bin", Path.GetFileNameWithoutExtension(record.Request.ProjectPath)!, "debug", BinaryName);
+                if (!File.Exists(binary)) throw new SandboxException("environment_build_missing", "The selected project did not produce hosty-core.", 409);
+                CoreBuildRetention.Mark(generation, "prepared", record.Request.ProjectPath);
+                return binary;
+            }
+            var source = record.Request.Mode == "release" ? Path.Combine(config.DataRoot, "core", "bin", BinaryName)
+                : Path.Combine(AppContext.BaseDirectory, BinaryName);
+            if (!File.Exists(source)) throw new SandboxException("environment_binary_missing", "The selected prepared or installed Core executable is unavailable.", 409);
+            // Copy the prepared generation: parent build retention must not remove a live child's binary.
+            // A release is a single native file; a debug build includes its adjacent managed dependencies.
+            if (record.Request.Mode == "release") File.Copy(source, Path.Combine(generation, BinaryName));
+            else CopyDirectory(Path.GetDirectoryName(source)!, generation);
+            CoreBuildRetention.Mark(generation, "prepared", record.Request.ProjectPath);
+            return Path.Combine(generation, BinaryName);
         }
-        var source = record.Request.Mode == "release" ? Path.Combine(config.DataRoot, "core", "bin", BinaryName)
-            : Path.Combine(AppContext.BaseDirectory, BinaryName);
-        if (!File.Exists(source)) throw new SandboxException("environment_binary_missing", "The selected prepared or installed Core executable is unavailable.", 409);
-        // Copy the prepared generation: parent build retention must not remove a live child's binary.
-        // A release is a single native file; a debug build includes its adjacent managed dependencies.
-        if (record.Request.Mode == "release") File.Copy(source, Path.Combine(generation, BinaryName));
-        else CopyDirectory(Path.GetDirectoryName(source)!, generation);
-        return Path.Combine(generation, BinaryName);
+        catch
+        {
+            ReleasePreparation(generation);
+            CoreBuildRetention.Cleanup(root);
+            throw;
+        }
+    }
+    private static void ReleasePreparation(string generation)
+    {
+        var path = Path.Combine(generation, CoreBuildRetention.Marker);
+        var marker = CoreLaunchFiles.Read(path, CoreLaunchJson.Default.CoreBuildGeneration);
+        // A failed attempt is no longer owned by this long-running parent. Retention keeps the
+        // newest failure's diagnostics, but does not pin every failed build until parent exit.
+        if (marker?.OwnerPid == Environment.ProcessId)
+            CoreLaunchFiles.Write(path, marker with { State = "failed", OwnerPid = -1, OwnerStartedAt = DateTimeOffset.MinValue }, CoreLaunchJson.Default.CoreBuildGeneration);
+    }
+    internal static string? Generation(string root, string? executable)
+    {
+        if (executable is null) return null;
+        var builds = Path.Combine(root, "core", "builds");
+        if (CoreDataPaths.ContainsSymbolicLink(builds, executable)) return null;
+        var path = Path.GetDirectoryName(executable);
+        while (path is not null && Path.GetDirectoryName(path) != builds) path = Path.GetDirectoryName(path);
+        return path is not null && File.Exists(Path.Combine(path, CoreBuildRetention.Marker)) ? path : null;
+    }
+    public Task CleanupAsync(CoreEnvironmentRecord record, string root, CancellationToken ct)
+    {
+        try
+        {
+            if (Generation(root, record.Executable) is { } generation) ReleasePreparation(generation);
+            CoreBuildRetention.Cleanup(root);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        { logger.LogWarning("Child Core build retention deferred for {Environment}: {Reason}", record.Id, ex.GetType().Name); }
+        return Task.CompletedTask;
     }
     private static void CopyDirectory(string source, string destination)
     {
-        foreach (var file in Directory.EnumerateFiles(source)) File.Copy(file, Path.Combine(destination, Path.GetFileName(file)));
+        foreach (var file in Directory.EnumerateFiles(source))
+            if (Path.GetFileName(file) != CoreBuildRetention.Marker) File.Copy(file, Path.Combine(destination, Path.GetFileName(file)));
         foreach (var directory in Directory.EnumerateDirectories(source))
         {
             if (new DirectoryInfo(directory).LinkTarget is not null) continue;
@@ -119,6 +161,8 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
         start.Environment["HOSTY_DISTRIBUTION_APPS_PATH"] = Path.Combine(root, "core", "distribution-apps.json");
         start.Environment["HOSTY_CORE_LAUNCH_MODE"] = record.Request.Mode == "source" ? "dev" : record.Request.Mode;
         start.Environment["HOSTY_CORE_PROJECT"] = record.Request.ProjectPath ?? "";
+        var generation = Generation(root, record.Executable);
+        start.Environment["HOSTY_CORE_GENERATION"] = generation ?? "";
         start.Environment["HOSTY_CLI_PATH"] = CoreCliLauncher.ResolveCliPath();
         if (OperatingSystem.IsWindows())
         {
@@ -134,13 +178,18 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
         }
         using var launched = Process.Start(start) ?? throw new SandboxException("environment_launch_failed", "Unable to start the child Core.", 409);
         var spawned = new CoreEnvironmentProcess(launched.Id, launched.StartTime.ToUniversalTime());
+        if (generation is not null) CoreBuildRetention.Mark(generation, "starting", record.Request.ProjectPath, spawned.Pid, spawned.StartedAt);
         await saveProcess(spawned);
         // On Windows cmd is the launcher. Discovery supplies the actual Core process after readiness.
         var probe = record with { Process = OperatingSystem.IsWindows() ? null : spawned };
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct); deadline.CancelAfter(TimeSpan.FromSeconds(45));
         while (!deadline.IsCancellationRequested)
         {
-            if (await ObserveAsync(probe, root, deadline.Token) is { } process) { await saveProcess(process); return; }
+            if (await ObserveAsync(probe, root, deadline.Token) is { } process)
+            {
+                if (generation is not null) CoreBuildRetention.Mark(generation, "ready", record.Request.ProjectPath, process.Pid, process.StartedAt);
+                await saveProcess(process); return;
+            }
             if (launched.HasExited) throw new SandboxException("environment_launch_failed", "Child Core exited before readiness. See " + log, 409);
             await Task.Delay(100, deadline.Token);
         }

@@ -24,6 +24,7 @@ internal interface ICoreEnvironmentRuntime
     Task<CoreEnvironmentProcess?> ObserveAsync(CoreEnvironmentRecord record, string root, CancellationToken ct);
     Task StartAsync(CoreEnvironmentRecord record, string root, Func<CoreEnvironmentProcess, Task> saveProcess, CancellationToken ct);
     Task StopAsync(CoreEnvironmentRecord record, string root, bool remove, CancellationToken ct);
+    Task CleanupAsync(CoreEnvironmentRecord record, string root, CancellationToken ct) => Task.CompletedTask;
 }
 
 internal sealed record CoreEnvironmentWorkspaceCreate(string RequestId, string Label, string WorkspaceId,

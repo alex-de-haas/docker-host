@@ -26,6 +26,57 @@ internal sealed class CoreEnvironmentStore(CoreDataPaths paths)
             if (await ReadAsync(Path.GetFileNameWithoutExtension(path), ct) is { } record) result.Add(record);
         return result.ToArray();
     }
+    private CoreEnvironmentStore AtRoot(string root) => new(paths with { DataRoot = root, CoreRoot = Path.Combine(root, "core") });
+
+    // The on-disk parent relationship survives child/CLI restarts without ambient environment flags.
+    internal async Task<CoreEnvironmentStore> BudgetStoreAsync(CancellationToken ct)
+    {
+        var current = this;
+        for (var depth = 0; depth < 64; depth++)
+        {
+            var root = new DirectoryInfo(Path.GetFullPath(current.DataRoot));
+            if (root.Parent?.Name != "environments" || !Guid.TryParseExact(root.Name, "N", out _)) return current;
+            var parent = AtRoot(root.Parent.Parent!.FullName);
+            var record = await parent.ReadAsync(root.Name, ct);
+            if (record is null || record.State is "finished" or "finishing" or "cleanup-failed")
+                throw new SandboxException("environment_parent_unavailable", "The parent environment is unavailable for allocation.", 409);
+            parent.VerifyRoot(record);
+            current = parent;
+        }
+        throw new SandboxException("environment_capacity", "The environment ancestry exceeds the supported bound.", 409);
+    }
+    private string DataRoot => paths.DataRoot;
+
+    internal async Task<FileStream> LockAllocationAsync(CancellationToken ct)
+    {
+        var file = Path.Combine(RegistryRoot, "allocation.lock");
+        if (CoreDataPaths.ContainsSymbolicLink(paths.DataRoot, file))
+            throw new SandboxException("environment_path_invalid", "Environment allocation storage must not contain symbolic links.");
+        Directory.CreateDirectory(RegistryRoot);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            try { return new FileStream(file, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+            catch (IOException) when (DateTime.UtcNow < deadline) { await Task.Delay(50, ct); }
+        }
+    }
+
+    internal async Task<List<CoreEnvironmentRecord>> ListUnfinishedTreeAsync(CancellationToken ct)
+    {
+        var result = new List<CoreEnvironmentRecord>();
+        var pending = new Queue<CoreEnvironmentStore>(); pending.Enqueue(this);
+        while (pending.TryDequeue(out var owner))
+            foreach (var record in await owner.ListAsync(ct))
+            {
+                if (record.State == "finished") continue;
+                result.Add(record);
+                if (result.Count >= 2) return result;
+                owner.VerifyRoot(record);
+                pending.Enqueue(AtRoot(owner.Root(record.Id)));
+            }
+        return result;
+    }
     public void VerifyRoot(CoreEnvironmentRecord record)
     {
         var root = Root(record.Id);

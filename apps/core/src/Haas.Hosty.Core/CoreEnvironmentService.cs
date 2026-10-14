@@ -112,20 +112,14 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             throw new SandboxException("environment_input_invalid", "Select a label and current, release, or source with an absolute Core project path.", 400);
         if (input.WorktreeIds is { } selected && (selected.Length > 16 || selected.Distinct(StringComparer.Ordinal).Count() != selected.Length))
             throw new SandboxException("environment_worktrees_invalid", "Select at most sixteen distinct worktrees.", 400);
-        foreach (var treeId in input.WorktreeIds ?? [])
-        {
-            if (workspaces is null) throw new SandboxException("environment_worktrees_unavailable", "Worktrees are unavailable.", 409);
-            var tree = await workspaces.Read(treeId, null, ct);
-            if (actor.AppId is not null && (tree.Owner.AppId != actor.AppId || tree.Owner.Installation != actor.Installation
-                || tree.Owner.UserId != actor.UserId || tree.Owner.SessionId != input.Context?.SessionId))
-                throw new SandboxException("environment_worktree_forbidden", "Select a worktree owned by this session.", 403);
-            if (tree.State != "active") throw new SandboxException("environment_worktree_unavailable", "The worktree is not active.", 409);
-        }
+        await ValidateWorktreesAsync(actor, input, ct);
         var fingerprint = SandboxValidation.Hash(CoreJson.Text(input));
         await allocation.WaitAsync(ct);
         try
         {
             if (!accepting) throw new SandboxException("environment_shutdown", "Core is stopping; new environments are closed.", 409);
+            var budget = await store.BudgetStoreAsync(ct);
+            using var reservation = await budget.LockAllocationAsync(ct);
             var all = await store.ListAsync(ct);
             var existing = all.FirstOrDefault(r => r.Owner.SameOwner(actor) && r.Request.RequestId == requestId);
             if (existing is not null)
@@ -134,10 +128,11 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                 await EnsureRootAsync(existing, ct);
                 return View(existing);
             }
-            if (all.Count(r => r.State != "finished") >= 2)
-                throw new SandboxException("environment_capacity", "Finish an existing environment before creating another (local limit: two).", 409);
+            var descendants = await budget.ListUnfinishedTreeAsync(ct);
+            if (descendants.Count >= 2)
+                throw new SandboxException("environment_capacity", "Finish an existing environment before creating another (root environment tree limit: two).", 409);
             var id = Guid.NewGuid().ToString("N");
-            var port = RuntimePortHelper.AllocateLoopbackPort(all.Where(r => r.State != "finished").Select(r => r.Port).ToHashSet());
+            var port = RuntimePortHelper.AllocateLoopbackPort(descendants.Select(r => r.Port).ToHashSet());
             var record = new CoreEnvironmentRecord(id, actor, input, fingerprint, port, 1, "stopped", clock.UtcNow);
             // Persist ownership before creating any root or process so an interrupted allocation is visible.
             await store.WriteAsync(record, ct);
@@ -145,6 +140,23 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             return View(record);
         }
         finally { allocation.Release(); }
+    }
+    private async Task ValidateWorktreesAsync(SandboxActor actor, CoreEnvironmentCreate input, CancellationToken ct)
+    {
+        var trees = new List<DevelopmentWorkspace>();
+        foreach (var treeId in input.WorktreeIds ?? [])
+        {
+            if (workspaces is null) throw new SandboxException("environment_worktrees_unavailable", "Worktrees are unavailable.", 409);
+            var tree = await workspaces.Read(treeId, null, ct);
+            if (actor.AppId is not null && (tree.Owner.AppId != actor.AppId || tree.Owner.Installation != actor.Installation
+                || tree.Owner.UserId != actor.UserId || tree.Owner.SessionId != input.Context?.SessionId))
+                throw new SandboxException("environment_worktree_forbidden", "Select a worktree owned by this session.", 403);
+            if (tree.State != "active") throw new SandboxException("environment_worktree_unavailable", "The worktree is not active.", 409);
+            trees.Add(tree);
+        }
+        if (actor.AppId is not null && input.Mode == "source"
+            && !trees.Any(tree => !CoreDataPaths.ContainsSymbolicLink(tree.Path, input.ProjectPath!)))
+            throw new SandboxException("environment_project_forbidden", "Select a Core project inside an attached worktree owned by this session, without symlinks.", 403);
     }
     private async Task EnsureRootAsync(CoreEnvironmentRecord record, CancellationToken ct)
     {
@@ -198,7 +210,11 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             deadline.CancelAfter(TimeSpan.FromMinutes(8));
             try
             {
-                if (kind is "start" or "restart") await EnsureRootAsync(record, deadline.Token);
+                if (kind is "start" or "restart")
+                {
+                    await ValidateWorktreesAsync(record.Owner, record.Request, deadline.Token);
+                    await EnsureRootAsync(record, deadline.Token);
+                }
                 store.VerifyRoot(record);
                 var root = store.Root(id);
                 if (kind is "start" or "restart")
@@ -243,6 +259,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                 record = record with { Revision = record.Revision + 1, State = kind == "finish" ? "cleanup-failed" : "failed", Error = ex.Message, Operations = operations };
             }
             await store.WriteAsync(record, CancellationToken.None);
+            if (record.State != "finished") await runtime.CleanupAsync(record, store.Root(id), CancellationToken.None);
             return View(record);
         }
         finally { gate.Release(); }
@@ -257,6 +274,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                 var record = (await store.ReadAsync(snapshot.Id, ct))!;
                 if (record.State == "finished") continue;
                 record = await ObserveAsync(record, ct);
+                await runtime.CleanupAsync(record, store.Root(record.Id), ct);
                 if ((record.Operations ?? []).Any(o => o.State == "running"))
                 {
                     record = record with { Revision = record.Revision + 1, Error = "An operation was interrupted. Inspect state and retry with a new request ID.",

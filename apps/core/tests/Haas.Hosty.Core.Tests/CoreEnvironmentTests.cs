@@ -162,6 +162,40 @@ public sealed class CoreEnvironmentTests
         Assert.True(CoreEnvironmentRuntime.Alive(new(process.Id, process.StartTime.ToUniversalTime())));
         Assert.False(CoreEnvironmentRuntime.Alive(new(process.Id, DateTimeOffset.UnixEpoch)));
     }
+    [Fact]
+    public async Task NestedAdmission_SharesCapacityAcrossServicesAndRestart_FinishReleasesIt()
+    {
+        using var f = new Fixture();
+        var child = await f.Create();
+        var config = new HostyCoreRuntimeConfig(child.DataRoot!, child.DataRoot!, "", 7070, "http://localhost:7070", null, "localhost", null, false);
+        var childStore = new CoreEnvironmentStore(CoreDataPaths.FromConfig(config));
+        var nested = new CoreEnvironmentService(childStore, f.Runtime, new Clock());
+        // Independent service/store instances contend on the on-disk root reservation.
+        var replacement = new CoreEnvironmentService(f.Store, f.Runtime, new Clock());
+        async Task<CoreEnvironmentView?> TryCreate(CoreEnvironmentService service)
+        {
+            try { return await service.CreateAsync(f.Actor, new(Guid.NewGuid().ToString(), "Concurrent"), default); }
+            catch (SandboxException ex) { Assert.Equal("environment_capacity", ex.Code); return null; }
+        }
+        var results = await Task.WhenAll(TryCreate(nested), TryCreate(replacement));
+        var allocated = Assert.Single(results, r => r is not null)!;
+        Assert.Single(results, r => r is null);
+        var owner = (await childStore.ListAsync(default)).Any(r => r.Id == allocated.Id) ? nested : replacement;
+        var restart = new CoreEnvironmentService(childStore, f.Runtime, new Clock());
+        Assert.Null(await TryCreate(restart));
+        var finished = await owner.CommandAsync(f.Actor, allocated.Id, "finish", new(Guid.NewGuid().ToString(), allocated.Revision), default);
+        Assert.Equal("finished", finished.State);
+        var grandchild = await restart.CreateAsync(f.Actor, new(Guid.NewGuid().ToString(), "Nested"), default);
+        Assert.NotEqual(child.Port, grandchild.Port);
+        var deeperConfig = config with { DataRoot = grandchild.DataRoot! };
+        var deeper = new CoreEnvironmentService(new(CoreDataPaths.FromConfig(deeperConfig)), f.Runtime, new Clock());
+        Assert.Null(await TryCreate(deeper));
+        // Parent Finish removes its entire owned subtree and restores the root budget.
+        Assert.Equal("finished", (await f.Command(child, "finish")).State);
+        Assert.False(Directory.Exists(grandchild.DataRoot));
+        Assert.NotNull(await TryCreate(replacement));
+        Assert.NotNull(await TryCreate(replacement));
+    }
     private sealed class Clock : IClock { public DateTimeOffset UtcNow => DateTimeOffset.UtcNow; }
     private sealed class Fixture : IDisposable
     {
