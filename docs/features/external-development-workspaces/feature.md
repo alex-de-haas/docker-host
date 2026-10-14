@@ -1,8 +1,8 @@
 ---
 created: 2026-10-07
 updated: 2026-10-14
-summary: Local external agents prepare authorized Core-owned Git worktrees through direct MCP, with separate workspace progress in Plans.
-components: [apps/core, apps/plans]
+summary: Local external agents use authorized Core-owned worktrees, separate plan progress, and read-only pull request tracking in Workspaces.
+components: [apps/core, apps/plans, apps/workspaces]
 ---
 
 # External Development Workspaces
@@ -73,9 +73,9 @@ difference when applicable. Provider failures replace successful facts with an u
 Observations persist under Core's `development/publications/external` directory and survive restart.
 Reads revalidate the current administrator, source access and connection before showing cached facts.
 The projection includes state, draft flag, checks, review decision, unresolved-thread count and
-observation time, but omits credentials and private review comment bodies. Removed references are never projected; the next successful refresh replaces the stored snapshot
-for the remaining references. Git publication authority remains separate
-from the external workspace grant.
+observation time, but omits credentials and private review comment bodies. Removed references are
+never projected; the next successful refresh replaces the stored snapshot for the remaining
+references. Git publication authority remains separate from the external workspace grant.
 
 ## Local Agent Setup
 
@@ -226,6 +226,9 @@ proof. Never force removal or manually delete Core's tree or shared bare reposit
 refusal. Durable leases do not expire with time; an administrator releases abandoned activity only
 after checking that its native consumer stopped. Released metadata remains available for inspection.
 
+The [PR #590 acceptance report](../../reviews/2026-10-14-external-workspace-pr-observation.md)
+records real provider, browser, connection-loss and remote-head verification.
+
 ## Testing Expectations
 
 - Exercise external PR observation with multiple references, remote head changes, provider errors,
@@ -233,7 +236,6 @@ after checking that its native consumer stopped. Released metadata remains avail
   persisted observations. Verify that no publication command or source cleanup is created.
 - Verify the exact GitHub query against a real PR and inspect state, checks, review summaries and
   connection loss through Core-managed Workspaces after normal browser login.
-
 - Preserve legacy owner JSON, allocation IDs, preparation argument fingerprints, persisted records,
   original bases and Harness session bindings through upgrade/restart.
 - Exercise real OAuth consent and PKCE redemption, token refresh, same-grant tasks, independent grants,

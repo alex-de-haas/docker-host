@@ -7,7 +7,7 @@ components: [apps/workspaces, apps/core, apps/harness, apps/shell]
 
 # Workspaces App
 
-Hosty Workspaces (`hosty.workspaces`, version `0.3.0`) is an ordinary runtime app. It consumes
+Hosty Workspaces (`hosty.workspaces`, version `0.3.1`) is an ordinary runtime app. It consumes
 Core's [workspace inspection contract](../assistant-session-workspaces/feature.md) under the
 reviewed `apps.workspaces.read` permission and the current administrator's app identity. It has
 no provider interface, MCP surface, source mutation controls or conversation storage.
