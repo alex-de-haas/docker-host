@@ -45,7 +45,7 @@ export interface StorageInspection {
 
 const defaultAppId = "com.haas.demo-app";
 // Keep in step with manifest.json + package.json (enforced by scripts/check-versions.mjs).
-const defaultAppVersion = "0.16.0";
+const defaultAppVersion = "0.17.0";
 
 export function getDemoConfig(): DemoConfig {
   const appId = process.env.HOSTY_APP_ID || defaultAppId;
@@ -70,8 +70,8 @@ export function getDemoConfig(): DemoConfig {
       appServiceTokenConfigured: Boolean(process.env.HOSTY_APP_SERVICE_TOKEN),
     },
     paths: {
-      data: process.env.DEMO_DATA_DIR || defaultRuntimePath("data"),
-      logs: process.env.DEMO_LOG_DIR || defaultRuntimePath("logs"),
+      data: process.env.HOSTY_APP_DATA_DIR || process.env.DEMO_DATA_DIR || defaultRuntimePath("data"),
+      logs: process.env.DEMO_LOG_DIR || path.join(process.env.HOSTY_APP_DATA_DIR || process.env.DEMO_DATA_DIR || defaultRuntimePath("data"), "logs"),
     },
     mounts: discoverHostyMounts(),
   };

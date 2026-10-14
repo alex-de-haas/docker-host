@@ -1,13 +1,13 @@
 ---
 created: 2026-10-09
-updated: 2026-10-12
-summary: Read-only inspection of session workspaces, repository worktrees, source changes, application bindings and recorded pull-request evidence.
+updated: 2026-10-14
+summary: Workspace and source inspection, pull-request evidence, and optional child Core sandbox creation, preview and lifecycle controls.
 components: [apps/workspaces, apps/core, apps/harness, apps/shell]
 ---
 
 # Workspaces App
 
-Hosty Workspaces (`hosty.workspaces`, version `0.2.1`) is an ordinary runtime app. It consumes
+Hosty Workspaces (`hosty.workspaces`, version `0.3.0`) is an ordinary runtime app. It consumes
 Core's [workspace inspection contract](../assistant-session-workspaces/feature.md) under the
 reviewed `apps.workspaces.read` permission and the current administrator's app identity. It has
 no provider interface, MCP surface, source mutation controls or conversation storage.
@@ -54,7 +54,19 @@ app bindings and PRs.
 
 The app reads on entry, explicit refresh and every 20 seconds while visible. Failed reads clear
 previous source content; changed selection aborts outstanding requests. Core and BFF responses
-are not cached. The viewer exposes no fetch, merge, commit, publish, cleanup or app-start action.
+are not cached. Source inspection exposes no fetch, merge, commit, publish or source-cleanup action.
+Sandbox lifecycle controls below operate on separate child Core environments.
+
+## Sandbox Environments
+
+With separately reviewed `core.environments.inspect` and `core.environments.operate` grants, an
+administrator creates a [child Core sandbox](../app-sandbox-runtimes/feature.md#shell-and-workspaces-controls)
+from active workspace worktrees. The panel supports the current Core build or a selected relative
+Core project, normal test-account setup, observed app status, authenticated preview, Start/Stop and
+confirmed complete deletion. Sandbox deletion preserves source. The Shell dashboard provides the
+same inventory/lifecycle view across workspaces. These controls do not grant source mutation rights.
+Application installation uses existing child Core/Harness workflows; worktree attachment alone does
+not install an application. The earlier single-app sandbox inventory remains a separate section.
 
 ## Runtime And Identity
 
@@ -65,13 +77,19 @@ The app publishes an independent manifest/version, image workflow and `app-feeds
 The shared SDK owns app-code exchange, session recovery, administrator gating, theme and launch
 mode. Standalone entry displays the app title; embedded/native entry hides duplicate app chrome.
 The server forwards only its service token and this app's current user credential to the bounded
-Core read routes. It cannot forward arbitrary Core paths or source mutation requests.
+Core read routes and the bounded sandbox UI routes. It cannot forward arbitrary Core paths,
+arbitrary child API transport or source mutation requests.
 
 The app exposes the SDK GET/POST adapter at `/api/hosty/ui/[...action]` behind the existing
 administrator session gate. It supplies host verification, navigation metadata and tool resolution,
 so Shell policy hides app navigation after reloads and standalone navigation finishes loading.
 
 ## Testing Expectations
+
+- Verify sandbox creation with current/source Core, normal test-account setup, app preview and
+  confirmed Finish through Shell embedding. Assert source retention and complete child cleanup.
+- Cover administrator/grant requirements, cross-origin mutation denial and bounded proxy paths.
+
 
 - SDK UI routes cover authenticated bootstrap/navigation/panels reads, same-origin navigation
   resolution, and rejection of anonymous, non-administrator and cross-origin requests.

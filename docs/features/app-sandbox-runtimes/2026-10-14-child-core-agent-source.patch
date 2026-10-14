@@ -1,0 +1,11 @@
+--- a/apps/demo-app/src/components/DemoOverview.tsx
++++ b/apps/demo-app/src/components/DemoOverview.tsx
+@@ -44,7 +44,7 @@
+     <DemoShell>
+       <DemoPageHeader
+         eyebrow={config.appId}
+-        title="Hosty Demo App"
++        title="Hosty Demo App — Child Core hot reload verified"
+         description="Runtime diagnostics for Hosty app lifecycle development."
+         actions={
+           <Status status="online">

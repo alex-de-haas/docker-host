@@ -19,7 +19,7 @@ beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} unobserve() {} });
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
     if (state.revoked) return new Response(JSON.stringify({ message: "Source access was revoked." }), { status: 403 });
-    const result = input === "/api/workspaces" ? { workspaces: [workspace], observedAt: "2026-10-09T10:00:00Z" }
+    const result = input === "/api/environments" ? { environments: [] } : input === "/api/sandboxes" ? { instances: [] } : input === "/api/workspaces" ? { workspaces: [workspace], observedAt: "2026-10-09T10:00:00Z" }
       : input.includes("/diff?") ? { path: "private.txt", combined: "+private source contents", binary: false, truncated: false } : tree;
     return new Response(JSON.stringify(result));
   }));
@@ -44,5 +44,6 @@ it("does not silently select a different worktree for an invalid deep link", asy
   state.query = "workspace=group&worktree=foreign";
   await act(async () => root.render(<WorkspacesWorkbench />));
   expect(container.textContent).toContain("requested worktree is not in this workspace");
-  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch).toHaveBeenCalledWith("/api/workspaces", expect.anything());
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/api/worktrees/"))).toBe(false);
 });

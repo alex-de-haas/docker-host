@@ -1,6 +1,6 @@
 ---
 created: 2026-06-03
-updated: 2026-10-06
+updated: 2026-10-14
 summary: The repository-local reference app used to validate lifecycle, identity, directory access and app roles.
 components: [apps/demo-app]
 ---
@@ -95,6 +95,16 @@ responses in a dialog using the same transport, preserving the document's embedd
 
 An iframe document replacement discards its in-memory grant. In cookie-restricted contexts the
 replacement document offers app-owned sign-in again; Shell does not relay the previous grant.
+
+## Docker Source Test Profile
+
+The reviewed `sandbox-dev` profile runs backend and frontend in separate Docker containers on
+container port 3000. Read-only source mounts share the selected worktree; dependency and Next
+output directories use isolated caches. `next-env.d.ts` is an explicitly declared generated-file
+overlay, independent for each service. The development image initializes empty Docker cache
+volume roots and drops to UID/GID 1000 with no-new-privileges before dependency setup and Next.
+The offline sandbox's existing non-root user override skips that initialization. Dependency
+preparation accepts both the offline sandbox generation and ordinary Core service caches.
 
 ## Testing Expectations
 

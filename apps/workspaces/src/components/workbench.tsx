@@ -1,4 +1,6 @@
 "use client";
+import { WorkspaceEnvironments } from "./workspace-environments";
+import { WorkspaceSandboxes } from "./workspace-sandboxes";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { HostyNavigationBoundary } from "@hosty-sdk/app/react";
@@ -81,6 +83,8 @@ function WorkspaceDetails({ workspace: w, selectedTree, epoch, now }: { workspac
     <Button className="lg:hidden" variant="ghost" size="sm" onClick={() => navigate("/")}><ArrowLeft className="size-4" />All workspaces</Button>
     <header className="flex flex-wrap items-start justify-between gap-4"><div className="min-w-0"><h2 className="text-xl font-semibold">{w.owner.label}</h2><p className="mt-1 break-all text-muted-foreground">{w.owner.kind === "external" ? "External work reference" : "Session"}: {w.owner.reference}</p><p className="mt-1 break-all font-mono text-xs text-muted-foreground">Workspace {w.id}</p></div>
       {session && <Button variant="outline" asChild><a href={session} target="_blank" rel="noreferrer">Open session<ArrowUpRight className="size-4" /></a></Button>}</header>
+    <WorkspaceEnvironments workspace={w} />
+    <WorkspaceSandboxes workspaceId={w.id} />
     {w.owner.sessionUnavailable && <Message>{w.owner.sessionUnavailable}</Message>}
     <div className="flex flex-wrap gap-2" role="group" aria-label="Repository worktrees">{w.worktrees.map(t => <Button key={t.id} variant={tree?.id === t.id ? "secondary" : "outline"} aria-pressed={tree?.id === t.id}
       title={t.repository} onClick={() => navigate(workspaceLink(w.id, t.id))}><GitBranch className="size-4" /><span className="max-w-56 truncate">{repositoryName(t.repository)}</span><span className="text-xs text-muted-foreground">{t.state}</span></Button>)}</div>

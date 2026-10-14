@@ -1,24 +1,129 @@
 ---
-status: On Hold
+status: Draft
 created: 2026-09-26
-updated: 2026-10-10
-summary: Deferred isolation of agent session executions, including workspace access, credentials, network boundaries and verified process shutdown.
+updated: 2026-10-14
+summary: Host protection through a shared agent container first, with measured per-session isolation, scoped access and verified shutdown retained as separate requirements.
 components: [apps/harness, apps/core]
 ---
 
-# Agent Session Containment
+# Agent Host And Session Containment
 
 ## Scope And Owner Direction
 
-The owner approved this planning revision on 2026-10-10, without implementation. This plan remains
-On Hold. It owns the execution boundary for individual agent sessions, replacing the original
-proposal to make a Docker profile for the whole Harness app the isolation boundary. Packaging a
-shared Harness server in Docker may be useful deployment work, but does not isolate its sessions.
+Owner revision, 2026-10-13: protect the host first and prefer one shared administrator agent
+container for the [November demonstration](../hosty-delivery-readiness/plan.md). Return this plan
+to Draft for active design; implementation is not approved. Compare performance/resource cost
+against per-session containers before deciding whether the stricter topology belongs in that
+milestone. One active agent, with no queue implementation, is enough for the demonstration.
 
-[Vision decisions 26, 28 and 32](../../vision.md) require an eventual isolated execution to expose
-only the owning workspace's authorized worktrees and to support a separately verified MCP-only
-ordinary-user profile. A container backend is the intended direction; its topology, supported hosts
-and rollout still need design and explicit implementation approval.
+The initial shared runner may access dedicated agent app data, explicitly shared worktrees and
+selected sandbox seed directories. It must not reach unrelated host folders, the whole Core data
+root, production app data, the Docker socket or unrestricted host control. Cross-workspace source
+visibility is an accepted limitation within this shared administrator boundary. Keeping the trusted
+coordinator and broad service credentials outside model-accessible execution remains necessary.
+
+This revises the sequencing in [vision decisions 26 and 32](../../vision.md), recorded by decision
+35. It does not turn a shared container into session isolation. The eventual per-session target
+below remains tracked by D1-D10; shared-host delivery is D11-D13, with comparison experiments under
+D9. Common host-control restrictions also apply to the shared runner. Neither the shared runner nor
+its performance results satisfy ordinary-user acceptance under decision 28.
+
+## Approved Bounded Experiment (2026-10-13)
+
+The owner explicitly requested a single-agent Docker experiment: restrict host filesystem mounts
+to dedicated agent data and a worktree, verify real agent operation, and measure startup/resources.
+This approves that research portion of D9 only, not the broader Draft implementation. Run Codex
+0.160.0 (the Harness pin) on the available local Docker Desktop/ARM64 engine with a disposable
+synthetic linked worktree, 2 CPU / 2 GiB limits, non-root execution and no Docker socket. Measure
+container start, app-server readiness, real edit/test turns, resume, idle/working resource use and
+filesystem refusal probes. Keep provider auth out of the image/evidence and remove its temporary
+copy afterward. Use existing ChatGPT authentication; do not create an API key or modify live Core.
+The Docker bridge permits provider traffic; this test does not establish network confinement or
+Core/Shell integration. Retain a dated report and repeatable recipe. D9 stays open for the wider
+matrix, comparison and integration acceptance; no production backend deliverable is completed.
+
+The [dated experiment report](../../reviews/2026-10-13-agent-container-experiment.md) records a
+successful standalone edit/test/resume and host-path refusal check. Repeat local thread readiness
+was 0.135 s median; settled idle used about 467-475 MiB, with a 698 MiB cgroup peak after resume.
+These are synthetic local observations, not integrated Harness acceptance or a session-topology
+decision. The report includes raw evidence, reproduction steps and the untested boundaries.
+
+The owner subsequently authorized a second bounded experiment through Harness: prepare a real
+application workspace, change source, build and test it, and measure loaded memory. Use an isolated
+local Core/Harness data root, the existing Demo App source, ordinary administrator setup/login and
+Core-owned session worktrees. An experimental command wrapper may transport the existing Codex
+adapter into Docker, with a narrow session workspace bridge where required. Keep trusted Core
+credentials outside the agent container, preserve the live host, and create no commits or PRs.
+Record transport adaptations and integration gaps separately from measured application results.
+This extends the research authorization under D9; the product implementation remains Draft.
+
+The [Harness/real-app report](../../reviews/2026-10-13-harness-container-experiment.md) records
+successful Core-owned workspace operations, a real Demo App patch, 21 passing tests, lint, and
+Turbopack/webpack builds through an experimental Docker command transport. Initial idle was
+486 MiB; the first build reached 2.14 GiB sampled working set and the cgroup lifetime peak was
+2.36 GiB under a 4 GiB ceiling. Harness coordination used about 270 MiB host RSS separately.
+Loopback MCP bridging, host/container path mapping and narrow Git metadata access required
+experiment-specific adapters. Production versions remain D11-D13; D9 still owns controlled
+comparisons, build worker-count tuning, concurrent work, long runs and browser/runtime overhead.
+
+Owner clarification after these experiments, 2026-10-13: the agent worker and the application
+sandbox are separate containers. Both experiments ran commands inside the agent worker; the
+second included npm, tests and compilers, but started no application server or sandbox runtime.
+Its 2.36 GiB peak therefore describes the worker plus its build subprocesses, not an agent/app
+runtime pair. This does not settle where builds belong in the product: worker-local builds,
+the application's development environment and a separate build worker remain options to compare
+under D9. Moving a compiler changes resource ownership, not necessarily total host memory demand.
+Keep 4 GiB as the tested experimental ceiling for this build workload, not a universal requirement.
+
+The owner then authorized and completed the
+[separate-container development experiment](../../reviews/2026-10-13-two-container-development-experiment.md).
+Harness source edits hot-reloaded in a separate Core-managed Demo App container; synthetic seed
+visibility, normal browser login, tests/lint and independent container stop/restart passed after
+fixture corrections. Main sampled worker/app peaks were 927/876 MiB; corrected app setup reached
+900 MiB. Cgroup peaks were 1.05 GiB for the worker and 1.75 GiB for the first app lifetime, with
+different cache accounting. These are development-loop observations, not production-build budgets.
+
+The fixture needed explicit port/type metadata and separate root/nested dependency caches; an
+agent-created Vitest cache otherwise prevented app restart through the read-only source mount.
+It uses a disposable Core installation, not concurrent sandbox identities in one Core. App
+runtime/preview acceptance remains under [Sandbox D4/D5/D8/D10](../app-sandbox-runtimes/plan.md),
+and D9 retains controlled comparisons/long-run costs. The bounded research does not approve the
+broader Draft backend or complete those deliverables.
+
+The [2026-10-14 Core sandbox runtime evidence](../app-sandbox-runtimes/2026-10-14-core-runtime-evidence.json)
+adds a real contained Codex/Harness edit/test/build turn beside independent app containers, real
+operator HMR and private browser verification. Sampled agent/app cgroup maxima are 1.59/1.20 GiB;
+the simultaneous maximum is 2.79 GiB. Agent lifetime peak is 2.50 GiB, including earlier preparation,
+with zero OOM events under 4 GiB. Sandbox resources and the copied agent login are removed after
+export. The transport is still experimental; these results do not approve or deliver the Draft
+production worker backend, per-session isolation or unrestricted agent network confinement.
+
+## Shared Host Boundary First
+
+Prefer a Docker environment that hosts the existing agent adapters with its own narrow persistent
+state area. Determine whether the untrusted execution worker can be separated from Harness's
+trusted coordination/service credentials; packaging the whole process with broad secrets does not
+by itself enforce the intended boundary. Core or a trusted launcher owns container creation;
+agents request scoped operations rather than receiving the Docker daemon or a general host shell.
+
+Keep all approved worktrees accessible through explicitly reviewed mounts or a narrow export.
+Current trees and Git metadata live below `core/development`; no physical migration to a new shared
+folder is required unless a reviewed design needs it. Resolve Git access without mounting all of
+Core. Add only the chosen sandbox instance's synthetic-data area when seeding is authorized.
+Source, provider state, fixture data and coordinator secrets need separate path/lifetime decisions.
+
+Use the same local source/task in native, shared-container and per-session-container experiments.
+Separate engine/VM overhead, agent processes, app build and browser cost. Measure cached startup,
+resume, first tool action, idle/peak RAM and recovery with one agent first; 3/5-agent scaling is
+secondary. Do not assume that one container implies one process or saves the cost of concurrent
+agents. No queue is required. A reusable instance launcher may be shared with App Sandbox later,
+but a generic framework and per-session worker pool are not first-slice prerequisites.
+
+Label the active mode and shared-source limitation honestly. There is no silent native fallback.
+Check host canaries, credentials and scoped APIs; cross-session denial tests become release gates
+only for a mode claiming session isolation. Stopping one conversation must not be reported as
+revoking its filesystem access while a shared worker still holds that access. Define worker-wide
+stop and recovery effects on all active conversations and retain source when ownership is unknown.
 
 ## Current Behavior
 
@@ -35,7 +140,10 @@ and rollout still need design and explicit implementation approval.
   authorization; they do not make that broad local control channel session-scoped.
 - Cancellation and a subsequent permission change do not prove that detached commands have stopped.
 
-## Target Behavior
+## Eventual Per-Session Target Behavior
+
+This stricter target remains unbuilt after a shared-host milestone; do not check its deliverables
+merely because the shared runner passes host-containment tests.
 
 ### Session Execution Boundary
 
@@ -155,8 +263,9 @@ The 2026-10-10 transfer retires Approval Rules D1-D4 and D7-D10 there without ma
 | D8 app/action authority, Git destinations and audit | App Development Controls D2-D3/D6; Execution Authorization D1-D3; PR Lifecycle; Approval Rules D15 for permission decisions |
 | D9 settings bypass and D10 sensitive reads / all tool paths | Containment D8/D9 |
 
-D1-D7 below retain their original themes, adjusted to session execution rather than whole-Harness
-packaging. New work uses D8-D10; no retired Approval Rules ID is reused.
+D1-D10 retain the stricter session target and its historical transfers. D9 also owns the new
+shared/native/per-session comparison. D11-D13 add the explicitly narrower shared-host milestone;
+no prior deliverable is marked complete or silently narrowed, and no retired ID is reused.
 
 ## Deliverables
 
@@ -168,27 +277,36 @@ packaging. New work uses D8-D10; no retired Approval Rules ID is reused.
 - [ ] D6. Integrate existing or separately approved scoped Core lifecycle/development/publication operations and update the host prompt; verify granted and refused actions without a privileged host CLI fallback.
 - [ ] D7. Document shipped isolation and limitations in feature.md and affected Harness/Bridge reality docs, remove this plan and regenerate the index after all deliverables pass.
 - [ ] D8. Enforce effective filesystem, command, network and native-settings policy across file/search tools, shell, scripts, subagents and in-process fetches; support independent edit/command grants and refuse unsupported capability or stale-thread reuse.
-- [ ] D9. Run reproducible synthetic-fixture experiments and end-to-end acceptance on the selected OS/adapter matrix; carry forward historical regression cases, verify actual effects and audit coverage, and record unsupported cases before implementation approval and release.
+- [ ] D9. Compare native, shared-container and per-session execution using reproducible synthetic fixtures and measured startup/resource costs; run mode-specific acceptance on the selected OS/adapter matrix, carry forward historical regression cases, and record actual effects, audit coverage and unsupported cases.
 - [ ] D10. Implement ownership and verified termination of all execution descendants plus mount-release acknowledgements for Workspace Lifecycle Controls; cover detached writers, cancellation, restart/recovery and unknown state without claiming API revocation alone removes OS access.
+
+### Initial Shared-Host Milestone (Owner Revision, 2026-10-13)
+
+- [ ] D11. Implement a shared administrator agent-container backend with pinned adapters/toolchains, trusted launch/coordination outside agent authority, persistence and recovery, without per-session containers or queueing as prerequisites.
+- [ ] D12. Define and enforce the shared runner's exact data/worktree/Git/seed bindings and scoped Core/provider access; verify common host-control restrictions and preserve existing workspace and PR operations without broad host credentials.
+- [ ] D13. Verify the shared-host journey under D9, cancellation/recovery and stop effects, document its observed guarantees and cross-session limitations, and keep the stricter session requirements explicitly unfinished.
 
 ## Open Questions
 
-1. Which trusted component launches sessions, and is one container kept for the session or replaced
-   per execution? How are concurrency, resume, provider switching and recovery represented?
-2. Which platforms/container engine are supported first, and what network enforcement works for
+1. What shared worker/coordinator split, provider-login transfer and exact mount set satisfies the
+   first host boundary, and which startup/RAM budget justifies later per-session execution?
+2. For the eventual session mode, which trusted component launches it, and is a container retained
+   per session or replaced per execution? How are concurrency, resume and recovery represented?
+3. Which platforms/container engine are supported first, and what network enforcement works for
    native tools, model transport and MCP on each? Coordinate research with App Sandbox.
-3. Which Git metadata strategy and no-Git source binding preserve useful development without
-   exposing originals, sibling worktrees or shared administrative state?
-4. Can provider credentials remain in a broker, and how are native login state and existing host
+4. Which Git metadata and no-Git binding support the shared runner without exposing Core state,
+   and what stricter strategy excludes originals/siblings in eventual session mode?
+5. Can provider credentials remain in a broker, and how are native login state and existing host
    connections supported without exposing broader homes or cross-session state?
-5. How do active grant changes trigger a new execution generation, and which acknowledgement proves
-   process termination and mount release before lifecycle cleanup?
+6. How do active grant changes trigger a new execution generation, and which acknowledgement proves
+   process termination and mount release before cleanup, including the effects of shared-worker stop?
 
 ## Verification
 
 - Launch through Core/Harness with real identity on each supported host. Verify the actual execution
   placement, mode shown in the UI, provider-backed Claude/Codex turns and refusal of host fallback.
-- Use two simultaneous sessions, including different users in the later ordinary-user acceptance.
+- For the stricter session mode, use two simultaneous sessions, including different users in the
+  later ordinary-user acceptance.
   Inspect mounts/processes and attempt file, shell, search, symlink and network access to synthetic
   originals, siblings, secrets and control endpoints. Prove external denial, not a model's refusal.
 - Exercise multiple authorized worktrees, Git metadata/refs, no-Git or unsupported sources, package

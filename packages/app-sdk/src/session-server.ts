@@ -2,12 +2,13 @@ import { ProviderClient, type ProviderServerOptions } from "@hosty-sdk/app/provi
 import { ProviderError } from "@hosty-sdk/app/providers";
 import type { AppSessionStatus, SessionRecoveryParams } from "./session-types.js";
 import type { PermissionNoticeState } from "./permission-types.js";
+import type { SandboxIdentityContext } from "./sandbox-identity.js";
 import type { AppContinuity } from "./continuity.js";
 
 /** Framework-neutral server adapter. Call with an already authenticated app session, never request data. */
 export type HostySessionInput = {
   status: AppSessionStatus;
-  identity?: { userId: string; hostRole: string | null; activeUntil?: string | null; activityRequired?: boolean; continuity?: AppContinuity };
+  identity?: { userId: string; hostRole: string | null; activeUntil?: string | null; activityRequired?: boolean; continuity?: AppContinuity; sandbox?: SandboxIdentityContext };
   error?: { code: string; message: string; status: number | null };
 };
 
@@ -19,6 +20,12 @@ export async function createHostySessionResponse(session: HostySessionInput, rec
   const identity = session.identity;
   if (options.administratorOnly && identity.hostRole !== "host.admin")
     return Response.json({ status: "forbidden", recovery }, { headers });
+  if (identity.sandbox) {
+    // Core admits only recipes without required global permissions in this offline profile.
+    // The revalidated execution identity is authoritative; never query the installed app's
+    // permission state or advertise a global permission-review action from a test realm.
+    return Response.json({ status: "active", ...identity, recovery, hosty: { version: 1, setup: "ready" } }, { headers });
+  }
   let setup: "ready" | "missing" | "unsupported" | "unavailable" | "incompatible" = "unavailable";
   let notice: PermissionNoticeState | undefined;
   try {

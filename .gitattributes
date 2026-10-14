@@ -1,0 +1,2 @@
+# Unified-diff evidence intentionally includes a space prefix on blank context lines.
+docs/features/**/*.patch whitespace=-blank-at-eol

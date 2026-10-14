@@ -1,0 +1,574 @@
+{
+  "date": "2026-10-14",
+  "scope": "Local macOS ARM64 Docker Desktop, reviewed offline Demo App source/artifact recipes; experimental contained Codex transport",
+  "baseCommit": "608739739dbf31a7476c9150a4ce1cdf30c2bb0f",
+  "docker": {
+    "engine": "29.8.2",
+    "configuredGiB": 20,
+    "reportedMemoryBytes": 20939583488
+  },
+  "independentQa": {
+    "interactive": {
+      "source": "appArtifact",
+      "background": false,
+      "runtimeRequested": true,
+      "runtimeVerified": true,
+      "allocationReplay": true,
+      "noWorkspace": true,
+      "resetCreatesNewUserAndExpandsSeed": true,
+      "startupSeconds": 4.274,
+      "disposalReplay": true,
+      "temporaryResourcesRemoved": true,
+      "state": "passed"
+    },
+    "background": {
+      "source": "appArtifact",
+      "background": true,
+      "runtimeRequested": true,
+      "runtimeVerified": true,
+      "allocationReplay": true,
+      "noWorkspace": true,
+      "resetCreatesNewUserAndExpandsSeed": true,
+      "startupSeconds": 3.247,
+      "backgroundDispatchAfterLogout": true,
+      "revocationDenied": true,
+      "disposalReplay": true,
+      "temporaryResourcesRemoved": true,
+      "state": "passed"
+    }
+  },
+  "agent-resource-summary": {
+    "window": {
+      "status": "idle",
+      "seconds": 101.23673605918884,
+      "startedAt": 1791962948.593409
+    },
+    "samples": 21,
+    "nominalIntervalSeconds": 5,
+    "maxActualIntervalSeconds": 5.005,
+    "peaks": {
+      "agentWorkingSetBytes": 1440961528,
+      "appWorkingSetBytes": 1028653056,
+      "concurrentAgentAndAppWorkingSetBytes": 2468251435,
+      "agentCgroupCurrentBytes": 1704001536,
+      "appCgroupCurrentBytes": 1288527872,
+      "concurrentAgentAndAppCgroupBytes": 2991177728,
+      "agentCgroupLifetimePeakBytes": 2679844864
+    },
+    "lastDiskBytes": {
+      "agentData": 261455872,
+      "worktree": 782172160
+    },
+    "memoryEvents": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0",
+      "sock_throttled": "0"
+    },
+    "notes": [
+      "Docker working set subtracts reclaimable cache; cgroup current includes charged memory.",
+      "Lifetime peak includes the earlier coordinator build and dependency installation; it is not an agent-turn-only peak.",
+      "Concurrent values are maxima of same-sample sums; per-container maxima are not summed."
+    ]
+  },
+  "actual-network": {
+    "passed": true,
+    "checks": {
+      "host-canary": {
+        "passed": true,
+        "observed": {
+          "error": "TypeError"
+        }
+      },
+      "direct-core": {
+        "passed": true,
+        "observed": {
+          "error": "TypeError"
+        }
+      },
+      "other-instance": {
+        "passed": true,
+        "observed": {
+          "error": "TypeError"
+        }
+      },
+      "internet-ip": {
+        "passed": true,
+        "observed": {
+          "error": "TypeError"
+        }
+      },
+      "admin-route": {
+        "passed": true,
+        "observed": {
+          "status": 403
+        }
+      },
+      "encoded-route": {
+        "passed": true,
+        "observed": {
+          "status": 403
+        }
+      },
+      "socket-route": {
+        "passed": true,
+        "observed": {
+          "status": 403
+        }
+      },
+      "fixed-protocol-route": {
+        "passed": true,
+        "observed": {
+          "status": 200
+        }
+      },
+      "external-dns": {
+        "passed": true,
+        "observed": {
+          "error": "EAI_AGAIN"
+        }
+      },
+      "forwarding-disabled": {
+        "passed": true
+      },
+      "service-config": {
+        "passed": true
+      }
+    }
+  },
+  "resource-failures": {
+    "start": {
+      "kind": "start",
+      "state": "ready",
+      "seconds": 4.284,
+      "operation": {
+        "id": "e7c80a17-6411-433f-8c46-642a23b9236c",
+        "kind": "start",
+        "fingerprint": "7332cda9ff23e6673559e586847f0a55c522bf3a891a11fbfe313ed4a287628c",
+        "state": "succeeded",
+        "createdAt": "2026-10-14T07:48:38.466497+00:00",
+        "errorCode": null,
+        "message": null
+      }
+    },
+    "pid": {
+      "exitCode": 0,
+      "stdout": "{\"spawnErrors\":50}\n",
+      "stderr": ""
+    },
+    "tmpfs": {
+      "exitCode": 0,
+      "stdout": "ENOSPC\n",
+      "stderr": ""
+    },
+    "readonlyRoot": {
+      "exitCode": 0,
+      "stdout": "EROFS\n",
+      "stderr": ""
+    },
+    "oom": {
+      "exitCode": 137,
+      "stdout": "",
+      "stderr": ""
+    },
+    "memoryEvents": "low 0\nhigh 0\nmax 40\noom 1\noom_kill 1\noom_group_kill 0\nsock_throttled 0\n",
+    "afterOOMRestart": {
+      "kind": "restart",
+      "state": "ready",
+      "seconds": 5.315,
+      "operation": {
+        "id": "835085d9-e378-48f4-900c-52c2b5564215",
+        "kind": "restart",
+        "fingerprint": "2492c5035bf9b358951f32309653c4eba8b7e21ef27a445aa3bba5105e6ee198",
+        "state": "succeeded",
+        "createdAt": "2026-10-14T07:48:43.750459+00:00",
+        "errorCode": null,
+        "message": null
+      }
+    },
+    "diskWrite": {
+      "exitCode": 0,
+      "stdout": "written\n",
+      "stderr": ""
+    },
+    "diskEnforcement": {
+      "seconds": 2.039,
+      "state": "stopped",
+      "errorCode": "storage_budget_exceeded"
+    },
+    "disposal": {
+      "kind": "dispose",
+      "state": "disposed",
+      "seconds": 1.728,
+      "operation": {
+        "id": "66f7cb77-af33-438e-a515-6d87260ceae9",
+        "kind": "dispose",
+        "fingerprint": "a9b9fc5843404923acaee769ef983db004bd64f441a2bce3e86986c296aafd82",
+        "state": "succeeded",
+        "createdAt": "2026-10-14T07:48:51.183649+00:00",
+        "errorCode": null,
+        "message": null
+      }
+    }
+  },
+  "configuration-drift": {
+    "start": {
+      "kind": "start",
+      "state": "ready",
+      "seconds": 5.858,
+      "operation": {
+        "id": "07c601f2-5bb7-4630-b556-2034164691d5",
+        "kind": "start",
+        "fingerprint": "137daf173decffec1a3d5f65ba573aeccbe016d9311e1dff3dfd8472bd49cc37",
+        "state": "succeeded",
+        "createdAt": "2026-10-14T07:54:35.958811+00:00",
+        "errorCode": null,
+        "message": null
+      }
+    },
+    "observedState": "stopped",
+    "errorCode": "sandbox_configuration_changed",
+    "seconds": 8.135,
+    "recovered": {
+      "kind": "restart",
+      "state": "ready",
+      "seconds": 5.358,
+      "operation": {
+        "id": "573dc84c-8306-4d47-898f-ecd8e7417da1",
+        "kind": "restart",
+        "fingerprint": "9eb8cafd4d6dd66f911ac7058a8700a30ba4f07da4d58af5e5b90cd016425b00",
+        "state": "succeeded",
+        "createdAt": "2026-10-14T07:54:50.003521+00:00",
+        "errorCode": null,
+        "message": null
+      }
+    }
+  },
+  "final-browser-results": [
+    {
+      "instanceId": "914bcf3c4b834a1db9178326379fa891",
+      "source": "worktree",
+      "state": "passed",
+      "stale": false,
+      "errorCode": null
+    },
+    {
+      "instanceId": "488bc6f1ad8b4275931f0dd3e7975223",
+      "source": "appArtifact",
+      "state": "passed",
+      "stale": false,
+      "errorCode": null
+    }
+  ],
+  "data-separation-final": [
+    {
+      "kind": "worktree",
+      "roleDataWritten": true,
+      "files": [
+        "app-roles.json",
+        "scenario.json"
+      ]
+    },
+    {
+      "kind": "appArtifact",
+      "roleDataWritten": false,
+      "files": [
+        "scenario.json"
+      ]
+    }
+  ],
+  "third-instance-admission": {
+    "kind": "start",
+    "state": "starting",
+    "seconds": 1.211,
+    "operation": {
+      "id": "71145596-58e6-4cce-b2d0-9ff2bec55045",
+      "kind": "start",
+      "fingerprint": "8362ff05d31eb7361610b051c96e1897d3ee8347876b08b478895ac71449cb60",
+      "state": "failed",
+      "createdAt": "2026-10-14T07:43:50.031262+00:00",
+      "errorCode": "sandbox_concurrency_exceeded",
+      "message": "Operation did not complete; inspect state and recorded resources before retrying."
+    }
+  },
+  "core-adoption": {
+    "passed": true,
+    "instances": [
+      {
+        "id": "fe20535a0dad4c61a8b8540f1d09be3f",
+        "state": "ready",
+        "generation": "6de2619dc2ae411991cfb913bb8c9df3",
+        "dataRevision": "e0c61d427f904062bf22831759952644"
+      },
+      {
+        "id": "965e50221feb479d99f9d0ed4b2a08e3",
+        "state": "ready",
+        "generation": "b8ab1113b3fd454487f8df326b34cc1d",
+        "dataRevision": "e3d7f17ac9cb4812aa701a50e2118ef8"
+      }
+    ]
+  },
+  "second-runtime": {
+    "state": "ready",
+    "startupSeconds": 4.251,
+    "operationState": "succeeded",
+    "errorCode": null,
+    "pinnedOriginal": "sha256:6a30b0b2d34b6e3b50fd0b23f6df99431c76c5f1582861dd1ce0fd65a12ef2f8",
+    "serviceImages": {
+      "hosty-sb-fe20535a0dad4c61a8b8540f1d09be3f-6de2619dc2ae411991cfb913bb8c9df3-frontend": "sha256:6a30b0b2d34b6e3b50fd0b23f6df99431c76c5f1582861dd1ce0fd65a12ef2f8",
+      "hosty-sb-fe20535a0dad4c61a8b8540f1d09be3f-6de2619dc2ae411991cfb913bb8c9df3-backend": "sha256:6a30b0b2d34b6e3b50fd0b23f6df99431c76c5f1582861dd1ce0fd65a12ef2f8"
+    },
+    "pinnedTagMutationPassed": true
+  },
+  "first-pair-disposal": [
+    {
+      "kind": "dispose",
+      "state": "disposed",
+      "seconds": 23.015,
+      "operation": {
+        "id": "8a284b82-f890-4cc5-9226-7e813fe6d37c",
+        "kind": "dispose",
+        "fingerprint": "7ed179349a4f42a6d0046c28762042076b448b15bfafa5ec97462ca4c9b8c848",
+        "state": "succeeded",
+        "createdAt": "2026-10-14T07:37:03.305634+00:00",
+        "errorCode": null,
+        "message": null
+      },
+      "replay": true,
+      "dataRemoved": true,
+      "realmRemoved": true,
+      "instanceId": "965e50221feb479d99f9d0ed4b2a08e3"
+    },
+    {
+      "kind": "dispose",
+      "state": "disposed",
+      "seconds": 1.713,
+      "operation": {
+        "id": "a86f40c8-9794-4025-a48e-7ac8db47fde7",
+        "kind": "dispose",
+        "fingerprint": "1752534ba92203341e192da6f3e31db185b3b65522c738e6ffc9115a7119901e",
+        "state": "succeeded",
+        "createdAt": "2026-10-14T07:37:26.33174+00:00",
+        "errorCode": null,
+        "message": null
+      },
+      "replay": true,
+      "dataRemoved": true,
+      "realmRemoved": true,
+      "instanceId": "fe20535a0dad4c61a8b8540f1d09be3f"
+    }
+  ],
+  "cancel-result": {
+    "cancelSeconds": 0.034,
+    "reportState": "failed",
+    "errorCode": "sandbox_browser_cancelled",
+    "appState": "ready",
+    "via": "Harness session workspace action"
+  },
+  "crash-recovery": {
+    "method": "SIGKILL isolated Core, then CLI source restart after stale local control refused start",
+    "beforePid": 63074,
+    "afterPid": 86025,
+    "instances": [
+      {
+        "id": "914bcf3c4b834a1db9178326379fa891",
+        "state": "ready",
+        "sameGeneration": true,
+        "sameDataRevision": true,
+        "sameUsers": true
+      },
+      {
+        "id": "488bc6f1ad8b4275931f0dd3e7975223",
+        "state": "ready",
+        "sameGeneration": true,
+        "sameDataRevision": true,
+        "sameUsers": true
+      }
+    ],
+    "afterStartedAt": "2026-10-14T07:59:34.403755+00:00"
+  },
+  "worker-death": {
+    "state": "failed",
+    "errorCode": "sandbox_browser_worker_failed",
+    "appState": "ready"
+  },
+  "independent-stop": {
+    "appState": "stopped",
+    "agentCommandExit": 0,
+    "node": "v22.23.3"
+  },
+  "final-disposal": [
+    {
+      "instanceId": "914bcf3c4b834a1db9178326379fa891",
+      "kind": "dispose",
+      "state": "disposed",
+      "seconds": 3.263,
+      "operation": {
+        "id": "af4d315d-7ea2-48c6-a085-bdbea1c6a412",
+        "kind": "dispose",
+        "fingerprint": "bc6e0aeca11b205e154b77da96c97d4eb70803dce2eb6c0d9235260ad18d4cfc",
+        "state": "succeeded",
+        "createdAt": "2026-10-14T08:03:27.945343+00:00",
+        "errorCode": null,
+        "message": null
+      },
+      "replay": true,
+      "dataRemoved": true,
+      "realmRemoved": true,
+      "containersRemoved": true,
+      "networksRemoved": true
+    },
+    {
+      "instanceId": "488bc6f1ad8b4275931f0dd3e7975223",
+      "kind": "dispose",
+      "state": "disposed",
+      "seconds": 1.725,
+      "operation": {
+        "id": "3c981976-a243-433c-805f-9c1bbb570feb",
+        "kind": "dispose",
+        "fingerprint": "8fedb376cb286db3511fe4ba5dbcbf946cc15102e8d9052cf1250f2b9e138f21",
+        "state": "succeeded",
+        "createdAt": "2026-10-14T08:03:31.254379+00:00",
+        "errorCode": null,
+        "message": null
+      },
+      "replay": true,
+      "dataRemoved": true,
+      "realmRemoved": true,
+      "containersRemoved": true,
+      "networksRemoved": true
+    }
+  ],
+  "agent-cleanup": {
+    "containerRemoved": true,
+    "copiedAuthRemoved": true,
+    "sourcePreserved": true,
+    "exportsPreserved": true
+  },
+  "remaining": [
+    "Actual daemon loss and crash during create/dispose matrix",
+    "Approved production agent coordinator integration for shared state/worktree quotas",
+    "Same-window host process overhead measurements",
+    "Explicitly authorized Git/PR/CI end-to-end acceptance",
+    "Optional remote preview approval and validation"
+  ],
+  "environmentRestoration": {
+    "dockerConfiguredGiB": 20,
+    "dockerReportedMemoryBytes": 20939583488,
+    "workspacesContainerId": "3f2d04388358d1e59a9ebf647bcb2defea02ece3354b540d61cdc70b16de09cb",
+    "workspacesHealthy": true,
+    "workspacesMemoryBytes": 0,
+    "workspacesMemorySwapBytes": 0,
+    "liveCorePid": 72204,
+    "liveCoreStartUtc": "2026-10-12T07:09:20.597897Z",
+    "liveCoreUnchanged": true,
+    "qaCoresStopped": true,
+    "stoppedQaBaselineContainersRemoved": [
+      "d4289d0b391e",
+      "894bc0b369be",
+      "9fc9636e1837",
+      "f23e58097313",
+      "9f863833cffb",
+      "0bab90cb3d2a"
+    ]
+  },
+  "verification": {
+    "core": {
+      "command": "dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --no-restore --no-build --artifacts-path apps/core/tests/bin/sandbox-artifacts --logger console;verbosity=normal",
+      "passed": 3204,
+      "failed": 0,
+      "skipped": 4,
+      "seconds": 423.15,
+      "skipReason": "Existing opt-in DockerDevelopment/Telemetry and companion Torrent/VPN suites were not enabled. Dedicated sandbox Docker/browser acceptance ran separately.",
+      "earlierRun": "Two failures (sandbox directory HTTP and POSIX port-release timing) in the earlier concurrent full run. Both passed a focused five-case repeat and this full unchanged-source rerun; cause is not established."
+    },
+    "sdk": {
+      "commands": [
+        "npm run sdk:test",
+        "npm run build --workspace @hosty-sdk/app"
+      ],
+      "passed": 654,
+      "build": "passed"
+    },
+    "harness": {
+      "commands": [
+        "npm run harness:test",
+        "npm run harness:lint",
+        "npm run harness:build-web"
+      ],
+      "passed": 539,
+      "lint": "passed",
+      "webBuild": "passed"
+    },
+    "shell": {
+      "commands": [
+        "npm run shell:test",
+        "npm run shell:lint",
+        "npm run shell:build"
+      ],
+      "nodePassed": 191,
+      "componentPassed": 254,
+      "lint": "passed",
+      "build": "passed"
+    },
+    "workspaces": {
+      "commands": [
+        "npm run workspaces:test",
+        "npm run workspaces:lint",
+        "npm run workspaces:build"
+      ],
+      "passed": 12,
+      "lint": "passed",
+      "build": "passed"
+    },
+    "demo": {
+      "commands": [
+        "npm test --workspace @haas/hosty-demo-app",
+        "npm run demo-app:lint",
+        "npm run demo-app:build"
+      ],
+      "passed": 6,
+      "lint": "passed",
+      "build": "passed",
+      "artifactImageId": "sha256:67ef0a5859dbb084f7f8952dc580d80900d61c8d6f4d86e4a62c5e2a6486b6d4"
+    },
+    "relay": {
+      "command": "node --test apps/core/sandbox-relay/relay.test.mjs",
+      "passed": 11
+    },
+    "browserPolicy": {
+      "command": "node --test apps/core/sandbox-browser/policy.test.mjs",
+      "passed": 2
+    },
+    "repository": {
+      "commands": [
+        "node scripts/docs-index.mjs --fix",
+        "node scripts/docs-index.mjs --check",
+        "node scripts/check-versions.mjs",
+        "git diff --check"
+      ],
+      "result": "passed"
+    },
+    "nativeAot": {
+      "command": "npm run core:aot",
+      "result": "passed",
+      "runtime": "osx-arm64",
+      "newTrimOrAotWarnings": 0,
+      "existingCompilerWarnings": [
+        "CS9113",
+        "CA1416"
+      ]
+    }
+  },
+  "versions": {
+    "platform": "0.131.1 -> 0.132.0",
+    "sdk": "0.27.24 -> 0.28.0",
+    "harness": "0.50.0 -> 0.51.0",
+    "shell": "0.101.10 -> 0.102.0",
+    "workspaces": "0.2.1 -> 0.3.0",
+    "demo": "0.16.0 -> 0.17.0"
+  }
+}

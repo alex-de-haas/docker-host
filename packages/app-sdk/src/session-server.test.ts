@@ -57,3 +57,14 @@ describe("standard overlay server adapter", () => {
     expect(await response.json()).toMatchObject({ status: "active", userId: "alice", hosty: { version: 1, setup: "ready" } });
   });
 });
+
+
+it("uses the revalidated sandbox setup without querying installed-app permissions", async () => {
+  const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+  const sandbox = { runtimeInstanceId: "a".repeat(32), generation: "b".repeat(32), dataRevision: "c".repeat(32), identityRealm: "sandbox" as const, appRole: "admin", permissions: [] };
+  const response = await createHostySessionResponse({ status: "active", identity: { ...identity, hostRole: null, sandbox } }, recovery, options);
+  expect(await response.json()).toMatchObject({ status: "active", hostRole: null, sandbox, hosty: { version: 1, setup: "ready" } });
+  expect(fetcher).not.toHaveBeenCalled();
+  const denied = await createHostySessionResponse({ status: "active", identity: { ...identity, hostRole: null, sandbox } }, recovery, { ...options, administratorOnly: true });
+  expect(await denied.json()).toMatchObject({ status: "forbidden" });
+});

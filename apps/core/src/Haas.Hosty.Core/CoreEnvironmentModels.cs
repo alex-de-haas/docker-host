@@ -1,0 +1,33 @@
+namespace Haas.Hosty.Core;
+
+internal sealed record CoreEnvironmentCreate(string RequestId, string Label, string Mode = "current",
+    string? ProjectPath = null, SandboxContext? Context = null, string[]? WorktreeIds = null);
+internal sealed record CoreEnvironmentCommand(string RequestId, long ExpectedRevision);
+internal sealed record CoreEnvironmentProcess(int Pid, DateTimeOffset StartedAt);
+internal sealed record CoreEnvironmentOperation(string Id, string Kind, string Fingerprint, string State, string? Error = null);
+internal sealed record CoreEnvironmentRecord(string Id, SandboxActor Owner, CoreEnvironmentCreate Request,
+    string Fingerprint, int Port, long Revision, string State, DateTimeOffset CreatedAt,
+    CoreEnvironmentProcess? Process = null, string? Executable = null, string? Error = null,
+    IReadOnlyList<CoreEnvironmentOperation>? Operations = null);
+internal sealed record CoreEnvironmentView(string Id, string Label, string Mode, string? ProjectPath,
+    SandboxContext? Context, string State, long Revision, int Port, string? DataRoot, string PreviewUrl,
+    CoreEnvironmentProcess? Process, string? Error, IReadOnlyList<CoreEnvironmentOperation> Operations);
+internal sealed record CoreEnvironmentList(IReadOnlyList<CoreEnvironmentView> Environments);
+internal sealed record CoreEnvironmentSetup(string Email, string DisplayName, string Password);
+internal sealed record CoreEnvironmentApiRequest(string Method, string Path, System.Text.Json.JsonElement? Body = null);
+internal sealed record CoreEnvironmentApiResponse(int Status, System.Text.Json.JsonElement? Body);
+internal sealed record CoreEnvironmentSession(string Cookie, string Csrf);
+
+internal interface ICoreEnvironmentRuntime
+{
+    Task<string> PrepareAsync(CoreEnvironmentRecord record, string root, CancellationToken ct);
+    Task<CoreEnvironmentProcess?> ObserveAsync(CoreEnvironmentRecord record, string root, CancellationToken ct);
+    Task StartAsync(CoreEnvironmentRecord record, string root, Func<CoreEnvironmentProcess, Task> saveProcess, CancellationToken ct);
+    Task StopAsync(CoreEnvironmentRecord record, string root, bool remove, CancellationToken ct);
+}
+
+internal sealed record CoreEnvironmentWorkspaceCreate(string RequestId, string Label, string WorkspaceId,
+    string[] WorktreeIds, string? CoreWorktreeId = null, string? CoreProject = null);
+internal sealed record CoreEnvironmentApp(string Id, string DisplayName, string? Version, string RuntimeState,
+    string? Health, string? PreviewUrl);
+internal sealed record CoreEnvironmentApplications(string State, IReadOnlyList<CoreEnvironmentApp> Apps, string? Error = null);

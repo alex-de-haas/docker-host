@@ -2,6 +2,9 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { McpToolPolicy } from "../mcp/policy.js";
 import { AppContextError } from "./app-context.js";
+import { CoreEnvironmentClient, coreEnvironmentActions, type CoreEnvironmentAction, SandboxError, SandboxClient, sandboxActions, type SandboxAction } from "@hosty-sdk/app/sandbox/server";
+import { coreEnvironmentTools } from "./environment-tools.js";
+import { sandboxTools } from "./sandbox-tools.js";
 
 export interface DevelopmentWorkspace {
   id: string; workspaceId?: string; path: string; branch: string; targetBranch: string; originalBase: string; state: string;
@@ -11,10 +14,20 @@ export interface DevelopmentWorkspace {
   observation?: { state: string; at: string; head?: string; targetHead?: string; ahead?: number; behind?: number;
     conflict?: boolean; error?: string; sessionFiles?: string[]; local?: { files: { path: string; status: string }[] } };
 }
-export type DevelopmentAction = "viewer" | "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
+export type DevelopmentAction = CoreEnvironmentAction | SandboxAction | "viewer" | "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
 export class DevelopmentClient {
   constructor(private readonly origin: string | null, private readonly appId: string, private readonly token: string | null) {}
   get available(): boolean { return Boolean(this.origin && this.token); }
+  async environment(credential: string, action: CoreEnvironmentAction, input: Record<string, unknown>): Promise<unknown> {
+    if (!this.available) throw new AppContextError(503, "environments_unavailable", "Child Core environments require a Core-managed app identity.");
+    try { return await new CoreEnvironmentClient(async () => credential, { coreOrigin: this.origin!, appId: this.appId, serviceToken: this.token! }).call(action, input); }
+    catch (error) { if (error instanceof SandboxError) throw new AppContextError(error.status ?? 503, error.code, error.message); throw error; }
+  }
+  async sandbox(credential: string, action: SandboxAction, input: Record<string, unknown>): Promise<unknown> {
+    if (!this.available) throw new AppContextError(503, "sandboxes_unavailable", "Sandbox operations require a Core-managed app identity.");
+    try { return await new SandboxClient(async () => credential, { coreOrigin: this.origin!, appId: this.appId, serviceToken: this.token! }).call(action, input); }
+    catch (error) { if (error instanceof SandboxError) throw new AppContextError(error.status ?? 503, error.code, error.message); throw error; }
+  }
   async call(sessionId: string, credential: string, action: DevelopmentAction, input: Record<string, unknown>): Promise<unknown> {
     if (!this.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
     const publication = action.startsWith("pr-");
@@ -47,8 +60,8 @@ const toolProperties = {
   paths: { type: "array", items: { type: "string" } },
   pullRequests: { type: "array", items: { type: "string" } },
 };
-const actions = ["list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"] as const;
-const descriptions: Record<(typeof actions)[number], string> = {
+const actions = [...coreEnvironmentActions, ...sandboxActions, "list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"] as const;
+const descriptions: Partial<Record<(typeof actions)[number], string>> = {
   "pr-resolve-review": "Resolve an addressed review thread returned by pr_status. Supply requestId, expectedHead and threadId. Fix and verify the feedback first; never resolve merely to unblock merge.",
   "pr-commit": "Commit selected paths using the selected connection verified identity or user Git profile. Configure publication first. Supply requestId, expectedHead, paths and message; Harness records the contributing agent.",
   "pr-list": "List Core publication facts, including completed contributions and release status.",
@@ -75,9 +88,9 @@ const descriptions: Record<(typeof actions)[number], string> = {
 
 export const DEVELOPMENT_PROVIDER = "hosty:development";
 export const DEVELOPMENT_IDENTITY = "hosty-development-v1";
-export const developmentTools = () => actions.map(action => ({ name: action.replaceAll("-", "_"), description: descriptions[action],
+export const developmentTools = () => [...coreEnvironmentTools(), ...sandboxTools(), ...actions.filter(action => !action.startsWith("sandbox-") && !action.startsWith("environment-")).map(action => ({ name: action.replaceAll("-", "_"), description: descriptions[action]!,
   inputSchema: { type: "object", properties: toolProperties, additionalProperties: false },
-  annotations: { readOnlyHint: ["list", "status", "diff", "pr-list", "pr-status", "pr-connections"].includes(action), destructiveHint: ["cleanup", "pr-merge"].includes(action), openWorldHint: false } }));
+  annotations: { readOnlyHint: ["list", "status", "diff", "pr-list", "pr-status", "pr-connections"].includes(action), destructiveHint: ["cleanup", "pr-merge"].includes(action), openWorldHint: false } }))];
 
 /** Session-key authenticated local MCP surface; Core credentials never enter the agent config. */
 export class DevelopmentMcp {
@@ -141,6 +154,8 @@ export class DevelopmentMcp {
 export function workspaceInstructions(workspaces: DevelopmentWorkspace[]): string {
   return "Hosty development workflow: before editing application source, use hosty-workspaces prepare to obtain a registered Git worktree. " +
     "Work only in assigned worktrees. Do not access or modify original source checkouts. Use Core workspace tools for Git operations. " +
+    "Use environment_create/start for a full child Core with separate users and data. No workspace is required; environment_api operates only on that child after explicit normal password setup. Keep previews until operator review; environment_finish deletes its temporary resources. " +
+    "Use sandbox_plan/prepare to test an attached app in separate Core-owned containers with empty/synthetic data. Artifact QA does not need a workspace. Keep previews for operator review; finish explicitly with sandbox_dispose after exporting needed results. Preserve request IDs through reconnects. " +
     "These are workflow instructions, not filesystem isolation. Context selection alone does not allocate source. " +
     "Configure publication with pr_configure before committing; use pr_commit for verified/user-configured authorship. Publish through pr_publish, inspect pr_status, then pr_merge and pr_complete. Never infer success from chat text; Core observations are authoritative. Preserve operation requestIds after timeouts. " +
     "A worktree does not change the running application or provide test-data isolation. Finish active work before requesting cleanup. " +

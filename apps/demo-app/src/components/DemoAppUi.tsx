@@ -221,7 +221,7 @@ export function PeopleList({ users }: { users: AppDirectoryUser[] }) {
             </div>
           </div>
           <StateBadge tone={user.hostRole === "host.admin" ? "success" : "neutral"}>
-            {formatHostRole(user.hostRole)}
+            {user.sandboxRole ? `Sandbox · ${user.sandboxRole}` : formatHostRole(user.hostRole ?? "unknown")}
           </StateBadge>
         </div>
       ))}

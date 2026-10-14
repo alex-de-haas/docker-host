@@ -1,8 +1,8 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-10-08
-summary: An inbox where users submit app observations and administrators send reviewed batches to assistant sessions.
+updated: 2026-10-13
+summary: Durable draft app observations, administrator triage and reviewed batch delivery with optional assistant grouping into development sessions.
 components: [apps/shell, apps/harness, packages/app-sdk]
 ---
 
@@ -40,6 +40,26 @@ aligning two elements; when available, let the reporter include enough surroundi
 explain that relationship. An unavailable screenshot must not prevent submitting the selected
 element's context and comment.
 
+### Collect And Save Before Submission (Owner Clarification, 2026-10-13)
+
+Use small comments/observations rather than requiring an issue-sized problem. Working UI labels are
+Comments and Feedback; final naming remains open. Both ordinary users and administrators can
+collect several element/page annotations during one visit, edit/remove them and submit the group.
+Each item retains its own app, route, evidence and stable identity so administrators can regroup it.
+Typing or dictation can supply the comment; this does not require a new speech service.
+
+Persist the unfinished collection and its attachments before submission, independently of the
+current page and any assistant session. Preserve it across navigation, reload and closing/reopening
+the capture surface. D5 decides authenticated draft storage, local buffering during failed saves,
+attachment recovery and cross-device expectations. Show Saving/Saved/Save failed and keep pending
+text/evidence recoverable; never acknowledge Saved while only a volatile component holds the data.
+A crash during an upload must not silently discard the whole collection. Define limits/retention
+and account switching without exposing another reporter's drafts.
+
+Submitting a collection retains individual records and a batch reference, with idempotent retries.
+Saving a draft or submitting feedback starts no agent. Closing the picker preserves other saved
+comments; removing a comment and submitting the collection are distinct actions.
+
 ### Submit Without Agent Access
 
 Ordinary users can submit feedback for apps they are authorized to use. Submission creates an inbox
@@ -60,9 +80,11 @@ remain attributed input data, not trusted instructions or permission grants, eve
 An administrator opens the inbox, filters by app/status, reads comments and inspects screenshots and
 page/element context from different reporters. Support selection of several related entries, with
 the ability to leave other entries pending, identify duplicates or dismiss an item with a reason.
-Grouping is an explicit operator choice, not an automatic promise that unrelated requests form one
-feature. Cross-app selection is valid when it belongs to the same change; repository grouping still
-follows the session's one-worktree/normal-one-PR-per-repository rule.
+Grouping is an operator choice by default. Cross-app selection is valid when it belongs to the
+same change; within one session use the existing repository/worktree grouping. Under the October 13
+direction below, an explicit delegated-organizing action may let the assistant create several
+sessions and worktrees. Separate independent changes to one repository can then have separate PRs;
+that is not permission to split one feature into phase PRs.
 
 **Send to assistant** prepares a reviewable batch for a new or existing non-completed session. Show
 the selected item ids, their evidence, suggested app context and the administrator's combined request;
@@ -74,6 +96,28 @@ item instead of flattening all reports into an anonymous prompt.
 An administrator may use the same capture surface to save items for later or send a reviewed item
 directly to a chosen session, without a mandatory inbox round trip. Ordinary users receive the
 submission path only. Exact direct-send UX is a design question, not approval to auto-run page text.
+
+### Optional Assistant Grouping And Delegation (Owner Clarification, 2026-10-13)
+
+An administrator can approve/dismiss individual observations, amend the combined request and choose
+the exact subset to send. Approval, selection and dispatch are distinct; approved items can wait
+without starting an agent. Offer two explicit dispatch choices: send the reviewed batch to one
+chosen session, or authorize the assistant to organize that batch into related tasks/sessions.
+Ordinary reporters never gain this dispatch authority. Rejected or unselected observations stay out.
+
+For delegated organization, retain an inspectable mapping from each selected item/revision to its
+resulting task, session, workspace and PR. The assistant may group by app, repository or change kind.
+Independent repositories may run concurrently; default to sequential work for overlapping changes
+in one repository. An explicit independent split can use separate worktrees/branches and parallel
+PRs, with overlap/dependency and merge-order handling. A fresh child session is not a permission
+grant: it uses reviewed source/runtime/publication authority and the user's/repository's commit
+rules. Completion or one merged PR does not resolve every item in the batch.
+
+D6 owns this optional feedback dispatch integration, including bounded fan-out, cancellation,
+retry/deduplication and traceability. General execution scheduling/delegation stays with
+[Bridge D11](../ai-agent-bridge/plan.md#step-11--durable-jobs-and-notifications) and shared session
+APIs; do not build an unrelated scheduler inside the inbox. The [local demo](../hosty-delivery-readiness/plan.md)
+uses one active agent and does not require this optional parallel mode.
 
 ### Traceability And Partial Results
 
@@ -157,25 +201,33 @@ plan's scope; this feature hands reviewed evidence to assistant sessions only.
 - [ ] D2. Validate and implement in-app DOM element/region selection and supported image capture paths, with element/comment and text/context fallbacks and evidence preview.
 - [ ] D3. Implement administrator triage, reviewed batch and direct-send paths with idempotent session delivery.
 - [ ] D4. Implement per-item outcomes, authorized reporter notifications and evidence retention/access.
+- [ ] D5. Implement durable multi-comment drafts and attachment recovery across navigation/reload, explicit save state, failed-save buffering, edit/remove and idempotent grouped submission without agent execution.
+- [ ] D6. Implement explicitly authorized assistant grouping/delegation of selected feedback using the shared execution owner, with item/session/workspace/PR links, bounded independent parallel work and safe retry/cancellation.
 
 ## Implementation Phases
 
 After this plan is approved as Ready, implement these phases on one feature branch and in one PR:
 
 1. **Intake and storage foundation.** Select Core or a separate app as owner; implement authenticated
-   text/context submission, durable evidence records, access checks and retention. Verify that ordinary
-   submission starts no agent and cannot read another user's reports.
+   text/context submission, durable drafts/evidence, save-state and recovery, access checks and
+   retention. Verify that ordinary submission starts no agent and cannot read another user's drafts/reports.
 2. **Capture integration.** Spike the candidate capture paths, then implement supported screenshot
    and element capture with preview/removal and text fallback. Persist evidence through phase 1's
    authorization and storage contract, including cross-origin and broken-page cases.
 3. **Triage and session delivery.** Build administrator selection, reviewed batches and direct-send
    using the intake records and shared-session input contract. Verify destination access, provenance,
-   partial batch selection and idempotent retries before enabling agent dispatch.
+   partial batch selection and idempotent retries before enabling agent dispatch. Add optional
+   delegated organization through the shared runner contract rather than treating approval as dispatch.
 4. **Outcomes and acceptance.** Add per-item result tracking and authorized reporter notifications;
    verify partial outcomes, retained evidence after session deletion and the complete user-to-admin
    journey. Update shipped documentation and remove this plan only after all deliverables pass.
 
 ## Open Questions
+
+- What draft autosave/buffering and attachment upload contract survives reload/offline failures, and
+  are cross-device drafts required? What limits/retention and final Comments/Feedback labels apply?
+- What shared execution API supports authorized fan-out, overlap checks, cancellation and retry,
+  and what maximum concurrency may an administrator select for optional delegated organization?
 
 - Where do feedback intake and its durable evidence live, and what narrow authorization permits ordinary
   users to submit without agent access? What can reporters see, and how do retention, attachment access,
@@ -186,6 +238,13 @@ After this plan is approved as Ready, implement these phases on one feature bran
   without requiring completion of the separate SDK overlay feature.
 
 ## Verification
+
+- Collect several unsent comments with evidence, navigate, reload and reopen. Interrupt a save and
+  attachment upload, retry submission, and switch accounts. Saved items survive, pending items are
+  recoverable, each report is submitted once and another user's drafts remain inaccessible.
+- Approve some items and dismiss others without starting work; explicitly dispatch only the approved
+  subset. In delegated mode verify grouping across apps, independent worktrees/PRs, overlap handling,
+  partial failures and cancellation. Retried fan-out does not duplicate sessions or lose item links.
 
 - A regular user submits a page/element observation with comment and screenshot; it survives
   reload before any session exists. Verify no agent turn, workspace or elevated permission is
