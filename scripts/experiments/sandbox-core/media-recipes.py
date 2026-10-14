@@ -11,6 +11,7 @@ import json
 import re
 import shutil
 import subprocess
+import uuid
 from pathlib import Path
 
 
@@ -31,6 +32,7 @@ def main():
         parser.error('Output must be outside the repository and both source checkouts.')
     if output.exists():
         parser.error('Use a new output directory; existing evidence is not overwritten.')
+    preparation_id = uuid.uuid4().hex
     prepared = []
     inventory = []
     for source in sources:
@@ -51,7 +53,7 @@ def main():
                 raise ValueError('Docker returned an invalid image ID.')
             # Preserve the repository: Core resolves its registry digest at first start.
             # A raw content ID is not a repository name in an ordinary app recipe.
-            tag = 'hosty-qa-' + image_id.removeprefix('sha256:')
+            tag = f'hosty-qa-{preparation_id}-{len(inventory)}-' + image_id.removeprefix('sha256:')
             alias = original['repository'] + ':' + tag
             runtime['image'] = {'repository': original['repository'], 'tag': tag}
             service['runtimes'] = {'docker': runtime}

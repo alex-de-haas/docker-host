@@ -64,6 +64,15 @@ class RecipeTests(unittest.TestCase):
             self.run_helper(docker)
         self.assertEqual(2, len(json.loads((self.output / "images.json").read_text())))
 
+    def test_preparations_and_repeated_services_have_distinct_owned_aliases(self):
+        aliases = []
+        for name in ("first", "second"):
+            self.output = self.root / name
+            self.run_helper(self.image)
+            aliases.extend(item["fixtureTag"] for item in json.loads((self.output / "images.json").read_text()))
+        self.assertEqual(4, len(aliases))
+        self.assertEqual(4, len(set(aliases)))
+
     def test_missing_asset_creates_no_aliases(self):
         (self.sources[1] / "icon.svg").unlink()
         calls = []
