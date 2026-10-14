@@ -343,3 +343,21 @@ it("keeps ordinary runtime-switch errors visible and successful switches refresh
   await act(async () => actions.switchAppRuntime(target, "docker"));
   expect(fixture.toast.success).toHaveBeenCalledWith("Runtime switched", expect.objectContaining({ description: "Routine app: dev to docker" }));
 });
+
+it("keeps a confirmed runtime switch distinct from an unreachable Shell page", async () => {
+  const self = { ...target, id: "hosty.shell", selectedRuntime: "dev" };
+  apps = [self];
+  fixture.switchSettle.mockResolvedValue({ kind: "settled" });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 503 })));
+  await mount();
+  await act(async () => {
+    const switching = actions.switchAppRuntime(self, "docker");
+    await vi.advanceTimersByTimeAsync(90_000);
+    await switching;
+  });
+  expect(fixture.toast.warning).toHaveBeenCalledExactlyOnceWith("Runtime switched; Shell page is not answering yet", {
+    description: "Core confirmed the selected runtime is running. Reload this page once the Shell browser address is reachable again.",
+  });
+  expect(fixture.toast.error).not.toHaveBeenCalled();
+  expect(callsTo("/api/apps/hosty.shell/switch-runtime")).toHaveLength(1);
+});

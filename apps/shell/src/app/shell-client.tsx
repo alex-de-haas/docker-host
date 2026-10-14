@@ -883,10 +883,16 @@ export function ShellClient({
           toast.info("Switching Shell runtime", { description: "Waiting for the selected runtime, then reloading this page…" });
           const outcome = await waitForShellRuntimeSwitch({ coreOrigin, shellAppId, targetRuntime: plan.targetRuntime });
           if (outcome.kind === "failed") throw new Error(outcome.message);
-          if (outcome.kind === "settled" && await waitForOwnOrigin()) window.location.reload();
-          else toast.warning("Shell runtime switch is not confirmed yet", {
-            description: "Check Shell with `hosty apps list`. If it is stopped, start it with `hosty apps start hosty.shell`, then reload this page.",
-          });
+          if (outcome.kind === "settled") {
+            if (await waitForOwnOrigin()) window.location.reload();
+            else toast.warning("Runtime switched; Shell page is not answering yet", {
+              description: "Core confirmed the selected runtime is running. Reload this page once the Shell browser address is reachable again.",
+            });
+          } else {
+            toast.warning("Shell runtime switch is not confirmed yet", {
+              description: "Check Shell with `hosty apps list`. If it is stopped, start it with `hosty apps start hosty.shell`, then reload this page.",
+            });
+          }
           return;
         }
         await refresh();

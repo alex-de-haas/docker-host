@@ -214,7 +214,7 @@ Core and combined-Host self-runtime changes are different from Shell-only change
 
 Shell also exposes Hosty Shell runtime switching in the Installed Apps System Apps table when Core reports multiple runtime profiles. System apps also use the ordinary lifecycle controls; stopping Shell interrupts its UI.
 
-For its own runtime switch, Shell waits for Core to report the requested runtime running after startup, then reloads the page. A dropped apply response does not trigger a second apply or an immediate failure message. Explicit Core refusals still appear as errors; an unconfirmed switch times out with CLI recovery instructions. Concurrent lifecycle clicks for the same app are suppressed while the switch is pending.
+For its own runtime switch, Shell waits for Core to report the requested runtime running after startup, then reloads the page. A dropped apply response does not trigger a second apply or an immediate failure message. Explicit Core refusals still appear as errors; an unconfirmed switch times out with CLI recovery instructions. If Core confirms the target is running but the browser-address probe times out, Shell reports a completed switch with an unreachable page and asks the operator to reload when it becomes reachable. Concurrent lifecycle clicks for the same app are suppressed while the switch is pending.
 
 ## Source Selection Authority
 
