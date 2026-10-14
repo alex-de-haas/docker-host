@@ -72,7 +72,10 @@ export function collectAppProblems(app: CoreApp): AppProblem[] {
     });
   }
 
-  problems.push(...collectDependencyProblems(app.dependencies));
+  // A stopped consumer is not using its dependencies. Keep its own diagnostics visible.
+  if (app.runtimeState !== "stopped") {
+    problems.push(...collectDependencyProblems(app.dependencies));
+  }
 
   if (app.updateCheck?.error) {
     problems.push({

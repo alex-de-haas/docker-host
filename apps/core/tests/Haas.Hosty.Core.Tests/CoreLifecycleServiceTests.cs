@@ -1716,6 +1716,71 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ApplyRuntimeSwitchAsync_WhenTheRequestDisconnectsDuringStop_CompletesTheSwitch()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteSwitchableDockerManifestAsync()));
+        await fixture.Service.StartAsync("com.example.notes");
+        var plan = await fixture.Service.CreateRuntimeSwitchPlanAsync("com.example.notes", new("docker-alt"));
+        using var request = new CancellationTokenSource();
+        fixture.Adapter.StopProbe = () =>
+        {
+            request.Cancel();
+            return Task.CompletedTask;
+        };
+
+        var result = await fixture.Service.ApplyRuntimeSwitchAsync("com.example.notes", new("docker-alt", plan.PlanDigest), request.Token);
+
+        Assert.Equal("runtime-switched", result.Status);
+        Assert.Equal("running", result.App?.RuntimeState);
+        Assert.Equal("docker-alt", result.App?.SelectedRuntime);
+        Assert.Equal("docker-alt", (await fixture.Apps.GetAppAsync("com.example.notes"))?.SelectedRuntime);
+        Assert.Equal("pre-runtime-switch", result.Backup?.Reason);
+        Assert.Equal(2, fixture.Adapter.StartCount);
+        Assert.Equal(1, fixture.Adapter.StopCount);
+    }
+
+    [Fact]
+    public async Task ApplyRuntimeSwitchAsync_WhenTheRequestIsAlreadyCancelled_DoesNotStopTheApp()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteSwitchableDockerManifestAsync()));
+        await fixture.Service.StartAsync("com.example.notes");
+        var plan = await fixture.Service.CreateRuntimeSwitchPlanAsync("com.example.notes", new("docker-alt"));
+        using var request = new CancellationTokenSource();
+        request.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            fixture.Service.ApplyRuntimeSwitchAsync("com.example.notes", new("docker-alt", plan.PlanDigest), request.Token));
+
+        Assert.Equal(0, fixture.Adapter.StopCount);
+        var app = (await fixture.Apps.GetAppAsync("com.example.notes"))!;
+        Assert.Equal("running", app.RuntimeState);
+        Assert.Equal("docker", app.SelectedRuntime);
+    }
+
+    [Fact]
+    public async Task ApplyRuntimeSwitchAsync_WhenCoreShutsDownDuringStop_CancelsTheSwitch()
+    {
+        using var lifetime = new RestartTestLifetime();
+        var fixture = await LifecycleFixture.CreateAsync(hostLifetime: lifetime);
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteSwitchableDockerManifestAsync()));
+        await fixture.Service.StartAsync("com.example.notes");
+        var plan = await fixture.Service.CreateRuntimeSwitchPlanAsync("com.example.notes", new("docker-alt"));
+        fixture.Adapter.StopProbe = () =>
+        {
+            lifetime.StopApplication();
+            return Task.CompletedTask;
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            fixture.Service.ApplyRuntimeSwitchAsync("com.example.notes", new("docker-alt", plan.PlanDigest)));
+
+        Assert.Equal(1, fixture.Adapter.StartCount);
+        Assert.Equal("docker", (await fixture.Apps.GetAppAsync("com.example.notes"))?.SelectedRuntime);
+    }
+
+    [Fact]
     public async Task ApplyRuntimeSwitchAsync_PreservesAssignedHostPortOverride()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -1743,8 +1808,10 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal("7171", app?.Settings.GetValueOrDefault("HOSTY_PORT_HTTP")?.Value);
     }
 
-    [Fact]
-    public async Task ApplyRuntimeSwitchAsync_RollsBackSelectedRuntimeWhenRestartFails()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ApplyRuntimeSwitchAsync_RollsBackSelectedRuntimeWhenRestartFails(bool disconnectDuringStop)
     {
         var fixture = await LifecycleFixture.CreateAsync();
         var manifest = await fixture.WriteSwitchableDockerManifestAsync();
@@ -1754,6 +1821,12 @@ public sealed partial class CoreLifecycleServiceTests
             "local-data");
         await fixture.Service.StartAsync("com.example.notes");
         fixture.Adapter.FailOnStartCount = 2;
+        using var request = new CancellationTokenSource();
+        fixture.Adapter.StopProbe = () =>
+        {
+            if (disconnectDuringStop) request.Cancel();
+            return Task.CompletedTask;
+        };
 
         var plan = await fixture.Service.CreateRuntimeSwitchPlanAsync(
             "com.example.notes",
@@ -1761,7 +1834,7 @@ public sealed partial class CoreLifecycleServiceTests
         var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
             fixture.Service.ApplyRuntimeSwitchAsync(
                 "com.example.notes",
-                new AppRuntimeSwitchApplyRequest("docker-alt", plan.PlanDigest)));
+                new AppRuntimeSwitchApplyRequest("docker-alt", plan.PlanDigest), request.Token));
         var app = await fixture.Apps.GetAppAsync("com.example.notes");
         var backup = Assert.Single(await fixture.Backups.ListBackupsAsync("com.example.notes"));
 

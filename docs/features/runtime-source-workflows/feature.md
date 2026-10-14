@@ -1,6 +1,6 @@
 ---
 created: 2026-06-03
-updated: 2026-10-07
+updated: 2026-10-14
 summary: Source checkouts, local overrides and runtime switching for installed apps, with Git inspection.
 components: [apps/core, apps/shell]
 ---
@@ -198,6 +198,8 @@ Runtime switching can move between Docker, `localCommand`, and mixed profiles. C
 
 When a running app is switched, Core stops the current runtime, updates selected runtime state, and starts the target runtime. If the target runtime fails to start, Core restores the selected runtime in installation state to the previous runtime, leaves the app stopped, records `LastError`, and returns `runtime_switch_restart_failed`. Any `pre-runtime-switch` backup created before mutation remains available through normal backup commands.
 
+Caller cancellation applies during lock acquisition and plan validation. Once mutation begins, Core owns completion using its application lifetime, so stopping Shell cannot cancel the switch by disconnecting its own proxy request. Core shutdown still cancels the operation.
+
 ## Default Hosty Apps
 
 Hosty Shell is also a runtime app. Its manifest declares Docker and `dev` local command runtime profiles, so administrators can use the same source commands for Shell-only local runtime work:
@@ -211,6 +213,8 @@ hosty apps switch-runtime hosty.shell --runtime dev --plan-digest <digest>
 Core and combined-Host self-runtime changes are different from Shell-only changes. Core cannot complete its own replacement after it stops, so Core runtime switching still requires the trusted CLI or another outer supervisor.
 
 Shell also exposes Hosty Shell runtime switching in the Installed Apps System Apps table when Core reports multiple runtime profiles. System apps also use the ordinary lifecycle controls; stopping Shell interrupts its UI.
+
+For its own runtime switch, Shell waits for Core to report the requested runtime running after startup, then reloads the page. A dropped apply response does not trigger a second apply or an immediate failure message. Explicit Core refusals still appear as errors; an unconfirmed switch times out with CLI recovery instructions. Concurrent lifecycle clicks for the same app are suppressed while the switch is pending.
 
 ## Source Selection Authority
 
@@ -233,6 +237,9 @@ This API policy does not sandbox native agents with direct filesystem access. Cl
 runtime switches and normal lifecycle operations keep their existing authorization.
 
 ## Testing Expectations
+
+- A runtime switch survives caller disconnection during stop, persists the selected runtime, preserves its backup and starts the target. A target startup failure still rolls back after disconnection. Pre-admission cancellation leaves the running app intact; Core shutdown cancels the operation.
+- Shell self-switch recovery waits through the old runtime, proxy outages and target startup, without replaying apply. Explicit refusals, persisted rollback and bounded timeout remain distinct from a confirmed target startup.
 
 - Changing the selected profile's development flag in either direction appears in the update plan and requires review, even alongside a version bump.
 - `source-override` records the folder's commit as the override's own and leaves the reviewed pin unchanged, including for a folder nested inside a repository; clearing the override drops both.
