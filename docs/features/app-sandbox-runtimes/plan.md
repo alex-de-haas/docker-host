@@ -129,7 +129,7 @@ The checked items below record the verified scope merged in #590; expanded requi
 - [x] D4. Reuse full Docker source development and verify the selected offline Demo App recipe, source/watch/HMR, root/nested cache separation, isolated networks, relay and Core-access boundaries on the selected support matrix; report unsupported recipes without host fallback.
 - [x] D6. Expose independent authorized Core APIs and client/SDK contracts with replay/reconnect, test-user management, persona launch and evidence export; adapt Harness tools and workspace views, and show all authorized instances in Shell with optional context and lifecycle/resource/cleanup observations.
 - [x] D8. Integrate the trusted Playwright runner with sandbox-realm login by selected test users, private expiring credential/grant handling, role/permission scenarios, source/fixture-bound sanitized evidence and truthful pass/fail/unknown outcomes; verify real-operator login separately.
-- [x] D10. Implement and verify instance-specific local preview origins, real-user login, access controls, embedded/direct navigation and HMR; provide operator Open preview links.
+- [x] D10. Implement and verify instance-specific local preview origins, real-user login, access controls, embedded/direct navigation and HMR; provide operator Open preview links. The reproduced fresh-login callback regression remains explicitly open under D9.
 - [x] D12. Verify a Core-managed non-Harness app using interactive and explicitly authorized background access to run a complete QA lifecycle from a pinned Demo App artifact, without workspace/worktree/session allocation or code edits; cover cross-client denial, grant revocation, quotas, replay, exported results and complete disposal.
 - [x] D18. Isolate Core API state using a dedicated same-host Core process and fresh data root per environment; support release/source selection, normal users and permissions, independent local origins, and Core-plus-app development without mutating the primary installation.
 - [x] D19. Track and dispose each test Core root and its owned processes, app containers, networks, caches and temporary data; stop writers before deletion, preserve borrowed source/shared mounts/exports, and verify crash/interrupted-cleanup recovery with a broken child Core.
@@ -142,7 +142,7 @@ The checked items below record the verified scope merged in #590; expanded requi
 ### Remaining Reliability And Acceptance
 
 - [ ] D5. Complete real Docker-daemon loss/recovery and interruption-during-create/dispose acceptance, keeping journal/replay and cleanup failures observable. Preserve the existing offline CPU/RAM/PID and soft-disk policy; connect its remaining agent/worktree monitor only through the separately approved production worker coordinator.
-- [ ] D9. Complete the integrated acceptance matrix and simultaneous Core/Harness/agent/app/browser measurements, compose the authorized Git/PR/CI/review journey, reconcile dependent plans and document only verified host/recipe guarantees.
+- [ ] D9. Reproduce and fix the known fresh-login → HMR → navigation regression where consumed callback code/state reappears in the URL; cookie-authenticated reload is not acceptance. Complete the inherited integrated acceptance matrix below and simultaneous Core/Harness/agent/app/browser measurements, compose the authorized Git/PR/CI/review journey, reconcile dependent plans and document only verified host/recipe guarantees.
 - [ ] D11. Decide and separately approve optional remote preview ingress/private access, then implement and verify it, or explicitly retire it if the owner abandons it. Local delivery does not wait for it.
 
 ### Permission Extension (Owner Revision, 2026-10-14)
@@ -247,6 +247,98 @@ expired agent session means the sandbox is finished or deletes source, fixtures 
 Soft disk quotas are an explicit local-demo limitation recorded under D5. Unattended workloads
 requiring hard protection from disk exhaustion are outside this profile's supported guarantees.
 
+
+## Inherited Acceptance Matrix (D9)
+
+This is the approved matrix retained from the earlier plan, not a new claim that every case
+has passed. Compose the existing evidence and close remaining cases under D9. Cases involving
+sandbox realms, the private relay and blanket network denial apply to the original offline
+`/api/sandboxes` profile; the trusted child-Core mode uses normal child identity and the approved
+internet/dependency policy above, not those obsolete restrictions on its Core API.
+
+The [two-container experiment](../../reviews/2026-10-13-two-container-development-experiment.md)
+records the still-open fresh-login callback regression. D10's delivered preview controls do not
+close that specific case; D9 must reproduce it from a fresh login and verify the actual fix.
+
+- From a Core-managed app with no assistant role, allocate and run a pinned Demo App artifact using
+  the general API without workspace/worktree/session IDs or hidden allocations. Create personas/data,
+  run a browser check, export a result and Finish. Verify Shell preview and inventory still work.
+- Repeat under an explicit background sandbox grant after the interactive browser is closed/logged
+  out. Deny service-token-only calls, old installed-app lifecycle scopes, revoked/expired grants,
+  unapproved targets/recipes and replaced caller installations. Another app with sandbox permission
+  cannot read/control this instance or replay its operation IDs. Aggregate admission spans clients.
+- Run the worktree adapter through the same lifecycle and verify source authorization/consumer
+  protection. Omitting or forging workspace context cannot authorize an otherwise inaccessible source.
+- Start the installed app plus two workspace instances of it. Empty data shows a fresh install;
+  synthetic seeds produce the intended state. Writes/reset/dispose in one leave the others unchanged.
+- Stop/restart preserves test users and fixtures. Finish deletes every recorded realm/session,
+  credential, owned folder/volume/cache, seed staging area, log/evidence artifact, container,
+  managed browser context, network and preview binding; source edits, real users and other instances
+  remain intact. A later sandbox starts fresh and cannot reuse previous identities or grants.
+  Verify an explicitly exported report survives without retaining a sandbox archive by default.
+- Interrupt disposal during termination and deletion. Access must already be revoked, cleanup
+  blockers remain visible, and retry/recovery uses the original operation ID without reporting
+  `disposed` prematurely. Finishing a browser job or agent turn alone must not remove an operator preview.
+- Demonstrate source edit → reload → operator preview and Playwright assertions; change dependencies
+  and exercise the reviewed rebuild. Old evidence is stale after any source/fixture change.
+- Repeat app startup after agent installs/tests have populated root and nested dependency caches;
+  app setup must not write/delete the agent's outputs through a shared source mount. Validate port
+  agreement, required generated framework metadata and actual HTTP readiness, not lifecycle status alone.
+- Sign in through the real Core; test authorized and denied viewers, revoked accounts/access,
+  iframe/direct links, callbacks, stale URLs and cross-instance/production token reuse.
+- Check fresh login → HMR → navigation: consumed authorization callback code/state must remain
+  removed from the URL. The two-container fixture observed callback parameters resurfacing after
+  its first hot reload; the later cookie-authenticated repeat is not proof that this case is fixed.
+- Probe mount/path/symlink escape, production dependency fallback, external effects and forbidden
+  Core endpoints; inspect actual effects rather than trusting an agent's textual refusal.
+- Before the integrated run, probe the actual isolated network: deny direct internet/IP/DNS/IPv6,
+  bridge/host aliases, controlled host-service canaries, other instances and the agent; allow only
+  the intended services and fixed relay paths. Verify no relay packet forwarding, open CONNECT,
+  encoded-path/Host/redirect bypass or cross-listener access. Verify local HTTP/HMR and the browser's
+  Core origin through the relay, including proxy bypass handling and Shell embedding.
+- Create administrator/member/read-only/disabled personas through Harness, seed business records
+  with their scoped IDs and log in through the sandbox realm. Verify app-level roles/permissions
+  and that even the administrator cannot control Core, workspaces, providers, the installed app or
+  another sandbox. Use duplicate real/test emails and deliberate ID/token-type collisions; no
+  fallback to the global directory is allowed. Test unknown role/permission handling explicitly.
+- Verify job expiry, subject/role revocation, reset/dispose and worker death; stale user IDs and
+  grants must not revive after fixture restoration. Check that the agent cannot export credentials,
+  control a browser debugging port or execute arbitrary runner code. Verify saved evidence excludes
+  login secrets. Ordinary Core operator login and real-user allowed/denied preview are separate cases.
+- Exercise admission failure with the current VM budget, hard memory/PID/tmpfs failures, seed and
+  artifact ingestion limits, log rotation and soft storage thresholds. Record overshoot and stop
+  latency honestly; preserve source/data and require explicit cleanup before resumption.
+- Test build/start/cleanup failure, memory limits, detached work, Core recovery and active-consumer
+  retention. A stopped browser tab or cancelled RPC does not establish released resources.
+- Repeat prepare/start/reset after a lost response with the same request ID; refuse changed input,
+  stale revision, stale installation, foreign workspace and changed execution-contract digests.
+  Race prepare against source cleanup and two starts against port reservations; preserve resources
+  with unknown ownership. Verify stop after owner/source revocation and recovery after Docker failure.
+- Stop the agent while the app remains available, then stop the app while the agent can still use
+  its workspace. Keep a preview through Harness/Core restart with verified adoption, and deny old
+  generation credentials after replacement. Reset changes browser storage origin; no production
+  cookie, service token, directory grant or delegated/MCP identity works by app ID alone.
+- Inspect Docker mounts/labels/limits at creation, not only after startup. Test memory/PID exhaustion,
+  failed setup, nested-cache collisions and bounded disk/log growth. Record cold image/build/setup
+  separately from warm start-to-HTTP-ready, source edit-to-HMR and observed browser update time.
+- Sample agent and all app service containers during idle, dependency setup, edit/HMR, tests,
+  production build and browser checks. Report working set and cgroup peak separately, with sampling
+  interval and OOM counters; report simultaneous aggregate samples rather than summing lifetime
+  peaks. Measure Harness/Core/browser host cost separately and avoid double-counting the Docker VM.
+  The experiment's roughly 594 MiB idle per container and 1.63 GiB corrected app cgroup peak are
+  fixture observations, not capacity guarantees or general launch limits.
+- Complete an authorized Git/PR/CI/review journey using existing owners; preserve source and any
+  explicitly exported report, while Finish still removes the sandbox's own temporary artifacts.
+  Verify that sandbox testing never starts a live-data trial automatically.
+- This document describes intended product behavior. The dated bounded experiment is evidence for
+  its fixture only; run affected builds/tests and full real Core/Shell acceptance during implementation.
+
+Implementation verification includes `npm run core:build`, `npm run core:test`, SDK build/tests,
+Harness lint/tests/web build, and lint/tests/builds for changed Demo App, Workspaces and Shell code.
+Run CLI checks if its contract changes, plus `node scripts/check-versions.mjs` and docs validation.
+Use a separate test Core data root with normal setup/password login and a genuine installed-app
+baseline. Never restart the operator's Core merely to execute these tests. The implementation requires the affected product builds/tests, index/link validation and
+`git diff --check`; the independent API probe does not replace Docker/browser acceptance.
 
 ## Verification And Completion
 
