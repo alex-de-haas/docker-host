@@ -367,6 +367,32 @@ public sealed class SandboxServiceTests
     }
 
     private sealed class Clock : IClock { public DateTimeOffset UtcNow => new(2026, 10, 13, 0, 0, 0, TimeSpan.Zero); }
+    [Fact]
+    public async Task Plan_ManagedChildDefaultsLeaveRoomForRelayAndBrowser_ExplicitLimitsArePreserved()
+    {
+        using var f = new Fixture();
+        var config = new HostyCoreRuntimeConfig(f.Root, f.Root, "", 7070, "http://localhost:7070", null, "localhost", null, false);
+        var parent = new CoreEnvironmentStore(CoreDataPaths.FromConfig(config));
+        var id = Guid.NewGuid().ToString("N");
+        Directory.CreateDirectory(Path.Combine(parent.Root(id), "core"));
+        File.WriteAllText(CoreInstanceId.BuildPath(parent.Root(id)), id);
+        await parent.WriteAsync(new(id, f.Actor, new(Guid.NewGuid().ToString(), "QA"), "hash", 7071, 1, "running", DateTimeOffset.UtcNow), default);
+        var childConfig = config with { DataRoot = parent.Root(id), InstanceId = id };
+        var service = new SandboxService(new(CoreDataPaths.FromConfig(childConfig)), f.Inputs, f.Runtime, new Clock(), config: childConfig);
+        var plan = await service.PlanAsync(f.Actor, f.Request, default);
+        var limits = plan.Request.Limits!;
+        Assert.Equal(2147483648, limits.MemoryBytes); Assert.Equal(.5, limits.Cpus); Assert.Equal(128, limits.Pids);
+        var child = new CoreEnvironmentLimits();
+        Assert.True(limits.MemoryBytes + 335544320 + 1677721600 <= child.MemoryBytes);
+        Assert.True(limits.Cpus + .35 + 1.1 <= child.Cpus);
+        Assert.True(limits.Pids + 80 + 272 <= child.Pids);
+        var prepared = await service.PrepareAsync(f.Actor, new(Guid.NewGuid().ToString(), plan.Id, plan.Digest), default);
+        Assert.Equal(limits, prepared.Limits);
+        var explicitLimits = new SandboxLimits();
+        Assert.Equal(explicitLimits, (await service.PlanAsync(f.Actor, f.Request with { Limits = explicitLimits }, default)).Request.Limits);
+        Assert.Equal(explicitLimits, (await f.Service.PlanAsync(f.Actor, f.Request, default)).Request.Limits);
+    }
+
     private sealed class Fixture : IDisposable
     {
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "hosty-sandbox-test-" + Guid.NewGuid().ToString("N"));

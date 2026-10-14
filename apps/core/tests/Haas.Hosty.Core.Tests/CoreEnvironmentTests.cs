@@ -218,6 +218,30 @@ public sealed class CoreEnvironmentTests
         Assert.Equal("finished", (await f.Service.CommandAsync(owner, item.Id, "finish",
             new(Guid.NewGuid().ToString(), item.Revision), default)).State);
     }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Reconcile_StopsAnIncompatibleLiveChildAndSurfacesStopFailure(bool stopFails)
+    {
+        using var f = new Fixture(); var item = await f.Command(await f.Create(), "start");
+        f.Runtime.Incompatible = true; f.Runtime.FailStop = stopFails;
+        await f.Service.ReconcileAsync(default);
+        var saved = (await f.Store.ReadAsync(item.Id, default))!;
+        Assert.Equal("failed", saved.State);
+        if (stopFails)
+        {
+            Assert.Contains("Stopping the incompatible child also failed", saved.Error);
+            Assert.NotNull(saved.Process);
+            f.Runtime.FailStop = false;
+            await f.Service.ReconcileAsync(default);
+            saved = (await f.Store.ReadAsync(item.Id, default))!;
+        }
+        Assert.Null(saved.Process);
+        Assert.Single(f.Runtime.Removals);
+        Assert.False(f.Runtime.Removals[0]);
+        Assert.True(Directory.Exists(item.DataRoot));
+    }
+
     [Fact]
     public async Task Finish_DockerUnavailable_ReplaysOriginalRequestAfterRestartAndRetainsReservation()
     {
@@ -338,14 +362,16 @@ public sealed class CoreEnvironmentTests
         public CoreEnvironmentUsage? Usage; public bool FailObservation;
         public Task<CoreEnvironmentUsage?> InspectResourcesAsync(CoreEnvironmentRecord record, string root, CancellationToken ct)
             => FailObservation ? throw new IOException("Docker unavailable") : Task.FromResult(Usage);
-        public int Starts; public bool FailStop; public bool FailBuild; public List<bool> Removals = [];
+        public int Starts; public bool Incompatible; public bool FailStop; public bool FailBuild; public List<bool> Removals = [];
         private readonly Dictionary<string, CoreEnvironmentProcess> live = [];
         public TaskCompletionSource<string>? Preparation;
         public TaskCompletionSource PreparationStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<string> PrepareAsync(CoreEnvironmentRecord record, string root, CancellationToken ct)
         { PreparationStarted.TrySetResult(); return FailBuild ? throw new IOException("Build failed") : Preparation?.Task ?? Task.FromResult("prepared-core"); }
         public Task<CoreEnvironmentProcess?> ObserveAsync(CoreEnvironmentRecord record, string root, CancellationToken ct)
-            => Task.FromResult(live.GetValueOrDefault(record.Id));
+            => Incompatible && live.ContainsKey(record.Id)
+                ? throw new SandboxException("environment_core_version", "Unsupported old child", 409)
+                : Task.FromResult(live.GetValueOrDefault(record.Id));
         public async Task StartAsync(CoreEnvironmentRecord record, string root, Func<CoreEnvironmentProcess, Task> save, CancellationToken ct)
         { Starts++; var process = new CoreEnvironmentProcess(1234567, DateTimeOffset.UtcNow); live[record.Id] = process; await save(process); }
         public Task StopAsync(CoreEnvironmentRecord record, string root, bool remove, CancellationToken ct)

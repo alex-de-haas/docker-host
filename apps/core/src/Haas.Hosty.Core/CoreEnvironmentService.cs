@@ -316,7 +316,18 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             catch (Exception ex) when (ex is not OutOfMemoryException and not OperationCanceledException)
             {
                 var record = (await store.ReadAsync(snapshot.Id, ct))!;
-                await store.WriteAsync(record with { State = record.RootDeletionStarted || record.Operations?.Any(o => o.Kind == "finish") == true ? "cleanup-failed" : "failed", Error = ex.Message, Revision = record.Revision + 1 }, ct);
+                var error = ex.Message;
+                if (ex is SandboxException { Code: "environment_core_version" })
+                {
+                    try
+                    {
+                        await runtime.StopAsync(record, store.Root(record.Id), false, ct);
+                        record = record with { Process = null };
+                    }
+                    catch (Exception stopError) when (stopError is not OutOfMemoryException and not OperationCanceledException)
+                    { error += " Stopping the incompatible child also failed: " + stopError.Message; }
+                }
+                await store.WriteAsync(record with { State = record.RootDeletionStarted || record.Operations?.Any(o => o.Kind == "finish") == true ? "cleanup-failed" : "failed", Error = error, Revision = record.Revision + 1 }, ct);
             }
             finally { gate.Release(); }
         }

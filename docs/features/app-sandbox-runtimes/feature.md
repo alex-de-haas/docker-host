@@ -264,6 +264,12 @@ replacement parent reconciles persisted PID/start identities and child control d
 operations retain an explicit failed outcome for inspection and a deliberate retry using the **same
 request UUID and original arguments**. Successful or superseded operations do not rerun. Shell and
 Workspaces preserve a failed Finish request across refresh instead of discarding its replay identity.
+Offline single-app plans inside a managed child default to 2 GiB, 0.5 CPU and 128 PIDs,
+leaving room for their relay, capacity probes and one browser within the default child budget.
+The plan persists these effective limits before approval. Explicit limits and primary-Core defaults
+remain unchanged. Parent reconciliation stops incompatible pre-0.133 child processes and their
+containers; a stop failure remains visible and retains the reservation for retry.
+
 Finish closes the managed root and descendants to new starts. It journals the cleanup-owner inventory
 and a root-deletion checkpoint outside the deleted tree, so interruption after removal of the identity
 file remains recoverable; a changed identity still blocks deletion. Finish uses a

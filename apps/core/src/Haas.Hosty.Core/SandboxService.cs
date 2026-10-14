@@ -2,13 +2,18 @@ using System.Text;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class SandboxService(SandboxStore store, ISandboxInputs inputs, ISandboxRuntime runtime, IClock clock, UserDirectoryStore? directory = null)
+internal sealed class SandboxService(SandboxStore store, ISandboxInputs inputs, ISandboxRuntime runtime, IClock clock, UserDirectoryStore? directory = null, HostyCoreRuntimeConfig? config = null)
 {
     private readonly SemaphoreSlim allocationGate = new(1, 1);
 
     public async Task<SandboxPlan> PlanAsync(SandboxActor actor, SandboxPlanRequest request, CancellationToken ct)
     {
-        request = request with { Limits = SandboxValidation.Limits(request.Limits) };
+        // Leave room for the relay, admission probes and one browser in the default child pool.
+        // Persist effective defaults in the reviewed plan; explicit operator limits stay unchanged.
+        var defaults = request.Limits is null && config is not null
+            && await CoreEnvironmentResources.ManagedAsync(config, ct) is not null
+            ? new SandboxLimits(MemoryBytes: 2147483648, Cpus: .5, Pids: 128) : null;
+        request = request with { Limits = SandboxValidation.Limits(request.Limits ?? defaults) };
         if (request.Context is { } context)
             foreach (var field in new[] { context.WorkspaceId, context.SessionId, context.JobId }.OfType<string>())
                 SandboxValidation.Text(field, 200, "context");
