@@ -87,6 +87,24 @@ class RecipeTests(unittest.TestCase):
         self.assertFalse((self.output / "media").exists())
         self.assertFalse(any(args[0] == "tag" for args in calls))
 
+    def test_app_id_cannot_escape_output_or_reuse_output_root(self):
+        manifest_path = self.sources[0] / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        outside = self.root / "outside"
+        for index, app_id in enumerate(("../outside", str(outside), ".")):
+            self.output = self.root / f"output-{index}"
+            manifest["id"] = app_id
+            manifest_path.write_text(json.dumps(manifest))
+            calls = []
+            def docker(*args):
+                calls.append(args)
+                return self.image(*args)
+            with self.assertRaisesRegex(ValueError, "recipe directory"):
+                self.run_helper(docker)
+            self.assertFalse(outside.exists())
+            self.assertFalse(any(args[0] == "tag" for args in calls))
+            self.assertFalse((self.output / "manifest.json").exists())
+
     def test_missing_asset_creates_no_aliases(self):
         (self.sources[1] / "icon.svg").unlink()
         calls = []

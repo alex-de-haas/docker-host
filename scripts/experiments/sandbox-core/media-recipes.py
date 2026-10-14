@@ -69,7 +69,9 @@ def main():
         prepared.append((source, manifest))
     output.mkdir(parents=True, mode=0o700)
     for source, manifest in prepared:
-        destination = output / manifest['id']
+        destination = (output / manifest['id']).resolve()
+        if destination == output or not destination.is_relative_to(output):
+            raise ValueError('App ID must keep its recipe directory inside the output directory.')
         destination.mkdir()
         (destination / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
         for nav in manifest.get('ui', {}).get('navigation', []):

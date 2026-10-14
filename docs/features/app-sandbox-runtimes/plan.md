@@ -19,8 +19,10 @@ The owner now authorizes the Media Server plus dedicated Transcode Engine scenar
 Harness and a normal authenticated browser, including resource measurements and complete
 test-environment cleanup. The chosen external input is `/Users/haas/dev-media`, read-only.
 No production app data, credentials or provider connections are inherited. This instruction
-approved the bounded D25 milestone below; its read-only Media implementation and repeat acceptance are complete. It does not authorize
-publishing another PR, remote deployment or changing the operator's primary Core installation.
+approved the bounded D25 milestone below; its read-only Media implementation and repeat acceptance
+are complete. The owner separately authorized PRs for the Media implementation, this plan/report
+and the linked Transcode Engine recovery fix. Remote deployment and changes to the operator's
+primary Core installation are outside that publication request.
 
 ## Environment Scope (Later Owner Discussion, 2026-10-14)
 
@@ -37,6 +39,36 @@ Continue useful multi-app testing with the child Core. D13 tracks reusable opera
 not adding internet connectivity that this mode already has. D16 retains aggregate resource
 accounting and permission acceptance; nested creation and the root-wide two-descendant count
 limit already exist. Count limits are not CPU/RAM/disk quotas.
+
+## Approved Consent Policy Requirements (D13)
+
+Reuse Core-owned permission review, revocable grants, existing dependency declarations and the
+shared-mount library. Extend them with an execution target and an explicit sandbox policy; avoid a
+parallel identity system, generic policy language or a service-mesh project. A manifest/request
+states what an app needs and an optional explanation; it cannot grant that access to itself.
+
+An operator can approve one run or save a policy for a defined app/caller scope. Matching later
+runs proceed autonomously. Prompt for a requested expansion beyond the saved policy, not each
+restart or ordinary source edit. Reuse mandatory revision/digest checks when executable contracts
+or targets materially change; saved consent does not silently authorize a changed provider or
+contract. Report effective access and revocation in the existing instance view. User roles inside
+the sandbox and permissions of its running service remain separate: a test user's `admin` role
+is not a grant of authority over the parent Core.
+
+Keep offline available alongside explicitly and persistently approvable outbound internet access.
+Do not constrain the product to HTTP/HTTPS or make domain-by-domain approval/custom TLS interception
+prerequisites. Apply the selected policy to browser and setup traffic and report any first-profile
+protocol limits. Internet can reach installed apps' public origins; ordinary endpoint authentication
+still applies, and missing dependency bindings do not deny an unauthenticated public API.
+
+Shared mounts require an explicit registered-folder binding and enforced access mode; read-write
+is a separate expansion beyond read-only. Dedicated dependency installations remain the selected
+D14 scope; shared installed providers require renewed approval of a concrete provider contract.
+Consent never implies access to installed-app data or copied production credentials.
+
+Verify one-run versus saved choices, isolation between app/caller scopes, autonomous matching runs,
+requested expansions, target/contract revision revalidation, effective-access display and revocation.
+Technical restart and ordinary source edits within the reviewed contract must not repeatedly prompt.
 
 ## Proposed Core Integration Contract
 
@@ -115,7 +147,7 @@ The checked items below record the verified scope merged in #590; expanded requi
 
 ### Permission Extension (Owner Revision, 2026-10-14)
 
-- [ ] D13. Add reusable, revocable operator consent for internet-enabled sandbox policies, expose effective access, avoid repeated prompts within an unchanged scope and cover browser/setup traffic. Ordinary child Core internet is existing behavior, not evidence that this policy is delivered.
+- [ ] D13. Add one-run or saved, revocable operator consent scoped to app/caller and reviewed targets, with mandatory revision/digest revalidation for changed executable contracts/targets; follow the approved consent-policy requirements above, expose effective access, avoid repeated prompts within an unchanged scope and cover browser/setup traffic. Ordinary child Core internet is existing behavior, not evidence that this policy is delivered.
 - [ ] D14. Resolve dependencies to dedicated installations within one test Core and manage their grouped lifecycle with separate data/credentials and no implicit main-environment fallback. Keep shared installed providers deferred pending a concrete provider contract and renewed scope approval.
 - [ ] D15. Complete sandbox integration/acceptance for declared mount slots bound to approved shared-library entries, enforced read-only/read-write limits, reuse/revocation and preservation of external folders during reset/Finish; reuse the existing mount planner rather than a second permission system.
 - [ ] D16. Complete ordinary user/service permission acceptance for child APIs and owned nested creation, including aggregate resource accounting and cleanup. Preserve the existing root-wide two-descendant admission bound and normal roles; do not invent sandbox-specific roles.
