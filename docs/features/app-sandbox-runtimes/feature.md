@@ -313,6 +313,18 @@ Demo app health and identity through Open preview, Shell inventory, Stop/Start a
 from both surfaces. Independent checks confirm removed roots/listeners/Docker resources and retained
 workspace source with released sandbox consumers.
 
+## Media Dependency Acceptance
+
+The [read-only Media acceptance](../../reviews/2026-10-14-read-only-media-sandbox-acceptance.md) exercises a fresh child through a real Harness agent and normal password login. Media Server 0.92.0 and its dedicated Transcode Engine use ordinary installation review, child dependency resolution and shared-mount bindings. Both containers receive kernel-enforced read-only access to the original media folder; the mode survives provider replacement.
+
+The companion Media implementation requires Transcode Engine 0.14.0+ for recoverable exports, using its `idempotentTranscodes` capability. [Transcode Engine PR 50](https://github.com/alex-de-haas/transcode-engine/pull/50) adds stable submission IDs and durable outcomes; [Media Server PR 338](https://github.com/alex-de-haas/media-server/pull/338) retains the exact request for recovery. The fixture recipe helper gives every preparation and service its own Docker alias and records the complete cleanup inventory before tagging. Recipe directories derived from app IDs must remain beneath the selected output directory. Copied navigation assets must remain inside both their source checkout and their recipe destination. The dated acceptance report preserves its original pre-review baseline; the linked PRs record the additional regression checks.
+
+The browser creates a read-only catalog, scans 31 files, manually identifies one source through the normal API, and starts a full-length H.264 export to a separate writable mount. Independent probe/decode and authenticated download succeed. Media source count stays unchanged. A second Media Server remux completes after provider restart without restarting Media Server; it retains a timestamp warning also present in the original AVI.
+
+The agent removes exports and finishes both test children. Independent checks confirm removed child processes, ports, containers and roots; all 118 source-file SHA-256 hashes and filesystem observations match. External folders survive Core Finish, then the fixture removes its own output and helper resources. Source worktrees survive.
+
+Automatic TMDb enrichment and torrent ingestion are outside this setup. Measured fixture limits and memory do not implement aggregate child admission quotas; the broader permission, revocation and platform matrix remains in the plan.
+
 ## Testing Expectations
 
 Verify embedded Workspaces creation in current/source mode, normal child login and application preview,
