@@ -6,7 +6,7 @@ Baseline: `608739739dbf31a7476c9150a4ce1cdf30c2bb0f` plus the uncommitted sandbo
 
 D22 passes on macOS with Docker Desktop. A real Codex 0.160.0 agent using `gpt-6.1-sol` runs through Harness 0.51.0 session `bc73d51c-8084-4ce1-b503-f9a596f3e425`. It chooses and invokes the production environment tools itself. This complements the [manager acceptance](2026-10-14-child-core-manager.md), whose orchestration used a fake agent adapter.
 
-[Structured evidence](../features/app-sandbox-runtimes/2026-10-14-child-core-agent-evidence.json), [authenticated hot-reload screenshot](../features/app-sandbox-runtimes/2026-10-14-child-core-agent-preview.png), [agent source patch](../features/app-sandbox-runtimes/2026-10-14-child-core-agent-source.patch).
+[Authenticated hot-reload screenshot](../features/app-sandbox-runtimes/2026-10-14-child-core-agent-preview.png). The agent changes, measurements and cleanup results are summarized below; raw run outputs and the experimental patch are not versioned.
 
 ## Actual Agent Flow
 

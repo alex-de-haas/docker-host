@@ -139,7 +139,7 @@ can test a pinned app artifact. A workspace can link several app instances, and 
 its installed instance beside sandbox instances. Source ownership and consumer cleanup still apply
 when a worktree is selected; scheduling remains with the calling workflow.
 
-The [sandbox runtime evidence](../app-sandbox-runtimes/2026-10-14-core-runtime-evidence.json) verifies
+The [sandbox runtime acceptance summary](../app-sandbox-runtimes/feature.md#integrations-and-verification-boundary) verifies
 the Harness/worktree loop and independent QA without workspace allocation. Shell and Workspaces
 consume that same API. Git publication/CI acceptance and the supported production agent transport
 remain under their existing owners; no commits or PRs are created by this runtime experiment.

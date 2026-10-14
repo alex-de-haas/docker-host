@@ -796,9 +796,8 @@ Earlier checked items retain their verified offline scope; the following IDs own
 
 ### Same-Host Core Environments (Owner Decision, 2026-10-14)
 
-D20 evidence: [review](../../reviews/2026-10-14-same-host-core-experiment.md) and
-[measurements](2026-10-14-same-host-core-evidence.json). The checked experiment records both passing
-checks and concrete limitations. The subsequent [manager acceptance](../../reviews/2026-10-14-child-core-manager.md) closes D18/D19/D21 on the selected local host.
+D20 evidence: [review and measurement summary](../../reviews/2026-10-14-same-host-core-experiment.md).
+The checked experiment records both passing checks and concrete limitations. The subsequent [manager acceptance](../../reviews/2026-10-14-child-core-manager.md) closes D18/D19/D21 on the selected local host.
 
 
 - [x] D20. Run and document the approved shared-Docker, two-Core experiment with duplicate app IDs, independent users/data/origins, lifecycle and crash behavior, process/container memory, and owned-resource cleanup.
@@ -811,8 +810,8 @@ D23 evidence: [Core and Demo source acceptance](../../reviews/2026-10-14-core-so
 
 ### Remaining Acceptance After The 2026-10-14 Runtime Run
 
-The [runtime evidence](2026-10-14-core-runtime-evidence.json) supersedes the earlier
-[API-only checkpoint](2026-10-14-core-api-evidence.json) for local runtime acceptance. Worktree/Harness
+The [runtime acceptance summary](feature.md#integrations-and-verification-boundary) supersedes
+the earlier API-only checkpoint for local runtime acceptance. Worktree/Harness
 and independent artifact/background journeys both passed, including real Core password login,
 scoped personas, HMR, private browser reports and complete instance disposal. Checked deliverables
 are bounded to the selected macOS Docker Desktop/offline Demo App recipe. They do not claim a

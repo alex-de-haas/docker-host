@@ -207,7 +207,7 @@ implementation checklist:
    Git/PR/CI/review path and creation from Shell, then apply ready visual references with parity
    checks. Existing feature owners retain implementation; this plan's D3 collects acceptance.
 
-The [2026-10-14 runtime evidence](../app-sandbox-runtimes/2026-10-14-core-runtime-evidence.json)
+The [2026-10-14 runtime acceptance summary](../app-sandbox-runtimes/feature.md#integrations-and-verification-boundary)
 records completion of the two local Core sandbox journeys: real Harness/worktree edits and
 independent artifact QA after logout under scoped background authority. Separate agent/app
 containers, local preview/HMR, temporary users/data, private browser results, failure checks and

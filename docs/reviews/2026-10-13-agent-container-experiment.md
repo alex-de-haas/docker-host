@@ -6,7 +6,7 @@ Baseline: `f146d0ddd810eeaaa1d9cc922bf6c000a6d1d3e2`, with uncommitted planning 
 
 One standalone Codex agent successfully edited a synthetic worktree, passed three tests, wrote persistent agent data, and resumed the same conversation after its container restarted. Host filesystem refusal probes and container-wide shutdown passed. Startup was fast on this machine; the observed memory cost was roughly half a GiB, with a higher transient peak. This supports continuing with the shared-container prototype, but does not decide the cost of per-session containers.
 
-[Machine-readable evidence](../features/assistant-runtime-containment/2026-10-13-agent-container-evidence.json) includes all 30 startup timings, 343 resource samples, configuration, checks, test output, source/test results and recipe hashes. [Containment D9](../features/assistant-runtime-containment/plan.md) still owns the unmeasured comparison and integration work.
+This report summarizes 30 startup timings, 343 resource samples, configuration, checks and test results. Raw measurements and logs are local experiment outputs, not repository assets. [Containment D9](../features/assistant-runtime-containment/plan.md) still owns the unmeasured comparison and integration work.
 
 ## Configuration And Boundary
 
@@ -83,9 +83,9 @@ python3 scripts/experiments/agent-container/run.py \
   --starts 30 --idle-seconds 60
 ```
 
-Choose a fresh root each time; preparation refuses an existing directory. The driver uses a randomly named container, removes only its own labelled container, removes its temporary login copy, and preserves evidence and synthetic data. An external kill or machine failure can interrupt cleanup; inspect the chosen experiment directory/container in that case. The measured image ID and script hashes are preserved in the evidence. Package repository contents can change on a future rebuild despite pinned base/Codex versions.
+Choose a fresh root each time; preparation refuses an existing directory. The driver uses a randomly named container, removes only its own labelled container, removes its temporary login copy, and preserves evidence and synthetic data. An external kill or machine failure can interrupt cleanup; inspect the chosen experiment directory/container in that case. The driver saves the measured image ID and detailed observations in the experiment directory. Package repository contents can change on a future rebuild despite pinned base/Codex versions.
 
-The existing-login and app-server mechanisms follow the official [Codex authentication](https://learn.chatgpt.com/docs/auth) and [app-server](https://learn.chatgpt.com/docs/app-server) documentation. No credentials are included in the repository evidence files.
+The existing-login and app-server mechanisms follow the official [Codex authentication](https://learn.chatgpt.com/docs/auth) and [app-server](https://learn.chatgpt.com/docs/app-server) documentation. No credentials are included in this report or its example commands.
 
 ## Scope Limits And Remaining Acceptance
 

@@ -78,7 +78,6 @@ CLI restart contract.
 
 ## Evidence And Limits
 
-[Structured evidence](../features/app-sandbox-runtimes/2026-10-14-sandbox-ui-evidence.json),
 [Shell](../features/app-sandbox-runtimes/2026-10-14-sandbox-ui-shell.png),
 [embedded Workspaces](../features/app-sandbox-runtimes/2026-10-14-sandbox-ui-workspaces.png),
 [source build](../features/app-sandbox-runtimes/2026-10-14-sandbox-ui-building.png),

@@ -15,7 +15,6 @@ worked through normal browser password login and app authentication. This suppor
 same-host architecture without a VM; it does not implement a parent Core sandbox API or a security
 boundary against trusted Core code using the shared Docker daemon.
 
-[Machine-readable evidence](../features/app-sandbox-runtimes/2026-10-14-same-host-core-evidence.json),
 [Core A preview](../features/app-sandbox-runtimes/2026-10-14-same-host-core-a.png),
 [Core B preview](../features/app-sandbox-runtimes/2026-10-14-same-host-core-b.png).
 

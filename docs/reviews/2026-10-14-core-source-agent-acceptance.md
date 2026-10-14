@@ -6,7 +6,7 @@ Baseline: `608739739dbf31a7476c9150a4ce1cdf30c2bb0f` plus the uncommitted sandbo
 
 D23 passes in one complete model-driven cycle on macOS with Docker Desktop. Codex 0.160.0 using the connection's default `gpt-6.1-sol` runs through actual Harness 0.51.0 session `ce4dfc9e-5a24-45d5-afd5-992a019a2c3d`. The agent edits both Core and Demo, starts a child using its changed Core project, verifies the new API through Demo in a real browser, and finishes the environment. This extends the [prior real-agent run](2026-10-14-child-core-agent-acceptance.md), which changed Demo with the current prepared Core.
 
-[Structured evidence](../features/app-sandbox-runtimes/2026-10-14-core-source-agent-evidence.json), [browser screenshot](../features/app-sandbox-runtimes/2026-10-14-core-source-agent-preview.png), [agent-authored patch](../features/app-sandbox-runtimes/2026-10-14-core-source-agent-source.patch), [sanitized test/build/browser/resource logs](../features/app-sandbox-runtimes/2026-10-14-core-source-agent-logs.zip).
+[Browser screenshot](../features/app-sandbox-runtimes/2026-10-14-core-source-agent-preview.png). The agent changes, measurements and cleanup results are summarized below; raw run outputs, log archives and the experimental patch are not versioned.
 
 ## Actual Flow
 
@@ -24,7 +24,7 @@ The four-file patch changes the Core endpoint, its HTTP test, Demo's response re
 
 ## Verification
 
-All agent commands return exit code zero. Exact arguments, durations and logs are retained in evidence.
+All agent commands return exit code zero. The commands, outcomes and measured durations are summarized below; raw logs are local experiment outputs.
 
 - `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --artifacts-path <worktree>/.artifacts/source-agent-tests --filter FullyQualifiedName~AppDirectory -m:1 -p:UseSharedCompilation=false`: **11 passed, 0 failed, 0 skipped**, including the new HTTP test; 59.3 seconds including Linux compilation/restore.
 - `npm test --workspace @haas/hosty-demo-app`: **6 passed**, repeated after the final edit.

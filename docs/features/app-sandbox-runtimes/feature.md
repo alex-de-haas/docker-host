@@ -144,8 +144,10 @@ revocation; `--runtime` adds Docker start and a private browser smoke test. A ba
 is also verified after logout under its separate digest-bound grant.
 The fixture is not a production scheduler.
 
-The [API checkpoint](2026-10-14-core-api-evidence.json) is retained as the earlier preparation-only
-baseline. The subsequent [runtime evidence](2026-10-14-core-runtime-evidence.json) records:
+The repository retains acceptance summaries, screenshots and experiment scripts. Raw measurement
+JSON, log archives and experimental source patches are local run outputs and are not versioned.
+
+The 2026-10-14 runtime acceptance extends the earlier preparation-only API checkpoint and records:
 
 - A real Codex turn through Harness in a separate 4 GiB agent container: source edit, tests, lint,
   production build, private browser verification and HMR in a held-open real-operator browser.

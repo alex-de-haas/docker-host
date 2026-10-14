@@ -12,7 +12,7 @@ This validates the bounded integration experiment. It does not ship a production
 
 ## Evidence And Environment
 
-The [machine-readable evidence](../features/assistant-runtime-containment/2026-10-13-harness-container-evidence.json) contains configuration, 993 container samples, 479 host RSS samples, Core workspace observations, the patch and new test, sanitized command logs, cgroup counters, cleanup checks and experimental script hashes.
+This report summarizes configuration, 993 container samples, 479 host RSS samples, Core workspace observations, verification and cleanup. Raw measurements, logs and the experimental patch are local run outputs, not repository assets.
 
 | Component | Value |
 | --- | --- |

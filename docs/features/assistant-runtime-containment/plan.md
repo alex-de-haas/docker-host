@@ -90,7 +90,7 @@ runtime/preview acceptance remains under [Sandbox D4/D5/D8/D10](../app-sandbox-r
 and D9 retains controlled comparisons/long-run costs. The bounded research does not approve the
 broader Draft backend or complete those deliverables.
 
-The [2026-10-14 Core sandbox runtime evidence](../app-sandbox-runtimes/2026-10-14-core-runtime-evidence.json)
+The [2026-10-14 Core sandbox runtime acceptance summary](../app-sandbox-runtimes/feature.md#integrations-and-verification-boundary)
 adds a real contained Codex/Harness edit/test/build turn beside independent app containers, real
 operator HMR and private browser verification. Sampled agent/app cgroup maxima are 1.59/1.20 GiB;
 the simultaneous maximum is 2.79 GiB. Agent lifetime peak is 2.50 GiB, including earlier preparation,

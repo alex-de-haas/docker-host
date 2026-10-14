@@ -13,7 +13,6 @@ Core processes sharing Docker, with separate data, users, ports and origins. The
 its missing-manager, automatic Shell bootstrap, local-image adoption and Demo health findings are
 resolved here. Explicitly installing a fixed-port app still uses its ordinary port-review contract.
 
-[Evidence](../features/app-sandbox-runtimes/2026-10-14-child-core-manager-evidence.json),
 [Harness inventory](../features/app-sandbox-runtimes/2026-10-14-child-core-harness.png),
 [authenticated Demo preview](../features/app-sandbox-runtimes/2026-10-14-child-core-preview.png).
 

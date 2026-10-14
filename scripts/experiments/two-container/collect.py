@@ -31,7 +31,7 @@ result['applicationLogs']={p.name:sanitize(p.read_text()) for p in e.glob('app-*
 result['patch']=(e/'workspace-v2.patch').read_text()
 result['taskPrompts']={p.name:p.read_text() for p in e.glob('*-task.txt')}
 result['recipeSha256']={str(p.relative_to(repo)):hashlib.sha256(p.read_bytes()).hexdigest() for p in Path(__file__).parent.iterdir() if p.is_file()}
-target=repo/'docs/features/app-sandbox-runtimes/2026-10-13-two-container-evidence.json'
+target=e/'two-container-evidence.json'
 target.write_text(json.dumps(result,indent=2)+'\n')
 shutil.copy2(e/'hot-reload-v2.jpg',target.with_name('2026-10-13-two-container-preview.jpg'))
 print(json.dumps({'evidence':str(target),'mainSamples':len(main),'finalSamples':len(final),'mainSummary':result['mainSummary'],'finalRecipeSummary':result['finalRecipeSummary']},indent=2))
