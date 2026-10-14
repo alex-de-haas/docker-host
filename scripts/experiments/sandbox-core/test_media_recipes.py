@@ -73,6 +73,20 @@ class RecipeTests(unittest.TestCase):
         self.assertEqual(4, len(aliases))
         self.assertEqual(4, len(set(aliases)))
 
+    def test_source_containment_does_not_allow_destination_traversal(self):
+        manifest_path = self.sources[0] / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["ui"]["navigation"][0]["iconAsset"] = "../media/icon.svg"
+        manifest_path.write_text(json.dumps(manifest))
+        calls = []
+        def docker(*args):
+            calls.append(args)
+            return self.image(*args)
+        with self.assertRaisesRegex(ValueError, "recipe destination"):
+            self.run_helper(docker)
+        self.assertFalse((self.output / "media").exists())
+        self.assertFalse(any(args[0] == "tag" for args in calls))
+
     def test_missing_asset_creates_no_aliases(self):
         (self.sources[1] / "icon.svg").unlink()
         calls = []

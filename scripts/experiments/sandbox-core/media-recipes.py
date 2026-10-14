@@ -79,7 +79,9 @@ def main():
             path = (source / asset).resolve()
             if not path.is_relative_to(source) or Path(asset).is_absolute():
                 raise ValueError('Navigation asset must remain inside the source checkout.')
-            target = destination / asset
+            target = (destination / asset).resolve()
+            if not target.is_relative_to(destination.resolve()):
+                raise ValueError('Navigation asset must remain inside its recipe destination.')
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, target)
     # Persist the complete cleanup inventory before the first Docker mutation.
