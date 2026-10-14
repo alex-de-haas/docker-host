@@ -1,6 +1,6 @@
 ---
 created: 2026-10-07
-updated: 2026-10-09
+updated: 2026-10-14
 summary: Local external agents prepare authorized Core-owned Git worktrees through direct MCP, with separate workspace progress in Plans.
 components: [apps/core, apps/plans]
 ---
@@ -52,6 +52,30 @@ links and older payloads without external metadata retain their original present
 aggregates repositories sharing one external principal/user/task reference. The legacy worktree ID
 stays unchanged; the additional `workspaceId` identifies its logical group. Shell provides ordinary
 app navigation and has no workspace source access.
+
+## Pull Request Observation
+
+Recorded external PR URLs are observed by Core's existing publication observer every 30 seconds.
+The read-only path reuses the source provider's PR/check/review query; it never creates publication
+commands, merges, pushes, resolves review threads or schedules source cleanup.
+
+Core uses the workspace's reviewed Git connection when present. For public source without a
+selected connection, it uses the owner's sole connected account for that provider. Missing,
+expired or ambiguous connections have explicit explanations in Workspaces. Another administrator's
+account is never selected. Selecting an application's Git source connection resolves ambiguity.
+
+Each reference is correlated with the workspace repository, head repository, working branch and
+target branch. Unrelated URLs and PRs are refused before exposing observations; implicit fork or
+branch reassignment is not supported. Multiple references refresh independently. A new remote head
+updates status and checks together without modifying local Git, and Workspaces displays a head
+difference when applicable. Provider failures replace successful facts with an unavailable reason.
+
+Observations persist under Core's `development/publications/external` directory and survive restart.
+Reads revalidate the current administrator, source access and connection before showing cached facts.
+The projection includes state, draft flag, checks, review decision, unresolved-thread count and
+observation time, but omits credentials and private review comment bodies. Removed references are never projected; the next successful refresh replaces the stored snapshot
+for the remaining references. Git publication authority remains separate
+from the external workspace grant.
 
 ## Local Agent Setup
 
@@ -177,7 +201,7 @@ and do not create a Hosty filesystem sandbox.
 | `abort_workspace_merge(workspaceId, requestId, expectedHead)` | Abort a pending integration with a HEAD check |
 | `acquire_workspace_lease(workspaceId, requestId, leaseId)` | Record durable activity before native work |
 | `release_workspace_lease(workspaceId, requestId, leaseId)` | Release known stopped activity |
-| `record_workspace_pull_requests(workspaceId, requestId, pullRequests)` | Associate existing HTTPS PR URLs without publishing or proving merge |
+| `record_workspace_pull_requests(workspaceId, requestId, pullRequests)` | Associate existing HTTPS PR URLs for read-only provider observation; never publish or prove merge |
 | `cleanup_workspace(workspaceId, requestId, expectedHead)` | Explicitly request conservative source cleanup |
 
 Generate a new request UUID for each intentional managed mutation. Retain its original arguments.
@@ -203,6 +227,12 @@ refusal. Durable leases do not expire with time; an administrator releases aband
 after checking that its native consumer stopped. Released metadata remains available for inspection.
 
 ## Testing Expectations
+
+- Exercise external PR observation with multiple references, remote head changes, provider errors,
+  malformed or unrelated URLs, expired/disconnected/ambiguous accounts, owner access loss and
+  persisted observations. Verify that no publication command or source cleanup is created.
+- Verify the exact GitHub query against a real PR and inspect state, checks, review summaries and
+  connection loss through Core-managed Workspaces after normal browser login.
 
 - Preserve legacy owner JSON, allocation IDs, preparation argument fingerprints, persisted records,
   original bases and Harness session bindings through upgrade/restart.

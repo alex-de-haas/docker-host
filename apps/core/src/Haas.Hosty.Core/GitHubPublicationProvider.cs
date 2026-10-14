@@ -133,7 +133,40 @@ internal sealed class GitHubPublicationProvider(HttpClient http, IClock clock) :
     }
     private async Task<JsonNode> Graph(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
     {
-        const string query = "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){id number url state isDraft headRefName headRefOid baseRefName headRepository{nameWithOwner} mergeCommit{oid} mergeStateStatus reviewDecision reviewThreads(first:100){pageInfo{hasNextPage} nodes{id path line isResolved comments(first:20){pageInfo{hasNextPage} nodes{body}}}} commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){pageInfo{hasNextPage} nodes{... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}}}}";
+        const string query = """
+            query($owner: String!, $repo: String!, $number: Int!) {
+              repository(owner: $owner, name: $repo) {
+                pullRequest(number: $number) {
+                  id number url state isDraft headRefName headRefOid baseRefName
+                  headRepository { nameWithOwner }
+                  mergeCommit { oid }
+                  mergeStateStatus reviewDecision
+                  reviewThreads(first: 100) {
+                    pageInfo { hasNextPage }
+                    nodes {
+                      id path line isResolved
+                      comments(first: 20) { pageInfo { hasNextPage } nodes { body } }
+                    }
+                  }
+                  commits(last: 1) {
+                    nodes {
+                      commit {
+                        statusCheckRollup {
+                          contexts(first: 100) {
+                            pageInfo { hasNextPage }
+                            nodes {
+                              ... on CheckRun { name status conclusion }
+                              ... on StatusContext { context state }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """;
         var parts = Slug(r.Repository).Split('/');
         var data = await Request(c, HttpMethod.Post, "/graphql", new JsonObject { ["query"] = query,
             ["variables"] = new JsonObject { ["owner"] = parts[0], ["repo"] = parts[1], ["number"] = r.Number } }, ct);

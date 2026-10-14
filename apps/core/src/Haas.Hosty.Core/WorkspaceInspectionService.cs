@@ -139,6 +139,8 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
 
     private async Task<InspectionPullRequest[]> PullRequestsAsync(DevelopmentWorkspace tree, string userId, CancellationToken ct)
     {
+        if (tree.Owner.IsExternal && publications is not null)
+            return await publications.ReadExternalReferencesAsync(tree, userId, ct);
         var result = tree.PullRequests.Where(SafeUrl).Distinct(StringComparer.Ordinal).ToDictionary(url => url,
             url => new InspectionPullRequest(url, null, null, "No verified provider observation."), StringComparer.Ordinal);
         if (publications is null || users is null || connections is null) return result.Values.ToArray();

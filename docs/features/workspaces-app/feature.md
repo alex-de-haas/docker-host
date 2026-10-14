@@ -44,7 +44,9 @@ app bindings and PRs.
   explicit. Released or unreadable worktrees do not report a clean current source state.
 - **Pull requests** lists multiple references and authorized recorded provider observations. CI,
   review summaries, published-head differences and observation age are explicit. A URL without
-  evidence shows unknown provider state. Observations older than 90 seconds are labelled stale;
+  evidence shows an unobserved state with its connection or refresh explanation. External workspace
+  references use Core's existing provider observer every 30 seconds with the owner's source connection.
+  Observations older than 90 seconds are labelled stale;
   historical PR references do not imply current checks or aggregate completion.
 - **Applications** lists explicit installation/subpath bindings. Matching a file to a directory is
   navigation help, not exhaustive dependency analysis; shared/unmapped files remain visible.

@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class PublicationService(CoreDataPaths paths, DevelopmentWorkspaceService workspaces,
+internal sealed partial class PublicationService(CoreDataPaths paths, DevelopmentWorkspaceService workspaces,
     UserConnectionService connections, AppRegistryStore apps,
     UserDirectoryStore users, IClock clock, AuditStore audit)
 {
@@ -330,6 +330,7 @@ internal sealed class PublicationObserver(PublicationService service, ILogger<Pu
         {
             try
             {
+                await service.RefreshExternalReferencesAsync(stoppingToken);
                 foreach (var r in (await service.ListAsync(null, stoppingToken)).Publications)
                 {
                     try { await service.ObserveAsync(r.WorkspaceId, null, stoppingToken); await service.CleanupAsync(r.WorkspaceId, stoppingToken); }

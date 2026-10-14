@@ -142,9 +142,9 @@ function DiffView({ tree, path, view, epoch }: { tree: Worktree; path: string; v
 function Pr({ pr, now, head }: { pr: PullRequest; now: number; head?: string | null }) {
   const o = pr.observation;
   return <section className="space-y-3 rounded-lg border p-4"><a href={safeLink(pr.url, true)} target="_blank" rel="noreferrer" className="inline-flex max-w-full items-center gap-2 break-all font-medium underline underline-offset-4">{pr.url}<ArrowUpRight className="size-4 shrink-0" /></a>
-    <div className="flex flex-wrap gap-2"><Badge variant="outline">{o ? o.draft ? "Draft" : o.state : "Provider state unknown"}</Badge><Badge variant="outline">{isStale(o?.at, now) ? "Stale / unobserved" : "Recently observed"}</Badge></div>
+    <div className="flex flex-wrap gap-2"><Badge variant="outline">{o ? o.state === "open" && o.draft ? "Draft" : o.state : "Not observed"}</Badge><Badge variant="outline">{!o ? "Awaiting provider data" : isStale(o.at, now) ? "Stale" : "Recently observed"}</Badge></div>
     {pr.unavailable && <p className="text-muted-foreground">{pr.unavailable}</p>}{o?.error && <p className="text-destructive">{o.error}</p>}
     {pr.publishedHead && <p className="text-xs text-muted-foreground">Published HEAD {short(pr.publishedHead)}{head !== pr.publishedHead ? " · differs from this worktree" : ""}</p>}
-    {o && <><p className="text-xs text-muted-foreground">Observed {time(o.at)} · Review: {o.reviewDecision || "unknown"} · {o.unresolvedThreads} unresolved threads</p><ul className="divide-y">{o.checks?.map((c, i) => <li key={c.name + i} className="flex justify-between gap-4 py-2"><span>{c.name}</span><span>{c.state}</span></li>)}</ul>{!o.checks?.length && <p className="text-muted-foreground">No check results recorded.</p>}</>}
+    {o && <><p className="text-xs text-muted-foreground">Observed {time(o.at)} · Review: {o.reviewDecision || "No review decision"} · {o.unresolvedThreads} unresolved threads</p><ul className="divide-y">{o.checks?.map((c, i) => <li key={c.name + i} className="flex justify-between gap-4 py-2"><span>{c.name}</span><span>{c.state}</span></li>)}</ul>{!o.checks?.length && <p className="text-muted-foreground">No check results recorded.</p>}</>}
   </section>;
 }

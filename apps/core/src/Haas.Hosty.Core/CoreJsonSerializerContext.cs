@@ -99,6 +99,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(SourceWorkspaceList))]
 [JsonSerializable(typeof(PublicationCommand))]
 [JsonSerializable(typeof(PublicationRecord))]
+[JsonSerializable(typeof(ExternalPublicationSnapshot))]
 [JsonSerializable(typeof(PublicationList))]
 [JsonSerializable(typeof(PublicationConnections))]
 [JsonSerializable(typeof(PublicationIdentity))]
