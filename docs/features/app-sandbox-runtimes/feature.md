@@ -1,6 +1,6 @@
 ---
 created: 2026-10-14
-updated: 2026-10-14
+updated: 2026-10-15
 summary: Independent app sandboxes and parent-managed child Core environments with separate data, shared Docker, lifecycle recovery and Harness, Shell and Workspaces controls.
 components: [apps/core, apps/harness, apps/shell, apps/workspaces, apps/demo-app, packages/app-sdk]
 ---
@@ -62,7 +62,9 @@ separate instance-owned directories. Preparation starts with empty app data. An 
 applies a staged seed, rotates the data revision and recreates fixture personas with new IDs.
 Fixture references such as `{{sandbox.user.admin}}` expand to that reset's scoped user ID.
 
-Technical stop/restart retains personas and data. Finish/dispose first revokes access, verifies
+Technical stop/restart retains personas and data. Start after stop and explicit restart remove the
+previous generation before runtime admission inventories container capacity; stopped containers are
+not counted again as part of the new generation. Finish/dispose first revokes access, verifies
 that owned consumers are stopped, then deletes temporary folders and realm state and releases the
 source consumer. A minimal operation receipt remains for disposal replay. Source worktrees and
 explicitly exported reports are outside instance cleanup. Expired plans are pruned; retained plans, owners, allocation receipts and operation journals have
@@ -280,7 +282,8 @@ It also traverses recorded descendants, removes containers/networks/volumes bear
 instance label, deletes the temporary root, and releases worktree consumers. Fresh Docker inventories must confirm resource removal. Dependency networks carry full instance/app
 ownership labels. App start preserves upgrade compatibility by reusing an unlabelled legacy network
 at its exact derived name, including on non-default roots, without deleting its endpoints. A conflicting
-owner label is refused. Finish still reports legacy unlabelled networks as an explicit repair error
+owner label is refused. Failed app startup removes only a network created by that invocation;
+adopted labelled and legacy networks are retained during partial-start cleanup. Finish still reports legacy unlabelled networks as an explicit repair error
 rather than deleting them by name or silently omitting them. Failed cleanup retains the root and a retryable error. A finished operation receipt remains for replay. Borrowed source,
 external mount targets, exported evidence and shared Docker images remain outside deletion.
 

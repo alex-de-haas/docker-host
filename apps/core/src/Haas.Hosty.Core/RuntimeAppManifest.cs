@@ -1883,11 +1883,13 @@ internal sealed class DockerRuntimeAdapter(
         // per-app user network, so the internal port never needs host publishing. Containers
         // run standalone otherwise, so only create the network when discovery is actually used.
         var dependencyNetwork = RequiresUserNetwork(context.AllServices) ? BuildNetworkName(config.InstanceId, context.App.Id) : null;
+        var createdDependencyNetwork = false;
         if (dependencyNetwork is not null)
         {
             var network = await runner.RunAsync(["network", "create", "--label", "hosty.instance=" + config.InstanceId,
                 "--label", "hosty.app.id=" + context.App.Id, dependencyNetwork], cancellationToken: cancellationToken);
-            if (network.ExitCode != 0)
+            createdDependencyNetwork = network.ExitCode == 0;
+            if (!createdDependencyNetwork)
             {
                 var owner = await runner.RunAsync(["network", "inspect", "--format", "{{ index .Labels \"hosty.instance\" }}|{{ index .Labels \"hosty.app.id\" }}", dependencyNetwork], cancellationToken: cancellationToken);
                 // Before ownership labels, every instance used this exact app network name. Reuse
@@ -2155,7 +2157,7 @@ internal sealed class DockerRuntimeAdapter(
                 await RemoveContainerIfOwnedAsync(context.App.Id, containerName, CancellationToken.None);
             }
 
-            if (dependencyNetwork is not null)
+            if (createdDependencyNetwork && dependencyNetwork is not null)
             {
                 _ = await RunDockerAsync(["network", "rm", dependencyNetwork], ignoreFailures: true, CancellationToken.None);
             }
