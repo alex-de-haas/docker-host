@@ -9,6 +9,7 @@ vi.mock("../lib/api", async original => ({
   ...await original<typeof import("../lib/api")>(),
   approveSkill: vi.fn(), call: vi.fn(), loadSettings: vi.fn(), saveSettings: vi.fn(),
 }));
+vi.mock("./agent-runtime", () => ({ AgentRuntime: () => null }));
 vi.mock("./agent-providers", () => ({ AgentProviders: () => null }));
 
 let root: Root;

@@ -169,6 +169,13 @@ for (const channel of channels) {
   }
 }
 
+// The worker ships with Harness, and uses the exact same provider protocol versions.
+expectEqual("Harness worker version", { harness: json("apps/harness/manifest.json").version, worker: json("apps/harness/worker/package.json").version, workerLock: json("apps/harness/worker/package-lock.json").packages[""].version });
+for (const provider of ["@openai/codex", "@anthropic-ai/claude-agent-sdk"]) {
+  expectEqual(`worker ${provider}`, { harness: json("apps/harness/package.json").dependencies[provider], worker: json("apps/harness/worker/package.json").dependencies[provider] });
+}
+expectEqual("worker image release", { harness: json("apps/harness/manifest.json").version, image: read("apps/harness/src/runtime/image.ts").match(/hosty-agent-worker:([^"\s]+)/)?.[1] });
+
 if (problems.length > 0) {
   console.error("Version drift detected:");
   for (const problem of problems) {

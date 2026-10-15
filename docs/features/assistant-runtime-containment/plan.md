@@ -1,14 +1,22 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-10-14
-summary: Host protection through a shared agent container first, with measured per-session isolation, scoped access and verified shutdown retained as separate requirements.
+updated: 2026-10-15
+summary: Remaining per-session execution isolation, scoped access and verified shutdown; the shared Docker worker is implemented and verified separately.
 components: [apps/harness, apps/core]
 ---
 
 # Agent Host And Session Containment
 
 ## Scope And Owner Direction
+
+The 2026-10-15 owner request starts the shared-worker delivery under the separate
+[Shared Docker Agent Runtime](../assistant-shared-docker-runtime/feature.md).
+This plan remains Draft for the stricter per-session scope. Former D11-D13 are transferred and
+retired here without being completed; historical references still identify that original scope.
+The shared feature records the approved two-provider/selected-login contract and verified
+implementation boundaries. The older experiment authorizations below describe their original dates, not a current
+prohibition on the newly requested shared-worker work.
 
 Owner revision, 2026-10-13: protect the host first and prefer one shared administrator agent
 container for the [November demonstration](../hosty-delivery-readiness/plan.md). Return this plan
@@ -24,8 +32,8 @@ coordinator and broad service credentials outside model-accessible execution rem
 
 This revises the sequencing in [vision decisions 26 and 32](../../vision.md), recorded by decision
 35. It does not turn a shared container into session isolation. The eventual per-session target
-below remains tracked by D1-D10; shared-host delivery is D11-D13, with comparison experiments under
-D9. Common host-control restrictions also apply to the shared runner. Neither the shared runner nor
+below remains tracked by D1-D10; shared-host delivery now belongs to the linked shared-runtime
+plan, with eventual mode comparisons under D9. Common host-control restrictions also apply to the shared runner. Neither the shared runner nor
 its performance results satisfy ordinary-user acceptance under decision 28.
 
 ## Approved Bounded Experiment (2026-10-13)
@@ -63,7 +71,7 @@ Turbopack/webpack builds through an experimental Docker command transport. Initi
 486 MiB; the first build reached 2.14 GiB sampled working set and the cgroup lifetime peak was
 2.36 GiB under a 4 GiB ceiling. Harness coordination used about 270 MiB host RSS separately.
 Loopback MCP bridging, host/container path mapping and narrow Git metadata access required
-experiment-specific adapters. Production versions remain D11-D13; D9 still owns controlled
+experiment-specific adapters. The supported implementation is recorded in the shared-runtime feature; D9 still owns controlled
 comparisons, build worker-count tuning, concurrent work, long runs and browser/runtime overhead.
 
 Owner clarification after these experiments, 2026-10-13: the agent worker and the application
@@ -100,30 +108,13 @@ production worker backend, per-session isolation or unrestricted agent network c
 
 ## Shared Host Boundary First
 
-Prefer a Docker environment that hosts the existing agent adapters with its own narrow persistent
-state area. Determine whether the untrusted execution worker can be separated from Harness's
-trusted coordination/service credentials; packaging the whole process with broad secrets does not
-by itself enforce the intended boundary. Core or a trusted launcher owns container creation;
-agents request scoped operations rather than receiving the Docker daemon or a general host shell.
-
-Keep all approved worktrees accessible through explicitly reviewed mounts or a narrow export.
-Current trees and Git metadata live below `core/development`; no physical migration to a new shared
-folder is required unless a reviewed design needs it. Resolve Git access without mounting all of
-Core. Add only the chosen sandbox instance's synthetic-data area when seeding is authorized.
-Source, provider state, fixture data and coordinator secrets need separate path/lifetime decisions.
-
-Use the same local source/task in native, shared-container and per-session-container experiments.
-Separate engine/VM overhead, agent processes, app build and browser cost. Measure cached startup,
-resume, first tool action, idle/peak RAM and recovery with one agent first; 3/5-agent scaling is
-secondary. Do not assume that one container implies one process or saves the cost of concurrent
-agents. No queue is required. A reusable instance launcher may be shared with App Sandbox later,
-but a generic framework and per-session worker pool are not first-slice prerequisites.
-
-Label the active mode and shared-source limitation honestly. There is no silent native fallback.
-Check host canaries, credentials and scoped APIs; cross-session denial tests become release gates
-only for a mode claiming session isolation. Stopping one conversation must not be reported as
-revoking its filesystem access while a shared worker still holds that access. Define worker-wide
-stop and recovery effects on all active conversations and retain source when ownership is unknown.
+The [Shared Docker Agent Runtime](../assistant-shared-docker-runtime/feature.md) owns the initial
+coordinator/worker split, common worktree and Git bindings, provider-state handling, single-workload
+admission and stop/recovery implementation. Its first mode deliberately shares source visibility
+within the administrator boundary. This plan owns the additional isolation required before claiming
+that separate sessions or users cannot reach one another's source, credentials or running commands.
+Per-session comparisons may reuse shared-runtime measurements but cannot substitute for tests of
+the stricter mode. Revoking a Core token alone does not prove operating-system access has ended.
 
 ## Current Behavior
 
@@ -264,8 +255,8 @@ The 2026-10-10 transfer retires Approval Rules D1-D4 and D7-D10 there without ma
 | D9 settings bypass and D10 sensitive reads / all tool paths | Containment D8/D9 |
 
 D1-D10 retain the stricter session target and its historical transfers. D9 also owns the new
-shared/native/per-session comparison. D11-D13 add the explicitly narrower shared-host milestone;
-no prior deliverable is marked complete or silently narrowed, and no retired ID is reused.
+shared/native/per-session comparison. Former D11-D13 transferred to the now-completed shared-runtime milestone as
+described below; no prior deliverable is marked complete, and those IDs remain retired.
 
 ## Deliverables
 
@@ -280,22 +271,24 @@ no prior deliverable is marked complete or silently narrowed, and no retired ID 
 - [ ] D9. Compare native, shared-container and per-session execution using reproducible synthetic fixtures and measured startup/resource costs; run mode-specific acceptance on the selected OS/adapter matrix, carry forward historical regression cases, and record actual effects, audit coverage and unsupported cases.
 - [ ] D10. Implement ownership and verified termination of all execution descendants plus mount-release acknowledgements for Workspace Lifecycle Controls; cover detached writers, cancellation, restart/recovery and unknown state without claiming API revocation alone removes OS access.
 
-### Initial Shared-Host Milestone (Owner Revision, 2026-10-13)
+### Transferred Shared-Host Milestone (2026-10-15)
 
-- [ ] D11. Implement a shared administrator agent-container backend with pinned adapters/toolchains, trusted launch/coordination outside agent authority, persistence and recovery, without per-session containers or queueing as prerequisites.
-- [ ] D12. Define and enforce the shared runner's exact data/worktree/Git/seed bindings and scoped Core/provider access; verify common host-control restrictions and preserve existing workspace and PR operations without broad host credentials.
-- [ ] D13. Verify the shared-host journey under D9, cancellation/recovery and stop effects, document its observed guarantees and cross-session limitations, and keep the stricter session requirements explicitly unfinished.
+Former D11 (worker/backend) maps to Shared Runtime D1-D2/D6; former D12 (bindings/access) maps
+to D3-D5; former D13 (acceptance/documentation) maps to D7-D8. These IDs are retired here, not
+completed. The [shared feature](../assistant-shared-docker-runtime/feature.md) and
+[acceptance report](../../reviews/2026-10-15-shared-docker-agent-acceptance.md) record completion of that milestone
+without approving this per-session design.
 
 ## Open Questions
 
-1. What shared worker/coordinator split, provider-login transfer and exact mount set satisfies the
-   first host boundary, and which startup/RAM budget justifies later per-session execution?
+1. After the shared runtime ships, which measured startup/RAM and source-privacy requirements
+   justify adding the stricter per-session mode? Shared transport/login/bindings belong to its plan.
 2. For the eventual session mode, which trusted component launches it, and is a container retained
    per session or replaced per execution? How are concurrency, resume and recovery represented?
 3. Which platforms/container engine are supported first, and what network enforcement works for
    native tools, model transport and MCP on each? Coordinate research with App Sandbox.
-4. Which Git metadata and no-Git binding support the shared runner without exposing Core state,
-   and what stricter strategy excludes originals/siblings in eventual session mode?
+4. Which stricter Git metadata and no-Git binding strategy excludes originals/siblings in the
+   eventual session mode, beyond the shared-runtime source boundary?
 5. Can provider credentials remain in a broker, and how are native login state and existing host
    connections supported without exposing broader homes or cross-session state?
 6. How do active grant changes trigger a new execution generation, and which acknowledgement proves

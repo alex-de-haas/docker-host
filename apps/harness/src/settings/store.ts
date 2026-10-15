@@ -15,6 +15,7 @@ import { CORE_PROVIDER_ID } from "./providers.js";
 // dialog, which cannot express a list that changes as the fleet changes.
 
 export interface AssistantSettings {
+  executionMode?: "native" | "docker";
   mcpToolRules?: Record<string, ToolRule>;
   mcpPolicyMigrated?: string[];
   immediateHandoffs?: boolean;
@@ -109,6 +110,7 @@ export class SettingsStore {
     try {
       const parsed = JSON.parse(await readFile(this.file, "utf8")) as Partial<AssistantSettings>;
       this.cached = withCoreDefaults({
+        executionMode: parsed.executionMode === "docker" ? "docker" : "native",
         immediateHandoffs: parsed.immediateHandoffs === true,
         mcpToolRules: validRules(parsed.mcpToolRules) ? parsed.mcpToolRules : {},
         mcpPolicyMigrated: Array.isArray(parsed.mcpPolicyMigrated) ? parsed.mcpPolicyMigrated.filter(v => typeof v === "string") : [],
@@ -164,6 +166,7 @@ export class SettingsStore {
   ): Promise<AssistantSettings> {
     const current = await this.read();
     const next: AssistantSettings = {
+      executionMode: patch.executionMode ?? current.executionMode ?? "native",
       mcpToolRules: patch.mcpToolRules ?? current.mcpToolRules ?? {},
       mcpPolicyMigrated: patch.mcpPolicyMigrated ?? current.mcpPolicyMigrated ?? [],
       immediateHandoffs: patch.immediateHandoffs ?? current.immediateHandoffs ?? false,

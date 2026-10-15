@@ -2,7 +2,7 @@
 status: In Progress
 created: 2026-09-25
 updated: 2026-10-15
-summary: Remaining production worker-monitor integration, integrated acceptance and measurements, supported-host coverage and optional remote preview after local sandbox verification.
+summary: Remaining integrated Git/publication acceptance, supported-host coverage and optional remote preview after local sandbox and shared-worker verification.
 components: [apps/core, apps/harness, apps/shell, apps/workspaces, packages/app-sdk]
 ---
 
@@ -43,8 +43,8 @@ operator's primary Core version, source and data. Keep raw logs and evidence out
 The owner selected macOS plus Linux in Docker for this continuation; no Windows test host is
 available. Keep native Windows acceptance explicitly unverified.
 Remote preview D11 remains deferred. The production agent backend remains separately owned by
-[Containment D11-D13](../assistant-runtime-containment/plan.md); this continuation uses the existing
-bounded Harness acceptance worker and does not silently promote that Draft implementation scope.
+[Shared Docker Agent Runtime](../assistant-shared-docker-runtime/feature.md); the 2026-10-15 acceptance uses its supported shared worker. Its implementation and local
+verification are complete; it does not approve the stricter per-session containment scope.
 
 ## Latest Verified Checkpoint (2026-10-15)
 
@@ -210,8 +210,8 @@ The checked items below record the verified scope merged in #590; expanded requi
 
 ### Remaining Reliability And Acceptance
 
-- [ ] D5. Connect the remaining offline agent/worktree resource monitor through the separately approved production worker coordinator, preserving the existing CPU/RAM/PID and soft-disk policy. The 2026-10-15 daemon acceptance verifies actual Docker loss, preview revocation, retained data/journal, explicit incomplete cleanup, same-UUID interrupted disposal and full live-resource removal on macOS. The child-Core recovery subset is recorded in D26. Worker-coordinator integration remains unimplemented; the Draft containment plan is not implicitly approved by this acceptance.
-- [ ] D9. Complete the remaining inherited integrated acceptance matrix and full simultaneous Core/Harness/agent/app/browser measurements, compose the authorized Git/PR/CI/review journey, reconcile dependent plans and document only verified host/recipe guarantees. The 2026-10-15 report verifies the fresh-login callback fix through embedded and direct HMR; it does not establish every host/recipe case or a complete native Harness memory peak.
+- [x] D5. Connect the agent/worktree resource monitor through the supported shared Harness worker, preserving CPU/RAM/PID and soft-disk policy. Active Core-owned leases prevent double-counting its sandbox reservation. The [shared-worker acceptance](../../reviews/2026-10-15-shared-docker-agent-acceptance.md) verifies busy admission, detached cancellation, coordinator loss, retained leases and explicit recovery; the earlier offline daemon acceptance covers actual Docker loss and same-UUID interrupted disposal. Stricter per-session containment remains unapproved.
+- [ ] D9. Complete the remaining inherited integrated acceptance matrix and full simultaneous Core/Harness/agent/app/browser measurements, compose the authorized Git/PR/CI/review journey, reconcile dependent plans and document only verified host/recipe guarantees. The fresh-login and shared-worker reports cover both providers, direct/embedded HMR, separate Demo/Media containers and sampled native/browser memory. They do not establish every host/recipe or the composed Git/publication journey.
 - [ ] D11. Decide and separately approve optional remote preview ingress/private access, then implement and verify it, or explicitly retire it if the owner abandons it. Local delivery does not wait for it.
 
 ### Permission Extension (Owner Revision, 2026-10-14)
@@ -241,11 +241,11 @@ The [read-only Media acceptance report](../../reviews/2026-10-14-read-only-media
 | 1 | D9 local development journey | Published baseline, fresh login/HMR/navigation and complete cleanup verified |
 | 2 | D13/D15 | Reusable consent, scoped expansion review and mount revocation verified |
 | 3 | D14/D16/D17 | Dedicated dependencies, database, ordinary authority and nested lifecycle verified |
-| 4 | Remaining D5/D9 | Fault and supported-host matrix verified; unavailable targets remain explicit |
+| 4 | Remaining D9 | Fault and supported-host matrix verified; unavailable targets remain explicit |
 | Optional | D11 | Separately approved remote preview, without per-instance publication becoming a local prerequisite |
 
 Do not check a broad deliverable merely because D25 covers one representative case. The production
-shared agent backend remains [Containment D11-D13](../assistant-runtime-containment/plan.md), not a
+shared agent backend remains [Shared Docker Agent Runtime](../assistant-shared-docker-runtime/feature.md), not a
 new sandbox dependency or a claim implied by the experiment wrapper. Source Docker platform
 acceptance remains with [Mixed Development Runtimes](../mixed-development-runtimes/plan.md).
 Final live-data trials remain explicit operator actions under
@@ -267,7 +267,7 @@ Distribute the app budget across all of its services; never multiply it by the s
 
 | Resource | Default limit |
 | --- | --- |
-| Shared agent and its build/test descendants | 2 CPUs, 4 GiB RAM, 512 PIDs; coordinated with Containment D11-D13 |
+| Shared agent and its build/test descendants | 2 CPUs, 4 GiB RAM, 512 PIDs; coordinated with Shared Runtime D6 |
 | One app instance, all services/setup combined | 2 CPUs, 4 GiB RAM, 512 PIDs |
 | One Playwright worker | 1 CPU, 1.5 GiB RAM, 256 PIDs; one job at a time |
 | One trusted relay | 0.25 CPU, 256 MiB RAM, 64 PIDs |
@@ -418,7 +418,7 @@ baseline. Never restart the operator's Core merely to execute these tests. The i
 
 The [2026-10-15 trusted-Core acceptance](../../reviews/2026-10-15-trusted-core-consent-acceptance.md) records the completed D13–D17 checks and bounded macOS/Linux-in-Docker measurements.
 
-The [offline daemon acceptance](../../reviews/2026-10-15-offline-sandbox-daemon-acceptance.md) records the prepare/dispose fixes, actual Docker loss/recovery, same-UUID interrupted cleanup, browser repeat, memory snapshots and complete fixture removal. Shell is restored to its original configuration. D5 remains unchecked for the production worker-monitor integration.
+The [offline daemon acceptance](../../reviews/2026-10-15-offline-sandbox-daemon-acceptance.md) records the prepare/dispose fixes, actual Docker loss/recovery, same-UUID interrupted cleanup, browser repeat, memory snapshots and complete fixture removal. Shell is restored to its original configuration. D5 is now complete through the [shared-worker acceptance](../../reviews/2026-10-15-shared-docker-agent-acceptance.md).
 
 ## Verification And Completion
 
@@ -431,7 +431,7 @@ The [offline daemon acceptance](../../reviews/2026-10-15-offline-sandbox-daemon-
   sessions, configs and raw evidence must not leak into the main installation or repository.
 - Preserve interrupted operations with their original request UUIDs. Finish is not successful while
   any owned writer/resource remains; external shared mounts and borrowed source must survive it.
-- Keep D5's remaining production worker-monitor integration, D9's cross-feature/platform and
+- Keep D9's remaining cross-feature/platform and
   measurement acceptance, and optional D11 explicit until their own checks pass. D13-D17 and D25
   are verified in the linked reports. Update feature.md and regenerate docs/root.md with the work.
 

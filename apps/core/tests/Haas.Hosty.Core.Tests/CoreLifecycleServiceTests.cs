@@ -1979,6 +1979,32 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10), $"start took {stopwatch.Elapsed}");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StartOrRestart_WhenEnvironmentCapacityIsExhausted_SettlesTheAppAndAllowsRetry(bool restart)
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        if (restart) await fixture.Service.StartAsync("com.example.notes");
+        fixture.Adapter.StartProbe = () => throw new SandboxException("environment_application_capacity", "Environment capacity exhausted.");
+
+        var error = await Assert.ThrowsAsync<SandboxException>(() => restart
+            ? fixture.Service.RestartAsync("com.example.notes")
+            : fixture.Service.StartAsync("com.example.notes"));
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("environment_application_capacity", error.Code);
+        Assert.Equal(409, error.Status);
+        Assert.Equal(AppRuntimeStates.Stopped, app!.RuntimeState);
+        Assert.Equal("failed", app.OperationStatus);
+        Assert.Equal(error.Message, app.LastError);
+
+        fixture.Adapter.StartProbe = null;
+        var retried = await fixture.Service.StartAsync("com.example.notes");
+        Assert.Equal(AppRuntimeStates.Running, retried.App!.RuntimeState);
+        Assert.Null(retried.App.LastError);
+    }
+
     [Fact]
     public async Task StartAsync_FailsWhenAServiceExitsDuringTheWait()
     {

@@ -943,6 +943,10 @@ internal static class LifecycleEndpoints
             };
             return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: statusCode);
         }
+        catch (SandboxException ex)
+        {
+            return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: ex.Status);
+        }
         catch (InvalidOperationException ex)
         {
             return CoreJson.Json(new ErrorResponse("lifecycle_operation_failed", ex.Message), statusCode: StatusCodes.Status400BadRequest);

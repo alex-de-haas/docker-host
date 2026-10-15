@@ -22,6 +22,7 @@ export type AssistantQuestion = {
 };
 
 export type AssistantSession = {
+  executionMode?: "native" | "docker";
   autonomy?: "normal" | "autonomous";
   handoffDraft?: { text: string; attachments: StoredAttachment[] };
   handoffDispatch?: { id: string; state: string; error?: string };

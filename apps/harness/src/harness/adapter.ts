@@ -97,6 +97,7 @@ export type HarnessEvent =
   | { type: "error"; message: string };
 
 export interface HarnessStartOptions {
+  processTransport?: import("../runtime/transport.js").AgentProcessTransport;
   autonomy?: "normal" | "autonomous";
   sessionId: string;
   cwd: string;

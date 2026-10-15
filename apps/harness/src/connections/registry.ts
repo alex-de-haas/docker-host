@@ -1,6 +1,8 @@
+import { constants as fsConstants } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import {
   chmod,
+  open,
   cp,
   lstat,
   mkdir,
@@ -34,6 +36,7 @@ export interface AgentConnection {
   secretKey: string;
   hostDirectory?: string;
   importSource?: string;
+  dockerImportIdentity?: string;
 }
 interface RegistryState {
   version: 1;
@@ -93,6 +96,7 @@ export class AgentConnections {
   private queue: Promise<unknown> = Promise.resolve();
   private logins = new Map<string, LoginState>();
   private syncErrors = new Map<string, string>();
+  private syncedAuth = new Map<string, string>();
   private syncTimer: ReturnType<typeof setInterval>;
   constructor(
     private readonly dataDir: string,
@@ -486,7 +490,7 @@ export class AgentConnections {
       }
     });
   }
-  private home(connection: AgentConnection): string {
+  private home(connection: AgentConnection, docker = false): string {
     if (!this.cacheDir)
       throw new ConnectionError(
         503,
@@ -495,21 +499,19 @@ export class AgentConnections {
       );
     return path.join(
       this.cacheDir,
-      "agent-providers",
+      docker ? "agent-docker-providers" : "agent-providers",
       connection.id,
       String(connection.revision),
     );
   }
   private async removeManagedHome(connection: AgentConnection): Promise<void> {
-    if (this.cacheDir)
-      await rm(path.join(this.cacheDir, "agent-providers", connection.id), {
-        recursive: true,
-        force: true,
-      });
+    if (this.cacheDir) for (const directory of ["agent-providers", "agent-docker-providers"])
+      await rm(path.join(this.cacheDir, directory, connection.id), { recursive: true, force: true });
   }
-  private async nativeHome(connection: AgentConnection): Promise<string> {
-    const home = this.home(connection);
+  private async nativeHome(connection: AgentConnection, docker = false): Promise<string> {
+    const home = this.home(connection, docker);
     await mkdir(home, { recursive: true, mode: 0o700 });
+    if ((await realpath(home)) !== path.join(await realpath(this.cacheDir!), path.relative(this.cacheDir!, home))) throw new ConnectionError(409, "provider_storage_conflict", "The managed provider home redirects through a symbolic link.");
     await chmod(home, 0o700);
     // Only conversation directories enter backups. Native credential/config files stay in cache.
     for (const directory of connection.kind === "codex"
@@ -542,9 +544,15 @@ export class AgentConnections {
           "The managed provider session directory has an unexpected location.",
         );
     }
-    return home;
+    return docker ? await realpath(home) : home;
   }
-  async adapter(binding: ConnectionBinding): Promise<HarnessAdapter> {
+  async workerMounts(binding: ConnectionBinding): Promise<import("../runtime/worker.js").WorkerMount[]> {
+    const connection = await this.get(binding.connectionId);
+    if (connection.revision !== binding.connectionRevision) throw new ConnectionError(409, "provider_credentials_changed", "Select the updated connection in a new chat.");
+    const home = await this.nativeHome(connection, true);
+    return [{ source: await realpath(home) }, ...await Promise.all((connection.kind === "codex" ? ["sessions", "archived_sessions"] : ["projects"]).map(async directory => ({ source: await realpath(path.join(home, directory)) })))];
+  }
+  async adapter(binding: ConnectionBinding, docker = false): Promise<HarnessAdapter> {
     const adapter = await this.serialize(async () => {
       const connection = await this.get(binding.connectionId);
       if (
@@ -565,6 +573,32 @@ export class AgentConnections {
             "provider_host_account_changed",
             "The account in this host login changed. Start a new chat to use the current account.",
           );
+        if (docker) {
+          const home = await this.nativeHome(connection, docker);
+          const stored = await this.secretGet(connection.secretKey);
+          const importedIdentity = connection.dockerImportIdentity;
+          if (!stored && importedIdentity === binding.connectionIdentity)
+            throw new ConnectionError(409, "provider_reconnect_required", "The imported authorization was revoked. Reconnect this host login in Harness settings.");
+          if (!stored || importedIdentity !== binding.connectionIdentity) {
+            // Import authorization only. Never copy host config, hooks, MCP entries or histories.
+            const raw = await readFile(path.join(connection.hostDirectory!, "auth.json"), "utf8").catch(() => null);
+            if (!raw || Buffer.byteLength(raw) > 16000) throw new ConnectionError(409, "provider_import_required", "This host login cannot be imported. Sign in through Harness.");
+            const auth = JSON.parse(raw) as Record<string, unknown>;
+            const tokens = auth.tokens as Record<string, unknown> | undefined;
+            const selected = auth.OPENAI_API_KEY ? { OPENAI_API_KEY: auth.OPENAI_API_KEY } : {
+              auth_mode: "chatgpt", tokens: tokens && Object.fromEntries(["access_token", "refresh_token", "id_token", "account_id"].map(key => [key, tokens[key]])),
+              ...(typeof auth.last_refresh === "string" ? { last_refresh: auth.last_refresh } : {}),
+            };
+            if (typeof auth.OPENAI_API_KEY !== "string" && (typeof tokens?.access_token !== "string" || typeof tokens?.refresh_token !== "string"))
+              throw new ConnectionError(409, "provider_import_required", "This host login has no portable authorization. Sign in through Harness.");
+            await this.secrets.set(connection.secretKey, JSON.stringify(selected));
+            await this.writeAuth(home, JSON.stringify(selected));
+            connection.dockerImportIdentity = binding.connectionIdentity;
+            await this.save(await this.load());
+          }
+          await this.synchronizeAuth(connection, home);
+          return new CodexHarnessAdapter({ dataDir: this.dataDir, codexHome: home, managedHome: home, isolated: true });
+        }
         return new CodexHarnessAdapter({
           dataDir: this.dataDir,
           codexHome: connection.hostDirectory,
@@ -580,7 +614,7 @@ export class AgentConnections {
           "Reconnect this provider in Hosty Harness settings. Its credential is missing.",
         );
       }
-      const home = await this.nativeHome(connection);
+      const home = await this.nativeHome(connection, docker);
       if (connection.kind === "claude") {
         const env = cleanAgentEnvironment();
         env.CLAUDE_CONFIG_DIR = home;
@@ -592,12 +626,10 @@ export class AgentConnections {
         return new ClaudeHarnessAdapter(env);
       }
       if (connection.auth === "chatgpt") {
-        const file = path.join(home, "auth.json");
-        const current = await readFile(file, "utf8").catch(() => null);
-        if (current) await this.persistNativeAuth(connection, current);
-        else await writeFile(file, secret, { mode: 0o600 });
+        await this.synchronizeAuth(connection, home);
         this.syncErrors.delete(connection.id);
       }
+      if (docker && connection.auth === "api-key") await this.writeAuth(home, JSON.stringify({ OPENAI_API_KEY: secret }));
       return new CodexHarnessAdapter({
         dataDir: this.dataDir,
         codexHome: home,
@@ -609,7 +641,7 @@ export class AgentConnections {
     return {
       name: adapter.name,
       capabilities: adapter.capabilities,
-      probe: () => adapter.probe(),
+      probe: () => docker ? Promise.resolve({ available: true }) : adapter.probe(),
       start: (options) => {
         const current = this.state?.connections.find(
           (c) => c.id === binding.connectionId,
@@ -647,11 +679,8 @@ export class AgentConnections {
             interrupt: () => run.interrupt(),
             setMcpServers: (servers) => run.setMcpServers(servers),
             stop: async () => {
-              try {
-                await run.stop();
-              } finally {
-                release();
-              }
+              await run.stop();
+              release();
             },
           };
         } catch (error) {
@@ -710,7 +739,7 @@ export class AgentConnections {
     }
     return defaultHealth;
   }
-  async health(binding?: ConnectionBinding | null): Promise<
+  async health(binding?: ConnectionBinding | null, docker = false): Promise<
     HarnessAvailability & {
       name: string;
       capabilities: HarnessAdapter["capabilities"] & { appContext: boolean };
@@ -732,7 +761,7 @@ export class AgentConnections {
     try {
       const selected = binding === undefined ? await this.binding() : binding;
       if (!selected) return missing;
-      const adapter = await this.adapter(selected);
+      const adapter = await this.adapter(selected, docker);
       return {
         name: adapter.name,
         capabilities: { ...adapter.capabilities, appContext: true },
@@ -796,11 +825,38 @@ export class AgentConnections {
     const stored = await this.secretGet(connection.secretKey);
     if (stored !== raw) await this.secrets.set(connection.secretKey, raw);
   }
+  private async writeAuth(home: string, raw: string): Promise<void> {
+    const temporary = path.join(home, `.hosty-auth-${randomUUID()}`);
+    const handle = await open(temporary, "wx", 0o600);
+    try { await handle.writeFile(raw); } finally { await handle.close(); }
+    await rename(temporary, path.join(home, "auth.json"));
+  }
+  private async synchronizeAuth(connection: AgentConnection, home: string): Promise<void> {
+    let secret = await this.secretGet(connection.secretKey);
+    if (!secret) throw new ConnectionError(409, "provider_reconnect_required", "Reconnect this provider: its Core authorization is missing.");
+    let current: string | null = null;
+    const handle = await open(path.join(home, "auth.json"), fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW).catch(error => {
+      if (error.code === "ENOENT") return null; throw error;
+    });
+    if (handle) {
+      try { if ((await handle.stat()).size > 16000) throw new Error("Provider authorization exceeds its size limit."); current = await handle.readFile("utf8"); }
+      finally { await handle.close(); }
+    }
+    const previous = this.syncedAuth.get(home);
+    const refreshedAt = (raw: string) => { const value = JSON.parse(raw).last_refresh; return typeof value === "string" ? Date.parse(value) || 0 : 0; };
+    // A local refresh wins only when this process observed the old value, or its provider timestamp
+    // is newer after restart. An unchanged stale home never overwrites a refreshed Core secret.
+    if (current && current !== secret && (previous !== undefined && current !== previous || refreshedAt(current) > refreshedAt(secret))) {
+      await this.persistNativeAuth(connection, current); secret = current;
+    }
+    if (current !== secret) await this.writeAuth(home, secret);
+    this.syncedAuth.set(home, secret);
+  }
   async syncCredentials(): Promise<void> {
     await this.serialize(async () => {
       await this.cleanupSecrets();
       for (const connection of (await this.load()).connections.filter(
-        (c) => c.auth === "chatgpt",
+        (c) => c.auth === "chatgpt" || c.auth === "host-login",
       )) {
         try {
           // Missing Core secret is revocation/reconnect, never an invitation to recreate it from cache.
@@ -808,11 +864,10 @@ export class AgentConnections {
             await this.removeManagedHome(connection);
             continue;
           }
-          const raw = await readFile(
-            path.join(this.home(connection), "auth.json"),
-            "utf8",
-          ).catch(() => null);
-          if (raw) await this.persistNativeAuth(connection, raw);
+          for (const docker of connection.auth === "host-login" ? [true] : [false, true]) {
+            const home = this.home(connection, docker);
+            if (await lstat(home).catch(() => null)) await this.synchronizeAuth(connection, home);
+          }
           this.syncErrors.delete(connection.id);
         } catch {
           this.syncErrors.set(
