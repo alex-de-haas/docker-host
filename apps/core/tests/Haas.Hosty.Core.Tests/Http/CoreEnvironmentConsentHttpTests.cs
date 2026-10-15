@@ -85,6 +85,25 @@ public sealed class CoreEnvironmentConsentHttpTests
         Assert.Equal("finished", (await finished.Content.ReadFromJsonAsync<CoreEnvironmentView>())!.State);
     }
     [Fact]
+    public async Task ManageOnlyCaller_CanApproveAndLaunchWithoutReceivingReadAuthority()
+    {
+        await using var host = await CoreEnvironmentHttpTests.StartHostAsync(); using var caller = await Caller(host);
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var app = (await apps.GetAppAsync("qa.client"))!;
+        await apps.UpsertAppAsync(app with { GrantedCorePermissions = [CoreAppPermissions.CoreEnvironmentsManage] });
+        var input = new CoreEnvironmentCreate(Guid.NewGuid().ToString(), "Manage-only QA");
+        await Approve(host, caller, input, true);
+        var grants = host.Services.GetRequiredService<BackgroundGrantService>();
+        var grant = Assert.Single((await grants.ReadAsync(default))!.Grants);
+        Assert.Equal(["manage"], Assert.Single(grant.Scopes).Actions);
+        var token = await grants.IssueAsync("qa.client", new(grant.Id, "environment"), default);
+        caller.DefaultRequestHeaders.Remove("X-Hosty-User-Token");
+        caller.DefaultRequestHeaders.Add("X-Hosty-User-Token", token.AccessToken);
+        using var created = await caller.PostAsJsonAsync(Root, input); created.EnsureSuccessStatusCode();
+        Assert.Equal("stopped", (await created.Content.ReadFromJsonAsync<CoreEnvironmentView>())!.State);
+        Assert.Equal(HttpStatusCode.Forbidden, (await caller.GetAsync(Root)).StatusCode);
+    }
+    [Fact]
     public async Task SavedConsent_PinsCallerModeCeilingsAndAccountRevision()
     {
         await using var host = await CoreEnvironmentHttpTests.StartHostAsync(); using var caller = await Caller(host);

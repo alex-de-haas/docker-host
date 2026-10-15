@@ -89,11 +89,13 @@ internal sealed class CoreEnvironmentConsentService(HostyCoreRuntimeConfig confi
         var user = (await users.ReadAsync(ct)).Users.FirstOrDefault(u => u.Id == plan.UserId);
         var app = await apps.GetAppAsync(plan.AppId, ct);
         var current = await PolicyAsync(plan.Request, ct);
-        if (user is null || user.AuthRevision != plan.AuthRevision || app?.InstalledAt != plan.Installation
+        if (user is null || user.AuthRevision != plan.AuthRevision || app is null || app.InstalledAt != plan.Installation
             || current != plan.Policy)
             throw new AppIdentityException("environment_consent_changed", "The owner, installation or Core target changed. Review a new request.");
+        var actions = Actions.Where(action => AppManagementAuthorization.HasPermission(app, action == "read"
+            ? CoreAppPermissions.CoreEnvironmentsRead : CoreAppPermissions.CoreEnvironmentsManage)).ToArray();
         _ = await grants.CreateAsync(user, new(plan.AppId, "Trusted Core: " + plan.Request.Label,
-            [new("environment", "core-environment", AgentMcpDirectory.CoreId, Actions,
+            [new("environment", "core-environment", AgentMcpDirectory.CoreId, actions,
                 Environment: saved ? plan.Policy with { RequestDigest = null } : plan.Policy)]), ct);
     }
     internal async Task<CoreEnvironmentConsent> FindAsync(SandboxActor actor, CoreEnvironmentCreate request, CancellationToken ct)

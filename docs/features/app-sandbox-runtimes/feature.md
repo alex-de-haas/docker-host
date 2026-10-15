@@ -399,7 +399,8 @@ The regenerated retention marker and skipped directory links are outside that co
 Another target or increased resource ceiling requires review. Worktree
 ownership and source path checks still apply independently. A single-app sandbox grant cannot
 launch a whole Core; the separate `core-environment` scope can issue normal short-lived background
-credentials for its reviewed actions.
+credentials for its reviewed actions. Consent includes only the caller's currently granted
+read/manage actions; a manage-only caller does not receive read authority.
 
 The shared Shell/Workspaces panel shows effective consent and supports revocation. Shell also lists
 saved permissions when no environment remains. Revocation prevents new delegated creation,
