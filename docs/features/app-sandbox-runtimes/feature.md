@@ -475,6 +475,22 @@ set). Native Core/Harness/browser RSS is measured separately. This is one macOS 
 workload, not an all-host guarantee or a complete cold-start benchmark; remaining D9 coverage stays
 in the [plan](plan.md).
 
+## Released Local Acceptance
+
+The [local D9 report](../../reviews/2026-10-15-sandbox-d9-local-acceptance.md) verifies merged Core/CLI
+0.135.1, Demo 0.17.2 and worker 0.53.0 with a real Codex conversation, fresh child password login,
+source build/HMR, concurrent same-ID Start, stale-request refusal, independent QA without a workspace,
+private Docker config preservation and full Finish. Its L01-L22 ledger maps 209 unique Core cases,
+18 Harness tests and six Demo tests to profile-specific live evidence. Both child roots/processes,
+two app containers, six cache volumes and a network are removed while borrowed source remains intact.
+
+Cold client image transfers, dependency/cache preparation and warm lifecycle timing are recorded
+separately from the already-running Docker VM and shared base layers. The selected simultaneous
+worker-plus-child sample is 3,417.6 MiB charged / 2,154.3 MiB working set; native Core, Harness,
+browser and verification processes have separate measurements. The report retains the temporary
+helper failure and sampling boundaries. Local D27 is verified; the plan retains additional D9
+host/architecture/recipe and D11 remote-preview acceptance.
+
 ## Testing Expectations
 
 Verify embedded Workspaces creation in current/source mode, normal child login and application preview,
