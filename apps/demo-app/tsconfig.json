@@ -31,7 +31,11 @@
     ".next-dev-backend/types/**/*.ts",
     ".next-dev-backend/dev/types/**/*.ts",
     ".next-dev-frontend/types/**/*.ts",
-    ".next-dev-frontend/dev/types/**/*.ts"
+    ".next-dev-frontend/dev/types/**/*.ts",
+    ".next-sandbox-backend/types/**/*.ts",
+    ".next-sandbox-backend/dev/types/**/*.ts",
+    ".next-sandbox-frontend/types/**/*.ts",
+    ".next-sandbox-frontend/dev/types/**/*.ts"
   ],
   "exclude": ["node_modules"]
 }

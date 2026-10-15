@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-24
-updated: 2026-10-10
+updated: 2026-10-14
 summary: Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -121,10 +121,35 @@ compatibility. Sessions and context remain assistant-owned, with successive agen
 the same session. Workspaces does not become a provider or a second conversation engine.
 
 The [Workspaces app](../workspaces-app/feature.md) begins with read-only inventory and per-worktree
-changes/PRs. Testing and browser execution stay in the deferred Sandbox feature; plan associations
+changes/PRs. Testing and browser execution use the independent Core Sandbox feature under acceptance; plan associations
 and implementation handoffs stay deferred. Source allocation starts with authorized edits, not
 ordinary questions. Future operator close ends development authority while retaining discussion;
 closing, cancellation and physical cleanup are distinct and must not assume native processes stopped.
+
+## Workspace Sandbox Journey (Owner Clarification, 2026-10-13)
+
+The [November demonstration plan](../hosty-delivery-readiness/plan.md) selects one local agent,
+host-first container protection, workspace Docker app instances with synthetic data and real Core
+users, operator preview and Playwright verification. Commit/push/PR/CI/review use the shipped
+publication path and belong in that journey. D1-D2 here integrate those facts across restarts;
+Sandbox owns an independent Core runtime/identity/data/browser API available to authorized apps.
+This journey supplies optional workspace/worktree context and consumes the same lifecycle. It does
+not make Harness sessions or source changes prerequisites for sandbox use: independent QA clients
+can test a pinned app artifact. A workspace can link several app instances, and an app can retain
+its installed instance beside sandbox instances. Source ownership and consumer cleanup still apply
+when a worktree is selected; scheduling remains with the calling workflow.
+
+The [sandbox runtime acceptance summary](../app-sandbox-runtimes/feature.md#integrations-and-verification-boundary) verifies
+the Harness/worktree loop and independent QA without workspace allocation. Shell and Workspaces
+consume that same API. Git publication/CI acceptance and the supported production agent transport
+remain under their existing owners; no commits or PRs are created by this runtime experiment.
+
+[Feedback](../app-feedback-inbox/plan.md) adds optional durable collections and explicit assistant
+organization into several sessions/workspaces. Independent changes may use parallel worktrees/PRs;
+source access, execution authority and repository commit rules still apply to every child.
+Provider switching and the broader acceptance below remain tracked requirements of this umbrella,
+but are not prerequisites for the one-provider first demonstration. Partial integration does not
+close this plan.
 
 ## Common Invariants
 
@@ -184,7 +209,7 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
 | [Feedback inbox](../app-feedback-inbox/plan.md) | Independent ordinary-user intake and admin triage/batch delivery outside the privileged Harness process |
 | [External context exchange](../assistant-external-session-context/plan.md) | Later explicit local-agent read/prepare/report workflow |
 | [Harness Swift](../hosty-harness-swift/plan.md) | Dedicated native client with independent delivery and notification decisions |
-| [Sandbox runtimes](../app-sandbox-runtimes/plan.md) | Worktree runtime selection, runtime/data isolation and deterministic browser validation |
+| [Sandbox runtimes](../app-sandbox-runtimes/plan.md) | Independent Core instance API, optional worktree integration, runtime/data/user isolation and deterministic browser validation |
 | [Synthetic app evaluations](../agent-app-evaluations/plan.md) | Later exploratory agents and controlled variant comparisons |
 
 Existing owners retain their deliverables: [approval rules](../assistant-approval-rules/plan.md),

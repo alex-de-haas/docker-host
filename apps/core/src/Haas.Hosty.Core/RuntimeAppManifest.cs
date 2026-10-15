@@ -848,8 +848,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         if (manifest.Data?.Enabled == true && selectedProfile is not null)
         {
             dataTarget = manifest.Data.Targets.FirstOrDefault(target =>
-                string.Equals(target.Runtime, selectedProfile.Key, StringComparison.Ordinal) ||
-                string.Equals(target.Runtime, selectedProfile.Type, StringComparison.Ordinal));
+                string.Equals(target.Runtime, selectedProfile.Key, StringComparison.Ordinal))
+                ?? manifest.Data.Targets.FirstOrDefault(target =>
+                    string.Equals(target.Runtime, selectedProfile.Type, StringComparison.Ordinal));
 
             if (selectedProfile.Type == "docker" && dataTarget is null)
             {
@@ -867,8 +868,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         if (manifest.Cache?.Enabled == true && selectedProfile is not null)
         {
             cacheTarget = manifest.Cache.Targets.FirstOrDefault(target =>
-                string.Equals(target.Runtime, selectedProfile.Key, StringComparison.Ordinal) ||
-                string.Equals(target.Runtime, selectedProfile.Type, StringComparison.Ordinal));
+                string.Equals(target.Runtime, selectedProfile.Key, StringComparison.Ordinal))
+                ?? manifest.Cache.Targets.FirstOrDefault(target =>
+                    string.Equals(target.Runtime, selectedProfile.Type, StringComparison.Ordinal));
 
             if (selectedProfile.Type == "docker" && cacheTarget is null)
             {
@@ -1752,6 +1754,8 @@ internal interface IDockerCommandRunner
     // `environment` is injected into the docker CLI process (not the argv), so secret-bearing values
     // referenced by `-e KEY` (name only) never appear in ps/`/proc/*/cmdline` (C-M5).
     Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, IReadOnlyDictionary<string, string>? environment = null, CancellationToken cancellationToken = default);
+    Task<DockerCommandResult> RunBoundedAsync(IReadOnlyList<string> args, int outputLimit, CancellationToken cancellationToken)
+        => RunAsync(args, null, cancellationToken);
 }
 
 internal sealed record DockerCommandResult(int ExitCode, string StandardOutput, string StandardError);
@@ -1766,7 +1770,13 @@ internal sealed class ProcessDockerCommandRunner(TimeSpan? timeout = null) : IDo
 {
     private readonly TimeSpan timeout = timeout ?? TimeSpan.FromMinutes(30);
 
-    public async Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, IReadOnlyDictionary<string, string>? environment = null, CancellationToken cancellationToken = default)
+    public Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, IReadOnlyDictionary<string, string>? environment = null, CancellationToken cancellationToken = default)
+        => RunCoreAsync(args, environment, cancellationToken, null);
+
+    public Task<DockerCommandResult> RunBoundedAsync(IReadOnlyList<string> args, int outputLimit, CancellationToken cancellationToken)
+        => RunCoreAsync(args, null, cancellationToken, outputLimit);
+
+    private async Task<DockerCommandResult> RunCoreAsync(IReadOnlyList<string> args, IReadOnlyDictionary<string, string>? environment, CancellationToken cancellationToken, int? outputLimit)
     {
         var startInfo = new System.Diagnostics.ProcessStartInfo { FileName = "docker" };
         foreach (var arg in args)
@@ -1787,7 +1797,7 @@ internal sealed class ProcessDockerCommandRunner(TimeSpan? timeout = null) : IDo
         ProcessRunResult result;
         try
         {
-            result = await ProcessRunner.RunAsync(startInfo, timeout, cancellationToken);
+            result = await ProcessRunner.RunAsync(startInfo, timeout, cancellationToken, outputLimit);
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
@@ -1862,6 +1872,9 @@ internal sealed class DockerRuntimeAdapter(
         if (dockerCoreListener is not null) await dockerCoreListener.EnsureReadyAsync(cancellationToken);
         var endpoints = new List<AppEndpointContract>();
         var services = OrderServices(context.Manifest.Services);
+        using var admission = await CoreEnvironmentResources.AdmitAsync(config, runner, context.App.Id, services.Count, cancellationToken,
+            replacementServices: services.Select(s => s.Key).ToHashSet(StringComparer.Ordinal),
+            totalServices: context.AllServices.Count(s => s.Runtime.Type == "docker"));
         var resolvedLocks = new Dictionary<string, ArtifactLock>(StringComparer.Ordinal);
 
         MaybeAdviseWslMirroredNetworking(context, services);
@@ -1870,9 +1883,22 @@ internal sealed class DockerRuntimeAdapter(
         // per-app user network, so the internal port never needs host publishing. Containers
         // run standalone otherwise, so only create the network when discovery is actually used.
         var dependencyNetwork = RequiresUserNetwork(context.AllServices) ? BuildNetworkName(config.InstanceId, context.App.Id) : null;
+        var createdDependencyNetwork = false;
         if (dependencyNetwork is not null)
         {
-            _ = await RunDockerAsync(["network", "create", dependencyNetwork], ignoreFailures: true, cancellationToken);
+            var network = await runner.RunAsync(["network", "create", "--label", "hosty.instance=" + config.InstanceId,
+                "--label", "hosty.app.id=" + context.App.Id, dependencyNetwork], cancellationToken: cancellationToken);
+            createdDependencyNetwork = network.ExitCode == 0;
+            if (!createdDependencyNetwork)
+            {
+                var owner = await runner.RunAsync(["network", "inspect", "--format", "{{ index .Labels \"hosty.instance\" }}|{{ index .Labels \"hosty.app.id\" }}", dependencyNetwork], cancellationToken: cancellationToken);
+                // Before ownership labels, every instance used this exact app network name. Reuse
+                // those networks on upgrade without deleting live endpoints or asserting ownership
+                // for Finish; destructive cleanup still requires the full instance label.
+                if (owner.ExitCode != 0 || owner.StandardOutput.Trim() != config.InstanceId + "|" + context.App.Id
+                    && owner.StandardOutput.Trim() is not ("|" or "<no value>|<no value>"))
+                    throw new AppLifecycleException("runtime_network_unverified", "Cannot verify the app network owner: " + network.StandardError);
+            }
         }
 
         // Track containers this start actually created so a later service failing can unwind them (C-H5):
@@ -1888,7 +1914,7 @@ internal sealed class DockerRuntimeAdapter(
                 throw new AppLifecycleException("runtime_profile_invalid", $"Docker service '{service.Key}' does not declare an image.");
             }
 
-            var sourceCommand = await DockerSourceRuntime.PrepareAsync(context, service, runner, cancellationToken);
+            var sourceCommand = await DockerSourceRuntime.PrepareAsync(context, service, runner, cancellationToken, config.InstanceId);
             var hostNetwork = service.Runtime.IsHostNetwork;
             var containerName = BuildContainerName(config.InstanceId, context.App.Id, service.Key);
             var existingLock = context.App.ArtifactLocks?.GetValueOrDefault(service.Key);
@@ -1901,7 +1927,7 @@ internal sealed class DockerRuntimeAdapter(
             // through to the normal recreate path below. Adopted
             // containers are intentionally NOT added to startedContainers: this start did not create
             // them, so a later sibling's failure must not tear a healthy running service down.
-            if (service.Runtime.SourceMount is null && await TryAdoptRunningContainerAsync(context.App.Id, containerName, service.Image, existingLock, cancellationToken))
+            if (service.Runtime.SourceMount is null && (admission is null || await admission.MatchesAsync(runner, containerName, cancellationToken)) && await TryAdoptRunningContainerAsync(context.App.Id, containerName, service.Image, existingLock, cancellationToken))
             {
                 resolvedLocks[service.Key] = existingLock!;
                 AppendServiceEndpoints(endpoints, service, AssignServicePorts(context, service, hostNetwork), config);
@@ -1980,6 +2006,7 @@ internal sealed class DockerRuntimeAdapter(
 
             // Privileged extras (validated + install-review gated): Linux capabilities and host
             // device nodes, e.g. NET_ADMIN + /dev/net/tun for an in-container VPN.
+            if (admission is not null) runArgs.AddRange(admission.Arguments);
             runArgs.AddRange(BuildPrivilegedArguments(service.Runtime));
             runArgs.AddRange(BuildHealthcheckArguments(service.Runtime));
 
@@ -2130,7 +2157,7 @@ internal sealed class DockerRuntimeAdapter(
                 await RemoveContainerIfOwnedAsync(context.App.Id, containerName, CancellationToken.None);
             }
 
-            if (dependencyNetwork is not null)
+            if (createdDependencyNetwork && dependencyNetwork is not null)
             {
                 _ = await RunDockerAsync(["network", "rm", dependencyNetwork], ignoreFailures: true, CancellationToken.None);
             }
@@ -2414,9 +2441,12 @@ internal sealed class DockerRuntimeAdapter(
     {
         if (!string.IsNullOrWhiteSpace(existingLock?.ImageDigest))
         {
-            var pinnedReference = (image with { Digest = existingLock!.ImageDigest }).Reference;
+            var pinnedReference = existingLock!.Kind == "local-image" ? existingLock.ImageDigest!
+                : (image with { Digest = existingLock.ImageDigest }).Reference;
             if (!await ImageExistsLocallyAsync(pinnedReference, cancellationToken))
             {
+                if (existingLock.Kind == "local-image")
+                    throw new AppLifecycleException("docker_local_image_missing", "The locked local image is missing. Restore it or explicitly review an image update.");
                 if (onDownload is not null) await onDownload();
                 _ = await RunDockerAsync(["pull", pinnedReference], ignoreFailures: false, cancellationToken);
             }
@@ -2450,9 +2480,10 @@ internal sealed class DockerRuntimeAdapter(
         var digest = ParsePullDigest(pullOutput) ?? await ResolveRepoDigestByTagAsync(tagReference, cancellationToken);
         if (string.IsNullOrWhiteSpace(digest))
         {
-            // A local-only image may have no repo digest; run the tag as-is and record a lock that
-            // still captures the resolved-from ref so the policy/plan machinery has something to show.
-            return (tagReference, new ArtifactLock("image", null, tagReference, null, null, DateTimeOffset.UtcNow));
+            // Local content IDs are immutable too, but are not registry digests: never append one
+            // to a repository reference or try to pull it. Persist the distinction for adoption.
+            var local = await DockerSourceRuntime.ResolveLocalImageAsync(tagReference, null, runner, cancellationToken);
+            return (local.Reference, local.Lock with { Kind = "local-image" });
         }
 
         var runReference = (image with { Digest = digest }).Reference;
@@ -2518,8 +2549,9 @@ internal sealed class DockerRuntimeAdapter(
     private async Task<bool> IsContainerRunningAsync(string containerName, CancellationToken cancellationToken)
     {
         var inspect = await RunRawAsync(["inspect", "--format", "{{.State.Running}}", containerName], cancellationToken);
-        return inspect.ExitCode == 0 &&
-            string.Equals(inspect.StandardOutput.Trim(), "true", StringComparison.OrdinalIgnoreCase);
+        if (inspect.ExitCode != 0 && !inspect.StandardError.Contains("No such", StringComparison.OrdinalIgnoreCase))
+            throw new AppLifecycleException("docker_state_unknown", "Docker is unavailable; the container cannot be reported stopped.");
+        return inspect.ExitCode == 0 && string.Equals(inspect.StandardOutput.Trim(), "true", StringComparison.OrdinalIgnoreCase);
     }
 
     // True when a Core-owned container of this name is already running the exact image the app's lock
@@ -2565,7 +2597,8 @@ internal sealed class DockerRuntimeAdapter(
         // The instance label must equal this Core's id (absent = the default instance's empty id):
         // adoption must never cross roots — a second-root Core adopting the default root's container
         // is exactly the disaster instance identity exists to prevent.
-        var pinnedReference = (image with { Digest = existingLock.ImageDigest }).Reference;
+        var pinnedReference = existingLock.Kind == "local-image" ? existingLock.ImageDigest
+            : (image with { Digest = existingLock.ImageDigest }).Reference;
         return string.Equals(parts[0].Trim(), "true", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(parts[1].Trim(), appId, StringComparison.Ordinal) &&
             string.Equals(parts[2].Trim(), config.InstanceId, StringComparison.Ordinal) &&
@@ -3376,6 +3409,8 @@ internal sealed record RuntimeDockerImage(string Repository, string Tag, string?
 
 internal sealed class RuntimeAppManifest
 {
+    // Explicit opt-in: older SDKs cannot safely interpret instance-scoped test administrators.
+    public SandboxManifest? Sandbox { get; init; }
     // Collection properties coalesce null to empty in the getter so that members absent
     // from the JSON behave the same under the source generator (used for Native AOT) as
     // under the reflection serializer, which preserved the `= []` initializer.

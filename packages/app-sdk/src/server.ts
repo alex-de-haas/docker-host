@@ -1,6 +1,7 @@
 // Server slice: Next route-handler factories and Core revalidation. Never reaches a client
 // bundle — the service token lives here.
 import "server-only";
+import { readSandboxTarget, readSandboxIdentity, type SandboxIdentityContext } from "./index";
 import { readAppContinuity, type AppContinuity } from "./continuity";
 import { createHostySessionResponse } from "./session-server";
 import { createHostyUiResponse } from "./ui-server";
@@ -50,6 +51,8 @@ export interface HostIdentity {
   activeUntil?: string | null;
   activityRequired?: boolean;
   continuity?: AppContinuity;
+  /** Present for every identity (including real viewers) acting inside a sandbox. */
+  sandbox?: SandboxIdentityContext;
 }
 
 /** Structured detail for a failed resolution: the Core HTTP status (null when Core was
@@ -126,6 +129,8 @@ export function readAppIdentityToken(headers: HeaderReader, config: HostyAppConf
     }
   }
 
+  if (process.env.HOSTY_SANDBOX_PROTOCOL)
+    return headers.get(HOSTY_APP_IDENTITY_HEADER)?.trim() || readCookie(headers.get("cookie"), config.identityCookieName) || null;
   return readCookie(headers.get("cookie"), config.identityCookieName) || headers.get(HOSTY_APP_IDENTITY_HEADER)?.trim() || null;
 }
 
@@ -197,7 +202,8 @@ export async function resolveAppSession(
   }
 
   const now = Date.now();
-  const cached = revalidationCache.get(token);
+  // Synthetic subject changes and instance revocation are checked online on every request.
+  const cached = process.env.HOSTY_SANDBOX_PROTOCOL ? undefined : revalidationCache.get(token);
   if (cached) {
     if (now - cached.cachedAt < REVALIDATION_CACHE_TTL_MS && now < cached.expiresAtMs) {
       return { status: "active", identity: cached.identity };
@@ -299,6 +305,9 @@ async function revalidateWithCore(
     return { status: "expired" };
   }
 
+  let sandbox: SandboxIdentityContext | null;
+  try { sandbox = readSandboxIdentity(payload, readSandboxTarget(process.env)); }
+  catch { return { status: "forbidden", error: { status: 403, code: "sandbox_identity_mismatch", message: "The identity does not match this execution target." } }; }
   const hostRole = readString(payload.hostRole);
   const expiresAt = readString(payload.expiresAt);
   const identity: HostIdentity = {
@@ -306,15 +315,16 @@ async function revalidateWithCore(
     email: readString(payload.email),
     displayName: readString(payload.displayName),
     hostRole,
-    appRole: config.mapHostRole ? config.mapHostRole(hostRole) : hostRole,
+    appRole: sandbox?.identityRealm === "sandbox" ? sandbox.appRole : config.mapHostRole ? config.mapHostRole(hostRole) : hostRole,
     expiresAt,
     activeUntil: readString(payload.activeUntil),
     activityRequired: payload.activityRequired === true,
     continuity: readAppContinuity(payload.continuity),
+    ...(sandbox ? { sandbox } : {}),
   };
 
   const expiresAtMs = expiresAt ? Date.parse(expiresAt) : Number.NaN;
-  if (Number.isFinite(expiresAtMs) && expiresAtMs > Date.now()) {
+  if (!sandbox && Number.isFinite(expiresAtMs) && expiresAtMs > Date.now()) {
     pruneRevalidationCache();
     revalidationCache.set(token, { identity, expiresAtMs, cachedAt: Date.now() });
   }

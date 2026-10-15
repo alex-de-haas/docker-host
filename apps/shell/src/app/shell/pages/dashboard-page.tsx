@@ -1,5 +1,7 @@
 "use client";
 
+import { CoreEnvironments } from "./core-environments";
+import { SandboxInstances } from "./sandbox-instances";
 import { fetchCore } from "../core-transport.js";
 
 
@@ -420,6 +422,8 @@ export function DashboardPage({
           )}
         </FramePanel>
       </Frame>
+      {canManageApps && <CoreEnvironments coreOrigin={coreOrigin} />}
+      {canManageApps && <SandboxInstances coreOrigin={coreOrigin} />}
     </div>
     </ResourceUsageProvider>
   );

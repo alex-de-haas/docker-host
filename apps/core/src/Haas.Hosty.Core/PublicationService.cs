@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class PublicationService(CoreDataPaths paths, DevelopmentWorkspaceService workspaces,
+internal sealed partial class PublicationService(CoreDataPaths paths, DevelopmentWorkspaceService workspaces,
     UserConnectionService connections, AppRegistryStore apps,
     UserDirectoryStore users, IClock clock, AuditStore audit)
 {
@@ -335,6 +335,7 @@ internal sealed class PublicationObserver(PublicationService service, ILogger<Pu
                     try { await service.ObserveAsync(r.WorkspaceId, null, stoppingToken); await service.CleanupAsync(r.WorkspaceId, stoppingToken); }
                     catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning("Cannot observe publication {WorkspaceId}: {ErrorType}", r.WorkspaceId, ex.GetType().Name); }
                 }
+                await service.RefreshExternalReferencesAsync(stoppingToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning("Cannot list publications: {ErrorType}", ex.GetType().Name); }
         } while (await timer.WaitForNextTickAsync(stoppingToken));

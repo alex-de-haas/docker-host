@@ -46,3 +46,13 @@ describe("fixed panel adapter", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 });
+
+
+it.each(["sandbox", "core"] as const)("does not bridge a %s sandbox viewer into global UI authority", async identityRealm => {
+  const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+  const sandbox = { runtimeInstanceId: "a".repeat(32), generation: "b".repeat(32), dataRevision: "c".repeat(32), identityRealm, appRole: "admin", permissions: [] };
+  const response = await createHostyUiResponse(new Request("https://sandbox.test/api/hosty/ui/bootstrap"),
+    { ...context, session: { status: "active", identity: { hostRole: identityRealm === "core" ? "host.admin" : null, sandbox } } }, options);
+  expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ code: "unsupported_sandbox_ui" });
+  expect(fetcher).not.toHaveBeenCalled();
+});

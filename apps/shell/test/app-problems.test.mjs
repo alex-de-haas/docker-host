@@ -133,7 +133,7 @@ function dependency(overrides = {}) {
 }
 
 test("a required dependency that is not installed is an error", () => {
-  const problems = collectAppProblems(app({ dependencies: [dependency({ installed: false, running: false })] }));
+  const problems = collectAppProblems(app({ runtimeState: "running", dependencies: [dependency({ installed: false, running: false })] }));
   assert.equal(problems.length, 1);
   assert.equal(problems[0].severity, "error");
   assert.match(problems[0].title, /Required dependency com\.haas\.torrent-engine is not installed/);
@@ -142,14 +142,14 @@ test("a required dependency that is not installed is an error", () => {
 test("a running dependency whose service is not answering is a warning, and an older Core stays silent", () => {
   // `healthy` false is the signal; `healthy` absent is a Core that does not report readiness, and
   // must not read as unhealthy.
-  const notAnswering = collectAppProblems(app({ dependencies: [dependency({ installed: true, running: true, healthy: false, ready: false })] }));
+  const notAnswering = collectAppProblems(app({ runtimeState: "running", dependencies: [dependency({ installed: true, running: true, healthy: false, ready: false })] }));
   assert.equal(notAnswering.length, 1);
   assert.equal(notAnswering[0].severity, "warning");
   assert.match(notAnswering[0].title, /is not answering yet/);
 
-  const older = collectAppProblems(app({ dependencies: [dependency({ installed: true, running: true })] }));
+  const older = collectAppProblems(app({ runtimeState: "running", dependencies: [dependency({ installed: true, running: true })] }));
   assert.equal(older.length, 0);
-  const answering = collectAppProblems(app({ dependencies: [dependency({ installed: true, running: true, healthy: true, ready: true })] }));
+  const answering = collectAppProblems(app({ runtimeState: "running", dependencies: [dependency({ installed: true, running: true, healthy: true, ready: true })] }));
   assert.equal(answering.length, 0);
 });
 
@@ -157,31 +157,33 @@ test("an optional dependency that is not installed is silent", () => {
   // The one row that removes a signal: not installing an optional dependency is a choice, and an icon
   // for it would train operators to ignore the icon.
   const problems = collectAppProblems(app({
+    runtimeState: "running",
     dependencies: [dependency({ required: false, installed: false, running: false })],
   }));
   assert.deepEqual(problems, []);
 });
 
 test("an installed dependency that is stopped takes its severity from `required`", () => {
-  const required = collectAppProblems(app({ dependencies: [dependency({ running: false })] }));
+  const required = collectAppProblems(app({ runtimeState: "running", dependencies: [dependency({ running: false })] }));
   assert.equal(required.length, 1);
   assert.equal(required[0].severity, "error");
   assert.match(required[0].title, /Required dependency .* is not running/);
 
-  const optional = collectAppProblems(app({ dependencies: [dependency({ required: false, running: false })] }));
+  const optional = collectAppProblems(app({ runtimeState: "running", dependencies: [dependency({ required: false, running: false })] }));
   assert.equal(optional.length, 1);
   assert.equal(optional[0].severity, "warning");
   assert.match(optional[0].title, /Optional dependency .* is not running/);
 });
 
 test("a stopped dependency reports its version when one is declared", () => {
-  const problems = collectAppProblems(app({ dependencies: [dependency({ running: false, version: "^0.1.0" })] }));
+  const problems = collectAppProblems(app({ runtimeState: "running", dependencies: [dependency({ running: false, version: "^0.1.0" })] }));
   assert.match(problems[0].detail, /com\.haas\.torrent-engine \(\^0\.1\.0\)/);
 });
 
 test("a running dependency with an unresolvable wired endpoint warns and names the env var", () => {
   // The dependency itself is healthy; the wiring is not — the consumer just never receives the URL.
   const problems = collectAppProblems(app({
+    runtimeState: "running",
     dependencies: [dependency({ endpoints: [{ endpointKey: "control", alias: "torrent-ctl", resolved: false }] })],
   }));
   assert.equal(problems.length, 1);
@@ -192,6 +194,7 @@ test("a running dependency with an unresolvable wired endpoint warns and names t
 
 test("a running dependency with resolved endpoints is silent", () => {
   const problems = collectAppProblems(app({
+    runtimeState: "running",
     dependencies: [dependency({ endpoints: [{ endpointKey: "control", alias: "ctl", resolved: true }] })],
   }));
   assert.deepEqual(problems, []);
@@ -201,6 +204,7 @@ test("a stopped dependency is not also reported as unresolved wiring", () => {
   // Core reports every endpoint as unresolved while the provider is down; reporting both would be two
   // icons for one cause.
   const problems = collectAppProblems(app({
+    runtimeState: "running",
     dependencies: [dependency({ running: false, endpoints: [{ endpointKey: "control", alias: "ctl", resolved: false }] })],
   }));
   assert.equal(problems.length, 1);
@@ -232,4 +236,22 @@ test("optional declarations and stale observations never invent required failure
   const problems = collectAppProblems(app({ permissionState: { status: "stale", missingRequired: ["apps.install"], error: "Invalid manifest" } }));
   assert.equal(problems.length, 1);
   assert.equal(problems[0].severity, "warning");
+});
+
+test("stopping a consumer hides dependency diagnostics but retains its own errors", () => {
+  const dependencies = [
+    dependency({ installed: false, running: false }),
+    dependency({ running: false }),
+    dependency({ required: false, running: false }),
+    dependency({ healthy: false }),
+    dependency({ endpoints: [{ endpointKey: "control", alias: "ctl", resolved: false }] }),
+  ];
+  const consumer = app({ runtimeState: "running", dependencies });
+  assert.equal(collectAppProblems(consumer).length, 5);
+  assert.deepEqual(collectAppProblems({ ...consumer, runtimeState: "stopped" }), []);
+  assert.deepEqual(collectAppProblems({ ...consumer, runtimeState: "stopped", lastError: "Start failed" }), [
+    { severity: "error", title: "Last operation failed", detail: "Start failed" },
+  ]);
+  assert.equal(collectAppProblems({ ...consumer, runtimeState: "starting" }).length, 5);
+  assert.equal(collectAppProblems({ ...consumer, runtimeState: "running" }).length, 5);
 });

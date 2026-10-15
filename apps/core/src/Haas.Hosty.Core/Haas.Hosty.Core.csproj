@@ -18,5 +18,6 @@
   <ItemGroup>
     <Compile Include="../../../../shared/*.cs" Link="%(Filename)%(Extension)" />
     <EmbeddedResource Include="Browser/*" />
+    <EmbeddedResource Include="../../sandbox-browser/seccomp.json" LogicalName="Hosty.SandboxBrowser.seccomp.json" />
   </ItemGroup>
 </Project>

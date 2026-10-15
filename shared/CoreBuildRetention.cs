@@ -23,6 +23,8 @@ internal static class CoreBuildRetention
 
     public static bool IsAlive(int pid, DateTimeOffset started)
     {
+        // Nonpositive IDs represent unowned generations, never an OS process identity.
+        if (pid <= 0) return false;
         try { using var process = Process.GetProcessById(pid); return !process.HasExited && Math.Abs((process.StartTime.ToUniversalTime() - started.UtcDateTime).TotalMilliseconds) < 100; }
         catch (ArgumentException) { return false; }
         // An inaccessible process is not evidence of death.

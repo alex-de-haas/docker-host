@@ -1,6 +1,6 @@
 ---
 created: 2026-09-25
-updated: 2026-09-25
+updated: 2026-10-13
 summary: One Core resource sampler for containers, local process trees and Core itself, shared by Dashboard and Telemetry.
 components: [apps/core, apps/shell, apps/telemetry-ui]
 ---
@@ -17,8 +17,16 @@ retention remains unchanged; no new persistence is introduced in Core or Shell.
 `RuntimeResourceSampler` samples local processes approximately every three seconds while a visible
 Dashboard holds a 20-second renewable lease. Without a viewer, a running Telemetry app keeps the
 sampler active at ten seconds. With neither consumer, acquisition stops. Multiple browser clients
-share the producer. Docker acquisition stays at ten seconds, with a four-second deadline; a slow
+share the producer. Docker acquisition stays at ten seconds, with an eight-second deadline; a slow
 Docker probe can delay a local tick within that bound.
+
+A failed Docker acquisition preserves the last successful snapshot and its original observation
+timestamps. Only observations at most 20 seconds old are included in subsequent frames or exported
+to Telemetry; repeated failures cannot refresh their age. A successful empty snapshot clears the
+cache immediately. Removed and confirmed stopped apps still follow normal reconciliation.
+Timeouts, unavailable Docker commands, and nonzero CLI exits are logged at Warning with elapsed
+time and bounded command diagnostics. Repeated failures produce at most one warning per minute;
+the next successful acquisition logs recovery at Information.
 
 `LocalResourceReader` uses the runtime adapter's registered service roots, including roots adopted
 after a Core restart with `--keep-apps`. It enumerates PID/parent/group ownership once per tick using
@@ -83,6 +91,10 @@ Responsive rows retain values and actions without horizontal scrolling.
 
 ## Testing Expectations
 
+- Docker acquisition covers success, deadline cancellation, preservation of fresh observations,
+  expiry without timestamp renewal, recovery, successful empty results, command failures, host
+  shutdown cancellation, and warning throttling. Telemetry also excludes expired cached readings
+  while the next acquisition is in progress.
 - Process-tree ownership includes descendants/reparented POSIX group members and excludes unrelated
   trees; CPU deltas cover multi-core usage, first samples, PID reuse and counter resets.
 - History expires and stays bounded, incremental reads work, and a changed run ID resynchronizes.

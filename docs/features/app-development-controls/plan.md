@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-16
-updated: 2026-10-10
+updated: 2026-10-13
 summary: Typed inspect, enter, run and leave operations for app development, with runtime verification and authority checks.
 components: [apps/core, apps/harness]
 ---
@@ -65,6 +65,16 @@ Do not add write scopes to all delegated tokens,
 infer write power from an admin role on a read-only credential, or expose the host control secret.
 Do not expand the meaning of existing `mcp:lifecycle` silently; choose and document standing-grant
 semantics for these more powerful source/runtime changes.
+
+## Installed-App Trial After Sandbox (Owner Direction, 2026-10-13)
+
+The normal agent development/test loop uses separate
+[workspace Docker sandbox instances](../app-sandbox-runtimes/plan.md) and empty/synthetic app data.
+The installed-app path below is a separate, explicit operator action for a final trial against real
+data. Show the selected source/runtime and live-data consequence before applying it; sandbox test
+success or a merged PR never performs this switch automatically. D4-D5 include this distinction
+and its UI/operation acceptance. Existing runtime-switch confirmation and data-compatibility checks
+remain applicable, and no production-data import is added to Sandbox.
 
 ## Enter, Edit, Leave
 

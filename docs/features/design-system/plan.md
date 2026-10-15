@@ -1,9 +1,9 @@
 ---
 status: Draft
 created: 2026-10-12
-updated: 2026-10-12
-summary: Hosty's visual language, Ink and Signal, with its color, type, icon and ReUI token rules, and the Shell layouts built from it, including tools at narrow widths and on phones.
-components: [apps/shell, packages/app-sdk, apps/core, apps/harness, assets/hosty-brand, apps/plans, apps/workspaces, apps/telemetry, apps/demo-app]
+updated: 2026-10-13
+summary: Hosty's visual language — ink acts, lime answers — with its color, type, mark and ReUI token rules, and the Shell layouts built from it, including tools at narrow widths and on phones.
+components: [apps/shell, apps/shell-swift, packages/app-sdk, apps/core, apps/harness, assets/hosty-brand, apps/plans, apps/workspaces, apps/telemetry, apps/demo-app]
 ---
 
 # Design System
@@ -24,11 +24,11 @@ until shared from its page. This document carries every value and rule needed to
 | Artboard | Covers |
 | --- | --- |
 | `Main` | Cover and the four principles |
-| `Color`, `Accent` | Palette, ink scale, status, app spectrum; accent candidates |
+| `Color`, `Accent` | Palette, ink scale, status, app spectrum; ink acts, lime answers |
 | `Type` | Type scale and voice |
 | `Iconography`, `Roles` | Mark, tiles, interface icons; provider role icons |
 | `Components`, `Tokens` | ReUI components in light and dark; CSS variables |
-| `Motif` | Node motif, loader, empty state, motion |
+| `Motif` | Cell motif, loader, empty state, motion |
 | `Shell`, `AppDetail`, `DataGrid` | Dashboard with tools, dark app detail, table page |
 | `PanelOptions`, `ShellNarrow` | The fit rule for tools, Shell in a 900 px window |
 | `PhonePeek`, `PhoneSheet`, `PhoneTools`, `PhoneKeyboard`, `PhoneManyTools` | Phone: tab bar, open tool, tool list, keyboard and long dialog, many tools |
@@ -37,12 +37,14 @@ until shared from its page. This document carries every value and rule needed to
 
 1. **Calm chrome, lively content.** Navigation, panels and text stay ink and white. Color belongs to
    app tiles, status and charts.
-2. **One blue for action.** Hosty Blue marks what can be done. One primary button per view; the rest
-   are outline or ghost.
-3. **Signal means live.** Cyan appears only where something is happening now: an app starting, a
-   stream, a tool at work. Nothing live, no cyan — and never in charts.
-4. **Nodes and wires.** The H-graph mark is the house motif: rounded squares joined by lines, used for
-   loaders, empty states and diagrams.
+2. **Ink acts, lime answers.** Primary buttons are ink. Lime appears in answer to the person —
+   hover, press, focus and selection — and, by owner decision, in two fixed places: progress bar
+   fills, whoever started the work, and the Core cell of the mark. One primary button per view; the
+   rest are outline or ghost.
+3. **Work moves in blue.** An app starting or a tool at work shows a pulse or a turning ring in Info
+   blue with a label, and its progress bar fills in lime; there is no separate live color.
+4. **Cells.** The mark is seven square cells; the same cells build the motif, the loader, empty states
+   and diagrams.
 
 ## Color
 
@@ -50,18 +52,22 @@ until shared from its page. This document carries every value and rule needed to
 
 | Name | Hex | Use |
 | --- | --- | --- |
-| Ink | `#0F1B2D` | Text, dark surfaces, the mark (17.4:1 on white) |
+| Ink | `#0F1B2D` | Text, dark surfaces, the mark, the primary action (17.4:1 on white) |
 | Mist | `#F6F8FB` | Light canvas; cards sit on it in pure white |
-| Hosty Blue | `#1C68FF` | Primary action, links, focus, selection (white text 4.7:1) |
-| Signal | `#28D5E5` | Live state only; fills carry ink text (9.7:1) |
-| Signal strong | `#0891A1` | Signal dots, rings and progress on light surfaces (3.8:1 on white) |
+| White | `#FFFFFF` | Cards, popovers and fields on the mist canvas |
+| Lime | `#A3E635` | Brand: hover and press, focus ring, checked and selected fills, text selection, progress bar fills, the Core cell of the mark. The same in both themes; carries ink text (11.5:1); never text, icons or hairlines on light (1.5:1 on white) |
+| Lime strong | `#5A9A0A` | Small lime marks on light: the active-navigation marker, the mark's Core cell without a tile (3.5:1 on white, 3.2:1 on mist and lime soft) |
+| Lime soft | `#ECFCCB` | Highlight under ink text: menu items, ghost hover, active navigation (dark: `#273B2E`) |
 
-Approximate share of a typical screen: ~70% white and mist, ~20% ink, ~7% blue, ~2% app and
-status color, at most 1% signal.
+Approximate share of a typical screen: ~70% white and mist, ~20% ink, ~5% lime and only on
+interaction, and ~2% app and status color.
 
-Hosty Blue stays the action color for now (owner decision, 2026-10-12). The `Accent` artboard keeps
-four candidates — Iris `#5B5BD6`, Sapphire `#2F5BD3`, Ink, Lagoon `#0B7C86` — for the per-user
-accent setting tracked in [Accent Presets](../accent-presets/plan.md), which is on hold.
+Owner decision, 2026-10-13: ink is the action color and lime the interaction color, in both themes.
+Hosty Blue `#1C68FF` remains only as Info, for links (`#1449C2` on light, `#8DB4FF` on dark) and as the
+first chart color, `--chart-1`, because charts are data, not brand; a sky
+blue `#00BBFF` tried the same day was dropped, and so was the cyan signal color: work now shows in Info
+blue with motion, so the brand is ink, white and lime. The per-user accent setting stays parked in
+[Accent Presets](../accent-presets/plan.md).
 
 ### Ink scale (cool neutrals, hue 215°)
 
@@ -87,7 +93,7 @@ Four meanings, never mixed: **info** tells, **needs you** asks, **failed** repor
 | State | Solid | Soft | Text | Meaning |
 | --- | --- | --- | --- | --- |
 | Running | `#16A34A` | `#E8F7EE` | `#0F6B33` | Healthy and serving |
-| Working | `#0891A1` (dark: `#28D5E5`) | `#E3FAFC` | `#08707D` | Starting, updating, a tool at work (signal) |
+| Working | `#1C68FF` (dark: `#4D8BFF`) | `#E8F0FF` | `#1449C2` | Starting, updating, a tool at work: Info blue with a pulse or ring and a label; its progress bar fills lime |
 | Stopped | `#93A3BA` | `#EEF2F7` | `#5A6A82` | Intentionally off, not an error |
 | Info | `#1C68FF` | `#E8F0FF` | `#1449C2` | An update or a result; never requires action |
 | Needs you | `#F59E0B` | `#FEF3DC` | `#8A5300` | A decision or a fix: approval, degraded app, missing configuration |
@@ -97,12 +103,14 @@ Color never carries a state alone. The normal state — running and healthy — 
 a bare dot, with its name in the tooltip and accessible label. Every other state carries a text
 label, and where there is no room for one, its own shape: a diamond for "needs you", an alert icon
 for "failed", a hollow ring for "no connection", and for "working" a pulse that becomes a static outer
-ring when motion is reduced. No two states differ by color alone.
+ring when motion is reduced. No two states differ by color alone: working shares Info's blue and is
+told apart by its motion and label.
 
 ### App spectrum
 
 Tiles and charts only — never buttons, text or chrome. Every color carries a white glyph at 3:1 or
-better. Hosty Blue is not in the spectrum: a blue tile means the platform itself.
+better. Lime is not in the spectrum: it belongs to the mark and to interaction, and the platform's
+own tile is ink.
 
 | Name | Hex | Assigned to |
 | --- | --- | --- |
@@ -150,13 +158,21 @@ happening.
 
 ## Logo and icons
 
-- **Mark.** The H-graph from [`assets/hosty-brand`](../../../assets/hosty-brand/README.md), unchanged:
-  ink on light, off-white on dark, white on the blue brand tile. Clear space is one node width. Below
-  20 px use the favicon cut. No gradients, no spectrum colors, no heavier stroke, no rotation.
+- **Mark.** Seven square cells on a 3 × 3 grid spell an H: two hosts and the Core between them. On
+  the 100-unit grid the cells are 22 units with 7-unit gaps, starting at 10, with sharp corners. Six
+  cells are ink on light and white on dark; the Core cell is lime `#A3E635`, or `#5A9A0A` on a light
+  surface without a tile. The mark never sits on a colored tile. It replaces the H-graph in
+  [`assets/hosty-brand`](../../../assets/hosty-brand/README.md). Clear space is one cell. Below 20 px
+  use the favicon cut, scaled ×1.16 with the gaps kept open. No gradients, no spectrum colors, no
+  rounded or merged cells, no rotation.
+- **App icon.** Where a container is required — app icon, favicon, store — the mark sits on an ink
+  tile with radius 22: white cells 16 units with 5.5-unit gaps from 20.5, and the lime Core. On a dark
+  surface the tile steps one tone lighter (`#22324B`) instead of taking a grey frame.
 - **Wordmark.** Geist 600, shipped as outlined paths; the current lockups ask the system for Inter.
 - **App tiles.** One construction for every app: 100 × 100 grid, corner radius 22, glyph inside the
   central 56 × 56, white stroke 6 with round caps and joins, one spectrum color, at most one detail in
-  a light tint of it.
+  a light tint of it. App tiles keep their rounded corners and strokes, so the mark's sharp cells set
+  the platform apart from the apps it hosts.
 - **Interface icons.** Lucide at 16, 20 or 24 px, stroke 2, never filled, inheriting text color —
   muted at rest, ink when active. App navigation icons ship in `currentColor`; Shell tints them.
 - **Tool icons.** A tool shows its manifest Lucide icon on a neutral tile, with the owning app's
@@ -186,13 +202,30 @@ described by the roles it provides; each role has one icon, used wherever the ap
 
 ReUI components unchanged, dressed by tokens. Controls are 36 px tall (32 small, 40 large; 44 px
 touch targets on phones) with an 8 px radius; popovers use 10 px and cards 14 px. Borders separate;
-shadows only lift what floats. Focus is a blue border plus a 3 px ring at about 30% opacity.
-Disabled is 45% opacity. Dark mode lifts surfaces with a lighter fill rather than a shadow.
+shadows only lift what floats. Disabled is 45% opacity. Dark mode lifts surfaces with a lighter fill
+rather than a shadow.
+
+- **Buttons.** The primary button is ink with white text, near-white with ink text in dark. Default
+  and outline buttons turn lime with ink text on hover and press; on touch, press stands in for
+  hover. Danger stays red and darkens on hover.
+- **Focus.** A 3 px lime ring that always sits against an ink edge, so the indicator keeps 3:1 even
+  though lime on white is only 1.5:1: inputs take an ink border on focus (lime in dark), the ink
+  primary button carries the ring directly on its edge, and on light surfaces every other focus
+  indicator without an ink edge — outline and ghost buttons, sidebar and top-strip items, dialog
+  controls, resize handles — first takes a 2 px ink ring with the lime halo outside it.
+- **Selection.** Checked checkboxes and switches are lime with an ink check or knob; text selection is
+  lime with ink text. Menu items, ghost hover and active navigation highlight in lime soft with ink
+  text; a selected table row takes a lime wash, and a selected tab a 3 px underline in lime strong on
+  light (3.2:1 on Mist) and lime on dark.
+- **Progress.** Progress bars fill with lime on a neutral track (`#EEF2F7`, dark `#26364F`) in both
+  themes; the label next to the bar carries the value.
+- **Links.** Info blue, underlined.
 
 ## Tokens
 
 ReUI reads the standard shadcn CSS variables, so the theme is a values swap in `globals.css`. Note that
-shadcn's `--accent` is the hover background, not the brand color; the brand color is `--primary`.
+shadcn's `--accent` is the hover and highlight background — here lime soft — and `--primary` is the
+ink action color; lime itself is the Hosty addition `--brand`.
 
 | Variable | Light (`:root`) | Dark (`.dark`) |
 | --- | --- | --- |
@@ -202,33 +235,33 @@ shadcn's `--accent` is the hover background, not the brand color; the brand colo
 | `--card-foreground` | `#0F1B2D` | `#F1F5FA` |
 | `--popover` | `#FFFFFF` | `#1C2B44` |
 | `--popover-foreground` | `#0F1B2D` | `#F1F5FA` |
-| `--primary` | `#1C68FF` | `#1C68FF` |
-| `--primary-foreground` | `#FFFFFF` | `#FFFFFF` |
+| `--primary` | `#0F1B2D` | `#F1F5FA` |
+| `--primary-foreground` | `#FFFFFF` | `#0F1B2D` |
 | `--secondary` | `#EEF2F7` | `#26364F` |
 | `--secondary-foreground` | `#0F1B2D` | `#F1F5FA` |
 | `--muted` | `#EEF2F7` | `#1C2B44` |
 | `--muted-foreground` | `#5A6A82` | `#93A3BA` |
-| `--accent` | `#EEF2F7` | `#22324B` |
+| `--accent` | `#ECFCCB` | `#273B2E` |
 | `--accent-foreground` | `#0F1B2D` | `#F1F5FA` |
 | `--destructive` | `#D93036` | `#D93036` |
 | `--border` | `#DFE5EE` | `#26364F` |
 | `--input` | `#C3CDDB` | `#2E3F5C` |
-| `--ring` | `#1C68FF` | `#4D8BFF` |
+| `--ring` | `#A3E635` | `#A3E635` |
 | `--sidebar` | `#F6F8FB` | `#0B1524` |
 | `--sidebar-foreground` | `#3A4B66` | `#B8C4D6` |
-| `--sidebar-accent` | `#E8F0FF` | `#16294A` |
-| `--sidebar-accent-foreground` | `#1449C2` | `#8DB4FF` |
+| `--sidebar-accent` | `#ECFCCB` | `#273B2E` |
+| `--sidebar-accent-foreground` | `#0F1B2D` | `#F1F5FA` |
 | `--sidebar-border` | `#DFE5EE` | `#1A2A42` |
 | `--chart-1` … `--chart-5` | `#1C68FF` `#7C3AED` `#C026D3` `#F59E0B` `#64748B` | `#4D8BFF` `#A78BFA` `#E879F9` `#FBBF24` `#94A3B8` |
 
-Charts never use signal cyan; a chart line is history, not live activity.
+Charts never use lime; it belongs to interaction.
 
 Hosty additions:
 
 | Variable | Light | Dark |
 | --- | --- | --- |
-| `--signal` / `--signal-foreground` / `--signal-text` | `#28D5E5` / `#0F1B2D` / `#08707D` | `#28D5E5` / `#0F1B2D` / `#67E8F9` |
-| `--signal-strong` | `#0891A1` | `#28D5E5` |
+| `--brand` / `--brand-foreground` | `#A3E635` / `#0F1B2D` | `#A3E635` / `#0F1B2D` |
+| `--brand-strong` | `#5A9A0A` | `#A3E635` |
 | `--success` / `--success-soft` / `--success-text` | `#16A34A` / `#E8F7EE` / `#0F6B33` | `#22C55E` / success at 16% / `#4ADE80` |
 | `--warning` / `--warning-text` | `#F59E0B` / `#8A5300` | `#F59E0B` / `#FBBF24` |
 | `--info` / `--info-text` | `#1C68FF` / `#1449C2` | `#4D8BFF` / `#8DB4FF` |
@@ -238,14 +271,21 @@ Hosty additions:
 @theme inline {
   --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, monospace;
-  --color-signal: var(--signal);
-  --color-signal-strong: var(--signal-strong);
-  --color-signal-text: var(--signal-text);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-strong: var(--brand-strong);
   --color-success-soft: var(--success-soft);
   --color-success-text: var(--success-text);
   /* warning, info and destructive the same way */
 }
 ```
+
+Default and outline buttons use `hover:bg-brand hover:text-brand-foreground` instead of
+`hover:bg-primary/90`. Anything that uses `primary` as a foreground — `text-primary`,
+`border-primary`, a small `bg-primary` dot — moves to `--brand-strong` or Info blue, because ink there
+would read as body text and lime fails on light. In Shell today that is the Button `link` variant,
+`field.tsx` (checked choice border and link hover), the Cloudflare connection card link, and two
+indicator dots.
 
 Radius: `--radius: 0.625rem` (sm 6, md 8, lg 10, xl 14). Spacing on a 4 px base: 4, 8, 12, 16, 20,
 24, 32, 40, 48. Elevation: card `0 1px 2px` at 6% ink, dropdown `0 4px 14px -4px` at 16%, dialog
@@ -253,14 +293,18 @@ Radius: `--radius: 0.625rem` (sm 6, md 8, lg 10, xl 14). Spacing on a 4 px base:
 
 ## Motif and motion
 
-- **Node field.** A 70 px grid of 22 px nodes joined by 2.5 px wires, at most four colored nodes;
-  backdrop for headers, onboarding and empty states.
-- **Loader.** Signal travels the H: corner, corner, center, corner, corner.
-- **Empty state.** Dashed nodes are slots waiting to be filled; one sentence of help, one primary
-  button.
+- **Cell field.** A 70 px grid of 22 px square cells, no wires, at most four colored cells — app
+  colors, lime for the platform, Info blue for what works; backdrop for headers, onboarding and empty
+  states.
+- **Loader.** Lime travels the H cell by cell: down the left column, through the Core, up the right.
+  The loader is the mark in motion, so its cells light in the mark's lime; on light surfaces each lit
+  cell keeps a lime-strong `#5A9A0A` edge so the shape holds 3:1, and on dark it is plain lime.
+  Status dots, labels and rings for the working state stay Info blue.
+- **Empty state.** Dashed cells are slots waiting to be filled; the lime cell in the Core spot is the
+  action. One sentence of help, one primary button.
 - **Motion.** Hover and press 120 ms ease-out, color only. Menus 150 ms fade plus 4 px. Panels and
-  sheets 220 ms `cubic-bezier(.2,.8,.2,1)`. Toasts 240 ms in, 160 ms out. The live pulse loops at
-  1.6 s and only on working states. `prefers-reduced-motion` keeps fades and stops movement and loops;
+  sheets 220 ms `cubic-bezier(.2,.8,.2,1)`. Toasts 240 ms in, 160 ms out. The working pulse loops
+  at 1.6 s, in Info blue, and only on working states. `prefers-reduced-motion` keeps fades and stops movement and loops;
   the working dot then keeps a static outer ring so it still differs from a plain dot.
 - **Avoid.** Gradient washes and glows, frosted glass, 3D or stock illustration, emoji as icons.
 
@@ -276,7 +320,7 @@ Radius: `--radius: 0.625rem` (sm 6, md 8, lg 10, xl 14). Spacing on a 4 px base:
   Stopped), plus the hand icon for manual start.
 - Actions: More (⋯) always; one contextual action when needed (Start, Update, Logs, Configure);
   Restart and Logs appear on hover or focus.
-- Core is the first row with the blue platform tile; listen address, public origin, ingress, data root
+- Core is the first row with the platform's ink tile; listen address, public origin, ingress, data root
   and runtime host expand under it. App rows expand into per-service status, endpoint and resources.
 - Header: filters as text toggles with counts (All, Running, In progress, Attention, Updates), the
   aggregate resources with a sparkline, search, Check updates and the single primary Install app.
@@ -349,7 +393,8 @@ never opened on this device, and a phone, still see them:
 - All tools groups tools as Needs you, Working, No connection, then a four-column grid of every tool
   with search and Edit (pin and reorder).
 - The Tools tab carries a count of tools that need the user, colored by the most severe (red for a
-  failure, amber for a decision); with nothing to decide, a signal dot shows that something works.
+  failure, amber for a decision); with nothing to decide the tab carries no badge, and working tools
+  show their pulse in the list.
 - With the keyboard open the tab bar gives way and Shell sizes the sheet and the tool frame to the
   visible viewport above the keyboard.
 - Everything inside the frame belongs to the tool. For the assistant, Harness owns the approval
@@ -395,20 +440,20 @@ the deliverable that changes it.
 
 ### Phase 1 — Foundations
 
-- [ ] D1. Replace Shell's neutral shadcn values in `apps/shell/src/app/globals.css` with the light and dark tokens above, including signal, signal strong and the three-tone status tokens.
+- [ ] D1. Replace Shell's neutral shadcn values in `apps/shell/src/app/globals.css` with the light and dark tokens above — the ink primary, the lime brand and lime soft accent, and the three-tone status tokens — and give buttons, inputs, checkboxes, switches, tabs (the line variant in `components/ui/tabs.tsx`), selected table rows (`components/ui/table.tsx`, today `bg-muted`), document-wide text selection (`::selection` in `globals.css`, not only in `input.tsx`) and progress bars the lime hover, focus, selection and progress states described under Components, with the ink-edge focus treatment applied to every `--ring` consumer in Shell (16 components today, including `shell-top-strip.tsx`, `shell-sidebar.tsx`, `ui/dialog.tsx` and `ui/resizable.tsx`).
 - [ ] D2. Load Geist and Geist Mono in Shell and use them for `--font-sans` and `--font-mono`.
-- [ ] D3. Outline the wordmark in Geist 600 in `assets/hosty-brand`, regenerate the lockups with `build-assets.mjs`, and record the ink scale and status colors in `brand-tokens.json` and the brand README.
-- [ ] D4. Redraw the Plans and Workspaces tile icons on the shared 100-unit grid (radius 22, stroke 6) and map Demo App to its spectrum color.
+- [ ] D3. Replace the H-graph with the grid mark in `assets/hosty-brand` — light, dark, the ink-tile app icon and the favicon cut — outline the wordmark in Geist 600, regenerate the lockups and app icons with `build-assets.mjs` — which also rewrites Shell's public icons and the `apps/shell-swift` AppIcon set, so both ship with version bumps (`MARKETING_VERSION` for the Swift client) — redraw the hand-coded copies of the mark in Shell's `chrome/brand-mark.tsx` and the SDK's `overlay-react.tsx` (with an `@hosty-sdk/app` version bump), and record the ink scale, lime brand and status colors in `brand-tokens.json` and the brand README.
+- [ ] D4. Redraw the Plans and Workspaces tile icons on the shared 100-unit grid (radius 22, stroke 6) and map Demo App to its spectrum color, redrawing its icon — `apps/demo-app/assets/icon.svg` still draws the retired H-graph — as a glyph of its own, with a Demo App version bump.
 - [ ] D5. Ship the Telemetry and Demo App navigation icons in `currentColor` instead of hard-coded colors.
-- [ ] D6. Use the four status meanings across Shell — info blue, needs you amber (including pending approvals), failed red, working signal (replacing the sky spinner) — and keep cyan out of charts.
-- [ ] D16. Contrast pass on Shell: no text lighter than `#5A6A82` on light surfaces, `#6E7F98` and `#93A3BA` only for icons and disabled states, signal marks on light in `#0891A1`, and every state except the normal running dot carrying a label or its own shape, including the static ring for working under reduced motion.
+- [ ] D6. Use the four status meanings across Shell — info blue, needs you amber (including pending approvals), failed red, working as an Info-blue pulse or ring with a label and a lime progress bar (replacing the sky spinner) — and keep lime out of charts.
+- [ ] D16. Contrast pass on Shell: no text lighter than `#5A6A82` on light surfaces, `#6E7F98` and `#93A3BA` only for icons and disabled states, no `primary`-colored text, borders or dots (they move to `--brand-strong` or Info blue), and every state except the normal running dot carrying a label or its own shape, including the static ring for working under reduced motion.
 
 ### Phase 2 — Shell pages
 
 - [ ] D7. Rework the Dashboard rows as described under Dashboard: no header row, role icons instead of the System badge, version and runtime under the name with an available update as `current → new`, status label only off-normal, single-line resources, hover actions plus one contextual action.
 - [ ] D8. Add the Dashboard compact layout, selected by container width.
 - [ ] D9. Build the data-grid page pattern on ReUI Data Grid and apply it first to Settings › Security › Access tokens.
-- [ ] D10. Replace generic loaders and empty states with the H-graph loader and node empty states.
+- [ ] D10. Replace generic loaders and empty states with the grid-mark loader and cell empty states.
 - [ ] D18. Add the provider role icon set and its chip (icon-only in rows, icon and name in app details) for `ui-client`, `assistant`, `speech-to-text` and `otlp-collector`, with the reserved icons for planned roles, and remove every "System" label from Shell.
 
 ### Phase 3 — Tools and small screens
@@ -432,6 +477,8 @@ the deliverable that changes it.
 - `node scripts/docs-index.mjs --check` passes.
 - Per deliverable: Shell lint, type-check build and tests; affected app and SDK builds; version bumps
   per AGENTS.md for every shipped artifact.
+- Lime never appears as text, an icon or a hairline on a light surface; every lime fill there carries
+  ink or a lime-strong edge (progress bars excepted, whose label carries the value).
 - Contrast checks for every text and status token pair in light and dark, and every state checked
   with `prefers-reduced-motion` and in grayscale to confirm it differs by more than color.
 - Activity: a pending Harness approval reaches the Tools badge on a second device that never opened

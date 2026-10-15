@@ -29,6 +29,24 @@ public sealed class GitHubPublicationTests
             ["reviewThreads"] = new JsonObject { ["pageInfo"] = new JsonObject { ["hasNextPage"] = more }, ["nodes"] = new JsonArray() },
             ["commits"] = new JsonObject { ["nodes"] = new JsonArray(new JsonObject { ["commit"] = new JsonObject { ["statusCheckRollup"] = new JsonObject { ["contexts"] = new JsonObject { ["pageInfo"] = new JsonObject { ["hasNextPage"] = false }, ["nodes"] = new JsonArray(new JsonObject { ["name"] = "CI", ["status"] = "COMPLETED", ["conclusion"] = "SUCCESS" }) } } } }) }
         } } } }.ToJsonString();
+    [Fact]
+    public async Task ObservationQueryClosesEverySelectionSet()
+    {
+        var http = new Http(); http.Replies.Enqueue(Graph());
+        await new GitHubPublicationProvider(new HttpClient(http), new Clock()).ObserveAsync(Connection, Record, default);
+        var payload = JsonNode.Parse(Assert.Single(http.Calls).Body)!;
+        var query = payload["query"]!.GetValue<string>();
+        var depth = 0;
+        foreach (var token in query)
+        {
+            if (token == '{') depth++;
+            if (token == '}') depth--;
+            Assert.True(depth >= 0, "GraphQL selection set closes before it opens.");
+        }
+        Assert.Equal(0, depth);
+        Assert.Equal(42, payload["variables"]!["number"]!.GetValue<int>());
+    }
+
     [Theory]
     [InlineData("https://github.com/owner/repo.git", "owner/repo")]
     [InlineData("https://github.com/owner/repo.git-tools", "owner/repo.git-tools")]

@@ -32,19 +32,45 @@ internal sealed class CoreRootLock : IDisposable
     // root's discovery file) rather than bind alongside it or die on a bare sharing violation. The
     // discovery file's PID is what tells a live Core apart from a holder that has not written
     // discovery yet (a Core still starting up).
-    public static CoreRootLock Acquire(HostyCoreRuntimeConfig config)
+    public static CoreRootLock Acquire(HostyCoreRuntimeConfig config, bool cleanup = false)
     {
+        if (!cleanup) RequireEnvironmentOpen(config.DataRoot);
         var lockPath = BuildLockPath(config.RunDirectory);
         try
         {
             SecureFileSystem.EnsurePrivateDirectory(config.RunDirectory);
             var stream = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            try { if (!cleanup) RequireEnvironmentOpen(config.DataRoot); }
+            catch { stream.Dispose(); throw; }
             WriteHolderPid(stream);
             return new CoreRootLock(stream, lockPath);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             throw new CoreRootLockedException(BuildRefusalMessage(config, lockPath), ex);
+        }
+    }
+
+    private static void RequireEnvironmentOpen(string dataRoot)
+    {
+        try { VerifyEnvironmentOpen(dataRoot); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        { throw new CoreRootLockedException($"Cannot open managed environment '{dataRoot}': {ex.Message}", ex); }
+    }
+    private static void VerifyEnvironmentOpen(string dataRoot)
+    {
+        var root = new DirectoryInfo(Path.GetFullPath(dataRoot));
+        for (var depth = 0; root.Parent?.Name == "environments" && Guid.TryParseExact(root.Name, "N", out _) && depth < 64; depth++)
+        {
+            var parent = root.Parent.Parent!;
+            var path = Path.Combine(parent.FullName, "core", "environments", root.Name + ".json");
+            if (!File.Exists(path)) throw new IOException("Managed environment ownership is unavailable.");
+            using var json = JsonDocument.Parse(File.ReadAllText(path));
+            var record = json.RootElement;
+            if (record.GetProperty("id").GetString() != root.Name || record.GetProperty("state").GetString() is "finishing" or "cleanup-failed" or "finished"
+                || record.TryGetProperty("rootDeletionStarted", out var deleting) && deleting.GetBoolean())
+                throw new IOException("This managed environment is closing; retry Finish in its parent Core.");
+            root = parent;
         }
     }
 

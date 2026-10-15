@@ -107,6 +107,14 @@ internal static class AppManagementAuthorization
         {
             foreach (var route in routes) result.Add(route, [permission]);
         }
+        Add(CoreAppPermissions.CoreEnvironmentsInspect, "GET /api/core-environments", "GET /api/core-environments/{id}", "GET /api/core-environments/{id}/apps");
+        Add(CoreAppPermissions.CoreEnvironmentsOperate, "POST /api/core-environments/{id}/operations/{kind}", "POST /api/core-environments/{id}/setup");
+        result["POST /api/core-environments/from-workspace"] = [CoreAppPermissions.CoreEnvironmentsOperate, CoreAppPermissions.WorkspacesRead];
+        Add(CoreAppPermissions.SandboxesInspect, "GET /api/sandbox-instances", "GET /api/sandbox-instances/{id}",
+            "GET /api/sandbox-instances/{id}/browser-runs/{jobId}", "GET /api/sandbox-instances/{id}/preview", "GET /api/sandbox-instances/{id}/diagnostics");
+        Add(CoreAppPermissions.SandboxesOperate, "POST /api/sandbox-instances/{id}/operations/{kind}",
+            "POST /api/sandbox-instances/{id}/users", "POST /api/sandbox-instances/{id}/seeds", "POST /api/sandbox-instances/{id}/browser-runs",
+            "POST /api/sandbox-instances/{id}/users/delete", "POST /api/sandbox-instances/{id}/viewers", "POST /api/sandbox-instances/{id}/evidence/clear", "POST /api/sandbox-instances/{id}/browser-runs/cancel");
         Add(CoreAppPermissions.ReadApps,
             "GET /api/apps", "GET /api/apps/permissions", "GET /api/apps/{appId}/health", "GET /api/apps/{appId}/update-status",
             "GET /api/apps/{appId}/assets/{**assetPath}", "GET /api/apps/{id}/permissions");

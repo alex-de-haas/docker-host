@@ -206,3 +206,5 @@
 @container dashboard (width >= 700px) {
   .dashboard-service-endpoints { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+@source "../../../../packages/app-sdk/src/sandbox-react.tsx";
