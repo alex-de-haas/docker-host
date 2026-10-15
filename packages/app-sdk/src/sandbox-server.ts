@@ -82,13 +82,15 @@ export class SandboxClient {
   }
 }
 
-export const coreEnvironmentActions = ["environment-create", "environment-list", "environment-status", "environment-start",
+export const coreEnvironmentActions = ["environment-consent", "environment-create", "environment-list", "environment-status", "environment-start",
   "environment-stop", "environment-restart", "environment-finish", "environment-setup", "environment-api"] as const;
 export type CoreEnvironmentAction = typeof coreEnvironmentActions[number];
+export interface CoreEnvironmentSavedConsent { id: string; appId: string; label: string; mode: string; target: string; state: string }
 export interface CoreEnvironment { id: string; label: string; mode: string; projectPath?: string; context?: SandboxContext;
   state: string; revision: number; port: number; dataRoot?: string; previewUrl: string;
   process?: { pid: number; startedAt: string }; error?: string; operations: SandboxOperation[];
   limits?: { memoryBytes: number; cpus: number; pids: number; diskBytes: number; applicationMemoryBytes: number; applicationCpus: number; applicationPids: number };
+  access?: { state: string; grantId?: string; saved: boolean; description: string };
   usage?: { ownedDiskBytes: number; containerMemoryBytes: number; coreMemoryBytes: number; state: string; observedAt: string; error?: string } }
 /** Full child Core transport. Requires core.environments permissions and live administrator authority.
  * Setup uses ordinary password authentication. Parent credentials are never forwarded to the child. */
@@ -107,8 +109,8 @@ export class CoreEnvironmentClient {
     if (!coreEnvironmentActions.includes(action)) throw new SandboxError("environment_operation_invalid", "Unknown environment operation.", 400);
     const { environmentId, ...body } = input;
     const read = action === "environment-list" || action === "environment-status";
-    let suffix = "";
-    if (action !== "environment-list" && action !== "environment-create") {
+    let suffix = action === "environment-consent" ? "/consent" : "";
+    if (action !== "environment-list" && action !== "environment-create" && action !== "environment-consent") {
       if (typeof environmentId !== "string" || !/^[a-f0-9]{32}$/.test(environmentId)) throw new SandboxError("environment_id_invalid", "Select a Core-issued environment ID.", 400);
       suffix = `/${environmentId}` + (action === "environment-status" ? "" : action === "environment-api" ? "/api"
         : action === "environment-setup" ? "/setup" : `/operations/${action.slice("environment-".length)}`);

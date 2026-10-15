@@ -1,6 +1,6 @@
 ---
 created: 2026-06-22
-updated: 2026-10-14
+updated: 2026-10-15
 summary: Apps declare dependencies on other installed apps, Core injects their URLs and reports their state.
 components: [apps/core, apps/shell]
 ---
@@ -60,8 +60,8 @@ dependency may not be installed yet) — that surfaces as reported state instead
 
 At start, for each wired endpoint Core resolves the dependency app's endpoint by `key` and injects
 its URL as `HOSTY_DEPENDENCY_{ALIAS}_URL`. For a **docker** consumer the URL's loopback host is
-rewritten to `host.docker.internal` (the same rewrite used for `HOSTY_CORE_ORIGIN`), so the value is
-reachable from inside the container; **localCommand** consumers get the URL as-is.
+rewritten to `host.docker.internal` for HTTP and non-HTTP protocols such as Redis. Protocol, explicit port,
+original path and query options are preserved without adding a root slash; **localCommand** consumers get the URL as-is.
 
 > **Connectivity caveat (current).** Reachability via `host.docker.internal:{hostPort}` requires the
 > dependency to publish that endpoint host-reachable (`expose: "host"`). A loopback-only endpoint is

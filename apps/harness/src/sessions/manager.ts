@@ -259,7 +259,7 @@ export class SessionManager {
       const token = credential ?? session.workspaceCredential ?? session.credential;
       if (!token) throw new AppContextError(401, "environment_credentials_required", "Refresh Hosty credentials before managing child Core environments.");
       const { action: _action, workspaceId, ...input } = raw;
-      if (action === "environment-create") {
+      if (action === "environment-create" || action === "environment-consent") {
         if (workspaceId && !session.record.developmentWorkspaces?.some(w => w.workspaceId === workspaceId && w.state === "active"))
           throw new AppContextError(403, "environment_workspace_forbidden", "Select this session's active workspace or omit it.");
         if (input.worktreeIds !== undefined && (!Array.isArray(input.worktreeIds) || input.worktreeIds.some(treeId =>
@@ -269,7 +269,7 @@ export class SessionManager {
       } else if (action !== "environment-list" && !session.record.coreEnvironments?.some(e => e.id === input.environmentId))
         throw new AppContextError(403, "environment_forbidden", "The environment is not associated with this session; list environments to recover an uncertain create.");
       // Setup passwords and arbitrary child API bodies never enter the lifecycle recovery journal.
-      if (action !== "environment-setup" && action !== "environment-api" && typeof input.requestId === "string") {
+      if (action !== "environment-consent" && action !== "environment-setup" && action !== "environment-api" && typeof input.requestId === "string") {
         const operations = session.record.coreEnvironmentOperations ?? [];
         const prior = operations.find(o => o.input.requestId === input.requestId);
         if (prior && (prior.action !== action || stableSandboxInput(prior.input) !== stableSandboxInput(input)))
@@ -285,7 +285,7 @@ export class SessionManager {
     const result = await this.development!.environment(prepared.token, action, prepared.input);
     return this.serialize(id, async () => {
       const session = await this.requireLive(id);
-      if (action !== "environment-api" && action !== "environment-setup") {
+      if (action !== "environment-consent" && action !== "environment-api" && action !== "environment-setup") {
         const environments = action === "environment-list" ? (result as { environments: CoreEnvironment[] }).environments.filter(e => e.context?.sessionId === id) : [result as CoreEnvironment];
         const known = new Map((session.record.coreEnvironments ?? []).map(e => [e.id, e]));
         for (const environment of environments) known.set(environment.id, environment);

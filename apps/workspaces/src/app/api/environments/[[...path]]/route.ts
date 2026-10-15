@@ -7,7 +7,7 @@ async function handle(request: Request, context: { params: Promise<{ path?: stri
     const parts = (await context.params).path ?? [];
     const read = request.method === "GET";
     const path = parts.join("/");
-    if (!(read ? /^(?:[a-f0-9]{32}(?:\/apps)?)?$/.test(path) : /^(?:from-workspace|[a-f0-9]{32}\/(?:setup|operations\/(?:start|stop|restart|finish)))$/.test(path)))
+    if (!(read ? /^(?:[a-f0-9]{32}(?:\/apps)?)?$/.test(path) : /^(?:from-workspace|consents\/[a-f0-9]{32}\/revoke|[a-f0-9]{32}\/(?:setup|consent\/revoke|operations\/(?:start|stop|restart|finish)))$/.test(path)))
       throw new WorkspacesError("Unknown sandbox operation.", 404, "not_found");
     if (!read) {
       const origin = request.headers.get("origin"); const url = new URL(request.url);

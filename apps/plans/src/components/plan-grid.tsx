@@ -2,13 +2,19 @@
 
 import { Fragment, useId, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import {
+  createExpandedRowModel,
+  createPaginatedRowModel,
+  createSortedRowModel,
   flexRender,
   functionalUpdate,
-  getCoreRowModel,
-  getExpandedRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  useReactTable,
+  rowExpandingFeature,
+  rowPaginationFeature,
+  rowSortingFeature,
+  sortFn_alphanumeric,
+  sortFn_basic,
+  sortFn_text,
+  tableFeatures,
+  useTable,
   type Column,
   type ColumnDef,
   type ExpandedState,
@@ -42,6 +48,16 @@ import { WorkspaceOwner, WorkspaceSessionLink } from "@/components/workspace-own
 import { documentForCard, planLink } from "@/lib/model";
 import type { PlanCard, WorkspacePlan } from "@/lib/types";
 
+const features = tableFeatures({
+  rowSortingFeature,
+  rowExpandingFeature,
+  rowPaginationFeature,
+  sortedRowModel: createSortedRowModel(),
+  expandedRowModel: createExpandedRowModel(),
+  paginatedRowModel: createPaginatedRowModel(),
+  sortFns: { alphanumeric: sortFn_alphanumeric, basic: sortFn_basic, text: sortFn_text },
+});
+
 const EMPTY_UNAVAILABLE: Record<string, string> = {};
 
 function cardId(card: PlanCard): string {
@@ -74,7 +90,7 @@ function followLink(event: MouseEvent<HTMLAnchorElement>, url: string, navigate:
   }
 }
 
-function SortableHeader({ column, title }: { column: Column<PlanCard>; title: string }) {
+function SortableHeader({ column, title }: { column: Column<typeof features, PlanCard, unknown>; title: string }) {
   const sorted = column.getIsSorted();
   const SortIcon = sorted === "asc" ? ArrowUpIcon : sorted === "desc" ? ArrowDownIcon : ArrowUpDownIcon;
   return <Button type="button" variant="ghost" size="sm" aria-label={`Sort by ${title}`} onClick={column.getToggleSortingHandler()}>
@@ -83,7 +99,7 @@ function SortableHeader({ column, title }: { column: Column<PlanCard>; title: st
 }
 
 export function PlanGrid({ plans, navigate, loadingMessage, toolbar, emptyMessage, unavailableRepositories = EMPTY_UNAVAILABLE }: { plans: PlanCard[]; navigate: (url: string) => void; loadingMessage?: string | null; toolbar?: ReactNode; emptyMessage?: ReactNode; unavailableRepositories?: Record<string, string> }) {
-  "use no memo"; // TanStack v8 exposes a mutable table instance that React Compiler cannot memoize.
+  "use no memo"; // React Compiler would memoize TanStack builder reads (getRowModel, getCanNextPage) that it cannot track.
   const [sorting, setSorting] = useState<SortingState>([{ id: "updated", desc: true }]);
   const [expanded, setExpanded] = useState<ExpandedState>({});
   const expansionId = useId();
@@ -99,12 +115,12 @@ export function PlanGrid({ plans, navigate, loadingMessage, toolbar, emptyMessag
       ? Math.min(page.pagination.pageIndex, Math.max(0, Math.ceil(plans.length / page.pagination.pageSize) - 1))
       : 0,
   };
-  const columns = useMemo<ColumnDef<PlanCard>[]>(() => [
+  const columns = useMemo<ColumnDef<typeof features, PlanCard, unknown>[]>(() => [
     {
       id: "plan",
       accessorFn: card => documentForCard(card)?.title ?? card.path,
       header: ({ column }) => <SortableHeader column={column} title="Plan" />,
-      sortingFn: "alphanumeric",
+      sortFn: "alphanumeric",
       cell: ({ row }) => {
         const card = row.original;
         const document = documentForCard(card);
@@ -122,7 +138,7 @@ export function PlanGrid({ plans, navigate, loadingMessage, toolbar, emptyMessag
       id: "status",
       accessorFn: card => cardStatus(card, unavailableRepositories),
       header: ({ column }) => <SortableHeader column={column} title="Tracked status" />,
-      sortingFn: "text",
+      sortFn: "text",
       cell: ({ row }) => {
         const status = cardStatus(row.original, unavailableRepositories);
         const variant = ["Document error", "Unavailable", "Blocked"].includes(status) ? "destructive" : status === "In Progress" ? "default" : "secondary";
@@ -137,7 +153,7 @@ export function PlanGrid({ plans, navigate, loadingMessage, toolbar, emptyMessag
         return progress && progress.total > 0 ? progress.done / progress.total : undefined;
       },
       header: ({ column }) => <SortableHeader column={column} title="Tracked progress" />,
-      sortingFn: "basic",
+      sortFn: "basic",
       sortUndefined: "last",
       cell: ({ row }) => {
         const document = unavailableRepositories[row.original.repository.id] ? null : row.original.document;
@@ -148,7 +164,7 @@ export function PlanGrid({ plans, navigate, loadingMessage, toolbar, emptyMessag
       id: "repository",
       accessorFn: card => `${repositoryName(card)} ${card.repository.branch} ${card.apps.map(app => app.name).join(", ")}`,
       header: ({ column }) => <SortableHeader column={column} title="Repository / apps" />,
-      sortingFn: "alphanumeric",
+      sortFn: "alphanumeric",
       cell: ({ row }) => <div className="flex min-w-44 max-w-60 flex-col gap-1 whitespace-normal">
         <span className="break-words text-xs">{repositoryName(row.original)}</span>
         <span className="break-all text-xs text-muted-foreground">Tracked branch: {row.original.repository.branch || "unresolved"}</span>
@@ -162,7 +178,7 @@ export function PlanGrid({ plans, navigate, loadingMessage, toolbar, emptyMessag
         return document?.errors.length ? undefined : document?.updated ?? undefined;
       },
       header: ({ column }) => <SortableHeader column={column} title="Tracked updated" />,
-      sortingFn: "text",
+      sortFn: "text",
       sortUndefined: "last",
       cell: ({ getValue }) => {
         const updated = getValue<string | undefined>();
@@ -173,7 +189,7 @@ export function PlanGrid({ plans, navigate, loadingMessage, toolbar, emptyMessag
       id: "workspaces",
       accessorFn: card => card.workspaces.length,
       header: ({ column }) => <SortableHeader column={column} title="Workspaces" />,
-      sortingFn: "basic",
+      sortFn: "basic",
       cell: ({ row }) => {
         const card = row.original;
         const count = card.workspaces.length;
@@ -185,18 +201,13 @@ export function PlanGrid({ plans, navigate, loadingMessage, toolbar, emptyMessag
       },
     },
   ], [navigate, unavailableRepositories, expansionId]);
-  // eslint-disable-next-line react-hooks/incompatible-library -- The component explicitly opts out of compilation above.
-  const table = useReactTable({
+  const table = useTable({
+    features,
     data: plans,
     columns,
     getRowId: cardId,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getExpandedRowModel: getExpandedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
     getRowCanExpand: row => row.original.workspaces.length > 0,
     paginateExpandedRows: false,
-    enableRowSelection: false,
     enableMultiSort: false,
     autoResetPageIndex: false,
     autoResetExpanded: false,
@@ -223,8 +234,8 @@ export function PlanGrid({ plans, navigate, loadingMessage, toolbar, emptyMessag
           </TableHead>;
         })}</TableRow>)}</TableHeader>
         <TableBody>{table.getRowModel().rows.length > 0 ? table.getRowModel().rows.map(row => <Fragment key={row.id}><TableRow>
-          {row.getVisibleCells().map(cell => <TableCell key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>)}
-        </TableRow>{row.getIsExpanded() && <TableRow><TableCell colSpan={row.getVisibleCells().length} className="whitespace-normal"><div id={`${expansionId}-${encodeURIComponent(row.id)}`} className="flex flex-col gap-3 p-3">
+          {row.getAllCells().map(cell => <TableCell key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>)}
+        </TableRow>{row.getIsExpanded() && <TableRow><TableCell colSpan={row.getAllCells().length} className="whitespace-normal"><div id={`${expansionId}-${encodeURIComponent(row.id)}`} className="flex flex-col gap-3 p-3">
           <h3 className="font-semibold">Workspace versions of {documentForCard(row.original)?.title ?? row.original.path}</h3>
           <Table aria-label={`Workspace versions of ${documentForCard(row.original)?.title ?? row.original.path}`}><TableHeader><TableRow><TableHead>Workspace branch</TableHead><TableHead>Status / change</TableHead><TableHead>Workspace progress</TableHead><TableHead>Last change</TableHead><TableHead>State / observation</TableHead><TableHead>Links</TableHead></TableRow></TableHeader><TableBody>
             {row.original.workspaces.map(version => <WorkspaceVersionRow key={version.workspace.id} card={row.original} version={version} navigate={navigate} />)}

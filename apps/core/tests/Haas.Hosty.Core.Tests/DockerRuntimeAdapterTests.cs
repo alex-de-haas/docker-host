@@ -106,6 +106,24 @@ public sealed class DockerRuntimeAdapterTests
         Assert.Equal(coreOrigin, result);
     }
 
+    [Theory]
+    [InlineData("redis://127.0.0.1:6379", "redis://host.docker.internal:6379")]
+    [InlineData("http://127.0.0.1:3000", "http://host.docker.internal:3000")]
+    [InlineData("http://localhost:80", "http://host.docker.internal:80")]
+    [InlineData("https://localhost:443/", "https://host.docker.internal:443/")]
+    [InlineData("http://[::1]:3000?mode=test#item", "http://host.docker.internal:3000?mode=test#item")]
+    [InlineData("redis://user:pass@localhost:6379/2", "redis://user:pass@host.docker.internal:6379/2")]
+    [InlineData("http://localhost:3000/a%2Fb?uri=http://localhost:4000", "http://host.docker.internal:3000/a%2Fb?uri=http://localhost:4000")]
+    [InlineData("http://localhost", "http://host.docker.internal")]
+    [InlineData("postgresql://localhost:5432/test?sslmode=disable", "postgresql://host.docker.internal:5432/test?sslmode=disable")]
+    [InlineData("redis://[::1]:6379/2", "redis://host.docker.internal:6379/2")]
+    [InlineData("http://0.0.0.0:8080/api?mode=test", "http://host.docker.internal:8080/api?mode=test")]
+    [InlineData("redis://database.example:6379/2", "redis://database.example:6379/2")]
+    [InlineData("file://localhost/tmp/database", "file://localhost/tmp/database")]
+    [InlineData("not-a-url", "not-a-url")]
+    public void BuildDockerDependencyUrl_RewritesOnlyLocalHostsAcrossProtocols(string endpoint, string expected)
+        => Assert.Equal(expected, DockerRuntimeAdapter.BuildDockerDependencyUrl(endpoint));
+
     [Fact]
     public void BuildPortArguments_DefaultPort_PublishesLoopbackTcpOnlyAndInjectsHostPortOnce()
     {
