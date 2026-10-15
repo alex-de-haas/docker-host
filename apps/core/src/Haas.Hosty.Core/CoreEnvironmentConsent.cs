@@ -120,7 +120,11 @@ internal sealed class CoreEnvironmentConsentService(HostyCoreRuntimeConfig confi
     {
         // Direct operators retain ordinary authority, including recovery after delegation is revoked.
         if (actor.AppId is null) return;
-        if (record.Consent is not { } consent) return; // Existing operator-created environments.
+        if (record.Consent is not { } consent)
+        {
+            if (record.OperatorApproved) return;
+            throw new SandboxException("environment_consent_required", "Review this existing trusted Core through environment_consent, then retry its original creation request.", 403);
+        }
         if (actor.GrantId is not null && (actor.GrantId != consent.GrantId || actor.ScopeId != consent.ScopeId))
             throw new AppIdentityException("environment_consent_denied", "The environment belongs to another consent.");
         var (grant, scope) = await grants.ValidateAsync(actor.AppId, consent.GrantId, consent.ScopeId, ct);
@@ -162,7 +166,8 @@ internal sealed class CoreEnvironmentConsentService(HostyCoreRuntimeConfig confi
     }
     internal async Task<CoreEnvironmentEffectiveAccess> AccessAsync(CoreEnvironmentRecord record, CancellationToken ct)
     {
-        if (record.Consent is not { } consent) return new("operator", null, false, Description);
+        if (record.Consent is not { } consent)
+            return new(record.Owner.AppId is null || record.OperatorApproved ? "operator" : "revoked-or-unavailable", null, false, Description);
         try
         {
             var (_, scope) = await grants.ValidateAsync(record.Owner.AppId!, consent.GrantId, consent.ScopeId, ct);

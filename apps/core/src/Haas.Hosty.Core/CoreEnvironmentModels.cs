@@ -9,7 +9,7 @@ internal sealed record CoreEnvironmentRecord(string Id, SandboxActor Owner, Core
     string Fingerprint, int Port, long Revision, string State, DateTimeOffset CreatedAt,
     CoreEnvironmentProcess? Process = null, string? Executable = null, string? Error = null,
     IReadOnlyList<CoreEnvironmentOperation>? Operations = null, bool RootDeletionStarted = false,
-    string[]? CleanupOwners = null, CoreEnvironmentUsage? Usage = null, CoreEnvironmentConsent? Consent = null);
+    string[]? CleanupOwners = null, CoreEnvironmentUsage? Usage = null, CoreEnvironmentConsent? Consent = null, bool OperatorApproved = false);
 internal sealed record CoreEnvironmentView(string Id, string Label, string Mode, string? ProjectPath,
     SandboxContext? Context, string State, long Revision, int Port, string? DataRoot, string PreviewUrl,
     CoreEnvironmentProcess? Process, string? Error, IReadOnlyList<CoreEnvironmentOperation> Operations,

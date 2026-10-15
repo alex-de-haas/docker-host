@@ -402,6 +402,11 @@ launch a whole Core; the separate `core-environment` scope can issue normal shor
 credentials for its reviewed actions. Consent includes only the caller's currently granted
 read/manage actions; a manage-only caller does not receive read authority.
 
+Operator-created children persist explicit operator approval, including when they retain an
+assistant workspace owner. Legacy app-owned records without that marker or consent require review
+before delegated start/restart, setup or child API access. The original creation request attaches
+approved consent without replacing the child; operator authority and Stop/Finish remain available.
+
 The shared Shell/Workspaces panel shows effective consent and supports revocation. Shell also lists
 saved permissions when no environment remains. Revocation prevents new delegated creation,
 start/restart, setup and child API transport. The operator retains inspection, Stop and Finish.

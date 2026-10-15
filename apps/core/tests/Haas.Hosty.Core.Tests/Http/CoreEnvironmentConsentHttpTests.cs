@@ -166,6 +166,76 @@ public sealed class CoreEnvironmentConsentHttpTests
         Assert.Equal(current.Operations, persisted.Operations);
         Assert.Equal(preparations, runtime.Preparations);
     }
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public async Task StoredOperatorApproval_DistinguishesLegacyDelegation(bool operatorApproved, bool renew)
+    {
+        var runtime = new PausedStartRuntime(); runtime.Resume.SetResult();
+        await using var host = await CoreHttpHarness.StartAsync(configure: services =>
+            services.AddSingleton<ICoreEnvironmentRuntime>(runtime));
+        using var caller = await Caller(host);
+        var app = (await host.Services.GetRequiredService<AppRegistryStore>().GetAppAsync("qa.client"))!;
+        var actor = new SandboxActor("actor", app.Id, app.InstalledAt);
+        var service = host.Services.GetRequiredService<CoreEnvironmentService>();
+        var store = host.Services.GetRequiredService<CoreEnvironmentStore>();
+        var config = host.Services.GetRequiredService<HostyCoreRuntimeConfig>();
+        var binary = Path.Combine(config.DataRoot, "core", "bin", OperatingSystem.IsWindows() ? "hosty-core.exe" : "hosty-core");
+        Directory.CreateDirectory(Path.GetDirectoryName(binary)!); await File.WriteAllTextAsync(binary, "test release");
+        var input = new CoreEnvironmentCreate(Guid.NewGuid().ToString(), "Upgrade QA", "release");
+        var child = await service.CreateAsync(actor, input, default, operatorApproved: true);
+        Assert.True((await store.ReadAsync(child.Id, default))!.OperatorApproved);
+        if (!operatorApproved)
+        {
+            // A pre-upgrade record has neither field; deserialize it through the actual store.
+            var json = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(store.RecordPath(child.Id)))!.AsObject();
+            json.Remove("consent"); json.Remove("operatorApproved");
+            await File.WriteAllTextAsync(store.RecordPath(child.Id), json.ToJsonString());
+            var legacy = (await store.ReadAsync(child.Id, default))!;
+            Assert.False(legacy.OperatorApproved); Assert.Null(legacy.Consent);
+            await service.RequireConsentAsync(new("actor"), legacy, true, default);
+            foreach (var action in new[] { "/operations/start", "/operations/restart", "/setup", "/api" })
+            {
+                object body = action == "/setup" ? new CoreEnvironmentSetup("test@example.test", "Test", "test-password-long")
+                    : action == "/api" ? new CoreEnvironmentApiRequest("GET", "/api/apps")
+                    : new CoreEnvironmentCommand(Guid.NewGuid().ToString(), child.Revision);
+                using var denied = await caller.PostAsJsonAsync(Root + "/" + child.Id + action, body);
+                Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+            }
+            Assert.Equal(0, runtime.Preparations);
+            Assert.Equal("revoked-or-unavailable", (await caller.GetFromJsonAsync<CoreEnvironmentView>(Root + "/" + child.Id))!.Access!.State);
+            using var stopped = await caller.PostAsJsonAsync(Root + "/" + child.Id + "/operations/stop",
+                new CoreEnvironmentCommand(Guid.NewGuid().ToString(), child.Revision));
+            stopped.EnsureSuccessStatusCode();
+            child = (await stopped.Content.ReadFromJsonAsync<CoreEnvironmentView>())!;
+            if (renew)
+            {
+                await Approve(host, caller, input, true);
+                using var replay = await caller.PostAsJsonAsync(Root, input); replay.EnsureSuccessStatusCode();
+                var renewed = (await replay.Content.ReadFromJsonAsync<CoreEnvironmentView>())!;
+                Assert.Equal(child.Id, renewed.Id); Assert.Equal(child.DataRoot, renewed.DataRoot);
+                Assert.Equal("active", renewed.Access!.State);
+                Assert.False((await store.ReadAsync(child.Id, default))!.OperatorApproved);
+                child = renewed;
+            }
+        }
+        else Assert.Equal("operator", child.Access!.State);
+        if (operatorApproved || renew)
+        {
+            using var started = await caller.PostAsJsonAsync(Root + "/" + child.Id + "/operations/start",
+                new CoreEnvironmentCommand(Guid.NewGuid().ToString(), child.Revision));
+            started.EnsureSuccessStatusCode();
+            child = (await started.Content.ReadFromJsonAsync<CoreEnvironmentView>())!;
+            Assert.Equal("running", child.State);
+            Assert.Equal(1, runtime.Preparations);
+        }
+        using var finished = await caller.PostAsJsonAsync(Root + "/" + child.Id + "/operations/finish",
+            new CoreEnvironmentCommand(Guid.NewGuid().ToString(), child.Revision));
+        finished.EnsureSuccessStatusCode();
+        Assert.Equal("finished", (await finished.Content.ReadFromJsonAsync<CoreEnvironmentView>())!.State);
+        Assert.False(Directory.Exists(child.DataRoot));
+    }
     [Fact]
     public async Task SavedConsent_PinsCallerModeCeilingsAndAccountRevision()
     {

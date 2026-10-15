@@ -158,6 +158,11 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                             await store.WriteAsync(existing, ct);
                         }
                     }
+                    else if (operatorApproved && existing.Consent is null && !existing.OperatorApproved)
+                    {
+                        existing = existing with { OperatorApproved = true, Revision = existing.Revision + 1 };
+                        await store.WriteAsync(existing, ct);
+                    }
                     else await RequireConsentAsync(actor, existing, false, ct);
                     await EnsureRootAsync(existing, ct);
                     return await ViewAsync(existing, ct);
@@ -172,7 +177,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             CoreEnvironmentResources.Reserve(descendants, input.Limits ?? new());
             var id = Guid.NewGuid().ToString("N");
             var port = RuntimePortHelper.AllocateLoopbackPort(descendants.Select(r => r.Port).ToHashSet());
-            var record = new CoreEnvironmentRecord(id, actor with { GrantId = null, ScopeId = null }, input, fingerprint, port, 1, "stopped", clock.UtcNow, Consent: approved);
+            var record = new CoreEnvironmentRecord(id, actor with { GrantId = null, ScopeId = null }, input, fingerprint, port, 1, "stopped", clock.UtcNow, Consent: approved, OperatorApproved: operatorApproved || actor.AppId is null);
             // Persist ownership before creating any root or process so an interrupted allocation is visible.
             await store.WriteAsync(record, ct);
             await EnsureRootAsync(record, ct);
