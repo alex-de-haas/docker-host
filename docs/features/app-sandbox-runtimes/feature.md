@@ -488,9 +488,30 @@ Cold client image transfers, dependency/cache preparation and warm lifecycle tim
 separately from the already-running Docker VM and shared base layers. The selected simultaneous
 worker-plus-child sample is 3,417.6 MiB charged / 2,154.3 MiB working set; native Core, Harness,
 browser and verification processes have separate measurements. The report retains the temporary
-helper failure and sampling boundaries. Local D27 records these verified stages; D9 retains
-unmeasured cold-engine image import/extraction, uncached build/start and engine/build memory
-as well as host/architecture/recipe acceptance. D11 retains remote-preview acceptance.
+helper failure and sampling boundaries. Local D27 records these verified stages; D28 below records
+the subsequent cold-engine measurement. D9 retains host/architecture/recipe acceptance and D11
+retains remote-preview acceptance.
+
+## Isolated Cold-Engine Acceptance
+
+The [cold-engine report](../../reviews/2026-10-15-sandbox-d9-cold-engine-acceptance.md) verifies an empty independent
+Docker engine with released Linux arm64 Core 0.135.1, Harness/worker 0.53.0 and source Demo 0.17.2.
+A real Harness agent prepares the worktree, changes Demo, starts a child and app, passes six tests,
+lint and production build, performs warm restart, and Finishes with identical-input replay. A normal
+password-authenticated browser verifies separate child identity, navigation and HMR with a retained
+page sentinel. Source is read-only in the two app containers and six caches are separate.
+
+Cold worker pull/import takes 19.38 seconds; first source-image build 16.28 seconds; cold Demo HTTP
+readiness 28.15 seconds versus 6.07 seconds warm. Whole-fixture cgroup peak is 8,458.59 MiB under a
+12 GiB ceiling, including daemon, BuildKit, native Core/Harness/browser, worker and app; no OOM occurs.
+The report separates tar extraction, dependency preparation, working set and native RSS. It records
+prepared tooling, Autonomous-mode execution, the temporary recipe and the already-running host VM.
+This is one Linux arm64-in-Docker measurement, not native-host or generic recipe acceptance.
+
+Independent cleanup proves child root/ports/containers/volumes/network removal and unchanged borrowed
+source. Removing the temporary parent, engine container and volume also removes its engine images,
+build cache and credentials. The primary Core process and all 41 existing containers, 153 images,
+505 build-cache records, 15 volumes and 26 networks remain unchanged.
 
 ## Testing Expectations
 
