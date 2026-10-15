@@ -420,7 +420,8 @@ return their existing journal after launch consent is revoked or its target chan
 and retryable failures require live consent before preparing or changing the journal. Caller
 identity, ownership and request fingerprint checks still apply to terminal replays.
 Approval audit records identify the initiating app as their resource and retain the request, caller,
-operation and one-run/saved choice under the reviewed metadata schema. A prepared generation is
+operation and one-run/saved choice under the reviewed metadata schema. The requested event is
+persisted before submitting the review, so abandoned requests are traceable without a decision. A prepared generation is
 journaled before post-build consent revalidation, so rejected launches release its parent ownership
 and retention keeps only the latest failure diagnostics instead of accumulating orphan builds.
 After reviewing a changed target or renewed permission, replaying the original creation request

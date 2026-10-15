@@ -53,6 +53,24 @@ public sealed class CoreEnvironmentConsentHttpTests
         client.DefaultRequestHeaders.Remove(AppManagementAuthorization.IdentityHeader);
         client.DefaultRequestHeaders.Add("X-Hosty-User-Token", token); return client;
     }
+    [Fact]
+    public async Task ConsentPreparation_IsAuditedWithoutAnOperatorDecision()
+    {
+        await using var host = await CoreEnvironmentHttpTests.StartHostAsync(); using var caller = await Caller(host);
+        using var prepared = await caller.PostAsJsonAsync(Root + "/consent",
+            new CoreEnvironmentCreate(Guid.NewGuid().ToString(), "Uncompleted consent"));
+        prepared.EnsureSuccessStatusCode();
+        var view = (await prepared.Content.ReadFromJsonAsync<InstallationRequestView>())!;
+        var events = await host.Services.GetRequiredService<AuditStore>().ReadRecentAsync();
+        var request = Assert.Single(events, entry => entry.Action == "core.environment.approval"
+            && entry.Details.GetValueOrDefault("requestId") == view.Id);
+        Assert.Equal("requested", request.Outcome);
+        Assert.Equal("app", request.ResourceType);
+        Assert.Equal("qa.client", request.ResourceId);
+        Assert.Equal("qa.client", request.Details["caller"]);
+        Assert.Equal("core-environment", request.Details["operation"]);
+        Assert.Null(await host.Services.GetRequiredService<BackgroundGrantService>().ReadAsync(default));
+    }
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

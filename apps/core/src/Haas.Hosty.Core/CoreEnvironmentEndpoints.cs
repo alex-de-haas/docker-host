@@ -69,7 +69,8 @@ internal static class CoreEnvironmentEndpoints
         const string internalRoot = "/api/internal/apps/{appId}/core-environments";
         routes.MapPost(internalRoot + "/consent", async (string appId, CoreEnvironmentCreate input, HttpRequest request,
             CoreEnvironmentAuthorization auth, CoreEnvironmentService service, CoreEnvironmentConsentService consent,
-            InstallationApprovalStore approvals, CorePublicOriginResolver origins, IClock clock, CancellationToken ct) =>
+            InstallationApprovalStore approvals, InstallationApprovalService approvalService,
+            CorePublicOriginResolver origins, IClock clock, CancellationToken ct) =>
             await SandboxEndpoints.Handle(async () =>
             {
                 var actor = await auth.RequireAsync(request, appId, false, ct);
@@ -78,6 +79,7 @@ internal static class CoreEnvironmentEndpoints
                 var entry = approvals.Add(new InstallationApproval { UserId = actor.UserId, CallerAppId = appId,
                     IdentityToken = request.Headers["X-Hosty-User-Token"].ToString(), CallerName = plan.DisplayName,
                     ExpiresAt = clock.UtcNow.Add(InstallationApprovalStore.Lifetime), EnvironmentPlan = plan });
+                await approvalService.RecordAsync(entry, "requested", ct);
                 approvals.Submit(entry, new());
                 return approvals.View(entry, origins.Effective);
             }));
