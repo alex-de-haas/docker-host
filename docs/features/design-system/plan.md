@@ -110,21 +110,25 @@ told apart by its motion and label.
 
 Each first-party app has one accent. It is identity only: the lit cell of the app's mark, a 3 px
 strip on the app's own frame, the first series of the app's own charts (the app sets `--chart-1` to
-its strong shade inside its frame) and its mark, with that one cell lit, in its empty-state art. It never fills behind content, never marks focus or selection, and never
+its strong shade on light and to the accent itself on dark, where the strong shades drop below 3:1) and its mark, with that one cell lit, in its empty-state art. It never fills behind content, never marks focus or selection, and never
 stands for a state, so it may sit near a status hue without meaning one. Lime stays Hosty's, and
 interaction stays lime inside every app. Accents sit at least 20° apart — the closest pair, Harness and Marketplace, is 21° — and a new
 first-party app takes a free hue and a free mark. Third-party apps keep their own icons.
 
-| App | Accent | Strong (marks on light) | Mark |
-| --- | --- | --- | --- |
-| Shell | `#22D3EE` | `#0891B2` | S |
-| Plans | `#60A5FA` | `#2563EB` | P |
-| Telemetry | `#A78BFA` | `#7C3AED` | T, lit at the top |
-| Harness | `#FB923C` | `#C2410C` | A (agent) |
-| Whisper | `#F472B6` | `#DB2777` | V (voice), lit at the point |
-| Marketplace | `#FACC15` | `#A16207` | M |
-| Workspaces | `#34D399` | `#059669` | W |
-| Demo App | `#E879F9` | `#C026D3` | D |
+| App | Accent | Strong (marks on light) | Mark | Cells, top to bottom |
+| --- | --- | --- | --- | --- |
+| Hosty (reference) | `#A3E635` | `#5A9A0A` | H | `X.X` `X*X` `X.X` |
+| Shell | `#22D3EE` | `#0891B2` | S | `XX.` `X*X` `.XX` |
+| Plans | `#60A5FA` | `#2563EB` | P | `XXX` `X*X` `X..` |
+| Telemetry | `#A78BFA` | `#7C3AED` | T | `X*X` `.X.` `.X.` |
+| Harness | `#FB923C` | `#C2410C` | A (agent) | `.X.` `X*X` `X.X` |
+| Whisper | `#F472B6` | `#DB2777` | V (voice) | `X.X` `X.X` `.*.` |
+| Marketplace | `#FACC15` | `#A16207` | M | `XXX` `X*X` `X.X` |
+| Workspaces | `#34D399` | `#059669` | W | `X.X` `X*X` `XXX` |
+| Demo App | `#E879F9` | `#C026D3` | D | `XX.` `X*X` `XX.` |
+
+`X` is an ink (or white) cell, `*` the lit cell in the accent, `.` an empty cell; each row reads left to
+right on the 3 × 3 grid. The catalog icon, the in-app mark and the empty-state art all use this map.
 
 ## Typography
 
@@ -261,7 +265,7 @@ ink action color; lime itself is the Hosty addition `--brand`.
 | `--chart-1` … `--chart-5` | `#1C68FF` `#7C3AED` `#C026D3` `#F59E0B` `#64748B` | `#4D8BFF` `#A78BFA` `#E879F9` `#FBBF24` `#94A3B8` |
 
 Charts never use lime; it belongs to interaction. `--chart-1` is Hosty Blue in Shell's own charts; a
-first-party app overrides it with its accent's strong shade inside its own frame, so there is one
+first-party app overrides it inside its own frame — strong shade on light, accent on dark — so there is one
 first-series token, not two.
 
 Hosty additions:
@@ -453,7 +457,7 @@ the deliverable that changes it.
 - [ ] D1. Replace Shell's neutral shadcn values in `apps/shell/src/app/globals.css` with the light and dark tokens above — the ink primary, the lime brand and lime soft accent, and the three-tone status tokens — and give buttons, inputs, checkboxes, switches, tabs (the line variant in `components/ui/tabs.tsx`), selected table rows (`components/ui/table.tsx`, today `bg-muted`), document-wide text selection (`::selection` in `globals.css`, not only in `input.tsx`) and progress bars the lime hover, focus, selection and progress states described under Components, with the ink-edge focus treatment applied to every `--ring` consumer in Shell (16 components today, including `shell-top-strip.tsx`, `shell-sidebar.tsx`, `ui/dialog.tsx` and `ui/resizable.tsx`).
 - [ ] D2. Load IBM Plex Sans and JetBrains Mono in Shell for `--font-sans` and `--font-mono`, and self-host the same files for Core's own pages.
 - [ ] D3. Replace the H-graph with the grid mark in `assets/hosty-brand` — light, dark, the ink-tile app icon and the favicon cut — outline the wordmark in IBM Plex Sans 600, regenerate the lockups and app icons with `build-assets.mjs` — which also rewrites Shell's public icons and the `apps/shell-swift` AppIcon set, so both ship with version bumps (`MARKETING_VERSION` for the Swift client) — redraw the hand-coded copies of the mark in Shell's `chrome/brand-mark.tsx` and the SDK's `overlay-react.tsx` (with an `@hosty-sdk/app` version bump), and record the ink scale, lime brand and status colors in `brand-tokens.json` and the brand README.
-- [ ] D4. Redraw every first-party app icon as its cell mark on the ink tile — Shell S, Plans P, Telemetry T, Harness A, Whisper V, Marketplace M, Workspaces W, Demo App D (whose `icon.svg` still draws the retired H-graph) — replacing each `apps/<app>/assets/icon.svg` and `apps/workspaces/public/icon.svg`, adding one for Whisper and pointing its manifest's `catalogMetadata.icon` at it (Core builds `iconUrl` only from that field), with each app's version bump; then apply the accents as described under App accents: Shell draws each app's 3 px frame strip and tool badges from its accent, sourced as the open question settles, and each first-party app sets `--chart-1` to its accent's strong shade for its own charts and shows its mark, accent cell lit, in its own empty states.
+- [ ] D4. Redraw every first-party app icon as its cell mark on the ink tile — Shell S, Plans P, Telemetry T, Harness A, Whisper V, Marketplace M, Workspaces W, Demo App D (whose `icon.svg` still draws the retired H-graph) — replacing each `apps/<app>/assets/icon.svg` and `apps/workspaces/public/icon.svg`, adding one for Whisper and pointing its manifest's `catalogMetadata.icon` at it (Core builds `iconUrl` only from that field), with each app's version bump; then apply the accents as described under App accents: Shell draws each app's 3 px frame strip and tool badges from its accent, sourced as the open question settles, and each first-party app sets `--chart-1` to its accent's strong shade on light and its accent on dark for its own charts and shows its mark, accent cell lit, in its own empty states.
 - [ ] D5. Ship the Telemetry and Demo App navigation icons in `currentColor` instead of hard-coded colors.
 - [ ] D6. Use the four status meanings across Shell — info blue, needs you amber (including pending approvals), failed red, working as an Info-blue pulse or ring with a label and a lime progress bar (replacing the sky spinner) — and keep lime out of charts.
 - [ ] D16. Contrast pass on Shell: no text lighter than `#5A6A82` on light surfaces, `#6E7F98` and `#93A3BA` only for icons and disabled states, no `primary`-colored text, borders or dots (they move to `--brand-strong` or Info blue), and every state except the normal running dot carrying a label or its own shape, including the static ring for working under reduced motion.
