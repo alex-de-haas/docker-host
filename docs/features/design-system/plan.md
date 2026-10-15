@@ -128,7 +128,8 @@ first-party app takes a free hue and a free mark. Third-party apps keep their ow
 | Demo App | `#E879F9` | `#C026D3` | D | `XX.` `X*X` `XX.` |
 
 `X` is an ink (or white) cell, `*` the lit cell in the accent, `.` an empty cell; each row reads left to
-right on the 3 × 3 grid. The catalog icon, the in-app mark and the empty-state art all use this map.
+right on the 3 × 3 grid. The catalog icon — which Shell also shows in its rows and navigation — and the empty-state art both
+use this map; there is no separate in-app copy of the mark.
 
 ## Typography
 
