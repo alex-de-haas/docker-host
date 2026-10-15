@@ -267,9 +267,11 @@ ink action color; lime itself is the Hosty addition `--brand`.
 
 Charts never use lime; it belongs to interaction. `--chart-1` is Hosty Blue in Shell's own charts; a
 first-party app overrides it inside its own frame — strong shade on light, accent on dark — so there is one
-first-series token, not two. A later chart token that sits within 20° of the app's accent takes the
-displaced Hosty Blue instead, so no two series match: Telemetry swaps with `--chart-2`, Demo App with
-`--chart-3`, Harness and Marketplace with `--chart-4`.
+first-series token, not two. A later colored chart token (`--chart-2` to `--chart-4`; the slate
+`--chart-5` is neutral and never swaps) that sits within 20° of the app's accent takes the displaced
+Hosty Blue instead, so no two series match: Telemetry swaps with `--chart-2`, Demo App with
+`--chart-3`, Harness and Marketplace with `--chart-4`. Plans' accent is itself blue, so it simply
+replaces Hosty Blue and nothing is displaced.
 
 Hosty additions:
 
