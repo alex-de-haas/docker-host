@@ -407,8 +407,12 @@ saved permissions when no environment remains. Revocation prevents new delegated
 start/restart, setup and child API transport. The operator retains inspection, Stop and Finish.
 Finish retires one-run consent; saved consent remains an explicit operator policy until revoked.
 The original creation request still returns the finished receipt after one-run consent is retired,
-without recreating data or processes. Approval audit records retain the request, caller, operation
-and one-run/saved choice under the reviewed metadata schema.
+without recreating data or processes. Exact successful or superseded Start/Restart replays also
+return their existing journal after launch consent is revoked or its target changes; new commands
+and retryable failures require live consent before preparing or changing the journal. Caller
+identity, ownership and request fingerprint checks still apply to terminal replays.
+Approval audit records retain the request, caller, operation and one-run/saved choice under the
+reviewed metadata schema.
 After reviewing a changed target or renewed permission, replaying the original creation request
 updates the active child's consent without replacing its identity, data or lifecycle journal.
 Renewal shares the child's command gate and re-reads its latest state after an in-flight operation.

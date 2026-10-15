@@ -103,6 +103,69 @@ public sealed class CoreEnvironmentConsentHttpTests
         Assert.Equal("stopped", (await created.Content.ReadFromJsonAsync<CoreEnvironmentView>())!.State);
         Assert.Equal(HttpStatusCode.Forbidden, (await caller.GetAsync(Root)).StatusCode);
     }
+    [Theory]
+    [InlineData("start", "succeeded", false)]
+    [InlineData("restart", "succeeded", false)]
+    [InlineData("start", "superseded", false)]
+    [InlineData("restart", "superseded", false)]
+    [InlineData("start", "failed", false)]
+    [InlineData("restart", "failed", false)]
+    [InlineData("start", "succeeded", true)]
+    [InlineData("restart", "succeeded", true)]
+    [InlineData("start", "superseded", true)]
+    [InlineData("restart", "superseded", true)]
+    [InlineData("start", "failed", true)]
+    [InlineData("restart", "failed", true)]
+    public async Task CommandReplay_RequiresConsentOnlyWhenItCanLaunch(string kind, string outcome, bool changeTarget)
+    {
+        var runtime = new PausedStartRuntime { FailPrepare = outcome != "succeeded" };
+        runtime.Resume.SetResult();
+        await using var host = await CoreHttpHarness.StartAsync(configure: services =>
+            services.AddSingleton<ICoreEnvironmentRuntime>(runtime));
+        using var caller = await Caller(host);
+        var config = host.Services.GetRequiredService<HostyCoreRuntimeConfig>();
+        var binary = Path.Combine(config.DataRoot, "core", "bin", OperatingSystem.IsWindows() ? "hosty-core.exe" : "hosty-core");
+        Directory.CreateDirectory(Path.GetDirectoryName(binary)!); await File.WriteAllTextAsync(binary, "test release");
+        var input = new CoreEnvironmentCreate(Guid.NewGuid().ToString(), "Replay QA", "release");
+        await Approve(host, caller, input, true);
+        using var created = await caller.PostAsJsonAsync(Root, input); created.EnsureSuccessStatusCode();
+        var child = (await created.Content.ReadFromJsonAsync<CoreEnvironmentView>())!;
+        var command = new CoreEnvironmentCommand(Guid.NewGuid().ToString(), child.Revision);
+        var url = Root + "/" + child.Id + "/operations/" + kind;
+        using var executed = await caller.PostAsJsonAsync(url, command); executed.EnsureSuccessStatusCode();
+        var current = (await executed.Content.ReadFromJsonAsync<CoreEnvironmentView>())!;
+        Assert.Equal(outcome == "succeeded" ? "succeeded" : "failed", Assert.Single(current.Operations).State);
+        if (outcome == "superseded")
+        {
+            using var stopped = await caller.PostAsJsonAsync(Root + "/" + child.Id + "/operations/stop",
+                new CoreEnvironmentCommand(Guid.NewGuid().ToString(), current.Revision));
+            stopped.EnsureSuccessStatusCode();
+            current = (await stopped.Content.ReadFromJsonAsync<CoreEnvironmentView>())!;
+            Assert.Equal("stopped", current.State);
+        }
+        if (changeTarget) await File.WriteAllTextAsync(binary, "replacement release");
+        else await host.Services.GetRequiredService<BackgroundGrantService>().RevokeAsync("actor", child.Access!.GrantId, default);
+        runtime.FailPrepare = false;
+        var preparations = runtime.Preparations;
+        using var replay = await caller.PostAsJsonAsync(url, command);
+        Assert.Equal(outcome == "failed" ? HttpStatusCode.Forbidden : HttpStatusCode.OK, replay.StatusCode);
+        if (replay.IsSuccessStatusCode)
+        {
+            var receipt = (await replay.Content.ReadFromJsonAsync<CoreEnvironmentView>())!;
+            Assert.Equal(current.State, receipt.State);
+            Assert.Equal(current.Process, receipt.Process);
+            Assert.Equal(current.Revision, receipt.Revision);
+            Assert.Equal(current.Operations, receipt.Operations);
+        }
+        using var changedReplay = await caller.PostAsJsonAsync(url, command with { ExpectedRevision = current.Revision });
+        Assert.Equal(HttpStatusCode.Conflict, changedReplay.StatusCode);
+        using var fresh = await caller.PostAsJsonAsync(url, new CoreEnvironmentCommand(Guid.NewGuid().ToString(), current.Revision));
+        Assert.Equal(HttpStatusCode.Forbidden, fresh.StatusCode);
+        var persisted = (await host.Services.GetRequiredService<CoreEnvironmentStore>().ReadAsync(child.Id, default))!;
+        Assert.Equal(current.Revision, persisted.Revision);
+        Assert.Equal(current.Operations, persisted.Operations);
+        Assert.Equal(preparations, runtime.Preparations);
+    }
     [Fact]
     public async Task SavedConsent_PinsCallerModeCeilingsAndAccountRevision()
     {
@@ -266,7 +329,14 @@ public sealed class CoreEnvironmentConsentHttpTests
     {
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public Task<string> PrepareAsync(CoreEnvironmentRecord record, string root, CancellationToken ct) => Task.FromResult("test-core");
+        public bool FailPrepare { get; set; }
+        public int Preparations { get; private set; }
+        public Task<string> PrepareAsync(CoreEnvironmentRecord record, string root, CancellationToken ct)
+        {
+            Preparations++;
+            if (FailPrepare) throw new InvalidOperationException("Simulated preparation failure.");
+            return Task.FromResult("test-core");
+        }
         public Task<CoreEnvironmentProcess?> ObserveAsync(CoreEnvironmentRecord record, string root, CancellationToken ct) => Task.FromResult(record.Process);
         public async Task StartAsync(CoreEnvironmentRecord record, string root, Func<CoreEnvironmentProcess, Task> save, CancellationToken ct)
         {

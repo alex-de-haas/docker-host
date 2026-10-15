@@ -242,13 +242,18 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
         try
         {
             var record = await RequireAsync(actor, id, ct);
-            if (kind is "start" or "restart") await RequireConsentAsync(actor, record, true, ct);
             var operations = (record.Operations ?? []).ToList();
             var prior = operations.FirstOrDefault(o => o.Id == requestId);
             if (prior is not null)
             {
                 if (prior.Fingerprint != fingerprint) throw ReplayConflict();
                 if (prior.State == "succeeded" || operations.Last().Id != requestId || record.State == "finished") return await ViewAsync(record, ct);
+            }
+            // Exact terminal replays do not launch anything. New and retryable operations still
+            // require live consent before changing the journal or preparing the child.
+            if (kind is "start" or "restart") await RequireConsentAsync(actor, record, true, ct);
+            if (prior is not null)
+            {
                 if (!accepting) throw new SandboxException("environment_shutdown", "Core is stopping.", 409);
                 operations = operations.Select(o => o.Id == requestId ? o with { State = "running", Error = null } : o).ToList();
                 record = record with { Revision = record.Revision + 1, Operations = operations, Error = null };
