@@ -10,7 +10,7 @@ internal static class AuditDetailsPolicy
         "existingUser tool retentionDays purged");
     private static readonly HashSet<string> LifecycleFields = Fields("via tool operation operationId");
     private static readonly HashSet<string> ApprovalFields = Fields(
-        "requestId caller hostPathChange operation removalOptions assistantTarget assistantAccessEnabled assistantInstructions selectedOptionalPermissions");
+        "requestId caller hostPathChange operation removalOptions assistantTarget assistantAccessEnabled assistantInstructions selectedOptionalPermissions environmentConsentSaved");
     private static readonly HashSet<string> AppReportFields = Fields("sessionId toolName actor deletedBy createdBy autonomy mode waitedMs");
     private static readonly HashSet<string> NotificationFields = Fields("appId recipients status pruned");
     private static readonly HashSet<string> BackupFields = Fields("appId reason planDigest deleted skipped");
@@ -23,7 +23,7 @@ internal static class AuditDetailsPolicy
         {
             var action when action.StartsWith("auth.", StringComparison.Ordinal) => AuthFields,
             var action when action.StartsWith("app.lifecycle.", StringComparison.Ordinal) || action == "core.lifecycle.restart" => LifecycleFields,
-            "app.installation.approval" or "app.permissions.approval" or "app.mcp.approval" => ApprovalFields,
+            "app.installation.approval" or "app.permissions.approval" or "app.mcp.approval" or "core.environment.approval" => ApprovalFields,
             var action when action.StartsWith("notification.", StringComparison.Ordinal) => NotificationFields,
             var action when action.StartsWith("backup.", StringComparison.Ordinal) => BackupFields,
             var action when action.StartsWith("development.workspace.", StringComparison.Ordinal) => WorkspaceFields,

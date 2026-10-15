@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-13
-updated: 2026-10-14
+updated: 2026-10-15
 summary: Local demo priorities through November 5 for host-contained agents, workspace Docker sandboxes, app creation, Git review, optional feedback and gradual redesign.
 components: [apps/core, apps/harness, apps/shell, apps/workspaces]
 ---
@@ -45,16 +45,32 @@ commits or start every implementation. Open technical questions keep this and af
 Draft. Containment remains Draft; the owner subsequently approved Sandbox and its independent
 Core API boundary, so its owning plan is Ready.
 
+## Verified Sandbox Progress (2026-10-15)
+
+Sandbox now ships independent single-app instances and trusted child Core environments, Harness
+lifecycle tools, Shell/Workspaces previews, separate data/caches and interrupted-Finish recovery.
+See [current behavior](../app-sandbox-runtimes/feature.md), rather than treating the original
+September/October design gaps below as unimplemented platform foundations. The
+[fresh-login/HMR acceptance](../../reviews/2026-10-15-sandbox-login-hmr-acceptance.md) verifies the
+latest SDK correction and complete child cleanup. The
+[trusted-Core acceptance](../../reviews/2026-10-15-trusted-core-consent-acceptance.md) verifies saved
+consent and dedicated dependency/mount scenarios; the
+[offline daemon acceptance](../../reviews/2026-10-15-offline-sandbox-daemon-acceptance.md) verifies
+actual Docker-loss and interrupted cleanup recovery. Sandbox retains production worker-monitor
+integration, wider integrated measurements and unverified host cases. Production
+agent containment, app authoring, feedback and redesign retain their separate approval and scope.
+This checkpoint does not approve implementation of this Draft umbrella.
+
 ## Existing Foundation And Actual Gaps
 
 | Area | Reuse | Remaining work for this journey |
 | --- | --- | --- |
-| Docker Development | [Mixed Development Runtimes](../mixed-development-runtimes/feature.md): Docker source mount, image/build recipe, watch command and cache volumes | Bind selected workspace source and all runtime resources to a new sandbox instance; complete relevant [remaining platform acceptance](../mixed-development-runtimes/plan.md) |
-| Workspaces | [Session workspaces](../assistant-session-workspaces/feature.md) and [Workspaces viewer](../workspaces-app/feature.md) | Runtime instances and preview/test evidence alongside source, without making the viewer a second orchestrator |
+| Docker Development | [Mixed Development Runtimes](../mixed-development-runtimes/feature.md): Docker source mount, image/build recipe, watch command and cache volumes | Workspace/source and child ownership now ship; complete relevant [remaining platform acceptance](../mixed-development-runtimes/plan.md) |
+| Workspaces | [Session workspaces](../assistant-session-workspaces/feature.md) and [Workspaces viewer](../workspaces-app/feature.md) | Child runtime status and preview controls ship; complete the remaining integrated acceptance without making the viewer a second orchestrator |
 | Git and review | [PR lifecycle](../assistant-pr-lifecycle/feature.md): commits, push, draft/ready PRs, CI/review observation and completion | Verify access from the contained runner and compose it with sandbox evidence; do not reimplement publication |
 | App creation | [Prototype Workspaces](../app-prototype-workspaces/plan.md), [Development Controls](../app-development-controls/plan.md), [App Authoring](../app-authoring/plan.md) | Durable creation, recovery and create/view/change flow; refresh older baseline tables against shipped workspace/publication APIs |
 | Agent boundary | [Containment](../assistant-runtime-containment/plan.md) | Shared host-contained execution first; session isolation retained as later tracked work |
-| Sandbox | [App Sandbox](../app-sandbox-runtimes/plan.md) | Independent permissioned Core API, optional workspace integration, concurrent instances, isolated data/users, local preview, Playwright and complete cleanup |
+| Sandbox | [App Sandbox](../app-sandbox-runtimes/plan.md) | Production worker-monitor integration, remaining cross-feature/host acceptance and full simultaneous measurements |
 | Feedback | [App Feedback Inbox](../app-feedback-inbox/plan.md) and shipped [Overlay](../hosty-overlay/feature.md) | Durable draft annotations, intake, administrator triage and optional assistant grouping/delegation |
 | Redesign | [Design System](../design-system/plan.md), Ink and Signal | Apply foundations and prepared screens with functional parity; mockups are not a complete inventory of capabilities |
 

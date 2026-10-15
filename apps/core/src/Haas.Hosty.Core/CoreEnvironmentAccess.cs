@@ -19,7 +19,9 @@ internal sealed class CoreEnvironmentAccess(CoreEnvironmentStore store, CoreEnvi
         var gate = service.Gate(id); await gate.WaitAsync(ct);
         try
         {
-            var record = await service.RequireAsync(actor, id, ct); RequireRunning(record); store.VerifyRoot(record);
+            var record = await service.RequireAsync(actor, id, ct);
+            await service.RequireConsentAsync(actor, record, false, ct);
+            RequireRunning(record); store.VerifyRoot(record);
             using var client = Client();
             var discovery = await JsonStorage.ReadAsync<ControlDiscoveryDocument>(Path.Combine(store.Root(id), "core", "run", "control.json"), ct)
                 ?? throw new SandboxException("environment_not_ready", "Child Core control discovery is unavailable.", 409);
@@ -59,7 +61,9 @@ internal sealed class CoreEnvironmentAccess(CoreEnvironmentStore store, CoreEnvi
         var gate = service.Gate(id); await gate.WaitAsync(ct);
         try
         {
-            var record = await service.RequireAsync(actor, id, ct); RequireRunning(record); store.VerifyRoot(record);
+            var record = await service.RequireAsync(actor, id, ct);
+            await service.RequireConsentAsync(actor, record, false, ct);
+            RequireRunning(record); store.VerifyRoot(record);
             if (input.Method is not ("GET" or "POST" or "PUT" or "DELETE" or "PATCH") || !input.Path.StartsWith("/api/", StringComparison.Ordinal)
                 || input.Path.Contains('\\') || input.Path.Contains('#') || input.Path.Any(char.IsControl))
                 throw new SandboxException("environment_api_invalid", "Use a relative /api/ path and a JSON HTTP method.", 400);
