@@ -1,6 +1,6 @@
 ---
 created: 2026-07-30
-updated: 2026-10-09
+updated: 2026-10-15
 summary: Shell's three destinations, Dashboard, Settings and Apps, with the route table and the sidebar.
 components: [apps/shell]
 ---
@@ -179,6 +179,8 @@ matching Core's expanded section.
 
 Resource cells show CPU with a small shared-scale sparkline and RAM beside status. Core is separate
 from the all-app total in the installed-apps header; expanded services expose their own readings.
+Stopped apps keep an empty resource cell; their expanded services, as well as individually stopped
+or exited services, hide resource controls. Transitional app states retain their resource display.
 Clicking any resource cell opens a ReUI-framed popover with five-minute CPU/RAM charts. The Shell
 uses the ReUI registry's recommended shadcn Chart and Popover primitives. The data comes from Core's
 bounded RAM history through the administrator API and shared SSE, independently of Telemetry;
