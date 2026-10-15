@@ -67,6 +67,7 @@ export function DemoOverview({ config, storage, appStartedAt }: { config: DemoCo
             <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
               A compact runtime app that exposes runtime config, storage probes, assigned
               Host directory data, and health endpoints for Hosty development.
+              App data stays separate from your Core identity. Child sandboxes keep their test users and data separate.
             </p>
           </CardContent>
         </Card>
