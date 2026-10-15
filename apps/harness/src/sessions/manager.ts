@@ -798,9 +798,12 @@ export class SessionManager {
       const token = session.workspaceCredential ?? session.credential;
       if (!token || !this.development) throw new WorkerError("worker_credentials_required", "Refresh the owning administrator's Core login to release the stopped worker lease.", 401);
       await this.development.workerBindings(id, token, { leaseId: state.leaseId, acquire: false });
+      // Keep the persisted generation until every source lease has been acknowledged.
+      // Otherwise a failed worktree release leaves busy admission with no recoverable state.
+      await this.leaseWorkspaces(session, false);
       await worker.finish();
     }
-    await this.leaseWorkspaces(session, false);
+    // Without a generation, preparation failed before this turn acquired any source leases.
     worker.releaseClaim(id); this.workerBindings = null;
   }
 

@@ -89,8 +89,9 @@ Cleanup and lease acquisition share Core's binding lock.
 
 Stop confirms termination and removal through successful Docker inventory. Daemon failure is not
 interpreted as absence. Unknown termination preserves ownership and leases, blocks another workload
-and exposes recovery. Core lease release must succeed before scratch/state deletion and admission
-release. Restart reconciles the same generation, does not replay uncertain model turns, and requires
+and exposes recovery. Both the shared worker lease and individual worktree leases must be released before scratch/state
+deletion and admission release. A failure before generation creation releases admission directly,
+without attempting unrelated worktree cleanup. Restart reconciles the same generation, does not replay uncertain model turns, and requires
 the owning administrator's fresh Core credential to release retained leases. Provider changes and
 transcript retention protect a persisted unreconciled worker. Abandonment stops Docker before
 releasing its provider or pending approvals.

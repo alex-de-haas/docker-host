@@ -31,7 +31,11 @@ it("rejects a second Docker turn before recording it, holds admission during app
   const client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
   const bindings = { instanceId: "a".repeat(64), installationId: "b".repeat(64), treesRoot: "/trees", repositoriesRoot: "/repos", worktreePaths: [] };
   const lease = vi.spyOn(client, "workerBindings").mockResolvedValue(bindings);
-  vi.spyOn(client, "call").mockResolvedValue({ workspaces: [] });
+  let releaseFails = false;
+  const workspaceCalls = vi.spyOn(client, "call").mockImplementation(async (_id, _token, action) => {
+    if (action === "release-lease" && releaseFails) throw new Error("workspace release unavailable");
+    return { workspaces: [{ id: "existing-workspace", state: "active" }] };
+  });
   const worker = new SharedDockerWorker(root, path.join(root, "cache"));
   let state: WorkerState | null = null, stopFails = false;
   vi.spyOn(worker, "current", "get").mockImplementation(() => state);
@@ -44,8 +48,10 @@ it("rejects a second Docker turn before recording it, holds admission during app
   vi.spyOn(worker, "finish").mockImplementation(async () => { expect(state?.phase).toBe("stopped"); state = null; });
   const store = new SessionStore(root, path.join(root, "cache"));
   const manager = new SessionManager(store, adapter, new AuditReporter(null, null, "hosty.harness"), root, settings, null, null, null, "http://127.0.0.1:1", null, connections, client, worker);
-  cleanups.push(async () => { stopFails = false; await manager.shutdown(); });
+  cleanups.push(async () => { stopFails = false; releaseFails = false; await manager.shutdown(); });
   const first = await manager.createSession({ createdBy: "admin" }), second = await manager.createSession({ createdBy: "admin" });
+  first.developmentLease = "11111111-1111-4111-8111-111111111111";
+  await store.saveRecord(first);
   await manager.postMessage(first.id, "start", undefined, [], { workspaceCredential: "hostyg_test" });
   expect(starts[0]?.processTransport).toBeDefined();
   starts[0]!.onEvent({ type: "approval_request", approvalId: "approval", toolName: "Bash", input: {} });
@@ -57,7 +63,12 @@ it("rejects a second Docker turn before recording it, holds admission during app
   await vi.waitFor(() => expect(stop).toHaveBeenCalled());
   expect(worker.busy).toBe(true);
   expect(lease.mock.calls.some(call => call[2]?.acquire === false)).toBe(false);
-  stopFails = false;
+  stopFails = false; releaseFails = true;
+  await expect(manager.recoverDocker("admin", "hostyg_fresh")).rejects.toThrow("workspace release unavailable");
+  expect(worker.current?.phase).toBe("stopped");
+  expect(worker.finish).not.toHaveBeenCalled();
+  expect(worker.busy).toBe(true);
+  releaseFails = false;
   await manager.recoverDocker("admin", "hostyg_fresh");
   expect(worker.busy).toBe(false);
   expect(lease.mock.calls.some(call => call[1] === "hostyg_fresh" && call[2]?.acquire === false)).toBe(true);
@@ -75,6 +86,13 @@ it("rejects a second Docker turn before recording it, holds admission during app
   expect(await manager.sweepAbandoned(1, Date.now() + 100)).toEqual([second.id]);
   expect(runStop).toHaveBeenCalledTimes(stopsBeforeSweep + 1);
   expect(worker.busy).toBe(false);
+  const releasesBeforePreparation = workspaceCalls.mock.calls.filter(call => call[2] === "release-lease").length;
+  releaseFails = true;
+  vi.mocked(connections.adapter).mockRejectedValueOnce(new Error("provider unavailable before launch"));
+  await expect(manager.postMessage(first.id, "retry")).rejects.toThrow("provider unavailable before launch");
+  expect(worker.busy).toBe(false);
+  expect(workspaceCalls.mock.calls.filter(call => call[2] === "release-lease")).toHaveLength(releasesBeforePreparation);
+  releaseFails = false;
   vi.spyOn(worker, "health").mockResolvedValue({ available: false, reason: "Docker daemon unavailable", image: "test", state: null });
   const providerHealth = vi.spyOn(connections, "health").mockResolvedValue({ name: "test", available: true, capabilities: { ...adapter.capabilities, appContext: true } });
   expect(await manager.sessionHealth(second.id)).toMatchObject({ executionMode: "docker", available: false, reason: "Docker daemon unavailable" });
