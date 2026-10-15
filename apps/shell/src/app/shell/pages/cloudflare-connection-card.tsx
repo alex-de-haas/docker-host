@@ -45,28 +45,25 @@ export function CloudflareConnectionCard() {
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
 
-  const load = useCallback(async (silent = false) => {
-    if (!silent) {
-      setLoading(true);
-    }
-    try {
-      const [statusResponse, templateResponse] = await Promise.all([
-        sendCsrfJson(`${coreOrigin}/api/core/cloudflare/status`, undefined, "GET"),
-        sendCsrfJson(`${coreOrigin}/api/core/cloudflare/token-template`, undefined, "GET"),
-      ]);
-      setStatus((await statusResponse.json()) as CloudflareConnectionStatus);
-      setTemplate((await templateResponse.json()) as CloudflareTokenTemplate);
+  // Only the first, non-silent read shows as loading, and `loading` starts true for it. State is
+  // written only in the promise callbacks.
+  const load = useCallback((silent = false) =>
+    Promise.all([
+      sendCsrfJson(`${coreOrigin}/api/core/cloudflare/status`, undefined, "GET").then((response) => response.json() as Promise<CloudflareConnectionStatus>),
+      sendCsrfJson(`${coreOrigin}/api/core/cloudflare/token-template`, undefined, "GET").then((response) => response.json() as Promise<CloudflareTokenTemplate>),
+    ]).then(([nextStatus, nextTemplate]) => {
+      setStatus(nextStatus);
+      setTemplate(nextTemplate);
       setError(null);
-    } catch (loadError) {
+    }, (loadError: unknown) => {
       if (!isAuthRequiredRedirectError(loadError)) {
         setError(loadError instanceof Error ? loadError.message : "Could not load the Cloudflare status.");
       }
-    } finally {
+    }).finally(() => {
       if (!silent) {
         setLoading(false);
       }
-    }
-  }, [coreOrigin, sendCsrfJson]);
+    }), [coreOrigin, sendCsrfJson]);
 
   useEffect(() => {
     void load();

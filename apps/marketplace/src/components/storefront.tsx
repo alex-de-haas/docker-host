@@ -52,15 +52,16 @@ export function Storefront() {
   const [notice, setNotice] = useState<string | null>(null);
   const requestRef = useRef<AbortController | null>(null);
 
-  const loadCatalog = useCallback(async (refresh: boolean, signal?: AbortSignal) => {
-    try {
-      const response = await fetchCatalogApps(refresh, signal);
+  // A promise chain rather than async/await: every state write then sits in a callback the
+  // React Compiler lint recognizes as asynchronous when the mount effect starts this load.
+  const loadCatalog = useCallback((refresh: boolean, signal?: AbortSignal) =>
+    fetchCatalogApps(refresh, signal).then(response => {
       if (signal?.aborted) return;
       setCatalog(response);
       setHasCatalog(true);
       setSessionExpired(false);
       setError(null);
-    } catch (loadError) {
+    }, (loadError: unknown) => {
       if (loadError instanceof Error && loadError.name === "AbortError") {
         return;
       }
@@ -71,12 +72,11 @@ export function Storefront() {
         setSessionExpired(loadError.status === 401);
       }
       setError(loadError instanceof Error ? loadError.message : "The catalog could not be loaded.");
-    } finally {
+    }).finally(() => {
       if (!signal?.aborted) {
         setLoading(false);
       }
-    }
-  }, []);
+    }), []);
 
   const loadInstalledAppIds = useCallback((signal?: AbortSignal) => {
     // Asks Core (via a Marketplace server route + app service token) which apps are already

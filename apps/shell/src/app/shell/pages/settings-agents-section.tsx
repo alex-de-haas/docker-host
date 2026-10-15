@@ -12,6 +12,13 @@ type Target = { id: string; displayName: string; offered: boolean; runtimeState:
   interfaces: { key: string; readiness: string }[]; skills: Skill[]; assistantIds?: string[] };
 type Directory = { revision: string; targets: Target[]; assistants?: { id: string; displayName: string }[] };
 
+async function fetchDirectory(url: string, coreOrigin: string): Promise<Directory> {
+  const response = await fetchCore(url, { credentials: "include" });
+  redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+  if (!response.ok) throw new Error("Could not load the agent directory.");
+  return await response.json() as Directory;
+}
+
 export function SettingsAgentsSection({ coreOrigin, sendCsrfJson }: {
   coreOrigin: string;
   sendCsrfJson: (url: string, body: unknown, method?: string) => Promise<Response>;
@@ -20,12 +27,7 @@ export function SettingsAgentsSection({ coreOrigin, sendCsrfJson }: {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const url = coreOrigin + "/api/core/agents";
-  const load = useCallback(async () => {
-    const response = await fetchCore(url, { credentials: "include" });
-    redirectToCoreLoginIfAuthRequired(response, coreOrigin);
-    if (!response.ok) throw new Error("Could not load the agent directory.");
-    setDirectory(await response.json() as Directory);
-  }, [url, coreOrigin]);
+  const load = useCallback(() => fetchDirectory(url, coreOrigin).then(setDirectory), [url, coreOrigin]);
   const showLoadError = (reason: unknown) => {
     if (!isAuthRequiredRedirectError(reason)) setError(String(reason));
   };

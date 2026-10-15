@@ -13,6 +13,8 @@ export function SessionWorkspaces({ session, running }: { session: AssistantSess
   const [busy, setBusy] = useState(false);
   const [appId, setAppId] = useState("");
   const pending = useRef<{ action: string; input: Record<string, unknown> } | null>(null);
+  // Mirrors whether `pending` holds a request, for rendering the retry button.
+  const [retryable, setRetryable] = useState(false);
   const refresh = useCallback(async () => {
     const result = await workspaceAction<{ workspaces: Workspace[] }>(session.id, "list");
     setWorkspaces(result.workspaces); setError("");
@@ -28,7 +30,6 @@ export function SessionWorkspaces({ session, running }: { session: AssistantSess
     return () => { active = false; clearInterval(timer); };
   }, [open, session.id]);
   useEffect(() => {
-    setPublications([]); setPublicationError("");
     if (!open) return;
     let active = true;
     const load = () => workspaceAction<{ publications: Publication[] }>(session.id, "pr-list").then(result => {
@@ -40,17 +41,23 @@ export function SessionWorkspaces({ session, running }: { session: AssistantSess
   }, [session.id, open]);
   const run = async (action: string, input: Record<string, unknown>, retry = false) => {
     const request = retry && pending.current ? pending.current : { action, input: { ...input, requestId: crypto.randomUUID() } };
-    pending.current = request; setBusy(true); setError("");
+    pending.current = request; setRetryable(true); setBusy(true); setError("");
     try {
       const result = await workspaceAction<Workspace>(session.id, request.action, request.input);
       pending.current = null;
+      setRetryable(false);
       await refresh();
       const operation = result.operations?.find(o => o.id === request.input.requestId);
       if (operation && operation.state !== "succeeded") setError(operation.error ?? `Operation ${operation.state}. Inspect the current worktree before continuing.`);
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(false); }
   };
-  return <details className="shrink-0 border-b text-sm" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+  return <details className="shrink-0 border-b text-sm" open={open} onToggle={event => {
+    const nextOpen = event.currentTarget.open;
+    setOpen(nextOpen);
+    // Closing drops the publication list, so reopening never shows a stale one before it reloads.
+    if (!nextOpen) { setPublications([]); setPublicationError(""); }
+  }}>
     <summary className="cursor-pointer px-3 py-2">Source workspaces</summary>
     <div className="max-h-80 space-y-3 overflow-y-auto px-3 pb-3">
       <p className="text-xs text-muted-foreground">Prepare a worktree when you want source changes. The installed application keeps its current runtime and data.</p>
@@ -62,7 +69,7 @@ export function SessionWorkspaces({ session, running }: { session: AssistantSess
         <Button size="sm" variant="outline" disabled={!appId || busy || running} onClick={() => void run("prepare", { appId })}>Prepare worktree</Button>
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => void refresh().catch(e => setError(e instanceof Error ? e.message : String(e)))}>Refresh</Button>
       </div>
-      {error && <div role="alert" className="text-destructive">{error}{pending.current && <Button size="sm" variant="outline" disabled={busy} onClick={() => void run("", {}, true)}>Retry same request</Button>}</div>}
+      {error && <div role="alert" className="text-destructive">{error}{retryable && <Button size="sm" variant="outline" disabled={busy} onClick={() => void run("", {}, true)}>Retry same request</Button>}</div>}
       {publicationError && <p role="alert" className="text-xs text-destructive">Publication status: {publicationError}</p>}
       {publications.map(p => <PublicationCard key={p.workspaceId} publication={p} />)}
       {workspaces.length === 0 && !error && <p className="text-muted-foreground">No worktrees for this session.</p>}

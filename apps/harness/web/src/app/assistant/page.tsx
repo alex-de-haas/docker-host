@@ -142,8 +142,9 @@ export default function AssistantPage() {
   const [ready, setReady] = useState(false);
   const activeSessionId = useRef<string | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
-  // A session this client was watching that no longer exists; cleared once acted on.
-  const [deletedElsewhere, setDeletedElsewhere] = useState<string | null>(null);
+  // Handles a session this client was watching being deleted elsewhere. Held in a ref so the stream
+  // callback always reaches the current handler without depending on it.
+  const deletedElsewhereRef = useRef<(sessionId: string) => void>(() => {});
   // Sessions this tab deleted itself. The deletion fans out to every subscriber including this one,
   // and its own click must not come back as "this session was deleted" from somewhere else.
   const selfDeleted = useRef(new Set<string>());
@@ -211,7 +212,9 @@ export default function AssistantPage() {
           setStreamed("");
         }
         if (event.type === "session_status") {
-          setStatus(String(event.status ?? "idle"));
+          const value = String(event.status ?? "idle");
+          setStatus(value);
+          setSessions(current => current.map(item => item.id === record.id ? { ...item, status: value } : item));
           if (!["running", "awaiting_approval", "awaiting_question"].includes(String(event.status))) {
             setActivity(null);
             setStreamed("");
@@ -223,11 +226,10 @@ export default function AssistantPage() {
             // This tab's own delete, already handled where the button was pressed.
             return;
           }
-          // Deleted from somewhere else — another tab, another client. Recorded for the effect
-          // below rather than handled here: detaching clears the conversation and opens history,
-          // and reaching that state from inside the stream callback would tie this callback to
-          // state it must not go stale on.
-          setDeletedElsewhere(record.id);
+          // Deleted from somewhere else — another tab, another client. Handled through the ref:
+          // detaching clears the conversation and opens history, and depending on that here would
+          // tie this callback to state it must not go stale on.
+          deletedElsewhereRef.current(record.id);
           return;
         }
         setEvents((current) => [...current, event]);
@@ -435,22 +437,20 @@ export default function AssistantPage() {
     }
   }, [input, session]);
 
-  // The active session's status arrives on the stream, not in the list read at load. Folding it back
-  // in is what keeps the ordering and the badge true for the session most likely to block — the one
-  // the operator is watching.
-  useEffect(() => {
-    if (session) {
-      setSessions((current) =>
-        current.map((record) => (record.id === session.id ? { ...record, status } : record)),
-      );
-    }
-  }, [session, status]);
+  // The active session's status arrives on the stream, not in the list read at load. Overlaying it
+  // is what keeps the ordering and the badge true for the session most likely to block — the one
+  // the operator is watching. Stream status events also write it into the list, so a session keeps
+  // its last known status after the operator switches away.
+  const listedSessions = useMemo(
+    () => session ? sessions.map(record => record.id === session.id && record.status !== status ? { ...record, status } : record) : sessions,
+    [sessions, session, status],
+  );
 
   // One source: this page holds the list and the stream, so it publishes and the embedder listens. A
   // shell polling the gateway for the same fact would disagree with this one for its whole interval.
   useEffect(() => {
-    publishAttention(waitingCount(sessions));
-  }, [sessions]);
+    publishAttention(waitingCount(listedSessions));
+  }, [listedSessions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -596,15 +596,15 @@ export default function AssistantPage() {
   }, [detachDeleted]);
 
   useEffect(() => {
-    if (!deletedElsewhere) return;
-    setDeletedElsewhere(null);
-    setSessions(current => current.filter(entry => entry.id !== deletedElsewhere));
-    clearDraft(deletedElsewhere);
-    if (activeSessionId.current === deletedElsewhere) {
-      detachDeleted(deletedElsewhere);
-      setError("This session was deleted in another window. Choose a session or start a new one.");
-    }
-  }, [deletedElsewhere, detachDeleted]);
+    deletedElsewhereRef.current = (sessionId: string) => {
+      setSessions(current => current.filter(entry => entry.id !== sessionId));
+      clearDraft(sessionId);
+      if (activeSessionId.current === sessionId) {
+        detachDeleted(sessionId);
+        setError("This session was deleted in another window. Choose a session or start a new one.");
+      }
+    };
+  }, [detachDeleted]);
 
   const rename = useCallback(async (sessionId: string, title: string) => {
     setError(null);
@@ -705,7 +705,7 @@ export default function AssistantPage() {
 
       {showSessions ? (
         <SessionList
-          sessions={orderSessions(sessions)}
+          sessions={orderSessions(listedSessions)}
           activeId={session?.id ?? null}
           onPick={(record) => {
             requestedSessionRef.current = record.id;

@@ -18,6 +18,8 @@ export function SandboxInstances({ coreOrigin }: { coreOrigin: string }) {
   const [diagnostics, setDiagnostics] = useState<Record<string, SandboxDiagnostics>>({});
   const [embedded, setEmbedded] = useState<string | null>(null);
   const pending = useRef<Pending | null>(null);
+  // Mirrors `pending` for rendering: the retry button offers exactly the request the ref holds.
+  const [retryable, setRetryable] = useState<Pending | null>(null);
   const key = `hosty:sandbox-operation:${coreOrigin}`;
   const observe = useCallback((instance: SandboxInstance) => {
     const request = pending.current;
@@ -25,7 +27,7 @@ export function SandboxInstances({ coreOrigin }: { coreOrigin: string }) {
     const operation = instance.operations.find(item => item.id === request.requestId);
     if (!operation) return;
     if (operation.state === "succeeded" || operation.state === "failed") {
-      pending.current = null; sessionStorage.removeItem(key); setNotice("");
+      pending.current = null; setRetryable(null); sessionStorage.removeItem(key); setNotice("");
       setError(operation.state === "failed" ? operation.message ?? operation.errorCode ?? "Operation failed." : "");
     } else if (operation.state === "running") {
       setNotice(`Sandbox ${request.action} is in progress.`); setError("");
@@ -51,13 +53,14 @@ export function SandboxInstances({ coreOrigin }: { coreOrigin: string }) {
   useEffect(() => {
     const controller = new AbortController();
     try { pending.current = JSON.parse(sessionStorage.getItem(key) ?? "null"); } catch { pending.current = null; }
+    setRetryable(pending.current);
     if (pending.current) setError("A previous operation needs confirmation. Refresh state or retry the same request.");
     const load = () => refresh(controller.signal).catch(cause => { if (!controller.signal.aborted) { setInstances([]); setError(cause instanceof Error ? cause.message : "Sandbox inventory unavailable."); } });
     void load(); const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); }, 5000);
     return () => { controller.abort(); clearInterval(timer); };
   }, [refresh, key]);
   async function run(value: Pending) {
-    pending.current = value; sessionStorage.setItem(key, JSON.stringify(value)); setBusy(true); setError("");
+    pending.current = value; setRetryable(value); sessionStorage.setItem(key, JSON.stringify(value)); setBusy(true); setError("");
     try {
       const response = await sendCsrfJson(`${coreOrigin}/api/sandbox-instances/${value.id}/operations/${value.action}`, {
         requestId: value.requestId, expectedRevision: value.expectedRevision,
@@ -68,7 +71,7 @@ export function SandboxInstances({ coreOrigin }: { coreOrigin: string }) {
         const rejected = await response.clone().json().catch(() => null) as { code?: string } | null;
         if (["sandbox_revision_stale", "sandbox_operation_capacity", "sandbox_metadata_quota",
           "sandbox_forbidden", "sandbox_not_found"].includes(rejected?.code ?? "")) {
-          pending.current = null; sessionStorage.removeItem(key); setNotice("");
+          pending.current = null; setRetryable(null); sessionStorage.removeItem(key); setNotice("");
         }
         throw new Error(await readCoreError(response));
       }
@@ -82,7 +85,7 @@ export function SandboxInstances({ coreOrigin }: { coreOrigin: string }) {
       <Button variant="ghost" size="sm" onClick={() => void refresh().then(() => setError("")).catch(cause => setError(String(cause)))}>Refresh</Button></FrameHeader>
     <FramePanel className="space-y-3 p-3">
       {notice && <p role="status" className="text-sm text-muted-foreground">{notice}</p>}
-      {error && <p role="alert" className="text-sm text-destructive">{error} {pending.current && <Button variant="outline" size="sm" disabled={busy} onClick={() => void run(pending.current!)}>Retry same request</Button>}</p>}
+      {error && <p role="alert" className="text-sm text-destructive">{error} {retryable && <Button variant="outline" size="sm" disabled={busy} onClick={() => void run(retryable)}>Retry same request</Button>}</p>}
       {!instances.length && !error && <p className="text-sm text-muted-foreground">No sandbox instances. Create one through Harness or an authorized QA app.</p>}
       {instances.map(instance => <div key={instance.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3">
         <div className="min-w-0"><div className="flex flex-wrap gap-2"><span className="font-medium">{instance.appId}</span><Badge variant="outline">Sandbox · {instance.state}</Badge></div>
@@ -100,8 +103,8 @@ export function SandboxInstances({ coreOrigin }: { coreOrigin: string }) {
           {instance.state === "ready" && instance.previewUrl && <details className="text-sm"><summary className="cursor-pointer p-2">Test personas</summary><div className="flex flex-wrap gap-2">{instance.users.filter(user => user.enabled).map(user => <Button key={user.id} asChild variant="outline" size="sm"><a href={`${instance.previewUrl}?hosty_sandbox_persona=${encodeURIComponent(user.id)}`} target="_blank" rel="noreferrer">{user.displayName} · {user.role}</a></Button>)}</div></details>}
           {instance.state === "ready" && instance.previewUrl && <Button asChild variant="outline" size="sm"><a href={`${instance.previewUrl}?hosty_sandbox_persona=core`} target="_blank" rel="noreferrer">Open preview</a></Button>}
           {instance.state === "ready" && instance.previewUrl && <Button variant="outline" size="sm" onClick={() => setEmbedded(embedded === instance.id ? null : instance.id)}>{embedded === instance.id ? "Hide preview" : "Embed preview"}</Button>}
-          {(instance.state === "ready" ? ["stop", "restart"] : ["start"]).map(action => <Button key={action} variant="outline" size="sm" disabled={busy || !!pending.current} onClick={() => void run({ id: instance.id, action, requestId: crypto.randomUUID(), expectedRevision: instance.revision })}>{action === "start" ? "Start" : action === "stop" ? "Stop" : "Restart"}</Button>)}
-          <Button variant="ghost" size="sm" disabled={busy || !!pending.current} onClick={() => { if (window.confirm("Finish this sandbox and delete its test users, data, caches and evidence? Export needed results first. Source worktrees are retained.")) void run({ id: instance.id, action: "dispose", requestId: crypto.randomUUID(), expectedRevision: instance.revision }); }}>Finish sandbox</Button></div>
+          {(instance.state === "ready" ? ["stop", "restart"] : ["start"]).map(action => <Button key={action} variant="outline" size="sm" disabled={busy || !!retryable} onClick={() => void run({ id: instance.id, action, requestId: crypto.randomUUID(), expectedRevision: instance.revision })}>{action === "start" ? "Start" : action === "stop" ? "Stop" : "Restart"}</Button>)}
+          <Button variant="ghost" size="sm" disabled={busy || !!retryable} onClick={() => { if (window.confirm("Finish this sandbox and delete its test users, data, caches and evidence? Export needed results first. Source worktrees are retained.")) void run({ id: instance.id, action: "dispose", requestId: crypto.randomUUID(), expectedRevision: instance.revision }); }}>Finish sandbox</Button></div>
         {diagnostics[instance.id] && <details open className="w-full text-xs"><summary>Service logs · {diagnostics[instance.id].state}</summary>
           {diagnostics[instance.id].errorCode && <p>{diagnostics[instance.id].errorCode}</p>}
           {diagnostics[instance.id].services.map(log => <div key={log.service}><p>{log.service} · {log.state}</p><pre className="max-h-64 overflow-auto whitespace-pre-wrap">{log.text || "No retained output."}</pre></div>)}
