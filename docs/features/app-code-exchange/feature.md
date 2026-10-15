@@ -63,8 +63,9 @@ The React identity, launch and theme bridges remove consumed query parameters im
 synchronize the cleaned URL again after parent framework effects. This lets Next's installed
 History API adapter update its canonical route, so development HMR does not restore consumed
 `code`/`state`. A deferred synchronization runs only while the browser still has that exact cleaned
-URL; later navigation or another cleanup takes precedence. Unrelated query parameters and the
-current fragment are retained by cleanup. Code redemption, PKCE and session authority are unchanged.
+URL; later navigation or another cleanup takes precedence. The deferred call preserves the
+current history-entry state, including metadata written by a parent router after initial cleanup.
+Unrelated query parameters and the current fragment are retained by cleanup. Code redemption, PKCE and session authority are unchanged.
 
 ## Atomic redemption and authority
 

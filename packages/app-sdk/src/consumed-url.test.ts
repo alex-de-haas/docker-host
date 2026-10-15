@@ -24,6 +24,19 @@ describe("consumed callback URL synchronization", () => {
     expect(window.location.hash).toBe("#item");
   });
 
+  it("preserves state installed for the cleaned URL before deferred synchronization", async () => {
+    window.history.replaceState(null, "", "/draft?code=consumed&filter=open");
+    const clean = new URL(window.location.href); clean.searchParams.delete("code");
+    replaceConsumedUrl(clean);
+    const routerState = { navigationKey: "keep", scroll: { x: 0, y: 140 }, draft: "unsaved" };
+    window.history.replaceState(routerState, "", clean.href);
+    const replace = vi.spyOn(window.history, "replaceState");
+    await flushEffects();
+    expect(replace).toHaveBeenCalledExactlyOnceWith(routerState, "", "/draft?filter=open");
+    expect(window.history.state).toEqual(routerState);
+    expect(window.location.href).toBe(clean.href);
+  });
+
   it("does not overwrite navigation before the deferred synchronization", async () => {
     window.history.replaceState(null, "", "/?code=consumed");
     replaceConsumedUrl(new URL("/", window.location.href));
