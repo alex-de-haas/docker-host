@@ -1,9 +1,9 @@
 ---
 status: Draft
 created: 2026-10-12
-updated: 2026-10-13
+updated: 2026-10-15
 summary: Hosty's visual language — ink acts, lime answers — with its color, type, mark and ReUI token rules, and the Shell layouts built from it, including tools at narrow widths and on phones.
-components: [apps/shell, apps/shell-swift, packages/app-sdk, apps/core, apps/harness, assets/hosty-brand, apps/plans, apps/workspaces, apps/telemetry, apps/demo-app]
+components: [apps/shell, apps/shell-swift, packages/app-sdk, apps/core, apps/harness, assets/hosty-brand, apps/plans, apps/workspaces, apps/telemetry, apps/demo-app, apps/marketplace, apps/whisper]
 ---
 
 # Design System
@@ -24,9 +24,9 @@ until shared from its page. This document carries every value and rule needed to
 | Artboard | Covers |
 | --- | --- |
 | `Main` | Cover and the four principles |
-| `Color`, `Accent` | Palette, ink scale, status, app spectrum; ink acts, lime answers |
-| `Type` | Type scale and voice |
-| `Iconography`, `Roles` | Mark, tiles, interface icons; provider role icons |
+| `Color`, `Accent` | Palette, ink scale, status, app accents; ink acts, lime answers |
+| `Type`, `TypePairings` | Type scale and voice; the face comparison behind IBM Plex Sans + JetBrains Mono |
+| `Iconography`, `Roles`, `AppMarks` | Mark, app icons, interface icons; provider role icons; the app mark family |
 | `Components`, `Tokens` | ReUI components in light and dark; CSS variables |
 | `Motif` | Cell motif, loader, empty state, motion |
 | `Shell`, `AppDetail`, `DataGrid` | Dashboard with tools, dark app detail, table page |
@@ -36,7 +36,7 @@ until shared from its page. This document carries every value and rule needed to
 ## Principles
 
 1. **Calm chrome, lively content.** Navigation, panels and text stay ink and white. Color belongs to
-   app tiles, status and charts.
+   app marks, status and charts.
 2. **Ink acts, lime answers.** Primary buttons are ink. Lime appears in answer to the person —
    hover, press, focus and selection — and, by owner decision, in two fixed places: progress bar
    fills, whoever started the work, and the Core cell of the mark. One primary button per view; the
@@ -56,7 +56,7 @@ until shared from its page. This document carries every value and rule needed to
 | Mist | `#F6F8FB` | Light canvas; cards sit on it in pure white |
 | White | `#FFFFFF` | Cards, popovers and fields on the mist canvas |
 | Lime | `#A3E635` | Brand: hover and press, focus ring, checked and selected fills, text selection, progress bar fills, the Core cell of the mark. The same in both themes; carries ink text (11.5:1); never text, icons or hairlines on light (1.5:1 on white) |
-| Lime strong | `#5A9A0A` | Small lime marks on light: the active-navigation marker, the mark's Core cell without a tile (3.5:1 on white, 3.2:1 on mist and lime soft) |
+| Lime strong | `#5A9A0A` | Small lime marks on light: the active-navigation marker, the selected-tab underline, loader cell edges (3.5:1 on white, 3.2:1 on mist and lime soft) |
 | Lime soft | `#ECFCCB` | Highlight under ink text: menu items, ghost hover, active navigation (dark: `#273B2E`) |
 
 Approximate share of a typical screen: ~70% white and mist, ~20% ink, ~5% lime and only on
@@ -106,27 +106,32 @@ for "failed", a hollow ring for "no connection", and for "working" a pulse that 
 ring when motion is reduced. No two states differ by color alone: working shares Info's blue and is
 told apart by its motion and label.
 
-### App spectrum
+### App accents
 
-Tiles and charts only — never buttons, text or chrome. Every color carries a white glyph at 3:1 or
-better. Lime is not in the spectrum: it belongs to the mark and to interaction, and the platform's
-own tile is ink.
+Each first-party app has one accent. It is identity only: the lit cell of the app's mark, a 3 px
+strip on the app's own frame, the first series of the app's own charts (its strong shade on light)
+and its empty-state art. It never fills behind content, never marks focus or selection, and never
+stands for a state, so it may sit near a status hue without meaning one. Lime stays Hosty's, and
+interaction stays lime inside every app. Accents sit at least 25° apart; a new first-party app takes a
+free hue and a free mark. Third-party apps keep their own icons.
 
-| Name | Hex | Assigned to |
-| --- | --- | --- |
-| Cobalt | `#2449A7` | Plans |
-| Violet | `#7C3AED` | Telemetry |
-| Fuchsia | `#A21CAF` | Demo App |
-| Ember | `#C2410C` | Harness |
-| Amber | `#B45309` | free |
-| Green | `#15803D` | free |
-| Teal | `#0D9488` | Marketplace |
-| Slate | `#334155` | Shell |
-| Graphite | `#1E2A3B` | Workspaces |
+| App | Accent | Strong (marks on light) | Mark |
+| --- | --- | --- | --- |
+| Shell | `#22D3EE` | `#0891B2` | S |
+| Plans | `#60A5FA` | `#2563EB` | P |
+| Telemetry | `#A78BFA` | `#7C3AED` | T, lit at the top |
+| Harness | `#FB923C` | `#C2410C` | A (agent) |
+| Whisper | `#F472B6` | `#DB2777` | V (voice), lit at the point |
+| Marketplace | `#FACC15` | `#A16207` | M |
+| Workspaces | `#34D399` | `#059669` | W |
+| Demo App | `#E879F9` | `#C026D3` | D |
 
 ## Typography
 
-Geist for the interface, Geist Mono for anything a machine wrote — IDs, ports, versions, paths, logs.
+IBM Plex Sans for the interface, JetBrains Mono for anything a machine wrote — IDs, ports, versions,
+paths, logs. Owner decision, 2026-10-15, after the `TypePairings` comparison: Plex's squared details
+echo the cell mark, JetBrains Mono reads better in code and logs than Plex Mono, and both cover
+Cyrillic and ship under the OFL. Core pages self-host both files under their strict CSP.
 Weights 400 and 600 do most of the work; 500 is for buttons and badges.
 
 | Token | Size / line | Weight | Tracking |
@@ -139,7 +144,7 @@ Weights 400 and 600 do most of the work; 500 is for buttons and badges.
 | body (default) | 14 / 22 | 400 | 0 |
 | small | 13 / 20 | 400 | 0, muted |
 | overline | 11 / 16 | 600 | +8%, uppercase |
-| mono | 13 / 20 | Geist Mono 400 | 0 |
+| mono | 13 / 20 | JetBrains Mono 400 | 0 |
 
 Sentence case everywhere; uppercase only for the overline. Numbers that change use `tabular-nums`.
 Body lines stop at about 72 characters. Phone inputs use 16 px so mobile browsers do not zoom.
@@ -160,23 +165,24 @@ happening.
 
 - **Mark.** Seven square cells on a 3 × 3 grid spell an H: two hosts and the Core between them. On
   the 100-unit grid the cells are 22 units with 7-unit gaps, starting at 10, with sharp corners. Six
-  cells are ink on light and white on dark; the Core cell is lime `#A3E635`, or `#5A9A0A` on a light
-  surface without a tile. The mark never sits on a colored tile. It replaces the H-graph in
+  cells are ink on light and white on dark; the Core cell is lime `#A3E635` on every surface (owner
+  decision, 2026-10-14; a logo is exempt from contrast minimums). The mark never sits on a colored tile. It replaces the H-graph in
   [`assets/hosty-brand`](../../../assets/hosty-brand/README.md). Clear space is one cell. Below 20 px
-  use the favicon cut, scaled ×1.16 with the gaps kept open. No gradients, no spectrum colors, no
+  use the favicon cut, scaled ×1.16 with the gaps kept open. No gradients, no app accents, no
   rounded or merged cells, no rotation.
 - **App icon.** Where a container is required — app icon, favicon, store — the mark sits on an ink
   tile with radius 22: white cells 16 units with 5.5-unit gaps from 20.5, and the lime Core. On a dark
   surface the tile steps one tone lighter (`#22324B`) instead of taking a grey frame.
-- **Wordmark.** Geist 600, shipped as outlined paths; the current lockups ask the system for Inter.
-- **App tiles.** One construction for every app: 100 × 100 grid, corner radius 22, glyph inside the
-  central 56 × 56, white stroke 6 with round caps and joins, one spectrum color, at most one detail in
-  a light tint of it. App tiles keep their rounded corners and strokes, so the mark's sharp cells set
-  the platform apart from the apps it hosts.
+- **Wordmark.** IBM Plex Sans 600, shipped as outlined paths; the current lockups ask the system for Inter.
+- **App marks.** Every first-party app is drawn like the Hosty mark: square cells on the same 3 × 3
+  grid spell the app's initial, with exactly one lit cell in the app's accent (see App accents). Ink
+  cells on light, white on dark; where a container is required, the same ink tile as the Hosty icon
+  (`#22324B` on dark surfaces), never a colored tile. A pattern belongs to one app. They replace the
+  colored tiles with stroke glyphs.
 - **Interface icons.** Lucide at 16, 20 or 24 px, stroke 2, never filled, inheriting text color —
   muted at rest, ink when active. App navigation icons ship in `currentColor`; Shell tints them.
 - **Tool icons.** A tool shows its manifest Lucide icon on a neutral tile, with the owning app's
-  spectrum color as a small corner badge.
+  accent as a small corner badge.
 
 ### Provider roles
 
@@ -193,7 +199,7 @@ described by the roles it provides; each role has one icon, used wherever the ap
 | `text-to-speech` (planned) | `volume-2` | reserved |
 
 - Roles come from Core's confirmed roles, not from what a manifest requests.
-- Role icons are ink on mist in a 20 px chip; spectrum color stays on the app tile.
+- Role icons are ink on mist in a 20 px chip; the app's accent stays on its mark.
 - Rows show icons only, with "Provides: …" as tooltip and accessible label; app details show icon
   and name. At most three icons, then `+N`; an app without roles shows none.
 - Lifecycle warnings speak in roles: "Stopping Harness leaves the host without an assistant."
@@ -269,8 +275,8 @@ Hosty additions:
 
 ```css
 @theme inline {
-  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, monospace;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
   --color-brand: var(--brand);
   --color-brand-foreground: var(--brand-foreground);
   --color-brand-strong: var(--brand-strong);
@@ -441,9 +447,9 @@ the deliverable that changes it.
 ### Phase 1 — Foundations
 
 - [ ] D1. Replace Shell's neutral shadcn values in `apps/shell/src/app/globals.css` with the light and dark tokens above — the ink primary, the lime brand and lime soft accent, and the three-tone status tokens — and give buttons, inputs, checkboxes, switches, tabs (the line variant in `components/ui/tabs.tsx`), selected table rows (`components/ui/table.tsx`, today `bg-muted`), document-wide text selection (`::selection` in `globals.css`, not only in `input.tsx`) and progress bars the lime hover, focus, selection and progress states described under Components, with the ink-edge focus treatment applied to every `--ring` consumer in Shell (16 components today, including `shell-top-strip.tsx`, `shell-sidebar.tsx`, `ui/dialog.tsx` and `ui/resizable.tsx`).
-- [ ] D2. Load Geist and Geist Mono in Shell and use them for `--font-sans` and `--font-mono`.
-- [ ] D3. Replace the H-graph with the grid mark in `assets/hosty-brand` — light, dark, the ink-tile app icon and the favicon cut — outline the wordmark in Geist 600, regenerate the lockups and app icons with `build-assets.mjs` — which also rewrites Shell's public icons and the `apps/shell-swift` AppIcon set, so both ship with version bumps (`MARKETING_VERSION` for the Swift client) — redraw the hand-coded copies of the mark in Shell's `chrome/brand-mark.tsx` and the SDK's `overlay-react.tsx` (with an `@hosty-sdk/app` version bump), and record the ink scale, lime brand and status colors in `brand-tokens.json` and the brand README.
-- [ ] D4. Redraw the Plans and Workspaces tile icons on the shared 100-unit grid (radius 22, stroke 6) and map Demo App to its spectrum color, redrawing its icon — `apps/demo-app/assets/icon.svg` still draws the retired H-graph — as a glyph of its own, with a Demo App version bump.
+- [ ] D2. Load IBM Plex Sans and JetBrains Mono in Shell for `--font-sans` and `--font-mono`, and self-host the same files for Core's own pages.
+- [ ] D3. Replace the H-graph with the grid mark in `assets/hosty-brand` — light, dark, the ink-tile app icon and the favicon cut — outline the wordmark in IBM Plex Sans 600, regenerate the lockups and app icons with `build-assets.mjs` — which also rewrites Shell's public icons and the `apps/shell-swift` AppIcon set, so both ship with version bumps (`MARKETING_VERSION` for the Swift client) — redraw the hand-coded copies of the mark in Shell's `chrome/brand-mark.tsx` and the SDK's `overlay-react.tsx` (with an `@hosty-sdk/app` version bump), and record the ink scale, lime brand and status colors in `brand-tokens.json` and the brand README.
+- [ ] D4. Redraw every first-party app icon as its cell mark on the ink tile — Shell S, Plans P, Telemetry T, Harness A, Whisper V, Marketplace M, Workspaces W, Demo App D (whose `icon.svg` still draws the retired H-graph) — replacing each `apps/<app>/assets/icon.svg` and `apps/workspaces/public/icon.svg`, adding one for Whisper, with each app's version bump.
 - [ ] D5. Ship the Telemetry and Demo App navigation icons in `currentColor` instead of hard-coded colors.
 - [ ] D6. Use the four status meanings across Shell — info blue, needs you amber (including pending approvals), failed red, working as an Info-blue pulse or ring with a label and a lime progress bar (replacing the sky spinner) — and keep lime out of charts.
 - [ ] D16. Contrast pass on Shell: no text lighter than `#5A6A82` on light surfaces, `#6E7F98` and `#93A3BA` only for icons and disabled states, no `primary`-colored text, borders or dots (they move to `--brand-strong` or Info blue), and every state except the normal running dot carrying a label or its own shape, including the static ring for working under reduced motion.
@@ -471,6 +477,8 @@ the deliverable that changes it.
   its own minimum in its manifest instead of the 560 px default?
 - Is ⌘J the assistant shortcut?
 - May a user pin one tool as a fifth phone tab?
+- Where does Shell read an app's accent for the frame strip and tool badges — a manifest field
+  limited to the fixed palette, or a table Shell keeps for first-party apps?
 
 ## Verification
 
