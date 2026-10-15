@@ -267,7 +267,9 @@ Stop preserves users and data. Normal parent shutdown stops owned children and t
 replacement parent reconciles persisted PID/start identities and child control discovery. Interrupted
 operations retain an explicit failed outcome for inspection and a deliberate retry using the **same
 request UUID and original arguments**. Successful or superseded operations do not rerun. Shell and
-Workspaces preserve a failed Finish request across refresh instead of discarding its replay identity.
+Workspaces preserve a failed Finish request across refresh while it remains the latest journal
+operation. A newer operation supersedes that saved replay; the panel clears it and allows a fresh
+delete request against the current revision instead of leaving all controls blocked.
 Offline single-app plans inside a managed child default to 2 GiB, 0.5 CPU and 128 PIDs,
 leaving room for their relay, capacity probes and one browser within the default child budget.
 The plan persists these effective limits before approval. Explicit limits and primary-Core defaults

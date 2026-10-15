@@ -47,9 +47,11 @@ export function CoreEnvironmentPanel({ request, storageKey, workspace, workspace
         const item = selected.find(e => e.id === saved.id);
         const operation = item?.operations.find(o => o.id.replaceAll("-", "") === String(saved.body.requestId).replaceAll("-", ""));
         if (operation && ["succeeded", "failed"].includes(operation.state)) {
-          if (operation.state === "succeeded" || saved.kind !== "finish") savePending(null);
+          const superseded = operation !== item?.operations.at(-1);
+          if (operation.state === "succeeded" || saved.kind !== "finish" || superseded) savePending(null);
           setError(operation.state === "failed" ? item?.error ?? "Sandbox operation failed." : "");
           if (item?.state === "finished") setNotice("Sandbox deleted. Workspace source is preserved.");
+          else if (superseded) setNotice("A newer operation replaced the previous request. Review the current sandbox status.");
         }
       }
       const results = await Promise.all(selected.filter(e => e.state === "running").map(async e => {

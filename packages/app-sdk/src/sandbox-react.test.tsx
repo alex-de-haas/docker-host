@@ -102,3 +102,37 @@ it("retains a failed Finish across refresh and reuses its original request after
   expect(mutations).toHaveLength(2); expect(mutations[1]).toEqual(mutations[0]);
   expect(sessionStorage.getItem(storageKey)).toBeNull(); expect(container.textContent).toContain("Sandbox deleted");
 });
+
+it.each(["refresh", "remount"])("discards a superseded Finish replay on %s and permits a new deletion", async mode => {
+  const oldRequestId = crypto.randomUUID(), newerRequestId = crypto.randomUUID();
+  const original = { path: `/${id}/operations/finish`, body: { requestId: oldRequestId, expectedRevision: 2 }, id, kind: "finish" };
+  sessionStorage.setItem(storageKey, JSON.stringify(original));
+  let superseded = false, finished = false;
+  const request = vi.fn(async (_path: string, body?: unknown) => {
+    if (body) { finished = true; return { ...item, state: "finished" }; }
+    return { environments: finished ? [] : [{ ...item, state: "cleanup-failed", revision: superseded ? 6 : 4,
+      error: "Docker unavailable", operations: [
+        { id: oldRequestId.replaceAll("-", ""), kind: "finish", state: "failed" },
+        ...(superseded ? [{ id: newerRequestId, kind: "finish", state: "failed" }] : []),
+      ] }] };
+  });
+  await render(request as EnvironmentRequest, true);
+  expect(button("Retry same request")).toBeDefined();
+  expect(button("Create sandbox").disabled).toBe(true);
+  superseded = true;
+  if (mode === "remount") { await act(async () => root.render(null)); await render(request as EnvironmentRequest, true); }
+  else await click("Refresh sandboxes");
+
+  expect(sessionStorage.getItem(storageKey)).toBeNull();
+  expect(button("Retry same request")).toBeUndefined();
+  expect(button("Create sandbox").disabled).toBe(false);
+  expect(button("Retry deletion").disabled).toBe(false);
+  expect(container.textContent).not.toContain("A previous request needs confirmation");
+  await click("Retry deletion"); await click("Delete permanently");
+  const mutations = request.mock.calls.filter(([, body]) => body);
+  expect(mutations).toHaveLength(1);
+  expect(mutations[0][1]).toMatchObject({ expectedRevision: 6, requestId: expect.any(String) });
+  const requestId = (mutations[0][1] as { requestId: string }).requestId;
+  expect([oldRequestId, newerRequestId]).not.toContain(requestId);
+  expect(container.textContent).toContain("Sandbox deleted");
+});
