@@ -111,8 +111,8 @@ filesystem allocation limits. Storage violations revoke access and stop known co
 long setup. Instance metrics report sampled Docker memory/CPU and a sampled aggregate memory peak;
 this value is not a cgroup lifetime peak. The Core side reserves 10 GiB of the coordinated 30 GiB mutable budget for the separately managed
 agent/worktrees and limits sandbox storage to 20 GiB. The experiment coordinator monitors and stops
-its agent at 2 GiB state or 8 GiB worktree use. A supported production worker coordinator and the
-remaining interruption matrix stay tracked under D5 and the containment plan.
+its agent at 2 GiB state or 8 GiB worktree use. The [shared worker](../assistant-shared-docker-runtime/feature.md) supplies the supported agent
+coordinator; the remaining integrated matrix stays tracked under D9.
 
 ## Private Browser Verification
 
@@ -218,7 +218,8 @@ not copied. No workspace is required. Optional registered worktrees are retained
 consumers until Finish; they remain outside the temporary root.
 
 Docker CLI plugin discovery carries the installed plugin directories reported by Docker into the
-child's own configuration, preserving child-owned settings. Buildx remains available under the
+child's own configuration, preserving child-owned settings with an owner-only atomic JSON writer.
+Buildx remains available under the
 private HOME without copying the parent's registry logins or Docker configuration.
 
 `current` copies the parent's prepared executable closure; `release` copies its installed native
@@ -444,7 +445,7 @@ its normal app-installation and shared-mount review are not replaced by parent-s
 
 The [2026-10-15 trusted-Core acceptance](../../reviews/2026-10-15-trusted-core-consent-acceptance.md) verifies one-run/saved consent, revocation, dedicated Redis dependencies, shared mount limits, ordinary roles, nested cleanup and Linux-in-Docker interrupted Finish. It records the measured resource envelope and remaining host-coverage limits.
 
-The [offline daemon acceptance](../../reviews/2026-10-15-offline-sandbox-daemon-acceptance.md) verifies interrupted prepare, actual Docker loss, revoked preview with retained data, observable failed cleanup, same-UUID disposal after coordinator death, browser recovery and complete resource removal on macOS. D5 retains production worker-monitor integration; this bounded run does not establish the entire D9 host and measurement matrix.
+The [offline daemon acceptance](../../reviews/2026-10-15-offline-sandbox-daemon-acceptance.md) verifies interrupted prepare, actual Docker loss, revoked preview with retained data, observable failed cleanup, same-UUID disposal after coordinator death, browser recovery and complete resource removal on macOS. D5 is complete through the shared worker integration below; this bounded run does not establish the entire D9 host and measurement matrix.
 
 ## Shared Agent Worker Accounting
 
@@ -459,6 +460,20 @@ Application start/restart capacity refusal returns a structured HTTP 409 with th
 code. Core settles the app to stopped/failed, preserves the diagnostic and permits a normal retry
 after capacity is available; it does not leave an app indefinitely starting. Stopped containers
 continue to reserve their limits until the owning runtime is removed.
+
+## Composed Git And Child-Core Acceptance
+
+The [D9 Git acceptance report](../../reviews/2026-10-15-sandbox-d9-git-acceptance.md) records a real
+Codex Docker conversation that edits/tests Demo, creates a child Core, survives Harness failure,
+publishes a test PR through Core, applies a real review finding and explicitly finishes the child.
+A separate authenticated Playwright browser verifies HMR and preview; the agent consumes its report.
+Harness displays the published head and observed CI. Independent cleanup verifies source retention
+and removal of the child process, ports, data, two containers, six cache volumes and its network.
+
+The selected simultaneous agent-plus-app peak is 5,473.4 MiB charged memory (3,942.2 MiB working
+set). Native Core/Harness/browser RSS is measured separately. This is one macOS arm64 Docker
+workload, not an all-host guarantee or a complete cold-start benchmark; remaining D9 coverage stays
+in the [plan](plan.md).
 
 ## Testing Expectations
 
