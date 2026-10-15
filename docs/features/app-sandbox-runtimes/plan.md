@@ -2,7 +2,7 @@
 status: In Progress
 created: 2026-09-25
 updated: 2026-10-15
-summary: Remaining cold-engine preparation, host and recipe acceptance plus optional remote preview after the verified local released-Core and agent workflow.
+summary: Remaining host and recipe acceptance plus optional remote preview after verified local release, cold-engine and agent workflows.
 components: [apps/core, apps/harness, apps/shell, apps/workspaces, packages/app-sdk]
 ---
 
@@ -69,8 +69,8 @@ reports, execute uncovered local cases, measure a controlled cold preparation an
 repeat through Harness and a real browser, and independently verify complete disposal.
 
 D27 passed in the [local acceptance report](../../reviews/2026-10-15-sandbox-d9-local-acceptance.md),
-including the exact test ledger and measurement boundaries. D9 retains cold-engine image
-import/extraction and uncached build/start measurements as well as additional host/architecture/recipe
+including the exact test ledger and measurement boundaries. D28 below closes the cold-engine image
+import/extraction and uncached build/start measurement gap. D9 retains additional host/architecture/recipe
 scope; macOS arm64 and Linux in Docker do not establish native Linux/Windows or amd64-worker
 support. D11 remote preview remains deferred. The two execution profiles keep separate
 expectations: offline sandbox network/persona restrictions do not apply to trusted child Core.
@@ -81,6 +81,22 @@ Measure downloaded release artifacts, image preparation, dependency setup, HTTP 
 HMR and warm restart as distinct intervals. Capture native preparation descendants from the
 start; distinguish fresh fixture/build caches from an already-running Docker VM and shared
 image layers. Do not prune shared Docker resources to manufacture a cold result.
+
+## Approved Cold-Engine Acceptance (2026-10-15)
+
+The owner approves a disposable Docker engine with its own empty image/build/data store,
+complete Harness agent and browser acceptance, separate cold/warm timing and resource accounting,
+and full fixture teardown. Existing Docker containers, caches and configuration remain untouched.
+A bounded Linux container hosts the independent daemon, released Linux arm64 Core, Harness and
+browser; it does not establish native Linux-host or Windows support. Record transfer/unpack,
+uncached dependency/build, HTTP readiness, browser, warm replay and cleanup as distinct stages.
+Keep wider D9 platform/recipe acceptance and optional D11 open. No commit or publication is part
+of this experiment request.
+
+D28 passed in the [cold-engine acceptance report](../../reviews/2026-10-15-sandbox-d9-cold-engine-acceptance.md): real
+Harness agent, normal browser login/HMR, uncached image preparation, cold/warm readiness, enclosing
+engine/build/native memory and complete disposal. All existing Docker inventory and primary Core
+process identity were preserved. This closes the local cold-engine gap, not the wider D9 matrix.
 
 ## Latest Verified Checkpoint (2026-10-15)
 
@@ -251,8 +267,9 @@ The checked items below record the verified scope merged in #590; expanded requi
 ### Remaining Reliability And Acceptance
 
 - [x] D5. Connect the agent/worktree resource monitor through the supported shared Harness worker, preserving CPU/RAM/PID and soft-disk policy. Active Core-owned leases prevent double-counting its sandbox reservation. The [shared-worker acceptance](../../reviews/2026-10-15-shared-docker-agent-acceptance.md) verifies busy admission, detached cancellation, coordinator loss, retained leases and explicit recovery; the earlier offline daemon acceptance covers actual Docker loss and same-UUID interrupted disposal. Stricter per-session containment remains unapproved.
-- [ ] D9. Complete a controlled cold-engine image import/extraction, uncached build/setup and first-start readiness measurement, with native preparation and engine/build memory accounted for, using an isolated engine or separately approved host; do not prune shared workloads. The private OCI downloads in D27 do not cover these stages. Verify additional native Linux/Windows, Linux amd64 worker and other recipe guarantees before claiming them. D27 records the local negative/race ledger, measured client-transfer/dependency stages, native-process sampling and complete disposal; it does not close all local cold-start acceptance. The composed real-agent Demo → child Core → browser → commit/push/PR/CI/review → Finish journey and simultaneous one-workload measurements passed in the D9 Git report. Prior reports cover both providers, direct/embedded HMR, separate Demo/Media dependencies and Docker-loss recovery. Retain native Linux-host/Windows and amd64-worker verification as unverified; Linux in Docker is the selected available target, not proof of native-host support.
-- [x] D27. Record the macOS arm64/Linux-in-Docker released-baseline acceptance: map inherited cases to exact tests and dated evidence, run local protocol/replay cases, measure fresh client OCI transfer and dependency preparation with simultaneous native/container sampling, verify ordinary Harness/browser behavior and independently prove full owned-resource cleanup. Preserve unmeasured cold-engine import/extraction/build/start and wider host/recipe acceptance under unchecked D9.
+- [ ] D9. Verify remaining native Linux-host/Windows, Linux amd64 worker and additional recipe guarantees before claiming them. Linux in Docker is the selected available target, not proof of native-host support. D27 records the local negative/race ledger and D28 closes cold-engine import/extraction/build/start and engine/build memory acceptance. The composed real-agent Demo → child Core → browser → commit/push/PR/CI/review → Finish journey passed in the D9 Git report. Prior reports cover both providers, direct/embedded HMR, dedicated Demo/Media dependencies and Docker-loss recovery; retain their profile-specific limits.
+- [x] D27. Record the macOS arm64/Linux-in-Docker released-baseline acceptance: map inherited cases to exact tests and dated evidence, run local protocol/replay cases, measure fresh client OCI transfer and dependency preparation with simultaneous native/container sampling, verify ordinary Harness/browser behavior and independently prove full owned-resource cleanup. Its cold-engine measurement gap is subsequently verified by D28; wider host/recipe acceptance remains in D9.
+- [x] D28. Verify cold image import/extraction, uncached source-image/dependency preparation and first HTTP readiness on an independent empty Docker engine. Run the real Harness agent and authenticated browser/HMR journey, measure warm restart with retained images/caches and enclosing engine/build/native memory, verify same-ID Finish and full fixture teardown, and prove existing containers/caches and primary Core remain unchanged. The cold-engine report records the Linux arm64/DinD, Autonomous-mode and temporary-recipe boundaries.
 - [ ] D11. Decide and separately approve optional remote preview ingress/private access, then implement and verify it, or explicitly retire it if the owner abandons it. Local delivery does not wait for it.
 
 ### Permission Extension (Owner Revision, 2026-10-14)
@@ -282,7 +299,7 @@ The [read-only Media acceptance report](../../reviews/2026-10-14-read-only-media
 | 1 | D9 local development journey | Published baseline, fresh login/HMR/navigation and complete cleanup verified |
 | 2 | D13/D15 | Reusable consent, scoped expansion review and mount revocation verified |
 | 3 | D14/D16/D17 | Dedicated dependencies, database, ordinary authority and nested lifecycle verified |
-| 4 | Remaining D9 | Cold-engine preparation and supported-host/recipe acceptance verified; unavailable targets remain explicit |
+| 4 | Remaining D9 | D28 closes local cold-engine preparation; supported-host/recipe acceptance remains explicit |
 | Optional | D11 | Separately approved remote preview, without per-instance publication becoming a local prerequisite |
 
 Do not check a broad deliverable merely because D25 covers one representative case. The production
@@ -470,7 +487,7 @@ The [offline daemon acceptance](../../reviews/2026-10-15-offline-sandbox-daemon-
 | Fresh identity, direct/embedded HMR and navigation | [Fresh login](../../reviews/2026-10-15-sandbox-login-hmr-acceptance.md), direct repeat in D9 | No fresh embedded repeat on every later recipe; bind evidence to its actual inputs |
 | Dedicated dependencies, mounts, consent and nested lifecycle | [Trusted Core](../../reviews/2026-10-15-trusted-core-consent-acceptance.md), Media reports and the D27 ledger | Profile-specific cases are reconciled; further recipe/host claims need their own acceptance |
 | Docker loss, interrupted Finish and same-ID recovery | [Offline daemon](../../reviews/2026-10-15-offline-sandbox-daemon-acceptance.md) | D9 did not repeat daemon loss; confirm any additional claimed failure combination explicitly |
-| Simultaneous resources | D27 captures cold client image transfer, dependency preparation and native descendants with the live worker/app/browser workload | D9 retains cold-engine import/extraction and uncached build/start, including engine/build memory; shared VM/base layers and single-run limits remain explicit |
+| Simultaneous resources and cold engine | D27 records client transfer; [D28](../../reviews/2026-10-15-sandbox-d9-cold-engine-acceptance.md) measures empty-engine import/extraction, uncached build/start and warm repeat, including all native/engine/build workload memory | One Linux arm64/DinD workload with prepared tooling and an already-running host VM; broader host/recipe claims remain unverified |
 | Host and architecture support | macOS arm64 plus Linux arm64 containers; CI unit/AOT coverage | Native Linux-host, Windows Docker and local amd64-worker acceptance remain unverified |
 
 Dependent umbrella plans now link the composed journey rather than listing it as wholly missing.
@@ -482,8 +499,9 @@ own approval and verification requirements. These links do not close or approve 
 The [local acceptance report](../../reviews/2026-10-15-sandbox-d9-local-acceptance.md#coverage-ledger) maps L01-L22 to exact tests, dated live evidence and profile-specific boundaries.
 D27 passed on the merged release: 209 unique Core cases, 18 Harness tests and six Demo tests;
 real agent/browser source build, HMR, concurrent replay, independent QA, quota inventory and both
-Finishes passed. Cold-engine image import/extraction, uncached build/start and engine/build memory
-remain unmeasured under D9, alongside broader host/recipe guarantees; optional D11 also remains unchecked.
+Finishes passed. [D28](../../reviews/2026-10-15-sandbox-d9-cold-engine-acceptance.md) subsequently verifies
+cold-engine image import/extraction, uncached build/start and engine/build memory. Broader D9
+host/recipe guarantees and optional D11 remain unchecked.
 
 ## Verification And Completion
 
@@ -496,7 +514,7 @@ remain unmeasured under D9, alongside broader host/recipe guarantees; optional D
   sessions, configs and raw evidence must not leak into the main installation or repository.
 - Preserve interrupted operations with their original request UUIDs. Finish is not successful while
   any owned writer/resource remains; external shared mounts and borrowed source must survive it.
-- Keep D9's cold-engine import/extraction/build/start measurements, additional host/architecture/recipe acceptance, and optional D11 explicit until their own checks pass. D13-D17 and D25
+- Keep D9's additional host/architecture/recipe acceptance and optional D11 explicit until their own checks pass. D28 records the bounded local cold-engine result. D13-D17 and D25
   are verified in the linked reports. Update feature.md and regenerate docs/root.md with the work.
 
 ## References
