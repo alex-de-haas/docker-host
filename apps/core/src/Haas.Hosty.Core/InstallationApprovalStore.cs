@@ -115,6 +115,21 @@ internal sealed class InstallationApprovalStore(IClock clock)
         }
     }
 
+    internal InstallationApproval? FindEnvironmentRequest(CoreEnvironmentConsentPlan plan)
+    {
+        lock (gate)
+        {
+            var matches = entries.Values.Where(entry => (entry.ExpiresAt > clock.UtcNow || entry.Status == "executing")
+                && entry.EnvironmentPlan is { } prior && prior.AppId == plan.AppId && prior.UserId == plan.UserId
+                && prior.Installation == plan.Installation && prior.AuthRevision == plan.AuthRevision
+                && prior.Request.RequestId == plan.Request.RequestId).ToArray();
+            if (matches.Any(entry => entry.EnvironmentPlan!.Policy.RequestDigest != plan.Policy.RequestDigest))
+                throw new SandboxException("environment_replay_conflict", "Reuse the original creation UUID with unchanged arguments.", 409);
+            return matches.LastOrDefault(entry => entry.EnvironmentPlan!.Policy == plan.Policy
+                && entry.Status is "draft" or "pending" or "executing" or "succeeded");
+        }
+    }
+
     public InstallationApproval Get(string id)
     {
         lock (gate)

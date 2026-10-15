@@ -74,6 +74,66 @@ public sealed class CoreEnvironmentConsentHttpTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task ConsentReplay_ReusesReviewAndGrant_AndRevocationCannotFallBackToADuplicate(bool saved)
+    {
+        await using var host = await CoreEnvironmentHttpTests.StartHostAsync(); using var caller = await Caller(host);
+        var input = new CoreEnvironmentCreate(Guid.NewGuid().ToString(), "Replay consent");
+        var responses = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => caller.PostAsJsonAsync(Root + "/consent", input)));
+        var views = new List<InstallationRequestView>();
+        foreach (var response in responses)
+        {
+            using (response) { response.EnsureSuccessStatusCode(); views.Add((await response.Content.ReadFromJsonAsync<InstallationRequestView>())!); }
+        }
+        var requestId = Assert.Single(views.Select(view => view.Id).Distinct());
+        Assert.All(views, view => Assert.Equal("pending", view.Status));
+        var events = await host.Services.GetRequiredService<AuditStore>().ReadRecentAsync();
+        Assert.Single(events, entry => entry.Action == "core.environment.approval" && entry.Outcome == "requested"
+            && entry.Details.GetValueOrDefault("requestId") == requestId);
+        using var changed = await caller.PostAsJsonAsync(Root + "/consent", input with { Label = "Changed arguments" });
+        Assert.Equal(HttpStatusCode.Conflict, changed.StatusCode);
+        await Approve(host, caller, input, saved);
+        using var replay = await caller.PostAsJsonAsync(Root + "/consent", input); replay.EnsureSuccessStatusCode();
+        var completed = (await replay.Content.ReadFromJsonAsync<InstallationRequestView>())!;
+        Assert.Equal(requestId, completed.Id); Assert.Equal("succeeded", completed.Status);
+        // Grant reuse is durable and independent of the temporary approval-page store.
+        var consent = host.Services.GetRequiredService<CoreEnvironmentConsentService>();
+        await Task.WhenAll(consent.ApproveAsync(completed.EnvironmentPlan!, saved, default),
+            consent.ApproveAsync(completed.EnvironmentPlan!, saved, default));
+        var grants = host.Services.GetRequiredService<BackgroundGrantService>();
+        var grant = Assert.Single((await grants.ReadAsync(default))!.Grants);
+        using var created = await caller.PostAsJsonAsync(Root, input); created.EnsureSuccessStatusCode();
+        Assert.Equal(grant.Id, (await created.Content.ReadFromJsonAsync<CoreEnvironmentView>())!.Access!.GrantId);
+        await grants.RevokeAsync("actor", grant.Id, default);
+        using var denied = await caller.PostAsJsonAsync(Root, input with { RequestId = Guid.NewGuid().ToString() });
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        Assert.DoesNotContain((await grants.ReadAsync(default))!.Grants, g => g.RevokedAt is null);
+        using var renewal = await caller.PostAsJsonAsync(Root + "/consent", input); renewal.EnsureSuccessStatusCode();
+        var renewed = (await renewal.Content.ReadFromJsonAsync<InstallationRequestView>())!;
+        Assert.NotEqual(requestId, renewed.Id); Assert.Equal("pending", renewed.Status);
+    }
+    [Fact]
+    public async Task ObservationDigests_AreSharedWithinAResponse_ButNeverBetweenResponses()
+    {
+        await using var host = await CoreEnvironmentHttpTests.StartHostAsync();
+        var config = host.Services.GetRequiredService<HostyCoreRuntimeConfig>();
+        var binary = Path.Combine(config.DataRoot, "core", "bin", OperatingSystem.IsWindows() ? "hosty-core.exe" : "hosty-core");
+        Directory.CreateDirectory(Path.GetDirectoryName(binary)!); await File.WriteAllTextAsync(binary, "first target");
+        var consent = host.Services.GetRequiredService<CoreEnvironmentConsentService>();
+        var input = new CoreEnvironmentCreate(Guid.NewGuid().ToString(), "Observation", "release");
+        var digests = new Dictionary<string, Task<string>>(StringComparer.Ordinal);
+        var first = await consent.PolicyAsync(input, default, digests);
+        await File.WriteAllTextAsync(binary, "changed target");
+        var second = await consent.PolicyAsync(input with { Limits = new(MemoryBytes: 2147483648) }, default, digests);
+        Assert.Equal(first.TargetDigest, second.TargetDigest);
+        Assert.NotEqual(first.RequestDigest, second.RequestDigest);
+        Assert.NotEqual(first.Limits.MemoryBytes, second.Limits.MemoryBytes);
+        Assert.Single(digests);
+        var nextResponse = await consent.PolicyAsync(input, default, new(StringComparer.Ordinal));
+        Assert.NotEqual(first.TargetDigest, nextResponse.TargetDigest);
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task Consent_OnlyCorePageCanChooseRunOrSaved_AndRevocationBlocksDelegatedAccess(bool saved)
     {
         await using var host = await CoreEnvironmentHttpTests.StartHostAsync(); using var caller = await Caller(host);
@@ -427,6 +487,7 @@ public sealed class CoreEnvironmentConsentHttpTests
         Task<CoreEnvironmentView>? replay = null;
         try
         {
+            await host.Services.GetRequiredService<BackgroundGrantService>().RevokeAsync("actor", child.Access!.GrantId, default);
             await Approve(host, caller, input, true);
             replay = service.CreateAsync(actor, input, default);
             Assert.NotSame(replay, await Task.WhenAny(replay, Task.Delay(250)));

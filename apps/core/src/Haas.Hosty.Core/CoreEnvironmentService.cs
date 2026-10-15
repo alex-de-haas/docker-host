@@ -18,8 +18,8 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
         record.Request.Mode, record.Request.ProjectPath, record.Request.Context, record.State, record.Revision, record.Port,
         record.State == "finished" ? null : store.Root(record.Id), $"http://core.i-{record.Id}.hosty.localhost:{record.Port}",
         record.Process, record.Error, record.Operations ?? [], CoreEnvironmentResources.Limits(record), record.Usage);
-    private async Task<CoreEnvironmentView> ViewAsync(CoreEnvironmentRecord record, CancellationToken ct)
-        => View(record) with { Access = consent is null ? null : await consent.AccessAsync(record, ct) };
+    private async Task<CoreEnvironmentView> ViewAsync(CoreEnvironmentRecord record, CancellationToken ct, Dictionary<string, Task<string>>? digests = null)
+        => View(record) with { Access = consent is null ? null : await consent.AccessAsync(record, ct, digests) };
     internal Task RequireConsentAsync(SandboxActor actor, CoreEnvironmentRecord record, bool launch, CancellationToken ct)
         => consent?.RequireAsync(actor, record, launch, ct) ?? Task.CompletedTask;
     internal async Task<CoreEnvironmentRecord> RequireAsync(SandboxActor actor, string id, CancellationToken ct)
@@ -34,20 +34,21 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
     {
         var records = await store.ListAsync(ct);
         var observed = new List<CoreEnvironmentView>();
+        var digests = new Dictionary<string, Task<string>>(StringComparer.Ordinal);
         foreach (var record in records.Where(r => r.Owner.UserId == actor.UserId && (actor.AppId is null || r.Owner.SameOwner(actor) && (actor.GrantId is null || r.Consent?.GrantId == actor.GrantId && r.Consent.ScopeId == actor.ScopeId))))
         {
             var gate = Gate(record.Id);
-            if (!await gate.WaitAsync(0, ct)) { observed.Add(await ViewAsync((await store.ReadAsync(record.Id, ct))!, ct)); continue; }
+            if (!await gate.WaitAsync(0, ct)) { observed.Add(await ViewAsync((await store.ReadAsync(record.Id, ct))!, ct, digests)); continue; }
             try
             {
                 var current = (await store.ReadAsync(record.Id, ct))!;
-                try { observed.Add(await ViewAsync(await ObserveAsync(current, ct), ct)); }
+                try { observed.Add(await ViewAsync(await ObserveAsync(current, ct), ct, digests)); }
                 catch (Exception ex) when (ex is SandboxException or IOException or System.Text.Json.JsonException)
-                { observed.Add(await ViewAsync(current with { State = "failed", Error = ex.Message }, ct)); }
+                { observed.Add(await ViewAsync(current with { State = "failed", Error = ex.Message }, ct, digests)); }
             }
             finally { gate.Release(); }
         }
-        return new(observed, consent is null ? [] : await consent.ListAsync(actor, ct));
+        return new(observed, consent is null ? [] : await consent.ListAsync(actor, ct, digests));
     }
     public async Task<CoreEnvironmentView> ReadAsync(SandboxActor actor, string id, CancellationToken ct)
     {

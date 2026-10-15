@@ -75,13 +75,33 @@ internal static class CoreEnvironmentEndpoints
             {
                 var actor = await auth.RequireAsync(request, appId, false, ct);
                 if (actor.GrantId is not null) throw new AppIdentityException("interactive_required", "Review new consent with an interactive administrator.");
-                var plan = await consent.PlanAsync(actor, await service.ValidateCreateAsync(actor, input, ct), ct);
-                var entry = approvals.Add(new InstallationApproval { UserId = actor.UserId, CallerAppId = appId,
-                    IdentityToken = request.Headers["X-Hosty-User-Token"].ToString(), CallerName = plan.DisplayName,
-                    ExpiresAt = clock.UtcNow.Add(InstallationApprovalStore.Lifetime), EnvironmentPlan = plan });
-                await approvalService.RecordAsync(entry, "requested", ct);
-                approvals.Submit(entry, new());
-                return approvals.View(entry, origins.Effective);
+                await consent.RequestGate.WaitAsync(ct);
+                try
+                {
+                    var plan = await consent.PlanAsync(actor, await service.ValidateCreateAsync(actor, input, ct), ct);
+                    if (approvals.FindEnvironmentRequest(plan) is { } prior)
+                    {
+                        if (prior.Status == "draft")
+                        {
+                            await approvalService.RecordAsync(prior, "requested", ct);
+                            approvals.Submit(prior, new());
+                        }
+                        if (prior.Status != "succeeded") return approvals.View(prior, origins.Effective);
+                        try
+                        {
+                            _ = await consent.FindAsync(actor, plan.Request, ct);
+                            return approvals.View(prior, origins.Effective);
+                        }
+                        catch (SandboxException ex) when (ex.Code == "environment_consent_required") { }
+                    }
+                    var entry = approvals.Add(new InstallationApproval { UserId = actor.UserId, CallerAppId = appId,
+                        IdentityToken = request.Headers["X-Hosty-User-Token"].ToString(), CallerName = plan.DisplayName,
+                        ExpiresAt = clock.UtcNow.Add(InstallationApprovalStore.Lifetime), EnvironmentPlan = plan });
+                    await approvalService.RecordAsync(entry, "requested", ct);
+                    approvals.Submit(entry, new());
+                    return approvals.View(entry, origins.Effective);
+                }
+                finally { consent.RequestGate.Release(); }
             }));
         routes.MapGet(internalRoot, async (string appId, HttpRequest request, CoreEnvironmentAuthorization auth, CoreEnvironmentService service, CancellationToken ct) =>
             await SandboxEndpoints.Handle(async () => await service.ListAsync(await auth.RequireAsync(request, appId, true, ct), ct)));

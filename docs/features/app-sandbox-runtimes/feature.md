@@ -389,6 +389,11 @@ confirmation page; the page defaults to this run and offers a saved permission f
 Preparing or visiting the page does not allocate or start a child. After approval, the caller retries
 the original creation UUID. Direct operator launches, including the workspace UI action, retain
 ordinary operator authority and do not grant permission for unrelated later launches by that app.
+Concurrent and exact consent retries reuse the pending or completed review within its normal
+lifetime, scoped to the caller installation, owner, creation UUID and policy. Changed creation
+arguments conflict; revoked permission or a changed Core target can receive a new review. Repeated
+approval reuses an identical active persisted grant, including after approval pages expire or Core
+restarts, so revocation does not leave a duplicate matching grant.
 
 Consent uses the existing background-grant store. A scope pins the owner authorization revision,
 calling installation, current/release/source mode, Core target, trust-contract version and resource
@@ -410,7 +415,9 @@ approved consent without replacing the child; operator authority and Stop/Finish
 The shared Shell/Workspaces panel shows effective consent and supports revocation. Shell also lists
 saved permissions when no environment remains. Effective access and saved permissions report a
 changed or unavailable binary target instead of an active launch permission, while preserving
-revocation and ordinary operator lifecycle controls. Grant labels reuse the validated sandbox name
+revocation and ordinary operator lifecycle controls. Each list response computes a distinct
+current/release target digest once and shares it across environments and saved permissions; the
+next request recomputes the digest. Grant labels reuse the validated sandbox name
 without adding a prefix that exceeds the grant's name limit. Revocation prevents new delegated creation,
 start/restart, setup and child API transport. The operator retains inspection, Stop and Finish.
 Finish retires one-run consent; saved consent remains an explicit operator policy until revoked.
