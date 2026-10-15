@@ -114,7 +114,7 @@ Plans: 10 In Progress · 1 Blocked · 40 Draft · 6 On Hold.
 - [Assistant MCP Delegation](features/delegated-token-exchange/feature.md) — Core grants individual assistants access to selected MCP targets through administrator-configured delegation.
 - [Demo App](features/demo-app/feature.md) — The repository-local reference app used to validate lifecycle, identity, directory access and app roles.
 - [Dependency-Ordered Autostart — Start Providers First, And Say So With `waiting`](features/dependency-ordered-autostart/plan.md) — Start providers before their consumers and report a held-back app as waiting rather than stopped. · Draft, 0/6, updated 2026-09-21
-- [Design System](features/design-system/plan.md) — Hosty's visual language — ink acts, lime answers — with its color, type, mark and ReUI token rules, and the Shell layouts built from it, including tools at narrow widths and on phones. · Draft, 0/18, updated 2026-10-13
+- [Design System](features/design-system/plan.md) — Hosty's visual language — ink acts, lime answers — with its color, type, mark and ReUI token rules, and the Shell layouts built from it, including tools at narrow widths and on phones. · Draft, 0/19, updated 2026-10-15
 - [Documentation Workflow](features/documentation-workflow/feature.md) — Workflow documents carry YAML frontmatter and stable deliverable IDs, checked by one validator shared by every Hosty repository.
 - [Feature: Domain Model](features/domain-model/feature.md) — The shared vocabulary for Core, Shell, the CLI and runtime apps.
 - [Embedded App Chrome](features/embedded-app-chrome/feature.md) — Navigation visibility uses explicit SDK composition policy while legacy launch modes retain transport and old-client compatibility.
