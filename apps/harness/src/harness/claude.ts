@@ -222,6 +222,11 @@ class ClaudeRun implements HarnessRun {
         prompt: this.input as AsyncIterable<never>,
         options: {
           cwd: this.options.cwd,
+          ...(this.options.processTransport ? {
+            pathToClaudeCodeExecutable: "/opt/hosty-worker/claude",
+            spawnClaudeCodeProcess: (input: { args: string[]; cwd?: string; env: NodeJS.ProcessEnv }) =>
+              this.options.processTransport!.spawn("claude", input.args, { cwd: input.cwd ?? this.options.cwd, env: input.env }),
+          } : {}),
           resume: this.options.resumeHarnessSessionId,
           permissionMode: this.options.autonomy === "autonomous" ? "bypassPermissions" : "default",
           allowDangerouslySkipPermissions: this.options.autonomy === "autonomous",

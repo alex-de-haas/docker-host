@@ -1,3 +1,4 @@
+import { WorkerError } from "./runtime/worker.js";
 import { createHostySessionResponse } from "@hosty-sdk/app/session/server";
 import { createHostyUiResponse } from "@hosty-sdk/app/ui/server";
 import { readOwnPermissionNotice } from "@hosty-sdk/app/permissions/server";
@@ -70,7 +71,7 @@ export function createGatewayServer(
         sendJson(response, 409, { code: "session_busy", message: error.message });
         return;
       }
-      if (error instanceof AppContextError || error instanceof ConnectionError) {
+      if (error instanceof AppContextError || error instanceof ConnectionError || error instanceof WorkerError) {
         sendJson(response, error.status, { code: error.code, message: error.message });
         return;
       }
@@ -317,6 +318,15 @@ async function route(
   // an operator sees `com-haas-media-server-f9a077 · add_torrent`. The wire name cannot change: the
   // client builds `mcp__<server>__<tool>` from it and the grant set is keyed on it. So the id stays
   // and the label is translated, here, where the roster already is.
+  if (url.pathname === "/api/runtime" && method === "GET") { sendJson(response, 200, await manager.runtimeStatus()); return; }
+  if (url.pathname === "/api/runtime/image" && method === "POST") {
+    if (!manager.worker) throw new WorkerError("worker_unavailable", "Managed worker storage is unavailable.", 503);
+    await manager.worker.install(); sendJson(response, 200, await manager.runtimeStatus()); return;
+  }
+  if (url.pathname === "/api/runtime/stop" && method === "POST") {
+    await manager.recoverDocker(actor.userId, actor.via === "app-session" ? readAppCredential(request) : undefined);
+    sendJson(response, 200, await manager.runtimeStatus()); return;
+  }
   if (method === "GET" && url.pathname === "/api/apps") {
     const discovered = providers ? await providers.read() : null;
     const core = providers?.core() ?? null;
@@ -361,6 +371,7 @@ async function route(
   const connectionMatch = url.pathname.match(/^\/api\/connections\/([a-zA-Z0-9-]+)(\/test|\/login)?$/);
   if (connections && connectionMatch) {
     const id = connectionMatch[1]!; const action = connectionMatch[2] ?? "";
+    if (method !== "GET" && action !== "/test") await manager.assertWorkerProviderInactive(id);
     if (action === "/test" && method === "POST") { sendJson(response, 200, await connections.health(await connections.binding(id))); return; }
     if (action === "/login" && method === "POST") { sendJson(response, 200, await connections.startLogin(id)); return; }
     if (!action && method === "PUT") { sendJson(response, 200, await connections.update(await readJson(request), id)); return; }
@@ -420,6 +431,7 @@ async function route(
         try { await manager.mcpPolicy.update(body.mcpToolRules as Record<string, import("./mcp/policy.js").ToolRule>); }
         catch (error) { sendJson(response, 409, { code: "tool_policy_changed", message: error instanceof Error ? error.message : "Refresh the tool catalog." }); return; }
       }
+      if (body.executionMode !== undefined) await manager.setExecutionMode(body.executionMode);
       await settings.update({
         immediateHandoffs: typeof body.immediateHandoffs === "boolean" ? body.immediateHandoffs : undefined,
         systemPrompt: typeof body.systemPrompt === "string" ? body.systemPrompt : undefined,

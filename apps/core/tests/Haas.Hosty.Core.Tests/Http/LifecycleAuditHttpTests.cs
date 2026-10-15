@@ -111,6 +111,27 @@ public sealed class LifecycleAuditHttpTests
     }
 
     [Fact]
+    public async Task Start_WhenEnvironmentCapacityIsExhausted_ReturnsStructuredConflict()
+    {
+        await using var host = await CreateHostAsync(new() { ExhaustCapacity = true });
+        await SeedUserAsync(host);
+        await InstallAsync(host);
+        using var client = host.CreateClient();
+        using var request = Request(host, "http", AppId, "start", new { });
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        Assert.Equal("environment_application_capacity", error!.Code);
+        Assert.Equal("Environment capacity exhausted.", error.Message);
+        var app = await host.Services.GetRequiredService<AppRegistryStore>().GetAppAsync(AppId);
+        Assert.Equal("stopped", app!.RuntimeState);
+        Assert.Equal("failed", app.OperationStatus);
+        var audit = Assert.Single(await host.Services.GetRequiredService<AuditStore>().ReadRecentAsync(),
+            entry => entry.Action == "app.lifecycle.start");
+        Assert.Equal("failed", audit.Outcome);
+    }
+
+    [Fact]
     public async Task AppManagementTransport_PreservesTheActingUserWithoutExportingItsCredentials()
     {
         await using var host = await CreateHostAsync(new());
@@ -272,8 +293,11 @@ public sealed class LifecycleAuditHttpTests
         public string Type => "localCommand";
         public TaskCompletionSource? StopGate { get; set; }
         public bool FailStop { get; set; }
+        public bool ExhaustCapacity { get; set; }
         public Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
-            => Task.FromResult(new AppRuntimeStartResult("running", []));
+            => ExhaustCapacity
+                ? throw new SandboxException("environment_application_capacity", "Environment capacity exhausted.")
+                : Task.FromResult(new AppRuntimeStartResult("running", []));
         public async Task<AppRuntimeOperationResult> StopAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
         {
             if (StopGate is { } gate) await gate.Task.WaitAsync(cancellationToken);
