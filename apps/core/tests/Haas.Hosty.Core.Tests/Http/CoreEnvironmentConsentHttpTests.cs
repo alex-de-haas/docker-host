@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
+using Haas.Hosty.Launch;
 
 namespace Haas.Hosty.Core.Tests.Http;
 
@@ -38,6 +39,8 @@ public sealed class CoreEnvironmentConsentHttpTests
         var audit = await host.Services.GetRequiredService<AuditStore>().ReadRecentAsync();
         var decision = Assert.Single(audit, entry => entry.Action == "core.environment.approval"
             && entry.Outcome == "approved" && entry.Details.GetValueOrDefault("requestId") == view.Id);
+        Assert.Equal("app", decision.ResourceType);
+        Assert.Equal("qa.client", decision.ResourceId);
         Assert.Equal("qa.client", decision.Details["caller"]);
         Assert.Equal("core-environment", decision.Details["operation"]);
         Assert.Equal(saved.ToString(), decision.Details["environmentConsentSaved"]);
@@ -421,6 +424,60 @@ public sealed class CoreEnvironmentConsentHttpTests
         Assert.Equal(started.Revision + 1, renewed.Revision);
         Assert.NotEqual(child.Access!.GrantId, renewed.Access!.GrantId);
         Assert.Equal(renewed.Access.GrantId, (await store.ReadAsync(child.Id, default))!.Consent!.GrantId);
+    }
+    [Fact]
+    public async Task ConsentRevokedDuringPreparation_ReleasesEachRejectedGeneration()
+    {
+        var runtime = new RejectedPreparationRuntime();
+        await using var host = await CoreHttpHarness.StartAsync(configure: services =>
+            services.AddSingleton<ICoreEnvironmentRuntime>(runtime));
+        runtime.Inner = ActivatorUtilities.CreateInstance<CoreEnvironmentRuntime>(host.Services);
+        var grants = host.Services.GetRequiredService<BackgroundGrantService>();
+        runtime.Reject = record => grants.RevokeAsync("actor", record.Consent!.GrantId, default);
+        using var caller = await Caller(host);
+        var config = host.Services.GetRequiredService<HostyCoreRuntimeConfig>();
+        var binary = Path.Combine(config.DataRoot, "core", "bin", OperatingSystem.IsWindows() ? "hosty-core.exe" : "hosty-core");
+        Directory.CreateDirectory(Path.GetDirectoryName(binary)!); await File.WriteAllTextAsync(binary, "fixture native output");
+        var input = new CoreEnvironmentCreate(Guid.NewGuid().ToString(), "Rejected preparation", "release");
+        string? previous = null;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            await Approve(host, caller, input, true);
+            using var created = await caller.PostAsJsonAsync(Root, input); created.EnsureSuccessStatusCode();
+            var child = (await created.Content.ReadFromJsonAsync<CoreEnvironmentView>())!;
+            using var started = await caller.PostAsJsonAsync(Root + "/" + child.Id + "/operations/start",
+                new CoreEnvironmentCommand(Guid.NewGuid().ToString(), child.Revision));
+            started.EnsureSuccessStatusCode();
+            var failed = (await started.Content.ReadFromJsonAsync<CoreEnvironmentView>())!;
+            Assert.Equal("failed", failed.State);
+            Assert.Null(failed.Process);
+            Assert.Equal("failed", failed.Operations.Last().State);
+            var stored = (await host.Services.GetRequiredService<CoreEnvironmentStore>().ReadAsync(child.Id, default))!;
+            Assert.Equal(runtime.Prepared, stored.Executable);
+            var generation = Assert.Single(Directory.GetDirectories(Path.Combine(child.DataRoot!, "core", "builds")));
+            Assert.Equal(CoreEnvironmentRuntime.Generation(child.DataRoot!, stored.Executable), generation);
+            var marker = CoreLaunchFiles.Read(Path.Combine(generation, CoreBuildRetention.Marker), CoreLaunchJson.Default.CoreBuildGeneration)!;
+            Assert.Equal("failed", marker.State); Assert.Equal(-1, marker.OwnerPid);
+            if (previous is not null) Assert.False(Directory.Exists(previous));
+            previous = generation;
+        }
+    }
+    private sealed class RejectedPreparationRuntime : ICoreEnvironmentRuntime
+    {
+        public CoreEnvironmentRuntime Inner { get; set; } = null!;
+        public Func<CoreEnvironmentRecord, Task> Reject { get; set; } = null!;
+        public string? Prepared { get; private set; }
+        public async Task<string> PrepareAsync(CoreEnvironmentRecord record, string root, CancellationToken ct)
+        {
+            Prepared = await Inner.PrepareAsync(record, root, ct);
+            await Reject(record);
+            return Prepared;
+        }
+        public Task<CoreEnvironmentProcess?> ObserveAsync(CoreEnvironmentRecord record, string root, CancellationToken ct) => Task.FromResult(record.Process);
+        public Task StartAsync(CoreEnvironmentRecord record, string root, Func<CoreEnvironmentProcess, Task> save, CancellationToken ct)
+            => throw new InvalidOperationException("Revoked preparation must never start a process.");
+        public Task StopAsync(CoreEnvironmentRecord record, string root, bool remove, CancellationToken ct) => Task.CompletedTask;
+        public Task CleanupAsync(CoreEnvironmentRecord record, string root, CancellationToken ct) => Inner.CleanupAsync(record, root, ct);
     }
     private sealed class PausedStartRuntime : ICoreEnvironmentRuntime
     {

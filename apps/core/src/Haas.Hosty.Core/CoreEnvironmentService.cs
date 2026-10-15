@@ -295,9 +295,11 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                     record = record with { State = record.Request.Mode == "source" ? "building" : "starting" };
                     await store.WriteAsync(record, deadline.Token);
                     var executable = await runtime.PrepareAsync(record, root, deadline.Token);
-                    await RequireConsentAsync(actor, record, true, deadline.Token);
+                    // Retention must see the prepared generation even if consent changed during
+                    // the build. No process is launched before revalidation succeeds.
                     record = record with { Executable = executable };
                     await store.WriteAsync(record, deadline.Token);
+                    await RequireConsentAsync(actor, record, true, deadline.Token);
                 }
                 if (kind is "stop" or "restart" or "finish")
                 {

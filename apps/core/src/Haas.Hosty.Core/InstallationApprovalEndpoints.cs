@@ -176,7 +176,7 @@ internal sealed class InstallationApprovalService(
 
     public Task RecordAsync(InstallationApproval entry, string outcome, CancellationToken ct)
         => audit.AppendAsync(new AuditRecord($"audit_{Guid.NewGuid():N}", entry.EnvironmentPlan is not null ? "core.environment.approval" : entry.AssistantAccessPlan is not null ? "app.mcp.approval" : entry.PermissionPlan is null ? "app.installation.approval" : "app.permissions.approval", "app",
-            entry.AssistantAccessPlan?.AssistantId ?? entry.HostPathPlan?.Change.AppId ?? entry.PermissionPlan?.AppId ?? entry.RemovalPlan?.AppId ?? entry.InstallPlan?.AppId ?? entry.UpdatePlan?.AppId, outcome, entry.UserId, clock.UtcNow,
+            entry.EnvironmentPlan?.AppId ?? entry.AssistantAccessPlan?.AssistantId ?? entry.HostPathPlan?.Change.AppId ?? entry.PermissionPlan?.AppId ?? entry.RemovalPlan?.AppId ?? entry.InstallPlan?.AppId ?? entry.UpdatePlan?.AppId, outcome, entry.UserId, clock.UtcNow,
             new Dictionary<string, string> { ["requestId"] = entry.Id, ["caller"] = entry.CallerAppId ?? "operator",
                 ["hostPathChange"] = entry.HostPathPlan is { } path ? CoreJson.Text(path.Change) : "",
                 ["environmentConsentSaved"] = entry.SaveEnvironmentConsent.ToString(),
