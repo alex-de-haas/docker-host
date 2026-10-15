@@ -45,6 +45,10 @@ jobs:
       - name: Lint Harness worker
         run: npm run harness:lint
 
+      # Server tests request the exported settings page from a clean checkout.
+      - name: Build Harness settings page
+        run: npm run harness:build-web
+
       - name: Test Harness worker
         run: npm run harness:test
 

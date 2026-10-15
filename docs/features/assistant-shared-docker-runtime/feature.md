@@ -34,8 +34,9 @@ packages; it is not network confinement or a malware-analysis environment.
 Harness pins `ghcr.io/alex-de-haas/hosty-agent-worker:0.53.0`, resolving it to an immutable local image
 ID before creation. The worker package pins Codex 0.160.0 and Claude Agent SDK 0.3.288, matching the
 coordinator. The image includes Node, Git, Python, ripgrep and .NET SDK 10. The dedicated image
-workflow builds arm64/amd64, runs Harness checks and uses the repository publication guard and
-provenance flow. Install worker image pulls this fixed release, not a caller-supplied image.
+workflow builds arm64/amd64, builds the settings export before running Harness checks, and uses
+the repository publication guard and provenance flow. Install worker image pulls this fixed release,
+not a caller-supplied image.
 
 Core supplies canonical source roots through an authenticated internal binding descriptor. The
 worker mounts all registered Core worktrees read/write and common Git metadata read-only at the
