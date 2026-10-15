@@ -8,6 +8,8 @@ namespace Haas.Hosty.Core;
 internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDockerCommandRunner docker,
     IHttpClientFactory clients, ILogger<CoreEnvironmentRuntime> logger) : ICoreEnvironmentRuntime
 {
+    public async Task<CoreEnvironmentUsage?> InspectResourcesAsync(CoreEnvironmentRecord record, string root, CancellationToken ct)
+        => await CoreEnvironmentResources.InspectAsync(record, root, docker, ct);
     private static string BinaryName => OperatingSystem.IsWindows() ? "hosty-core.exe" : "hosty-core";
     public async Task<string> PrepareAsync(CoreEnvironmentRecord record, string root, CancellationToken ct)
     {
@@ -123,6 +125,10 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
             foreach (var header in discovery.RequiredHeaders) request.Headers.TryAddWithoutValidation(header.Key, header.Value);
             using var response = await client.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode) return null;
+            using var status = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
+            var versionText = status.RootElement.TryGetProperty("version", out var version) ? version.GetString()?.Split('-')[0] : null;
+            if (!Version.TryParse(versionText, out var parsed) || parsed < new Version(0, 133, 0))
+                throw new SandboxException("environment_core_version", "Child Core 0.133.0 or newer is required for resource limits and resumable cleanup. Finish or upgrade this environment.", 409);
             using var process = Process.GetProcessById(discovery.ProcessId);
             return new(process.Id, process.StartTime.ToUniversalTime());
         }
@@ -130,7 +136,15 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
     }
     public async Task StartAsync(CoreEnvironmentRecord record, string root, Func<CoreEnvironmentProcess, Task> saveProcess, CancellationToken ct)
     {
-        if (await ObserveAsync(record, root, ct) is { } existing) { await saveProcess(existing); return; }
+        try
+        {
+            if (await ObserveAsync(record, root, ct) is { } existing) { await saveProcess(existing); return; }
+        }
+        catch (SandboxException ex) when (ex.Code == "environment_core_version")
+        {
+            // Do not adopt a pre-quota child as if its app containers were bounded.
+            await StopAsync(record, root, false, ct);
+        }
         if (Alive(record.Process)) throw new SandboxException("environment_process_unready", "The recorded process is alive but not ready. Stop it before starting another.", 409);
         Directory.CreateDirectory(Path.Combine(root, "core", "logs"));
         var log = Path.Combine(root, "core", "logs", "environment-" + Guid.NewGuid().ToString("N") + ".log");
@@ -185,7 +199,14 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct); deadline.CancelAfter(TimeSpan.FromSeconds(45));
         while (!deadline.IsCancellationRequested)
         {
-            if (await ObserveAsync(probe, root, deadline.Token) is { } process)
+            CoreEnvironmentProcess? process;
+            try { process = await ObserveAsync(probe, root, deadline.Token); }
+            catch (SandboxException ex) when (ex.Code == "environment_core_version")
+            {
+                await StopAsync(probe with { Process = spawned }, root, false, ct);
+                throw;
+            }
+            if (process is not null)
             {
                 if (generation is not null) CoreBuildRetention.Mark(generation, "ready", record.Request.ProjectPath, process.Pid, process.StartedAt);
                 await saveProcess(process); return;
@@ -197,6 +218,11 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
     }
     public async Task StopAsync(CoreEnvironmentRecord record, string root, bool remove, CancellationToken ct)
     {
+        if (record.RootDeletionStarted)
+        {
+            foreach (var owner in record.CleanupOwners ?? [record.Id]) await DockerCleanupAsync(owner, true, ct);
+            return;
+        }
         var discovery = await DiscoveryAsync(record, root, ct);
         var identity = record.Process;
         if (discovery is not null)
@@ -226,7 +252,7 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
         {
             DataRoot = root, RunDirectory = Path.Combine(root, "core", "run"),
             ControlDiscoveryPath = Path.Combine(root, "core", "run", "control.json"),
-        }) : null;
+        }, cleanup: true) : null;
         // A broken child may have its own environments. Reconcile only roots recorded under it.
         var childStore = new CoreEnvironmentStore(CoreDataPaths.FromConfig(config with { DataRoot = root }));
         foreach (var child in await childStore.ListAsync(ct))
@@ -276,5 +302,15 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
                 if (owner != id) throw new SandboxException("environment_docker_owner", "Docker resource ownership changed.", 409);
                 await Run([resource, "rm", name]);
             }
+        // Success means a fresh inventory is empty, not merely that delete commands were accepted.
+        if ((await Run(["ps", "-aq", "--filter", "label=hosty.instance=" + id])).Length != 0)
+            throw new SandboxException("environment_docker_cleanup", "Owned containers remain after cleanup.", 409);
+        foreach (var resource in new[] { "network", "volume" })
+            if ((await Run([resource, "ls", "-q", "--filter", "label=hosty.instance=" + id])).Length != 0)
+                throw new SandboxException("environment_docker_cleanup", "Owned Docker resources remain after cleanup.", 409);
+        // Older app runtimes created unlabelled networks. Do not claim complete cleanup or
+        // delete an ambiguous resource by name alone; retain the root for explicit repair.
+        if ((await Run(["network", "ls", "-q", "--filter", "name=^hosty-" + id[..12] + "-"])).Length != 0)
+            throw new SandboxException("environment_docker_unverified", "A legacy or unverified instance network remains; verify its ownership before removal, then retry Finish.", 409);
     }
 }

@@ -47,18 +47,20 @@ internal sealed class CoreEnvironmentStore(CoreDataPaths paths)
     }
     private string DataRoot => paths.DataRoot;
 
-    internal async Task<FileStream> LockAllocationAsync(CancellationToken ct)
+    internal async Task<FileStream> LockAllocationAsync(CancellationToken ct, TimeSpan? maxWait = null)
     {
         var file = Path.Combine(RegistryRoot, "allocation.lock");
         if (CoreDataPaths.ContainsSymbolicLink(paths.DataRoot, file))
             throw new SandboxException("environment_path_invalid", "Environment allocation storage must not contain symbolic links.");
         Directory.CreateDirectory(RegistryRoot);
-        var deadline = DateTime.UtcNow.AddSeconds(10);
+        var deadline = DateTime.UtcNow.Add(maxWait ?? TimeSpan.FromSeconds(10));
         while (true)
         {
             ct.ThrowIfCancellationRequested();
             try { return new FileStream(file, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
             catch (IOException) when (DateTime.UtcNow < deadline) { await Task.Delay(50, ct); }
+            catch (IOException ex)
+            { throw new SandboxException("environment_allocation_busy", "Environment resource admission is busy or unavailable; retry after the active start completes. " + ex.Message, 409); }
         }
     }
 
@@ -71,7 +73,7 @@ internal sealed class CoreEnvironmentStore(CoreDataPaths paths)
             {
                 if (record.State == "finished") continue;
                 result.Add(record);
-                if (result.Count >= 2) return result;
+                if (result.Count > 128) throw new SandboxException("environment_capacity", "Environment tree exceeds the supported bound.", 409);
                 owner.VerifyRoot(record);
                 pending.Enqueue(AtRoot(owner.Root(record.Id)));
             }
@@ -82,8 +84,13 @@ internal sealed class CoreEnvironmentStore(CoreDataPaths paths)
         var root = Root(record.Id);
         if (!Directory.Exists(root)) return;
         var identity = CoreInstanceId.BuildPath(root);
-        if (!File.Exists(identity) || File.ReadAllText(identity).Trim() != record.Id)
+        if ((!File.Exists(identity) && !record.RootDeletionStarted) || (File.Exists(identity) && File.ReadAllText(identity).Trim() != record.Id))
             throw new SandboxException("environment_owner_mismatch", "The environment root no longer has its recorded Core identity.", 409);
+    }
+    internal async Task<string[]> CleanupOwnersAsync(CoreEnvironmentRecord record, CancellationToken ct)
+    {
+        var children = await AtRoot(Root(record.Id)).ListUnfinishedTreeAsync(ct);
+        return children.Select(r => r.Id).Append(record.Id).Distinct(StringComparer.Ordinal).ToArray();
     }
     public void DeleteRoot(CoreEnvironmentRecord record)
     {

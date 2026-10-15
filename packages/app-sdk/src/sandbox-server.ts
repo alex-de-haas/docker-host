@@ -87,7 +87,9 @@ export const coreEnvironmentActions = ["environment-create", "environment-list",
 export type CoreEnvironmentAction = typeof coreEnvironmentActions[number];
 export interface CoreEnvironment { id: string; label: string; mode: string; projectPath?: string; context?: SandboxContext;
   state: string; revision: number; port: number; dataRoot?: string; previewUrl: string;
-  process?: { pid: number; startedAt: string }; error?: string; operations: SandboxOperation[] }
+  process?: { pid: number; startedAt: string }; error?: string; operations: SandboxOperation[];
+  limits?: { memoryBytes: number; cpus: number; pids: number; diskBytes: number; applicationMemoryBytes: number; applicationCpus: number; applicationPids: number };
+  usage?: { ownedDiskBytes: number; containerMemoryBytes: number; coreMemoryBytes: number; state: string; observedAt: string; error?: string } }
 /** Full child Core transport. Requires core.environments permissions and live administrator authority.
  * Setup uses ordinary password authentication. Parent credentials are never forwarded to the child. */
 export class CoreEnvironmentClient {

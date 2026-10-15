@@ -309,6 +309,86 @@ public sealed class DockerRuntimeAdapterTests
             "hosty-0123456789ab-com-example-app-web",
             DockerRuntimeAdapter.BuildContainerName("0123456789abcdef0123456789abcdef", "com.example.app", "web"));
 
+    [Theory]
+    [InlineData("|", true)]
+    [InlineData("<no value>|<no value>", true)]
+    [InlineData("0123456789abcdef0123456789abcdef|com.example.app", true)]
+    [InlineData("another-instance|com.example.app", false)]
+    [InlineData("0123456789abcdef0123456789abcdef|another-app", false)]
+    [InlineData("0123456789abcdef0123456789abcdef|", false)]
+    public async Task StartAsync_NonDefaultInstance_ReusesLegacyNetworkButRejectsConflictingOwner(string owner, bool allowed)
+    {
+        const string instance = "0123456789abcdef0123456789abcdef";
+        var runner = new FakeDockerCommandRunner(args => args switch
+        {
+            ["network", "create", ..] => new(1, "", "network already exists"),
+            ["network", "inspect", ..] => new(0, owner, ""),
+            ["pull", ..] => new(0, "Digest: sha256:" + new string('a', 64), ""),
+            _ => new(0, "", ""),
+        });
+        var context = CreateMultiServiceDockerContext("api", "web");
+        context = context with { Manifest = context.Manifest with { Services = context.Manifest.Services
+            .Select(s => s.Key == "web" ? s with { DependsOn = [new("api", null)] } : s).ToArray() } };
+        var adapter = CreateAdapter(runner, instanceId: instance);
+        if (allowed)
+        {
+            await adapter.StartAsync(context);
+            Assert.Equal(2, runner.Commands.Count(c => c[0] == "run"));
+        }
+        else
+        {
+            var error = await Assert.ThrowsAsync<AppLifecycleException>(() => adapter.StartAsync(context));
+            Assert.Equal("runtime_network_unverified", error.Code);
+            Assert.False(runner.Ran("run"));
+        }
+        Assert.Equal(DockerRuntimeAdapter.BuildNetworkName(instance, context.App.Id), runner.Find("network", "inspect")![^1]);
+        Assert.False(runner.Ran("network", "rm"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("|")]
+    [InlineData("<no value>|<no value>")]
+    [InlineData("0123456789abcdef0123456789abcdef|com.example.app")]
+    public async Task StartAsync_PartialStartRemovesOnlyNewDependencyNetwork(string? existingOwner)
+    {
+        const string instance = "0123456789abcdef0123456789abcdef";
+        var running = new HashSet<string>(StringComparer.Ordinal);
+        var runner = new FakeDockerCommandRunner(args =>
+        {
+            switch (args)
+            {
+                case ["network", "create", ..]:
+                    return existingOwner is null ? new(0, "", "") : new(1, "", "network already exists");
+                case ["network", "inspect", ..]:
+                    return new(0, existingOwner!, "");
+                case ["pull", ..]:
+                    return new(0, "Digest: sha256:" + new string('a', 64), "");
+                case ["run", ..]:
+                    var name = args[args.ToList().IndexOf("--name") + 1];
+                    if (name.EndsWith("-web", StringComparison.Ordinal)) return new(1, "", "web failed to start");
+                    running.Add(name);
+                    return new(0, "", "");
+                case ["inspect", "--format", var format, ..] when format.Contains("hosty.app.id", StringComparison.Ordinal):
+                    return running.Contains(args[^1]) ? new(0, "com.example.app\t" + instance, "") : new(1, "", "no such container");
+                case ["rm", ..]:
+                    running.Remove(args[^1]);
+                    return new(0, "", "");
+                default:
+                    return new(0, "", "");
+            }
+        });
+        var context = CreateMultiServiceDockerContext("api", "web");
+        context = context with { Manifest = context.Manifest with { Services = context.Manifest.Services
+            .Select(s => s.Key == "web" ? s with { DependsOn = [new("api", null)] } : s).ToArray() } };
+
+        await Assert.ThrowsAsync<AppLifecycleException>(() => CreateAdapter(runner, instanceId: instance).StartAsync(context));
+
+        Assert.Empty(running);
+        Assert.True(runner.Ran("rm", "-f", DockerRuntimeAdapter.BuildContainerName(instance, context.App.Id, "api")));
+        Assert.Equal(existingOwner is null, runner.Ran("network", "rm", DockerRuntimeAdapter.BuildNetworkName(instance, context.App.Id)));
+    }
+
     [Fact]
     public void RequiresUserNetwork_OnlyWhenAServiceDependsOnAnother()
     {
@@ -1324,6 +1404,14 @@ public sealed class DockerRuntimeAdapterTests
             CreateAdapter(runner).StopAsync(CreateDockerContext(CreateDockerAppRecord(updatePolicy: null, locks: null))));
 
         Assert.Equal("docker_stop_incomplete", ex.Code);
+    }
+
+    [Fact]
+    public async Task StopAsync_DaemonUnavailable_DoesNotReportStopped()
+    {
+        var runner = new FakeDockerCommandRunner(_ => new DockerCommandResult(1, "", "Cannot connect to Docker daemon"));
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => CreateAdapter(runner).StopAsync(CreateDockerContext(CreateDockerAppRecord(null, null))));
+        Assert.Equal("docker_state_unknown", error.Code);
     }
 
     [Fact]

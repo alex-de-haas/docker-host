@@ -77,6 +77,33 @@ public sealed class SandboxServiceTests
         await Assert.ThrowsAsync<SandboxException>(() => operations.CommandAsync(fixture.Actor, instance.Id, "stop", input, default));
     }
 
+    [Theory]
+    [InlineData("start")]
+    [InlineData("restart")]
+    public async Task RestartRemovesRetainedGenerationBeforeRuntimeAdmission(string command)
+    {
+        using var fixture = new Fixture();
+        var ready = await fixture.Command(await fixture.Prepare(), "start");
+        var previous = (await fixture.Store.ReadAsync(ready.Id, default))!;
+        var stopped = await fixture.Command(ready, "stop");
+        Assert.Equal("stopped", stopped.State);
+        Assert.Equal(previous.Resources, (await fixture.Store.ReadAsync(ready.Id, default))!.Resources);
+        fixture.Runtime.Calls.Clear();
+
+        var restarted = await fixture.Command(stopped, command);
+
+        Assert.Equal("ready", restarted.State);
+        Assert.Equal(new[] { "stop", "remove", "start" }, fixture.Runtime.Calls.Select(c => c.Kind));
+        var removed = fixture.Runtime.Calls[1].Instance;
+        Assert.Equal(previous.Generation, removed.Generation);
+        Assert.Equal(previous.Resources, removed.Resources);
+        // Docker admission is inside runtime.StartAsync, so the retained containers have already
+        // been removed when it inventories the child. Never exempt orphaned containers by label.
+        var starting = fixture.Runtime.Calls[2].Instance;
+        Assert.NotEqual(previous.Generation, starting.Generation);
+        Assert.Empty(starting.Resources);
+    }
+
     [Fact]
     public async Task FailedPreparationCanBeDisposedAndEmergencyRevocationSurvivesStoreRecreation()
     {
@@ -367,6 +394,32 @@ public sealed class SandboxServiceTests
     }
 
     private sealed class Clock : IClock { public DateTimeOffset UtcNow => new(2026, 10, 13, 0, 0, 0, TimeSpan.Zero); }
+    [Fact]
+    public async Task Plan_ManagedChildDefaultsLeaveRoomForRelayAndBrowser_ExplicitLimitsArePreserved()
+    {
+        using var f = new Fixture();
+        var config = new HostyCoreRuntimeConfig(f.Root, f.Root, "", 7070, "http://localhost:7070", null, "localhost", null, false);
+        var parent = new CoreEnvironmentStore(CoreDataPaths.FromConfig(config));
+        var id = Guid.NewGuid().ToString("N");
+        Directory.CreateDirectory(Path.Combine(parent.Root(id), "core"));
+        File.WriteAllText(CoreInstanceId.BuildPath(parent.Root(id)), id);
+        await parent.WriteAsync(new(id, f.Actor, new(Guid.NewGuid().ToString(), "QA"), "hash", 7071, 1, "running", DateTimeOffset.UtcNow), default);
+        var childConfig = config with { DataRoot = parent.Root(id), InstanceId = id };
+        var service = new SandboxService(new(CoreDataPaths.FromConfig(childConfig)), f.Inputs, f.Runtime, new Clock(), config: childConfig);
+        var plan = await service.PlanAsync(f.Actor, f.Request, default);
+        var limits = plan.Request.Limits!;
+        Assert.Equal(2147483648, limits.MemoryBytes); Assert.Equal(.5, limits.Cpus); Assert.Equal(128, limits.Pids);
+        var child = new CoreEnvironmentLimits();
+        Assert.True(limits.MemoryBytes + 335544320 + 1677721600 <= child.MemoryBytes);
+        Assert.True(limits.Cpus + .35 + 1.1 <= child.Cpus);
+        Assert.True(limits.Pids + 80 + 272 <= child.Pids);
+        var prepared = await service.PrepareAsync(f.Actor, new(Guid.NewGuid().ToString(), plan.Id, plan.Digest), default);
+        Assert.Equal(limits, prepared.Limits);
+        var explicitLimits = new SandboxLimits();
+        Assert.Equal(explicitLimits, (await service.PlanAsync(f.Actor, f.Request with { Limits = explicitLimits }, default)).Request.Limits);
+        Assert.Equal(explicitLimits, (await f.Service.PlanAsync(f.Actor, f.Request, default)).Request.Limits);
+    }
+
     private sealed class Fixture : IDisposable
     {
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "hosty-sandbox-test-" + Guid.NewGuid().ToString("N"));
@@ -411,6 +464,7 @@ public sealed class SandboxServiceTests
     }
     private sealed class FakeRuntime : ISandboxRuntime
     {
+        public List<(string Kind, SandboxInstance Instance)> Calls { get; } = [];
         public bool FailStart { get; set; }
         public int StartCount { get; private set; }
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -420,6 +474,7 @@ public sealed class SandboxServiceTests
         public TaskCompletionSource? ResumeObserve { get; set; }
         public async Task<SandboxRuntimeStart> StartAsync(SandboxInstance instance, Func<SandboxResource, Task> record, CancellationToken ct)
         {
+            Calls.Add(("start", instance));
             StartCount++;
             await record(new("container", "owned-test-container", instance.Generation));
             Started.TrySetResult();
@@ -428,8 +483,15 @@ public sealed class SandboxServiceTests
             return new("http://sandbox.hosty.localhost:19000", "http://auth.sandbox.hosty.localhost:19000", []);
         }
         public Task StopAsync(SandboxInstance instance, CancellationToken ct)
-            => FailStop ? Task.FromException(new SandboxException("sandbox_stop_failed", "Simulated unavailable daemon.")) : Task.CompletedTask;
-        public Task RemoveAsync(SandboxInstance instance, CancellationToken ct) => Task.CompletedTask;
+        {
+            Calls.Add(("stop", instance));
+            return FailStop ? Task.FromException(new SandboxException("sandbox_stop_failed", "Simulated unavailable daemon.")) : Task.CompletedTask;
+        }
+        public Task RemoveAsync(SandboxInstance instance, CancellationToken ct)
+        {
+            Calls.Add(("remove", instance));
+            return Task.CompletedTask;
+        }
         public async Task<string> ObserveAsync(SandboxInstance instance, CancellationToken ct)
         {
             Observing.TrySetResult();

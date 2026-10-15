@@ -24,6 +24,24 @@ are complete. The owner separately authorized PRs for the Media implementation, 
 and the linked Transcode Engine recovery fix. Remote deployment and changes to the operator's
 primary Core installation are outside that publication request.
 
+## Approved Recovery And Aggregate Budget Work (2026-10-14)
+
+After merging Engine #50, Media #338 and docker-host #593, the owner authorizes a fresh
+Harness/browser acceptance of published Media 0.92.0 and Engine 0.14.0, followed by D5's
+Docker failure/interrupted Finish recovery and D16's aggregate environment budgets.
+Use a separate coordinator Core and `/Users/haas/dev-media` read-only. Keep source and
+external folders outside owned cleanup. No primary Core upgrade or automatic live-data
+switch is part of this work.
+
+The acceptance must distinguish restart adoption from creation of duplicate resources,
+retain the original operation ID after a lost response or interruption, expose incomplete
+cleanup, and independently verify all owned processes, ports, containers, networks, volumes
+and temporary roots are removed after Finish succeeds. Quotas must apply before runtime
+creation and cover sibling/nested environments rather than multiplying a budget per service;
+measure enforcement and preserve explicit soft-disk and host-process limitations.
+The existing broad D5/D16 items stay open until their own required checks pass. D9 retains
+its unrelated login/HMR and cross-platform cases; this release recheck does not close them.
+
 ## Environment Scope (Later Owner Discussion, 2026-10-14)
 
 Two existing execution modes must not be conflated:
@@ -139,9 +157,13 @@ The checked items below record the verified scope merged in #590; expanded requi
 - [x] D23. Verify a real Harness agent editing both Core and Demo App in its session worktree, building a source-mode child Core from that project, consuming the changed Core API in Demo through normal browser authentication, running affected checks, and finishing with independently verified complete cleanup. Preserve sanitized evidence and repair any regressions exposed by the run.
 - [x] D24. Integrate child Core environments into Workspaces and Shell: create/start from validated workspace worktrees with optional source Core selection, ordinary test-account setup, observed app status and authenticated preview links, replayable lifecycle controls and explicit complete Finish. Verify the real embedded browser journey, permission denial, source retention and cleanup, then document the shipped UI.
 
+### Current Recovery Delivery
+
+- [x] D26. Recheck the published Media/Transcode pair through a real Harness agent and browser; implement and verify child-Core Docker loss/recovery, same-request interrupted Finish, complete owned-resource deletion, aggregate sibling/nested reservations, Docker admission limits and soft-disk observation. Preserve the original media folder and document measured limits.
+
 ### Remaining Reliability And Acceptance
 
-- [ ] D5. Complete real Docker-daemon loss/recovery and interruption-during-create/dispose acceptance, keeping journal/replay and cleanup failures observable. Preserve the existing offline CPU/RAM/PID and soft-disk policy; connect its remaining agent/worktree monitor only through the separately approved production worker coordinator.
+- [ ] D5. Complete the remaining offline single-app profile Docker-daemon loss/recovery and interruption-during-create/dispose acceptance (the child-Core subset is tracked explicitly in D26), keeping journal/replay and cleanup failures observable. Preserve the existing offline CPU/RAM/PID and soft-disk policy; connect its remaining agent/worktree monitor only through the separately approved production worker coordinator.
 - [ ] D9. Reproduce and fix the known fresh-login → HMR → navigation regression where consumed callback code/state reappears in the URL; cookie-authenticated reload is not acceptance. Complete the inherited integrated acceptance matrix below and simultaneous Core/Harness/agent/app/browser measurements, compose the authorized Git/PR/CI/review journey, reconcile dependent plans and document only verified host/recipe guarantees.
 - [ ] D11. Decide and separately approve optional remote preview ingress/private access, then implement and verify it, or explicitly retire it if the owner abandons it. Local delivery does not wait for it.
 
@@ -150,7 +172,7 @@ The checked items below record the verified scope merged in #590; expanded requi
 - [ ] D13. Add one-run or saved, revocable operator consent scoped to app/caller and reviewed targets, with mandatory revision/digest revalidation for changed executable contracts/targets; follow the approved consent-policy requirements above, expose effective access, avoid repeated prompts within an unchanged scope and cover browser/setup traffic. Ordinary child Core internet is existing behavior, not evidence that this policy is delivered.
 - [ ] D14. Resolve dependencies to dedicated installations within one test Core and manage their grouped lifecycle with separate data/credentials and no implicit main-environment fallback. Keep shared installed providers deferred pending a concrete provider contract and renewed scope approval.
 - [ ] D15. Complete sandbox integration/acceptance for declared mount slots bound to approved shared-library entries, enforced read-only/read-write limits, reuse/revocation and preservation of external folders during reset/Finish; reuse the existing mount planner rather than a second permission system.
-- [ ] D16. Complete ordinary user/service permission acceptance for child APIs and owned nested creation, including aggregate resource accounting and cleanup. Preserve the existing root-wide two-descendant admission bound and normal roles; do not invent sandbox-specific roles.
+- [ ] D16. Complete ordinary user/service permission acceptance for child APIs and owned nested creation, using D26’s aggregate resource accounting and cleanup. Preserve the existing root-wide two-descendant admission bound and normal roles; do not invent sandbox-specific roles.
 - [ ] D17. Verify the combined permission/dependency/mount/Core-API/child lifecycle contract, including a separate database provider, revocation, main-environment compatibility and cleanup. Shared installed-provider tests apply only after their deferred scope is approved.
 
 ### Same-Host Core Environments (Owner Decision, 2026-10-14)

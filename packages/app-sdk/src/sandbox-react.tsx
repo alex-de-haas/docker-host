@@ -47,9 +47,11 @@ export function CoreEnvironmentPanel({ request, storageKey, workspace, workspace
         const item = selected.find(e => e.id === saved.id);
         const operation = item?.operations.find(o => o.id.replaceAll("-", "") === String(saved.body.requestId).replaceAll("-", ""));
         if (operation && ["succeeded", "failed"].includes(operation.state)) {
-          savePending(null);
+          const superseded = operation !== item?.operations.at(-1);
+          if (operation.state === "succeeded" || saved.kind !== "finish" || superseded) savePending(null);
           setError(operation.state === "failed" ? item?.error ?? "Sandbox operation failed." : "");
           if (item?.state === "finished") setNotice("Sandbox deleted. Workspace source is preserved.");
+          else if (superseded) setNotice("A newer operation replaced the previous request. Review the current sandbox status.");
         }
       }
       const results = await Promise.all(selected.filter(e => e.state === "running").map(async e => {
@@ -83,7 +85,7 @@ export function CoreEnvironmentPanel({ request, storageKey, workspace, workspace
     try {
       savePending(value);
       const result = await request<CoreEnvironment>(value.path, value.body);
-      savePending(null);
+      if (value.kind !== "finish" || result.state === "finished") savePending(null);
       if (result.error) throw new Error(result.error);
       if (result.state === "finished") setNotice("Sandbox deleted. Workspace source is preserved.");
       else setNotice("");
@@ -120,6 +122,8 @@ export function CoreEnvironmentPanel({ request, storageKey, workspace, workspace
           <button className={button} disabled={disabled || ["building", "starting", "stopping", "finishing", "cleanup-failed"].includes(item.state)} onClick={() => void command(item, item.state === "running" ? "stop" : "start")}>{item.state === "running" ? "Stop" : "Start"}</button>
           <button className={button + " text-destructive"} disabled={disabled || item.state === "finishing"} onClick={() => setRemoving(item.id)}>{item.state === "cleanup-failed" ? "Retry deletion" : "Delete sandbox"}</button>
         </div></header>
+      {item.limits && <p className="text-xs text-muted-foreground">Reserved: {(item.limits.memoryBytes / 1073741824).toFixed(1)} GiB container memory · {item.limits.cpus} CPUs · {item.limits.pids} PIDs · {(item.limits.diskBytes / 1073741824).toFixed(1)} GiB soft disk limit. Released after deletion.</p>}
+      {item.usage && <p className="text-xs text-muted-foreground">{item.usage.state === "unknown" ? "Resource usage unavailable; the reservation remains active." : `Observed: ${(item.usage.containerMemoryBytes / 1048576).toFixed(0)} MiB containers · ${(item.usage.coreMemoryBytes / 1048576).toFixed(0)} MiB Core process · ${(item.usage.ownedDiskBytes / 1073741824).toFixed(2)} GiB owned data.`}</p>}
       {item.error && <p role="alert" className="text-sm text-destructive">{item.error}</p>}
       {item.state === "running" && <><EnvironmentApplications value={apps[item.id]} />
         {apps[item.id] && ["setup-required", "sign-in-required"].includes(apps[item.id].state) && <SetupAccount request={request} id={item.id} disabled={disabled} onDone={() => refresh()} />}</>}

@@ -17,7 +17,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
     internal CoreEnvironmentView View(CoreEnvironmentRecord record) => new(record.Id, record.Request.Label,
         record.Request.Mode, record.Request.ProjectPath, record.Request.Context, record.State, record.Revision, record.Port,
         record.State == "finished" ? null : store.Root(record.Id), $"http://core.i-{record.Id}.hosty.localhost:{record.Port}",
-        record.Process, record.Error, record.Operations ?? []);
+        record.Process, record.Error, record.Operations ?? [], CoreEnvironmentResources.Limits(record), record.Usage);
     internal async Task<CoreEnvironmentRecord> RequireAsync(SandboxActor actor, string id, CancellationToken ct)
     {
         var record = await store.ReadAsync(id, ct) ?? throw new SandboxException("environment_not_found", "Environment not found.", 404);
@@ -57,7 +57,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
     }
     private async Task<CoreEnvironmentRecord> ObserveAsync(CoreEnvironmentRecord record, CancellationToken ct)
     {
-        if (record.State is "finished" or "finishing") return record;
+        if (record.State is "finished" or "finishing" or "cleanup-failed" || record.RootDeletionStarted) return record;
         store.VerifyRoot(record);
         var process = await runtime.ObserveAsync(record, store.Root(record.Id), ct);
         var state = process is not null ? "running" : record.State == "running" ? "stopped" : record.State;
@@ -112,6 +112,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             throw new SandboxException("environment_input_invalid", "Select a label and current, release, or source with an absolute Core project path.", 400);
         if (input.WorktreeIds is { } selected && (selected.Length > 16 || selected.Distinct(StringComparer.Ordinal).Count() != selected.Length))
             throw new SandboxException("environment_worktrees_invalid", "Select at most sixteen distinct worktrees.", 400);
+        CoreEnvironmentResources.Validate(input.Limits ?? new());
         await ValidateWorktreesAsync(actor, input, ct);
         var fingerprint = SandboxValidation.Hash(CoreJson.Text(input));
         await allocation.WaitAsync(ct);
@@ -131,6 +132,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             var descendants = await budget.ListUnfinishedTreeAsync(ct);
             if (descendants.Count >= 2)
                 throw new SandboxException("environment_capacity", "Finish an existing environment before creating another (root environment tree limit: two).", 409);
+            CoreEnvironmentResources.Reserve(descendants, input.Limits ?? new());
             var id = Guid.NewGuid().ToString("N");
             var port = RuntimePortHelper.AllocateLoopbackPort(descendants.Select(r => r.Port).ToHashSet());
             var record = new CoreEnvironmentRecord(id, actor, input, fingerprint, port, 1, "stopped", clock.UtcNow);
@@ -160,11 +162,11 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
     }
     private async Task EnsureRootAsync(CoreEnvironmentRecord record, CancellationToken ct)
     {
-        if (record.State == "finished") return;
+        if (record.State == "finished" || record.RootDeletionStarted || record.State is "finishing" or "cleanup-failed") return;
         var root = store.Root(record.Id);
         if (!File.Exists(CoreInstanceId.BuildPath(root)))
         {
-            if (Directory.Exists(root) && Directory.EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories).Any(File.Exists))
+            if (!IncompleteAllocationRoot(root, record.Id))
                 throw new SandboxException("environment_owner_mismatch", "An incomplete root contains unexpected files.", 409);
             Directory.CreateDirectory(Path.Combine(root, "core"));
             await JsonStorage.WriteTextAsync(CoreInstanceId.BuildPath(root), record.Id, ct);
@@ -174,6 +176,23 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             "{\"schemaVersion\":\"distribution-apps.0.1\",\"apps\":[]}", ct);
         foreach (var treeId in record.Request.WorktreeIds ?? [])
             await workspaces!.SetSandboxConsumerAsync(treeId, record.Id, true, ct);
+    }
+    private static bool IncompleteAllocationRoot(string root, string id)
+    {
+        if (!Directory.Exists(root)) return true;
+        foreach (var entry in Directory.EnumerateFileSystemEntries(root))
+        {
+            if (entry != Path.Combine(root, "core") || CoreDataPaths.ContainsSymbolicLink(root, entry) || !Directory.Exists(entry)) return false;
+            foreach (var file in Directory.EnumerateFileSystemEntries(entry))
+            {
+                var name = Path.GetFileName(file);
+                var prefix = Path.GetFileName(CoreInstanceId.BuildPath(root)) + ".";
+                if (CoreDataPaths.ContainsSymbolicLink(root, file) || !File.Exists(file) || !name.StartsWith(prefix, StringComparison.Ordinal)
+                    || !name.EndsWith(".tmp", StringComparison.Ordinal) || !Guid.TryParseExact(name[prefix.Length..^4], "N", out _)
+                    || !id.StartsWith(File.ReadAllText(file), StringComparison.Ordinal)) return false;
+            }
+        }
+        return true;
     }
     public async Task<CoreEnvironmentView> CommandAsync(SandboxActor actor, string id, string kind,
         CoreEnvironmentCommand input, CancellationToken ct)
@@ -191,7 +210,11 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             if (prior is not null)
             {
                 if (prior.Fingerprint != fingerprint) throw ReplayConflict();
-                if (prior.State != "running") return View(record);
+                if (prior.State == "succeeded" || operations.Last().Id != requestId || record.State == "finished") return View(record);
+                if (!accepting) throw new SandboxException("environment_shutdown", "Core is stopping.", 409);
+                operations = operations.Select(o => o.Id == requestId ? o with { State = "running", Error = null } : o).ToList();
+                record = record with { Revision = record.Revision + 1, Operations = operations, Error = null };
+                await store.WriteAsync(record, ct);
             }
             else
             {
@@ -199,6 +222,8 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                     throw new SandboxException("environment_revision_conflict", "Read the current environment revision before changing it.", 409);
                 if (record.State == "finished") return View(record);
                 if (!accepting) throw new SandboxException("environment_shutdown", "Core is stopping.", 409);
+                if (kind != "finish" && (record.RootDeletionStarted || operations.Any(o => o.Kind == "finish")))
+                    throw new SandboxException("environment_finishing", "Finish has closed this environment; retry its original request.", 409);
                 if (operations.Count >= 1024 && kind != "finish") throw new SandboxException("environment_operation_capacity", "The environment operation journal is full; finish it.", 409);
                 operations.Add(new(requestId, kind, fingerprint, "running"));
                 record = record with { Revision = record.Revision + 1, Operations = operations, Error = null };
@@ -227,7 +252,8 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                 }
                 if (kind is "stop" or "restart" or "finish")
                 {
-                    record = record with { State = kind == "finish" ? "finishing" : "stopping" };
+                    record = record with { State = kind == "finish" ? "finishing" : "stopping",
+                        CleanupOwners = kind == "finish" ? record.CleanupOwners ?? await store.CleanupOwnersAsync(record, deadline.Token) : record.CleanupOwners };
                     await store.WriteAsync(record, deadline.Token);
                     await runtime.StopAsync(record, root, kind == "finish", deadline.Token);
                     record = record with { Process = null, State = kind == "finish" ? "finishing" : "stopped" };
@@ -245,6 +271,10 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                 }
                 if (kind == "finish")
                 {
+                    // This journal lives outside the deleted tree. After all writers and Docker resources
+                    // are gone, a crash during recursive deletion may remove the root identity first.
+                    record = record with { RootDeletionStarted = true };
+                    await store.WriteAsync(record, deadline.Token);
                     store.DeleteRoot(record);
                     foreach (var treeId in record.Request.WorktreeIds ?? [])
                         await workspaces!.SetSandboxConsumerAsync(treeId, record.Id, false, deadline.Token);
@@ -277,7 +307,8 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                 await runtime.CleanupAsync(record, store.Root(record.Id), ct);
                 if ((record.Operations ?? []).Any(o => o.State == "running"))
                 {
-                    record = record with { Revision = record.Revision + 1, Error = "An operation was interrupted. Inspect state and retry with a new request ID.",
+                    record = record with { Revision = record.Revision + 1, State = record.Operations!.Any(o => o.Kind == "finish" && o.State == "running") ? "cleanup-failed" : record.State,
+                        Error = "An operation was interrupted. Retry the original request ID and arguments.",
                         Operations = record.Operations!.Select(o => o.State == "running" ? o with { State = "failed", Error = "Parent Core stopped during the operation." } : o).ToArray() };
                     await store.WriteAsync(record, ct);
                 }
@@ -285,7 +316,18 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             catch (Exception ex) when (ex is not OutOfMemoryException and not OperationCanceledException)
             {
                 var record = (await store.ReadAsync(snapshot.Id, ct))!;
-                await store.WriteAsync(record with { State = "failed", Error = ex.Message, Revision = record.Revision + 1 }, ct);
+                var error = ex.Message;
+                if (ex is SandboxException { Code: "environment_core_version" })
+                {
+                    try
+                    {
+                        await runtime.StopAsync(record, store.Root(record.Id), false, ct);
+                        record = record with { Process = null };
+                    }
+                    catch (Exception stopError) when (stopError is not OutOfMemoryException and not OperationCanceledException)
+                    { error += " Stopping the incompatible child also failed: " + stopError.Message; }
+                }
+                await store.WriteAsync(record with { State = record.RootDeletionStarted || record.Operations?.Any(o => o.Kind == "finish") == true ? "cleanup-failed" : "failed", Error = error, Revision = record.Revision + 1 }, ct);
             }
             finally { gate.Release(); }
         }
@@ -305,7 +347,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                 try
                 {
                     await runtime.StopAsync(record, store.Root(record.Id), false, ct);
-                    record = record with { State = "stopped", Process = null, Revision = record.Revision + 1 };
+                    record = record with { State = record.Operations?.Any(o => o.Kind == "finish") == true ? "cleanup-failed" : "stopped", Process = null, Revision = record.Revision + 1 };
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 { record = record with { State = "cleanup-failed", Error = ex.Message, Revision = record.Revision + 1 }; }
@@ -314,16 +356,59 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             finally { gate.Release(); }
         }));
     }
+    internal async Task ObserveResourcesAsync(CancellationToken ct)
+    {
+        foreach (var snapshot in await store.ListAsync(ct))
+        {
+            if (snapshot.State is "finished" or "finishing" or "cleanup-failed" || snapshot.RootDeletionStarted) continue;
+            var gate = Gate(snapshot.Id); if (!await gate.WaitAsync(0, ct)) continue;
+            try
+            {
+                var record = (await store.ReadAsync(snapshot.Id, ct))!;
+                try
+                {
+                    var usage = await runtime.InspectResourcesAsync(record, store.Root(record.Id), ct);
+                    if (usage is null) continue;
+                    record = record with { Usage = usage };
+                    if (usage.OwnedDiskBytes > CoreEnvironmentResources.Limits(record).DiskBytes)
+                    {
+                        await runtime.StopAsync(record, store.Root(record.Id), false, ct);
+                        record = record with { State = "quota-exceeded", Process = null, Revision = record.Revision + 1,
+                            Error = "The owned-data soft disk limit is exceeded. Data is retained; Finish releases the reservation." };
+                    }
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException and not OperationCanceledException)
+                {
+                    record = record with { Usage = new(record.Usage?.OwnedDiskBytes ?? 0, record.Usage?.ContainerMemoryBytes ?? 0,
+                        record.Usage?.CoreMemoryBytes ?? 0, "unknown", clock.UtcNow, ex.Message) };
+                }
+                await store.WriteAsync(record, ct);
+            }
+            finally { gate.Release(); }
+        }
+    }
     private static SandboxException ReplayConflict() => new("environment_replay_conflict", "Reuse the original request UUID with exactly the original arguments.", 409);
 }
 
 internal sealed class CoreEnvironmentSupervisor(CoreEnvironmentService service, CoreShutdownOptions shutdown,
-    ILogger<CoreEnvironmentSupervisor> logger) : IHostedService
+    ILogger<CoreEnvironmentSupervisor> logger) : BackgroundService
 {
-    public async Task StartAsync(CancellationToken ct)
+    public override async Task StartAsync(CancellationToken ct)
     {
         try { await service.ReconcileAsync(ct); }
         catch (Exception ex) { logger.LogError(ex, "Child Core reconciliation failed; environment records are retained for repair."); }
+        await base.StartAsync(ct);
     }
-    public Task StopAsync(CancellationToken ct) => service.ShutdownAsync(shutdown.KeepRuntimeApps, ct);
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+        while (await timer.WaitForNextTickAsync(ct))
+            try { await service.ObserveResourcesAsync(ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Environment resource observation deferred."); }
+    }
+    public override async Task StopAsync(CancellationToken ct)
+    {
+        await base.StopAsync(ct);
+        await service.ShutdownAsync(shutdown.KeepRuntimeApps, ct);
+    }
 }
