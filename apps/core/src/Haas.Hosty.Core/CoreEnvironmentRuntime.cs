@@ -182,6 +182,12 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
         }
         if (endpoint is null || !(endpoint.StartsWith("unix://", StringComparison.Ordinal) || endpoint.StartsWith("npipe://", StringComparison.Ordinal)))
             throw new SandboxException("environment_docker_remote", "Child environments require the shared local Docker engine.", 409);
+        // Docker Desktop installs Buildx under the operator's HOME. The child has a private HOME:
+        // retain CLI discovery without sharing the parent's Docker configuration or credentials.
+        var plugins = await docker.RunAsync(["info", "--format", "{{json .ClientInfo.Plugins}}"], null, ct);
+        if (plugins.ExitCode != 0)
+            throw new SandboxException("environment_docker_unknown", "Cannot discover the shared Docker CLI plugins.", 409);
+        await CoreEnvironmentDockerPlugins.ConfigureAsync(home, plugins.StandardOutput, ct);
         start.Environment["DOCKER_HOST"] = endpoint;
         start.Environment["HOSTY_DATA_ROOT"] = root;
         start.Environment["HOSTY_CORE_PORT"] = record.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);

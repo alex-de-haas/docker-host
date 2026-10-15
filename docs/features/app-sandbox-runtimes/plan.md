@@ -46,6 +46,20 @@ Remote preview D11 remains deferred. The production agent backend remains separa
 [Shared Docker Agent Runtime](../assistant-shared-docker-runtime/feature.md); the 2026-10-15 acceptance uses its supported shared worker. Its implementation and local
 verification are complete; it does not approve the stricter per-session containment scope.
 
+## Approved D9 Integrated Run (2026-10-15)
+
+The owner authorizes a real Harness Docker agent to edit Demo App in a Core-owned worktree,
+create a child Core, verify its separate application containers in the browser, and use Core's
+publication APIs to commit, push and open a test PR with CI and review. This run also covers
+recovery, simultaneous resource measurements and complete sandbox cleanup. A test PR merge is
+not authorized. Verify the published Core 0.135.0, Harness/worker 0.53.0 and Demo 0.17.1 baseline
+from merge commit `b996226e2c1574d6a34f0c0743147d54a3d98844` first. Keep the primary Core unchanged.
+Record results in a new dated report; retain unchecked D9 until its remaining matrix is reconciled.
+The released child Core's private HOME hides user-installed Docker CLI plugins on macOS. The real
+source-build run reproduced a fallback to the legacy builder and refusal of `COPY --chmod`.
+D9 includes the scoped plugin-discovery correction and repeat acceptance; parent Docker credentials
+must remain private, and child-owned Docker settings must survive a restart.
+
 ## Latest Verified Checkpoint (2026-10-15)
 
 The [fresh-login/HMR report](../../reviews/2026-10-15-sandbox-login-hmr-acceptance.md) records the

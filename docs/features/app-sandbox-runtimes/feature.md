@@ -217,6 +217,10 @@ keys, connections, app registry, app data and caches. Parent credentials and pro
 not copied. No workspace is required. Optional registered worktrees are retained as persistent
 consumers until Finish; they remain outside the temporary root.
 
+Docker CLI plugin discovery carries the installed plugin directories reported by Docker into the
+child's own configuration, preserving child-owned settings. Buildx remains available under the
+private HOME without copying the parent's registry logins or Docker configuration.
+
 `current` copies the parent's prepared executable closure; `release` copies its installed native
 Core binary; `source` builds an absolute selected Core project into a child-owned output directory.
 A source restart builds before stopping the previous process, preserving it on compilation failure.
