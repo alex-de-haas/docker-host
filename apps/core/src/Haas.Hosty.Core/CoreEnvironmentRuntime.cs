@@ -77,14 +77,28 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
         { logger.LogWarning("Child Core build retention deferred for {Environment}: {Reason}", record.Id, ex.GetType().Name); }
         return Task.CompletedTask;
     }
-    private static void CopyDirectory(string source, string destination)
+    // Preparation and consent must describe the same file closure. Directory links are excluded;
+    // the retention marker is regenerated for the child rather than copied from its parent.
+    internal static IEnumerable<FileSystemInfo> PreparedEntries(string source)
     {
-        foreach (var file in Directory.EnumerateFiles(source))
-            if (Path.GetFileName(file) != CoreBuildRetention.Marker) File.Copy(file, Path.Combine(destination, Path.GetFileName(file)));
-        foreach (var directory in Directory.EnumerateDirectories(source))
+        foreach (var entry in new DirectoryInfo(source).EnumerateFileSystemInfos())
         {
-            if (new DirectoryInfo(directory).LinkTarget is not null) continue;
-            var target = Path.Combine(destination, Path.GetFileName(directory)); Directory.CreateDirectory(target); CopyDirectory(directory, target);
+            if (entry is DirectoryInfo directory)
+            {
+                if (directory.LinkTarget is not null) continue;
+                yield return entry;
+                foreach (var nested in PreparedEntries(directory.FullName)) yield return nested;
+            }
+            else if (entry.Name != CoreBuildRetention.Marker) yield return entry;
+        }
+    }
+    internal static void CopyDirectory(string source, string destination)
+    {
+        foreach (var entry in PreparedEntries(source))
+        {
+            var target = Path.Combine(destination, Path.GetRelativePath(source, entry.FullName));
+            if (entry is DirectoryInfo) Directory.CreateDirectory(target);
+            else File.Copy(entry.FullName, target);
         }
     }
     internal static bool Alive(CoreEnvironmentProcess? identity)

@@ -159,6 +159,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<CoreEnvironmentStore>();
         builder.Services.AddSingleton<ICoreEnvironmentRuntime, CoreEnvironmentRuntime>();
         builder.Services.AddSingleton<CoreEnvironmentService>();
+        builder.Services.AddSingleton<CoreEnvironmentConsentService>();
         builder.Services.AddSingleton<CoreEnvironmentAuthorization>();
         builder.Services.AddSingleton<CoreEnvironmentAccess>();
         builder.Services.AddSingleton<SandboxStore>();

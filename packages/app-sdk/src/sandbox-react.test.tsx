@@ -136,3 +136,36 @@ it.each(["refresh", "remount"])("discards a superseded Finish replay on %s and p
   expect([oldRequestId, newerRequestId]).not.toContain(requestId);
   expect(container.textContent).toContain("Sandbox deleted");
 });
+
+it("can revoke saved consent after all sandboxes are finished without creating or deleting a child", async () => {
+  let revoked = false;
+  const request = vi.fn(async (path: string, body?: unknown) => {
+    if (body) revoked = true;
+    return { environments: [], consents: revoked ? [] : [{ id, appId: "qa.client", mode: "current", target: "/reviewed/core", state: "active" }] };
+  });
+  await render(request as EnvironmentRequest);
+  expect(container.textContent).toContain("Saved launch permissions (1)");
+  expect(container.textContent).toContain("Running children and their own accounts remain");
+  await click("Revoke permission for qa.client");
+  expect(request).toHaveBeenCalledWith(`/consents/${id}/revoke`, {});
+  expect(container.textContent).not.toContain("Saved launch permissions");
+});
+
+it("shows stale Core targets and retains consent revocation and operator controls", async () => {
+  let revoked = false;
+  const request = vi.fn(async (path: string, body?: unknown) => {
+    if (body) { revoked = true; return {}; }
+    return { environments: [{ ...item, state: "stopped", access: {
+      state: revoked ? "revoked-or-unavailable" : "target-changed", grantId: "grant", saved: true, description: "Trusted Core",
+    } }] };
+  });
+  await render(request as EnvironmentRequest);
+  expect(container.textContent).toContain("Core target changed or unavailable; review launch permission");
+  expect(container.textContent).not.toContain("Saved launch permission");
+  // This panel uses operator authority, which remains independent of delegated launch consent.
+  expect(button("Start").disabled).toBe(false);
+  expect(button("Delete sandbox").disabled).toBe(false);
+  await click("Revoke launch permission");
+  expect(request).toHaveBeenCalledWith(`/${id}/consent/revoke`, {});
+  expect(container.textContent).toContain("Launch permission revoked or unavailable");
+});
