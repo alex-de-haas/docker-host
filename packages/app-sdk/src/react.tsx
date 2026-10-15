@@ -1,5 +1,6 @@
 "use client";
 import { captureChromeHints } from "./ui-composition";
+import { replaceConsumedUrl } from "./consumed-url";
 
 // React slice: the client identity bridge — probe, silent recovery, and the fallback
 // cards. Prop-less by design: the app id and browser-reachable Core origin arrive in the
@@ -183,7 +184,7 @@ export function HostLaunchBridge() {
     // ignored must not survive into a link someone copies.
     if (url.searchParams.has(LAUNCH_MODE_PARAM)) {
       url.searchParams.delete(LAUNCH_MODE_PARAM);
-      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      replaceConsumedUrl(url);
     }
   }, []);
 
@@ -436,7 +437,7 @@ export function useAppIdentity({
       url.searchParams.delete("code");
       url.searchParams.delete("state");
       if (isSilentError || protocolRequired) url.searchParams.delete("error");
-      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      replaceConsumedUrl(url);
     }
     if (code && !error && !upgradedLegacy && attempt && !exchangeRef.current) {
       exchangeRef.current = {
@@ -630,7 +631,7 @@ export function HostThemeBridge({ followSystem = true, onTheme }: HostThemeBridg
     if (url.searchParams.has(THEME_PARAM) || url.searchParams.has(THEME_PREFERENCE_PARAM)) {
       url.searchParams.delete(THEME_PARAM);
       url.searchParams.delete(THEME_PREFERENCE_PARAM);
-      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      replaceConsumedUrl(url);
     }
 
     const handleMessage = (event: MessageEvent) => {

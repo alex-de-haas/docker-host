@@ -200,6 +200,46 @@ public sealed class SandboxServiceTests
         Assert.False(Directory.Exists(Path.Combine(fixture.Root, "core", "development")));
     }
 
+    [Theory]
+    [InlineData("preparing", "running", true)]
+    [InlineData("stopped", "unknown", false)]
+    [InlineData("unknown", "failed", false)]
+    public async Task InterruptedPrepareResumesAfterReconciliation(string state, string operationState, bool reconcile)
+    {
+        using var fixture = new Fixture();
+        var plan = await fixture.Service.PlanAsync(fixture.Actor, fixture.Request, default);
+        var request = new SandboxPrepareRequest(Guid.NewGuid().ToString(), plan.Id, plan.Digest);
+        var first = await fixture.Service.PrepareAsync(fixture.Actor, request, default);
+        var instance = (await fixture.Store.ReadAsync(first.Id, default))!;
+        fixture.Store.RemoveTemporary(first.Id);
+        await fixture.Store.WriteAsync(instance with { State = state, ErrorCode = "sandbox_prepare_incomplete",
+            Operations = instance.Operations.Select(o => o with { State = operationState,
+                ErrorCode = "sandbox_operation_interrupted", Message = "Interrupted" }).ToArray() }, default);
+        if (reconcile)
+        {
+            var browser = new SandboxBrowser(fixture.Store, fixture.Service, null!, null!, new Clock());
+            var supervisor = new SandboxSupervisor(fixture.Store, fixture.Runtime, null!, browser, new Clock(),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<SandboxSupervisor>.Instance);
+            await supervisor.ObserveAsync(first.Id, default);
+            Assert.Equal("stopped", (await fixture.Store.ReadAsync(first.Id, default))!.State);
+        }
+        var replay = await fixture.NewService().PrepareAsync(fixture.Actor, request, default);
+        Assert.Equal(first.Id, replay.Id);
+        Assert.Equal("prepared", replay.State);
+        Assert.Null(replay.ErrorCode);
+        var operation = Assert.Single(replay.Operations);
+        Assert.Equal("succeeded", operation.State);
+        Assert.Null(operation.ErrorCode);
+        Assert.Null(operation.Message);
+        Assert.True(Directory.Exists(fixture.Store.DataPath(first.Id, "data")));
+        Assert.Single(await fixture.Store.ListAsync(default));
+
+        await fixture.Command(replay, "dispose");
+        var disposed = await fixture.NewService().PrepareAsync(fixture.Actor, request, default);
+        Assert.Equal("disposed", disposed.State);
+        Assert.False(Directory.Exists(fixture.Store.DataRoot(first.Id)));
+    }
+
     [Fact]
     public async Task LostAllocationIndexRecoversPersistedPreparationInsteadOfDuplicatingIt()
     {
@@ -321,7 +361,15 @@ public sealed class SandboxServiceTests
         Assert.Empty(stored.Users);
         Assert.True(Directory.Exists(fixture.Store.DataRoot(instance.Id)));
         fixture.Runtime.FailStop = false;
-        var done = await fixture.NewService().CommandAsync(fixture.Actor, instance.Id, "dispose", dispose, default);
+        fixture.Runtime.ResumeStop = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var retry = fixture.NewService().CommandAsync(fixture.Actor, instance.Id, "dispose", dispose, default);
+        await fixture.Runtime.PausedStop.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var recovering = (await fixture.Store.ReadAsync(instance.Id, default))!;
+        Assert.Equal("running", recovering.Operations.Single(o => o.Id == dispose.RequestId).State);
+        Assert.Null(recovering.ErrorCode);
+        Assert.Null(recovering.Operations.Single(o => o.Id == dispose.RequestId).ErrorCode);
+        fixture.Runtime.ResumeStop.SetResult();
+        var done = await retry;
         Assert.Equal("disposed", done.State);
         Assert.False(Directory.Exists(fixture.Store.DataRoot(instance.Id)));
         Assert.False(Directory.Exists(fixture.Store.InstanceRoot(instance.Id)));
@@ -470,6 +518,8 @@ public sealed class SandboxServiceTests
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource? ResumeStart { get; set; }
         public bool FailStop { get; set; }
+        public TaskCompletionSource? ResumeStop { get; set; }
+        public TaskCompletionSource PausedStop { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Observing { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource? ResumeObserve { get; set; }
         public async Task<SandboxRuntimeStart> StartAsync(SandboxInstance instance, Func<SandboxResource, Task> record, CancellationToken ct)
@@ -482,10 +532,11 @@ public sealed class SandboxServiceTests
             if (FailStart) throw new SandboxException("sandbox_start_failed", "Simulated interrupted start.");
             return new("http://sandbox.hosty.localhost:19000", "http://auth.sandbox.hosty.localhost:19000", []);
         }
-        public Task StopAsync(SandboxInstance instance, CancellationToken ct)
+        public async Task StopAsync(SandboxInstance instance, CancellationToken ct)
         {
             Calls.Add(("stop", instance));
-            return FailStop ? Task.FromException(new SandboxException("sandbox_stop_failed", "Simulated unavailable daemon.")) : Task.CompletedTask;
+            if (FailStop) throw new SandboxException("sandbox_stop_failed", "Simulated unavailable daemon.");
+            if (ResumeStop is not null) { PausedStop.TrySetResult(); await ResumeStop.Task.WaitAsync(ct); }
         }
         public Task RemoveAsync(SandboxInstance instance, CancellationToken ct)
         {

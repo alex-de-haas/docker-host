@@ -106,6 +106,17 @@ public sealed class DockerRuntimeAdapterTests
         Assert.Equal(coreOrigin, result);
     }
 
+    [Theory]
+    [InlineData("redis://127.0.0.1:6379", "redis://host.docker.internal:6379/")]
+    [InlineData("postgresql://localhost:5432/test?sslmode=disable", "postgresql://host.docker.internal:5432/test?sslmode=disable")]
+    [InlineData("redis://[::1]:6379/2", "redis://host.docker.internal:6379/2")]
+    [InlineData("http://0.0.0.0:8080/api?mode=test", "http://host.docker.internal:8080/api?mode=test")]
+    [InlineData("redis://database.example:6379/2", "redis://database.example:6379/2")]
+    [InlineData("file://localhost/tmp/database", "file://localhost/tmp/database")]
+    [InlineData("not-a-url", "not-a-url")]
+    public void BuildDockerDependencyUrl_RewritesOnlyLocalHostsAcrossProtocols(string endpoint, string expected)
+        => Assert.Equal(expected, DockerRuntimeAdapter.BuildDockerDependencyUrl(endpoint));
+
     [Fact]
     public void BuildPortArguments_DefaultPort_PublishesLoopbackTcpOnlyAndInjectsHostPortOnce()
     {

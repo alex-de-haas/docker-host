@@ -136,3 +136,17 @@ it.each(["refresh", "remount"])("discards a superseded Finish replay on %s and p
   expect([oldRequestId, newerRequestId]).not.toContain(requestId);
   expect(container.textContent).toContain("Sandbox deleted");
 });
+
+it("can revoke saved consent after all sandboxes are finished without creating or deleting a child", async () => {
+  let revoked = false;
+  const request = vi.fn(async (path: string, body?: unknown) => {
+    if (body) revoked = true;
+    return { environments: [], consents: revoked ? [] : [{ id, appId: "qa.client", mode: "current", target: "/reviewed/core", state: "active" }] };
+  });
+  await render(request as EnvironmentRequest);
+  expect(container.textContent).toContain("Saved launch permissions (1)");
+  expect(container.textContent).toContain("Running children and their own accounts remain");
+  await click("Revoke permission for qa.client");
+  expect(request).toHaveBeenCalledWith(`/consents/${id}/revoke`, {});
+  expect(container.textContent).not.toContain("Saved launch permissions");
+});

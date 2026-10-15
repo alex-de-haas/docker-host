@@ -40,6 +40,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(CoreEnvironmentWorkspaceCreate))]
 [JsonSerializable(typeof(CoreEnvironmentApplications))]
 [JsonSerializable(typeof(CoreEnvironmentCreate))]
+[JsonSerializable(typeof(CoreEnvironmentConsentPlan))]
 [JsonSerializable(typeof(CoreEnvironmentCommand))]
 [JsonSerializable(typeof(CoreEnvironmentRecord))]
 [JsonSerializable(typeof(CoreEnvironmentView))]

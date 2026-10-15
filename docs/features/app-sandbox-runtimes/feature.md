@@ -66,7 +66,7 @@ Technical stop/restart retains personas and data. Start after stop and explicit 
 previous generation before runtime admission inventories container capacity; stopped containers are
 not counted again as part of the new generation. Finish/dispose first revokes access, verifies
 that owned consumers are stopped, then deletes temporary folders and realm state and releases the
-source consumer. A minimal operation receipt remains for disposal replay. Source worktrees and
+source consumer. A minimal operation receipt remains for disposal replay. An interrupted prepare resumes from its unfinished journal on the original request ID, including after reconciliation marks it stopped or unknown; later lifecycle operations and disposal are never revived by that replay. A retried disposal records running again before cleanup begins, so asynchronous observers do not confuse the preceding failed/unknown attempt with the current attempt. Source worktrees and
 explicitly exported reports are outside instance cleanup. Expired plans are pruned; retained plans, owners, allocation receipts and operation journals have
 explicit admission ceilings. Disposal and replay remain available at those ceilings.
 
@@ -192,6 +192,16 @@ Current limitations include local HTTP origins only, no automatic remote publica
 online package installation, and no sandbox adaptation of Demo App's MCP surface. The broader
 containerized-agent transport remains owned by the containment feature; the sandbox plan retains
 its own integrated development acceptance. See the unchecked deliverables for remaining work.
+
+## Fresh Login And HMR Verification
+
+The [2026-10-15 acceptance](../../reviews/2026-10-15-sandbox-login-hmr-acceptance.md) reproduces
+consumed callback parameters returning after HMR and verifies the SDK cleanup synchronization fix.
+Fresh password login works through Shell embedding and direct Demo launch; source edits update the
+open page without restoring `code`/`state`, and navigation/reload stay authenticated. Finish removes
+the child process, three app containers, one network, six cache volumes and temporary root while
+retaining source. The report distinguishes container measurements from incomplete native Harness
+peak capture and records separate hash-only navigation behavior. D9 remains open for wider acceptance.
 
 ## Parent-Managed Child Core Environments
 
@@ -369,6 +379,39 @@ The browser creates a read-only catalog, scans 31 files, manually identifies one
 The agent removes exports and finishes both test children. Independent checks confirm removed child processes, ports, containers and roots; all 118 source-file SHA-256 hashes and filesystem observations match. External folders survive Core Finish, then the fixture removes its own output and helper resources. Source worktrees survive.
 
 Automatic TMDb enrichment and torrent ingestion are outside this setup. Measured fixture limits and memory do not implement aggregate child admission quotas; the broader permission, revocation and platform matrix remains in the plan.
+
+## Trusted Child Core Consent
+
+Delegated child creation requires explicit operator consent in addition to the initiating app's
+`core.environments.manage` permission and current administrator authority. Harness exposes
+`environment_consent` with the exact `environment_create` arguments. Core returns its normal
+confirmation page; the page defaults to this run and offers a saved permission for matching launches.
+Preparing or visiting the page does not allocate or start a child. After approval, the caller retries
+the original creation UUID. Direct operator launches, including the workspace UI action, retain
+ordinary operator authority and do not grant permission for unrelated later launches by that app.
+
+Consent uses the existing background-grant store. A scope pins the owner authorization revision,
+calling installation, current/release/source mode, Core target, trust-contract version and resource
+ceilings. A one-run scope additionally pins the normalized creation request. Saved source consent
+trusts ordinary edits in the chosen Core project/worktree, while current/release consent pins the
+prepared binary closure. Another target or increased resource ceiling requires review. Worktree
+ownership and source path checks still apply independently. A single-app sandbox grant cannot
+launch a whole Core; the separate `core-environment` scope can issue normal short-lived background
+credentials for its reviewed actions.
+
+The shared Shell/Workspaces panel shows effective consent and supports revocation. Shell also lists
+saved permissions when no environment remains. Revocation prevents new delegated creation,
+start/restart, setup and child API transport. The operator retains inspection, Stop and Finish.
+Finish retires one-run consent; saved consent remains an explicit operator policy until revoked.
+After reviewing a changed target or renewed permission, replaying the original creation request
+updates the active child's consent without replacing its identity, data or lifecycle journal.
+Revocation alone neither stops a running child nor retracts its own accounts or credentials.
+The child remains a trusted Core with ordinary administrator rights, internet and shared Docker;
+its normal app-installation and shared-mount review are not replaced by parent-side policy.
+
+The [2026-10-15 trusted-Core acceptance](../../reviews/2026-10-15-trusted-core-consent-acceptance.md) verifies one-run/saved consent, revocation, dedicated Redis dependencies, shared mount limits, ordinary roles, nested cleanup and Linux-in-Docker interrupted Finish. It records the measured resource envelope and remaining host-coverage limits.
+
+The [offline daemon acceptance](../../reviews/2026-10-15-offline-sandbox-daemon-acceptance.md) verifies interrupted prepare, actual Docker loss, revoked preview with retained data, observable failed cleanup, same-UUID disposal after coordinator death, browser recovery and complete resource removal on macOS. D5 retains production worker-monitor integration; this bounded run does not establish the entire D9 host and measurement matrix.
 
 ## Testing Expectations
 

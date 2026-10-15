@@ -1,7 +1,7 @@
 namespace Haas.Hosty.Core;
 
 internal sealed class CoreEnvironmentAuthorization(AppServiceTokenService services, AppRegistryStore apps,
-    AppIdentityService identity, UserDirectoryStore users)
+    AppIdentityService identity, UserDirectoryStore users, AppSessionGrantStore sessions)
 {
     public async Task<SandboxActor> RequireAsync(HttpRequest request, string appId, bool read, CancellationToken ct)
     {
@@ -13,11 +13,13 @@ internal sealed class CoreEnvironmentAuthorization(AppServiceTokenService servic
         if (app is null || !AppManagementAuthorization.HasPermission(app, permission))
             throw new AppIdentityException("app_permission_required", "The app requires " + permission + ".");
         // A single-app background sandbox grant must not grow into authority over a whole Core.
-        var actor = await identity.RequireOperationHashAsync(AppIdentityService.HashToken(request.Headers["X-Hosty-User-Token"].ToString()),
-            appId, _ => false, ct);
+        var hash = AppIdentityService.HashToken(request.Headers["X-Hosty-User-Token"].ToString());
+        var actor = await identity.RequireOperationHashAsync(hash, appId,
+            scope => scope.Kind == "core-environment" && scope.Actions.Contains(read ? "read" : "manage"), ct);
         if (!(await users.ReadAsync(ct)).Users.Any(u => u.Id == actor.UserId && !u.Disabled && AppAccessPolicy.IsAdmin(u)))
             throw new AppIdentityException("admin_required", "A current administrator is required.");
-        return new(actor.UserId, appId, app.InstalledAt);
+        var session = await sessions.TryResolveAsync(hash, ct);
+        return new(actor.UserId, appId, app.InstalledAt, session?.BackgroundGrantId, session?.BackgroundScopeId);
     }
 }
 
@@ -33,6 +35,21 @@ internal static class CoreEnvironmentEndpoints
         routes.MapPost(root + "/from-workspace", async (CoreEnvironmentWorkspaceCreate input, HttpRequest request,
             UserDirectoryStore users, IClock clock, CoreEnvironmentService service, CancellationToken ct) =>
             await Admin(request, users, clock, false, actor => service.CreateFromWorkspaceAsync(actor, input, ct), ct));
+        routes.MapPost(root + "/consents/{id}/revoke", async (string id, HttpRequest request, UserDirectoryStore users,
+            IClock clock, CoreEnvironmentConsentService consent, CoreEnvironmentService service, CancellationToken ct) =>
+            await Admin(request, users, clock, false, async actor =>
+            {
+                await consent.RevokeAsync(actor, id, ct);
+                return await service.ListAsync(actor, ct);
+            }, ct));
+        routes.MapPost(root + "/{id}/consent/revoke", async (string id, HttpRequest request, UserDirectoryStore users,
+            IClock clock, CoreEnvironmentService service, BackgroundGrantService grants, CancellationToken ct) =>
+            await Admin(request, users, clock, false, async actor =>
+            {
+                var record = await service.RequireAsync(actor, id, ct);
+                if (record.Consent is { } consent) await grants.RevokeAsync(actor.UserId, consent.GrantId, ct);
+                return await service.ReadAsync(actor, id, ct);
+            }, ct));
         routes.MapGet(root + "/{id}/apps", async (string id, HttpRequest request,
             UserDirectoryStore users, IClock clock, CoreEnvironmentAccess access, CancellationToken ct) =>
             await Admin(request, users, clock, true, actor => access.ApplicationsAsync(actor, id, ct), ct));
@@ -50,6 +67,20 @@ internal static class CoreEnvironmentEndpoints
             UserDirectoryStore users, IClock clock, CoreEnvironmentAccess access, CancellationToken ct) =>
             await Admin(request, users, clock, false, actor => access.SendAsync(actor, id, input, ct), ct));
         const string internalRoot = "/api/internal/apps/{appId}/core-environments";
+        routes.MapPost(internalRoot + "/consent", async (string appId, CoreEnvironmentCreate input, HttpRequest request,
+            CoreEnvironmentAuthorization auth, CoreEnvironmentService service, CoreEnvironmentConsentService consent,
+            InstallationApprovalStore approvals, CorePublicOriginResolver origins, IClock clock, CancellationToken ct) =>
+            await SandboxEndpoints.Handle(async () =>
+            {
+                var actor = await auth.RequireAsync(request, appId, false, ct);
+                if (actor.GrantId is not null) throw new AppIdentityException("interactive_required", "Review new consent with an interactive administrator.");
+                var plan = await consent.PlanAsync(actor, await service.ValidateCreateAsync(actor, input, ct), ct);
+                var entry = approvals.Add(new InstallationApproval { UserId = actor.UserId, CallerAppId = appId,
+                    IdentityToken = request.Headers["X-Hosty-User-Token"].ToString(), CallerName = plan.DisplayName,
+                    ExpiresAt = clock.UtcNow.Add(InstallationApprovalStore.Lifetime), EnvironmentPlan = plan });
+                approvals.Submit(entry, new());
+                return approvals.View(entry, origins.Effective);
+            }));
         routes.MapGet(internalRoot, async (string appId, HttpRequest request, CoreEnvironmentAuthorization auth, CoreEnvironmentService service, CancellationToken ct) =>
             await SandboxEndpoints.Handle(async () => await service.ListAsync(await auth.RequireAsync(request, appId, true, ct), ct)));
         routes.MapGet(internalRoot + "/{id}", async (string appId, string id, HttpRequest request, CoreEnvironmentAuthorization auth, CoreEnvironmentService service, CancellationToken ct) =>

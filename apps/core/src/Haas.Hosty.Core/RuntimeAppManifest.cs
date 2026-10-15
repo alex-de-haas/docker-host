@@ -2060,10 +2060,10 @@ internal sealed class DockerRuntimeAdapter(
             {
                 runArgs.Add("-e");
                 // A dependency endpoint published on the host's loopback is unreachable from inside
-                // this container, so rewrite a loopback URL to host.docker.internal (same rewrite
-                // used for HOSTY_CORE_ORIGIN). The dependency must publish the endpoint host-reachable
+                // this container, so rewrite its host for HTTP and non-HTTP protocols alike.
+                // The dependency must publish the endpoint host-reachable
                 // (expose:host) for this to connect — see cross-app-dependencies.md.
-                runArgs.Add($"HOSTY_DEPENDENCY_{RuntimePortHelper.NormalizeEnvironmentKey(dependency.Key)}_URL={BuildDockerCoreOrigin(dependency.Value)}");
+                runArgs.Add($"HOSTY_DEPENDENCY_{RuntimePortHelper.NormalizeEnvironmentKey(dependency.Key)}_URL={BuildDockerDependencyUrl(dependency.Value)}");
             }
 
             foreach (var serviceUrl in RuntimeServiceDiscovery.BuildEnvironment(context.AllServices, service, (target, port) =>
@@ -3286,6 +3286,14 @@ internal sealed class DockerRuntimeAdapter(
         return settings.BuildEnvironment(endpoint, context.App.Id, serviceKey)
             .Select(pair => $"{pair.Key}={pair.Value}")
             .ToArray();
+    }
+
+    internal static string BuildDockerDependencyUrl(string endpoint)
+    {
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.IsFile || !IsHostLocalBinding(uri.Host))
+            return endpoint;
+        // Dependency URLs can carry protocol-specific paths/options. Only the host changes.
+        return new UriBuilder(uri) { Host = "host.docker.internal" }.Uri.AbsoluteUri;
     }
 
     internal static string BuildDockerCoreOrigin(string coreOrigin)
