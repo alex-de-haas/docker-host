@@ -22,6 +22,6 @@ internal static class CoreEnvironmentDockerPlugins
             .Select(value => value!.GetValue<string>()) ?? [];
         config["cliPluginsExtraDirs"] = new JsonArray(existing.Concat(directories)
             .Distinct(StringComparer.Ordinal).Select(value => (JsonNode?)JsonValue.Create(value)).ToArray());
-        await JsonStorage.WriteTextAsync(path, config.ToJsonString(), ct);
+        await JsonStorage.WriteOwnerFileAsync(path, config, ct);
     }
 }
