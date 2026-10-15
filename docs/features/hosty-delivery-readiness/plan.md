@@ -47,6 +47,9 @@ Core API boundary, so its owning plan is Ready.
 
 ## Verified Sandbox Progress (2026-10-15)
 
+After PR #595, the owner requested supported Harness execution in one shared Docker container.
+The [shared runtime](../assistant-shared-docker-runtime/feature.md) records the completed local delivery, with both providers and selected-account authorization import verified. Per-session containment remains a separate Draft scope.
+
 Sandbox now ships independent single-app instances and trusted child Core environments, Harness
 lifecycle tools, Shell/Workspaces previews, separate data/caches and interrupted-Finish recovery.
 See [current behavior](../app-sandbox-runtimes/feature.md), rather than treating the original
@@ -56,9 +59,8 @@ latest SDK correction and complete child cleanup. The
 [trusted-Core acceptance](../../reviews/2026-10-15-trusted-core-consent-acceptance.md) verifies saved
 consent and dedicated dependency/mount scenarios; the
 [offline daemon acceptance](../../reviews/2026-10-15-offline-sandbox-daemon-acceptance.md) verifies
-actual Docker-loss and interrupted cleanup recovery. Sandbox retains production worker-monitor
-integration, wider integrated measurements and unverified host cases. Production
-agent containment, app authoring, feedback and redesign retain their separate approval and scope.
+actual Docker-loss and interrupted cleanup recovery. Sandbox retains the composed Git/publication journey and unverified host/recipe cases.
+Stricter per-session agent containment, app authoring, feedback and redesign retain their separate approval and scope.
 This checkpoint does not approve implementation of this Draft umbrella.
 
 ## Existing Foundation And Actual Gaps
@@ -69,8 +71,8 @@ This checkpoint does not approve implementation of this Draft umbrella.
 | Workspaces | [Session workspaces](../assistant-session-workspaces/feature.md) and [Workspaces viewer](../workspaces-app/feature.md) | Child runtime status and preview controls ship; complete the remaining integrated acceptance without making the viewer a second orchestrator |
 | Git and review | [PR lifecycle](../assistant-pr-lifecycle/feature.md): commits, push, draft/ready PRs, CI/review observation and completion | Verify access from the contained runner and compose it with sandbox evidence; do not reimplement publication |
 | App creation | [Prototype Workspaces](../app-prototype-workspaces/plan.md), [Development Controls](../app-development-controls/plan.md), [App Authoring](../app-authoring/plan.md) | Durable creation, recovery and create/view/change flow; refresh older baseline tables against shipped workspace/publication APIs |
-| Agent boundary | [Containment](../assistant-runtime-containment/plan.md) | Shared host-contained execution first; session isolation retained as later tracked work |
-| Sandbox | [App Sandbox](../app-sandbox-runtimes/plan.md) | Production worker-monitor integration, remaining cross-feature/host acceptance and full simultaneous measurements |
+| Agent boundary | [Shared Docker Agent Runtime](../assistant-shared-docker-runtime/feature.md) and [Containment](../assistant-runtime-containment/plan.md) | Shared worker implementation and both-provider local acceptance complete; stricter session isolation retains its separate Draft plan |
+| Sandbox | [App Sandbox](../app-sandbox-runtimes/plan.md) | Remaining cross-feature/Git acceptance and native Linux/Windows host verification |
 | Feedback | [App Feedback Inbox](../app-feedback-inbox/plan.md) and shipped [Overlay](../hosty-overlay/feature.md) | Durable draft annotations, intake, administrator triage and optional assistant grouping/delegation |
 | Redesign | [Design System](../design-system/plan.md), Ink and Signal | Apply foundations and prepared screens with functional parity; mockups are not a complete inventory of capabilities |
 
@@ -120,7 +122,7 @@ need explicit instance access; neither an unguessable URL nor a synthetic login 
 
 | Priority | Outcome | Acceptance owner |
 | --- | --- | --- |
-| P0 | One working agent container protects the host; comparative measurements explain whether session containers are worth adding | [Containment](../assistant-runtime-containment/plan.md), D9 and D11-D13 |
+| P0 | One working agent container protects the host; comparative measurements explain whether session containers are worth adding | [Shared Docker Agent Runtime](../assistant-shared-docker-runtime/feature.md); local acceptance complete, eventual comparisons remain in Containment D9 |
 | P0 | Workspace Docker instances run separately with empty/seeded data, real Core login and local preview | [Sandbox](../app-sandbox-runtimes/plan.md), D1-D6/D10 |
 | P0 | Agent edits, tests through Playwright, operator inspects, then commit/push/PR/CI/review work through the existing publication path | [Sandbox D8-D9](../app-sandbox-runtimes/plan.md), [Development Sessions D1-D2](../assistant-development-sessions/plan.md), [PR lifecycle](../assistant-pr-lifecycle/feature.md) |
 | P0 | Create a new app from Shell and continue building it through the same workspace/sandbox flow | [Prototype Workspaces](../app-prototype-workspaces/plan.md), [App Authoring](../app-authoring/plan.md) |
@@ -214,11 +216,10 @@ implementation checklist:
    Then verify normal operator login and Playwright against that contract, including denied access
    and stale evidence after edits. Owners: Sandbox D2/D6/D8/D10 and this plan's D2. A standalone
    browser result is insufficient; no fake identity or installed-app credential reuse fills the gap.
-2. **Turn the proven worker path into an approved backend.** Replace the dated command wrapper,
-   loopback bridge and absolute-path mount adaptation with supported transport, Git metadata,
-   provider-state and stop/recovery contracts. Preserve the agent/app separation. Owners:
-   Containment D11-D13. Keep per-session containers and concurrency comparison secondary until
-   this one-agent path and app resource budget are understood.
+2. **Use the verified shared worker.** The [Shared Docker Agent Runtime](../assistant-shared-docker-runtime/feature.md)
+   implements the native coordinator, both provider transports, read-only Git metadata, selected
+   credentials and stop/recovery contract. Separate agent/app execution is verified locally.
+   Per-session containers and concurrency comparisons retain their separate Draft scope.
 3. **Complete the demonstration journey.** Compose sandbox/browser evidence with the existing
    Git/PR/CI/review path and creation from Shell, then apply ready visual references with parity
    checks. Existing feature owners retain implementation; this plan's D3 collects acceptance.
@@ -227,9 +228,7 @@ The [2026-10-14 runtime acceptance summary](../app-sandbox-runtimes/feature.md#i
 records completion of the two local Core sandbox journeys: real Harness/worktree edits and
 independent artifact QA after logout under scoped background authority. Separate agent/app
 containers, local preview/HMR, temporary users/data, private browser results, failure checks and
-cleanup passed. The owning Sandbox plan retains D5/D9/D11 for its remaining interruption,
-production-coordinator, cross-feature and optional remote acceptance. The experimental agent
-transport remains distinct from the Draft production Containment backend. No Git publication,
+cleanup passed. The owning Sandbox plan retains D9/D11 for its remaining cross-feature/host and optional remote acceptance. The supported shared-runtime backend now replaces the earlier experimental worker for this local journey. No Git publication,
 production data trial or remote deployment is implied by these results.
 
 Local preview should extend [Local Browser Origins](../local-browser-origins/feature.md), including

@@ -442,6 +442,20 @@ The [2026-10-15 trusted-Core acceptance](../../reviews/2026-10-15-trusted-core-c
 
 The [offline daemon acceptance](../../reviews/2026-10-15-offline-sandbox-daemon-acceptance.md) verifies interrupted prepare, actual Docker loss, revoked preview with retained data, observable failed cleanup, same-UUID disposal after coordinator death, browser recovery and complete resource removal on macOS. D5 retains production worker-monitor integration; this bounded run does not establish the entire D9 host and measurement matrix.
 
+## Shared Agent Worker Accounting
+
+The [supported shared Harness worker](../assistant-shared-docker-runtime/feature.md) is separate from
+application and child Core lifecycles. Offline sandbox admission avoids double-counting its existing
+agent reservation only when the container has the exact derived name/labels and an active Core-owned
+worker lease; a label alone grants no exemption. Unverified containers retain ordinary accounting.
+Worker Stop does not Finish an application sandbox. Demo dependency-image scripts have explicit
+readable modes so private Core source checkouts do not make the non-root application fail at startup.
+
+Application start/restart capacity refusal returns a structured HTTP 409 with the environment error
+code. Core settles the app to stopped/failed, preserves the diagnostic and permits a normal retry
+after capacity is available; it does not leave an app indefinitely starting. Stopped containers
+continue to reserve their limits until the owning runtime is removed.
+
 ## Testing Expectations
 
 Verify embedded Workspaces creation in current/source mode, normal child login and application preview,

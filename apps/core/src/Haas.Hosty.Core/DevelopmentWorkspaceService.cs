@@ -8,7 +8,7 @@ namespace Haas.Hosty.Core;
 
 // Core owns these repositories independently of app source/cache retention. Native agent access
 // remains cooperative; every managed operation still validates ownership and actual Git state.
-internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegistryStore apps, IClock clock,
+internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegistryStore apps, IClock clock,
     LocalCommandProcessRegistry? processes = null, ILogger<DevelopmentWorkspaceService>? logger = null,
     IDockerCommandRunner? docker = null, PrivateSourceService? privateSources = null,
     SourceRepositoryFetchCoordinator? fetches = null)
@@ -463,6 +463,7 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
     }
     private async Task CheckConsumers(DevelopmentWorkspace w, CancellationToken ct)
     {
+        await CheckSharedWorkersAsync(ct);
         if (w.Leases.Length > 0 || w.SandboxConsumers.Length > 0) throw Error("in_use", "An activity lease or a persistent sandbox consumer still references this worktree.");
         foreach (var process in processes?.Snapshot() ?? [])
         {
@@ -511,7 +512,8 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
             throw Error("consumer_unavailable", "Cannot verify running Docker source consumers; cleanup was refused.");
         }
     }
-    private async Task<DevelopmentWorkspace> FinishCleanup(DevelopmentWorkspace w, WorkspaceOperation op, CancellationToken ct, bool published = false)
+    private Task<DevelopmentWorkspace> FinishCleanup(DevelopmentWorkspace w, WorkspaceOperation op, CancellationToken ct, bool published = false)
+        => Locked("shared-worker-bindings", async () =>
     {
         await CheckConsumers(w, ct);
         if (Directory.Exists(w.Path))
@@ -542,7 +544,7 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
         }
         w = Put(w with { State = "released", Observation = null }, op with { State = "succeeded" });
         await Save(w); return w;
-    }
+    }, ct);
     internal static bool IsUnder(string root, string candidate)
     {
         var relative = System.IO.Path.GetRelativePath(MountPathPolicy.ResolveRealPath(root), MountPathPolicy.ResolveRealPath(candidate));

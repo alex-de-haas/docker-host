@@ -1,3 +1,4 @@
+import { SharedDockerWorker } from "./runtime/worker.js";
 import { DevelopmentClient } from "./sessions/development.js";
 import { AgentConnections } from "./connections/registry.js";
 import { CoreConnectionSecrets } from "./connections/secrets.js";
@@ -50,6 +51,9 @@ const proxy: McpProxy = new McpProxy((sessionId, appId) => manager.mintAppToken(
 // Literal IPv4 on purpose: the harness is a child process on this host, and a `localhost` that
 // resolves to ::1 first has cost this project a hang before (docs/features/observability).
 const proxyBaseUrl = `http://127.0.0.1:${config.port}`;
+const worker = config.cacheDir ? new SharedDockerWorker(config.dataDir, config.cacheDir) : null;
+await worker?.load();
+await worker?.stop().catch(() => console.warn("[worker] Previous generation requires Docker recovery; its source lease was retained."));
 const manager: SessionManager = new SessionManager(
   store,
   adapter,
@@ -63,13 +67,14 @@ const manager: SessionManager = new SessionManager(
   notifier,
   connections,
   new DevelopmentClient(config.coreOrigin, config.appId, config.serviceToken),
+  worker,
 );
 
 // Retention: once at boot, then daily. The sweep is cheap (a directory listing), and running it
 // in-process keeps retention working without any external scheduler.
 const sweep = (): void => {
   void store
-    .sweepRetention(config.retentionDays)
+    .sweepRetention(config.retentionDays, new Date(), new Set(worker?.activeSession ? [worker.activeSession] : []))
     .then((deleted) => {
       if (deleted.length > 0) {
         console.log(`[retention] deleted ${deleted.length} session(s) older than ${config.retentionDays}d`);
@@ -112,6 +117,7 @@ const facade = new McpFacade(
   settings,
 );
 
+const workerMonitor = setInterval(() => { void manager.observeWorker().catch(() => console.warn("[worker] Observation/recovery is pending; source leases remain held.")); }, 5000);
 const server = createGatewayServer(manager, adapter, settings, providers, proxy, facade, connections);
 server.listen(config.port, () => {
   console.log(
@@ -120,6 +126,7 @@ server.listen(config.port, () => {
 });
 
 const shutdown = (): void => {
+  clearInterval(workerMonitor);
   clearInterval(sweepTimer);
   clearInterval(abandonTimer);
   server.close();
