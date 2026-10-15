@@ -73,7 +73,8 @@ and refresh timestamps so an unchanged stale home does not overwrite newer Core 
 
 A dedicated bridge exposes only registered session workspace and app-MCP routes through
 `host.docker.internal`. Each route requires the current session bearer; native loopback handlers and
-call-time Core authorization remain in force. The bridge is not a generic host HTTP proxy, forwards
+call-time Core authorization remain in force. The bridge preserves MCP session/protocol headers
+and the last-event cursor for SSE resumption. It is not a generic host HTTP proxy and forwards
 no browser cookies or Core service credentials, bounds request bodies and removes session routes
 when execution stops. The listener is container-reachable; possession of its route bearer grants
 only the corresponding existing session MCP authority.

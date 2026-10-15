@@ -17,10 +17,15 @@ export class WorkerMcpBridge {
       if (!route || Buffer.byteLength(actual) !== Buffer.byteLength(route.bearer)
         || !timingSafeEqual(Buffer.from(actual), Buffer.from(route.bearer))) { response.writeHead(403); response.end(); return; }
       if (!["POST", "GET", "DELETE"].includes(request.method ?? "")) { response.writeHead(405); response.end(); return; }
+      const protocolHeaders: Record<string, string> = {};
+      for (const name of ["mcp-session-id", "mcp-protocol-version", "last-event-id"]) {
+        const value = request.headers[name];
+        if (typeof value === "string") protocolHeaders[name] = value;
+      }
       const upstream = httpRequest(new URL(request.url!, this.upstream), {
         method: request.method,
         headers: { authorization: route.bearer, "content-type": "application/json",
-          accept: "application/json, text/event-stream", ...(typeof request.headers["mcp-session-id"] === "string" ? { "mcp-session-id": request.headers["mcp-session-id"] } : {}) },
+          accept: "application/json, text/event-stream", ...protocolHeaders },
       }, incoming => {
         response.writeHead(incoming.statusCode ?? 502, { "content-type": incoming.headers["content-type"] ?? "application/json", "cache-control": "no-store",
           ...(typeof incoming.headers["mcp-session-id"] === "string" ? { "mcp-session-id": incoming.headers["mcp-session-id"] } : {}) });
