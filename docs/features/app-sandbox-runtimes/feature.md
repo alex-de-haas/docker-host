@@ -394,7 +394,9 @@ Consent uses the existing background-grant store. A scope pins the owner authori
 calling installation, current/release/source mode, Core target, trust-contract version and resource
 ceilings. A one-run scope additionally pins the normalized creation request. Saved source consent
 trusts ordinary edits in the chosen Core project/worktree, while current/release consent pins the
-prepared binary closure. Another target or increased resource ceiling requires review. Worktree
+prepared binary closure, including native libraries, configuration and other copied runtime files.
+The regenerated retention marker and skipped directory links are outside that copied closure.
+Another target or increased resource ceiling requires review. Worktree
 ownership and source path checks still apply independently. A single-app sandbox grant cannot
 launch a whole Core; the separate `core-environment` scope can issue normal short-lived background
 credentials for its reviewed actions.
@@ -403,8 +405,12 @@ The shared Shell/Workspaces panel shows effective consent and supports revocatio
 saved permissions when no environment remains. Revocation prevents new delegated creation,
 start/restart, setup and child API transport. The operator retains inspection, Stop and Finish.
 Finish retires one-run consent; saved consent remains an explicit operator policy until revoked.
+The original creation request still returns the finished receipt after one-run consent is retired,
+without recreating data or processes. Approval audit records retain the request, caller, operation
+and one-run/saved choice under the reviewed metadata schema.
 After reviewing a changed target or renewed permission, replaying the original creation request
 updates the active child's consent without replacing its identity, data or lifecycle journal.
+Renewal shares the child's command gate and re-reads its latest state after an in-flight operation.
 Revocation alone neither stops a running child nor retracts its own accounts or credentials.
 The child remains a trusted Core with ordinary administrator rights, internet and shared Docker;
 its normal app-installation and shared-mount review are not replaced by parent-side policy.

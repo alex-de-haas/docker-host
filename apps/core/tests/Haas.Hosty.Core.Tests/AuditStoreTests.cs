@@ -26,6 +26,7 @@ public sealed class AuditStoreTests
     [InlineData("app.installation.approval", "removalOptions")]
     [InlineData("app.permissions.approval", "selectedOptionalPermissions")]
     [InlineData("app.mcp.approval", "assistantTarget")]
+    [InlineData("core.environment.approval", "environmentConsentSaved")]
     [InlineData("app.lifecycle.stop", "operationId")]
     [InlineData("core.lifecycle.restart", "operation")]
     [InlineData("app.ai_action_approved", "toolName")]

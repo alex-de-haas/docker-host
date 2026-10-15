@@ -137,22 +137,32 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             var existing = all.FirstOrDefault(r => r.Owner.SameOwner(actor) && r.Request.RequestId == requestId);
             if (existing is not null)
             {
-                if (existing.Fingerprint != fingerprint) throw ReplayConflict();
-                _ = await RequireAsync(actor, existing.Id, ct);
-                if (existing.State != "finished" && actor.AppId is not null && !operatorApproved && consent is not null)
+                // Replay changes no reservation. Do not hold the root-wide allocation lock while
+                // waiting for this environment's command/API gate (a child may allocate descendants).
+                reservation.Dispose();
+                var gate = Gate(existing.Id); await gate.WaitAsync(ct);
+                try
                 {
-                    // A reviewed replacement target or revoked grant can be renewed by replaying
-                    // the original creation request. Keep the child identity, data and operations.
-                    var renewed = await consent.FindAsync(actor, input, ct);
-                    if (renewed != existing.Consent)
+                    if (existing.Fingerprint != fingerprint) throw ReplayConflict();
+                    existing = await RequireAsync(actor, existing.Id, ct);
+                    // A terminal receipt is safe to replay after Finish retires one-run consent.
+                    if (existing.State == "finished") return await ViewAsync(existing, ct);
+                    if (actor.AppId is not null && !operatorApproved && consent is not null)
                     {
-                        existing = existing with { Consent = renewed, Revision = existing.Revision + 1 };
-                        await store.WriteAsync(existing, ct);
+                        // A reviewed replacement target or revoked grant can be renewed by replaying
+                        // the original creation request. Keep the child identity, data and operations.
+                        var renewed = await consent.FindAsync(actor, input, ct);
+                        if (renewed != existing.Consent)
+                        {
+                            existing = existing with { Consent = renewed, Revision = existing.Revision + 1 };
+                            await store.WriteAsync(existing, ct);
+                        }
                     }
+                    else await RequireConsentAsync(actor, existing, false, ct);
+                    await EnsureRootAsync(existing, ct);
+                    return await ViewAsync(existing, ct);
                 }
-                else await RequireConsentAsync(actor, existing, false, ct);
-                await EnsureRootAsync(existing, ct);
-                return await ViewAsync(existing, ct);
+                finally { gate.Release(); }
             }
             var approved = actor.AppId is not null && !operatorApproved && consent is not null
                 ? await consent.FindAsync(actor, input, ct) : null;

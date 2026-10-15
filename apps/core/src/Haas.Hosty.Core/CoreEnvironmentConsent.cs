@@ -55,22 +55,27 @@ internal sealed class CoreEnvironmentConsentService(HostyCoreRuntimeConfig confi
             // Generation paths and retention markers change during an otherwise identical parent
             // restart. Bind executable content and runtime metadata, not that incidental location.
             var directory = request.Mode == "release" ? Path.GetDirectoryName(target)! : AppContext.BaseDirectory;
-            var files = request.Mode == "release" ? [target] : Directory.GetFiles(directory, "*", SearchOption.AllDirectories)
-                .Where(p => Path.GetExtension(p) == ".dll" || p.EndsWith(".deps.json", StringComparison.Ordinal)
-                    || p.EndsWith(".runtimeconfig.json", StringComparison.Ordinal)
-                    || Path.GetFileName(p) is "hosty-core" or "hosty-core.exe").Order(StringComparer.Ordinal).ToArray();
-            if (files.Length == 0 || files.Any(p => !File.Exists(p)))
-                throw new SandboxException("environment_binary_missing", "The selected Core target is unavailable.", 409);
-            var hashes = new List<string>();
-            foreach (var file in files)
-            {
-                await using var stream = File.OpenRead(file);
-                hashes.Add(Path.GetRelativePath(directory, file)
-                    + ":" + Convert.ToHexString(await SHA256.HashDataAsync(stream, ct)));
-            }
-            digest = SandboxValidation.Hash(string.Join("\n", hashes));
+            digest = request.Mode == "release" ? await HashFilesAsync(directory, [target], ct)
+                : await CurrentDigestAsync(directory, ct);
         }
         return new(request.Mode, target, digest, request.Limits ?? new(), RequestDigest: SandboxValidation.Hash(CoreJson.Text(request)));
+    }
+    internal static Task<string> CurrentDigestAsync(string directory, CancellationToken ct)
+        => HashFilesAsync(directory, CoreEnvironmentRuntime.PreparedEntries(directory)
+            .OfType<FileInfo>().Select(file => file.FullName), ct);
+    private static async Task<string> HashFilesAsync(string directory, IEnumerable<string> files, CancellationToken ct)
+    {
+        var selected = files.Order(StringComparer.Ordinal).ToArray();
+        if (selected.Length == 0 || selected.Any(p => !File.Exists(p)))
+            throw new SandboxException("environment_binary_missing", "The selected Core target is unavailable.", 409);
+        var hashes = new List<string>();
+        foreach (var file in selected)
+        {
+            await using var stream = File.OpenRead(file);
+            hashes.Add(Path.GetRelativePath(directory, file)
+                + ":" + Convert.ToHexString(await SHA256.HashDataAsync(stream, ct)));
+        }
+        return SandboxValidation.Hash(string.Join("\n", hashes));
     }
     internal async Task<CoreEnvironmentConsentPlan> PlanAsync(SandboxActor actor, CoreEnvironmentCreate request, CancellationToken ct)
     {

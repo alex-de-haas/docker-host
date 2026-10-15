@@ -35,6 +35,12 @@ public sealed class CoreEnvironmentConsentHttpTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         while (store.Get(view.Id).Status == "executing") await Task.Delay(10, timeout.Token);
         Assert.True(store.Get(view.Id).Status == expected, store.Get(view.Id).Error);
+        var audit = await host.Services.GetRequiredService<AuditStore>().ReadRecentAsync();
+        var decision = Assert.Single(audit, entry => entry.Action == "core.environment.approval"
+            && entry.Outcome == "approved" && entry.Details.GetValueOrDefault("requestId") == view.Id);
+        Assert.Equal("qa.client", decision.Details["caller"]);
+        Assert.Equal("core-environment", decision.Details["operation"]);
+        Assert.Equal(saved.ToString(), decision.Details["environmentConsentSaved"]);
     }
     private static async Task<HttpClient> Caller(CoreHttpHarness host, string id = "qa.client")
     {
@@ -112,6 +118,12 @@ public sealed class CoreEnvironmentConsentHttpTests
             var grants = host.Services.GetRequiredService<BackgroundGrantService>();
             var grant = (await grants.ReadAsync(default))!.Grants.Single(g => g.Id == child.Access!.GrantId);
             Assert.Equal(!saved, grant.RevokedAt is not null);
+            using var replay = await caller.PostAsJsonAsync(Root, input); replay.EnsureSuccessStatusCode();
+            var receipt = (await replay.Content.ReadFromJsonAsync<CoreEnvironmentView>())!;
+            Assert.Equal(child.Id, receipt.Id);
+            Assert.Equal("finished", receipt.State);
+            Assert.Null(receipt.DataRoot);
+            Assert.False(Directory.Exists(child.DataRoot));
         }
     }
     [Fact]
@@ -192,6 +204,57 @@ public sealed class CoreEnvironmentConsentHttpTests
         Assert.NotEqual(child.Access!.GrantId, renewed.Access!.GrantId);
         Assert.True(renewed.Revision > child.Revision);
         Assert.Single((await caller.GetFromJsonAsync<CoreEnvironmentList>(Root))!.Environments);
+    }
+    [Fact]
+    public async Task CreateReplay_RenewsConsentAfterConcurrentStartWithoutLosingItsJournal()
+    {
+        var runtime = new PausedStartRuntime();
+        await using var host = await CoreHttpHarness.StartAsync(configure: services =>
+            services.AddSingleton<ICoreEnvironmentRuntime>(runtime));
+        using var caller = await Caller(host);
+        var config = host.Services.GetRequiredService<HostyCoreRuntimeConfig>();
+        var binary = Path.Combine(config.DataRoot, "core", "bin", OperatingSystem.IsWindows() ? "hosty-core.exe" : "hosty-core");
+        Directory.CreateDirectory(Path.GetDirectoryName(binary)!); await File.WriteAllTextAsync(binary, "test release");
+        var input = new CoreEnvironmentCreate(Guid.NewGuid().ToString(), "QA", "release");
+        await Approve(host, caller, input, true);
+        using var created = await caller.PostAsJsonAsync(Root, input); created.EnsureSuccessStatusCode();
+        var child = (await created.Content.ReadFromJsonAsync<CoreEnvironmentView>())!;
+        var service = host.Services.GetRequiredService<CoreEnvironmentService>();
+        var store = host.Services.GetRequiredService<CoreEnvironmentStore>();
+        var actor = (await store.ReadAsync(child.Id, default))!.Owner;
+        var command = service.CommandAsync(actor, child.Id, "start", new(Guid.NewGuid().ToString(), child.Revision), default);
+        await runtime.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Task<CoreEnvironmentView>? replay = null;
+        try
+        {
+            await Approve(host, caller, input, true);
+            replay = service.CreateAsync(actor, input, default);
+            Assert.NotSame(replay, await Task.WhenAny(replay, Task.Delay(250)));
+            // A replay waiting for this child must not reserve the whole descendant tree.
+            using var reservation = await store.LockAllocationAsync(default, TimeSpan.FromSeconds(1));
+        }
+        finally { runtime.Resume.TrySetResult(); await command.WaitAsync(TimeSpan.FromSeconds(10)); }
+        var started = await command;
+        var renewed = await replay!.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("running", renewed.State);
+        Assert.Equal(started.Process, renewed.Process);
+        Assert.Equal(started.Operations, renewed.Operations);
+        Assert.Equal(started.Revision + 1, renewed.Revision);
+        Assert.NotEqual(child.Access!.GrantId, renewed.Access!.GrantId);
+        Assert.Equal(renewed.Access.GrantId, (await store.ReadAsync(child.Id, default))!.Consent!.GrantId);
+    }
+    private sealed class PausedStartRuntime : ICoreEnvironmentRuntime
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task<string> PrepareAsync(CoreEnvironmentRecord record, string root, CancellationToken ct) => Task.FromResult("test-core");
+        public Task<CoreEnvironmentProcess?> ObserveAsync(CoreEnvironmentRecord record, string root, CancellationToken ct) => Task.FromResult(record.Process);
+        public async Task StartAsync(CoreEnvironmentRecord record, string root, Func<CoreEnvironmentProcess, Task> save, CancellationToken ct)
+        {
+            Started.TrySetResult(); await Resume.Task.WaitAsync(ct);
+            await save(new(1234567, DateTimeOffset.UtcNow));
+        }
+        public Task StopAsync(CoreEnvironmentRecord record, string root, bool remove, CancellationToken ct) => Task.CompletedTask;
     }
     [Fact]
     public async Task ReleaseTargetChangeBeforeDecision_InvalidatesReview()

@@ -3292,8 +3292,18 @@ internal sealed class DockerRuntimeAdapter(
     {
         if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.IsFile || !IsHostLocalBinding(uri.Host))
             return endpoint;
-        // Dependency URLs can carry protocol-specific paths/options. Only the host changes.
-        return new UriBuilder(uri) { Host = "host.docker.internal" }.Uri.AbsoluteUri;
+        // Replace only the original authority's host: URI reserialization can add a root slash,
+        // drop an explicit default port or normalize protocol-specific paths/options.
+        var authorityStart = endpoint.IndexOf("://", StringComparison.Ordinal);
+        if (authorityStart < 0) return endpoint;
+        authorityStart += 3;
+        var authorityEnd = endpoint.IndexOfAny(['/', '?', '#'], authorityStart);
+        if (authorityEnd < 0) authorityEnd = endpoint.Length;
+        var hostStart = authorityStart + endpoint[authorityStart..authorityEnd].LastIndexOf('@') + 1;
+        var hostEnd = endpoint[hostStart] == '[' ? endpoint.IndexOf(']', hostStart) + 1
+            : endpoint.IndexOf(':', hostStart, authorityEnd - hostStart);
+        if (hostEnd < 0) hostEnd = authorityEnd;
+        return endpoint[..hostStart] + "host.docker.internal" + endpoint[hostEnd..];
     }
 
     internal static string BuildDockerCoreOrigin(string coreOrigin)
