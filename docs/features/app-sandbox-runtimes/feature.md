@@ -408,7 +408,10 @@ before delegated start/restart, setup or child API access. The original creation
 approved consent without replacing the child; operator authority and Stop/Finish remain available.
 
 The shared Shell/Workspaces panel shows effective consent and supports revocation. Shell also lists
-saved permissions when no environment remains. Revocation prevents new delegated creation,
+saved permissions when no environment remains. Effective access and saved permissions report a
+changed or unavailable binary target instead of an active launch permission, while preserving
+revocation and ordinary operator lifecycle controls. Grant labels reuse the validated sandbox name
+without adding a prefix that exceeds the grant's name limit. Revocation prevents new delegated creation,
 start/restart, setup and child API transport. The operator retains inspection, Stop and Finish.
 Finish retires one-run consent; saved consent remains an explicit operator policy until revoked.
 The original creation request still returns the finished receipt after one-run consent is retired,

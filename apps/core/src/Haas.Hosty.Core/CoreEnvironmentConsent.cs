@@ -94,7 +94,7 @@ internal sealed class CoreEnvironmentConsentService(HostyCoreRuntimeConfig confi
             throw new AppIdentityException("environment_consent_changed", "The owner, installation or Core target changed. Review a new request.");
         var actions = Actions.Where(action => AppManagementAuthorization.HasPermission(app, action == "read"
             ? CoreAppPermissions.CoreEnvironmentsRead : CoreAppPermissions.CoreEnvironmentsManage)).ToArray();
-        _ = await grants.CreateAsync(user, new(plan.AppId, "Trusted Core: " + plan.Request.Label,
+        _ = await grants.CreateAsync(user, new(plan.AppId, plan.Request.Label,
             [new("environment", "core-environment", AgentMcpDirectory.CoreId, actions,
                 Environment: saved ? plan.Policy with { RequestDigest = null } : plan.Policy)]), ct);
     }
@@ -151,7 +151,13 @@ internal sealed class CoreEnvironmentConsentService(HostyCoreRuntimeConfig confi
             var scope = grant.Scopes[0];
             if (scope.Kind != "core-environment" || scope.Environment is not { RequestDigest: null } policy) continue;
             var state = "active";
-            try { _ = await grants.ValidateAsync(grant.AppId, grant.Id, scope.Id, ct); }
+            try
+            {
+                _ = await grants.ValidateAsync(grant.AppId, grant.Id, scope.Id, ct);
+                var request = new CoreEnvironmentCreate(Guid.Empty.ToString("N"), grant.Label, policy.Mode,
+                    policy.Mode == "source" ? policy.Target : null, Limits: policy.Limits);
+                if (!await TargetMatchesAsync(policy, request, ct)) state = "target-changed";
+            }
             catch (AppIdentityException) { state = "unavailable"; }
             result.Add(new(grant.Id, grant.AppId, grant.Label, policy.Mode, policy.Target, policy.Limits, state));
         }
@@ -164,6 +170,11 @@ internal sealed class CoreEnvironmentConsentService(HostyCoreRuntimeConfig confi
             throw new AppIdentityException("environment_consent_denied", "Select your own trusted Core consent.");
         await grants.RevokeAsync(actor.UserId, id, ct);
     }
+    private async Task<bool> TargetMatchesAsync(CoreEnvironmentPolicy policy, CoreEnvironmentCreate request, CancellationToken ct)
+    {
+        try { return Covers(policy, await PolicyAsync(request, ct)); }
+        catch (Exception ex) when (ex is SandboxException or IOException or UnauthorizedAccessException) { return false; }
+    }
     internal async Task<CoreEnvironmentEffectiveAccess> AccessAsync(CoreEnvironmentRecord record, CancellationToken ct)
     {
         if (record.Consent is not { } consent)
@@ -171,7 +182,10 @@ internal sealed class CoreEnvironmentConsentService(HostyCoreRuntimeConfig confi
         try
         {
             var (_, scope) = await grants.ValidateAsync(record.Owner.AppId!, consent.GrantId, consent.ScopeId, ct);
-            return new("active", consent.GrantId, scope.Environment?.RequestDigest is null, Description);
+            if (scope.Environment is not { } policy || !Covers(policy, consent.Policy))
+                return new("revoked-or-unavailable", consent.GrantId, false, Description);
+            var current = await TargetMatchesAsync(policy, record.Request, ct);
+            return new(current ? "active" : "target-changed", consent.GrantId, policy.RequestDigest is null, Description);
         }
         catch (AppIdentityException) { return new("revoked-or-unavailable", consent.GrantId, false, Description); }
     }

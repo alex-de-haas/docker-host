@@ -84,6 +84,23 @@ public sealed class CoreEnvironmentConsentHttpTests
         finished.EnsureSuccessStatusCode();
         Assert.Equal("finished", (await finished.Content.ReadFromJsonAsync<CoreEnvironmentView>())!.State);
     }
+    [Theory]
+    [InlineData(107, false)]
+    [InlineData(120, false)]
+    [InlineData(107, true)]
+    [InlineData(120, true)]
+    public async Task MaximumEnvironmentLabels_AlsoFitConsentGrants(int length, bool saved)
+    {
+        await using var host = await CoreEnvironmentHttpTests.StartHostAsync(); using var caller = await Caller(host);
+        var input = new CoreEnvironmentCreate(Guid.NewGuid().ToString(), new string('x', length));
+        await Approve(host, caller, input, saved);
+        using var created = await caller.PostAsJsonAsync(Root, input); created.EnsureSuccessStatusCode();
+        var child = (await created.Content.ReadFromJsonAsync<CoreEnvironmentView>())!;
+        Assert.Equal(input.Label, child.Label);
+        Assert.Equal("active", child.Access!.State);
+        var grant = Assert.Single((await host.Services.GetRequiredService<BackgroundGrantService>().ReadAsync(default))!.Grants);
+        Assert.Equal(input.Label, grant.Label);
+    }
     [Fact]
     public async Task ManageOnlyCaller_CanApproveAndLaunchWithoutReceivingReadAuthority()
     {
@@ -346,6 +363,15 @@ public sealed class CoreEnvironmentConsentHttpTests
         await Approve(host, caller, input, true);
         using var created = await caller.PostAsJsonAsync(Root, input); created.EnsureSuccessStatusCode();
         var child = (await created.Content.ReadFromJsonAsync<CoreEnvironmentView>())!;
+        Assert.Equal("active", child.Access!.State);
+        await File.WriteAllTextAsync(binary, "replacement");
+        Assert.Equal("target-changed", (await caller.GetFromJsonAsync<CoreEnvironmentView>(Root + "/" + child.Id))!.Access!.State);
+        var changed = (await caller.GetFromJsonAsync<CoreEnvironmentList>(Root))!;
+        Assert.Equal("target-changed", Assert.Single(changed.Environments).Access!.State);
+        Assert.Equal("target-changed", Assert.Single(changed.Consents!).State);
+        File.Delete(binary);
+        Assert.Equal("target-changed", (await caller.GetFromJsonAsync<CoreEnvironmentView>(Root + "/" + child.Id))!.Access!.State);
+        Assert.Equal("target-changed", Assert.Single((await caller.GetFromJsonAsync<CoreEnvironmentList>(Root))!.Consents!).State);
         await File.WriteAllTextAsync(binary, "replacement");
         Assert.Equal(HttpStatusCode.Forbidden, (await caller.PostAsJsonAsync(Root, input)).StatusCode);
         await Approve(host, caller, input, true);
@@ -354,6 +380,7 @@ public sealed class CoreEnvironmentConsentHttpTests
         Assert.Equal(child.Id, renewed.Id);
         Assert.Equal(child.DataRoot, renewed.DataRoot);
         Assert.NotEqual(child.Access!.GrantId, renewed.Access!.GrantId);
+        Assert.Equal("active", renewed.Access.State);
         Assert.True(renewed.Revision > child.Revision);
         Assert.Single((await caller.GetFromJsonAsync<CoreEnvironmentList>(Root))!.Environments);
     }
