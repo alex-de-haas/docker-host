@@ -145,7 +145,12 @@ consume that same API. The [shared Docker runtime](../assistant-shared-docker-ru
 Codex/Claude execution. The [D9 Git acceptance](../../reviews/2026-10-15-sandbox-d9-git-acceptance.md)
 records one real Codex conversation publishing a test PR through Core, observing CI, fixing review,
 recovering from a Harness crash and finishing its child sandbox with source preserved. It does not
-verify provider switching within this conversation, merge/release, or the broader D1-D2 matrix.
+verify provider switching within this conversation or the broader D1-D2 matrix. PR #599 subsequently
+merged and published Core/CLI 0.135.1 and Demo 0.17.2; the
+[local continuation](../../reviews/2026-10-15-sandbox-d9-local-acceptance.md) verifies those releases,
+reconciles the local sandbox ledger and records Sandbox D27. Cold-engine image import/extraction
+and uncached build/start remain open in Sandbox D9. This does not close the umbrella
+plan's remaining deliverables.
 
 [Feedback](../app-feedback-inbox/plan.md) adds optional durable collections and explicit assistant
 organization into several sessions/workspaces. Independent changes may use parallel worktrees/PRs;
