@@ -488,8 +488,9 @@ Cold client image transfers, dependency/cache preparation and warm lifecycle tim
 separately from the already-running Docker VM and shared base layers. The selected simultaneous
 worker-plus-child sample is 3,417.6 MiB charged / 2,154.3 MiB working set; native Core, Harness,
 browser and verification processes have separate measurements. The report retains the temporary
-helper failure and sampling boundaries. Local D27 is verified; the plan retains additional D9
-host/architecture/recipe and D11 remote-preview acceptance.
+helper failure and sampling boundaries. Local D27 records these verified stages; D9 retains
+unmeasured cold-engine image import/extraction, uncached build/start and engine/build memory
+as well as host/architecture/recipe acceptance. D11 retains remote-preview acceptance.
 
 ## Testing Expectations
 

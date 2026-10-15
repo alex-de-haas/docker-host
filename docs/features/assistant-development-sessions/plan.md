@@ -148,7 +148,8 @@ recovering from a Harness crash and finishing its child sandbox with source pres
 verify provider switching within this conversation or the broader D1-D2 matrix. PR #599 subsequently
 merged and published Core/CLI 0.135.1 and Demo 0.17.2; the
 [local continuation](../../reviews/2026-10-15-sandbox-d9-local-acceptance.md) verifies those releases,
-reconciles the local sandbox ledger and closes Sandbox D27. It does not close this umbrella
+reconciles the local sandbox ledger and records Sandbox D27. Cold-engine image import/extraction
+and uncached build/start remain open in Sandbox D9. This does not close the umbrella
 plan's remaining deliverables.
 
 [Feedback](../app-feedback-inbox/plan.md) adds optional durable collections and explicit assistant

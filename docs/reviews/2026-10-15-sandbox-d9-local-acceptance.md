@@ -1,9 +1,10 @@
 # D9 Local Released-Core Acceptance And Coverage Ledger
 
 Date: 2026-10-15. Baseline: `70133a4dbcd4d3b91c3d46693c797162238b3d54`, merged
-[PR #599](https://github.com/alex-de-haas/docker-host/pull/599). This closes the owner-approved
-local portion, **Sandbox D27**, on macOS arm64 with Linux arm64 Docker containers. Broader
-host/architecture/recipe acceptance stays in [D9](../features/app-sandbox-runtimes/plan.md).
+[PR #599](https://github.com/alex-de-haas/docker-host/pull/599). This records **Sandbox D27**
+on macOS arm64 with Linux arm64 Docker containers. It does not close all local D9 acceptance:
+cold-engine image import/extraction and uncached build/start remain unmeasured, alongside
+host/architecture/recipe acceptance in [D9](../features/app-sandbox-runtimes/plan.md).
 The acceptance run changed no product code or version and created no commits or publication;
 this report is exported separately.
 
@@ -123,8 +124,11 @@ They are reported separately from Docker import/start on the shared engine.
 
 The new dependency layer is timestamped during this run; the pinned Node base and Docker engine
 were shared. The helper correction reused the just-built dependency layer. These measured stages
-close the local preparation gap without advertising an uninterrupted first-attempt success, cold
-Docker VM boot, uncached internet infrastructure or a statistical startup distribution.
+cover client transfer and selected preparation costs, not a complete cold-engine run. Image
+import/extraction into an empty engine, genuinely uncached build/setup and first-start readiness,
+including engine/build memory, remain unchecked under D9. This run also does not establish an
+uninterrupted first-attempt success, cold Docker VM boot, uncached internet infrastructure or a
+statistical startup distribution.
 
 ## Memory And Sampling
 
@@ -220,8 +224,8 @@ the other named reports are linked in [Evidence Retained From Earlier Runs](#evi
 | L16 | Lost response, changed input/revision, concurrent allocation/start and ports; both | `SandboxServiceTests.AcceptedLifecycleContinuesAfterObserverDisconnectAndReplaysItsJournal`, `CoreLifecycleServiceTests.Workspace_ConcurrentMonorepoRequestsReuseSourceAndRejectChangedRequest`, `CoreEnvironmentConsentHttpTests.CreateReplay_RenewsConsentAfterConcurrentStartWithoutLosingItsJournal` | Passed current race/replay tests; live concurrent same-ID Start returned one PID, changed-operation/stale-revision requests refused; distinct child ports verified. |
 | L17 | Agent/app independence, preview adoption and old generation denial; both | Shared-worker report, D9 Git recovery and offline-daemon report | Passed current generation/grant regressions; previous shared-worker, D9 Git and daemon-recovery runs retain the actual crash/adoption evidence. |
 | L18 | Failed setup/cache collisions and Docker mount/label/limit ownership; both | `DockerSourceRuntimeTests.CacheMountpoints_RejectFileCollisionsBeforeCreatingDirectories`, `CacheMountpoints_RejectExistingAndDanglingSymlinks`, `SandboxServiceTests.RuntimeAdoptionChecksConfigurationButIgnoresLiveCountersAndNetworkMembers`; runtime acceptance | Passed cache/collision/adoption tests; verified source mount flags and exact resource IDs/labels; two containers, six cache volumes and network absent after Finish. |
-| L19 | Cold image/dependency preparation, warm HTTP readiness and HMR | Earlier measurements explicitly exclude some preparation phases | Measured fresh full OCI transfers, new dependency layer, empty app-cache setup, actual readiness and warm Core replay. VM/base layers were shared; the timing section retains the helper failure. |
-| L20 | Simultaneous resources across setup/edit/test/build/browser and OOM accounting | D9 Git has complete selected workload samples but incomplete early source-Core preparation | 641 continuous samples from before preparation through teardown; native descendants included. Docker-engine-internal build memory excluded and the memory section states the parent artifact sampling caveat. |
+| L19 | Cold image/dependency preparation, warm HTTP readiness and HMR | Earlier measurements explicitly exclude some preparation phases | Measured fresh full OCI client transfers, new dependency layer, empty app-cache setup, actual readiness and warm Core replay. Cold-engine import/extraction and uncached build/start remain open in D9; VM/base layers were shared and the helper failure is retained. |
+| L20 | Simultaneous resources across setup/edit/test/build/browser and OOM accounting | D9 Git has complete selected workload samples but incomplete early source-Core preparation | 641 continuous samples from before preparation through teardown; native descendants included. Docker-engine-internal build memory remains unmeasured under D9; the memory section states the parent artifact sampling caveat. |
 | L21 | Authorized Git/PR/CI/review, source/export retention and no automatic live-data trial | D9 Git report, PR #599 merge and successful Core/Demo publications | PR #599 merged and all ten workflows succeeded; no new Git publication in this continuation. |
 | L22 | Selected support matrix and exact-input guarantees | macOS arm64 plus Linux arm64 containers and earlier native-AOT Linux-in-Docker fixture | Local macOS arm64/Linux arm64 Docker profile verified. Native Linux/Windows and Linux amd64 worker/other recipe guarantees remain in D9. |
 
@@ -261,6 +265,7 @@ not added to the repository.
 - [Agent Git/PR/CI/review and Harness failure](2026-10-15-sandbox-d9-git-acceptance.md).
 
 Those archives retain their original baseline and outcomes. PR #599's later merge/publication is
-established here rather than rewriting the earlier pre-merge report. Native Linux/Windows,
-Linux amd64 worker and other recipe guarantees remain unverified under D9; remote preview remains
+established here rather than rewriting the earlier pre-merge report. Cold-engine image
+import/extraction and uncached build/start, native Linux/Windows, Linux amd64 worker and other
+recipe guarantees remain unverified under D9; remote preview remains
 D11. This acceptance does not approve per-session agent containers or expand trusted-Core policy.
