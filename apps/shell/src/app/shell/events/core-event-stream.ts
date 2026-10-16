@@ -1,228 +1,222 @@
 "use client";
 import { APP_ACTIVITY_RENEWED } from "@hosty-sdk/app/browser-auth";
 
-// Client for Core's unified event stream (GET /api/events).
-//
-// The bus stores nothing: events are hints ("re-read this"), never records of what happened. A Core
-// restart drops everything in flight and a disconnected client misses events until it reconnects, so
-// the whole delivery guarantee is the subscriber contract — connect, resync through the API, then
-// react — repeated on every reconnect. That is why `onSync` is required rather than optional: a
-// subscriber that only listened would silently serve stale data after any gap.
-//
-// One EventSource per origin, shared by every subscriber. Browsers cap concurrent HTTP/1.1
-// connections per origin at ~6, and a stream is long-lived — a connection per component would spend
-// that budget on duplicates of the same data.
-//
-// This module is written in the shape the SDK slice (`@hosty-sdk/app/events`) will publish once
-// app-facing subscriptions ship, so migrating is a move rather than a redesign.
-
+// One connection per Core in this browser context. Most events remain refresh hints; resource
+// consumers opt into sequenced data and own their HTTP/buffer reconciliation during synchronization.
 export const CoreEventNames = {
   resourcesChanged: "resources.changed",
+  resourcesSample: "resources.sample",
   appChanged: "app.changed",
   appRemoved: "app.removed",
   appUpdateCheckChanged: "app.update-check.changed",
   fleetUpdateCheckChanged: "apps.update-check.changed",
   notification: "notification",
 } as const;
-
 export type CoreEventName = (typeof CoreEventNames)[keyof typeof CoreEventNames];
-
-const ALL_EVENT_NAMES: readonly CoreEventName[] = Object.values(CoreEventNames);
-
+export type CoreStreamState = "connecting" | "stream" | "legacy" | "error" | "inactive";
 export interface CoreEventSubscription {
-  /** Event names this subscriber cares about. */
   names: readonly CoreEventName[];
-  /**
-   * Re-read the state this subscriber renders. Called on connect, on every reconnect, when the tab
-   * becomes visible again, and (debounced) after matching events. Never optional — see above.
-   */
   onSync: () => void | Promise<void>;
-  /**
-   * Optional fast path for subscribers that can apply an event's payload directly instead of
-   * waiting for the resync. Delivered only while a sync is not in flight; otherwise the event
-   * collapses into another sync, because a payload applied on top of half-read state is a bug.
-   */
   onEvent?: (name: CoreEventName, data: unknown) => void;
-  /** Debounce for event-triggered syncs; multi-step operations commit several times in a row. */
   syncDebounceMs?: number;
+  /** Resource interest exists only while the page is visible. */
+  topic?: "resources";
+  onStreamState?: (state: CoreStreamState) => void;
+  /** The consumer buffers/reconciles payloads itself instead of fetching again for every event. */
+  receiveWhileSyncing?: boolean;
 }
-
-const DEFAULT_SYNC_DEBOUNCE_MS = 300;
-
 interface Subscriber extends CoreEventSubscription {
   syncing: boolean;
   resyncPending: boolean;
+  disposed: boolean;
   debounceTimer: ReturnType<typeof setTimeout> | null;
 }
-
 interface Connection {
   source: EventSource | null;
+  topics: string;
+  state: CoreStreamState;
+  pageActive: boolean;
   subscribers: Set<Subscriber>;
+  acknowledgementTimer: ReturnType<typeof setTimeout> | null;
+  retryTimer: ReturnType<typeof setTimeout> | null;
+  retryAttempt: number;
   disposeVisibility: () => void;
 }
-
 const connections = new Map<string, Connection>();
+const active = (connection: Connection, subscriber: Subscriber) => !subscriber.disposed && connection.pageActive &&
+  (!subscriber.topic || document.visibilityState === "visible");
 
-// Runs the subscriber's resync, collapsing overlapping requests. An event that lands while a sync is
-// in flight schedules exactly one more pass afterwards: the running sync may already have read state
-// from before that change.
 async function runSync(subscriber: Subscriber): Promise<void> {
-  if (subscriber.syncing) {
-    subscriber.resyncPending = true;
+  if (subscriber.disposed) return;
+  if (subscriber.receiveWhileSyncing) {
+    // Payload consumers own single-flight/cancellation alongside their event buffer. A cancelled
+    // generation must not hold up a new connection, and overlapping lifecycle signals need no
+    // queued second read once the consumer has reconciled its buffered frames.
+    try { await subscriber.onSync(); } catch { /* Consumer-owned recovery. */ }
     return;
   }
-
+  if (subscriber.syncing) { subscriber.resyncPending = true; return; }
   subscriber.syncing = true;
-  try {
-    await subscriber.onSync();
-  } catch {
-    // A failed resync is not fatal: the next event, the next visibility change, or the caller's own
-    // error handling covers it. Never surface transport noise as a shell-level error.
-  } finally {
+  try { await subscriber.onSync(); } catch { /* The consumer owns recovery and error presentation. */ }
+  finally {
     subscriber.syncing = false;
-    if (subscriber.resyncPending) {
-      subscriber.resyncPending = false;
-      void runSync(subscriber);
-    }
+    if (subscriber.resyncPending) { subscriber.resyncPending = false; void runSync(subscriber); }
   }
 }
-
-function scheduleSync(subscriber: Subscriber): void {
-  if (subscriber.debounceTimer !== null) {
-    clearTimeout(subscriber.debounceTimer);
-  }
-
+function scheduleSync(subscriber: Subscriber) {
+  if (subscriber.debounceTimer !== null) clearTimeout(subscriber.debounceTimer);
   subscriber.debounceTimer = setTimeout(() => {
     subscriber.debounceTimer = null;
     void runSync(subscriber);
-  }, subscriber.syncDebounceMs ?? DEFAULT_SYNC_DEBOUNCE_MS);
+  }, subscriber.syncDebounceMs ?? 300);
 }
-
-function openConnection(coreOrigin: string, connection: Connection): void {
-  if (connection.source !== null) {
-    return;
+function clearAcknowledgement(connection: Connection) {
+  if (connection.acknowledgementTimer !== null) clearTimeout(connection.acknowledgementTimer);
+  connection.acknowledgementTimer = null;
+}
+function setState(connection: Connection, state: CoreStreamState) {
+  connection.state = state;
+  for (const subscriber of connection.subscribers) {
+    subscriber.onStreamState?.(active(connection, subscriber) ? state : "inactive");
   }
-
+}
+function acknowledge(connection: Connection, state: "stream" | "legacy") {
+  clearAcknowledgement(connection);
+  if (connection.state === state) return;
+  setState(connection, state);
+  for (const subscriber of connection.subscribers) {
+    if (subscriber.topic && active(connection, subscriber)) void runSync(subscriber);
+  }
+}
+function closeConnection(connection: Connection) {
+  clearAcknowledgement(connection);
+  if (connection.retryTimer !== null) clearTimeout(connection.retryTimer);
+  connection.retryTimer = null;
+  connection.source?.close();
+  connection.source = null;
+}
+function reconcile(connection: Connection, force = false): boolean {
+  const subscribers = [...connection.subscribers].filter(s => active(connection, s));
+  const topics = [...new Set(subscribers.flatMap(s => s.topic ? [s.topic] : []))].sort().join(",");
+  if (!force && connection.source && connection.source.readyState !== EventSource.CLOSED && topics === connection.topics) return false;
+  closeConnection(connection);
+  connection.topics = topics;
+  if (!subscribers.length) { setState(connection, "inactive"); return true; }
+  setState(connection, "connecting");
   let source: EventSource;
-  try {
-    source = new EventSource("/api/core/api/events", { withCredentials: true });
-  } catch {
-    // No EventSource (or it refused to construct): subscribers keep whatever polling fallback they
-    // have. Nothing here is load-bearing enough to surface.
-    return;
-  }
-
+  try { source = new EventSource(`/api/core/api/events${topics ? `?topics=${topics}` : ""}`, { withCredentials: true }); }
+  catch { setState(connection, "error"); return true; }
   connection.source = source;
-
-  // Every (re)connect starts the contract over. The browser reconnects on its own after a drop, and
-  // this fires again — that is exactly when a client is most likely to be stale.
+  const current = () => connection.source === source;
   source.onopen = () => {
+    if (!current()) return;
+    connection.retryAttempt = 0;
+    clearAcknowledgement(connection);
+    setState(connection, "connecting");
     for (const subscriber of connection.subscribers) {
-      void runSync(subscriber);
+      if (!subscriber.topic && active(connection, subscriber)) void runSync(subscriber);
+    }
+    // Old Core ignores the query. Only an OPEN stream without the additive acknowledgement can
+    // select compatibility polling; network errors never turn a supported stream into polling.
+    if (topics) connection.acknowledgementTimer = setTimeout(() => acknowledge(connection, "legacy"), 2000);
+  };
+  source.addEventListener("stream.ready", event => {
+    if (!current()) return;
+    try {
+      if (JSON.parse((event as MessageEvent).data).resources === 1) acknowledge(connection, "stream");
+    } catch { /* Ignore malformed capability messages. */ }
+  });
+  for (const name of Object.values(CoreEventNames)) source.addEventListener(name, event => {
+    if (!current()) return;
+    let payload: unknown = null;
+    try { payload = JSON.parse((event as MessageEvent).data); } catch { /* Consumer can request recovery. */ }
+    for (const subscriber of connection.subscribers) {
+      if (!active(connection, subscriber) || !subscriber.names.includes(name)) continue;
+      if (subscriber.onEvent && (!subscriber.syncing || subscriber.receiveWhileSyncing)) subscriber.onEvent(name, payload);
+      else scheduleSync(subscriber);
+    }
+  });
+  source.onerror = () => {
+    if (!current()) return;
+    clearAcknowledgement(connection);
+    setState(connection, "error");
+    // EventSource retries interrupted streams, but a proxy's HTTP 502/503 can leave it CLOSED.
+    // Retry those with capped backoff too; otherwise a Core restart strands a visible Dashboard.
+    // This is connection recovery only: no resource GET runs until a stream opens and acknowledges.
+    if (source.readyState === EventSource.CLOSED && connection.retryTimer === null) {
+      const delays = [1000, 3000, 10_000, 30_000];
+      const delay = delays[Math.min(connection.retryAttempt++, delays.length - 1)];
+      connection.retryTimer = setTimeout(() => {
+        connection.retryTimer = null;
+        if (current()) reconcile(connection, true);
+      }, delay);
     }
   };
-
-  for (const name of ALL_EVENT_NAMES) {
-    source.addEventListener(name, (event) => {
-      let payload: unknown = null;
-      try {
-        payload = JSON.parse((event as MessageEvent).data as string);
-      } catch {
-        payload = null;
-      }
-
-      for (const subscriber of connection.subscribers) {
-        if (!subscriber.names.includes(name)) {
-          continue;
-        }
-
-        if (subscriber.onEvent && !subscriber.syncing) {
-          subscriber.onEvent(name, payload);
-          continue;
-        }
-
-        scheduleSync(subscriber);
-      }
-    });
-  }
-
-  source.onerror = () => {
-    // The browser retries on its own; a closed source (e.g. the session died) is reopened on the
-    // next visibility change. Staying silent is deliberate — the shell's normal fetches own auth
-    // redirects and error reporting.
-  };
+  return true;
 }
-
 function getConnection(coreOrigin: string): Connection {
   const existing = connections.get(coreOrigin);
-  if (existing) {
-    return existing;
-  }
-
-  const connection: Connection = { source: null, subscribers: new Set(), disposeVisibility: () => {} };
-
-  // A backgrounded tab can miss events entirely (throttled timers, a proxy reaping the idle
-  // connection). Returning to it is a resync point, and a chance to reopen a source the browser gave
-  // up on.
+  if (existing) return existing;
+  const connection: Connection = { source: null, topics: "", state: "inactive", pageActive: true,
+    subscribers: new Set(), acknowledgementTimer: null, retryTimer: null, retryAttempt: 0, disposeVisibility: () => {} };
+  let wasVisible = document.visibilityState === "visible";
   const onVisibility = () => {
-    if (document.visibilityState !== "visible") {
-      return;
-    }
-
-    if (connection.source === null || connection.source.readyState === EventSource.CLOSED) {
-      connection.source?.close();
-      connection.source = null;
-      openConnection(coreOrigin, connection);
-    }
-
+    const visible = document.visibilityState === "visible";
+    if (visible === wasVisible) return;
+    wasVisible = visible;
     for (const subscriber of connection.subscribers) {
-      void runSync(subscriber);
+      if (!active(connection, subscriber)) subscriber.onStreamState?.("inactive");
+    }
+    if (!reconcile(connection) && document.visibilityState === "visible") {
+      for (const subscriber of connection.subscribers) if (active(connection, subscriber)) void runSync(subscriber);
     }
   };
-
   const onRenewed = () => {
-    connection.source?.close(); connection.source = null;
-    openConnection(coreOrigin, connection);
-    for (const subscriber of connection.subscribers) void runSync(subscriber);
+    reconcile(connection, true);
+    for (const subscriber of connection.subscribers) if (!subscriber.topic && active(connection, subscriber)) void runSync(subscriber);
+  };
+  const onPageHide = () => { connection.pageActive = false; reconcile(connection, true); };
+  const onPageShow = (event: PageTransitionEvent) => {
+    if (!event.persisted && connection.pageActive) return;
+    connection.pageActive = true;
+    reconcile(connection, true);
   };
   document.addEventListener("visibilitychange", onVisibility);
   window.addEventListener(APP_ACTIVITY_RENEWED, onRenewed);
-  connection.disposeVisibility = () => { document.removeEventListener("visibilitychange", onVisibility); window.removeEventListener(APP_ACTIVITY_RENEWED, onRenewed); };
+  window.addEventListener("pagehide", onPageHide);
+  window.addEventListener("pageshow", onPageShow);
+  connection.disposeVisibility = () => {
+    document.removeEventListener("visibilitychange", onVisibility);
+    window.removeEventListener(APP_ACTIVITY_RENEWED, onRenewed);
+    window.removeEventListener("pagehide", onPageHide);
+    window.removeEventListener("pageshow", onPageShow);
+  };
   connections.set(coreOrigin, connection);
   return connection;
 }
-
-/**
- * Subscribe to Core's event stream. Returns an unsubscribe function; the shared connection closes
- * once the last subscriber leaves.
- */
 export function subscribeToCoreEvents(coreOrigin: string, subscription: CoreEventSubscription): () => void {
-  if (typeof window === "undefined") {
-    return () => {};
-  }
-
+  if (typeof window === "undefined") return () => {};
   const connection = getConnection(coreOrigin);
-  const subscriber: Subscriber = {
-    ...subscription,
-    syncing: false,
-    resyncPending: false,
-    debounceTimer: null,
-  };
+  const subscriber: Subscriber = { ...subscription, syncing: false, resyncPending: false, disposed: false, debounceTimer: null };
   connection.subscribers.add(subscriber);
-  openConnection(coreOrigin, connection);
-
-  // A subscriber that joins an already-open connection missed its own `onopen`, so it syncs here.
-  void runSync(subscriber);
-
+  const reopened = reconcile(connection);
+  // Hint consumers historically load immediately, even if opening the stream fails. Resource
+  // consumers instead wait for acknowledgement so subscription precedes their single history read.
+  if (!subscriber.topic && active(connection, subscriber)) void runSync(subscriber);
+  if (!reopened) {
+    subscriber.onStreamState?.(active(connection, subscriber) ? connection.state : "inactive");
+    if (subscriber.topic && active(connection, subscriber) && connection.source?.readyState === EventSource.OPEN &&
+      (connection.state === "stream" || connection.state === "legacy")) void runSync(subscriber);
+  }
   return () => {
-    if (subscriber.debounceTimer !== null) {
-      clearTimeout(subscriber.debounceTimer);
-    }
-
+    if (subscriber.disposed) return;
+    subscriber.disposed = true;
+    if (subscriber.debounceTimer !== null) clearTimeout(subscriber.debounceTimer);
+    subscriber.onStreamState?.("inactive");
     connection.subscribers.delete(subscriber);
-    if (connection.subscribers.size === 0) {
-      connection.source?.close();
-      connection.source = null;
+    if (connection.subscribers.size) reconcile(connection);
+    else {
+      closeConnection(connection);
       connection.disposeVisibility();
       connections.delete(coreOrigin);
     }
