@@ -48,7 +48,7 @@ internal static class EventStreamEndpoints
                 var resources = request.Query["topics"].ToString().Split(',').Contains("resources", StringComparer.Ordinal);
                 if (resources && !AppAccessPolicy.IsAdmin(user))
                     return CoreJson.Json(new ErrorResponse("admin_required", "Resource subscriptions require a Host administrator."), 403);
-                // The /api/events delegated policy already requires read.core + read.apps (and
+                // The /api/events delegated policy already requires core.read + apps.read (and
                 // notifications), a superset of /api/core/resources. Resolve it again during delivery.
                 response.Headers.ContentType = "text/event-stream";
                 response.Headers.CacheControl = "no-cache";
@@ -74,7 +74,7 @@ internal static class EventStreamEndpoints
                     if (!subscription.IsActive) return false;
                     if (AppManagementAuthorization.Caller(request) is null)
                     {
-                        var currentUser = await CoreSessionAuthorization.TryResolveSessionAsync(request, users, clock, streamToken);
+                        var currentUser = await CoreSessionAuthorization.RevalidateSessionAsync(request, users, clock, streamToken);
                         return currentUser?.Id == user.Id && currentUser.Role == user.Role;
                     }
                     var current = await AppManagementAuthorization.ResolveAsync(request, streamToken);

@@ -163,6 +163,47 @@ public sealed class EventStreamEndpointsTests
         Assert.DoesNotContain("event: resources.sample", BodyOf(context), StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OpenStreamDoesNotRenewSessionIdleWindow(bool resources)
+    {
+        var fixture = await Fixture.CreateAsync();
+        var started = fixture.Clock.UtcNow;
+        await fixture.Users.UpdateAsync(s => s with
+        {
+            Sessions = s.Sessions.Select(session => session with { ExpiresAt = started.AddDays(30) }).ToArray(),
+        });
+        var context = RequestContext("session_admin");
+        if (resources) context.Request.QueryString = new QueryString("?topics=resources");
+        var hub = new CoreEventHub();
+        using var stop = new CancellationTokenSource();
+        var stream = EventStreamEndpoints.StreamForSessionAsync(context.Request, context.Response,
+            fixture.Users, fixture.Clock, hub, stop.Token, heartbeat: TimeSpan.FromMilliseconds(20));
+        try
+        {
+            await WaitForBodyAsync(context, ": connected");
+            var initial = (await fixture.Users.ReadAsync()).Sessions.Single(s => s.Id == "session_admin").LastSeenAt;
+            for (var day = 1; day <= 3; day++)
+            {
+                fixture.Clock.UtcNow = started.AddDays(day);
+                hub.PublishAppEvent(CoreEventHub.AppChanged, $"activity-check-{day}");
+                await WaitForBodyAsync(context, $"activity-check-{day}");
+                var session = (await fixture.Users.ReadAsync()).Sessions.Single(s => s.Id == "session_admin");
+                Assert.Equal(initial, session.LastSeenAt);
+            }
+            // No event arrives now: the next heartbeat recheck must expire the idle session.
+            fixture.Clock.UtcNow = started.Add(AuthLifetimes.Defaults.CoreSessionIdle).AddSeconds(1);
+            await stream.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.False(hub.HasResourceSubscribers);
+        }
+        finally
+        {
+            stop.Cancel();
+            await stream;
+        }
+    }
+
     private static DefaultHttpContext RequestContext(string sessionId)
     {
         var context = new DefaultHttpContext();

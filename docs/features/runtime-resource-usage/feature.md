@@ -68,7 +68,8 @@ Core acknowledges the topic with `event: stream.ready` and `data: {"resources":1
 `logicalProcessors` and `frame` (timestamp, sequence and service measurements). Resources require
 administrator authority. The delegated event route requires `core.read`, `apps.read` and
 `apps.notifications`, covering the resource HTTP route's read permissions. Current session/grant
-and role checks precede delivery; a role change or lost authority ends the stream.
+and role checks precede delivery; a role change or lost authority ends the stream. Revalidating an
+open stream does not renew its Core session idle window.
 
 Shell subscribes before reading history once, then applies each sample directly without a GET.
 The shared connection recomputes topics when consumers mount, unmount or change visibility.
@@ -124,29 +125,6 @@ CPU, and at least five percentage points above baseline. The resource button inc
 in its accessible name; the visual dot is decorative. It is an activity hint, not an error.
 Responsive rows retain values and actions without horizontal scrolling.
 
-## SSE verification on 2026-10-16
-
-The initial implementation was exercised before integration with current main. A separate Core
-data root and Core-managed production Shell used normal administrator setup and email/password
-login on macOS. Two uninterrupted Chromium measurements recorded one initial resource-history GET, zero
-subsequent resource GETs and continuous samples (149 seconds / 42 samples and 125 seconds / 34
-samples). After a real Core outage, the same page recovered through the BFF with one HTTP resync,
-a new run identity and advancing resource values. Resource reads did not recur during the outage;
-stream reconnection backed off through proxy 503 responses. The Core-managed Shell process stayed
-running throughout recovery. Controlled visibility changes in the live page removed the resource
-topic while leaving the generic stream open, stopped resource reads/frames, and restored delivery
-with one history GET on return.
-
-The new transport tests cover stalled HTTP timeouts and proxy errors leaving EventSource closed,
-in addition to the lifecycle, buffering, sequence and upgrade scenarios above.
-
-Safari 27.0.1 WebDriver could not create a session because Allow Remote Automation is disabled.
-Native tab visibility/freeze scheduling was not reproduced by this Chromium automation session.
-Visibility/page restoration are covered by controlled lifecycle events and deterministic tests.
-Safari suspension/restoration and native OS sleep are unverified; browser-specific scheduling is
-not inferred from those tests. Acquisition implementations and Telemetry
-transport are unchanged, so their separate native-platform/live ingestion checks were not repeated.
-
 ## Testing Expectations
 
 - Docker acquisition covers success, deadline cancellation, preservation of fresh observations,
@@ -158,7 +136,8 @@ transport are unchanged, so their separate native-platform/live ingestion checks
 - History expires and stays bounded, incremental reads work, and a changed run ID resynchronizes.
 - API/topic access rejects anonymous and non-admin sessions; delegated grants require both read
   permissions and are rechecked before payload delivery. Revocation, role change, session expiry,
-  disconnect and shutdown release demand. Telemetry retains its service-token checks.
+  disconnect and shutdown release demand. Open streams do not renew the Core session idle window.
+  Telemetry retains its service-token checks.
 - Resource sequences survive unrelated events and expose bounded-queue drops. Generic streams do
   not activate sampling; multiple viewers share demand; stream reads do not extend legacy leases.
 - Shell transport tests cover two minutes without polling, initial HTTP/SSE overlap, duplicates,
