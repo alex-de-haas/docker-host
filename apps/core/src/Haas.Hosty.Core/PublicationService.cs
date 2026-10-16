@@ -164,7 +164,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         var record = r;
         var workflow = await workspaces.WorkflowAsync(owner, ct);
         var resumedCorrection = kind == "corrective" && record.Outcome == "merged" && workflow.State == "in-progress"
-            && workflow.Operations?.Any(o => o.Kind == "resume" && o.State == "succeeded") == true;
+            && workflow.Operations?.LastOrDefault(o => o.State == "succeeded" && o.Kind is "complete" or "resume")?.Kind == "resume";
         if (record.Outcome is not null && previous is null && !resumedCorrection) throw new PublicationException("completed", "This publication already has a final outcome. Explicitly resume retained workspace source before a corrective PR.");
         if (kind == "configure")
         {

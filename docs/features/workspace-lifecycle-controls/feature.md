@@ -64,6 +64,10 @@ configured completed-workspace expiry. Background cleanup requires its reviewed 
 in addition to source/resource authority. Unfinished/deferred work, active/waiting sessions and
 unresolved resource state remain protected. Retention cannot substitute age for verified completion.
 
+A corrective publication after a completed cycle requires a successful Resume after the latest
+workspace completion. Source observation can invalidate completion, but an older cycle's Resume
+does not authorize another corrective publication.
+
 ## Testing Expectations
 
 - Verify all-repository clean/merged evidence, dirty/current-unmerged rejection and exact-head merge
