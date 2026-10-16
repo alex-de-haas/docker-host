@@ -197,8 +197,13 @@ export function CoreSourceDialog({ open, onOpenChange, state, disabled, onSave }
   const [path, setPath] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Refresh the draft when the dialog opens or the saved source changes.
-  useEffect(() => { if (open) { setOverride(!!state?.source.overridePath); setPath(state?.source.overridePath ?? ""); setError(null); } }, [open, state?.source.overridePath]);
+  // Refresh the draft when the dialog opens or the saved source changes, in the same render.
+  const draftKey = open ? state?.source.overridePath ?? "" : null;
+  const [seededKey, setSeededKey] = useState<string | null>(null);
+  if (draftKey !== seededKey) {
+    setSeededKey(draftKey);
+    if (draftKey !== null) { setOverride(!!state?.source.overridePath); setPath(state?.source.overridePath ?? ""); setError(null); }
+  }
   const unavailable = disabled || saving || !state;
   const trimmedPath = path.trim();
   const dirty = override ? trimmedPath !== (state?.source.overridePath ?? "") : !!state?.source.overridePath;

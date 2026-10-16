@@ -80,7 +80,7 @@ import {
   resolveAvailableVersionLabel,
   type AppRevision,
 } from "../app-versions";
-import { isAppBusy, isAppIdle, isAppUp, matchesAppStateFilter, matchesAppSearch, type AppStateFilter } from "../runtime-states";
+import { isAppBusy, isAppUp, matchesAppStateFilter, matchesAppSearch, type AppStateFilter } from "../runtime-states";
 import { AppIcon } from "../app-icon";
 import { copyTextToClipboard } from "../clipboard";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
@@ -174,13 +174,16 @@ export function DashboardPage({
   // re-read below so it can refresh what was requested without ever initiating a check itself.
   const statusRequestedRef = useRef<Set<string>>(new Set());
 
-  useEffect(() => {
+  // Drop detail for apps that left the list, in the render that receives the new list.
+  const [prunedFor, setPrunedFor] = useState(apps);
+  if (prunedFor !== apps) {
+    setPrunedFor(apps);
     const appIds = new Set(apps.map((app) => app.id));
     setUpdateStatusByApp((current) => {
       const entries = Object.entries(current).filter(([appId]) => appIds.has(appId));
       return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
     });
-  }, [apps]);
+  }
 
   // Returns both halves so a caller can tell a real failure from an auth redirect: the latter yields
   // no status *and* no error, because the page is already navigating to the login screen and has
@@ -799,7 +802,7 @@ function AppServiceDetailsPanel({
                   ) : null}
                 </div>
                 <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
-                  {!isAppIdle(app.runtimeState) && service.status !== "stopped" && service.status !== "exited" && (
+                  {isAppUp(app.runtimeState) && app.operationStatus !== "updating" && service.status !== "stopped" && service.status !== "exited" && (
                     <div className="w-36 shrink-0"><ResourceUsage appId={app.id} service={service.service} label={`${app.displayName} · ${service.service}`} /></div>
                   )}
                   <div className="flex items-center gap-1.5">
@@ -1290,7 +1293,7 @@ function InstalledAppRow({
         </div>
       </TableCell>
       <TableCell role="cell" className="dashboard-resources">
-        {!isAppIdle(app.runtimeState) && <ResourceUsage appId={app.id} label={app.displayName} />}
+        {running && app.operationStatus !== "updating" && <ResourceUsage appId={app.id} label={app.displayName} />}
       </TableCell>
       <TableCell role="cell" className="dashboard-actions">
         <div className="flex items-center justify-end gap-1">

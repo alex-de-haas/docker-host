@@ -6,6 +6,7 @@ import { LanguagesIcon, LoaderCircleIcon } from "lucide-react";
 import type { ParsedDocument } from "@/lib/types";
 import { TRANSLATION_LANGUAGES, validTargetLanguage, type PlanTranslation, type TranslationOptions } from "@/lib/translation";
 import { SourceDocument } from "./document";
+import { PermissionReviewLink } from "./permission-review-link";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
@@ -111,7 +112,7 @@ function TranslationView({ document, repositoryId, workspaceId, navigate, conten
         {!loading && options && !choices.length && <p role="status" className="text-xs text-muted-foreground">No translation provider is installed.</p>}
         {!loading && choices.filter(p => p.problem).map(p => <p key={`${p.appId}:${p.key}`} className="text-xs text-muted-foreground">{p.displayName} ({p.key}): {p.problem}</p>)}
         {error && <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-destructive"><span>{error.message}</span>
-          {error.reviewUrl && <a href={error.reviewUrl} target="_blank" rel="noopener noreferrer" className="underline">Review Plans permissions</a>}
+          {error.reviewUrl && <PermissionReviewLink href={error.reviewUrl} />}
         </div>}
         {!pending && <Button variant="link" size="sm" className="self-start" onClick={() => setEpoch(value => value + 1)}>Refresh translators</Button>}
       </div>}

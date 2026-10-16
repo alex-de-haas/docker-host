@@ -3,8 +3,8 @@ using System.Threading.Channels;
 
 namespace Haas.Hosty.Core;
 
-// The in-process event bus behind GET /api/events. Deliberately stores NOTHING: events are hints
-// ("re-read this"), never records of what happened. A Core restart drops everything in flight and a
+// The in-process event bus behind GET /api/events. Most events are refresh hints; opt-in resource
+// frames carry data and a sequence for gap detection. A Core restart drops everything in flight and a
 // disconnected subscriber simply misses events until it reconnects — both are harmless because the
 // subscriber contract is "connect -> resync through the Core API -> react", repeated on every
 // reconnect. That is why there is no durable log, no cursor and no Last-Event-ID here; durability
@@ -20,6 +20,7 @@ internal sealed class CoreEventHub
     public const string AppRemoved = "app.removed";
     public const string AppUpdateCheckChanged = "app.update-check.changed";
     public const string FleetUpdateCheckChanged = "apps.update-check.changed";
+    public const string ResourcesSample = "resources.sample";
 
     // Notifications ride the same stream so a client needs one connection, not two.
     public const string NotificationEvent = "notification";
@@ -27,15 +28,30 @@ internal sealed class CoreEventHub
     private readonly object gate = new();
     private readonly List<CoreEventSubscription> subscriptions = [];
 
-    public CoreEventSubscription Subscribe(string userId, bool isAdmin, string? sessionId = null)
+    public CoreEventSubscription Subscribe(string userId, bool isAdmin, string? sessionId = null, bool resources = false)
     {
-        var subscription = new CoreEventSubscription(userId, isAdmin, this, sessionId);
+        var subscription = new CoreEventSubscription(userId, isAdmin, this, sessionId, resources && isAdmin);
         lock (gate)
         {
             subscriptions.Add(subscription);
         }
 
         return subscription;
+    }
+
+    public bool HasResourceSubscribers
+    {
+        get { lock (gate) return subscriptions.Any(s => s.Resources && s.IsActive); }
+    }
+
+    public void PublishResources(ResourceUsageEvent sample)
+    {
+        CoreEventSubscription[] targets;
+        lock (gate) targets = subscriptions.Where(s => s.Resources && s.IsActive).ToArray();
+        if (targets.Length == 0) return;
+        var envelope = new CoreEventEnvelope(ResourcesSample,
+            JsonSerializer.Serialize(sample, CoreJsonSerializerContext.Default.ResourceUsageEvent));
+        foreach (var subscription in targets) subscription.TryWrite(envelope);
     }
 
     // End the streams a credential currently holds open, so revoking it stops delivery now rather than
@@ -138,18 +154,22 @@ internal sealed class CoreEventSubscription : IDisposable
     private readonly Channel<CoreEventEnvelope> channel = Channel.CreateBounded<CoreEventEnvelope>(
         new BoundedChannelOptions(64) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
     private readonly CoreEventHub owner;
+    private int completed;
 
-    public CoreEventSubscription(string userId, bool isAdmin, CoreEventHub owner, string? sessionId = null)
+    public CoreEventSubscription(string userId, bool isAdmin, CoreEventHub owner, string? sessionId = null, bool resources = false)
     {
         UserId = userId;
         IsAdmin = isAdmin;
         SessionId = sessionId;
+        Resources = resources;
         this.owner = owner;
     }
 
     public string UserId { get; }
 
     public bool IsAdmin { get; }
+    public bool Resources { get; }
+    public bool IsActive => Volatile.Read(ref completed) == 0;
 
     // Which credential opened this stream, so revoking that credential can close it. Null when the
     // caller did not supply one; such a subscription is simply never closed this way.
@@ -161,11 +181,15 @@ internal sealed class CoreEventSubscription : IDisposable
 
     // End the stream without unregistering: the reader still owns the subscription and disposes it on
     // its way out, which is what removes it from the hub.
-    public void Complete() => channel.Writer.TryComplete();
+    public void Complete()
+    {
+        Interlocked.Exchange(ref completed, 1);
+        channel.Writer.TryComplete();
+    }
 
     public void Dispose()
     {
         owner.Remove(this);
-        channel.Writer.TryComplete();
+        Complete();
     }
 }

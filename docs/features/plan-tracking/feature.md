@@ -39,11 +39,18 @@ Plans new in a workspace appear beside tracked-branch plans. A deleted plan has 
 its label is `removed`. The label identifies the evidence and does not introduce a plan status.
 
 The detail view fills the viewport with a full-width tab panel. Its toolbar, version tabs and
-document metadata stay in place while the active content panel scrolls independently, including
+status/progress header stay in place while the active content panel scrolls independently, including
 by keyboard. The frame header carries the document path, adding the repository on large screens;
 its tooltip always includes both. The tracked panel places status and progress beside the path on wider
 screens and below it on narrow screens. The document title appears only in the Markdown; the
 tracked branch appears only in its tab.
+The content begins with a compact metadata block showing the selected version's created and updated
+dates, full summary, related app names and component paths. App associations use the same source-path
+mapping as the overview; components without an installed app remain visible as paths. Dates retain
+their YYYY-MM-DD values without timezone conversion. Absent fields are omitted. The block wraps on
+narrow screens and follows the app theme. Status and progress are not repeated there. Workspace
+metadata remains visible in both diff and full-document views, and translation preserves the source
+metadata while replacing only the document prose.
 The first tab shows the tracked branch and opens by
 default; each workspace changing this document has its own tab. Workspace panels display status,
 progress, deliverable changes, a diff against the workspace's base, a full-document toggle and an
@@ -123,6 +130,9 @@ Markdown renderer, with raw HTML disabled and repository-relative document links
 
 Plans declares optional `providers.translation` access. Reading does not require it. Missing access
 offers Core's ordinary permission review; **Refresh translators** or returning focus reloads choices.
+Both translation and discussion permission links ask the embedding host to open review when Plans
+is inside Shell. The host verifies the frame and determines the app identity, so Core's review page
+opens outside the app iframe's sandbox. Standalone links open Core directly in a separate tab.
 `GET /api/translation` requires a current administrator and returns choices/readiness without service
 credentials. The same-origin `POST /api/translation` rechecks source authorization, the selected
 provider installation and the SHA-256 fingerprint of fresh document bytes before sending Markdown.
@@ -258,7 +268,7 @@ standalone Next.js server as the cache mount's unprivileged owner. The image wor
 publication on version checks, lint and tests and follows the repository's immutable version-tag
 policy. It builds Linux amd64 and arm64 images with provenance attestations, carrying the repository
 and ReUI license notices.
-`manifest.json`, `package.json` and the Docker image tag share the independent app version `0.7.0`.
+`manifest.json`, `package.json` and the Docker image tag share the independent app version `0.7.1`.
 Side-panel discussions use Core 0.129.0, SDK 0.25.0 and Harness 0.48.0. Older Core remains usable for
 reading sources and presents an actionable refusal for this discussion contract. The [SDK panel system](../sdk-panel-system/feature.md) defines the shared host and browser acceptance contract.
 
@@ -276,6 +286,9 @@ replaced by these source test installations.
 
 ## Testing Expectations
 
+- Detail metadata shows the active tracked or workspace version's dates, summary, related apps and
+  component paths without repeating header status/progress. Missing fields, unmatched components,
+  long values, narrow layouts and both themes remain readable; translation retains source metadata.
 - Translation tests cover current administrator/source authority, same-origin POST, optional-permission
   recovery, readiness, selected installation, source fingerprints, missing/deleted workspaces and
   documents, provider errors, cancellation, duplicate activation, source/version invalidation,
@@ -293,6 +306,8 @@ replaced by these source test installations.
   bytes, selected workspace and deleted/stale versions, incompatible providers, separate API/UI
   destinations, finalized replay, duplicate activation, persisted installation-pinned retry identities, panel placement/retry and explicit separate opening
   and optional-permission recovery. Core projects only confirmed providers and declared browser UI.
+- Permission review links preserve standalone navigation and delegate embedded activation to the
+  host without navigating a sandboxed popup or supplying a caller-controlled app identity or URL.
 - HTTP authorization covers absent/read/full grants, current administrator role, app sessions,
   app-addressed assistant MCP and scoped credentials, mixed cookies, audience mismatch and revocation.
 - Repository and worktree tests cover deduplication, default branches, independent fetch freshness,

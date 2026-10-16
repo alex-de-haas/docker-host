@@ -179,6 +179,27 @@ generated block by hand; run `--fix` after changing any document.
 lives in docker-host and the others carry a byte-identical copy, so change it
 there first.
 
+## Background UI Updates
+
+- First decide whether a screen needs background updates, based on its intended behavior, the
+  user's request and the value of fresh data. Dashboard metrics and active Harness conversations
+  benefit from live updates; rarely changed settings usually need only loading on entry, refresh
+  after an action or explicit refresh. Preserve unsaved form edits when refreshing data.
+- Where background updates are warranted, prefer SSE over recurring requests, especially for
+  frequent changes or when a suitable stream already exists. Prefer payloads the client can
+  render directly when practical, and reuse existing infrastructure.
+- This is a recommendation, not a requirement to add SSE to every screen. Use engineering judgment
+  to balance freshness, request volume and implementation/maintenance cost. Polling, event-triggered
+  fetching or manual refresh are valid choices when they fit the scenario better; they do not
+  require a separate exception approval.
+- When using streams, share connections where appropriate within the same authorized backend and
+  browser context, preserve app/user boundaries, and handle visibility, reconnect and missed-data
+  recovery. Browser suspension and automatic reconnect alone do not guarantee up-to-date state.
+- Keep transport keep-alives and server-side sampling distinct from UI data refresh. Scope
+  subscriptions to actual consumers so a screen does not observe data it does not need.
+- The [resource delivery implementation](docs/features/runtime-resource-usage/feature.md) applies this
+  preference to Dashboard. Changes to other screens are evaluated individually in their own scope.
+
 ## Core Development Feedback Loop
 
 - Identify the intended data root and factual launch mode/project before changing its lifecycle. See [Core development mode](docs/features/core-dev-target/feature.md).

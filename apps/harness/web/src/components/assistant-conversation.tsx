@@ -155,8 +155,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const selectedExternal = external.find(w => w.id === externalId) ?? external[0];
   const activeSessionId = useRef<string | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
-  // A session this client was watching that no longer exists; cleared once acted on.
-  const [deletedElsewhere, setDeletedElsewhere] = useState<string | null>(null);
+  // Reach the current deletion handler from the stream without stale state.
+  const deletedElsewhereRef = useRef<(sessionId: string) => void>(() => {});
   // Sessions this tab deleted itself. The deletion fans out to every subscriber including this one,
   // and its own click must not come back as "this session was deleted" from somewhere else.
   const selfDeleted = useRef(new Set<string>());
@@ -224,7 +224,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           setStreamed("");
         }
         if (event.type === "session_status") {
-          setStatus(String(event.status ?? "idle"));
+          const value = String(event.status ?? "idle");
+          setStatus(value);
+          setSessions(current => current.map(item => item.id === record.id ? { ...item, status: value } : item));
           if (!["running", "awaiting_approval", "awaiting_question"].includes(String(event.status))) {
             setActivity(null);
             setStreamed("");
@@ -236,11 +238,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
             // This tab's own delete, already handled where the button was pressed.
             return;
           }
-          // Deleted from somewhere else — another tab, another client. Recorded for the effect
-          // below rather than handled here: detaching clears the conversation and opens history,
-          // and reaching that state from inside the stream callback would tie this callback to
-          // state it must not go stale on.
-          setDeletedElsewhere(record.id);
+          // Deleted from somewhere else — another tab, another client. Handled through the ref:
+          // detaching clears the conversation and opens history, and depending on that here would
+          // tie this callback to state it must not go stale on.
+          deletedElsewhereRef.current(record.id);
           return;
         }
         setEvents((current) => [...current, event]);
@@ -486,22 +487,15 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     return () => window.removeEventListener("storage", changed);
   }, [session]);
 
-  // The active session's status arrives on the stream, not in the list read at load. Folding it back
-  // in is what keeps the ordering and the badge true for the session most likely to block — the one
-  // the operator is watching.
-  useEffect(() => {
-    if (session) {
-      setSessions((current) =>
-        current.map((record) => (record.id === session.id ? { ...record, status } : record)),
-      );
-    }
-  }, [session, status]);
+  // Overlay live status while retaining stream updates for previously selected sessions.
+  const listedSessions = useMemo(
+    () => session ? sessions.map(record => record.id === session.id && record.status !== status ? { ...record, status } : record) : sessions,
+    [sessions, session, status],
+  );
 
-  // One source: this page holds the list and the stream, so it publishes and the embedder listens. A
-  // shell polling the gateway for the same fact would disagree with this one for its whole interval.
   useEffect(() => {
-    publishAttention(waitingCount(sessions));
-  }, [sessions]);
+    publishAttention(waitingCount(listedSessions));
+  }, [listedSessions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -647,15 +641,15 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   }, [detachDeleted]);
 
   useEffect(() => {
-    if (!deletedElsewhere) return;
-    setDeletedElsewhere(null);
-    setSessions(current => current.filter(entry => entry.id !== deletedElsewhere));
-    clearDraft(deletedElsewhere);
-    if (activeSessionId.current === deletedElsewhere) {
-      detachDeleted(deletedElsewhere);
-      setError("This session was deleted in another window. Choose a session or start a new one.");
-    }
-  }, [deletedElsewhere, detachDeleted]);
+    deletedElsewhereRef.current = (sessionId: string) => {
+      setSessions(current => current.filter(entry => entry.id !== sessionId));
+      clearDraft(sessionId);
+      if (activeSessionId.current === sessionId) {
+        detachDeleted(sessionId);
+        setError("This session was deleted in another window. Choose a session or start a new one.");
+      }
+    };
+  }, [detachDeleted]);
 
   const rename = useCallback(async (sessionId: string, title: string) => {
     setError(null);
@@ -734,7 +728,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         {selectedExternal && <WorkspaceDetails key={selectedExternal.id} workspace={selectedExternal} title={selectedExternal.owner.label} refresh={inventory.refresh} />}
       </div>}
       <div className={`${fullPage && tab !== "sessions" ? "hidden" : "flex"} min-h-0 flex-1`}>
-      {fullPage && <div className={`${mobileSessions ? "block" : "hidden"} w-full shrink-0 border-r md:block md:w-52`}><DevelopmentNavigation sessions={sessions} activeId={session?.id} workspaces={inventory.workspaces}
+      {fullPage && <div className={`${mobileSessions ? "block" : "hidden"} w-full shrink-0 border-r md:block md:w-52`}><DevelopmentNavigation sessions={listedSessions} activeId={session?.id} workspaces={inventory.workspaces}
         onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} /></div>}
       <main className={`${fullPage && mobileDetails && workspace ? "hidden min-[900px]:flex" : fullPage && mobileSessions ? "hidden md:flex" : "flex"} min-h-0 min-w-0 flex-1 flex-col`}>
 
@@ -792,7 +786,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
       {showSessions ? (
         <SessionList
-          sessions={orderSessions(sessions)}
+          sessions={orderSessions(listedSessions)}
           activeId={session?.id ?? null}
           onPick={pickSession}
           onRename={rename}

@@ -65,6 +65,62 @@ public sealed class RuntimeResourceTests
     }
 
     [Fact]
+    public void StreamSnapshotsDoNotRenewLegacyLeaseAndViewersShareDemand()
+    {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var hub = new CoreEventHub();
+        var sampler = new RuntimeResourceSampler(null!, null!, null!, hub, clock,
+            NullLogger<RuntimeResourceSampler>.Instance, new AppManifestService());
+        using var generic = hub.Subscribe("admin", true);
+        sampler.Read(stream: true);
+        Assert.False(sampler.HasViewers);
+        var first = hub.Subscribe("admin", true, "one", resources: true);
+        using var second = hub.Subscribe("admin", true, "two", resources: true);
+        Assert.True(sampler.HasViewers);
+        first.Dispose();
+        Assert.True(sampler.HasViewers);
+        hub.CloseSession("two");
+        Assert.False(sampler.HasViewers);
+        sampler.Read();
+        Assert.True(sampler.HasViewers);
+        clock.UtcNow = clock.UtcNow.AddSeconds(21);
+        sampler.Read(stream: true);
+        Assert.False(sampler.HasViewers);
+    }
+
+    [Fact]
+    public void StreamAndHistoryShareResourceSequenceDespiteOtherEventsAndQueueDrops()
+    {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var hub = new CoreEventHub();
+        using var subscriber = hub.Subscribe("admin", true, resources: true);
+        using var generic = hub.Subscribe("admin", true);
+        using var user = hub.Subscribe("user", false, resources: true);
+        var sampler = new RuntimeResourceSampler(null!, null!, null!, hub, clock,
+            NullLogger<RuntimeResourceSampler>.Instance, new AppManifestService());
+        for (var i = 0; i < 100; i++)
+        {
+            hub.PublishAppEvent(CoreEventHub.AppChanged);
+            sampler.Record(new(clock.UtcNow, []));
+        }
+        var snapshot = sampler.Read(stream: true);
+        Assert.Equal(100, snapshot.Sequence);
+        Assert.Equal(Enumerable.Range(1, 100).Select(i => (long)i), snapshot.History.Select(f => f.Sequence));
+        var sequences = new List<long>();
+        while (subscriber.Reader.TryRead(out var envelope))
+            if (envelope.Name == CoreEventHub.ResourcesSample)
+            {
+                var sample = System.Text.Json.JsonSerializer.Deserialize(envelope.Data, CoreJsonSerializerContext.Default.ResourceUsageEvent)!;
+                Assert.Equal(snapshot.RunId, sample.RunId);
+                Assert.Equal(sample.Sequence, sample.Frame.Sequence);
+                sequences.Add(sample.Sequence);
+            }
+        Assert.Equal(Enumerable.Range(69, 32).Select(i => (long)i), sequences);
+        while (generic.Reader.TryRead(out var envelope)) Assert.NotEqual(CoreEventHub.ResourcesSample, envelope.Name);
+        Assert.False(user.Reader.TryRead(out _));
+    }
+
+    [Fact]
     public async Task LocalReaderMeasuresCoreWithoutRequiringAnyApps()
     {
         var reader = new LocalResourceReader(new LocalCommandProcessRegistry(), new FakeClock(DateTimeOffset.UtcNow));

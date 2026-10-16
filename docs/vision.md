@@ -581,7 +581,25 @@ Decisions 1–5: 2026-08-19.
     not implement that guarantee. The owner authorizes the local experiment now; its result and the
     remaining parent manager are tracked by [sandbox D18-D21](features/app-sandbox-runtimes/plan.md#same-host-core-environments-owner-decision-2026-10-14).
 
-44. **Harness becomes the development workspace UI (2026-10-16).** The owner wants a full Harness
+44. **Prefer SSE where a screen needs background updates (2026-10-16; clarified the same day).**
+    The owner recommends SSE for screens whose architecture, user request or interaction model
+    calls for background updates, such as Dashboard metrics and active Harness conversations.
+    Frequent changes and existing streaming infrastructure make this particularly useful. Prefer
+    renderable state or versioned deltas where practical so the view can react on arrival.
+
+    This is not a mandate to make every screen live. Rarely changed settings can load on entry,
+    refresh after an action or offer explicit refresh; updates must preserve unsaved form edits.
+    Agents may choose polling, event-triggered fetching or another suitable refresh strategy based
+    on freshness needs, request volume and implementation/maintenance cost, without a separate
+    exception approval. Avoid building dedicated streaming infrastructure where its value is small.
+
+    Where streams are used, share existing connections within authorization boundaries and handle
+    visibility, reconnect and missed-data recovery. Browser suspension and native SSE reconnect
+    alone do not recover application state. The
+    [resource delivery implementation](features/runtime-resource-usage/feature.md) remains scoped to Dashboard
+    and its shared-stream support; it does not authorize a migration of every screen.
+
+45. **Harness becomes the development workspace UI (2026-10-16).** The owner wants a full Harness
     page combining conversation, workspace changes, PR/CI/review and reusable sandbox previews, while
     keeping the side panel for quick assistance. This revises decision 21's preferred UI placement;
     Core still owns independent workspace/sandbox APIs and other clients can use them. The later

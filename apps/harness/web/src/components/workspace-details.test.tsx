@@ -95,3 +95,18 @@ it("retains each repository's file and scope after closing its diff", async () =
   expect(document.querySelector<HTMLSelectElement>('[aria-label="Diff scope"]')!.value).toBe("local");
   expect(document.querySelector('[aria-label="Changed files"] [aria-current="true"]')?.textContent).toBe("details.txt");
 });
+
+
+it("uses refreshed workflow state and stops offering a successful journal request for retry", async () => {
+  const w = workspace(); const id = "8a6a4d08-56d5-4d03-8758-43a9af547009";
+  localStorage.setItem("hosty.workspace.action.workspace", JSON.stringify({ kind: "complete", requestId: id, expectedRevision: 0 }));
+  replies(w);
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Refresh" refresh={() => {}} />));
+  expect(container.textContent).toContain("Pending action: complete");
+  const updated = { ...w, workflow: { state: "completed", revision: 1, operations: [{ id, kind: "complete", expectedRevision: 0, state: "succeeded" }] } };
+  await act(async () => root.render(<WorkspaceDetails workspace={updated} title="Refresh" refresh={() => {}} />));
+  expect(container.textContent).toContain("completed");
+  expect(container.textContent).not.toContain("Pending action:");
+  await act(async () => root.render(<WorkspaceDetails workspace={{ ...updated, workflow: { state: "in-progress", revision: 2 } }} title="Refresh" refresh={() => {}} />));
+  expect(container.textContent).toContain("in progress");
+});

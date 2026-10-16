@@ -317,10 +317,10 @@ Final verification:
 The fixture's app runners and Core stop before teardown. Its labelled Docker container and
 private data, temporary account/session credentials, fixture repositories and build output are removed.
 No labelled test networks or volumes remain. Shared caches and the operator's main Core/apps are untouched. Raw evidence and logs are not repository
-artifacts. The registered implementation worktree is retained with uncommitted changes.
+artifacts. The registered implementation worktree is retained for publication.
 
 The UI plan's D1–D7 are complete. Artifact versions for the accumulated feature are Core/CLI
-0.136.0 → 0.137.0, Harness 0.54.0 → 0.55.0, Shell 0.103.1 → 0.103.2 and npm app SDK
+0.137.0 → 0.138.0, Harness 0.54.1 → 0.55.0, Shell 0.104.1 → 0.104.2 and npm app SDK
 0.31.0 → 0.32.0. These are source version changes, not a claim that releases are published.
 
 ## Testing Expectations

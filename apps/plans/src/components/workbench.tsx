@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
 import { deliverableChanges, filterPlans, lineDiff, mapBounded, planLink, readFilters, statusCounts, writeFilters, type PlanFilters } from "@/lib/model";
 import { type PlanDetail, type RepositoryPlans, type SourceRepository, type WorkspacePlan } from "@/lib/types";
-import { Progress, VersionBrief, formatTime } from "./plan-metadata";
+import { DocumentMetadata, Progress, VersionBrief, formatTime } from "./plan-metadata";
 import { TrackedDocument } from "./document";
 import { LoadingIndicator } from "./loading-indicator";
 import { WorkspaceOwner, WorkspaceSessionLink } from "./workspace-owner";
@@ -172,12 +172,18 @@ export function PlanVersions({ detail, workspaceId, navigate }: { detail: PlanDe
     </div>
     <TabsContent value="tracked" className="min-h-0 min-w-0 overflow-hidden">
       <Frame className="h-full min-h-0"><FrameHeader className="shrink-0 gap-2 sm:flex-row sm:items-center sm:justify-between"><DocumentPath detail={detail} />{detail.document && <div className="flex shrink-0 items-center gap-3"><Badge variant="secondary">{detail.document.status ?? "Document"}</Badge><Progress document={detail.document} /></div>}</FrameHeader><FramePanel className="min-h-0 flex-1 overflow-y-auto overscroll-contain focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" role="region" aria-label="Document content" tabIndex={0}>
-        <TrackedDocument document={detail.document} error={detail.error} repositoryId={repositoryId} navigate={navigate}>{detail.document && <TranslateDocument document={detail.document} repositoryId={repositoryId} workspaceId={null} navigate={navigate} />}</TrackedDocument>
+        <TrackedDocument document={detail.document} error={detail.error} repositoryId={repositoryId} navigate={navigate}>{detail.document && <div className="flex min-w-0 flex-col gap-4">
+          <DocumentMetadata document={detail.document} repository={detail.repository} />
+          <TranslateDocument document={detail.document} repositoryId={repositoryId} workspaceId={null} navigate={navigate} />
+        </div>}</TrackedDocument>
       </FramePanel></Frame>
     </TabsContent>
     {detail.workspaces.map(version => <TabsContent key={version.workspace.id} value={version.workspace.id} className="min-h-0 min-w-0 overflow-hidden">
       <Frame className="h-full min-h-0"><FrameHeader className="shrink-0 gap-1"><DocumentPath detail={detail} /><FrameTitle><h2 className="truncate" title={version.workspace.branch}>{version.workspace.branch}</h2></FrameTitle><VersionBrief version={version} /><FrameDescription>Changes against this workspace’s own base.</FrameDescription></FrameHeader><FramePanel className="min-h-0 flex-1 overflow-y-auto overscroll-contain focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" role="region" aria-label="Workspace content" tabIndex={0}>
-        <WorkspaceDocument version={version} repositoryId={repositoryId} navigate={navigate} />
+        <div className="flex min-w-0 flex-col gap-4">
+          {version.document && <DocumentMetadata document={version.document} repository={detail.repository} />}
+          <WorkspaceDocument version={version} repositoryId={repositoryId} navigate={navigate} />
+        </div>
       </FramePanel></Frame>
     </TabsContent>)}
     {unavailable && <TabsContent value={workspaceId} className="min-h-0 overflow-y-auto"><Alert><AlertTitle>Workspace version unavailable</AlertTitle><AlertDescription>The selected workspace no longer changes this document. Select the tracked branch or another workspace.</AlertDescription></Alert></TabsContent>}
@@ -187,7 +193,7 @@ export function WorkspaceDocument({ version, repositoryId, navigate }: { version
   const [view, setView] = useState<"document" | "diff">("diff");
   const changes = useMemo(() => deliverableChanges(version.base, version.document), [version.base, version.document]);
   const diff = useMemo(() => lineDiff(version.base?.content ?? "", version.document?.content ?? ""), [version.base, version.document]);
-  return <div className="flex min-w-0 flex-col gap-4"><div className="flex flex-col items-start gap-3"><WorkspaceOwner workspace={version.workspace} /><p className="text-xs text-muted-foreground">Workspace {version.workspace.state}. Observed {formatTime(version.workspace.observationAt)}{version.workspace.observationState ? ` (${version.workspace.observationState})` : ""}.</p><p className="text-xs text-muted-foreground">Document updated {version.document?.updated ?? "unknown"}. Last change {formatTime(version.change.modifiedAt)}.</p>
+  return <div className="flex min-w-0 flex-col gap-4"><div className="flex flex-col items-start gap-3"><WorkspaceOwner workspace={version.workspace} /><p className="text-xs text-muted-foreground">Workspace {version.workspace.state}. Observed {formatTime(version.workspace.observationAt)}{version.workspace.observationState ? ` (${version.workspace.observationState})` : ""}.</p><p className="text-xs text-muted-foreground">Last change {formatTime(version.change.modifiedAt)}.</p>
     <WorkspaceSessionLink workspace={version.workspace} button />
     {version.change.targetChanged && <Alert><AlertTitle>Tracked branch changed</AlertTitle><AlertDescription>The tracked branch also changed this document since the workspace base. The diff below shows this workspace’s own changes.</AlertDescription></Alert>}
   </div>

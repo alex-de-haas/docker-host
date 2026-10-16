@@ -30,28 +30,30 @@ export function CorePublicOriginCard() {
   // never implied — the same rule the app publish dialog follows.
   const [conflict, setConflict] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      // Both in one pass: the connection decides whether this control can do anything at all, and a
-      // second render that flips from "connect a token" to a form would read as a glitch.
-      const [publicationResponse, statusResponse] = await Promise.all([
-        sendCsrfJson(`${coreOrigin}/api/core/public-origin`, undefined, "GET"),
-        sendCsrfJson(`${coreOrigin}/api/core/cloudflare/status`, undefined, "GET"),
-      ]);
-      const next = (await publicationResponse.json()) as CloudflareCorePublication;
+  // `loading` starts true for the first read; later reads go through `reload`, which sets it first.
+  // State is written only in the promise callbacks.
+  const load = useCallback(() =>
+    // Both in one pass: the connection decides whether this control can do anything at all, and a
+    // second render that flips from "connect a token" to a form would read as a glitch.
+    Promise.all([
+      sendCsrfJson(`${coreOrigin}/api/core/public-origin`, undefined, "GET").then((response) => response.json() as Promise<CloudflareCorePublication>),
+      sendCsrfJson(`${coreOrigin}/api/core/cloudflare/status`, undefined, "GET").then((response) => response.json() as Promise<CloudflareConnectionStatus>),
+    ]).then(([next, nextConnection]) => {
       setState(next);
-      setConnection((await statusResponse.json()) as CloudflareConnectionStatus);
+      setConnection(nextConnection);
       setLabel(next.publication?.label ?? "");
       setError(null);
-    } catch (loadError) {
+    }, (loadError: unknown) => {
       if (!isAuthRequiredRedirectError(loadError)) {
         setError(loadError instanceof Error ? loadError.message : "Could not load Core's published address.");
       }
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
-  }, [coreOrigin, sendCsrfJson]);
+    }), [coreOrigin, sendCsrfJson]);
+  const reload = useCallback(() => {
+    setLoading(true);
+    return load();
+  }, [load]);
 
   useEffect(() => {
     void load();
@@ -68,7 +70,7 @@ export function CorePublicOriginCard() {
       const response = await sendCsrfJson(`${coreOrigin}/api/core/public-origin/publish`, { label: label.trim(), adopt });
       const result = (await response.json()) as CloudflareCorePublicationResult;
       setConflict(false);
-      await load();
+      await reload();
       await refresh();
       toast.success(`Core published at ${result.origin}`, {
         description: "Sign-in and invitation links use it now. Installed apps pick it up when they next start.",
@@ -94,7 +96,7 @@ export function CorePublicOriginCard() {
     try {
       const response = await sendCsrfJson(`${coreOrigin}/api/core/public-origin/unpublish`, {});
       const result = (await response.json()) as CloudflareCorePublicationResult;
-      await load();
+      await reload();
       await refresh();
       toast.success("Core's published address removed", { description: `Core now advertises ${result.origin}.` });
     } catch (unpublishError) {

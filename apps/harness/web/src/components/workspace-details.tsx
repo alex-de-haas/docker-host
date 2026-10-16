@@ -7,6 +7,14 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { developmentRequest, repositoryName, changeTotals, type DevelopmentWorkspace, type Worktree, type Diff, type Workflow } from "@/lib/development-api";
 import { WorkspacePreviews } from "./workspace-previews";
 
+type PendingAction = { kind: string; requestId: string; expectedRevision: number };
+function readPendingAction(workspaceId: string): PendingAction | null {
+  try {
+    const raw = localStorage.getItem(`hosty.workspace.action.${workspaceId}`);
+    const value = raw ? JSON.parse(raw) : null;
+    return value && ["complete", "resume", "defer", "delete"].includes(value.kind) && typeof value.requestId === "string" && Number.isSafeInteger(value.expectedRevision) ? value : null;
+  } catch { return null; }
+}
 const safeLink = (value: string) => { try { const u = new URL(value); return ["https:", "http:"].includes(u.protocol) && !u.username && !u.password ? u.href : undefined; } catch { return undefined; } };
 export function WorkspaceDetails({ workspace, title, running, refresh, deleteConversation }: {
   workspace: DevelopmentWorkspace; title: string; sessionId?: string; running?: boolean;
@@ -19,11 +27,19 @@ export function WorkspaceDetails({ workspace, title, running, refresh, deleteCon
   const [withConversation, setWithConversation] = useState(false);
   const [diffChoices, setDiffChoices] = useState<Record<string, { view: string; path: string }>>({});
   const [diffTree, setDiffTree] = useState<string | null>(null);
-  const [state, setState] = useState(workspace.workflow);
-  const [pending, setPending] = useState<{ kind: string; requestId: string; expectedRevision: number } | null>(null);
+  const [localResult, setLocalResult] = useState<{ base: Workflow; value: Workflow } | null>(null);
+  const state = localResult?.base === workspace.workflow ? localResult.value : workspace.workflow;
+  const [localPending, setPending] = useState<PendingAction | null>(() => readPendingAction(workspace.id));
+  const operation = state.operations?.find(o => o.state === "pending");
+  const pending = operation ? { kind: operation.kind, requestId: operation.id, expectedRevision: operation.expectedRevision }
+    : state.operations?.some(o => o.id === localPending?.requestId && o.state === "succeeded") ? null : localPending;
+  const [now, setNow] = useState(Date.now);
   const executing = useRef(false);
   const diffTrigger = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => { setState(workspace.workflow); }, [workspace.workflow]);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, []);
   useEffect(() => {
     const abort = new AbortController();
     void Promise.all(workspace.worktrees.map(t => developmentRequest<Worktree>(`/${workspace.id}/worktrees/${t.id}`, undefined, abort.signal)))
@@ -31,15 +47,6 @@ export function WorkspaceDetails({ workspace, title, running, refresh, deleteCon
       .catch(e => { if (!abort.signal.aborted) { setTrees([]); setError(e.message); } });
     return () => abort.abort();
   }, [workspace]);
-  useEffect(() => {
-    const operation = workspace.workflow.operations?.find(o => o.state === "pending");
-    if (operation) { setPending({ kind: operation.kind, requestId: operation.id, expectedRevision: operation.expectedRevision }); return; }
-    try {
-      const raw = localStorage.getItem(`hosty.workspace.action.${workspace.id}`);
-      const value = raw ? JSON.parse(raw) : null;
-      if (value && ["complete", "resume", "defer", "delete"].includes(value.kind) && typeof value.requestId === "string" && Number.isSafeInteger(value.expectedRevision)) setPending(value);
-    } catch { /* Storage is optional; API state remains authoritative. */ }
-  }, [workspace.id, workspace.workflow.operations]);
   const run = async (kind: string, retry = false) => {
     if (executing.current) return; executing.current = true; setBusy(true); setError("");
     const request = retry && pending ? pending : { kind, requestId: crypto.randomUUID(), expectedRevision: state.revision };
@@ -47,7 +54,7 @@ export function WorkspaceDetails({ workspace, title, running, refresh, deleteCon
     try { localStorage.setItem(`hosty.workspace.action.${workspace.id}`, JSON.stringify(request)); } catch { /* Keep request in memory. */ }
     try {
       const result = await developmentRequest<Workflow>(`/${workspace.id}/workflow/${request.kind}`, { requestId: request.requestId, expectedRevision: request.expectedRevision });
-      setState(result);
+      setLocalResult({ base: workspace.workflow, value: result });
       setPending(null); setConfirmDelete(false);
       try { localStorage.removeItem(`hosty.workspace.action.${workspace.id}`); } catch { /* Optional local recovery journal. */ }
       if (result.state === "deleted" && withConversation && deleteConversation) await deleteConversation();
@@ -88,7 +95,7 @@ export function WorkspaceDetails({ workspace, title, running, refresh, deleteCon
           <p className="truncate text-xs text-muted-foreground" title={tree.branch}>{tree.branch}</p>
           {tree.apps.length > 0 && <p className="text-xs text-muted-foreground">{tree.apps.map(app => app.name).join(" · ")}</p>}
           <p className="text-xs text-muted-foreground">{tree.observation?.at && Number.isFinite(Date.parse(tree.observation.at))
-            ? <>Observed <time dateTime={tree.observation.at}>{new Date(tree.observation.at).toLocaleString()}</time>{Date.now() - Date.parse(tree.observation.at) > 90000 ? " · Stale" : ""}</>
+            ? <>Observed <time dateTime={tree.observation.at}>{new Date(tree.observation.at).toLocaleString()}</time>{now - Date.parse(tree.observation.at) > 90000 ? " · Stale" : ""}</>
             : "Observation unavailable"}</p>
           <button type="button" disabled={tree.state !== "active"} onClick={event => { diffTrigger.current = event.currentTarget; setDiffTree(tree.id); }} className="flex w-full flex-wrap items-center gap-2 rounded py-1 text-left text-sm hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring">
             <FileDiff className="size-4" />Changes {totals ? <><span className="ml-auto text-emerald-700 dark:text-emerald-400">+{totals.additions}</span><span className="text-red-600 dark:text-red-400">−{totals.deletions}</span></> : <span className="ml-auto text-xs text-muted-foreground">Statistics unavailable</span>}
@@ -100,7 +107,7 @@ export function WorkspaceDetails({ workspace, title, running, refresh, deleteCon
       <WorkspacePreviews key={workspace.id} workspaceId={workspace.id} />
       {trees.some(t => t.pullRequests.length) && <section className="space-y-3 border-t pt-4"><h3 className="text-sm text-muted-foreground">Pull requests</h3>
         {trees.flatMap(tree => tree.pullRequests.map(pr => {
-          const o = pr.observation, stale = !o || Date.now() - Date.parse(o.at) > 90000;
+          const o = pr.observation, stale = !o || now - Date.parse(o.at) > 90000;
           const checks = o?.checks, passed = checks?.filter(c => ["SUCCESS", "NEUTRAL", "SKIPPED"].includes(c.state)).length;
           return <div key={`${tree.id}:${pr.url}`} className="space-y-1 text-sm"><a href={safeLink(pr.url)} target="_blank" rel="noreferrer" className="flex items-start gap-2 hover:underline"><GitPullRequest className="mt-0.5 size-4 shrink-0 text-violet-500" /><span className="line-clamp-2">{o?.title || `Pull request #${pr.url.split("/").pop()}`}</span></a>
             <p className="pl-6 text-xs text-muted-foreground">{repositoryName(tree.repository)} · CI {checks ? `${passed}/${checks.length}` : "unknown"} · {o?.commentCount === undefined ? "Comments unknown" : `${o.commentCount} discussion comments`}</p>

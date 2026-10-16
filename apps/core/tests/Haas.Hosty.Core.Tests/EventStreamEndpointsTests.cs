@@ -119,6 +119,91 @@ public sealed class EventStreamEndpointsTests
         Assert.DoesNotContain($"event: {CoreEventHub.AppChanged}", text, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ResourceTopicRequiresAdministrator()
+    {
+        var fixture = await Fixture.CreateAsync();
+        var context = RequestContext("session_user");
+        context.Request.QueryString = new QueryString("?topics=resources");
+        var hub = new CoreEventHub();
+        var result = await EventStreamEndpoints.StreamForSessionAsync(context.Request, context.Response,
+            fixture.Users, fixture.Clock, hub, CancellationToken.None);
+        Assert.Equal(403, StatusOf(result));
+        Assert.False(hub.HasResourceSubscribers);
+        Assert.Empty(BodyOf(context));
+    }
+
+    [Theory]
+    [InlineData("disconnect")]
+    [InlineData("shutdown")]
+    [InlineData("expiry")]
+    [InlineData("role")]
+    [InlineData("revoke")]
+    public async Task ResourceTopicAcknowledgesSupportAndReleasesDemand(string reason)
+    {
+        var fixture = await Fixture.CreateAsync();
+        var context = RequestContext("session_admin");
+        context.Request.QueryString = new QueryString("?topics=resources");
+        var hub = new CoreEventHub();
+        using var disconnect = new CancellationTokenSource();
+        using var shutdown = new CancellationTokenSource();
+        var stream = EventStreamEndpoints.StreamForSessionAsync(context.Request, context.Response,
+            fixture.Users, fixture.Clock, hub, disconnect.Token, heartbeat: TimeSpan.FromMilliseconds(20),
+            applicationStopping: shutdown.Token);
+        await WaitForBodyAsync(context, "event: stream.ready");
+        Assert.Contains("\"resources\":1", BodyOf(context), StringComparison.Ordinal);
+        Assert.True(hub.HasResourceSubscribers);
+        if (reason == "disconnect") disconnect.Cancel();
+        else if (reason == "shutdown") shutdown.Cancel();
+        else if (reason == "revoke") hub.CloseSession("session_admin");
+        else if (reason == "expiry") fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddHours(2);
+        else await fixture.Users.UpdateAsync(s => s with { Users = s.Users.Select(u => u with { Role = "host.user" }).ToArray() });
+        await stream.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.False(hub.HasResourceSubscribers);
+        Assert.DoesNotContain("event: resources.sample", BodyOf(context), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OpenStreamDoesNotRenewSessionIdleWindow(bool resources)
+    {
+        var fixture = await Fixture.CreateAsync();
+        var started = fixture.Clock.UtcNow;
+        await fixture.Users.UpdateAsync(s => s with
+        {
+            Sessions = s.Sessions.Select(session => session with { ExpiresAt = started.AddDays(30) }).ToArray(),
+        });
+        var context = RequestContext("session_admin");
+        if (resources) context.Request.QueryString = new QueryString("?topics=resources");
+        var hub = new CoreEventHub();
+        using var stop = new CancellationTokenSource();
+        var stream = EventStreamEndpoints.StreamForSessionAsync(context.Request, context.Response,
+            fixture.Users, fixture.Clock, hub, stop.Token, heartbeat: TimeSpan.FromMilliseconds(20));
+        try
+        {
+            await WaitForBodyAsync(context, ": connected");
+            var initial = (await fixture.Users.ReadAsync()).Sessions.Single(s => s.Id == "session_admin").LastSeenAt;
+            for (var day = 1; day <= 3; day++)
+            {
+                fixture.Clock.UtcNow = started.AddDays(day);
+                hub.PublishAppEvent(CoreEventHub.AppChanged, $"activity-check-{day}");
+                await WaitForBodyAsync(context, $"activity-check-{day}");
+                var session = (await fixture.Users.ReadAsync()).Sessions.Single(s => s.Id == "session_admin");
+                Assert.Equal(initial, session.LastSeenAt);
+            }
+            // No event arrives now: the next heartbeat recheck must expire the idle session.
+            fixture.Clock.UtcNow = started.Add(AuthLifetimes.Defaults.CoreSessionIdle).AddSeconds(1);
+            await stream.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.False(hub.HasResourceSubscribers);
+        }
+        finally
+        {
+            stop.Cancel();
+            await stream;
+        }
+    }
+
     private static DefaultHttpContext RequestContext(string sessionId)
     {
         var context = new DefaultHttpContext();

@@ -285,6 +285,45 @@ public sealed class AppManagementHttpTests
         Assert.Null(await reader.ReadLineAsync(timeout.Token));
     }
 
+    [Theory]
+    [InlineData("core.read")]
+    [InlineData("apps.read")]
+    public async Task ResourceStreamRequiresDelegatedReadPermissions(string missing)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        // Use the canonical permission values even if their wire spelling changes.
+        var permission = missing == "core.read" ? CoreAppPermissions.ReadCore : CoreAppPermissions.ReadApps;
+        using var client = await CreateAppClient(host, "example.console", CoreAppPermissions.Known.Where(p => p != permission).ToArray());
+        using var response = await client.GetAsync("/api/events?topics=resources");
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.False(host.Services.GetRequiredService<CoreEventHub>().HasResourceSubscribers);
+    }
+
+    [Theory]
+    [InlineData("permission")]
+    [InlineData("session")]
+    public async Task ResourceStreamRechecksDelegatedAuthorityBeforePayloadDelivery(string reason)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        using var client = await CreateAppClient(host, "example.console", CoreAppPermissions.Known);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var response = await client.GetAsync("/api/events?topics=resources", HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        response.EnsureSuccessStatusCode();
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(timeout.Token));
+        Assert.Equal(": connected", await reader.ReadLineAsync(timeout.Token));
+        Assert.Equal("", await reader.ReadLineAsync(timeout.Token));
+        Assert.Equal("event: stream.ready", await reader.ReadLineAsync(timeout.Token));
+        Assert.Equal("data: {\"resources\":1}", await reader.ReadLineAsync(timeout.Token));
+        Assert.Equal("", await reader.ReadLineAsync(timeout.Token));
+        var hub = host.Services.GetRequiredService<CoreEventHub>();
+        Assert.True(hub.HasResourceSubscribers);
+        if (reason == "permission") await SetPermissions(host, "example.console", [CoreAppPermissions.Notifications]);
+        else await host.Services.GetRequiredService<AppSessionGrantStore>().RevokeByAuthorizingSessionAsync("operator", DateTimeOffset.UtcNow);
+        hub.PublishResources(new("run", 1, DateTimeOffset.UtcNow, 8, new(DateTimeOffset.UtcNow, [], 1)));
+        Assert.Null(await reader.ReadLineAsync(timeout.Token));
+        Assert.False(hub.HasResourceSubscribers);
+    }
+
     [Fact]
     public async Task OwnProfileAppApi_NeedsOnlyIdentity_AndKeepsOwnerAndSecretsInsideCore()
     {
