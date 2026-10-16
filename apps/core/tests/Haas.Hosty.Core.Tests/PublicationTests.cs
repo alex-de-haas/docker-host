@@ -186,11 +186,27 @@ public sealed partial class CoreLifecycleServiceTests
         var workflow = await f.Workspaces.WorkflowAsync(f.W.Owner, default);
         Assert.Equal("in-progress", workflow.State);
         var error = await Assert.ThrowsAsync<PublicationException>(() => f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), edited.Observation!.Head), default));
-        Assert.Equal("completed", error.Code);
+        Assert.Equal("publication_completed", error.Code);
         await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "resume", new(Guid.NewGuid().ToString(), workflow.Revision), new Dictionary<string, string>(), default);
         var result = await f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), edited.Observation!.Head), default);
         Assert.Null(result.Outcome);
         Assert.Equal(2, result.History.Length);
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Publication_ResumeWithoutCompletedWorkspaceCannotAuthorizeCorrection(bool deferFirst)
+    {
+        var f = await PublicationFixture(); var head = f.W.Observation!.Head!;
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", new(Guid.NewGuid().ToString(), head, Title: "Feature"), default);
+        f.Provider.State = "merged"; f.Provider.Complete = true;
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "complete", new(Guid.NewGuid().ToString(), head, Outcome: "merged"), default);
+        if (deferFirst)
+            await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "defer", new(Guid.NewGuid().ToString(), 0), new Dictionary<string, string>(), default);
+        var resumed = await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "resume", new(Guid.NewGuid().ToString(), deferFirst ? 1 : 0), new Dictionary<string, string>(), default);
+        Assert.Equal("in-progress", resumed.State);
+        var error = await Assert.ThrowsAsync<PublicationException>(() => f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), head), default));
+        Assert.Equal("publication_completed", error.Code);
     }
     [Fact]
     public async Task Publication_CorrectiveCycleKeepsPriorPrAndChangesRemoteBranch()
