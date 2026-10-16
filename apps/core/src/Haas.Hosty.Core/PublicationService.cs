@@ -162,7 +162,12 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         }
         if (input.ConnectionId is not null && input.ConnectionId != r.ConnectionId) throw new PublicationException("connection_conflict", "This publication is bound to another connection.");
         var record = r;
-        if (record.Outcome is not null && previous is null) throw new PublicationException("completed", "This publication already has a final outcome.");
+        var workflow = await workspaces.WorkflowAsync(owner, ct);
+        var lastTransition = workflow.Operations?.LastOrDefault(o => o.State == "succeeded" && o.Kind is "complete" or "resume");
+        var resumedCorrection = kind == "corrective" && record.Outcome == "merged" && workflow.State == "in-progress"
+            && lastTransition is { Kind: "resume" }
+            && workflow.Operations?.Any(o => o.Kind == "complete" && o.State == "succeeded" && o.ExpectedRevision < lastTransition.ExpectedRevision) == true;
+        if (record.Outcome is not null && previous is null && !resumedCorrection) throw new PublicationException("completed", "This publication already has a final outcome. Explicitly resume retained workspace source before a corrective PR.");
         if (kind == "configure")
         {
             ValidatePolicy(input.Policy ?? new([], [], []));
@@ -270,8 +275,8 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
                     else if (kind == "corrective")
                     {
                         RequireHead(w, input);
-                        if (record.Observation.State != "merged" || record.Outcome is not null) throw new PublicationException("corrective_invalid", "A corrective PR requires a merged PR in an unfinished session.");
-                        record = record with { History = [.. record.History, new(record.Number.Value, record.Url!, record.Observation.Head, record.Observation.MergeCommit)], Number = null, Url = null, PublishedHead = null, Observation = null, Branch = w.Branch + "-corrective-" + input.RequestId };
+                        if (record.Observation.State != "merged" || record.Outcome is not null && !resumedCorrection) throw new PublicationException("corrective_invalid", "A corrective PR requires a merged PR in an unfinished session.");
+                        record = record with { History = [.. record.History, new(record.Number.Value, record.Url!, record.Observation.Head, record.Observation.MergeCommit)], Number = null, Url = null, PublishedHead = null, Observation = null, Branch = w.Branch + "-corrective-" + input.RequestId, Outcome = null, CompletedAt = null, CleanupRequested = false };
                     }
                     else if (kind == "complete")
                     {

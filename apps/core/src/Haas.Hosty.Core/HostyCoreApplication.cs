@@ -115,6 +115,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<DevelopmentWorkspaceService>();
         builder.Services.AddSingleton<SourceRepositoryFetchCoordinator>();
         builder.Services.AddSingleton<WorkspaceInspectionService>();
+        builder.Services.AddSingleton<WorkspaceCleanupService>();
         builder.Services.AddSingleton<WorkspaceInspectionAuthorization>();
         builder.Services.AddSingleton<SourceDocumentService>();
         builder.Services.AddSingleton<SourceDocumentAuthorization>();
@@ -409,6 +410,7 @@ internal static class HostyCoreApplication
         CloudflarePublicationEndpoints.Map(app);
         SourceEndpoints.Map(app);
         DevelopmentWorkspaceEndpoints.Map(app);
+        SessionRetentionEndpoints.Map(app);
         SourceDocumentEndpoints.Map(app);
         WorkspaceInspectionEndpoints.Map(app);
         PublicationEndpoints.Map(app);

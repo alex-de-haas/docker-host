@@ -122,3 +122,18 @@ it("autonomy skips Ask only for the selected session and still rechecks Disabled
   policy.cancel("other");
   await expect(other).rejects.toThrow("denied");
 });
+
+it("revokes an app without cancelling development approval or clearing its replay guard", async () => {
+  await policy.catalog("development", "v1", [write]);
+  const app = call().catch(error => error);
+  const development = policy.authorize("session", "development", "v1", "1", "merge", {}, new AbortController().signal);
+  await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(2));
+  policy.cancel("session", "app");
+  expect(await app).toBeInstanceOf(Error);
+  const id = notify.mock.calls.find(c => c[1].toolName === "development: merge")![1].approvalId;
+  expect(policy.resolve("session", id, true)).toBe(true);
+  const guard = await development; await guard();
+  policy.cancel("session", "app"); await guard();
+  await expect(policy.authorize("session", "development", "v1", "1", "merge", {}, new AbortController().signal)).rejects.toThrow("already received");
+  policy.cancel("session"); await expect(guard()).rejects.toThrow("canceled");
+});

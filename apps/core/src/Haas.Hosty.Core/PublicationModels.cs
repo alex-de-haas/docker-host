@@ -11,7 +11,8 @@ internal sealed record PublicationCheck(string Name, string State);
 internal sealed record PublicationObservation(DateTimeOffset At, string State, string? Head = null,
     string? Base = null, string? MergeCommit = null, bool Draft = false, string? MergeState = null,
     string? ReviewDecision = null, int UnresolvedThreads = 0, bool Complete = false,
-    PublicationCheck[]? Checks = null, string? Error = null, PublicationReview[]? Reviews = null);
+    PublicationCheck[]? Checks = null, string? Error = null, PublicationReview[]? Reviews = null,
+    string? Title = null, int? CommentCount = null);
 internal sealed record PublicationOperation(string Id, string Kind, string Fingerprint, string State,
     PublicationCommand Input, string? Error = null, PublicationIdentity? Author = null);
 internal sealed record PublicationRecord

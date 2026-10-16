@@ -659,7 +659,22 @@ describe("embedded panel discovery", () => {
     const f = await connect(), count = f.parent.postMessage.mock.calls.length;
     expect(await child!.openSurface(target, { placement: "side", requestId: createPresentationRequestId(), reuse: "new" })).toMatchObject({ code: "unsupported_composition" });
     expect(await child!.openToolPicker({ requestId: createPresentationRequestId() })).toMatchObject({ code: "unsupported_composition" });
+    expect(await child!.navigate("development", { requestId: createPresentationRequestId(), placement: "main", search: "?session=one" }))
+      .toMatchObject({ status: "unsupported", code: "main_navigation_unavailable" });
     expect(f.parent.postMessage.mock.calls.length).toBe(count);
+  });
+  it("sends explicit main navigation without invoking the local router", async () => {
+    const f = await connect(), local = vi.fn();
+    child!.composition.attachRouter({ endpoint: "web", getRoute: () => "/panel", navigate: local, subscribe: () => () => {} });
+    f.send({ ...f.offer, type: "hosty:ui:connected", coreOrigin: metadata.coreOrigin, userId: metadata.userId,
+      appId: "host", installationId: "host-1", capabilities: ["ui.composition.v1", "ui.main-navigation.v1"], revision: 1, chrome: {}, endpoint: "web" });
+    const requestId = createPresentationRequestId();
+    const pending = child!.navigate("development", { requestId, placement: "main", search: "?session=one" });
+    await vi.waitFor(() => expect(f.parent.postMessage.mock.calls.at(-1)![0]).toMatchObject({ type: "hosty:ui:navigate-main", entryKey: "development", search: "?session=one", requestId }));
+    expect(await child!.navigate("development", { requestId, placement: "main", search: "?session=other" }))
+      .toMatchObject({ status: "rejected", code: "request_conflict" });
+    f.send({ ...f.offer, type: "hosty:ui:action-result", requestId, result: { status: "accepted", requestId } });
+    expect(await pending).toMatchObject({ status: "accepted" }); expect(local).not.toHaveBeenCalled();
   });
   it("reports the local manifest key and republishes readiness when metadata arrives", async () => {
     const f = await connect(); let route = "/people/one";
@@ -1295,5 +1310,38 @@ describe("composition presentation instances", () => {
     expect(await h.openToolPicker({ requestId })).toMatchObject({ status: "accepted" });
     expect(await h.openSurface(target, { placement: "side", requestId })).toMatchObject({ code: "request_conflict" });
     expect(await h.openToolPicker({ requestId })).toMatchObject({ status: "accepted" });
+  });
+});
+
+
+describe("explicit main navigation", () => {
+  it("resolves the calling app, preserves the panel and replays the same action only once", async () => {
+    const h = await start(), main = vi.fn(async (_surface: import("./ui-types").UiFrameSurface) => true); h.setMainNavigator(main);
+    const f = frame();
+    f.send({ type: "hosty:ui:probe", childNonce: f.offer.childNonce, versions: [1], capabilities: ["ui.composition.v1"] });
+    f.send({ ...f.offer, type: "hosty:ui:accept", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: panel.appId, installationId: panel.installationId });
+    const previous = fetcher.getMockImplementation()!;
+    fetcher.mockImplementation((path: string, ...args: unknown[]) => path.endsWith("navigation/resolve")
+      ? Promise.resolve(Response.json({ available: true, surface: { ...resolved.surface!, route: "/development" }, state: "running" })) : previous(path, ...args));
+    const requestId = createPresentationRequestId();
+    const command = { ...f.offer, type: "hosty:ui:navigate-main", requestId, entryKey: "development", search: "?session=one" };
+    f.send(command); await vi.waitFor(() => expect(main).toHaveBeenCalledOnce());
+    expect(main.mock.calls[0]![0]).toMatchObject({ appId: panel.appId, installationId: panel.installationId, route: "/development?session=one" });
+    const resolveCall = fetcher.mock.calls.find(([path]) => String(path).endsWith("navigation/resolve"))!;
+    expect(JSON.parse(resolveCall[1].body)).toEqual({ appId: panel.appId, installationId: panel.installationId, entryKey: "development" });
+    f.send(command); await new Promise(resolve => setTimeout(resolve, 0)); expect(main).toHaveBeenCalledOnce();
+    f.send({ ...command, search: "?session=two" });
+    await vi.waitFor(() => expect(f.post.mock.calls.some(([m]) => m.type === "hosty:ui:action-result" && m.result.code === "request_conflict")).toBe(true));
+    expect(f.element.getAttribute("src")).toBeNull();
+  });
+  it.each(["missing-host", "invalid-query", "revoked-source"])("refuses promotion at %s without replacing the panel", async boundary => {
+    const h = await start(), main = vi.fn(async (_surface: import("./ui-types").UiFrameSurface) => true); if (boundary !== "missing-host") h.setMainNavigator(main);
+    const f = frame();
+    f.send({ type: "hosty:ui:probe", childNonce: f.offer.childNonce, versions: [1], capabilities: ["ui.composition.v1"] });
+    f.send({ ...f.offer, type: "hosty:ui:accept", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: panel.appId, installationId: panel.installationId });
+    if (boundary === "revoked-source") h.setActive(false);
+    f.send({ ...f.offer, type: "hosty:ui:navigate-main", requestId: createPresentationRequestId(), entryKey: "development", search: boundary === "invalid-query" ? "//other.example/" : "?session=one" });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(main).not.toHaveBeenCalled(); expect(f.element.getAttribute("src")).toBeNull();
   });
 });

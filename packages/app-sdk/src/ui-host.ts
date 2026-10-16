@@ -2,7 +2,7 @@ import { UiCompositionModel, validChromeOverrides, withChromeHints } from "./ui-
 import { DEFAULT_WORKSPACE, ROOT_VIEW, workspace, type UiPresentation, type UiWorkspace, type UiWorkspaceSnapshot,
   type UiWorkspaceRenderer, type UiViewDescriptor, type UiPlacementResolver } from "./ui-workspaces";
 export type { UiWorkspaceRenderer, UiViewDescriptor, UiPlacementResolver, UiPresentation } from "./ui-workspaces";
-import { UI_COMPOSITION_CAPABILITY, type UiChromeOverrides, type UiActionOptions, type UiActionResult, type UiNavigationTarget, type UiResolvedNavigation } from "./ui-types";
+import { UI_COMPOSITION_CAPABILITY, UI_MAIN_NAVIGATION_CAPABILITY, navigationSearch, type UiNavigationOptions, type UiChromeOverrides, type UiActionOptions, type UiActionResult, type UiNavigationTarget, type UiResolvedNavigation } from "./ui-types";
 import { createPresentationRequestId, type UiClient } from "./ui";
 import { UiError, panelKey, routeWithin, type PanelRef, type PanelTarget, type PresentationOptions, type PresentationResult,
   type UiBootstrap, type UiEnvironment, type UiEvent, type UiFrameSurface, type UiPanel, type UiResolvedPanel, type SurfaceReadiness } from "./ui-types";
@@ -49,6 +49,9 @@ export class UiHost implements UiClient {
   readonly composition: UiCompositionModel;
   private readonly workspaces = new Map<string, UiWorkspace>([[DEFAULT_WORKSPACE, workspace(DEFAULT_WORKSPACE)]]);
   private placement?: UiPlacementResolver;
+  private mainNavigator?: (surface: UiFrameSurface) => Promise<boolean>;
+  /** The host chooses where its primary application area lives. */
+  setMainNavigator(navigate?: (surface: UiFrameSurface) => Promise<boolean>) { this.mainNavigator = navigate; }
   private readonly actions = new Map<string, { input: string; pending?: Promise<UiActionResult>; result?: UiActionResult; frame?: Frame }>();
   private focusSequence = 0;
   private activityGeneration = 0;
@@ -441,7 +444,8 @@ export class UiHost implements UiClient {
     void operation.then(result => { entry.pending = undefined; entry.result = result; this.trimLedger(source); });
     return waitForPresentation(operation, id, options.signal);
   }
-  navigate = (entryKey: string, options: UiActionOptions): Promise<UiActionResult> => this.action("navigate", entryKey, options, async check => {
+  navigate = (entryKey: string, options: UiNavigationOptions): Promise<UiActionResult> => this.action("navigate", [entryKey, options.placement, options.search], options, async check => {
+    if (options.placement === "main") throw new UiError("main_navigation_unavailable", "This document has no parent main surface.");
     const catalog = this.getNavigation().catalog, entry = catalog?.entries.find(e => e.key === entryKey);
     if (!entry || !entry.route) throw new UiError("destination_changed", "Refresh this app's navigation.");
     if (await this.composition.navigateLocal(entry)) { check(); return; }
@@ -466,6 +470,25 @@ export class UiHost implements UiClient {
       if (await this.runRenderer(checkRenderer, signal => renderer.showToolPicker(signal), frame) !== "accepted")
         throw new UiError("presentation_unavailable", "A tool chooser is not available here.");
       checkRenderer();
+    }, frame);
+  }
+  private navigateMain(entryKey: string, search: unknown, options: UiActionOptions, frame: Frame) {
+    return this.action("navigate-main", [entryKey, search], options, async check => {
+      if (!navigationSearch(search)) throw new UiError("destination_invalid", "Invalid navigation query.");
+      const navigate = this.mainNavigator;
+      if (!navigate) throw new UiError("main_navigation_unavailable", "This host has no main application surface.");
+      await this.bootstrap(); check();
+      const target: UiNavigationTarget = { appId: frame.surface.appId, installationId: frame.surface.installationId, entryKey };
+      const resolved = await uiRequest<UiResolvedNavigation>(this.path, "navigation/resolve", target); check();
+      if (!resolved.available || !resolved.surface) throw new UiError(resolved.state, "This page is unavailable.");
+      const destination = { ...resolved.surface };
+      if (search !== undefined) {
+        const url = new URL(destination.route, destination.origin); url.search = search;
+        destination.route = url.pathname + url.search + url.hash;
+      }
+      if (!await this.mainNavigator?.(destination))
+        throw new UiError("destination_changed", "Refresh this app's navigation.");
+      check();
     }, frame);
   }
   private navigateFrame(entryKey: string, options: UiActionOptions, frame: Frame) {
@@ -681,7 +704,7 @@ export class UiHost implements UiClient {
       if (frame.connected) { this.reportFrame(frame, "loading"); frame.waitForReadiness(); }
       this.post(frame, { type: "hosty:ui:connected", coreOrigin: own.coreOrigin, userId: own.userId,
         appId: own.app.appId, installationId: own.app.installationId, code: frame.connected ? null : "actor_mismatch", route: frame.surface.route,
-        ...(frame.composition ? { capabilities: [UI_COMPOSITION_CAPABILITY], chrome: frame.chrome, revision: ++frame.policyRevision,
+        ...(frame.composition ? { capabilities: [UI_COMPOSITION_CAPABILITY, UI_MAIN_NAVIGATION_CAPABILITY], chrome: frame.chrome, revision: ++frame.policyRevision,
           rootDisabled: !this.getChrome().tools.enabled, endpoint: frame.surface.endpoint } : {}) });
       if (frame.connected !== wasConnected) frame.onConnection?.(frame.connected);
       if (!frame.connected) this.reportFrame(frame, "auth-required");
@@ -689,9 +712,11 @@ export class UiHost implements UiClient {
     }
     if (!frame.connected) return;
     const source = `${frame.surface.appId}:${frame.generation}:${frame.nonce}`;
-    if (frame.composition && (msg.type === "hosty:ui:picker" || msg.type === "hosty:ui:navigate") && validId(msg.requestId)) {
+    if (frame.composition && (msg.type === "hosty:ui:picker" || msg.type === "hosty:ui:navigate" || msg.type === "hosty:ui:navigate-main") && validId(msg.requestId)) {
       const result = msg.type === "hosty:ui:picker" ? await this.pickTools({ requestId: msg.requestId }, frame)
-        : typeof msg.entryKey === "string" ? await this.navigateFrame(msg.entryKey, { requestId: msg.requestId }, frame)
+        : typeof msg.entryKey === "string" ? msg.type === "hosty:ui:navigate-main"
+          ? await this.navigateMain(msg.entryKey, msg.search, { requestId: msg.requestId }, frame)
+          : await this.navigateFrame(msg.entryKey, { requestId: msg.requestId }, frame)
         : { status: "rejected", requestId: msg.requestId, code: "destination_invalid" };
       if (source === `${frame.surface.appId}:${frame.generation}:${frame.nonce}`)
         this.post(frame, { type: "hosty:ui:action-result", requestId: msg.requestId, result });

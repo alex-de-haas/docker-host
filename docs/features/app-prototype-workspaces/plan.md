@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-16
-updated: 2026-10-10
+updated: 2026-10-16
 summary: Durable no-Git app creation from a prompt, with bootstrap, development guide and assisted initial Git setup.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -18,6 +18,21 @@ Git-backed session development is selected, consume its registered workspace and
 than creating another branch/PR owner. The shared-source continuation and writer coordination below
 apply to the no-Git prototype path; they do not require a manual ownership handoff for the rare
 explicit local external-agent workflow. Reconcile the transition before either plan becomes Ready.
+
+## Owner Exploration (2026-10-16)
+
+The owner wants app creation and iteration before remote publication, potentially using a local Git
+repository so standard worktrees and sandbox source bindings work immediately. This is a candidate
+revision to the no-Git bootstrap below, not an implemented capability or settled replacement.
+[Harness development UI](../harness-development-ui/feature.md) makes existing-app work visible first and
+must not wait for this creation flow. Plans remains optional; no repository publication is required
+merely to discuss a new app. Hosted repository provisioning remains owned by
+[publication](../app-publication/plan.md).
+
+D19 owns reconciliation before Ready: local repository identity without a remote, initial commit
+needed for linked worktrees, durable source outside disposable sandbox data, instruction/commit
+consent, optional later remote connection, and Docker bootstrap versus the earlier localCommand
+recipe. Do not silently introduce automatic commits or remove the previous no-Git requirement.
 
 ## Goal And Decisions
 
@@ -504,6 +519,10 @@ All phases belong to one complete feature PR after the shared app-context featur
       with their required source-of-truth consistency. SDK bumps only if SDK implementation changes.
 - [ ] D18. Write current feature documentation, update source/assistant/guide docs and epic links, remove
       the completed plan and regenerate the index. No schemaVersion bump for ordinary additive work.
+
+- [ ] D19. Reconcile the owner's local-Git-before-publication proposal with the no-Git design, choose
+      source/worktree identity and initial-history policy, align bootstrap with Docker development,
+      and update the affected deliverables and acceptance before implementation approval.
 
 ## Acceptance Script
 

@@ -3,13 +3,13 @@ namespace Haas.Hosty.Core;
 internal sealed class WorkspaceInspectionAuthorization(AppServiceTokenService services, AppRegistryStore apps,
     AppIdentityService identity, UserDirectoryStore users)
 {
-    public async Task<string> RequireAsync(HttpRequest request, string appId, CancellationToken ct)
+    public async Task<string> RequireAsync(HttpRequest request, string appId, CancellationToken ct, bool manage = false)
     {
         if (!services.ValidateToken(appId, CoreSessionAuthorization.ReadBearerToken(request) ?? ""))
             throw new AppIdentityException("token_invalid", "An app service token is required.");
         var app = await apps.GetAppAsync(appId, ct);
-        if (app is null || !AppManagementAuthorization.HasPermission(app, CoreAppPermissions.WorkspacesRead))
-            throw new AppIdentityException("app_permission_required", "The calling app requires apps.workspaces.read.");
+        if (app is null || !AppManagementAuthorization.HasPermission(app, manage ? CoreAppPermissions.Sources : CoreAppPermissions.WorkspacesRead))
+            throw new AppIdentityException("app_permission_required", "The calling app requires the reviewed workspace permission.");
         if (request.Cookies.ContainsKey(CoreSessionAuthorization.SessionCookieName))
             throw new AppIdentityException("app_credential_mixed", "Use this app's user credential without a Core cookie.");
         var token = request.Headers["X-Hosty-User-Token"].ToString();
@@ -34,6 +34,21 @@ internal static class WorkspaceInspectionEndpoints
         routes.MapGet("", async (string appId, HttpRequest request, WorkspaceInspectionAuthorization auth,
             WorkspaceInspectionService service, CancellationToken ct) =>
             await Handle(async () => await service.ListAsync(await auth.RequireAsync(request, appId, ct), ct)));
+        routes.MapGet("/{workspaceId}/previews", async (string appId, string workspaceId, HttpRequest request,
+            WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
+            await Handle(async () => await cleanup.PreviewsAsync(workspaceId, await auth.RequireAsync(request, appId, ct), appId, ct)));
+        routes.MapGet("/{workspaceId}/workflow", async (string appId, string workspaceId, HttpRequest request,
+            WorkspaceInspectionAuthorization auth, WorkspaceInspectionService service, CancellationToken ct) =>
+            await Handle(async () => await service.WorkflowAsync(workspaceId, await auth.RequireAsync(request, appId, ct), null, null, ct)));
+        routes.MapPost("/{workspaceId}/workflow/{kind}", async (string appId, string workspaceId, string kind,
+            WorkspaceWorkflowCommand input, HttpRequest request, WorkspaceInspectionAuthorization auth,
+            WorkspaceInspectionService service, WorkspaceCleanupService cleanup, CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                var userId = await auth.RequireAsync(request, appId, ct, manage: true);
+                return kind == "delete" ? await cleanup.DeleteAsync(workspaceId, userId, appId, input, ct)
+                    : await service.WorkflowAsync(workspaceId, userId, kind, input, ct);
+            }));
         routes.MapGet("/{workspaceId}/worktrees/{id}", async (string appId, string workspaceId, string id, HttpRequest request,
             WorkspaceInspectionAuthorization auth, WorkspaceInspectionService service, CancellationToken ct) =>
             await Handle(async () => await service.ReadAsync(workspaceId, id, await auth.RequireAsync(request, appId, ct), ct)));
@@ -45,6 +60,7 @@ internal static class WorkspaceInspectionEndpoints
     private static async Task<IResult> Handle<T>(Func<Task<T>> action)
     {
         try { return CoreJson.Json(await action()); }
+        catch (SandboxException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Status); }
         catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), AuthEndpoints.MapIdentityErrorStatus(ex.Code)); }
         catch (AppLifecycleException ex)
         {

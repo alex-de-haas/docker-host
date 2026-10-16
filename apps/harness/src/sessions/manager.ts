@@ -1,3 +1,6 @@
+import { hasResourceHistory, retentionBusy, retentionStatus, type RetentionStatus } from "./retention.js";
+import type { RetentionSnapshot } from "./development.js";
+import { DEFAULT_WORKFLOW_PROMPT } from "../settings/workflow.js";
 import { WORKER_LIMITS } from "../runtime/image.js";
 import { SharedDockerWorker, WorkerError, type WorkerBindings } from "../runtime/worker.js";
 import { WorkerMcpBridge } from "../runtime/mcp-bridge.js";
@@ -213,6 +216,11 @@ export class SessionManager {
     return unavailable;
   }
 
+  async inspectWorkspaces(credential: string, path = "", body?: Record<string, unknown>): Promise<unknown> {
+    if (!this.development) throw new AppContextError(503, "workspaces_unavailable", "Workspace inspection requires Core.");
+    return this.development.inspection(credential, path, body);
+  }
+
   async workspaceAction(id: string, action: DevelopmentAction, input: Record<string, unknown>, credential?: string, userId?: string): Promise<unknown> {
     if (action.startsWith("environment-")) return this.environmentAction(id, action as CoreEnvironmentAction, input, credential, userId);
     if (action.startsWith("sandbox-")) return this.sandboxWorkspaceAction(id, action as SandboxAction, input, credential, userId);
@@ -222,9 +230,19 @@ export class SessionManager {
       if (!this.development?.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
       const token = credential ?? session.workspaceCredential ?? session.credential;
       if (!token) throw new AppContextError(401, "workspace_credentials_required", "Refresh the session's Hosty credentials before using workspaces.");
-      if (!["list", "prepare", "status", "diff", "viewer", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"].includes(action))
+      if (!["workflow-status", "workflow-complete", "workflow-resume", "workflow-defer", "workflow-delete", "list", "prepare", "status", "diff", "viewer", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"].includes(action))
         throw new AppContextError(400, "workspace_action_invalid", "Unknown workspace action.");
-      if (action === "cleanup" && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
+      if (action === "workflow-complete" && !userId && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
+        if (typeof input.requestId !== "string" || !/^[0-9a-f-]{36}$/i.test(input.requestId) || !Number.isSafeInteger(input.expectedRevision))
+          throw new AppContextError(400, "workflow_request_invalid", "Supply a UUID requestId and expectedRevision.");
+        const current = session.record.workflowCompletion;
+        if (current?.state === "queued" && (current.requestId !== input.requestId || current.expectedRevision !== input.expectedRevision))
+          throw new AppContextError(409, "workflow_request_pending", "Keep the existing completion request until the turn finishes.");
+        session.record.workflowCompletion = { requestId: input.requestId, expectedRevision: input.expectedRevision as number, state: "queued" };
+        await this.store.saveRecord(session.record);
+        return { state: "queued", message: "Completion will be verified after this turn exits and releases its source leases. This is not a completion result." };
+      }
+      if (["cleanup", "workflow-complete", "workflow-defer", "workflow-delete"].includes(action) && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
       if (action === "prepare") {
         if (!(session.record.appIds ?? []).includes(String(input.appId))) throw new AppContextError(409, "workspace_app_required", "Attach the source app to this session first.");
         session.record.developmentLease ??= randomUUID();
@@ -253,7 +271,7 @@ export class SessionManager {
         const verified = await this.development.workerBindings(id, token);
         await this.worker.registerTrees(verified!.worktreePaths, this.workerBindings);
       }
-      if (action !== "diff" && action !== "viewer" && !action.startsWith("pr-")) {
+      if (action !== "diff" && action !== "viewer" && !action.startsWith("pr-") && !action.startsWith("workflow-")) {
         const workspaces = action === "list" ? (result as { workspaces: DevelopmentWorkspace[] }).workspaces : [result as DevelopmentWorkspace];
         const known = new Map((session.record.developmentWorkspaces ?? []).map(w => [w.id, w]));
         for (const w of workspaces) known.set(w.id, w);
@@ -444,6 +462,7 @@ export class SessionManager {
       const now = new Date().toISOString();
       const title = normalizeTitle(input.title);
       const record: SessionRecord = {
+        retentionVersion: 1,
         executionMode: (await this.settings?.read())?.executionMode ?? "native",
         id: input.reservedHandoffId ?? randomUUID(),
         ...(input.reservedHandoffId ? { handoffPending: true } : {}),
@@ -579,6 +598,73 @@ export class SessionManager {
       throw new AppContextError(409, "app_context_conflict", "App selection changed in another tab. Review the current selection and retry.");
   }
 
+  private async retentionSnapshot(record: SessionRecord): Promise<RetentionSnapshot> {
+    if (this.development?.available) return this.development.retention(record.id, record.createdBy);
+    if (record.retentionVersion === 1 && !hasResourceHistory(record)) return { kind: "chat", workflow: null, resourcesFinished: true };
+    throw new Error("Core is unavailable; historical sessions are preserved until their resources can be verified.");
+  }
+
+  private async inspectRetention(record: SessionRecord, now: Date): Promise<{ status: RetentionStatus; snapshot?: RetentionSnapshot }> {
+    if (retentionBusy(record) || this.worker?.activeSession === record.id)
+      return { status: { state: "protected", observedAt: now.toISOString(), message: "Active work or unresolved operations are retained." } };
+    try {
+      const snapshot = await this.retentionSnapshot(record);
+      if (record.retentionCleanup && ["in-progress", "deferred"].includes(snapshot.workflow?.state ?? ""))
+        delete record.retentionCleanup; // Core confirms that deletion never started and completion was invalidated.
+      const policy = (await this.settings?.read())?.retention ?? { ordinaryDays: 30, completedWorkspaceDays: null };
+      return { status: retentionStatus(record, policy, snapshot, now), snapshot };
+    } catch (error) {
+      return { status: { state: "blocked", observedAt: now.toISOString(), message: error instanceof Error ? error.message : "Core verification is unavailable." } };
+    }
+  }
+
+  async sessionRetention(id: string, now = new Date()): Promise<RetentionStatus> {
+    return this.serialize(id, async () => {
+      const record = await this.getSession(id);
+      if (!record) throw new AppContextError(404, "session_missing", "Session not found.");
+      let { status } = await this.inspectRetention(record, now);
+      if (status.state === "scheduled" && record.retentionCleanup && record.retention?.state === "blocked")
+        status = { ...status, state: "blocked", message: record.retention.message };
+      record.retention = status;
+      await this.store.saveRecord(record);
+      return status;
+    });
+  }
+
+  async sweepRetention(now = new Date(), onlySessionId?: string): Promise<string[]> {
+    const deleted: string[] = [];
+    for (const item of await this.store.listRecords()) {
+      if (onlySessionId && item.id !== onlySessionId) continue;
+      await this.serialize(item.id, async () => {
+        if (this.stopping) return;
+        const record = await this.getSession(item.id);
+        if (!record) return;
+        const { status, snapshot } = await this.inspectRetention(record, now);
+        record.retention = status;
+        await this.store.saveRecord(record);
+        if (status.state !== "scheduled" || !status.dueAt || Date.parse(status.dueAt) > now.getTime() || !snapshot) return;
+        try {
+          if (snapshot.kind === "workspace") {
+            if (snapshot.workflow?.state !== "deleted") {
+              record.retentionCleanup ??= { requestId: randomUUID(), expectedRevision: snapshot.workflow!.revision };
+              record.retention = { ...status, state: "deleting", message: "Cleaning up completed workspace resources." };
+              await this.store.saveRecord(record);
+              const result = await this.development!.retention(record.id, record.createdBy, record.retentionCleanup);
+              if (result.workflow?.state !== "deleted" || !result.resourcesFinished) throw new Error("Core cleanup is still pending; retry uses the saved request ID.");
+            } else if (!snapshot.resourcesFinished) throw new Error("Retained resources must finish before deleting the conversation.");
+          }
+          // This lock also guards new turns, so no session can resume between verification and removal.
+          await this.removeSessionRecord(record, "retention");
+          deleted.push(record.id);
+        } catch (error) {
+          record.retention = { ...status, state: "blocked", message: error instanceof Error ? error.message : "Cleanup requires retry." };
+          await this.store.saveRecord(record);
+        }
+      });
+    }
+    return deleted;
+  }
+
   async listSessions(): Promise<SessionRecord[]> {
     return (await this.store.listRecords()).filter(record => !record.handoffPending);
   }
@@ -597,18 +683,31 @@ export class SessionManager {
    * Subscribers are told before the record goes: another tab with this session open would otherwise
    * sit on a stream that has stopped meaning anything, and reconnect into a 404 it cannot explain.
    */
-  async deleteSession(id: string, deletedBy: string): Promise<boolean> {
+  async deleteSession(id: string, deletedBy: string, credential?: string): Promise<boolean> {
     return this.serialize(id, async () => {
-      if (this.worker?.activeSession === id) await this.finishDocker(await this.requireLive(id));
       const record = this.live.get(id)?.record ?? (await this.store.readRecord(id));
       if (!record) {
         return false;
       }
 
+      const snapshot = await this.retentionSnapshot(record);
+      if (snapshot.kind === "workspace" && snapshot.workflow?.state !== "deleted")
+        throw new AppContextError(409, "workspace_retained", "Complete and delete the workspace before deleting this conversation. Unfinished source is retained.");
+      if (!snapshot.resourcesFinished || snapshot.kind === "chat" && hasResourceHistory(record))
+        throw new AppContextError(409, "resource_retained", "Finish and reconcile retained resources before deleting this conversation.");
+      if (record.coreEnvironmentOperations?.some(o => o.state === "pending") || record.sandboxOperations?.some(o => o.state === "pending"))
+        throw new AppContextError(409, "resource_operation_pending", "Recover outstanding operations before deleting this conversation.");
+      return this.removeSessionRecord(record, deletedBy);
+    });
+  }
+
+  private async removeSessionRecord(record: SessionRecord, deletedBy: string): Promise<boolean> {
+      const id = record.id;
       const session = this.live.get(id);
+      if (this.worker?.activeSession === id) await this.finishDocker(await this.requireLive(id));
       if (session) {
         if (session.run) {
-          await session.run.stop().catch(() => undefined);
+          await session.run.stop();
           session.run = null;
         }
         session.pendingApprovals.clear();
@@ -634,7 +733,6 @@ export class SessionManager {
       // separately from the session's creator, which is a different person often enough to matter.
       this.audit.report("ai_session_deleted", { sessionId: id, deletedBy, createdBy: record.createdBy });
       return true;
-    });
   }
 
   /**
@@ -810,6 +908,7 @@ export class SessionManager {
   async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null } = {}): Promise<void> {
     return this.serialize(id, async () => {
       const session = await this.requireLive(id);
+      if (session.record.retentionCleanup) throw new AppContextError(409, "cleanup_pending", "Workspace cleanup has started. Recover deletion before starting a new conversation.");
       if (session.record.handoffPending) throw new AppContextError(409, "handoff_pending", "Finalize the prepared handoff before sending.");
       if (context.dispatchId) {
         if (session.record.handoffDispatch?.id !== context.dispatchId) throw new AppContextError(409, "dispatch_conflict", "Dispatch identity does not match.");
@@ -934,7 +1033,8 @@ export class SessionManager {
           // Read at start, not at every turn: the system prompt is the session's instruction set, so a
           // mid-conversation swap would leave a transcript whose halves ran under different rules. An
           // edit takes effect in the next session, which the settings UI states plainly.
-          const operatorPrompt = (await this.settings?.read())?.systemPrompt?.trim() || undefined;
+          const instructions = await this.settings?.read();
+          const operatorPrompt = [instructions?.workflowPrompt ?? DEFAULT_WORKFLOW_PROMPT, instructions?.systemPrompt].filter(Boolean).join("\n\n");
           const mcpServers = await this.buildMcpServers(session);
           session.mcpSignature = JSON.stringify([mcpServers ?? {}, session.mcpTargetSignature]);
           // After the servers, deliberately: the set of enabled providers is what decides whose skill is
@@ -1195,7 +1295,10 @@ export class SessionManager {
     const servers = await this.buildMcpServers(session, candidates);
     const signature = JSON.stringify([servers ?? {}, session.mcpTargetSignature]);
     if (session.mcpSignature === signature) return true;
-    this.mcpPolicy.cancel(session.record.id); // Reconfiguration can replace the native client.
+    // A browser credential refresh must not replace an active client or cancel its approvals.
+    // Proxy routes already enforce removals; apply the native server list between turns.
+    if (["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) return false;
+    this.mcpPolicy.cancel(session.record.id); // An idle replacement starts a fresh RPC namespace.
     const applied = await session.run.setMcpServers(servers ?? {}).catch(() => false);
     if (!applied && session.mcpNoticeSignature !== signature) {
       session.mcpNoticeSignature = signature;
@@ -1223,7 +1326,10 @@ export class SessionManager {
     const ownServers = this.development?.available && this.proxyBaseUrl && session.workspaceCredential
       ? this.developmentMcp.config(session.record.id, this.proxyBaseUrl) : {};
     if (!session.workspaceCredential) this.developmentMcp.unregister(session.record.id);
-    await session.run?.setMcpServers(ownServers).catch(() => false);
+    if (!["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
+      this.mcpPolicy.cancel(session.record.id); // An idle replacement starts a fresh RPC namespace.
+      await session.run?.setMcpServers(ownServers).catch(() => false);
+    }
     this.clearRefresh(session);
     return false;
   }
@@ -1522,6 +1628,10 @@ export class SessionManager {
     const loaded = this.live.get(id);
     if (loaded) return loaded;
 
+    if (record.workflowCompletion?.state === "queued") {
+      record.workflowCompletion = { ...record.workflowCompletion, state: "blocked", error: "Harness restarted before completion was confirmed. Refresh Core state and retry explicitly." };
+      await this.store.saveRecord(record);
+    }
     const session: LiveSession = {
       activity: { epoch: randomUUID(), revision: 0, activity: null },
       record,
@@ -1764,6 +1874,20 @@ export class SessionManager {
     session.record.updatedAt = new Date().toISOString();
     await this.store.saveRecord(session.record);
 
+    if (session.record.workflowCompletion?.state === "queued" && !["running", "awaiting_approval", "awaiting_question"].includes(status)) {
+      const request = session.record.workflowCompletion;
+      try {
+        const credential = session.workspaceCredential ?? session.credential;
+        if (status !== "idle" || !credential || !this.development) throw new Error("Execution did not finish successfully. Review and request completion again.");
+        await this.development.call(id, credential, "workflow-complete", { requestId: request.requestId, expectedRevision: request.expectedRevision });
+        delete session.record.workflowCompletion;
+        await this.append(id, { type: "notice", message: "Core verified workspace completion. Source and previews are retained for operator review." });
+      } catch (error) {
+        session.record.workflowCompletion = { ...request, state: "blocked", error: error instanceof Error ? error.message : String(error) };
+        await this.append(id, { type: "notice", message: `Workspace completion was not confirmed: ${session.record.workflowCompletion.error}` });
+      }
+      await this.store.saveRecord(session.record);
+    }
     // Announced on *entering* the state, which this method already guarantees: it returns early when
     // the status has not changed, so a session that is asked about repeatedly does not re-announce.
     // Nothing is published on resolution — an inbox row that appears and disappears on its own is

@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-10
+updated: 2026-10-16
 summary: Apps declare where their pages belong, such as settings, panels or navigation, and Shell places them.
 components: [apps/shell, apps/core]
 ---
@@ -151,9 +151,10 @@ grip icon.
 
 ## Current Placements
 
-- **The gateway** declares an Assistant panel with the `bot` icon, plus `ui.settings` and no sidebar entry: its whole page is operator
-  configuration. It still declares `ui.entrypoint`, because a system app's `ui` block requires one —
-  but an entrypoint no longer buys a place in the sidebar (below).
+- **Harness** declares its development page in `ui.navigation`, a compact Assistant panel and its
+  settings surface. Explicit main navigation promotes a selected session from the panel to Shell's
+  content area. Session query parameters preserve the declared page pathname without duplicating
+  its entrypoint. Ordinary app navigation keeps its existing surface.
 - **Telemetry** keeps Metrics/Traces/Logs in the sidebar — routine use, possibly by non-admins.
 - **Demo App** declares a `Session` panel with the `contact-round` icon, which is the platform's worked example of the contract:
   narrow, chrome-free, and showing the session itself, since a panel reporting no session is exactly

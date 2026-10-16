@@ -19,6 +19,7 @@ beforeEach(async () => {
   dir = await mkdtemp(path.join(os.tmpdir(), "hosty-development-test-")); store = new SessionStore(dir, path.join(dir, "cache"));
   directory = new ProviderDirectory(null, null, "hosty.harness"); vi.spyOn(directory, "readApps").mockResolvedValue([{ id: "notes", displayName: "Notes", runtimeState: "stopped" }]);
   client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
+  vi.spyOn(client, "retention").mockResolvedValue({ kind: "workspace", workflow: { state: "in-progress", revision: 0 }, resourcesFinished: true });
   vi.spyOn(client, "call").mockImplementation(async (_id, _token, action) => action === "list" ? { workspaces: [tree] } : tree);
   starts = []; sent = []; manager = build();
 });
@@ -206,4 +207,41 @@ it("uses app identity for source operations without creating a cross-app credent
   expect(JSON.stringify(await store.readRecord(record.id))).not.toContain("hostyg_own");
   await manager.postMessage(record.id, "continue from a legacy client", "fresh-delegation");
   expect(client.call).toHaveBeenCalledWith(record.id, "fresh-delegation", "list", {});
+});
+
+it("queues explicit agent completion until turn exit; Core rejection remains visible", async () => {
+  const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+  await manager.postMessage(record.id, "work", "token");
+  const request = { requestId: "decfc6bd-033b-46f2-8138-7d0e54ff7923", expectedRevision: 0 };
+  vi.mocked(client.call).mockClear();
+  expect(await manager.workspaceAction(record.id, "workflow-complete", request)).toMatchObject({ state: "queued" });
+  expect(client.call).not.toHaveBeenCalledWith(record.id, expect.anything(), "workflow-complete", expect.anything());
+  vi.mocked(client.call).mockImplementation(async (_id, _token, action) => {
+    if (action === "workflow-complete") throw new Error("Current commits are not merged");
+    return action === "list" ? { workspaces: [tree] } : tree;
+  });
+  await finish(record.id);
+  await vi.waitFor(async () => expect((await store.readRecord(record.id))!.workflowCompletion?.state).toBe("blocked"));
+  expect(client.call).toHaveBeenCalledWith(record.id, "token", "workflow-complete", request);
+});
+it("retains a development conversation until Core confirms deletion", async () => {
+  const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+  await manager.workspaceAction(record.id, "prepare", { appId: "notes" }, "token", "admin");
+  vi.mocked(client.call).mockResolvedValue({ state: "completed" });
+  await expect(manager.deleteSession(record.id, "admin", "token")).rejects.toThrow("Complete and delete");
+  expect(await store.readRecord(record.id)).not.toBeNull();
+  vi.mocked(client.call).mockResolvedValue({ state: "deleted" });
+  vi.mocked(client.retention).mockResolvedValue({ kind: "workspace", workflow: { state: "deleted", revision: 2 }, resourcesFinished: true });
+  expect(await manager.deleteSession(record.id, "admin", "token")).toBe(true);
+});
+it("retention preserves unfinished development and waiting questions", async () => {
+  const record = await manager.createSession({ createdBy: "admin" });
+  record.updatedAt = "2000-01-01T00:00:00Z";
+  const check = vi.spyOn(client, "retention").mockResolvedValue({ kind: "workspace", workflow: { state: "in-progress", revision: 0 }, resourcesFinished: true });
+  expect(await manager.sweepRetention()).toEqual([]);
+  record.status = "awaiting_question";
+  check.mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true });
+  expect(await manager.sweepRetention()).toEqual([]);
+  record.status = "idle";
+  expect(await manager.sweepRetention()).toEqual([record.id]);
 });

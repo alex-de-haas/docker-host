@@ -19,6 +19,7 @@ internal static class CoreAppPermissions
     public const string ReadUsers = "users.read";
     public const string ManageUsers = "users.manage";
     public const string Sources = "apps.sources.full";
+    public const string WorkspacesCleanup = "apps.workspaces.cleanup";
     public const string WorkspacesRead = "apps.workspaces.read";
     public const string CoreEnvironmentsInspect = "core.environments.inspect";
     public const string CoreEnvironmentsOperate = "core.environments.operate";
@@ -35,7 +36,7 @@ internal static class CoreAppPermissions
     public const string SpeechProviders = "providers.speech-to-text";
     public const string TranslationProviders = "providers.translation";
     public const string AssistantProviders = "providers.assistant";
-    public static readonly string[] Known = [Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, SandboxesRead, SandboxesManage, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SandboxesInspect, SandboxesOperate, SourceConnections, ReadSkills, SpeechProviders, TranslationProviders, AssistantProviders];
+    public static readonly string[] Known = [Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, SandboxesRead, SandboxesManage, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SandboxesInspect, SandboxesOperate, SourceConnections, ReadSkills, SpeechProviders, TranslationProviders, AssistantProviders];
 
     // The old name grants exactly the same authority. Other retired permissions remain unsupported.
     public static string Normalize(string permission) => permission == LegacySources ? Sources : permission;
@@ -62,6 +63,7 @@ internal static class CoreAppPermissions
     public static string Describe(string permission) => permission switch
     {
         Sources => "Access and modify application source code, including code Hosty executes on this host in development mode; manage workspaces and use selected source-provider connections",
+        WorkspacesCleanup => "Delete this assistant installation's explicitly completed workspaces and owned temporary resources in the background after fresh Core verification",
         WorkspacesRead => "Inspect authorized development workspaces, worktrees, source diffs and recorded publication facts as the current administrator; no mutations",
         SandboxesInspect => "Inspect the current administrator's sandbox instances across their creating apps",
         SandboxesOperate => "Operate the current administrator's sandboxes across creating apps, including replacing test fixtures and deleting temporary resources",

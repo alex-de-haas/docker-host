@@ -1,5 +1,5 @@
 import { INITIAL_CHROME, INITIAL_NAVIGATION } from "./ui-composition";
-import type { UiChromeSnapshot, UiNavigationSnapshot, UiActionOptions, UiActionResult, PanelTarget, PresentationOptions, PresentationResult, UiEnvironment, UiEvent } from "@hosty-sdk/app/ui/types";
+import type { UiChromeSnapshot, UiNavigationSnapshot, UiActionOptions, UiNavigationOptions, UiActionResult, PanelTarget, PresentationOptions, PresentationResult, UiEnvironment, UiEvent } from "@hosty-sdk/app/ui/types";
 export * from "@hosty-sdk/app/ui/types";
 
 export interface UiClient {
@@ -8,7 +8,7 @@ export interface UiClient {
   subscribeChrome(listener: () => void): () => void;
   getNavigation(): UiNavigationSnapshot;
   subscribeNavigation(listener: () => void): () => void;
-  navigate(entryKey: string, options: UiActionOptions): Promise<UiActionResult>;
+  navigate(entryKey: string, options: UiNavigationOptions): Promise<UiActionResult>;
   openToolPicker(options: UiActionOptions): Promise<UiActionResult>;
   openSurface(target: PanelTarget, options: PresentationOptions): Promise<PresentationResult>;
   getPresentation(requestId: string, options?: { signal?: AbortSignal }): Promise<PresentationResult>;

@@ -1,6 +1,6 @@
 ---
 created: 2026-09-27
-updated: 2026-10-15
+updated: 2026-10-16
 summary: Session-owned logical workspaces group repository worktrees with compatible Git operations and a separately authorized inspection API.
 components: [apps/core, apps/harness, apps/workspaces]
 ---
@@ -31,8 +31,9 @@ no Git migration or new allocation store is needed. Different assistant installa
 sessions or external grants remain separate. Public labels never grant authority.
 
 A group reports `released` only when every authorized child is released; otherwise an unavailable,
-preparing or partially released group reports `attention`. There is no aggregate HEAD, branch,
-PR completion or new close operation. Child failures do not hide other authorized repositories.
+preparing or partially released group reports `attention`. There is no aggregate HEAD or branch. A separate [workflow record](../workspace-lifecycle-controls/feature.md)
+tracks explicit verified completion and cleanup across children. Child failures do not hide other
+authorized repositories.
 
 ## Authorization And APIs
 
@@ -64,7 +65,8 @@ Administrators use `/api/development/workspaces` to list active records across a
 CSRF. Responses use `Cache-Control: no-store`. Managed requests produce Core audit records; observed
 external Git activity does not acquire a fabricated managed-operation audit entry.
 
-[Workspaces](../workspaces-app/feature.md) is the ordinary read-only inspector. Shell displays its
+[Workspaces](../workspaces-app/feature.md) remains a standalone inspector. The
+[Harness development page](../harness-development-ui/feature.md) also reads the same Core projection. Shell displays its
 manifest navigation entry without reading source; the former dashboard launcher is removed.
 Harness resolves the viewer destination through the owning session's existing Core authorization.
 The link opens the current installed `hosty.workspaces` browser origin with workspace and worktree

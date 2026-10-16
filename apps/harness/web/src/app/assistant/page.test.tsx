@@ -3,9 +3,10 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import AssistantPage from "./page";
+import { AssistantConversation } from "@/components/assistant-conversation";
 import * as api from "@/lib/assistant-api";
 
-const ui = vi.hoisted(() => ({ reportSurfaceState: vi.fn() }));
+const ui = vi.hoisted(() => ({ reportSurfaceState: vi.fn(), getNavigation: vi.fn(), navigate: vi.fn() }));
 vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => ui }));
 
 vi.mock("@/lib/assistant-api", async original => ({
@@ -13,6 +14,7 @@ vi.mock("@/lib/assistant-api", async original => ({
   getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(),
   listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(),
 }));
+vi.mock("@/lib/development-api", async original => ({ ...await original<typeof import("@/lib/development-api")>(), useDevelopmentInventory: () => ({ workspaces: [], error: "", refresh: () => {} }) }));
 vi.mock("@/components/speech-input", () => ({ SpeechInput: () => null }));
 vi.mock("@/components/session-credentials", () => ({ SessionCredentials: () => null }));
 vi.mock("@/components/app-context-picker", () => ({ AppContextPicker: () => <button aria-label="Select app context" /> }));
@@ -356,4 +358,59 @@ it("clears the previous activity when opening a different session", async () => 
   await act(async () => button("New session")!.click());
   await act(async () => previousEmit(activityEvent(3, { phase: "thinking", tool: null, toolCount: 0 })));
   expect(activityRow()).toBeNull();
+});
+
+
+it("promotes the exact session to the host main area without sending or creating a conversation", async () => {
+  await render(); await type("Keep my draft");
+  ui.getNavigation.mockReturnValue({ entries: [{ key: "development", route: "/development" }] });
+  ui.navigate.mockResolvedValue({ status: "accepted" });
+  vi.mocked(api.createSession).mockClear();
+  const open = [...container.querySelectorAll("button")].find(b => b.textContent === "Open in Harness")!;
+  await act(async () => open.click());
+  expect(ui.navigate).toHaveBeenCalledWith("development", { requestId: expect.any(String), placement: "main", search: "?session=session-one" });
+  expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBe("Keep my draft");
+  expect(api.postMessage).not.toHaveBeenCalled(); expect(api.createSession).not.toHaveBeenCalled();
+});
+
+it("updates the host destination when selecting another full-page session and preserves its draft", async () => {
+  const next = { ...record, id: "next-session", title: "Other conversation" };
+  window.history.replaceState({}, "", "/development?session=session-one");
+  localStorage.setItem("hosty.assistant.draft.next-session", "Keep next draft");
+  vi.mocked(api.listSessions).mockResolvedValue([record, next]);
+  vi.mocked(api.getSession).mockImplementation(async id => id === next.id ? next : record);
+  ui.getNavigation.mockReturnValue({ entries: [{ key: "development", route: "/development" }] });
+  ui.navigate.mockResolvedValue({ status: "accepted" });
+  await act(async () => root.render(<AssistantConversation fullPage />));
+  const pick = [...container.querySelectorAll("button")].find(b => b.textContent?.startsWith("Other conversation"))!;
+  await act(async () => pick.click());
+  expect(ui.navigate).toHaveBeenCalledWith("development", expect.objectContaining({ placement: "main", search: "?session=next-session" }));
+  expect(input().value).toBe("Keep next draft");
+  expect(api.createSession).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
+});
+it("updates standalone selection URLs when the host has no main destination", async () => {
+  const next = { ...record, id: "standalone-next", title: "Standalone next" };
+  window.history.replaceState({}, "", "/development?session=session-one");
+  vi.mocked(api.listSessions).mockResolvedValue([record, next]);
+  vi.mocked(api.getSession).mockImplementation(async id => id === next.id ? next : record);
+  ui.getNavigation.mockReturnValue({ entries: [] });
+  await act(async () => root.render(<AssistantConversation fullPage />));
+  await act(async () => [...container.querySelectorAll("button")].find(b => b.textContent?.startsWith("Standalone next"))!.click());
+  expect(window.location.search).toBe("?session=standalone-next");
+  expect(localStorage.getItem("hosty.assistant.session")).toBe(next.id);
+});
+
+it("synchronizes uploaded draft references with an already open second surface without sending", async () => {
+  await render();
+  const key = "hosty.assistant.attachments.session-one";
+  await act(async () => {
+    localStorage.setItem(key, JSON.stringify([{ name: "reference.txt", size: 44 }]));
+    window.dispatchEvent(new StorageEvent("storage", { key, newValue: localStorage.getItem(key), storageArea: localStorage }));
+  });
+  expect(container.querySelector('[aria-label="Attachments to send"]')?.textContent).toContain("reference.txt");
+  await act(async () => {
+    localStorage.setItem(key, "[]"); window.dispatchEvent(new StorageEvent("storage", { key, newValue: "[]", storageArea: localStorage }));
+  });
+  expect(container.querySelector('[aria-label="Attachments to send"]')).toBeNull();
+  expect(api.postMessage).not.toHaveBeenCalled();
 });

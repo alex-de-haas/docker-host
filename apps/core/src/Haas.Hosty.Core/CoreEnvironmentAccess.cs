@@ -54,11 +54,14 @@ internal sealed class CoreEnvironmentAccess(CoreEnvironmentStore store, CoreEnvi
         }
         finally { gate.Release(); }
     }
-    public async Task<CoreEnvironmentApiResponse> SendAsync(SandboxActor actor, string id, CoreEnvironmentApiRequest input, CancellationToken ct)
+    public Task<CoreEnvironmentApiResponse> SendAsync(SandboxActor actor, string id, CoreEnvironmentApiRequest input, CancellationToken ct)
+        => SendCoreAsync(actor, id, input, serialize: true, ct);
+
+    private async Task<CoreEnvironmentApiResponse> SendCoreAsync(SandboxActor actor, string id, CoreEnvironmentApiRequest input, bool serialize, CancellationToken ct)
     {
         using var stopping = CancellationTokenSource.CreateLinkedTokenSource(ct, service.Stopping);
         ct = stopping.Token;
-        var gate = service.Gate(id); await gate.WaitAsync(ct);
+        var gate = service.Gate(id); if (serialize) await gate.WaitAsync(ct);
         try
         {
             var record = await service.RequireAsync(actor, id, ct);
@@ -81,7 +84,7 @@ internal sealed class CoreEnvironmentAccess(CoreEnvironmentStore store, CoreEnvi
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
             return await ResultAsync(response, ct);
         }
-        finally { gate.Release(); }
+        finally { if (serialize) gate.Release(); }
     }
     public async Task<CoreEnvironmentApplications> ApplicationsAsync(SandboxActor actor, string id, CancellationToken ct)
     {
@@ -89,9 +92,12 @@ internal sealed class CoreEnvironmentAccess(CoreEnvironmentStore store, CoreEnvi
         if (view.State != "running") return new(view.State, []);
         try
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct, service.Stopping);
             timeout.CancelAfter(TimeSpan.FromSeconds(10));
-            var response = await SendAsync(actor, id, new("GET", "/api/apps"), timeout.Token);
+            // This fixed read-only projection must remain observable while an app start/build
+            // holds the mutation gate. Authorization, consent, ownership and process checks
+            // still run; concurrent stop/finish is reported as unavailable.
+            var response = await SendCoreAsync(actor, id, new("GET", "/api/apps"), serialize: false, timeout.Token);
             if (response.Status is 401 or 403) return new("sign-in-required", [], "Sign in with a sandbox administrator to inspect its apps.");
             if (response.Status != 200 || response.Body is not { } body || !body.TryGetProperty("apps", out var apps)
                 || apps.ValueKind != JsonValueKind.Array) return new("unavailable", [], "The child Core did not return its application inventory.");
@@ -115,7 +121,12 @@ internal sealed class CoreEnvironmentAccess(CoreEnvironmentStore store, CoreEnvi
         var preview = Text(app, "embeddedUrl") is not null && installation is not null && endpoint is not null && route is not null
             ? Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(origin + "/api/apps/" + Uri.EscapeDataString(appId) + "/open",
                 new Dictionary<string, string?> { ["installationId"] = installation, ["endpoint"] = endpoint, ["route"] = route }) : null;
-        return new(appId, Text(app, "displayName") ?? appId, Text(app, "version"), Text(app, "runtimeState") ?? "unknown", health, preview);
+        static T? Read<T>(JsonElement value, string key, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type)
+            => value.TryGetProperty(key, out var field) && field.ValueKind == JsonValueKind.Object ? field.Deserialize(type) : default;
+        bool? restart = app.TryGetProperty("restartRequired", out var pending) && pending.ValueKind is JsonValueKind.True or JsonValueKind.False ? pending.GetBoolean() : null;
+        return new(appId, Text(app, "displayName") ?? appId, Text(app, "version"), Text(app, "runtimeState") ?? "unknown", health, preview,
+            restart, Read(app, "launchProgress", CoreJsonSerializerContext.Default.AppLaunchProgress),
+            Read(app, "development", CoreJsonSerializerContext.Default.AppDevelopmentStatus), Text(app, "manifestError"), Text(app, "lastError"));
     }
     private static void RequireRunning(CoreEnvironmentRecord record)
     {

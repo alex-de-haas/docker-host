@@ -149,6 +149,66 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Single(repeated.Operations);
     }
     [Fact]
+    public async Task Publication_ExplicitResumeAllowsCorrectiveWorkAfterMergedOutcomeWithoutLosingHistory()
+    {
+        var f = await PublicationFixture(); var head = f.W.Observation!.Head!;
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", new(Guid.NewGuid().ToString(), head, Title: "Feature"), default);
+        f.Provider.State = "merged"; f.Provider.Complete = true;
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "complete", new(Guid.NewGuid().ToString(), head, Outcome: "merged"), default);
+        await Assert.ThrowsAsync<PublicationException>(() => f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), head), default));
+        await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "complete", new(Guid.NewGuid().ToString(), 0), new Dictionary<string, string> { [f.W.Id] = head }, default);
+        await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "resume", new(Guid.NewGuid().ToString(), 1), new Dictionary<string, string>(), default);
+        var result = await f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), head), default);
+        Assert.Null(result.Outcome); Assert.Null(result.CompletedAt); Assert.False(result.CleanupRequested);
+        Assert.Equal(42, Assert.Single(result.History).Number);
+    }
+    [Fact]
+    public async Task Publication_OldResumeCannotAuthorizeCorrectionAfterAnotherCompletion()
+    {
+        var f = await PublicationFixture(); var head = f.W.Observation!.Head!;
+        for (var cycle = 0; cycle < 2; cycle++)
+        {
+            await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", new(Guid.NewGuid().ToString(), head, Title: "Feature"), default);
+            f.Provider.State = "merged"; f.Provider.Complete = true;
+            await f.Service.CommandAsync(f.W.Id, f.W.Owner, "complete", new(Guid.NewGuid().ToString(), head, Outcome: "merged"), default);
+            await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "complete", new(Guid.NewGuid().ToString(), cycle * 2), new Dictionary<string, string> { [f.W.Id] = head }, default);
+            if (cycle == 0)
+            {
+                await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "resume", new(Guid.NewGuid().ToString(), 1), new Dictionary<string, string>(), default);
+                await f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), head), default);
+            }
+        }
+        // A native edit invalidates completion, but it is not operator consent to resume this cycle.
+        await File.WriteAllTextAsync(Path.Combine(f.W.Path, "correction.txt"), "new correction");
+        await RunGitAsync(f.W.Path, ["add", "correction.txt"]);
+        await RunGitAsync(f.W.Path, ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "test correction"]);
+        var edited = await f.Workspaces.ObserveAsync(f.W.Id, f.W.Owner, default);
+        var workflow = await f.Workspaces.WorkflowAsync(f.W.Owner, default);
+        Assert.Equal("in-progress", workflow.State);
+        var error = await Assert.ThrowsAsync<PublicationException>(() => f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), edited.Observation!.Head), default));
+        Assert.Equal("publication_completed", error.Code);
+        await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "resume", new(Guid.NewGuid().ToString(), workflow.Revision), new Dictionary<string, string>(), default);
+        var result = await f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), edited.Observation!.Head), default);
+        Assert.Null(result.Outcome);
+        Assert.Equal(2, result.History.Length);
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Publication_ResumeWithoutCompletedWorkspaceCannotAuthorizeCorrection(bool deferFirst)
+    {
+        var f = await PublicationFixture(); var head = f.W.Observation!.Head!;
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", new(Guid.NewGuid().ToString(), head, Title: "Feature"), default);
+        f.Provider.State = "merged"; f.Provider.Complete = true;
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "complete", new(Guid.NewGuid().ToString(), head, Outcome: "merged"), default);
+        if (deferFirst)
+            await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "defer", new(Guid.NewGuid().ToString(), 0), new Dictionary<string, string>(), default);
+        var resumed = await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "resume", new(Guid.NewGuid().ToString(), deferFirst ? 1 : 0), new Dictionary<string, string>(), default);
+        Assert.Equal("in-progress", resumed.State);
+        var error = await Assert.ThrowsAsync<PublicationException>(() => f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), head), default));
+        Assert.Equal("publication_completed", error.Code);
+    }
+    [Fact]
     public async Task Publication_CorrectiveCycleKeepsPriorPrAndChangesRemoteBranch()
     {
         var f = await PublicationFixture(); var head = f.W.Observation!.Head;

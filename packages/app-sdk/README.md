@@ -460,10 +460,19 @@ a configurable default or URL field.
 
 ```ts
 const result = await ui.navigate(entry.key, { requestId: crypto.randomUUID() });
+// Explicitly promote a declared page into the embedder's main application area.
+const main = await ui.navigate(entry.key, {
+  requestId: crypto.randomUUID(), placement: "main", search: "?session=selected-session",
+});
 const picker = await ui.openToolPicker({ requestId: crypto.randomUUID() });
 // accepted means navigation was accepted / the chooser became visible.
 // Retain request IDs for uncertain retries; an accepted replay does not repeat the action.
 ```
+
+Hosts opt in with `host.setMainNavigator(async surface => launchMainPage(surface))`. The SDK resolves
+that caller's entry through Core before invoking it. Main placement preserves the originating panel;
+only the destination query can be overridden. Legacy/standalone hosts report it unavailable instead
+of silently navigating the panel. Normal navigation keeps its existing current-surface behavior.
 
 Document hints are `hosty_navigation=show|hide`, `hosty_tools=enabled|disabled` and
 `hosty_tool_launcher=show|hide`. The SDK removes them from the visible URL, preserving history

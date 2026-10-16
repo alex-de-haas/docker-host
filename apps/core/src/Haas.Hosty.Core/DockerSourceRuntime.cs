@@ -121,6 +121,7 @@ internal static class DockerSourceRuntime
         {
             var check = await runner.RunAsync(["image", "inspect", existing.ImageDigest], null, cancellationToken);
             if (check.ExitCode != 0) throw new AppLifecycleException("docker_dev_image_missing", "The locked development image is missing. Review a new build revision to rebuild it.");
+            if (context.ReportLaunchProgress is not null) await context.ReportLaunchProgress("build-reused", service.Key);
             return (existing.ImageDigest, existing);
         }
         if (existing is not null) throw new AppLifecycleException("docker_dev_build_requires_review", "Development environment changed; review and apply the source manifest to rebuild it.");
@@ -130,12 +131,14 @@ internal static class DockerSourceRuntime
             throw new AppLifecycleException("docker_dev_build_path_invalid", "The development Dockerfile must be a regular file inside the declared build context.");
         var owner = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(context.AppRoot)))[..12].ToLowerInvariant();
         var tag = DockerRuntimeAdapter.BuildContainerName(owner, context.App.Id, service.Key) + "-dev:" + fingerprint[..16];
+        if (context.ReportLaunchProgress is not null) await context.ReportLaunchProgress("building", service.Key);
         var result = await runner.RunAsync(["build", "--tag", tag, "--file", dockerfile, directory], null, cancellationToken);
         if (result.ExitCode != 0) throw new AppLifecycleException("docker_dev_build_failed", result.StandardError);
         var image = await runner.RunAsync(["image", "inspect", "--format", "{{.Id}}", tag], null, cancellationToken);
         var id = image.StandardOutput.Trim();
         if (image.ExitCode != 0 || !System.Text.RegularExpressions.Regex.IsMatch(id, "^sha256:[a-f0-9]{64}$"))
             throw new AppLifecycleException("docker_dev_image_unresolved", "Cannot resolve the built development image to an immutable image ID.");
+        if (context.ReportLaunchProgress is not null) await context.ReportLaunchProgress("build-ready", service.Key);
         return (id, new ArtifactLock("development-image", id, tag, fingerprint, null, DateTimeOffset.UtcNow));
     }
 

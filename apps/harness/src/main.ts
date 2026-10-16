@@ -37,7 +37,7 @@ const connections = config.harness === "fake" ? null : new AgentConnections(conf
 const store = new SessionStore(config.dataDir, config.cacheDir);
 const audit = new AuditReporter(config.coreOrigin, config.serviceToken, config.appId);
 const notifier = new WaitingNotifier(config.coreOrigin, config.serviceToken, config.appId);
-const settings = new SettingsStore(config.dataDir);
+const settings = new SettingsStore(config.dataDir, config.retentionDays);
 // Core's MCP endpoint, resolved once for both consumers: the facade lists it beside the apps for
 // external clients, and the provider directory offers it to the assistant's own sessions.
 const coreMcpUrl = config.coreOrigin ? `${config.coreOrigin.replace(/\/$/, "")}/api/mcp` : null;
@@ -70,14 +70,14 @@ const manager: SessionManager = new SessionManager(
   worker,
 );
 
-// Retention: once at boot, then daily. The sweep is cheap (a directory listing), and running it
-// in-process keeps retention working without any external scheduler.
+// Retention: once at boot, then daily. The manager reconciles Core resources and completion
+// before removal; running it in-process avoids a separate scheduler.
 const sweep = (): void => {
-  void store
-    .sweepRetention(config.retentionDays, new Date(), new Set(worker?.activeSession ? [worker.activeSession] : []))
+  void manager
+    .sweepRetention()
     .then((deleted) => {
       if (deleted.length > 0) {
-        console.log(`[retention] deleted ${deleted.length} session(s) older than ${config.retentionDays}d`);
+        console.log(`[retention] deleted ${deleted.length} session(s) under the configured policy`);
       }
     })
     .catch((error) => console.warn("[retention] sweep failed", error));

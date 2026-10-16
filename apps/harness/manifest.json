@@ -3,7 +3,7 @@
   "id": "hosty.harness",
   "name": "Hosty Harness",
   "description": "Host-resident operator assistant with managed Claude and Codex connections, chat and settings UI.",
-  "version": "0.54.1",
+  "version": "0.55.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -147,7 +147,7 @@
       "default": "30",
       "required": false,
       "label": "Transcript retention (days)",
-      "description": "Sessions and transcripts older than this are deleted by the daily cleanup sweep."
+      "description": "Initial ordinary-chat retention. Harness Settings → Instructions and retention overrides this value and separately controls verified completed workspaces. Unfinished work never expires."
     }
   ],
   "capabilities": [
@@ -160,12 +160,13 @@
   "ui": {
     "entrypoint": {
       "endpoint": "http",
-      "path": "/settings"
+      "path": "/development"
     },
     "settings": {
       "endpoint": "http",
       "path": "/settings"
     },
+    "navigation": [{ "label": "Harness", "endpoint": "http", "path": "/development" }],
     "panels": [
       {
         "id": "assistant",
@@ -182,10 +183,12 @@
   ],
   "corePermissions": [
     "apps.read",
+    "apps.workspaces.read",
     "apps.skills.read",
     "apps.sources.full"
   ],
   "optionalCorePermissions": [
+    "apps.workspaces.cleanup",
     "providers.speech-to-text",
     "core.read",
     "core.logs",

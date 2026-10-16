@@ -123,7 +123,10 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
         await ValidateWorktreesAsync(actor, input, ct);
         return input;
     }
-    public async Task<CoreEnvironmentView> CreateAsync(SandboxActor actor, CoreEnvironmentCreate input, CancellationToken ct, bool operatorApproved = false)
+    public Task<CoreEnvironmentView> CreateAsync(SandboxActor actor, CoreEnvironmentCreate input, CancellationToken ct, bool operatorApproved = false)
+        => workspaces is null ? CreateResourceAsync(actor, input, ct, operatorApproved)
+            : workspaces.WithResourceContextAsync(actor, input.Context, () => CreateResourceAsync(actor, input, ct, operatorApproved), ct);
+    private async Task<CoreEnvironmentView> CreateResourceAsync(SandboxActor actor, CoreEnvironmentCreate input, CancellationToken ct, bool operatorApproved)
     {
         input = await ValidateCreateAsync(actor, input, ct);
         var requestId = input.RequestId;

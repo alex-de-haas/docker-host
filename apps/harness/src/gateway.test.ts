@@ -1335,11 +1335,11 @@ describe("gateway", () => {
     const record = await manager.createSession({ createdBy: "user_admin" });
     const fresh = await manager.createSession({ createdBy: "user_admin" });
 
-    const stale = (await store.readRecord(record.id))!;
+    const stale = (await manager.getSession(record.id))!;
     stale.updatedAt = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
     await store.saveRecord(stale);
 
-    const deleted = await store.sweepRetention(30);
+    const deleted = await manager.sweepRetention();
     expect(deleted).toEqual([record.id]);
     expect(await store.readRecord(record.id)).toBeNull();
     expect(await store.readRecord(fresh.id)).not.toBeNull();

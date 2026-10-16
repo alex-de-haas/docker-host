@@ -967,6 +967,7 @@ internal sealed partial class CoreLifecycleService(
                 // Reset, so a previous run's `healthy` cannot survive into this start; the readiness
                 // wait below fills in the services once the runtime has launched them.
                 Health = new AppHealthSummary("starting", [], clock.UtcNow),
+                LaunchProgress = new("preparing", clock.UtcNow),
             }, cancellationToken)).App;
 
             var load = await LoadSelectionWithStatusAsync(app, cancellationToken);
@@ -1013,6 +1014,7 @@ internal sealed partial class CoreLifecycleService(
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
             await new HostPathAuthority(paths, apps).AppAsync(context.App, cancellationToken);
             context = await ReserveRuntimePathsAsync(EnsureMountsReadyForStart(context), cancellationToken);
+            context = context with { ReportLaunchProgress = (stage, service) => SetLaunchProgressAsync(appId, stage, service, cancellationToken) };
             var appliedConfigurationHash = AppConfigurationFingerprint.Compute(context.App, context.Mounts);
             if (app.OperationStatus == "updating")
                 context = context with { ReportUpdateProgress = (stage, service) => SetUpdateProgressAsync(appId, stage, service, cancellationToken) };
@@ -1046,6 +1048,7 @@ internal sealed partial class CoreLifecycleService(
             // The wait probes the endpoint set the record is about to persist — the same merge the write
             // below applies — so the start and the supervisor's later observations target the same ports.
             if (context.ReportUpdateProgress is not null) await context.ReportUpdateProgress("checking", null);
+            await context.ReportLaunchProgress!("checking", null);
             var readiness = await WaitForReadinessAsync(appId, adapter, context, selection, MergeEndpointUrls(app.Endpoints, result.Endpoints, selection), cancellationToken);
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
@@ -1055,6 +1058,8 @@ internal sealed partial class CoreLifecycleService(
                 ActiveSourcePaths = configurationApplied ? HostPathAuthority.CodePaths(context.App with { ActiveSourcePaths = null }).Select(MountPathPolicy.ResolveRealPath).Distinct().ToArray() : current.ActiveSourcePaths,
                 AppliedBrowserOrigin = configurationApplied ? coreOrigins?.Effective ?? runtimeConfig?.EffectiveCorePublicOrigin : current.AppliedBrowserOrigin,
                 Health = readiness,
+                LaunchProgress = new("ready", clock.UtcNow, BuildState: current.LaunchProgress?.BuildState),
+                AppliedSourceManifestDigest = configurationApplied ? selection.ManifestDigest : current.AppliedSourceManifestDigest,
                 OperationStatus = current.OperationStatus == "updating" ? "updating" : "started",
                 LastOperation = current.OperationStatus == "updating" ? "update" : "start",
                 LastError = null,
@@ -1437,6 +1442,7 @@ internal sealed partial class CoreLifecycleService(
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
             await new HostPathAuthority(paths, apps).AppAsync(context.App, cancellationToken);
             context = await ReserveRuntimePathsAsync(EnsureMountsReadyForStart(context), cancellationToken);
+            context = context with { ReportLaunchProgress = (stage, service) => SetLaunchProgressAsync(appId, stage, service, cancellationToken) };
             var appliedConfigurationHash = AppConfigurationFingerprint.Compute(context.App, context.Mounts);
             // From the first stop onward Core owns completion. A self-restart of Shell disconnects
             // its proxy request as soon as Stop kills the server carrying that request. Keep caller
@@ -1455,6 +1461,7 @@ internal sealed partial class CoreLifecycleService(
             {
                 RuntimeState = AppRuntimeStates.Starting,
                 Health = new AppHealthSummary("starting", [], clock.UtcNow),
+                LaunchProgress = new("preparing", clock.UtcNow),
             }, cancellationToken);
             // Restart must materialize the reviewed pin just like Start. In particular, a previous
             // failed update may have saved a new pin while the checkout still contains the old code.
@@ -1462,6 +1469,7 @@ internal sealed partial class CoreLifecycleService(
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
             await new HostPathAuthority(paths, apps).AppAsync(context.App, cancellationToken);
             context = await ReserveRuntimePathsAsync(EnsureMountsReadyForStart(context), cancellationToken);
+            context = context with { ReportLaunchProgress = (stage, service) => SetLaunchProgressAsync(appId, stage, service, cancellationToken) };
             appliedConfigurationHash = AppConfigurationFingerprint.Compute(context.App, context.Mounts);
             // Re-run capability provisioning on restart too, so a config-template change ships forward
             // and the app comes back with fresh Core-owned files (see PlatformCapabilities). Ordered
@@ -1479,6 +1487,7 @@ internal sealed partial class CoreLifecycleService(
                 selection.Services.All(service => start.CreatedServices.Contains(service.Key));
             // The same wait a cold start runs: this verb calls the adapter directly rather than through
             // StartCoreAsync, so a start-only wait would leave every restart without one.
+            await context.ReportLaunchProgress!("checking", null);
             var readiness = await WaitForReadinessAsync(appId, adapter, context, selection, MergeEndpointUrls(app.Endpoints, start.Endpoints, selection), cancellationToken);
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
@@ -1488,6 +1497,8 @@ internal sealed partial class CoreLifecycleService(
                 ActiveSourcePaths = configurationApplied ? HostPathAuthority.CodePaths(context.App with { ActiveSourcePaths = null }).Select(MountPathPolicy.ResolveRealPath).Distinct().ToArray() : current.ActiveSourcePaths,
                 AppliedBrowserOrigin = configurationApplied ? coreOrigins?.Effective ?? runtimeConfig?.EffectiveCorePublicOrigin : current.AppliedBrowserOrigin,
                 Health = readiness,
+                LaunchProgress = new("ready", clock.UtcNow, BuildState: current.LaunchProgress?.BuildState),
+                AppliedSourceManifestDigest = configurationApplied ? selection.ManifestDigest : current.AppliedSourceManifestDigest,
                 OperationStatus = "restarted",
                 LastOperation = "restart",
                 LastError = null,
@@ -1644,7 +1655,7 @@ internal sealed partial class CoreLifecycleService(
             await apps.UpdateAppAsync(
                 appId,
                 current => AppRuntimeStates.IsBusy(current.RuntimeState)
-                    ? current with { RuntimeState = AppRuntimeStates.Unknown, Health = null }
+                    ? current with { RuntimeState = AppRuntimeStates.Unknown, Health = null, LaunchProgress = new("interrupted", clock.UtcNow, BuildState: current.LaunchProgress?.BuildState == "building" ? "interrupted" : current.LaunchProgress?.BuildState) }
                     : current,
                 cancellationToken);
         }
@@ -3907,6 +3918,7 @@ internal sealed partial class CoreLifecycleService(
         var profiles = await ResolveRuntimeProfilesAsync(app, cancellationToken);
         var liveSourcePath = ResolveLiveSourcePath(app, profiles);
         var summary = AppSummary.From(app, profiles, liveSourcePath is not null, liveSourcePath);
+        var development = await ReadDevelopmentStatusAsync(app, liveSourcePath, cancellationToken);
         var configuration = await ReadConfigurationSnapshotAsync(app, cancellationToken, installed);
         // Last-known update verdict (plan-first updates): null until a check has run for this app.
         // Suppressed for a live-source runtime — it has no reviewed-update path, so a verdict from
@@ -3915,8 +3927,10 @@ internal sealed partial class CoreLifecycleService(
         return summary with
         {
             RestartRequired = AppRuntimeStates.IsUp(app.RuntimeState) && (
-                configuration.Library is null || AppConfigurationFingerprint.RequiresRestart(app, configuration.Library) ||
+                development?.RestartRequired == true || configuration.Library is null || AppConfigurationFingerprint.RequiresRestart(app, configuration.Library) ||
                 (coreOrigins is not null && !string.Equals(app.AppliedBrowserOrigin, coreOrigins.Effective, StringComparison.Ordinal))),
+            LaunchProgress = app.LaunchProgress,
+            Development = development,
             PermissionState = CachedPermissions(app),
             UpdateProgress = app.UpdateProgress,
             UpdateCheck = (await ReadUpdateSnapshotAsync(app, cancellationToken, summary.Live))?.Verdict,
@@ -4085,6 +4099,7 @@ internal sealed partial class CoreLifecycleService(
                 OperationStatus = "failed",
                 LastOperation = operation,
                 LastError = message,
+                LaunchProgress = operation is "start" or "restart" ? new("failed", clock.UtcNow, BuildState: current.LaunchProgress?.BuildState == "building" ? "failed" : current.LaunchProgress?.BuildState) : current.LaunchProgress,
             }, cancellationToken);
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or JsonException)
@@ -4108,6 +4123,7 @@ internal sealed partial class CoreLifecycleService(
                 OperationStatus = "failed",
                 LastOperation = operation,
                 LastError = message,
+                LaunchProgress = operation is "start" or "restart" ? new("failed", clock.UtcNow, BuildState: current.LaunchProgress?.BuildState == "building" ? "failed" : current.LaunchProgress?.BuildState) : current.LaunchProgress,
             }, cancellationToken);
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or JsonException)
@@ -4216,6 +4232,9 @@ internal sealed partial class CoreLifecycleService(
             && !string.IsNullOrWhiteSpace(localSourceRoot))
         {
             var manifestDirectory = Path.GetDirectoryName(Path.GetFullPath(selection.ManifestPath));
+            if (manifestDirectory is not null && FindGitRoot(manifestDirectory) is { } treeRoot
+                && File.Exists(Path.Combine(treeRoot, ".git")))
+                localSourceRoot = treeRoot;
             return string.IsNullOrWhiteSpace(manifestDirectory)
                 ? null
                 : NormalizeManifestSubpath(Path.GetRelativePath(Path.GetFullPath(localSourceRoot), manifestDirectory));
