@@ -10,6 +10,7 @@ import { LoaderCircleIcon, MessageCircleIcon } from "lucide-react";
 import { discussionVersion, type DiscussionInput, type DiscussionOptions, type DiscussionResult } from "@/lib/discussion";
 import type { PlanDetail } from "@/lib/types";
 import { Button } from "./ui/button";
+import { PermissionReviewLink } from "./permission-review-link";
 
 type Failure = { message: string; reviewUrl?: string; code?: string };
 async function responseBody<T>(response: Response): Promise<T> {
@@ -148,7 +149,7 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
       </div>
     </div>
     {error && <div role="alert" className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-sm text-destructive"><p>{error.message}</p>
-      {error.reviewUrl && <a href={error.reviewUrl} target="_blank" rel="noopener noreferrer" className="underline">Review Plans permissions</a>}
+      {error.reviewUrl && <PermissionReviewLink href={error.reviewUrl} />}
       {!options && <Button variant="link" size="sm" onClick={() => setEpoch(value => value + 1)}>Retry</Button>}
       {["handoff_closed", "request_expired", "conversation_deleted", "provider_changed", "pending_intent_obsolete"].includes(error.code ?? "") &&
         <Button variant="link" size="sm" disabled={pending} onClick={() => void discuss(true)}>Start a new discussion</Button>}
