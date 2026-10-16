@@ -16,7 +16,7 @@ export function validRules(value: unknown): value is Record<string, ToolRule> {
     Object.entries(value).every(([key, v]) => key.length < 500 && validKey(key) && v && typeof v === "object" &&
       typeof v.identity === "string" && v.identity.length < 3000 && ["ask", "run", "disabled"].includes(v.mode));
 }
-interface Pending { session: string; approvalId: string; finish: (allowed: boolean) => void }
+interface Pending { session: string; provider: string; approvalId: string; finish: (allowed: boolean) => void }
 /** One approval gate for local development tools and app MCP, independent of the native adapter. */
 export class McpToolPolicy {
   private readonly catalogs = new Map<string, ToolCatalog>();
@@ -84,8 +84,9 @@ export class McpToolPolicy {
     return catalog?.identity === identity && current && rule?.identity === identity && rule.definition === definition(current) ? rule.mode : "ask";
   }
   async authorize(session: string, provider: string, identity: string, requestId: string, tool: string, input: unknown, signal: AbortSignal): Promise<() => Promise<void>> {
-    const generation = this.generations.get(session) ?? Symbol();
-    this.generations.set(session, generation);
+    const scope = JSON.stringify([session, provider]);
+    const generation = this.generations.get(scope) ?? Symbol();
+    this.generations.set(scope, generation);
     const key = JSON.stringify([session, provider, requestId]);
     const fingerprint = createHash("sha256").update(JSON.stringify([identity, tool, input])).digest("hex");
     if (this.dispatched.has(key)) throw new Error(this.dispatched.get(key) === fingerprint
@@ -95,7 +96,7 @@ export class McpToolPolicy {
     this.dispatched.set(key, fingerprint);
     let mode = await this.mode(provider, identity, tool);
     if (mode === "disabled") throw new Error("This tool is disabled in Harness MCP settings.");
-    if (signal.aborted || this.generations.get(session) !== generation) throw new Error("MCP request was canceled before dispatch.");
+    if (signal.aborted || this.generations.get(scope) !== generation) throw new Error("MCP request was canceled before dispatch.");
     const observedTool = this.catalogs.get(provider)?.tools.find(t => t.name === tool);
     const observedDefinition = observedTool && definition(observedTool);
     if (!observedDefinition || this.catalogs.get(provider)?.identity !== identity) throw new Error("Unknown or changed tool; discover tools again.");
@@ -104,7 +105,7 @@ export class McpToolPolicy {
       const currentMode = await this.mode(provider, identity, tool);
       const current = this.catalogs.get(provider);
       const currentTool = current?.tools.find(t => t.name === tool);
-      if (signal.aborted || this.generations.get(session) !== generation || current?.identity !== identity || !currentTool || definition(currentTool) !== observedDefinition ||
+      if (signal.aborted || this.generations.get(scope) !== generation || current?.identity !== identity || !currentTool || definition(currentTool) !== observedDefinition ||
           currentMode === "disabled" || automatic && currentMode !== "run" && !this.autonomous(session))
         throw new Error("Tool policy changed or the request was canceled before dispatch. Retry with a new MCP request.");
     };
@@ -113,7 +114,7 @@ export class McpToolPolicy {
     const id = randomUUID();
     let finish!: (value: boolean) => void;
     const decision = new Promise<boolean>(resolve => { finish = resolve; });
-    this.pending.set(id, { session, approvalId: id, finish });
+    this.pending.set(id, { session, provider, approvalId: id, finish });
     const cancel = () => finish(false);
     signal.addEventListener("abort", cancel, { once: true });
     const timer = setTimeout(cancel, this.timeout);
@@ -133,10 +134,12 @@ export class McpToolPolicy {
     if (!pending || pending.session !== session) return false;
     this.pending.delete(id); pending.finish(allowed); return true;
   }
-  cancel(session: string): void {
-    this.generations.delete(session);
-    for (const p of this.pending.values()) if (p.session === session) p.finish(false);
-    for (const key of this.dispatched.keys()) if (JSON.parse(key)[0] === session) this.dispatched.delete(key);
+  /** Revoke one provider's requests, or the entire native client on session teardown. */
+  cancel(session: string, provider?: string): void {
+    const matches = (key: string) => { const pair: string[] = JSON.parse(key); return pair[0] === session && (provider === undefined || pair[1] === provider); };
+    for (const key of this.generations.keys()) if (matches(key)) this.generations.delete(key);
+    for (const p of this.pending.values()) if (p.session === session && (provider === undefined || p.provider === provider)) p.finish(false);
+    for (const key of this.dispatched.keys()) if (matches(key)) this.dispatched.delete(key);
   }
   close(): void { for (const p of this.pending.values()) p.finish(false); }
 }

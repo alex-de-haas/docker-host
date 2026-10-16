@@ -66,6 +66,47 @@ internal sealed partial class PublicationService
         { return Unavailable("PR observation is unavailable; the next refresh will retry."); }
     }
 
+    // Fetch fresh provider evidence before acquiring the workspace mutation lock. Publication
+    // commands take publication -> workspace locks; reversing that order would deadlock.
+    internal async Task<Dictionary<string, string>> MergedWorkspaceHeadsAsync(WorkspaceOwner owner, CancellationToken ct)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var tree in (await workspaces.ListAsync(owner, true, ct)).Workspaces)
+        {
+            if (!owner.IsExternal)
+            {
+                var record = await Read(tree.Id, ct);
+                if (record is null) continue;
+                record = await ObserveAsync(tree.Id, owner, ct);
+                if (record.Observation is { State: "merged", Complete: true, Head: { } head } && head == record.PublishedHead)
+                    result[tree.Id] = head;
+                continue;
+            }
+            if (tree.PullRequests.Length == 0) continue;
+            try
+            {
+                var binding = await ExternalConnection(tree, ct);
+                var provider = binding.Source.Publication!;
+                foreach (var url in tree.PullRequests.Where(SafeReference))
+                {
+                    if (!int.TryParse(new Uri(url).AbsolutePath.Split('/').LastOrDefault(), out var number) ||
+                        number <= 0 || provider.PullRequestUrl(binding.Repository, number) != url) continue;
+                    var record = new PublicationRecord { WorkspaceId = tree.Id, Owner = owner,
+                        Repository = binding.Repository, HeadRepository = binding.Repository,
+                        ConnectionId = binding.Connection.Id, Provider = binding.Source.Descriptor.Id,
+                        Branch = tree.Branch, TargetBranch = tree.TargetBranch, Number = number, Url = url };
+                    var observation = await connections.UseForSourceAsync(owner.UserId, binding.Connection.Id,
+                        c => provider.ObserveAsync(c, record, ct), ct);
+                    if (observation is { State: "merged", Complete: true, Head: { } head } && head == tree.Observation?.Head)
+                        result[tree.Id] = head;
+                }
+            }
+            catch (Exception ex) when (ex is PublicationException or UserConnectionException or HttpRequestException)
+            { /* No provider exemption; the fresh target ancestry check still applies. */ }
+        }
+        return result;
+    }
+
     private int externalObservationCursor;
     internal async Task RefreshExternalReferencesAsync(CancellationToken ct, TimeSpan? maximumDuration = null)
     {

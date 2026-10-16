@@ -10,6 +10,8 @@ export const CORE_PROVIDER_ID = "hosty:core";
 export type ToolCatalog = { provider: string; identity: string; tools: { name: string; description?: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } }[] };
 export type ToolRule = { identity: string; mode: "ask" | "run" | "disabled" };
 export type Settings = {
+  workflowPrompt?: string;
+  retention?: { ordinaryDays: number | null; completedWorkspaceDays: number | null };
   executionMode?: "native" | "docker";
   mcpToolRules?: Record<string, ToolRule>;
   immediateHandoffs?: boolean;
@@ -28,6 +30,7 @@ export type PendingSkill = {
 };
 
 export type SettingsResponse = {
+  defaults?: { workflowPrompt: string };
   toolCatalogs?: ToolCatalog[];
   mcpReviewBaseUrl?: string | null;
   instructions?: { appId: string; markdown: string | null; approved: boolean }[];

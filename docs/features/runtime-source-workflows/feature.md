@@ -1,6 +1,6 @@
 ---
 created: 2026-06-03
-updated: 2026-10-14
+updated: 2026-10-16
 summary: Source checkouts, local overrides and runtime switching for installed apps, with Git inspection.
 components: [apps/core, apps/shell]
 ---
@@ -37,6 +37,12 @@ The reviewed pin and the override's commit are separate fields because they answ
 Installation records predate this split at schema version 1, where both facts shared the `commit` field. Core migrates such a record on read — the commit of a record that has an override moves to the override's field and the pin re-resolves from the reviewed ref, exactly as a pre-split Core behaved — and the next write stores it at version 2, after which a recorded pin is taken as reviewed.
 
 Managed checkouts are for public-readable `http`/`https` Git repositories or local filesystem repositories. Core rejects embedded credentials and SSH-style repository URLs, and git subprocesses run with interactive credential prompts disabled. Private repositories should be cloned by an administrator and connected through `source-override` until Hosty has a Core-owned credential provider.
+
+For a manifest installed from a linked Git worktree, Core derives its repository-relative manifest
+subpath from that worktree's Git root, including when the manifest declares an absolute path or file
+URI for the original repository. The declared source repository retains its existing precedence as
+the source location; choosing the linked worktree for execution uses a repo-root source override.
+This preserves monorepo paths without treating the app subfolder as the checkout root.
 
 ## Development Profiles And Source Preservation
 
@@ -235,6 +241,17 @@ restoring its earlier snapshot.
 `apps.sources.full` permits modifying code that Hosty can execute on the host in development mode.
 This API policy does not sandbox native agents with direct filesystem access. Clearing an override,
 runtime switches and normal lifecycle operations keep their existing authorization.
+
+## Development Launch Observations
+
+App inventory exposes optional `launchProgress` and `development` observations. Core records its own
+preparation, Docker environment build/reuse, service start, readiness, failure and interruption.
+Successful configuration application records the source manifest digest. Live-source inventory
+compares the bounded manifest contents and source location with the applied state, detecting even
+same-size/same-mtime edits. A changed live manifest contributes to `restartRequired`; an unavailable
+manifest or missing historical baseline remains explicitly unverified. Generic app compiler/hot
+reload state is application-managed, not inferred from container health. Protected contract edits
+retain the normal review requirement instead of being adopted by a restart.
 
 ## Testing Expectations
 

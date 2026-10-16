@@ -117,9 +117,12 @@ public sealed class DockerSourceRuntimeTests : IDisposable
         File.WriteAllText(Path.Combine(root, "Dockerfile.dev"), "FROM example/environment:1");
         var service = SourceService() with { Runtime = SourceService().Runtime with { Build = new() } };
         var runner = new Runner();
-        var first = await DockerSourceRuntime.ResolveBuildAsync(Context, service, runner, null, default);
+        var stages = new List<string>();
+        var context = Context with { ReportLaunchProgress = (stage, _) => { stages.Add(stage); return Task.CompletedTask; } };
+        var first = await DockerSourceRuntime.ResolveBuildAsync(context, service, runner, null, default);
         File.WriteAllText(Path.Combine(root, "Dockerfile.dev"), "FROM example/environment:2");
-        var second = await DockerSourceRuntime.ResolveBuildAsync(Context, service, runner, first.Lock, default);
+        var second = await DockerSourceRuntime.ResolveBuildAsync(context, service, runner, first.Lock, default);
+        Assert.Equal(new[] { "building", "build-ready", "build-reused" }, stages);
         Assert.Equal(first, second);
         Assert.Equal(1, runner.Builds);
         var changed = service with { Runtime = service.Runtime with { Build = new() { Revision = "2" } } };

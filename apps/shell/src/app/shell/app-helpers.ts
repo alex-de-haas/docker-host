@@ -269,9 +269,13 @@ export function getAppPageLinks(app: CoreApp): AppPageLink[] {
 export function findAppPageLink(app: CoreApp, path: string) {
   const targetPath = normalizeAppPath(path);
   const pages = getAppPageLinks(app);
-  const exact = pages.find((page) => normalizeAppPath(page.path) === targetPath);
+  const exact = pages.find((page) => normalizeAppPath(page.path) === targetPath)
+    ?? pages.find((page) => normalizeAppPath(page.path).split(/[?#]/, 1)[0] === targetPath.split(/[?#]/, 1)[0]);
   if (exact) {
-    return { ...exact, path: targetPath };
+    const requested = new URL(targetPath, "https://app.invalid");
+    const destination = new URL(exact.redirectUri);
+    destination.search = requested.search; destination.hash = requested.hash;
+    return { ...exact, path: targetPath, redirectUri: destination.href };
   }
 
   const redirectUri = buildRedirectUriFromAppPath(app, targetPath);

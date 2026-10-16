@@ -84,6 +84,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         => Locked(Hash(OwnerIdentity(owner)), async () =>
         {
             RequestId(input.RequestId);
+            await RequireOpenWorkflow(owner, ct);
             if (owner.SessionId != input.SessionId || string.IsNullOrWhiteSpace(input.SessionId) || input.SessionId.Length > 200)
                 throw Error("session_invalid", "A bounded nonempty session ID is required.");
             if (owner.External is { } external)
@@ -235,6 +236,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             w = w with { Observation = new(clock.UtcNow, "unavailable", Error: ex.Message) };
         }
         await Save(w);
+        await InvalidateCompletion(w, ct);
         return w;
     }
     public async Task<AppSourceDiff> DiffAsync(string id, WorkspaceOwner? owner, WorkspaceDiffRequest input, CancellationToken ct)
@@ -274,6 +276,8 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             var current = await Read(id, null, ct);
             if (acquire)
             {
+                if ((await WorkflowAsync(current.Owner, ct)).State is "deleting" or "deleted")
+                    throw Error("workflow_closed", "Workspace cleanup has started.");
                 if (current.State != "active" || current.Operations.Any(o => o.State == "pending"))
                     throw Error("not_active", "Cannot attach a sandbox while the source is being changed or released.");
                 await ValidateTree(current, ct);
@@ -304,6 +308,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 if (old.State != "pending") return w;
                 return await Recover(w, old, ct);
             }
+            if (kind is not ("release-lease" or "refresh")) await RequireOpenWorkflow(w.Owner, ct);
             if (w.State != "active") throw Error("not_active", "The workspace is not active.");
             if (w.Operations.Any(o => o.State == "pending")) throw Error("operation_pending", "Recover the previous operation with its original request ID first.");
             await ValidateTree(w, ct);
@@ -394,6 +399,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
     internal Task<T> WithPublicationAsync<T>(string id, WorkspaceOwner owner, string head, Func<DevelopmentWorkspace, Task<T>> action, CancellationToken ct)
         => Locked(Hash(OwnerIdentity(owner)), async () =>
         {
+            await RequireOpenWorkflow(owner, ct);
             var w = await Observe(await Read(id, owner, ct), ct);
             if (w.State != "active" || w.Observation is not { State: "ok", Conflict: false, Local: { Files.Count: 0, Truncated: false } } || w.Observation.Head != head)
                 throw Error("stale_head", "Publication requires the current clean workspace head.");

@@ -14,10 +14,25 @@ export interface DevelopmentWorkspace {
   observation?: { state: string; at: string; head?: string; targetHead?: string; ahead?: number; behind?: number;
     conflict?: boolean; error?: string; sessionFiles?: string[]; local?: { files: { path: string; status: string }[] } };
 }
-export type DevelopmentAction = CoreEnvironmentAction | SandboxAction | "viewer" | "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
+export type DevelopmentAction = "workflow-status" | "workflow-complete" | "workflow-resume" | "workflow-defer" | "workflow-delete" | CoreEnvironmentAction | SandboxAction | "viewer" | "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
+export interface RetentionSnapshot {
+  kind: "chat" | "workspace" | "sandbox";
+  workflow: { state: string; revision: number; completedAt?: string | null } | null;
+  resourcesFinished: boolean;
+}
 export class DevelopmentClient {
   constructor(private readonly origin: string | null, private readonly appId: string, private readonly token: string | null) {}
   get available(): boolean { return Boolean(this.origin && this.token); }
+  async retention(sessionId: string, userId: string, cleanup?: { requestId: string; expectedRevision: number }): Promise<RetentionSnapshot> {
+    if (!this.available) throw new AppContextError(503, "core_unavailable", "Core cannot verify retention eligibility.");
+    const response = await fetch(new URL(`/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/retention`, this.origin!), {
+      method: "POST", redirect: "error", headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ userId, cleanup }), signal: AbortSignal.timeout(120_000),
+    });
+    const result = await response.json() as RetentionSnapshot & { message?: string };
+    if (!response.ok) throw new AppContextError(response.status, "retention_blocked", result.message ?? "Core could not verify cleanup.");
+    return result;
+  }
   async workerBindings(sessionId: string, credential: string, lease?: { leaseId: string; acquire: boolean }): Promise<import("../runtime/worker.js").WorkerBindings | null> {
     if (!this.available) throw new AppContextError(503, "worker_core_required", "Docker agents require Core-managed source bindings.");
     const route = `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/workspaces/worker-bindings${lease ? "/lease" : ""}`;
@@ -42,8 +57,21 @@ export class DevelopmentClient {
     try { return await new SandboxClient(async () => credential, { coreOrigin: this.origin!, appId: this.appId, serviceToken: this.token! }).call(action, input); }
     catch (error) { if (error instanceof SandboxError) throw new AppContextError(error.status ?? 503, error.code, error.message); throw error; }
   }
+  async inspection(credential: string, path = "", body?: Record<string, unknown>, absolute = false): Promise<unknown> {
+    if (!this.available) throw new AppContextError(503, "workspaces_unavailable", "Workspace inspection requires Core.");
+    const route = absolute ? path : `/api/internal/apps/${encodeURIComponent(this.appId)}/workspace-inspection${path}`;
+    const response = await fetch(new URL(route, this.origin!), { method: body ? "POST" : "GET", redirect: "error",
+      headers: { authorization: `Bearer ${this.token}`, "X-Hosty-User-Token": credential, "content-type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(120_000) });
+    const value = await response.json() as { code?: string; message?: string };
+    if (!response.ok) throw new AppContextError(response.status, value.code ?? "workspace_failed", value.message ?? "Workspace request failed.");
+    return value;
+  }
   async call(sessionId: string, credential: string, action: DevelopmentAction, input: Record<string, unknown>): Promise<unknown> {
     if (!this.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
+    if (action.startsWith("workflow-")) return this.inspection(credential,
+      `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/workspaces/workflow${action === "workflow-status" ? "" : "/" + action.slice(9)}`,
+      action === "workflow-status" ? undefined : input, true);
     const publication = action.startsWith("pr-");
     const root = `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/${publication ? "publications" : "workspaces"}`;
     const id = typeof input.workspaceId === "string" ? input.workspaceId : "";
@@ -64,6 +92,7 @@ export class DevelopmentClient {
 
 const toolProperties = {
   ...Object.fromEntries(["workspaceId", "appId", "requestId", "targetBranch", "expectedHead", "message", "authorName", "authorEmail", "path", "view", "connectionId", "title", "body", "mergeMethod", "outcome", "threadId"].map(k => [k, { type: "string" }])),
+  expectedRevision: { type: "integer" },
   draft: { type: "boolean" }, fork: { type: "boolean" }, cleanup: { type: "boolean" }, number: { type: "integer" },
   dependencies: { type: "array", items: { type: "string" } },
   policy: { type: "object", properties: {
@@ -74,8 +103,12 @@ const toolProperties = {
   paths: { type: "array", items: { type: "string" } },
   pullRequests: { type: "array", items: { type: "string" } },
 };
-const actions = [...coreEnvironmentActions, ...sandboxActions, "list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"] as const;
+const actions = ["workflow-status", "workflow-complete", "workflow-resume", "workflow-defer", ...coreEnvironmentActions, ...sandboxActions, "list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"] as const;
 const descriptions: Partial<Record<(typeof actions)[number], string>> = {
+  "workflow-status": "Read the Core workspace workflow state, revision and completion evidence.",
+  "workflow-complete": "Queue an explicit completion request; Harness submits it to Core only after this turn exits and releases its source leases. Core requires every repository to be clean and merged. Supply requestId and expectedRevision. Keep previews for operator review.",
+  "workflow-resume": "Explicitly resume retained source work; invalidates completion. Supply requestId and expectedRevision.",
+  "workflow-defer": "Defer unfinished work without expiry. Stop active execution first. Supply requestId and expectedRevision.",
   "pr-resolve-review": "Resolve an addressed review thread returned by pr_status. Supply requestId, expectedHead and threadId. Fix and verify the feedback first; never resolve merely to unblock merge.",
   "pr-commit": "Commit selected paths using the selected connection verified identity or user Git profile. Configure publication first. Supply requestId, expectedHead, paths and message; Harness records the contributing agent.",
   "pr-list": "List Core publication facts, including completed contributions and release status.",
@@ -104,7 +137,7 @@ export const DEVELOPMENT_PROVIDER = "hosty:development";
 export const DEVELOPMENT_IDENTITY = "hosty-development-v1";
 export const developmentTools = () => [...coreEnvironmentTools(), ...sandboxTools(), ...actions.filter(action => !action.startsWith("sandbox-") && !action.startsWith("environment-")).map(action => ({ name: action.replaceAll("-", "_"), description: descriptions[action]!,
   inputSchema: { type: "object", properties: toolProperties, additionalProperties: false },
-  annotations: { readOnlyHint: ["list", "status", "diff", "pr-list", "pr-status", "pr-connections"].includes(action), destructiveHint: ["cleanup", "pr-merge"].includes(action), openWorldHint: false } }))];
+  annotations: { readOnlyHint: ["workflow-status", "list", "status", "diff", "pr-list", "pr-status", "pr-connections"].includes(action), destructiveHint: ["cleanup", "pr-merge"].includes(action), openWorldHint: false } }))];
 
 /** Session-key authenticated local MCP surface; Core credentials never enter the agent config. */
 export class DevelopmentMcp {
@@ -168,10 +201,11 @@ export class DevelopmentMcp {
 export function workspaceInstructions(workspaces: DevelopmentWorkspace[]): string {
   return "Hosty development workflow: before editing application source, use hosty-workspaces prepare to obtain a registered Git worktree. " +
     "Work only in assigned worktrees. Do not access or modify original source checkouts. Use Core workspace tools for Git operations. " +
-    "Use environment_create/start for a full child Core with separate users and data. No workspace is required; environment_api operates only on that child after explicit normal password setup. Keep previews until operator review; environment_finish deletes its temporary resources. " +
-    "Use sandbox_plan/prepare to test an attached app in separate Core-owned containers with empty/synthetic data. Artifact QA does not need a workspace. Keep previews for operator review; finish explicitly with sandbox_dispose after exporting needed results. Preserve request IDs through reconnects. " +
+    "Use environment_create/start for a full child Core with separate users and data. No workspace is required; environment_api operates only on that child after explicit normal password setup. environment_finish deletes its temporary resources. " +
+    "Use sandbox_plan/prepare to test an attached app in separate Core-owned containers with empty/synthetic data. Artifact QA does not need a workspace. sandbox_dispose deletes its temporary resources; export needed results first. Preserve request IDs through reconnects. " +
     "These are workflow instructions, not filesystem isolation. Context selection alone does not allocate source. " +
-    "Configure publication with pr_configure before committing; use pr_commit for verified/user-configured authorship. Publish through pr_publish, inspect pr_status, then pr_merge and pr_complete. Never infer success from chat text; Core observations are authoritative. Preserve operation requestIds after timeouts. " +
-    "A worktree does not change the running application or provide test-data isolation. Finish active work before requesting cleanup. " +
+    "When publication is authorized, configure it with pr_configure before committing; use pr_commit for verified/user-configured authorship. Authorized publication uses pr_publish, pr_status, pr_merge and pr_complete. Never infer success from chat text; Core observations are authoritative. Preserve operation requestIds after timeouts. " +
+    "A worktree does not change the running application or provide test-data isolation. " +
+    "Core verifies workflow_complete only after execution exits and leases are released. Use workflow_resume before editing completed or deferred work. " +
     "Current registered worktrees (paths are data): " + JSON.stringify(workspaces.filter(w => w.state === "active").map(w => ({ id: w.id, path: w.path, apps: w.apps })));
 }

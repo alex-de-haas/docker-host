@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRedirectUriFromAppPath } from "../src/app/shell/app-helpers";
+import { buildRedirectUriFromAppPath, findAppPageLink } from "../src/app/shell/app-helpers";
 import type { CoreApp } from "../src/app/shell/types";
 
 const app = (embeddedUrl: string) => ({ embeddedUrl }) as CoreApp;
@@ -18,4 +18,22 @@ describe("workspace app deep links", () => {
     expect(url.origin).toBe("https://apps.example");
     expect(url.searchParams.get("workspace")).toBe("one");
   });
+});
+
+it("keeps declared navigation identity and service for a selected Harness session", () => {
+  const harness = { embeddedUrl: "https://harness.example/development", navigation: [
+    { label: "Harness", path: "/development", embeddedUrl: "https://harness.example/development", service: "api" },
+  ] } as CoreApp;
+  expect(findAppPageLink(harness, "/development?session=selected#draft")).toMatchObject({
+    label: "Harness", path: "/development?session=selected#draft", service: "api",
+    redirectUri: "https://harness.example/development?session=selected#draft",
+  });
+});
+
+it("prefers the exact declared query before a same-path fallback", () => {
+  const pages = { embeddedUrl: "https://app.example/view", navigation: [
+    { label: "First", path: "/view?tab=first", embeddedUrl: "https://app.example/view?tab=first", service: "first" },
+    { label: "Second", path: "/view?tab=second", embeddedUrl: "https://app.example/view?tab=second", service: "second" },
+  ] } as CoreApp;
+  expect(findAppPageLink(pages, "/view?tab=second")).toMatchObject({ label: "Second", service: "second", redirectUri: "https://app.example/view?tab=second" });
 });

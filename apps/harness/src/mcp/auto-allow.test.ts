@@ -9,6 +9,7 @@ import { FakeHarnessAdapter } from "../harness/fake.js";
 import { AuditReporter } from "../audit.js";
 import { TokenExchange } from "./exchange.js";
 import { McpProxy } from "./proxy.js";
+import { ruleKey } from "./policy.js";
 import type { ProviderDirectory } from "../settings/providers.js";
 
 // Whether an app's tool runs without an approval card. The operator decides per app; the app's own
@@ -90,6 +91,7 @@ describe("per-app auto-allow", () => {
   let store: SessionStore;
   let settings: SettingsStore;
   let manager: SessionManager;
+  let exchange: TokenExchange;
 
   beforeEach(async () => {
     offered = true;
@@ -98,7 +100,7 @@ describe("per-app auto-allow", () => {
     dataDir = mkdtempSync(path.join(os.tmpdir(), "hosty-auto-allow-"));
     store = new SessionStore(dataDir);
     settings = new SettingsStore(dataDir);
-    const exchange = new TokenExchange("http://core.test", "hosty.harness", "service");
+    exchange = new TokenExchange("http://core.test", "hosty.harness", "service");
     const proxy = new McpProxy((sessionId, appId) => manager.mintAppToken(sessionId, appId));
     manager = new SessionManager(
       store,
@@ -157,6 +159,46 @@ describe("per-app auto-allow", () => {
     expect(reconfigure).toHaveBeenCalledTimes(1);
     expect(renewRequests).toHaveBeenCalledWith(record.id);
     expect((await store.readEvents(record.id)).filter(event => event.type === "notice")).toHaveLength(1);
+  });
+
+  it.each([[false, false], [true, false], [true, true]])("preserves development approvals during credential refresh with app MCP offered=%s expired=%s", async (initiallyOffered, expired) => {
+    offered = initiallyOffered;
+    const record = await manager.createSession({ createdBy: "user_admin" });
+    await manager.postMessage(record.id, "hello", "hostyg_seed");
+    await vi.waitFor(async () => expect((await manager.getSession(record.id))?.status).toBe("idle"));
+    const live = (manager as unknown as { live: Map<string, { run: { setMcpServers: () => Promise<boolean> } }> }).live.get(record.id)!;
+    const reconfigure = vi.spyOn(live.run, "setMcpServers").mockResolvedValue(false);
+    await manager.mcpPolicy.catalog("hosty:development", "v1", [{ name: "environment_create" }]);
+    const pending = manager.mcpPolicy.authorize(record.id, "hosty:development", "v1", "create", "environment_create", {}, new AbortController().signal).catch(error => error);
+    const approval = await vi.waitFor(async () => {
+      const event = (await store.readEvents(record.id)).find(e => e.type === "approval_request");
+      expect(event).toBeDefined(); return event!;
+    });
+    if (expired) vi.spyOn(exchange, "refreshSelf").mockResolvedValue(null);
+    // Browser focus renews credentials; disabling the last app also removes proxy routes.
+    offered = false;
+    await manager.refreshSessionCredentials(record.id, "user_admin", "hostyg_fresh");
+    await manager.refreshSessionCredentials(record.id, "user_admin", "hostyg_fresher");
+    expect(reconfigure).not.toHaveBeenCalled();
+    expect(await manager.resolveApproval(record.id, approval.approvalId as string, "allow")).toBe(true);
+    const guard = await pending;
+    expect(guard).toBeTypeOf("function");
+    await guard();
+    expect((await store.readEvents(record.id)).filter(e => e.type === "approval_decision").map(e => e.decision)).toEqual(["allow"]);
+  });
+
+  it("resets development RPC identity when an expired delegation replaces an idle client", async () => {
+    const record = await manager.createSession({ createdBy: "user_admin" });
+    await manager.postMessage(record.id, "hello", "hostyg_seed");
+    await vi.waitFor(async () => expect((await manager.getSession(record.id))?.status).toBe("idle"));
+    await manager.mcpPolicy.catalog("hosty:development", "v1", [{ name: "status" }]);
+    await manager.mcpPolicy.update({ [ruleKey("hosty:development", "status")]: { identity: "v1", mode: "run" } });
+    const call = () => manager.mcpPolicy.authorize(record.id, "hosty:development", "v1", "1", "status", {}, new AbortController().signal);
+    const old = await call();
+    vi.spyOn(exchange, "refreshSelf").mockResolvedValue(null);
+    await manager.refreshSessionCredentials(record.id, "user_admin", "hostyg_fresh");
+    await expect(old()).rejects.toThrow("canceled");
+    const replacement = await call(); await replacement();
   });
 
   it("delegates app MCP prompting to the shared broker", async () => {

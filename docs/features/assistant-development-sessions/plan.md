@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-24
-updated: 2026-10-15
+updated: 2026-10-16
 summary: Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -160,6 +160,24 @@ Provider switching and the broader acceptance below remain tracked requirements 
 but are not prerequisites for the one-provider first demonstration. Partial integration does not
 close this plan.
 
+## Unified Harness Experience (Owner Revision, 2026-10-16)
+
+[Harness development UI](../harness-development-ui/feature.md) owns the full-page conversation,
+workspace, changes, PR and preview composition. The owner approved its functional structure on
+2026-10-16; that UI is implemented and verified; detailed styling stays with Design System. Core APIs stay independent; Plans/SDD remains
+optional. The side panel supports quick operations and a same-conversation transition to the full
+page. This revises the earlier separate Workspaces UI preference without moving source ownership.
+
+[Lifecycle controls](../workspace-lifecycle-controls/plan.md) owns explicit completion/removal.
+[Harness retention](../harness-session-retention/feature.md) owns independently configurable quick-chat
+and completed-development expiry. This revises unconditional completed-session retention above:
+manual removal and configured automatic deletion are both valid, but unfinished/blocked/paused
+work is preserved regardless of age. Verify all repository completion evidence, not merely PR
+closure. New work invalidates eligibility. Sandbox reuse preserves test data between iterations;
+Finish remains distinct from ending an agent turn. The separately approved D5 implementation now
+provides retention; wider lifecycle and prototype choices remain in their owning plans. These
+policies do not authorize discarding current unfinished work.
+
 ## Common Invariants
 
 These apply to the linked plans. Draft records intent; Ready requires explicit owner approval in
@@ -211,6 +229,8 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
 | [Agent MCP directory](../agent-mcp-directory/feature.md) | Core-owned policy for which apps' MCP servers agents use, published without credentials; agents call apps directly and Core never proxies |
 | [AHP client interface](../assistant-ahp/plan.md) | Bounded client/ingress spike and replaceable projection over Hosty sessions; existing web REST/SSE remains |
 | [Shared history and switching](../assistant-shared-history/plan.md) | Hosty session journal/adapters, provider context reconciliation and session sharing |
+| [Harness development UI](../harness-development-ui/feature.md) | Full-page and panel continuity, unified source/PR/preview presentation and Workspaces UI migration |
+| [Harness retention](../harness-session-retention/feature.md) | Separate quick-chat and verified completed-development expiry, with manual removal and recovery |
 | [Session workspaces](../assistant-session-workspaces/feature.md) | Registered linked worktrees, agent instructions, diffs and cleanup; Core API authorization remains required, new filesystem isolation is deferred |
 | [PR lifecycle](../assistant-pr-lifecycle/feature.md) | Publish/review/Merge/Complete, credentials, CI, ordered dependencies and corrective PRs |
 | [Action summary](../assistant-action-summary/plan.md) | Evidence-linked aggregation/UI over Hosty invocation events |

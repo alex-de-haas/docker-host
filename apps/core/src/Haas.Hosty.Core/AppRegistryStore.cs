@@ -463,7 +463,9 @@ internal sealed record AppRecord(
     string? AppliedBrowserOrigin = null,
     // Host paths retained by a runtime until a verified stop or complete fresh start replaces them.
     IReadOnlyList<string>? ActiveMountPaths = null,
-    IReadOnlyList<string>? ActiveSourcePaths = null)
+    IReadOnlyList<string>? ActiveSourcePaths = null,
+    AppLaunchProgress? LaunchProgress = null,
+    string? AppliedSourceManifestDigest = null)
 {
     [System.Text.Json.Serialization.JsonIgnore]
     public string BrowserOriginScope { get; init; } = "";
@@ -1096,7 +1098,9 @@ internal sealed record AppSummary(
     // values/shared mounts. Presence only; secret values and host paths never appear here.
     AppConfigurationReadiness? ConfigurationReadiness = null,
     string? InstallationId = null,
-    UiFramePolicy? FramePolicy = null)
+    UiFramePolicy? FramePolicy = null,
+    AppLaunchProgress? LaunchProgress = null,
+    AppDevelopmentStatus? Development = null)
 {
     public static AppSummary From(
         AppRecord app,

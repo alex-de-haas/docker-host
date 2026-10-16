@@ -137,6 +137,25 @@ public sealed class CoreEnvironmentTests
         finally { f.Runtime.Preparation.SetResult("prepared"); await start; }
     }
     [Fact]
+    public async Task ApplicationInventory_DoesNotWaitForAnAppMutationGate()
+    {
+        using var f = new Fixture(); var item = await f.Command(await f.Create(), "start");
+        using var process = System.Diagnostics.Process.GetCurrentProcess();
+        var record = (await f.Store.ReadAsync(item.Id, default))!;
+        await f.Store.WriteAsync(record with { Process = new(process.Id, process.StartTime.ToUniversalTime()) }, default);
+        var gate = f.Service.Gate(item.Id); await gate.WaitAsync();
+        try
+        {
+            var access = new CoreEnvironmentAccess(f.Store, f.Service);
+            // No child session exists: reaching this result proves the read did not queue
+            // behind a start/build, while still enforcing ordinary setup and ownership.
+            var inventory = await access.ApplicationsAsync(f.Actor, item.Id, default).WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal("setup-required", inventory.State);
+            await Assert.ThrowsAsync<SandboxException>(() => access.ApplicationsAsync(new("other"), item.Id, default));
+        }
+        finally { gate.Release(); }
+    }
+    [Fact]
     public void ApplicationPreview_UsesInstallationBoundCoreNavigationAndDoesNotExposeChildPayload()
     {
         using var json = System.Text.Json.JsonDocument.Parse("""
@@ -155,6 +174,22 @@ public sealed class CoreEnvironmentTests
         using var headless = System.Text.Json.JsonDocument.Parse("""{"id":"worker","runtimeState":"running"}""");
         Assert.Null(CoreEnvironmentAccess.ProjectApp(headless.RootElement, "http://core.test").PreviewUrl);
     }
+    [Fact]
+    public void ApplicationProjection_PreservesObservedBuildRestartAndUnknownLegacyState()
+    {
+        using var json = System.Text.Json.JsonDocument.Parse("""
+          {"id":"demo","runtimeState":"starting","restartRequired":true,
+           "launchProgress":{"stage":"building","buildState":"building","changedAt":"2026-10-16T12:00:00Z","service":"web"},
+           "development":{"reloadMode":"application-managed","manifestState":"changed","restartRequired":true},
+           "manifestError":"Invalid manifest","lastError":"Build failed"}
+          """);
+        var app = CoreEnvironmentAccess.ProjectApp(json.RootElement, "http://core.test");
+        Assert.True(app.RestartRequired); Assert.Equal("building", app.LaunchProgress!.BuildState);
+        Assert.Equal("changed", app.Development!.ManifestState); Assert.Equal("Invalid manifest", app.ManifestError);
+        using var legacy = System.Text.Json.JsonDocument.Parse("""{"id":"demo","runtimeState":"running"}""");
+        Assert.Null(CoreEnvironmentAccess.ProjectApp(legacy.RootElement, "http://core.test").RestartRequired);
+    }
+
     [Fact]
     public void ProcessIdentity_DoesNotAcceptReusedPid()
     {

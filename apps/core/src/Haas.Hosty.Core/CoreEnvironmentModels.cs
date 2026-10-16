@@ -33,5 +33,7 @@ internal interface ICoreEnvironmentRuntime
 internal sealed record CoreEnvironmentWorkspaceCreate(string RequestId, string Label, string WorkspaceId,
     string[] WorktreeIds, string? CoreWorktreeId = null, string? CoreProject = null);
 internal sealed record CoreEnvironmentApp(string Id, string DisplayName, string? Version, string RuntimeState,
-    string? Health, string? PreviewUrl);
+    string? Health, string? PreviewUrl, bool? RestartRequired = null,
+    AppLaunchProgress? LaunchProgress = null, AppDevelopmentStatus? Development = null,
+    string? ManifestError = null, string? LastError = null);
 internal sealed record CoreEnvironmentApplications(string State, IReadOnlyList<CoreEnvironmentApp> Apps, string? Error = null);

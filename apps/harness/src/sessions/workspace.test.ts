@@ -97,7 +97,8 @@ describe("a session's workspace", () => {
     const cwd = adapter.lastStart!.cwd;
     await manager.shutdown();
 
-    const swept = await store.sweepRetention(30, new Date(Date.now() + 31 * DAY));
+    manager = build(store);
+    const swept = await manager.sweepRetention(new Date(Date.now() + 31 * DAY));
 
     expect(swept).toEqual([id]);
     expect(existsSync(cwd)).toBe(false);

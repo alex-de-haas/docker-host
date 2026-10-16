@@ -51,6 +51,7 @@ export function clearDraft(sessionId: string): void {
   try {
     window.localStorage.removeItem(PREFIX + sessionId);
     window.localStorage.removeItem(MENTION_DRAFT_PREFIX + sessionId);
+    window.localStorage.removeItem("hosty.assistant.attachments." + sessionId);
   } catch {
     // Ignored for the same reason.
   }
@@ -67,7 +68,7 @@ export function pruneDrafts(liveSessionIds: readonly string[]): void {
     const live = new Set(liveSessionIds);
     for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
       const key = window.localStorage.key(index);
-      const prefix = key?.startsWith(PREFIX) ? PREFIX : key?.startsWith(MENTION_DRAFT_PREFIX) ? MENTION_DRAFT_PREFIX : null;
+      const prefix = key?.startsWith(PREFIX) ? PREFIX : key?.startsWith(MENTION_DRAFT_PREFIX) ? MENTION_DRAFT_PREFIX : key?.startsWith("hosty.assistant.attachments.") ? "hosty.assistant.attachments." : null;
       if (key && prefix && !live.has(key.slice(prefix.length))) {
         window.localStorage.removeItem(key);
       }
@@ -75,4 +76,16 @@ export function pruneDrafts(liveSessionIds: readonly string[]): void {
   } catch {
     // Ignored: an unprunable store is untidy, never wrong.
   }
+}
+
+/** Stored upload references only; file bytes remain in the authorized session cache. */
+export function readDraftAttachments(sessionId: string): { name: string; size: number }[] | null {
+  try {
+    const value = JSON.parse(localStorage.getItem("hosty.assistant.attachments." + sessionId) ?? "null");
+    return Array.isArray(value) && value.every(a => typeof a.name === "string" && typeof a.size === "number") ? value : null;
+  } catch { return null; }
+}
+export function writeDraftAttachments(sessionId: string, attachments: { name: string; size: number }[]): boolean {
+  try { localStorage.setItem("hosty.assistant.attachments." + sessionId, JSON.stringify(attachments)); return true; }
+  catch { return false; }
 }

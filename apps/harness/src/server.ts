@@ -29,6 +29,8 @@ const APP_SESSION_STREAM_SECONDS = 3600;
 import { SessionBusyError, SessionNotFoundError, type SessionManager } from "./sessions/manager.js";
 import type { HarnessAdapter } from "./harness/adapter.js";
 import { MAX_SYSTEM_PROMPT_CHARS, type SettingsStore } from "./settings/store.js";
+import { validRetention } from "./settings/store.js";
+import { DEFAULT_WORKFLOW_PROMPT } from "./settings/workflow.js";
 import type { PendingSkill } from "./mcp/skills.js";
 import type { ProviderDirectory } from "./settings/providers.js";
 import { serverName } from "./mcp/exchange.js";
@@ -416,6 +418,12 @@ async function route(
   if (url.pathname === "/api/settings" && settings && (method === "GET" || method === "PUT")) {
     if (method === "PUT") {
       const body = await readJson(request);
+      if (body.retention !== undefined && !validRetention(body.retention)) {
+        sendJson(response, 400, { code: "retention_invalid", message: "Choose Off or whole days from 1 to 3650 for both retention policies." }); return;
+      }
+      if (body.workflowPrompt !== undefined && (typeof body.workflowPrompt !== "string" || body.workflowPrompt.length > MAX_SYSTEM_PROMPT_CHARS)) {
+        sendJson(response, 400, { code: "workflow_prompt_invalid", message: `Workflow instructions must be text up to ${MAX_SYSTEM_PROMPT_CHARS} characters.` }); return;
+      }
       if (body.systemPrompt !== undefined && typeof body.systemPrompt !== "string") {
         sendJson(response, 400, {
           code: "system_prompt_invalid",
@@ -450,6 +458,8 @@ async function route(
       }
       if (body.executionMode !== undefined) await manager.setExecutionMode(body.executionMode);
       await settings.update({
+        workflowPrompt: typeof body.workflowPrompt === "string" ? body.workflowPrompt : undefined,
+        retention: validRetention(body.retention) ? body.retention : undefined,
         immediateHandoffs: typeof body.immediateHandoffs === "boolean" ? body.immediateHandoffs : undefined,
         systemPrompt: typeof body.systemPrompt === "string" ? body.systemPrompt : undefined,
         mcpAutoAllow: isBooleanRecord(body.mcpAutoAllow) ? body.mcpAutoAllow : undefined,
@@ -492,6 +502,7 @@ async function route(
       discovery: discovered ? "ok" : "unavailable",
       harness: connections ? { name: "Selected chat provider", capabilities: { autoAllow: true, liveReconfigure: false } } : { name: adapter.name, capabilities: adapter.capabilities },
       agentConnections: Boolean(connections),
+      defaults: { workflowPrompt: DEFAULT_WORKFLOW_PROMPT },
       limits: { systemPromptChars: MAX_SYSTEM_PROMPT_CHARS },
     });
     return;
@@ -543,6 +554,16 @@ async function route(
     return;
   }
 
+  const inspection = url.pathname.match(/^\/api\/development-workspaces(\/[a-f0-9]{64}(?:\/previews|\/worktrees\/[a-f0-9]{64}(?:\/diff)?|\/workflow(?:\/(?:complete|resume|defer|delete))?)?)?$/);
+  if (inspection && (method === "GET" || method === "POST")) {
+    const credential = actor.via === "app-session" ? readAppCredential(request) : null;
+    if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to inspect workspaces.");
+    if (method === "POST" && !/\/workflow\/(complete|resume|defer|delete)$/.test(inspection[1] ?? ""))
+      throw new AppContextError(400, "workspace_action_invalid", "Choose a workspace lifecycle action.");
+    sendJson(response, 200, await manager.inspectWorkspaces(credential, (inspection[1] ?? "") + url.search,
+      method === "POST" ? await readJson(request) : undefined)); return;
+  }
+
   const sessionMatch = url.pathname.match(/^\/api\/sessions\/([a-zA-Z0-9-]+)(\/.*)?$/);
   if (!sessionMatch) {
     sendJson(response, 404, { code: "not_found", message: "Unknown route." });
@@ -583,6 +604,14 @@ async function route(
     sendJson(response, 409, { code: "handoff_pending", message: "Finalize or cancel the prepared handoff first." }); return;
   }
 
+  if (rest === "/retention" && method === "POST") {
+    const deleted = await manager.sweepRetention(new Date(), sessionId);
+    sendJson(response, 200, deleted.includes(sessionId) ? { state: "deleted" } : await manager.sessionRetention(sessionId)); return;
+  }
+  if (rest === "/retention" && method === "GET") {
+    sendJson(response, 200, await manager.sessionRetention(sessionId)); return;
+  }
+
   if (rest === "/apps" && method === "PUT") {
     const body = await readJson(request);
     sendJson(response, 200, await manager.setAppContext(sessionId, body.appIds, body.expectedRevision, actor.userId));
@@ -620,7 +649,7 @@ async function route(
   }
 
   if (rest === "" && method === "DELETE") {
-    const deleted = await manager.deleteSession(sessionId, actor.userId);
+    const deleted = await manager.deleteSession(sessionId, actor.userId, await delegationCredential(request, false));
     if (!deleted) {
       sendJson(response, 404, { code: "session_not_found", message: "Session not found." });
       return;

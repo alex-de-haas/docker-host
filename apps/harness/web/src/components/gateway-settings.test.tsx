@@ -130,3 +130,30 @@ it("asks the embedder to open review without supplying an assistant identity", a
   expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: "hosty:request-mcp-review", targetAppId: "projects" }, "*");
   expect(saveSettings).not.toHaveBeenCalled();
 });
+
+it("saves independent retention policies without overwriting an unsaved workflow draft", async () => {
+  data.settings.workflowPrompt = "Original workflow";
+  data.settings.retention = { ordinaryDays: 2, completedWorkspaceDays: null };
+  data.defaults = { workflowPrompt: "Default workflow" };
+  vi.mocked(saveSettings).mockImplementation(async patch => { data.settings = { ...data.settings, ...patch }; return structuredClone(data); });
+  await act(async () => root.render(<GatewaySettings section="prompt" />));
+  async function input(id: string, text: string) {
+    const element = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(`#${id}`)!;
+    const proto = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    await act(async () => { Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(element, text); element.dispatchEvent(new Event("input", { bubbles: true })); });
+  }
+  const button = (name: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === name)!;
+  await input("workflow-prompt", "My process without Plans");
+  await input("ordinary-retention", "");
+  await input("workspace-retention", "7");
+  await act(async () => button("Save retention").click());
+  expect(saveSettings).toHaveBeenLastCalledWith({ retention: { ordinaryDays: null, completedWorkspaceDays: 7 } });
+  expect(container.querySelector<HTMLTextAreaElement>("#workflow-prompt")!.value).toBe("My process without Plans");
+  await act(async () => button("Save workflow").click());
+  expect(saveSettings).toHaveBeenLastCalledWith({ workflowPrompt: "My process without Plans" });
+  const calls = vi.mocked(saveSettings).mock.calls.length;
+  await act(async () => button("Restore default draft").click());
+  expect(saveSettings).toHaveBeenCalledTimes(calls);
+  expect(container.querySelector<HTMLTextAreaElement>("#workflow-prompt")!.value).toBe("Default workflow");
+  expect(container.textContent).toContain("Unfinished and deferred workspaces never expire");
+});

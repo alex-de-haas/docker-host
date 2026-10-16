@@ -703,6 +703,18 @@ export function ShellClient({
     [appEndpoint, canManageApps, getStandaloneAppHref, router, sendCsrfJson, shellAppId, shellResolvedTheme, shellThemePreference, workspace?.appId],
   );
 
+  useEffect(() => {
+    if (!panelHost) return;
+    panelHost.setMainNavigator(async surface => {
+      const app = state.apps.find(candidate => candidate.id === surface.appId && candidate.installationId === surface.installationId);
+      if (!app) return false;
+      const page = findAppPageLink(app, surface.route);
+      if (!page) return false;
+      return launchAppPage(app, { ...page, path: surface.route, redirectUri: new URL(surface.route, surface.origin).href });
+    });
+    return () => panelHost.setMainNavigator(undefined);
+  }, [panelHost, state.apps, launchAppPage]);
+
   const invalidateUpdateStatus = useCallback((appId: string) => {
     setUpdateStatusInvalidations((current) => ({ ...current, [appId]: (current[appId] ?? 0) + 1 }));
   }, []);

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-updated: 2026-10-12
+updated: 2026-10-16
 summary: Explicit navigation and tool policy, manifest navigation, and retained tool instances shared by Shell, desktop hosts and standalone apps.
 components: [packages/app-sdk, apps/core, apps/shell, apps/plans, apps/demo-app, apps/harness, apps/workspaces, apps/marketplace, apps/telemetry-ui, apps/shell-swift]
 ---
@@ -88,6 +88,15 @@ An embedded child replaces its existing app view through the host; its view ID a
 but the document generation changes. Shell updates its route model. Standalone replaces its own
 document. Failure leaves the current page; modified clicks use the pinned separate link.
 Actor/installation changes clear the navigation model. Refresh/retry recovers unavailable metadata.
+
+An explicit `ui.navigate(entryKey, { requestId, placement: "main", search })` asks the host to
+open the caller's declared entry in its main application area. Shell registers a `setMainNavigator`
+handler; the source panel remains mounted. Core resolves the bound caller/installation's entry
+again, and only its query can be overridden (bounded, no fragment or control characters). The
+negotiated `ui.main-navigation.v1` capability prevents old hosts from treating promotion as ordinary
+in-frame navigation. Missing host support is explicit; the root standalone client has no parent
+main surface. Request replay includes the query, and detached/revoked source frames cannot navigate.
+Accepted means host navigation was accepted, not that the destination has authenticated or is ready.
 
 ## App Integration
 

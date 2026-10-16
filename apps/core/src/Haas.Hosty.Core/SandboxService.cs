@@ -2,7 +2,7 @@ using System.Text;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class SandboxService(SandboxStore store, ISandboxInputs inputs, ISandboxRuntime runtime, IClock clock, UserDirectoryStore? directory = null, HostyCoreRuntimeConfig? config = null)
+internal sealed class SandboxService(SandboxStore store, ISandboxInputs inputs, ISandboxRuntime runtime, IClock clock, UserDirectoryStore? directory = null, HostyCoreRuntimeConfig? config = null, DevelopmentWorkspaceService? workspaces = null)
 {
     private readonly SemaphoreSlim allocationGate = new(1, 1);
 
@@ -94,11 +94,16 @@ internal sealed class SandboxService(SandboxStore store, ISandboxInputs inputs, 
                 SourceLeaseId = record.Plan.Request.Source.WorktreeId is null ? null : Guid.NewGuid().ToString(),
                 Operations = [new(request.RequestId, "prepare", fingerprint, "running", clock.UtcNow)]
             };
+            async Task<SandboxView> Allocate()
+            {
             // Journal the allocation first. An incomplete allocation retains its identity on replay.
             await store.WriteAsync(instance, ct);
             await JsonStorage.WriteAsync(path, allocations with { Allocations = allocations.Allocations.Append(
                 new(request.RequestId, fingerprint, instance.Id)).ToArray() }, true, ct);
             return await CompletePrepare(instance, ct);
+            }
+            return workspaces is null ? await Allocate()
+                : await workspaces.WithResourceContextAsync(actor, instance.Request.Context, Allocate, ct);
         }
         finally { allocationGate.Release(); }
     }

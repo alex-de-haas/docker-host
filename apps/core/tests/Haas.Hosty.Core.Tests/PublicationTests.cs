@@ -149,6 +149,20 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Single(repeated.Operations);
     }
     [Fact]
+    public async Task Publication_ExplicitResumeAllowsCorrectiveWorkAfterMergedOutcomeWithoutLosingHistory()
+    {
+        var f = await PublicationFixture(); var head = f.W.Observation!.Head!;
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", new(Guid.NewGuid().ToString(), head, Title: "Feature"), default);
+        f.Provider.State = "merged"; f.Provider.Complete = true;
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "complete", new(Guid.NewGuid().ToString(), head, Outcome: "merged"), default);
+        await Assert.ThrowsAsync<PublicationException>(() => f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), head), default));
+        await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "complete", new(Guid.NewGuid().ToString(), 0), new Dictionary<string, string> { [f.W.Id] = head }, default);
+        await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "resume", new(Guid.NewGuid().ToString(), 1), new Dictionary<string, string>(), default);
+        var result = await f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), head), default);
+        Assert.Null(result.Outcome); Assert.Null(result.CompletedAt); Assert.False(result.CleanupRequested);
+        Assert.Equal(42, Assert.Single(result.History).Number);
+    }
+    [Fact]
     public async Task Publication_CorrectiveCycleKeepsPriorPrAndChangesRemoteBranch()
     {
         var f = await PublicationFixture(); var head = f.W.Observation!.Head;

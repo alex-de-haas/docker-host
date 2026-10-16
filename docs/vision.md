@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-14
+updated: 2026-10-16
 ---
 
 # Hosty Platform Vision
@@ -581,6 +581,33 @@ Decisions 1–5: 2026-08-19.
     not implement that guarantee. The owner authorizes the local experiment now; its result and the
     remaining parent manager are tracked by [sandbox D18-D21](features/app-sandbox-runtimes/plan.md#same-host-core-environments-owner-decision-2026-10-14).
 
+44. **Harness becomes the development workspace UI (2026-10-16).** The owner wants a full Harness
+    page combining conversation, workspace changes, PR/CI/review and reusable sandbox previews, while
+    keeping the side panel for quick assistance. This revises decision 21's preferred UI placement;
+    Core still owns independent workspace/sandbox APIs and other clients can use them. The later
+    layout clarification groups Harness sessions by associated apps, with unassigned sessions at
+    the end. The owner subsequently places the main chat in the center and workspace details on the
+    right, omitting that panel entirely until a workspace exists. A separate External workspaces tab
+    shows Core-registered external work and its details without a conversation or history import;
+    Sessions itself adds no parallel workspace list. Details list each repository's change popup,
+    then sandboxes and PR/CI/review rows. Plans remains
+    separate and optional; editable default instructions can use SDD without making it mandatory.
+    Agents prepare workspaces and preview data through existing authority. Technical restarts and
+    iterations retain sandbox data until explicit lifecycle completion. External workspaces must
+    remain inspectable without fabricated Harness conversations. [Harness development UI](features/harness-development-ui/feature.md)
+    owns layout/migration; [lifecycle controls](features/workspace-lifecycle-controls/plan.md) owns
+    operator completion/removal. The owner also allows independent automatic retention for quick
+    chats and completed development sessions, but explicitly rejects expiry of forgotten unfinished
+    features: only verified completed/merged work becomes eligible. [Harness retention](features/harness-session-retention/feature.md)
+    owns those settings, eligibility and recovery. Two days/one week are examples, not selected
+    defaults. A local Git repository before optional remote publication is a candidate revision to
+    [prototype workspaces](features/app-prototype-workspaces/plan.md), still to be reconciled with the
+    earlier no-Git design. On 2026-10-16 the owner approved the revised Harness information structure
+    and requested it be recorded: the UI plan is Ready, with detailed styling deferred to the
+    [Design System redesign](features/design-system/plan.md). Lifecycle, retention and prototype
+    plans retain their separate statuses. No implementation starts or current-resource deletion is
+    authorized by this recording request.
+
 ## Expectations And Later Directions
 
 - **Apps ship with source.** The default is open source; a company's internal apps are closed by
@@ -639,6 +666,8 @@ the manifest contract. Two standing consequences:
 
 ## Spanned Features
 
+[harness-development-ui](features/harness-development-ui/feature.md) ·
+[harness-session-retention](features/harness-session-retention/feature.md) ·
 [workspaces-app](features/workspaces-app/feature.md) ·
 [default-applications](features/default-applications/plan.md) ·
 [sdk-panel-system](features/sdk-panel-system/feature.md) ·

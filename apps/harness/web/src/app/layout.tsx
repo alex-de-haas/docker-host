@@ -6,8 +6,8 @@ import { themeBootstrapScript } from "@hosty-sdk/app/theme";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Assistant settings",
-  description: "Operator configuration for the Hosty assistant.",
+  title: "Hosty Harness",
+  description: "Conversations, source workspaces and sandbox previews.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

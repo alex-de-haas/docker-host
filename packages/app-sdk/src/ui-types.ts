@@ -88,7 +88,14 @@ export type UiNavigationSnapshot = Readonly<{ status: "loading" | "ready" | "una
   entries: readonly UiNavigationEntry[]; activeKey: string | null; code?: string }>;
 export type UiResolvedNavigation = { target: UiNavigationTarget; surface: UiFrameSurface | null;
   available: boolean; state: string; standaloneHref: string | null };
+export const UI_MAIN_NAVIGATION_CAPABILITY = "ui.main-navigation.v1";
 export type UiActionOptions = { requestId: string; signal?: AbortSignal };
+/** Main placement is explicit; only the resolved navigation entry's query can be overridden. */
+export type UiNavigationOptions = UiActionOptions & { placement?: "main"; search?: string };
+export function navigationSearch(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string" && value.length <= 4096
+    && (value === "" || value.startsWith("?")) && !/[#\u0000-\u001f\u007f]/.test(value);
+}
 export type UiActionResult = { status: "accepted"; requestId: string }
   | { status: "blocked" | "unsupported" | "rejected" | "uncertain" | "unknown"; requestId: string; code: string };
 export type UiNavigationResult = UiActionResult;

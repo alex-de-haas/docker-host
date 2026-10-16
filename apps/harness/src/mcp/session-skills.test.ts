@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { SessionStore } from "../sessions/store.js";
 import { SettingsStore } from "../settings/store.js";
+import { DEFAULT_WORKFLOW_PROMPT } from "../settings/workflow.js";
 import { HOST_SYSTEM_PROMPT } from "../sessions/host-prompt.js";
 import { SessionManager } from "../sessions/manager.js";
 import { FakeHarnessAdapter } from "../harness/fake.js";
@@ -108,6 +109,13 @@ describe("app skills in a session", () => {
     expect(prompt!.indexOf("Be brief.")).toBeLessThan(prompt!.indexOf("<app-skill app="));
   });
 
+  it("delivers edited or empty workflow guidance to new agent sessions", async () => {
+    await settings.update({ workflowPrompt: "Test using my preferred process without a plan." });
+    expect(await startSession()).toContain("Test using my preferred process without a plan.");
+    await settings.update({ workflowPrompt: "" });
+    expect(await startSession()).not.toContain(DEFAULT_WORKFLOW_PROMPT);
+  });
+
   it("withholds a skill that carries no approved digest", async () => {
     // Enabled, readable, and still withheld: text that arrived without the operator's decision must
     // not deliver itself. This is the hole the first version had.
@@ -115,7 +123,7 @@ describe("app skills in a session", () => {
 
     const prompt = await startSession();
 
-    expect(prompt).toBe(`${HOST_SYSTEM_PROMPT}\n\nBe brief.`);
+    expect(prompt).toBe(`${HOST_SYSTEM_PROMPT}\n\n${DEFAULT_WORKFLOW_PROMPT}\n\nBe brief.`);
   });
 
   it("carries no skill when the provider is off", async () => {
@@ -126,7 +134,7 @@ describe("app skills in a session", () => {
 
     const prompt = await startSession();
 
-    expect(prompt).toBe(`${HOST_SYSTEM_PROMPT}\n\nBe brief.`);
+    expect(prompt).toBe(`${HOST_SYSTEM_PROMPT}\n\n${DEFAULT_WORKFLOW_PROMPT}\n\nBe brief.`);
     expect(prompt).not.toContain("<app-skill app=");
   });
 });

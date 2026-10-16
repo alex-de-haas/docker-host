@@ -27,9 +27,31 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
             var children = group.OrderBy(w => w.Repository, StringComparer.Ordinal).Select(w => Project(w, installed)).ToArray();
             var state = children.All(w => w.State == "released") ? "released"
                 : children.Any(w => w.State != "active" || w.Observation?.State != "ok") ? "attention" : "active";
-            result.Add(new(group.Key, state, projection, children));
+            result.Add(new(group.Key, state, projection, children) { Workflow = await workspaces.WorkflowAsync(owner, ct) });
         }
         return new(result.ToArray(), clock.UtcNow);
+    }
+
+    internal async Task<WorkspaceOwner> WorkflowOwnerAsync(string workspaceId, string userId, CancellationToken ct)
+    {
+        var trees = (await workspaces.ListAsync(null, true, ct)).Workspaces.Where(w => w.WorkspaceId == workspaceId).ToArray();
+        if (trees.Length == 0) throw DevelopmentWorkspaceService.Error("not_found", "Workspace not found.");
+        var installed = await apps.ListAppRecordsAsync(ct);
+        foreach (var tree in trees)
+        {
+            if (tree.Owner.UserId != userId) throw DevelopmentWorkspaceService.Error("forbidden", "Only the workspace owner can manage its lifecycle.");
+            await RequireSourceAsync(tree, userId, installed, ct);
+        }
+        return trees[0].Owner;
+    }
+    public async Task<WorkspaceWorkflow> WorkflowAsync(string workspaceId, string userId, string? kind,
+        WorkspaceWorkflowCommand? input, CancellationToken ct)
+    {
+        var owner = await WorkflowOwnerAsync(workspaceId, userId, ct);
+        if (kind is null) return await workspaces.WorkflowAsync(owner, ct);
+        var heads = kind is "complete" or "delete" && publications is not null
+            ? await publications.MergedWorkspaceHeadsAsync(owner, ct) : new Dictionary<string, string>();
+        return await workspaces.ChangeWorkflowAsync(owner, userId, kind, input!, heads, ct);
     }
 
     private async Task RequireSourceAsync(DevelopmentWorkspace tree, string userId, IReadOnlyList<AppRecord> installed, CancellationToken ct)
@@ -91,6 +113,11 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
                     commits.Add(new(fields[i].Trim(), fields[i + 1], fields[i + 2], fields[i + 3]));
             }
             catch (AppLifecycleException ex) { detailError = ex.Message; }
+        }
+        if (tree.Observation?.Local is { } local && detailError is null)
+        {
+            var statistics = await AppSourceService.AddLineStatisticsAsync(local with { Head = tree.OriginalBase, Files = changes }, ct);
+            changes = statistics.Files.ToList();
         }
         return result with { Commits = commits.Take(100).ToArray(), CommitsTruncated = commits.Count > 100,
             SessionChanges = changes.OrderBy(c => c.Path, StringComparer.Ordinal).ToArray(),

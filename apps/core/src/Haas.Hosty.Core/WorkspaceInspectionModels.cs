@@ -2,7 +2,10 @@ namespace Haas.Hosty.Core;
 
 // A read projection, deliberately excluding source credentials, transcripts and replay command bodies.
 internal sealed record WorkspaceInventory(InspectedWorkspace[] Workspaces, DateTimeOffset ObservedAt);
-internal sealed record InspectedWorkspace(string Id, string State, InspectionOwner Owner, InspectedWorktree[] Worktrees);
+internal sealed record InspectedWorkspace(string Id, string State, InspectionOwner Owner, InspectedWorktree[] Worktrees)
+{
+    public WorkspaceWorkflow Workflow { get; init; } = new();
+}
 internal sealed record InspectionOwner(string Kind, string Label, string Reference, string? AppId, string? SessionUrl, string? SessionUnavailable);
 internal sealed record WorkspaceDestination(string? Url, string? Unavailable);
 internal sealed record InspectionApp(string AppId, string Name, string? Subpath, bool Installed);

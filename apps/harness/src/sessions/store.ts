@@ -27,12 +27,16 @@ export type SessionStatus =
 export type SessionAutonomy = "normal" | "autonomous";
 
 export interface SessionRecord {
+  retentionVersion?: 1;
+  retention?: import("./retention.js").RetentionStatus;
+  retentionCleanup?: { requestId: string; expectedRevision: number };
   /** Existing records remain native until an explicit new conversation selects Docker. */
   executionMode?: "native" | "docker";
   workerUsage?: { memoryBytes: number; peakMemoryBytes: number; pids: number; observedAt: string; diskBytes?: number; diskObservedAt?: string };
   autonomy?: SessionAutonomy;
   developmentWorkspaces?: import("./development.js").DevelopmentWorkspace[];
   developmentLease?: string;
+  workflowCompletion?: { requestId: string; expectedRevision: number; state: "queued" | "blocked"; error?: string };
   coreEnvironments?: import("@hosty-sdk/app/sandbox/server").CoreEnvironment[];
   coreEnvironmentOperations?: { action: string; input: Record<string, unknown>; state: "pending" | "observed" }[];
   sandboxPlans?: import("@hosty-sdk/app/sandbox/server").SandboxPlan[];
@@ -232,24 +236,8 @@ export class SessionStore {
 
   /** Removes one session's directory — its record, transcript and everything else it kept. */
   async deleteSession(id: string): Promise<void> {
-    await rm(this.sessionDir(id), { recursive: true, force: true });
     await this.removeWorkspace(id);
+    await rm(this.sessionDir(id), { recursive: true, force: true });
   }
 
-  /** Deletes sessions whose last activity is older than the retention window. Returns deleted ids. */
-  async sweepRetention(retentionDays: number, now = new Date(), protectedIds: ReadonlySet<string> = new Set()): Promise<string[]> {
-    const cutoff = now.getTime() - retentionDays * 24 * 60 * 60 * 1000;
-    const deleted: string[] = [];
-    for (const record of await this.listRecords()) {
-      if (!protectedIds.has(record.id) && new Date(record.updatedAt).getTime() < cutoff) {
-        await rm(this.sessionDir(record.id), { recursive: true, force: true });
-        // The workspace goes with the session here and on delete — and nowhere else. Abandonment
-        // stops a session and keeps it resumable, so its files must stay.
-        await this.removeWorkspace(record.id);
-        deleted.push(record.id);
-      }
-    }
-
-    return deleted;
-  }
 }

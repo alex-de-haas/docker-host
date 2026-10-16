@@ -1953,6 +1953,7 @@ internal sealed class DockerRuntimeAdapter(
                 (runReference, resolvedLock) = await DockerSourceRuntime.ResolveLocalImageAsync(runReference, null, runner, cancellationToken);
             resolvedLocks[service.Key] = resolvedLock;
             if (context.ReportUpdateProgress is not null) await context.ReportUpdateProgress("starting", service.Key);
+            if (context.ReportLaunchProgress is not null) await context.ReportLaunchProgress("starting", service.Key);
 
             // Secret-bearing env (app settings + the service token) is passed by NAME on the argv and by
             // VALUE through the docker process environment, so the values never land in ps/cmdline (C-M5).
@@ -3373,7 +3374,9 @@ internal sealed record RuntimeLifecycleContext(
     string? AppCachePath = null,
     [property: System.Text.Json.Serialization.JsonIgnore]
     Func<string, string?, Task>? ReportUpdateProgress = null,
-    IReadOnlyList<RuntimeSelectedService>? GraphServices = null)
+    IReadOnlyList<RuntimeSelectedService>? GraphServices = null,
+    [property: System.Text.Json.Serialization.JsonIgnore]
+    Func<string, string?, Task>? ReportLaunchProgress = null)
 {
     public IReadOnlyList<RuntimeSelectedService> AllServices => GraphServices ?? Manifest.Services;
 }

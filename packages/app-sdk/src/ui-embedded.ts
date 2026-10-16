@@ -1,5 +1,5 @@
 import { activeNavigationKey, UiCompositionModel } from "./ui-composition";
-import { UI_COMPOSITION_CAPABILITY, type UiChromeOverrides, type UiActionOptions, type UiActionResult } from "./ui-types";
+import { UI_COMPOSITION_CAPABILITY, UI_MAIN_NAVIGATION_CAPABILITY, navigationSearch, type UiNavigationOptions, type UiChromeOverrides, type UiActionOptions, type UiActionResult } from "./ui-types";
 import { createPresentationRequestId, type UiClient } from "./ui";
 import { UiError, type PanelTarget, type PresentationOptions, type PresentationResult, type UiBootstrap, type UiEnvironment, type UiEvent } from "./ui-types";
 import { canonicalSurfaceRoute, DISCOVERY_TIMEOUT, failure, readUiMessage, uiRequest, validId, validTarget, waitForPresentation, type UiMessage } from "./ui-transport";
@@ -24,6 +24,7 @@ export class EmbeddedUiClient implements UiClient {
   private state: { route: string; state: "ready" | "blocked"; code?: string } | null = null;
   private active = true;
   private offered = false;
+  private mainNavigation = false;
   private readonly onMessage = (event: MessageEvent) => { void this.receive(event); };
   private readonly onFocus = () => { void this.recheck(); };
   private readonly onKey = (event: KeyboardEvent) => { if (this.active && !event.defaultPrevented && event.key === "Escape") this.post({ type: "hosty:ui:dismiss" }); };
@@ -150,7 +151,7 @@ export class EmbeddedUiClient implements UiClient {
       if (msg.code || msg.coreOrigin !== own.coreOrigin || msg.userId !== own.userId || msg.appId !== own.peer?.appId || msg.installationId !== own.peer?.installationId) {
         this.setEnvironment("blocked", "actor_mismatch"); return;
       }
-      clearTimeout(this.deadline); this.setEnvironment("connected");
+      clearTimeout(this.deadline); this.mainNavigation = Array.isArray(msg.capabilities) && msg.capabilities.includes(UI_MAIN_NAVIGATION_CAPABILITY); this.setEnvironment("connected");
       if (Array.isArray(msg.capabilities) && msg.capabilities.includes(UI_COMPOSITION_CAPABILITY)) {
         this.composition.setHostPolicy(channel.generation, msg.revision as number, msg.chrome as UiChromeOverrides, msg.rootDisabled === true, msg.endpoint as string);
       } else this.composition.setLegacyHost();
@@ -174,7 +175,7 @@ export class EmbeddedUiClient implements UiClient {
     if (!this.active) return { status: "blocked", requestId, code: "activity_required" };
     if (signal?.aborted) return { status: "uncertain", requestId, code: "presentation_unknown" };
     const target = message.target as PanelTarget | undefined;
-    const input = message.type === "hosty:ui:status" ? null : JSON.stringify([message.type, target?.panel ?? null, target?.route ?? null, message.reuse ?? "exact", message.entryKey ?? null]);
+    const input = message.type === "hosty:ui:status" ? null : JSON.stringify([message.type, target?.panel ?? null, target?.route ?? null, message.reuse ?? "exact", message.entryKey ?? null, message.search ?? null]);
     if (this.localActions.has(requestId)) return { status: "rejected", requestId, code: "request_conflict" };
     const existing = this.pending.get(requestId);
     if (existing) {
@@ -193,7 +194,7 @@ export class EmbeddedUiClient implements UiClient {
       return { status: "blocked", requestId, code: "presentation_busy" };
     let settle!: (result: UiResult) => void;
     const operation = new Promise<UiResult>(resolve => { settle = resolve; });
-    const entry: PendingRequest = { kind: message.type === "hosty:ui:picker" || message.type === "hosty:ui:navigate" ? "action" : "presentation", input, operation, waiters: 0, sent: false, resolve: result => {
+    const entry: PendingRequest = { kind: message.type === "hosty:ui:picker" || message.type === "hosty:ui:navigate" || message.type === "hosty:ui:navigate-main" ? "action" : "presentation", input, operation, waiters: 0, sent: false, resolve: result => {
       if (this.pending.get(requestId) === entry) this.pending.delete(requestId);
       settle(result);
     } };
@@ -230,7 +231,12 @@ export class EmbeddedUiClient implements UiClient {
       return Promise.resolve({ status: "unsupported", requestId: options.requestId, code: "unsupported_composition" });
     return this.request(options.requestId, { type: "hosty:ui:picker" }, options.signal) as Promise<UiActionResult>;
   };
-  navigate = (entryKey: string, options: UiActionOptions): Promise<UiActionResult> => {
+  navigate = (entryKey: string, options: UiNavigationOptions): Promise<UiActionResult> => {
+    if (options.placement === "main") {
+      if (!navigationSearch(options.search)) return Promise.resolve({ status: "rejected", requestId: options.requestId, code: "destination_invalid" });
+      if (!this.mainNavigation) return Promise.resolve({ status: "unsupported", requestId: options.requestId, code: "main_navigation_unavailable" });
+      return this.request(options.requestId, { type: "hosty:ui:navigate-main", entryKey, search: options.search }, options.signal) as Promise<UiActionResult>;
+    }
     const id = options.requestId, existing = this.localActions.get(id);
     if (!validId(id)) return Promise.resolve({ status: "rejected", requestId: id, code: "invalid_presentation" });
     if (existing) return existing.key === entryKey ? waitForPresentation(existing.result, id, options.signal) : Promise.resolve({ status: "rejected", requestId: id, code: "request_conflict" });
