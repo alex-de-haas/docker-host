@@ -18,6 +18,20 @@ export type DevelopmentAction = CoreEnvironmentAction | SandboxAction | "viewer"
 export class DevelopmentClient {
   constructor(private readonly origin: string | null, private readonly appId: string, private readonly token: string | null) {}
   get available(): boolean { return Boolean(this.origin && this.token); }
+  async workerBindings(sessionId: string, credential: string, lease?: { leaseId: string; acquire: boolean }): Promise<import("../runtime/worker.js").WorkerBindings | null> {
+    if (!this.available) throw new AppContextError(503, "worker_core_required", "Docker agents require Core-managed source bindings.");
+    const route = `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/workspaces/worker-bindings${lease ? "/lease" : ""}`;
+    let response: Response;
+    try { response = await fetch(new URL(route, this.origin!), { method: lease ? "POST" : "GET",
+      headers: { authorization: `Bearer ${this.token}`, "X-Hosty-User-Token": credential, "content-type": "application/json" },
+      body: lease ? JSON.stringify(lease) : undefined, signal: AbortSignal.timeout(120_000) }); }
+    catch { throw new AppContextError(503, "worker_lease_unknown", "Core worker lease outcome is unknown. Keep the same generation and lease ID for recovery."); }
+    const body = await response.text();
+    if (response.ok && !body && lease?.acquire === false) return null;
+    const result = JSON.parse(body) as (import("../runtime/worker.js").WorkerBindings & { code?: string; message?: string }) | null;
+    if (!response.ok) throw new AppContextError(response.status, result?.code ?? "worker_binding_failed", result?.message ?? "Core worker binding failed.");
+    return result;
+  }
   async environment(credential: string, action: CoreEnvironmentAction, input: Record<string, unknown>): Promise<unknown> {
     if (!this.available) throw new AppContextError(503, "environments_unavailable", "Child Core environments require a Core-managed app identity.");
     try { return await new CoreEnvironmentClient(async () => credential, { coreOrigin: this.origin!, appId: this.appId, serviceToken: this.token! }).call(action, input); }

@@ -1532,9 +1532,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var declaration in declarations)
             {
-                if (name is "assistant" or "speech-to-text" && (declaration.Version is null or < 1 || declaration.Capabilities is null))
+                if (name is "assistant" or "speech-to-text" or "translation" && (declaration.Version is null or < 1 || declaration.Capabilities is null))
                 {
-                    var code = name == "assistant" ? "app_manifest_assistant_contract_required" : "app_manifest_speech_to_text_contract_required";
+                    var code = $"app_manifest_{name.Replace('-', '_')}_contract_required";
                     errors.Add(new(code, $"The {name} interface requires a positive integer version and a capabilities array.", path));
                 }
                 if (declaration.Version is < 1 || declaration.Capabilities is { } capabilities &&
@@ -2060,10 +2060,10 @@ internal sealed class DockerRuntimeAdapter(
             {
                 runArgs.Add("-e");
                 // A dependency endpoint published on the host's loopback is unreachable from inside
-                // this container, so rewrite a loopback URL to host.docker.internal (same rewrite
-                // used for HOSTY_CORE_ORIGIN). The dependency must publish the endpoint host-reachable
+                // this container, so rewrite its host for HTTP and non-HTTP protocols alike.
+                // The dependency must publish the endpoint host-reachable
                 // (expose:host) for this to connect — see cross-app-dependencies.md.
-                runArgs.Add($"HOSTY_DEPENDENCY_{RuntimePortHelper.NormalizeEnvironmentKey(dependency.Key)}_URL={BuildDockerCoreOrigin(dependency.Value)}");
+                runArgs.Add($"HOSTY_DEPENDENCY_{RuntimePortHelper.NormalizeEnvironmentKey(dependency.Key)}_URL={BuildDockerDependencyUrl(dependency.Value)}");
             }
 
             foreach (var serviceUrl in RuntimeServiceDiscovery.BuildEnvironment(context.AllServices, service, (target, port) =>
@@ -3286,6 +3286,24 @@ internal sealed class DockerRuntimeAdapter(
         return settings.BuildEnvironment(endpoint, context.App.Id, serviceKey)
             .Select(pair => $"{pair.Key}={pair.Value}")
             .ToArray();
+    }
+
+    internal static string BuildDockerDependencyUrl(string endpoint)
+    {
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.IsFile || !IsHostLocalBinding(uri.Host))
+            return endpoint;
+        // Replace only the original authority's host: URI reserialization can add a root slash,
+        // drop an explicit default port or normalize protocol-specific paths/options.
+        var authorityStart = endpoint.IndexOf("://", StringComparison.Ordinal);
+        if (authorityStart < 0) return endpoint;
+        authorityStart += 3;
+        var authorityEnd = endpoint.IndexOfAny(['/', '?', '#'], authorityStart);
+        if (authorityEnd < 0) authorityEnd = endpoint.Length;
+        var hostStart = authorityStart + endpoint[authorityStart..authorityEnd].LastIndexOf('@') + 1;
+        var hostEnd = endpoint[hostStart] == '[' ? endpoint.IndexOf(']', hostStart) + 1
+            : endpoint.IndexOf(':', hostStart, authorityEnd - hostStart);
+        if (hostEnd < 0) hostEnd = authorityEnd;
+        return endpoint[..hostStart] + "host.docker.internal" + endpoint[hostEnd..];
     }
 
     internal static string BuildDockerCoreOrigin(string coreOrigin)

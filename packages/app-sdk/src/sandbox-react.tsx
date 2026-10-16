@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import type { CoreEnvironment } from "./sandbox-server.js";
+import type { CoreEnvironment, CoreEnvironmentSavedConsent } from "./sandbox-server.js";
 
 export type EnvironmentRequest = <T>(path: string, body?: unknown, signal?: AbortSignal) => Promise<T>;
 export interface EnvironmentWorkspace { id: string; worktrees: { id: string; label: string; state: string }[] }
@@ -17,6 +17,7 @@ function link(value?: string) {
 export function CoreEnvironmentPanel({ request, storageKey, workspace, workspaceHref }: {
   request: EnvironmentRequest; storageKey: string; workspace?: EnvironmentWorkspace; workspaceHref?: (id: string) => string;
 }) {
+  const [consents, setConsents] = useState<CoreEnvironmentSavedConsent[]>([]);
   const [environments, setEnvironments] = useState<CoreEnvironment[]>([]);
   const [apps, setApps] = useState<Record<string, EnvironmentApps>>({});
   const [loading, setLoading] = useState(true);
@@ -38,9 +39,10 @@ export function CoreEnvironmentPanel({ request, storageKey, workspace, workspace
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const sequence = ++refreshSequence.current;
     try {
-      const result = await request<{ environments: CoreEnvironment[] }>("", undefined, signal);
+      const result = await request<{ environments: CoreEnvironment[]; consents?: CoreEnvironmentSavedConsent[] }>("", undefined, signal);
       if (signal?.aborted || !active.current || sequence !== refreshSequence.current) return;
       const selected = result.environments.filter(e => !workspace || e.context?.workspaceId === workspace.id);
+      setConsents(result.consents ?? []);
       setEnvironments(selected.filter(e => e.state !== "finished")); setLoading(false); setReadError("");
       const saved = pendingRef.current;
       if (saved?.id) {
@@ -60,7 +62,7 @@ export function CoreEnvironmentPanel({ request, storageKey, workspace, workspace
       }));
       if (!signal?.aborted && active.current && sequence === refreshSequence.current) setApps(Object.fromEntries(results));
     } catch (cause) {
-      if (!signal?.aborted && active.current && sequence === refreshSequence.current) { setEnvironments([]); setApps({}); setLoading(false); setReadError(message(cause)); }
+      if (!signal?.aborted && active.current && sequence === refreshSequence.current) { setEnvironments([]); setConsents([]); setApps({}); setLoading(false); setReadError(message(cause)); }
     }
   }, [request, workspace, savePending]);
   useEffect(() => {
@@ -114,6 +116,7 @@ export function CoreEnvironmentPanel({ request, storageKey, workspace, workspace
     {(error || readError) && <p role="alert" className="text-sm text-destructive">{error || readError}</p>}
     {pending && <div className="flex items-center gap-3 text-sm"><span>{busy ? `Sandbox ${pending.kind} is in progress…` : "The request outcome is not confirmed."}</span><button className={button} disabled={busy} onClick={() => void run(pending)}>Retry same request</button></div>}
     {loading ? <p role="status" className="text-sm text-muted-foreground">Loading sandboxes…</p> : !environments.length && !error && !readError && <p className="text-sm text-muted-foreground">No active sandbox environments.</p>}
+    {!workspace && consents.length > 0 && <details className="rounded-md border p-3"><summary className="cursor-pointer text-sm font-medium">Saved launch permissions ({consents.length})</summary><p className="mt-2 text-xs text-muted-foreground">Revocation affects all matching launches and delegated access. Running children and their own accounts remain; use Stop or Delete sandbox to end them.</p><ul className="divide-y">{consents.map(grant => <li key={grant.id} className="space-y-2 py-3 text-sm"><p>{grant.appId} · {grant.mode} · {grant.state}</p><p className="break-all text-xs text-muted-foreground">{grant.target}</p><button className={button} disabled={disabled} onClick={() => { setBusy(true); void request(`/consents/${grant.id}/revoke`, {}).then(() => refresh()).catch(cause => setError(message(cause))).finally(() => setBusy(false)); }}>Revoke permission for {grant.appId}</button></li>)}</ul></details>}
     {environments.map(item => <article key={item.id} className="space-y-3 rounded-md border p-3" aria-label={`Sandbox ${item.label}`}>
       <header className="flex flex-wrap items-start justify-between gap-3"><div><h4 className="font-medium">{item.label} <span className="ml-2 rounded border px-2 py-0.5 text-xs font-normal">{item.state}</span></h4>
         <p className="mt-1 text-xs text-muted-foreground">{item.mode === "source" ? "Core built from workspace source" : item.mode === "release" ? "Installed Core release" : "Current Core build"}{item.context?.workspaceId && workspaceHref && <> · <a className="underline" href={workspaceHref(item.context.workspaceId)}>Open workspace</a></>}</p></div>
@@ -124,6 +127,7 @@ export function CoreEnvironmentPanel({ request, storageKey, workspace, workspace
         </div></header>
       {item.limits && <p className="text-xs text-muted-foreground">Reserved: {(item.limits.memoryBytes / 1073741824).toFixed(1)} GiB container memory · {item.limits.cpus} CPUs · {item.limits.pids} PIDs · {(item.limits.diskBytes / 1073741824).toFixed(1)} GiB soft disk limit. Released after deletion.</p>}
       {item.usage && <p className="text-xs text-muted-foreground">{item.usage.state === "unknown" ? "Resource usage unavailable; the reservation remains active." : `Observed: ${(item.usage.containerMemoryBytes / 1048576).toFixed(0)} MiB containers · ${(item.usage.coreMemoryBytes / 1048576).toFixed(0)} MiB Core process · ${(item.usage.ownedDiskBytes / 1073741824).toFixed(2)} GiB owned data.`}</p>}
+      {item.access && <div className="space-y-2 text-sm" aria-label="Sandbox consent"><p>{item.access.state === "operator" ? "Operator launch" : item.access.state === "active" ? item.access.saved ? "Saved launch permission" : "Permission for this run" : item.access.state === "target-changed" ? "Core target changed or unavailable; review launch permission" : "Launch permission revoked or unavailable"}</p><p className="text-xs text-muted-foreground">{item.access.description}</p>{item.access.grantId && ["active", "target-changed"].includes(item.access.state) && <button className={button} disabled={disabled} onClick={() => { setBusy(true); void request(`/${item.id}/consent/revoke`, {}).then(() => refresh()).catch(cause => setError(message(cause))).finally(() => setBusy(false)); }}>Revoke launch permission</button>}</div>}
       {item.error && <p role="alert" className="text-sm text-destructive">{item.error}</p>}
       {item.state === "running" && <><EnvironmentApplications value={apps[item.id]} />
         {apps[item.id] && ["setup-required", "sign-in-required"].includes(apps[item.id].state) && <SetupAccount request={request} id={item.id} disabled={disabled} onDone={() => refresh()} />}</>}

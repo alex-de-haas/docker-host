@@ -43,6 +43,15 @@ describe("independent sandbox client", () => {
 });
 
 describe("child Core environment client", () => {
+  it("requests consent without creating a child and preserves the exact creation UUID", async () => {
+    const fetch = vi.fn().mockResolvedValue(Response.json({ approvalUrl: "http://core.test/install/confirm/review" })); vi.stubGlobal("fetch", fetch);
+    const client = new CoreEnvironmentClient(async () => "interactive", options);
+    const input = { requestId: "a".repeat(32), label: "QA", mode: "current" };
+    await client.call("environment-consent", input);
+    expect(fetch.mock.calls[0][0].pathname).toBe("/api/internal/apps/qa.client/core-environments/consent");
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual(input);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it("targets only the child manager and does not retry unknown mutations", async () => {
     const fetch = vi.fn().mockRejectedValueOnce(new Error("lost response")); vi.stubGlobal("fetch", fetch);
     const client = new CoreEnvironmentClient(async () => "operator-grant", options);

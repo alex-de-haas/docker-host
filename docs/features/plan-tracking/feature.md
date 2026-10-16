@@ -1,6 +1,6 @@
 ---
 created: 2026-10-07
-updated: 2026-10-10
+updated: 2026-10-16
 summary: Administrator plan overview across installed source repositories and unreleased development workspaces, backed by bounded Core document reads.
 components: [apps/core, apps/plans, apps/harness, apps/shell, packages/app-sdk]
 ---
@@ -103,6 +103,38 @@ stop the detail read.
 Open pages re-read every 20 seconds. Refresh sources requests a fresh target fetch. A workspace
 marker means that the workspace changes the plan; it makes no claim about current agent activity.
 Unavailable workspace observations display their state, observation time and reason.
+
+### Translate A Document
+
+**Translate** above the Markdown opens translator and target-language controls. Choices come from
+Core's installed [translation providers](../translation-provider/feature.md), including Harness's
+separate Codex and Claude entries. One ready provider is selected automatically; multiple ready
+providers require a choice. Unconfigured, stopped or incompatible entries retain an explanation.
+Russian is the initial target; other presets and a custom language tag are available. Connection and
+model settings belong to **Harness → Settings → Providers → Translation providers**, independently
+for each backend and independently of chat model settings.
+
+Only **Translate document** submits work. The result replaces the Markdown reading view temporarily;
+**Show original** and **Show translation** switch without another model call. The original file,
+parsed status, deliverable progress and workspace diff remain unchanged. Translation applies to
+the tracked document or the selected workspace's full-document view, never to its diff. Translated
+headings are prose and are not reparsed as English workflow fields. Output uses the existing safe
+Markdown renderer, with raw HTML disabled and repository-relative document links preserved.
+
+Plans declares optional `providers.translation` access. Reading does not require it. Missing access
+offers Core's ordinary permission review; **Refresh translators** or returning focus reloads choices.
+`GET /api/translation` requires a current administrator and returns choices/readiness without service
+credentials. The same-origin `POST /api/translation` rechecks source authorization, the selected
+provider installation and the SHA-256 fingerprint of fresh document bytes before sending Markdown.
+A deleted, inaccessible or changed version fails explicitly, without selecting a different version
+or translator. Documents are limited to 128,000 Unicode code points.
+
+Pending requests disable duplicate activation and expose **Cancel translation**. Cancellation,
+navigation and changed source bytes discard late replies; unchanged source polling retains the view.
+Results exist only in component memory, not in source files or the Plans disk cache. There is no
+automatic translation, model fallback or retry.
+
+The [desktop preview](translation-preview.png) shows the Core-managed embedded reading view.
 
 ## Repository And Workspace Projection
 
@@ -226,12 +258,37 @@ standalone Next.js server as the cache mount's unprivileged owner. The image wor
 publication on version checks, lint and tests and follows the repository's immutable version-tag
 policy. It builds Linux amd64 and arm64 images with provenance attestations, carrying the repository
 and ReUI license notices.
-`manifest.json`, `package.json` and the Docker image tag share the independent app version `0.5.0`.
+`manifest.json`, `package.json` and the Docker image tag share the independent app version `0.7.0`.
 Side-panel discussions use Core 0.129.0, SDK 0.25.0 and Harness 0.48.0. Older Core remains usable for
 reading sources and presents an actionable refusal for this discussion contract. The [SDK panel system](../sdk-panel-system/feature.md) defines the shared host and browser acceptance contract.
 
+Translation uses Core 0.136.0, SDK 0.31.0 and Harness 0.54.0. The 2026-10-15 acceptance run used an
+isolated source Core with normal password login and Core-managed Plans, Harness and Shell. A public
+Markdown plan translated through Codex `gpt-6-luna` in both standalone and embedded views, preserving
+links, code, deliverable IDs and checkboxes. Original/translation switching, permission refusal and
+recovery, an unconfigured Claude entry, and a 390-pixel Shell viewport passed. The embedded translation
+region measured 182 pixels for both client and scroll width. No real Claude call was made in this
+browser run; both backend configuration paths have automated coverage and separate real-provider
+benchmarks in the translation feature. Existing continuity-maintenance 403 responses and initial
+Shell postMessage warnings remain visible in this test environment; they did not block translation.
+The optional Assistant permission was deliberately left ungranted. Operator release apps were not
+replaced by these source test installations.
+
 ## Testing Expectations
 
+- Translation tests cover current administrator/source authority, same-origin POST, optional-permission
+  recovery, readiness, selected installation, source fingerprints, missing/deleted workspaces and
+  documents, provider errors, cancellation, duplicate activation, source/version invalidation,
+  original switching and safe translated Markdown. Browser checks use Core-managed standalone and
+  Shell-embedded views. The 2026-10-15 run passed 137 Plans tests, lint and production build, plus
+  55 Harness translation tests; the exact source Core built with four existing compiler warnings.
+  Commands: `npm run test --workspace @haas/hosty-plans`,
+  `npm run lint --workspace @haas/hosty-plans`, `npm run build --workspace @haas/hosty-plans`,
+  `npm run harness:test -- src/translation test/translation-providers.test.tsx`, and
+  `dotnet build apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj --artifacts-path /tmp/hosty-plans-translation-build`.
+  `node scripts/check-versions.mjs`, `node scripts/docs-index.mjs --check` and `git diff --check`
+  passed after the final edits. Core's complete suite and Docker image publication were not rerun
+  for this Plans consumer change; live-provider browser acceptance covered Codex only.
 - Discussion tests cover administrator/source refusals, same-origin POST, exact UTF-8 attachment
   bytes, selected workspace and deleted/stale versions, incompatible providers, separate API/UI
   destinations, finalized replay, duplicate activation, persisted installation-pinned retry identities, panel placement/retry and explicit separate opening

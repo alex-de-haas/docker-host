@@ -146,6 +146,8 @@ jobs:
               - 'packages/app-sdk/**'
 
             harness:
+              - 'scripts/check-harness-worker.mjs'
+              - '.github/workflows/harness-worker-image.yml'
               - *node_shared
               - 'packages/app-sdk/**'
               - 'apps/harness/**'
@@ -590,6 +592,12 @@ jobs:
       - name: Test Hosty Harness
         run: npm run harness:test
 
+      - name: Build shared agent worker
+        run: docker build -f apps/harness/worker/Dockerfile -t "ghcr.io/alex-de-haas/hosty-agent-worker:$(node -p 'require("./apps/harness/manifest.json").version')" .
+
+      - name: Verify worker process and mount lifecycle
+        run: node --import tsx scripts/check-harness-worker.mjs
+
   telemetry-ui:
     name: Telemetry UI
     runs-on: ubuntu-latest
@@ -700,7 +708,7 @@ jobs:
           ( cd cardputer-artifacts && sha256sum hosty_cardputer_shell.bin > SHA256SUMS )
 
       - name: Upload firmware verification artifact
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: hosty-cardputer-${{ github.sha }}
           path: cardputer-artifacts/

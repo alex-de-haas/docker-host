@@ -72,7 +72,7 @@ internal sealed class SandboxService(SandboxStore store, ISandboxInputs inputs, 
                 if (recovered is null) return await ReadAsync(actor, prior.InstanceId, ct);
                 // Preparation persists before acquiring a worktree lease or creating data. Resume
                 // the same allocation after a crash instead of publishing a second instance.
-                if (recovered.State == "preparing") return await CompletePrepare(recovered, ct);
+                if (PreparationIncomplete(recovered)) return await CompletePrepare(recovered, ct);
                 return await ReadAsync(actor, prior.InstanceId, ct);
             }
             if (allocations.Allocations.Length >= 4096)
@@ -115,16 +115,26 @@ internal sealed class SandboxService(SandboxStore store, ISandboxInputs inputs, 
         throw new SandboxException("sandbox_preview_port_unavailable", "No unused instance preview port could be reserved.");
     }
 
+    private static bool PreparationIncomplete(SandboxInstance instance)
+        => instance.State is "preparing" or "stopped" or "unknown"
+            && instance.Resources.Length == 0
+            && instance.Operations is [{ Kind: "prepare", State: not "succeeded" }];
+
     private async Task<SandboxView> CompletePrepare(SandboxInstance instance, CancellationToken ct)
     {
         var gate = store.Gate(instance.Id); await gate.WaitAsync(ct);
         try
         {
+            // Reconciliation or explicit cleanup can win the gate after allocation lookup.
+            var current = await store.ReadAsync(instance.Id, ct);
+            if (current is null) return await ReadAsync(instance.Owner, instance.Id, ct);
+            instance = current;
+            if (!PreparationIncomplete(instance)) return View(instance);
             await RevalidateInput(instance, ct);
             await inputs.AcquireAsync(instance, ct);
             store.AllocateData(instance.Id);
-            instance = instance with { State = "prepared", Operations = instance.Operations.Select(o => o.Kind == "prepare"
-                ? o with { State = "succeeded" } : o).ToArray() };
+            instance = instance with { State = "prepared", ErrorCode = null, Operations = instance.Operations.Select(o => o.Kind == "prepare"
+                ? o with { State = "succeeded", ErrorCode = null, Message = null } : o).ToArray() };
             await store.WriteAsync(instance, ct);
             return View(instance);
         }
@@ -347,6 +357,11 @@ internal sealed class SandboxService(SandboxStore store, ISandboxInputs inputs, 
             {
                 if (prior.Fingerprint != fingerprint) throw ReplayConflict();
                 if (prior.State == "succeeded" || !recover) return View(instance);
+                // A durable retry is running again; do not expose its previous failure while
+                // asynchronous clients are observing the accepted cleanup attempt.
+                instance = instance with { ErrorCode = null, Operations = instance.Operations.Select(o => o.Id == requestId
+                    ? o with { State = "running", ErrorCode = null, Message = null } : o).ToArray() };
+                await store.WriteAsync(instance, default);
             }
             else
             {

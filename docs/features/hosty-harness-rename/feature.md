@@ -1,6 +1,6 @@
 ---
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-10-15
 summary: Hosty Harness replaces the former AI Gateway as the administrator assistant and MCP facade app.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -182,6 +182,13 @@ and Shell warnings remain. Browser visual smoke was unavailable: the in-app brow
 loopback URL and no Chrome browser surface was available. Real account execution and external-client
 reauthorization were not attempted; adapter and auth tests cover those boundaries without using
 operator credentials. Deployment publication and Windows/Docker-specific lanes run in CI.
+
+## Agent Execution Modes
+
+The [shared Docker runtime](../assistant-shared-docker-runtime/feature.md) adds an explicit default
+for new conversations while preserving native execution for existing records. Harness remains a native
+coordinator; Codex and Claude share one bounded worker and apps/previews remain separate. The settings
+panel exposes actual Docker readiness, image installation, resource observations and Stop/recovery.
 
 ## Testing Expectations
 

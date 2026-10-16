@@ -66,7 +66,7 @@ Technical stop/restart retains personas and data. Start after stop and explicit 
 previous generation before runtime admission inventories container capacity; stopped containers are
 not counted again as part of the new generation. Finish/dispose first revokes access, verifies
 that owned consumers are stopped, then deletes temporary folders and realm state and releases the
-source consumer. A minimal operation receipt remains for disposal replay. Source worktrees and
+source consumer. A minimal operation receipt remains for disposal replay. An interrupted prepare resumes from its unfinished journal on the original request ID, including after reconciliation marks it stopped or unknown; later lifecycle operations and disposal are never revived by that replay. A retried disposal records running again before cleanup begins, so asynchronous observers do not confuse the preceding failed/unknown attempt with the current attempt. Source worktrees and
 explicitly exported reports are outside instance cleanup. Expired plans are pruned; retained plans, owners, allocation receipts and operation journals have
 explicit admission ceilings. Disposal and replay remain available at those ceilings.
 
@@ -111,8 +111,8 @@ filesystem allocation limits. Storage violations revoke access and stop known co
 long setup. Instance metrics report sampled Docker memory/CPU and a sampled aggregate memory peak;
 this value is not a cgroup lifetime peak. The Core side reserves 10 GiB of the coordinated 30 GiB mutable budget for the separately managed
 agent/worktrees and limits sandbox storage to 20 GiB. The experiment coordinator monitors and stops
-its agent at 2 GiB state or 8 GiB worktree use. A supported production worker coordinator and the
-remaining interruption matrix stay tracked under D5 and the containment plan.
+its agent at 2 GiB state or 8 GiB worktree use. The [shared worker](../assistant-shared-docker-runtime/feature.md) supplies the supported agent
+coordinator; the remaining integrated matrix stays tracked under D9.
 
 ## Private Browser Verification
 
@@ -193,6 +193,16 @@ online package installation, and no sandbox adaptation of Demo App's MCP surface
 containerized-agent transport remains owned by the containment feature; the sandbox plan retains
 its own integrated development acceptance. See the unchecked deliverables for remaining work.
 
+## Fresh Login And HMR Verification
+
+The [2026-10-15 acceptance](../../reviews/2026-10-15-sandbox-login-hmr-acceptance.md) reproduces
+consumed callback parameters returning after HMR and verifies the SDK cleanup synchronization fix.
+Fresh password login works through Shell embedding and direct Demo launch; source edits update the
+open page without restoring `code`/`state`, and navigation/reload stay authenticated. Finish removes
+the child process, three app containers, one network, six cache volumes and temporary root while
+retaining source. The report distinguishes container measurements from incomplete native Harness
+peak capture and records separate hash-only navigation behavior. D9 remains open for wider acceptance.
+
 ## Parent-Managed Child Core Environments
 
 The independent `/api/core-environments` API creates an entire test Core on the same host and Docker
@@ -206,6 +216,11 @@ Each environment receives a unique Core instance ID, allocated port and local ho
 keys, connections, app registry, app data and caches. Parent credentials and provider connections are
 not copied. No workspace is required. Optional registered worktrees are retained as persistent
 consumers until Finish; they remain outside the temporary root.
+
+Docker CLI plugin discovery carries the installed plugin directories reported by Docker into the
+child's own configuration, preserving child-owned settings with an owner-only atomic JSON writer.
+Buildx remains available under the
+private HOME without copying the parent's registry logins or Docker configuration.
 
 `current` copies the parent's prepared executable closure; `release` copies its installed native
 Core binary; `source` builds an absolute selected Core project into a child-owned output directory.
@@ -369,6 +384,134 @@ The browser creates a read-only catalog, scans 31 files, manually identifies one
 The agent removes exports and finishes both test children. Independent checks confirm removed child processes, ports, containers and roots; all 118 source-file SHA-256 hashes and filesystem observations match. External folders survive Core Finish, then the fixture removes its own output and helper resources. Source worktrees survive.
 
 Automatic TMDb enrichment and torrent ingestion are outside this setup. Measured fixture limits and memory do not implement aggregate child admission quotas; the broader permission, revocation and platform matrix remains in the plan.
+
+## Trusted Child Core Consent
+
+Delegated child creation requires explicit operator consent in addition to the initiating app's
+`core.environments.manage` permission and current administrator authority. Harness exposes
+`environment_consent` with the exact `environment_create` arguments. Core returns its normal
+confirmation page; the page defaults to this run and offers a saved permission for matching launches.
+Preparing or visiting the page does not allocate or start a child. After approval, the caller retries
+the original creation UUID. Direct operator launches, including the workspace UI action, retain
+ordinary operator authority and do not grant permission for unrelated later launches by that app.
+Concurrent and exact consent retries reuse the pending or completed review within its normal
+lifetime, scoped to the caller installation, owner, creation UUID and policy. Changed creation
+arguments conflict; revoked permission or a changed Core target can receive a new review. Repeated
+approval reuses an identical active persisted grant, including after approval pages expire or Core
+restarts, so revocation does not leave a duplicate matching grant.
+
+Consent uses the existing background-grant store. A scope pins the owner authorization revision,
+calling installation, current/release/source mode, Core target, trust-contract version and resource
+ceilings. A one-run scope additionally pins the normalized creation request. Saved source consent
+trusts ordinary edits in the chosen Core project/worktree, while current/release consent pins the
+prepared binary closure, including native libraries, configuration and other copied runtime files.
+The regenerated retention marker and skipped directory links are outside that copied closure.
+Another target or increased resource ceiling requires review. Worktree
+ownership and source path checks still apply independently. A single-app sandbox grant cannot
+launch a whole Core; the separate `core-environment` scope can issue normal short-lived background
+credentials for its reviewed actions. Consent includes only the caller's currently granted
+read/manage actions; a manage-only caller does not receive read authority.
+
+Operator-created children persist explicit operator approval, including when they retain an
+assistant workspace owner. Legacy app-owned records without that marker or consent require review
+before delegated start/restart, setup or child API access. The original creation request attaches
+approved consent without replacing the child; operator authority and Stop/Finish remain available.
+
+The shared Shell/Workspaces panel shows effective consent and supports revocation. Shell also lists
+saved permissions when no environment remains. Effective access and saved permissions report a
+changed or unavailable binary target instead of an active launch permission, while preserving
+revocation and ordinary operator lifecycle controls. Each list response computes a distinct
+current/release target digest once and shares it across environments and saved permissions; the
+next request recomputes the digest. Grant labels reuse the validated sandbox name
+without adding a prefix that exceeds the grant's name limit. Revocation prevents new delegated creation,
+start/restart, setup and child API transport. The operator retains inspection, Stop and Finish.
+Finish retires one-run consent; saved consent remains an explicit operator policy until revoked.
+The original creation request still returns the finished receipt after one-run consent is retired,
+without recreating data or processes. Exact successful or superseded Start/Restart replays also
+return their existing journal after launch consent is revoked or its target changes; new commands
+and retryable failures require live consent before preparing or changing the journal. Caller
+identity, ownership and request fingerprint checks still apply to terminal replays.
+Approval audit records identify the initiating app as their resource and retain the request, caller,
+operation and one-run/saved choice under the reviewed metadata schema. The requested event is
+persisted before submitting the review, so abandoned requests are traceable without a decision. A prepared generation is
+journaled before post-build consent revalidation, so rejected launches release its parent ownership
+and retention keeps only the latest failure diagnostics instead of accumulating orphan builds.
+After reviewing a changed target or renewed permission, replaying the original creation request
+updates the active child's consent without replacing its identity, data or lifecycle journal.
+Renewal shares the child's command gate and re-reads its latest state after an in-flight operation.
+Revocation alone neither stops a running child nor retracts its own accounts or credentials.
+The child remains a trusted Core with ordinary administrator rights, internet and shared Docker;
+its normal app-installation and shared-mount review are not replaced by parent-side policy.
+
+The [2026-10-15 trusted-Core acceptance](../../reviews/2026-10-15-trusted-core-consent-acceptance.md) verifies one-run/saved consent, revocation, dedicated Redis dependencies, shared mount limits, ordinary roles, nested cleanup and Linux-in-Docker interrupted Finish. It records the measured resource envelope and remaining host-coverage limits.
+
+The [offline daemon acceptance](../../reviews/2026-10-15-offline-sandbox-daemon-acceptance.md) verifies interrupted prepare, actual Docker loss, revoked preview with retained data, observable failed cleanup, same-UUID disposal after coordinator death, browser recovery and complete resource removal on macOS. D5 is complete through the shared worker integration below; this bounded run does not establish the entire D9 host and measurement matrix.
+
+## Shared Agent Worker Accounting
+
+The [supported shared Harness worker](../assistant-shared-docker-runtime/feature.md) is separate from
+application and child Core lifecycles. Offline sandbox admission avoids double-counting its existing
+agent reservation only when the container has the exact derived name/labels and an active Core-owned
+worker lease; a label alone grants no exemption. Unverified containers retain ordinary accounting.
+Worker Stop does not Finish an application sandbox. Demo dependency-image scripts have explicit
+readable modes so private Core source checkouts do not make the non-root application fail at startup.
+
+Application start/restart capacity refusal returns a structured HTTP 409 with the environment error
+code. Core settles the app to stopped/failed, preserves the diagnostic and permits a normal retry
+after capacity is available; it does not leave an app indefinitely starting. Stopped containers
+continue to reserve their limits until the owning runtime is removed.
+
+## Composed Git And Child-Core Acceptance
+
+The [D9 Git acceptance report](../../reviews/2026-10-15-sandbox-d9-git-acceptance.md) records a real
+Codex Docker conversation that edits/tests Demo, creates a child Core, survives Harness failure,
+publishes a test PR through Core, applies a real review finding and explicitly finishes the child.
+A separate authenticated Playwright browser verifies HMR and preview; the agent consumes its report.
+Harness displays the published head and observed CI. Independent cleanup verifies source retention
+and removal of the child process, ports, data, two containers, six cache volumes and its network.
+
+The selected simultaneous agent-plus-app peak is 5,473.4 MiB charged memory (3,942.2 MiB working
+set). Native Core/Harness/browser RSS is measured separately. This is one macOS arm64 Docker
+workload, not an all-host guarantee or a complete cold-start benchmark; remaining D9 coverage stays
+in the [plan](plan.md).
+
+## Released Local Acceptance
+
+The [local D9 report](../../reviews/2026-10-15-sandbox-d9-local-acceptance.md) verifies merged Core/CLI
+0.135.1, Demo 0.17.2 and worker 0.53.0 with a real Codex conversation, fresh child password login,
+source build/HMR, concurrent same-ID Start, stale-request refusal, independent QA without a workspace,
+private Docker config preservation and full Finish. Its L01-L22 ledger maps 209 unique Core cases,
+18 Harness tests and six Demo tests to profile-specific live evidence. Both child roots/processes,
+two app containers, six cache volumes and a network are removed while borrowed source remains intact.
+
+Cold client image transfers, dependency/cache preparation and warm lifecycle timing are recorded
+separately from the already-running Docker VM and shared base layers. The selected simultaneous
+worker-plus-child sample is 3,417.6 MiB charged / 2,154.3 MiB working set; native Core, Harness,
+browser and verification processes have separate measurements. The report retains the temporary
+helper failure and sampling boundaries. Local D27 records these verified stages; D28 below records
+the subsequent cold-engine measurement. D9 retains host/architecture/recipe acceptance and D11
+retains remote-preview acceptance.
+
+## Isolated Cold-Engine Acceptance
+
+The [cold-engine report](../../reviews/2026-10-15-sandbox-d9-cold-engine-acceptance.md) verifies an empty independent
+Docker engine with released Linux arm64 Core 0.135.1, Harness/worker 0.53.0 and source Demo 0.17.2.
+A real Harness agent prepares the worktree, changes Demo, starts a child and app, passes six tests,
+lint and production build, performs warm restart, and Finishes with identical-input replay. A normal
+password-authenticated browser verifies separate child identity, navigation and HMR with a retained
+page sentinel. Source is read-only in the two app containers and six caches are separate.
+
+Cold worker pull/import takes 19.38 seconds; first source-image build 16.28 seconds; cold Demo HTTP
+readiness 28.15 seconds versus 6.07 seconds warm. Whole-fixture cgroup peak is 8,458.59 MiB under a
+12 GiB ceiling, including daemon, BuildKit, native Core/Harness/browser, worker and app; no OOM occurs.
+The report separates tar extraction, dependency preparation, working set and native RSS. It records
+prepared tooling, Autonomous-mode execution, the temporary recipe and the already-running host VM.
+This is one Linux arm64-in-Docker measurement, not native-host or generic recipe acceptance.
+
+Independent cleanup proves child root/ports/containers/volumes/network removal and unchanged borrowed
+source. Removing the temporary parent, engine container and volume also removes its engine images,
+build cache and credentials. The primary Core process and all 41 existing containers, 153 images,
+505 build-cache records, 15 volumes and 26 networks remain unchanged.
 
 ## Testing Expectations
 

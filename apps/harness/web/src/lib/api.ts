@@ -10,6 +10,7 @@ export const CORE_PROVIDER_ID = "hosty:core";
 export type ToolCatalog = { provider: string; identity: string; tools: { name: string; description?: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } }[] };
 export type ToolRule = { identity: string; mode: "ask" | "run" | "disabled" };
 export type Settings = {
+  executionMode?: "native" | "docker";
   mcpToolRules?: Record<string, ToolRule>;
   immediateHandoffs?: boolean;
   systemPrompt: string;

@@ -1,8 +1,11 @@
+import { WorkerError } from "./runtime/worker.js";
 import { createHostySessionResponse } from "@hosty-sdk/app/session/server";
 import { createHostyUiResponse } from "@hosty-sdk/app/ui/server";
 import { readOwnPermissionNotice } from "@hosty-sdk/app/permissions/server";
 import { delegationCredential } from "./session-delegation.js";
 import { speechRoute } from "./speech.js";
+import { translationRoute } from "./translation/routes.js";
+import { isTranslationKind, TranslationService } from "./translation/service.js";
 import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { ProviderError, type ProviderInvocation } from "@hosty-sdk/app/providers";
 import { HandoffStore } from "./handoff/store.js";
@@ -56,6 +59,7 @@ export function createGatewayServer(
   connections: AgentConnections | null = null,
 ): Server {
   const handoffs = new HandoffStore(manager, settings, providers);
+  const translations = connections && settings ? new TranslationService(connections, settings) : null;
   const recovered = handoffs.sweep().then(() => manager.recoverMcpApprovals()).catch(error => {
     // A transient directory/storage failure is retried by the periodic sweep. Keep unrelated
     // endpoints available and attach the handler immediately, before the first request arrives.
@@ -64,13 +68,14 @@ export function createGatewayServer(
   const timer = setInterval(() => { void handoffs.sweep().catch(error => console.error("[handoff] cleanup failed", error)); }, 60_000);
   timer.unref();
   const server = createServer((request, response) => {
-    void recovered.then(() => route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs)).catch((error) => {
+    void recovered.then(() => route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations)).catch((error) => {
+      if (response.destroyed) return;
       if (error instanceof ProviderError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
       if (error instanceof SessionBusyError) {
         sendJson(response, 409, { code: "session_busy", message: error.message });
         return;
       }
-      if (error instanceof AppContextError || error instanceof ConnectionError) {
+      if (error instanceof AppContextError || error instanceof ConnectionError || error instanceof WorkerError) {
         sendJson(response, error.status, { code: error.code, message: error.message });
         return;
       }
@@ -107,6 +112,7 @@ async function route(
   facade: McpFacade | null,
   connections: AgentConnections | null,
   handoffs: HandoffStore,
+  translations: TranslationService | null,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://gateway.local");
   const method = request.method ?? "GET";
@@ -116,6 +122,9 @@ async function route(
     response.writeHead(204).end();
     return;
   }
+
+  // This surface accepts only its exact Core provider credential, never operator cookies.
+  if (await translationRoute(request, response, url, translations)) return;
 
   // Outside /api and ahead of the operator gate, like the proxy below and for the same kind of
   // reason: an external agent client authenticates with a scoped access token of its own, which
@@ -291,6 +300,15 @@ async function route(
 
   if (await speechRoute(request, response, url)) return;
 
+  if (url.pathname === "/api/settings/translation" && translations && method === "GET") {
+    sendJson(response, 200, await translations.configuration()); return;
+  }
+  const translationSetting = url.pathname.match(/^\/api\/settings\/translation\/(codex|claude)$/);
+  if (translationSetting && translations && method === "PUT" && isTranslationKind(translationSetting[1]!)) {
+    const body = await readJson(request);
+    sendJson(response, 200, await translations.configure(translationSetting[1], body.connectionId, body.model)); return;
+  }
+
   if (url.pathname === "/api/assistant/v1/handoffs" && method === "POST") {
     const prepared = await handoffs.prepare(actor.userId, await readJson(request), consumer);
     sendJson(response, prepared.created ? 201 : 200, prepared.value); return;
@@ -317,6 +335,15 @@ async function route(
   // an operator sees `com-haas-media-server-f9a077 · add_torrent`. The wire name cannot change: the
   // client builds `mcp__<server>__<tool>` from it and the grant set is keyed on it. So the id stays
   // and the label is translated, here, where the roster already is.
+  if (url.pathname === "/api/runtime" && method === "GET") { sendJson(response, 200, await manager.runtimeStatus()); return; }
+  if (url.pathname === "/api/runtime/image" && method === "POST") {
+    if (!manager.worker) throw new WorkerError("worker_unavailable", "Managed worker storage is unavailable.", 503);
+    await manager.worker.install(); sendJson(response, 200, await manager.runtimeStatus()); return;
+  }
+  if (url.pathname === "/api/runtime/stop" && method === "POST") {
+    await manager.recoverDocker(actor.userId, actor.via === "app-session" ? readAppCredential(request) : undefined);
+    sendJson(response, 200, await manager.runtimeStatus()); return;
+  }
   if (method === "GET" && url.pathname === "/api/apps") {
     const discovered = providers ? await providers.read() : null;
     const core = providers?.core() ?? null;
@@ -361,6 +388,7 @@ async function route(
   const connectionMatch = url.pathname.match(/^\/api\/connections\/([a-zA-Z0-9-]+)(\/test|\/login)?$/);
   if (connections && connectionMatch) {
     const id = connectionMatch[1]!; const action = connectionMatch[2] ?? "";
+    if (method !== "GET" && action !== "/test") await manager.assertWorkerProviderInactive(id);
     if (action === "/test" && method === "POST") { sendJson(response, 200, await connections.health(await connections.binding(id))); return; }
     if (action === "/login" && method === "POST") { sendJson(response, 200, await connections.startLogin(id)); return; }
     if (!action && method === "PUT") { sendJson(response, 200, await connections.update(await readJson(request), id)); return; }
@@ -420,6 +448,7 @@ async function route(
         try { await manager.mcpPolicy.update(body.mcpToolRules as Record<string, import("./mcp/policy.js").ToolRule>); }
         catch (error) { sendJson(response, 409, { code: "tool_policy_changed", message: error instanceof Error ? error.message : "Refresh the tool catalog." }); return; }
       }
+      if (body.executionMode !== undefined) await manager.setExecutionMode(body.executionMode);
       await settings.update({
         immediateHandoffs: typeof body.immediateHandoffs === "boolean" ? body.immediateHandoffs : undefined,
         systemPrompt: typeof body.systemPrompt === "string" ? body.systemPrompt : undefined,

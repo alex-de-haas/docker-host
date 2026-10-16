@@ -33,8 +33,9 @@ internal static class CoreAppPermissions
     public const string SourceConnections = "sources.connections";
     public const string ReadSkills = "apps.skills.read";
     public const string SpeechProviders = "providers.speech-to-text";
+    public const string TranslationProviders = "providers.translation";
     public const string AssistantProviders = "providers.assistant";
-    public static readonly string[] Known = [Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, SandboxesRead, SandboxesManage, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SandboxesInspect, SandboxesOperate, SourceConnections, ReadSkills, SpeechProviders, AssistantProviders];
+    public static readonly string[] Known = [Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, SandboxesRead, SandboxesManage, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SandboxesInspect, SandboxesOperate, SourceConnections, ReadSkills, SpeechProviders, TranslationProviders, AssistantProviders];
 
     // The old name grants exactly the same authority. Other retired permissions remain unsupported.
     public static string Normalize(string permission) => permission == LegacySources ? Sources : permission;
@@ -86,6 +87,7 @@ internal static class CoreAppPermissions
         ReadUsers => "Read user-management information",
         ManageUsers => "Manage users and their access",
         SpeechProviders => "List and use all current and future speech-to-text providers",
+        TranslationProviders => "Send text to all current and future translation providers, using their configured accounts",
         AssistantProviders => "Create draft assistant conversations on your behalf",
         ReadSkills => "Read agent skills published by installed apps",
         Install => "Install, update and remove applications; routine updates need no confirmation, other changes require Core review",
@@ -112,6 +114,21 @@ internal sealed class InstallationApprovalStore(IClock clock)
                 throw new AppLifecycleException("approval_limit", "Too many pending requests. Try again later.");
             entries.Add(entry.Id, entry);
             return entry;
+        }
+    }
+
+    internal InstallationApproval? FindEnvironmentRequest(CoreEnvironmentConsentPlan plan)
+    {
+        lock (gate)
+        {
+            var matches = entries.Values.Where(entry => (entry.ExpiresAt > clock.UtcNow || entry.Status == "executing")
+                && entry.EnvironmentPlan is { } prior && prior.AppId == plan.AppId && prior.UserId == plan.UserId
+                && prior.Installation == plan.Installation && prior.AuthRevision == plan.AuthRevision
+                && prior.Request.RequestId == plan.Request.RequestId).ToArray();
+            if (matches.Any(entry => entry.EnvironmentPlan!.Policy.RequestDigest != plan.Policy.RequestDigest))
+                throw new SandboxException("environment_replay_conflict", "Reuse the original creation UUID with unchanged arguments.", 409);
+            return matches.LastOrDefault(entry => entry.EnvironmentPlan!.Policy == plan.Policy
+                && entry.Status is "draft" or "pending" or "executing" or "succeeded");
         }
     }
 
@@ -180,13 +197,14 @@ internal sealed class InstallationApprovalStore(IClock clock)
     }
 
     public void Decide(InstallationApproval entry, string nonce, string sessionId, bool approve, IReadOnlyList<string>? optionalPermissions = null, bool agentEnabled = false, IReadOnlyList<string>? agentSkills = null,
-        bool? autostart = null)
+        bool? autostart = null, bool saveEnvironmentConsent = false)
     {
         lock (gate)
         {
             RequireDecisionNonce(entry, nonce, sessionId);
             if (approve)
             {
+                entry.SaveEnvironmentConsent = entry.EnvironmentPlan is not null && saveEnvironmentConsent;
                 if (entry.AssistantAccessPlan is { } agent)
                 {
                     var selectedSkills = agentSkills ?? [];
@@ -226,7 +244,7 @@ internal sealed class InstallationApprovalStore(IClock clock)
     {
         lock (gate)
             return new(entry.Id, entry.Status, entry.InstallPlan, entry.UpdatePlan,
-                $"{origin.TrimEnd('/')}/install/confirm/{entry.Id}", entry.ExpiresAt, entry.Error, entry.PermissionPlan, entry.RemovalPlan, entry.HostPathPlan);
+                $"{origin.TrimEnd('/')}/install/confirm/{entry.Id}", entry.ExpiresAt, entry.Error, entry.PermissionPlan, entry.RemovalPlan, entry.HostPathPlan, entry.EnvironmentPlan);
     }
 }
 
@@ -246,6 +264,8 @@ internal sealed class InstallationApproval
     public IReadOnlyList<string> AgentSkills { get; set; } = [];
     public AppRemovalPlan? RemovalPlan { get; init; }
     public HostPathApprovalPlan? HostPathPlan { get; init; }
+    public CoreEnvironmentConsentPlan? EnvironmentPlan { get; init; }
+    public bool SaveEnvironmentConsent { get; set; }
     public IReadOnlyList<string>? SelectedOptionalPermissions { get; set; }
     public string? FeedsUrl { get; init; }
     public string? FeedId { get; init; }
@@ -256,7 +276,7 @@ internal sealed class InstallationApproval
     internal string? DecisionNonce { get; set; }
     internal string? DecisionSession { get; set; }
     public bool RequiresSources { get; init; }
-    public string? Permission => PermissionPlan is not null || AssistantAccessPlan is not null ? null : HostPathPlan?.Change.Permission ?? CoreAppPermissions.Install;
+    public string? Permission => EnvironmentPlan is not null ? CoreAppPermissions.CoreEnvironmentsManage : PermissionPlan is not null || AssistantAccessPlan is not null ? null : HostPathPlan?.Change.Permission ?? CoreAppPermissions.Install;
 }
 
 internal sealed record InstallationPrepare(string? ManifestPath = null, string? FeedsUrl = null,
@@ -264,7 +284,7 @@ internal sealed record InstallationPrepare(string? ManifestPath = null, string? 
     string? RemoveAppId = null, AppRemoveRequest? RemovalOptions = null, HostPathChange? HostPathChange = null);
 internal sealed record InstallationSubmit(IReadOnlyDictionary<string, string?>? Settings = null, bool? Autostart = null);
 internal sealed record InstallationRequestView(string Id, string Status, AppInstallPlan? Plan, AppUpdatePlan? UpdatePlan,
-    string ApprovalUrl, DateTimeOffset ExpiresAt, string? Error, AppPermissionPlan? PermissionPlan = null, AppRemovalPlan? RemovalPlan = null, HostPathApprovalPlan? HostPathPlan = null);
+    string ApprovalUrl, DateTimeOffset ExpiresAt, string? Error, AppPermissionPlan? PermissionPlan = null, AppRemovalPlan? RemovalPlan = null, HostPathApprovalPlan? HostPathPlan = null, CoreEnvironmentConsentPlan? EnvironmentPlan = null);
 
 internal sealed record AppRemovalPlan(string AppId, string DisplayName, string Version,
     AppRemoveRequest Options, AppRemovalImpact Impact)

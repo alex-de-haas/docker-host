@@ -1,6 +1,6 @@
 ---
 created: 2026-06-03
-updated: 2026-10-14
+updated: 2026-10-15
 summary: The repository-local reference app used to validate lifecycle, identity, directory access and app roles.
 components: [apps/demo-app]
 ---
@@ -19,6 +19,8 @@ flowchart LR
   E --> G["backend Core-assigned port"]
   B --> H["Hosty identity and app directory"]
 ```
+
+The overview explains that app data stays separate from Core identity and that child sandboxes have their own test users and data.
 
 ## Files
 

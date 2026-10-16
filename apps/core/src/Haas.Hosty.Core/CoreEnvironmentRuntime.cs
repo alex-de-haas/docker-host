@@ -77,14 +77,28 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
         { logger.LogWarning("Child Core build retention deferred for {Environment}: {Reason}", record.Id, ex.GetType().Name); }
         return Task.CompletedTask;
     }
-    private static void CopyDirectory(string source, string destination)
+    // Preparation and consent must describe the same file closure. Directory links are excluded;
+    // the retention marker is regenerated for the child rather than copied from its parent.
+    internal static IEnumerable<FileSystemInfo> PreparedEntries(string source)
     {
-        foreach (var file in Directory.EnumerateFiles(source))
-            if (Path.GetFileName(file) != CoreBuildRetention.Marker) File.Copy(file, Path.Combine(destination, Path.GetFileName(file)));
-        foreach (var directory in Directory.EnumerateDirectories(source))
+        foreach (var entry in new DirectoryInfo(source).EnumerateFileSystemInfos())
         {
-            if (new DirectoryInfo(directory).LinkTarget is not null) continue;
-            var target = Path.Combine(destination, Path.GetFileName(directory)); Directory.CreateDirectory(target); CopyDirectory(directory, target);
+            if (entry is DirectoryInfo directory)
+            {
+                if (directory.LinkTarget is not null) continue;
+                yield return entry;
+                foreach (var nested in PreparedEntries(directory.FullName)) yield return nested;
+            }
+            else if (entry.Name != CoreBuildRetention.Marker) yield return entry;
+        }
+    }
+    internal static void CopyDirectory(string source, string destination)
+    {
+        foreach (var entry in PreparedEntries(source))
+        {
+            var target = Path.Combine(destination, Path.GetRelativePath(source, entry.FullName));
+            if (entry is DirectoryInfo) Directory.CreateDirectory(target);
+            else File.Copy(entry.FullName, target);
         }
     }
     internal static bool Alive(CoreEnvironmentProcess? identity)
@@ -168,6 +182,12 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
         }
         if (endpoint is null || !(endpoint.StartsWith("unix://", StringComparison.Ordinal) || endpoint.StartsWith("npipe://", StringComparison.Ordinal)))
             throw new SandboxException("environment_docker_remote", "Child environments require the shared local Docker engine.", 409);
+        // Docker Desktop installs Buildx under the operator's HOME. The child has a private HOME:
+        // retain CLI discovery without sharing the parent's Docker configuration or credentials.
+        var plugins = await docker.RunAsync(["info", "--format", "{{json .ClientInfo.Plugins}}"], null, ct);
+        if (plugins.ExitCode != 0)
+            throw new SandboxException("environment_docker_unknown", "Cannot discover the shared Docker CLI plugins.", 409);
+        await CoreEnvironmentDockerPlugins.ConfigureAsync(home, plugins.StandardOutput, ct);
         start.Environment["DOCKER_HOST"] = endpoint;
         start.Environment["HOSTY_DATA_ROOT"] = root;
         start.Environment["HOSTY_CORE_PORT"] = record.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);

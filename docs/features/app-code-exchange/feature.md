@@ -1,6 +1,6 @@
 ---
 created: 2026-10-05
-updated: 2026-10-11
+updated: 2026-10-15
 summary: Authorization codes require target-app service identity and private S256 proof, with browser-origin and nonce-bound sign-in attempts.
 components: [apps/core, apps/cli, packages/app-sdk, apps/shell, apps/harness, apps/shell-swift]
 ---
@@ -58,6 +58,14 @@ refusal. Core never frames its password login.
 
 Ordinary validated `/open?redirectUri=...` links carry no credentials: they bootstrap the app,
 which creates its own attempt. The full issuance contract is independent of CLI/browser launch links.
+
+The React identity, launch and theme bridges remove consumed query parameters immediately and
+synchronize the cleaned URL again after parent framework effects. This lets Next's installed
+History API adapter update its canonical route, so development HMR does not restore consumed
+`code`/`state`. A deferred synchronization runs only while the browser still has that exact cleaned
+URL; later navigation or another cleanup takes precedence. The deferred call preserves the
+current history-entry state, including metadata written by a parent router after initial cleanup.
+Unrelated query parameters and the current fragment are retained by cleanup. Code redemption, PKCE and session authority are unchanged.
 
 ## Atomic redemption and authority
 

@@ -180,12 +180,16 @@ class CodexRun implements HarnessRun {
     // the environment. Nothing is written to the operator's ~/.codex — these servers belong to one
     // session of one gateway, not to the machine.
     const mcp = toCodexMcpConfig(options.mcpServers);
-    const target = spawnTarget(["app-server", ...(auth.managedHome ? ["-c", 'cli_auth_credentials_store="file"'] : []), ...mcp.args]);
-    this.child = spawn(target.command, target.args, {
-      stdio: ["pipe", "pipe", "pipe"],
+    const providerArgs = ["app-server", ...(auth.managedHome ? ["-c", 'cli_auth_credentials_store="file"'] : []), ...mcp.args];
+    const target = spawnTarget(providerArgs);
+    const spawnOptions = {
+      stdio: ["pipe", "pipe", "pipe"] as const,
       cwd: options.cwd,
       env: { ...(auth.isolated ? cleanAgentEnvironment() : process.env), ...env, ...mcp.env },
-    });
+    };
+    this.child = options.processTransport
+      ? options.processTransport.spawn("codex", providerArgs, spawnOptions)
+      : spawn(target.command, target.args, { ...spawnOptions, stdio: ["pipe", "pipe", "pipe"] });
     this.child.stdin.on("error", () => {});
     this.child.on("error", () => {
       this.failed = true;

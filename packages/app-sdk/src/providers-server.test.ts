@@ -32,3 +32,30 @@ describe("provider credentials", () => {
     expect(fetch.mock.calls[0]![1].signal.aborted).toBe(true);
   });
 });
+
+describe("translation providers", () => {
+  const selected = { ...provider, appId: "harness", key: "claude", kind: "translation", url: "http://harness.test/api/translation/v1/claude" };
+  const input = { text: "# Example\n\n- [ ] D1. Read.", targetLanguage: "ru", format: "markdown" as const };
+  it("sends Markdown and only the scoped credential to the exact selected key", async () => {
+    const result = { text: "# Пример\n\n- [ ] D1. Прочитать.", targetLanguage: "ru", sourceLanguage: "auto" };
+    const fetch = vi.fn().mockResolvedValueOnce(Response.json({ token: "scoped", provider: selected })).mockResolvedValueOnce(Response.json(result)); vi.stubGlobal("fetch", fetch);
+    expect(await client().translate(selected, input)).toEqual(result);
+    expect(String(fetch.mock.calls[0]![0])).toContain("/providers/translation/token");
+    expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual({ providerAppId: "harness", key: "claude" });
+    expect(fetch.mock.calls[1]).toEqual([selected.url + "/translations", expect.objectContaining({ redirect: "error", headers: { authorization: "Bearer scoped", "content-type": "application/json" }, body: JSON.stringify(input) })]);
+  });
+  it.each(["denied", "version", "response"])("fails closed for %s without retry or fallback", async failure => {
+    const fetch = vi.fn().mockResolvedValueOnce(failure === "denied" ? Response.json({ code: "app_permission_required" }, { status: 403 })
+      : Response.json({ token: "scoped", provider: { ...selected, version: failure === "version" ? 2 : 1 } })).mockResolvedValueOnce(Response.json({ text: "wrong language", targetLanguage: "en", sourceLanguage: "auto" }));
+    vi.stubGlobal("fetch", fetch);
+    await expect(client().translate(selected, input)).rejects.toMatchObject({ code: failure === "denied" ? "app_permission_required" : failure === "version" ? "provider_incompatible" : "provider_response_invalid" });
+    expect(fetch).toHaveBeenCalledTimes(failure === "response" ? 2 : 1);
+  });
+  it("cancels an in-flight translation", async () => {
+    const controller = new AbortController();
+    const fetch = vi.fn().mockResolvedValueOnce(Response.json({ token: "scoped", provider: selected })).mockImplementationOnce(async (_u, options) => {
+      controller.abort(); expect(options.signal.aborted).toBe(true); throw options.signal.reason;
+    }); vi.stubGlobal("fetch", fetch);
+    await expect(client().translate(selected, input, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+  });
+});

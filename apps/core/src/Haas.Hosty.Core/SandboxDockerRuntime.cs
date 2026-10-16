@@ -382,6 +382,7 @@ internal sealed partial class SandboxDockerRuntime(IDockerCommandRunner docker, 
         var reserved = running.Sum(i => (i.Request.Limits ?? new()).MemoryBytes + 268435456)
             + (browser ? 1610612736 : (instance.Request.Limits ?? new()).MemoryBytes + 268435456) + policy.ReservedAgentBytes + 2 * GiB;
         var live = await Run(["ps", "--quiet", "--no-trunc"], ct);
+        var remainingAgentReservation = policy.ReservedAgentBytes;
         foreach (var id in live.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var inspected = await Run(["container", "inspect", id], ct);
@@ -393,7 +394,9 @@ internal sealed partial class SandboxDockerRuntime(IDockerCommandRunner docker, 
             if (CoveredByAppReservation(running, item.GetProperty("Id").GetString()!)) continue;
             var memory = item.GetProperty("HostConfig").GetProperty("Memory").GetInt64();
             if (memory <= 0) throw Error("resource_budget_unknown", "A running Docker workload has no memory ceiling; its reservation must be coordinated before sandbox admission.");
-            reserved += memory;
+            var coveredAgent = await SharedWorkerReservationAsync(item, config.DataRoot, remainingAgentReservation, ct);
+            remainingAgentReservation -= coveredAgent;
+            reserved += memory - coveredAgent;
         }
         if (reserved > document.RootElement.GetProperty("MemTotal").GetInt64())
             throw Error("resource_budget_exceeded", $"The local sandbox profile requires {reserved} bytes including existing workloads and 2 GiB headroom.");

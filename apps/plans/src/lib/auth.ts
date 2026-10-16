@@ -10,6 +10,18 @@ export async function getIdentity(headers: Headers) {
 export class PlansError extends Error {
   constructor(message: string, public status = 503, public code = "plans_unavailable") { super(message); }
 }
+export function requireSameOriginJson(request: Request, message: string): void {
+  const destination = new URL(request.url), origin = request.headers.get("origin");
+  let sameOrigin = false;
+  try {
+    const supplied = new URL(origin ?? "");
+    const effective = new URL(`${supplied.protocol}//${request.headers.get("host") ?? destination.host}`).origin;
+    sameOrigin = origin === supplied.origin && ["http:", "https:"].includes(supplied.protocol) && origin === effective
+      && (supplied.protocol === destination.protocol || request.headers.get("sec-fetch-site") === "same-origin");
+  } catch { /* Missing or malformed Origin cannot initiate translation. */ }
+  if (!sameOrigin || request.headers.get("content-type")?.split(";", 1)[0].trim() !== "application/json")
+    throw new PlansError(message, 403, "origin_denied");
+}
 export async function requireAdministrator(headers: Headers): Promise<string> {
   return (await requireAdministratorIdentity(headers)).token;
 }

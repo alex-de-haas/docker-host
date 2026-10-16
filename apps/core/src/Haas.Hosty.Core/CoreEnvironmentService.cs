@@ -4,7 +4,7 @@ using System.Net.Sockets;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEnvironmentRuntime runtime, IClock clock, DevelopmentWorkspaceService? workspaces = null, WorkspaceInspectionService? inspection = null)
+internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEnvironmentRuntime runtime, IClock clock, DevelopmentWorkspaceService? workspaces = null, WorkspaceInspectionService? inspection = null, CoreEnvironmentConsentService? consent = null)
 {
     private readonly SemaphoreSlim allocation = new(1, 1);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> gates = new(StringComparer.Ordinal);
@@ -18,10 +18,15 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
         record.Request.Mode, record.Request.ProjectPath, record.Request.Context, record.State, record.Revision, record.Port,
         record.State == "finished" ? null : store.Root(record.Id), $"http://core.i-{record.Id}.hosty.localhost:{record.Port}",
         record.Process, record.Error, record.Operations ?? [], CoreEnvironmentResources.Limits(record), record.Usage);
+    private async Task<CoreEnvironmentView> ViewAsync(CoreEnvironmentRecord record, CancellationToken ct, Dictionary<string, Task<string>>? digests = null)
+        => View(record) with { Access = consent is null ? null : await consent.AccessAsync(record, ct, digests) };
+    internal Task RequireConsentAsync(SandboxActor actor, CoreEnvironmentRecord record, bool launch, CancellationToken ct)
+        => consent?.RequireAsync(actor, record, launch, ct) ?? Task.CompletedTask;
     internal async Task<CoreEnvironmentRecord> RequireAsync(SandboxActor actor, string id, CancellationToken ct)
     {
         var record = await store.ReadAsync(id, ct) ?? throw new SandboxException("environment_not_found", "Environment not found.", 404);
-        if (record.Owner.UserId != actor.UserId || actor.AppId is not null && !record.Owner.SameOwner(actor))
+        if (record.Owner.UserId != actor.UserId || actor.AppId is not null && (!record.Owner.SameOwner(actor) || actor.GrantId is not null &&
+                (record.Consent?.GrantId != actor.GrantId || record.Consent.ScopeId != actor.ScopeId)))
             throw new SandboxException("environment_forbidden", "The environment belongs to another caller.", 403);
         return record;
     }
@@ -29,29 +34,30 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
     {
         var records = await store.ListAsync(ct);
         var observed = new List<CoreEnvironmentView>();
-        foreach (var record in records.Where(r => r.Owner.UserId == actor.UserId && (actor.AppId is null || r.Owner.SameOwner(actor))))
+        var digests = new Dictionary<string, Task<string>>(StringComparer.Ordinal);
+        foreach (var record in records.Where(r => r.Owner.UserId == actor.UserId && (actor.AppId is null || r.Owner.SameOwner(actor) && (actor.GrantId is null || r.Consent?.GrantId == actor.GrantId && r.Consent.ScopeId == actor.ScopeId))))
         {
             var gate = Gate(record.Id);
-            if (!await gate.WaitAsync(0, ct)) { observed.Add(View((await store.ReadAsync(record.Id, ct))!)); continue; }
+            if (!await gate.WaitAsync(0, ct)) { observed.Add(await ViewAsync((await store.ReadAsync(record.Id, ct))!, ct, digests)); continue; }
             try
             {
                 var current = (await store.ReadAsync(record.Id, ct))!;
-                try { observed.Add(View(await ObserveAsync(current, ct))); }
+                try { observed.Add(await ViewAsync(await ObserveAsync(current, ct), ct, digests)); }
                 catch (Exception ex) when (ex is SandboxException or IOException or System.Text.Json.JsonException)
-                { observed.Add(View(current with { State = "failed", Error = ex.Message })); }
+                { observed.Add(await ViewAsync(current with { State = "failed", Error = ex.Message }, ct, digests)); }
             }
             finally { gate.Release(); }
         }
-        return new(observed);
+        return new(observed, consent is null ? [] : await consent.ListAsync(actor, ct, digests));
     }
     public async Task<CoreEnvironmentView> ReadAsync(SandboxActor actor, string id, CancellationToken ct)
     {
         var gate = Gate(id);
-        if (!await gate.WaitAsync(0, ct)) return View(await RequireAsync(actor, id, ct));
+        if (!await gate.WaitAsync(0, ct)) return await ViewAsync(await RequireAsync(actor, id, ct), ct);
         try
         {
             var record = await RequireAsync(actor, id, ct);
-            return View(await ObserveAsync(record, ct));
+            return await ViewAsync(await ObserveAsync(record, ct), ct);
         }
         finally { gate.Release(); }
     }
@@ -99,9 +105,9 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
         var assistantOwned = !owner.IsExternal && owner.UserId == actor.UserId;
         var environmentOwner = assistantOwned ? new SandboxActor(actor.UserId, owner.AppId, owner.Installation) : actor;
         return await CreateAsync(environmentOwner, new(input.RequestId, input.Label, project is null ? "current" : "source", project,
-            new(WorkspaceId: input.WorkspaceId, SessionId: assistantOwned ? owner.SessionId : null), input.WorktreeIds), ct);
+            new(WorkspaceId: input.WorkspaceId, SessionId: assistantOwned ? owner.SessionId : null), input.WorktreeIds), ct, operatorApproved: true);
     }
-    public async Task<CoreEnvironmentView> CreateAsync(SandboxActor actor, CoreEnvironmentCreate input, CancellationToken ct)
+    internal async Task<CoreEnvironmentCreate> ValidateCreateAsync(SandboxActor actor, CoreEnvironmentCreate input, CancellationToken ct)
     {
         var requestId = RequestId(input.RequestId);
         input = input with { RequestId = requestId, Label = input.Label?.Trim() ?? "" };
@@ -112,8 +118,15 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             throw new SandboxException("environment_input_invalid", "Select a label and current, release, or source with an absolute Core project path.", 400);
         if (input.WorktreeIds is { } selected && (selected.Length > 16 || selected.Distinct(StringComparer.Ordinal).Count() != selected.Length))
             throw new SandboxException("environment_worktrees_invalid", "Select at most sixteen distinct worktrees.", 400);
+        if (input.ProjectPath is not null) input = input with { ProjectPath = Path.GetFullPath(input.ProjectPath) };
         CoreEnvironmentResources.Validate(input.Limits ?? new());
         await ValidateWorktreesAsync(actor, input, ct);
+        return input;
+    }
+    public async Task<CoreEnvironmentView> CreateAsync(SandboxActor actor, CoreEnvironmentCreate input, CancellationToken ct, bool operatorApproved = false)
+    {
+        input = await ValidateCreateAsync(actor, input, ct);
+        var requestId = input.RequestId;
         var fingerprint = SandboxValidation.Hash(CoreJson.Text(input));
         await allocation.WaitAsync(ct);
         try
@@ -125,21 +138,51 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             var existing = all.FirstOrDefault(r => r.Owner.SameOwner(actor) && r.Request.RequestId == requestId);
             if (existing is not null)
             {
-                if (existing.Fingerprint != fingerprint) throw ReplayConflict();
-                await EnsureRootAsync(existing, ct);
-                return View(existing);
+                // Replay changes no reservation. Do not hold the root-wide allocation lock while
+                // waiting for this environment's command/API gate (a child may allocate descendants).
+                reservation.Dispose();
+                var gate = Gate(existing.Id); await gate.WaitAsync(ct);
+                try
+                {
+                    if (existing.Fingerprint != fingerprint) throw ReplayConflict();
+                    existing = await RequireAsync(actor, existing.Id, ct);
+                    // A terminal receipt is safe to replay after Finish retires one-run consent.
+                    if (existing.State == "finished") return await ViewAsync(existing, ct);
+                    if (actor.AppId is not null && !operatorApproved && consent is not null)
+                    {
+                        // A reviewed replacement target or revoked grant can be renewed by replaying
+                        // the original creation request. Keep the child identity, data and operations.
+                        var renewed = await consent.FindAsync(actor, input, ct);
+                        if (renewed != existing.Consent)
+                        {
+                            existing = existing with { Consent = renewed, Revision = existing.Revision + 1 };
+                            await store.WriteAsync(existing, ct);
+                        }
+                    }
+                    else if (operatorApproved && existing.Consent is null && !existing.OperatorApproved)
+                    {
+                        existing = existing with { OperatorApproved = true, Revision = existing.Revision + 1 };
+                        await store.WriteAsync(existing, ct);
+                    }
+                    else await RequireConsentAsync(actor, existing, false, ct);
+                    await EnsureRootAsync(existing, ct);
+                    return await ViewAsync(existing, ct);
+                }
+                finally { gate.Release(); }
             }
+            var approved = actor.AppId is not null && !operatorApproved && consent is not null
+                ? await consent.FindAsync(actor, input, ct) : null;
             var descendants = await budget.ListUnfinishedTreeAsync(ct);
             if (descendants.Count >= 2)
                 throw new SandboxException("environment_capacity", "Finish an existing environment before creating another (root environment tree limit: two).", 409);
             CoreEnvironmentResources.Reserve(descendants, input.Limits ?? new());
             var id = Guid.NewGuid().ToString("N");
             var port = RuntimePortHelper.AllocateLoopbackPort(descendants.Select(r => r.Port).ToHashSet());
-            var record = new CoreEnvironmentRecord(id, actor, input, fingerprint, port, 1, "stopped", clock.UtcNow);
+            var record = new CoreEnvironmentRecord(id, actor with { GrantId = null, ScopeId = null }, input, fingerprint, port, 1, "stopped", clock.UtcNow, Consent: approved, OperatorApproved: operatorApproved || actor.AppId is null);
             // Persist ownership before creating any root or process so an interrupted allocation is visible.
             await store.WriteAsync(record, ct);
             await EnsureRootAsync(record, ct);
-            return View(record);
+            return await ViewAsync(record, ct);
         }
         finally { allocation.Release(); }
     }
@@ -210,7 +253,13 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             if (prior is not null)
             {
                 if (prior.Fingerprint != fingerprint) throw ReplayConflict();
-                if (prior.State == "succeeded" || operations.Last().Id != requestId || record.State == "finished") return View(record);
+                if (prior.State == "succeeded" || operations.Last().Id != requestId || record.State == "finished") return await ViewAsync(record, ct);
+            }
+            // Exact terminal replays do not launch anything. New and retryable operations still
+            // require live consent before changing the journal or preparing the child.
+            if (kind is "start" or "restart") await RequireConsentAsync(actor, record, true, ct);
+            if (prior is not null)
+            {
                 if (!accepting) throw new SandboxException("environment_shutdown", "Core is stopping.", 409);
                 operations = operations.Select(o => o.Id == requestId ? o with { State = "running", Error = null } : o).ToList();
                 record = record with { Revision = record.Revision + 1, Operations = operations, Error = null };
@@ -220,7 +269,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             {
                 if (input.ExpectedRevision != record.Revision)
                     throw new SandboxException("environment_revision_conflict", "Read the current environment revision before changing it.", 409);
-                if (record.State == "finished") return View(record);
+                if (record.State == "finished") return await ViewAsync(record, ct);
                 if (!accepting) throw new SandboxException("environment_shutdown", "Core is stopping.", 409);
                 if (kind != "finish" && (record.RootDeletionStarted || operations.Any(o => o.Kind == "finish")))
                     throw new SandboxException("environment_finishing", "Finish has closed this environment; retry its original request.", 409);
@@ -247,8 +296,11 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                     record = record with { State = record.Request.Mode == "source" ? "building" : "starting" };
                     await store.WriteAsync(record, deadline.Token);
                     var executable = await runtime.PrepareAsync(record, root, deadline.Token);
+                    // Retention must see the prepared generation even if consent changed during
+                    // the build. No process is launched before revalidation succeeds.
                     record = record with { Executable = executable };
                     await store.WriteAsync(record, deadline.Token);
+                    await RequireConsentAsync(actor, record, true, deadline.Token);
                 }
                 if (kind is "stop" or "restart" or "finish")
                 {
@@ -276,6 +328,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                     record = record with { RootDeletionStarted = true };
                     await store.WriteAsync(record, deadline.Token);
                     store.DeleteRoot(record);
+                    if (consent is not null) await consent.FinishAsync(record, deadline.Token);
                     foreach (var treeId in record.Request.WorktreeIds ?? [])
                         await workspaces!.SetSandboxConsumerAsync(treeId, record.Id, false, deadline.Token);
                     record = record with { State = "finished", Process = null, Executable = null };
@@ -290,7 +343,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             }
             await store.WriteAsync(record, CancellationToken.None);
             if (record.State != "finished") await runtime.CleanupAsync(record, store.Root(id), CancellationToken.None);
-            return View(record);
+            return await ViewAsync(record, ct);
         }
         finally { gate.Release(); }
     }

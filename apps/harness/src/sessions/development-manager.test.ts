@@ -25,6 +25,18 @@ beforeEach(async () => {
 afterEach(async () => { await manager.shutdown(); vi.restoreAllMocks(); await rm(dir, { recursive: true, force: true }); });
 const finish = async (id: string) => { starts.at(-1)!.onEvent({ type: "result", status: "success" }); await vi.waitFor(async () => expect((await manager.getSession(id))?.status).toBe("idle")); };
 describe("development session coordination", () => {
+  it("keeps consent review separate from the creation journal with the same request ID", async () => {
+    const record = await manager.createSession({ createdBy: "admin" });
+    const input = { requestId: "a".repeat(32), label: "QA" };
+    const call = vi.spyOn(client, "environment").mockResolvedValue({ approvalUrl: "http://core.test/install/confirm/review" });
+    await manager.workspaceAction(record.id, "environment-consent", input, "token", "admin");
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations ?? []).toEqual([]);
+    expect((await store.readRecord(record.id))!.coreEnvironments ?? []).toEqual([]);
+    expect(call).toHaveBeenCalledWith("token", "environment-consent", { ...input, context: { sessionId: record.id } });
+    call.mockResolvedValue({ id: "b".repeat(32), state: "stopped", context: { sessionId: record.id } });
+    await manager.workspaceAction(record.id, "environment-create", input, "token", "admin");
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("observed");
+  });
   it("recovers child Core creation without a workspace and keeps setup secrets out of session records", async () => {
     const record = await manager.createSession({ createdBy: "admin" });
     const input = { requestId: "a".repeat(32), label: "Independent QA" };
