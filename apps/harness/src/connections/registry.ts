@@ -6,6 +6,7 @@ import {
   cp,
   lstat,
   mkdir,
+  mkdtemp,
   readFile,
   readdir,
   realpath,
@@ -24,6 +25,7 @@ import { ClaudeHarnessAdapter } from "../harness/claude.js";
 import { CodexHarnessAdapter } from "../harness/codex.js";
 import type { ConnectionSecrets } from "./secrets.js";
 import { cleanAgentEnvironment, CodexLogin } from "./codex-login.js";
+import { translationEnvironment, type TranslationRuntime } from "../translation/native.js";
 
 export type AgentKind = "claude" | "codex";
 export type AuthMethod = "api-key" | "claude-token" | "chatgpt" | "host-login";
@@ -84,6 +86,7 @@ const safeId = (id: string): boolean => /^[a-zA-Z0-9-]{1,80}$/.test(id);
 export class AgentConnections {
   private state: RegistryState | null = null;
   private active = new Map<string, number>();
+  private translationActive = new Set<string>();
   private changing = new Set<string>();
   private assertInactive(id: string): void {
     if (this.active.get(id))
@@ -297,6 +300,8 @@ export class AgentConnections {
   }
   async reserve(binding: ConnectionBinding): Promise<() => void> {
     return this.serialize(async () => {
+      if (this.translationActive.has(binding.connectionId))
+        throw new ConnectionError(409, "provider_in_use", "This connection is translating. Retry after it finishes.");
       const connection = await this.get(binding.connectionId);
       if (
         connection.revision !== binding.connectionRevision ||
@@ -554,6 +559,8 @@ export class AgentConnections {
   }
   async adapter(binding: ConnectionBinding, docker = false): Promise<HarnessAdapter> {
     const adapter = await this.serialize(async () => {
+      if (this.translationActive.has(binding.connectionId))
+        throw new ConnectionError(409, "provider_in_use", "This connection is translating. Retry after it finishes.");
       const connection = await this.get(binding.connectionId);
       if (
         connection.kind !== binding.harnessKind ||
@@ -643,6 +650,8 @@ export class AgentConnections {
       capabilities: adapter.capabilities,
       probe: () => docker ? Promise.resolve({ available: true }) : adapter.probe(),
       start: (options) => {
+        if (this.translationActive.has(binding.connectionId))
+          throw new ConnectionError(409, "provider_in_use", "This connection is translating. Retry after it finishes.");
         const current = this.state?.connections.find(
           (c) => c.id === binding.connectionId,
         );
@@ -690,6 +699,88 @@ export class AgentConnections {
       },
     };
   }
+  /** Translation has an isolated native profile and an exclusive credential lease.
+   * Native renewal must not race an operator chat or overwrite a replacement account. */
+  async withTranslationRuntime<T>(binding: ConnectionBinding, action: (runtime: TranslationRuntime) => Promise<T>): Promise<T> {
+    const connection = await this.serialize(async () => {
+      const current = await this.get(binding.connectionId);
+      if (current.revision !== binding.connectionRevision || current.kind !== binding.harnessKind)
+        throw new ConnectionError(409, "translation_connection_changed", "Select the translation connection again after changing its credentials.");
+      if (this.active.get(current.id) || this.translationActive.has(current.id))
+        throw new ConnectionError(429, "translation_busy", "This connection is in use. Stop its open chat or choose a dedicated translation connection.");
+      if (this.syncErrors.has(current.id))
+        throw new ConnectionError(503, "translation_unavailable", "Reconnect this account before using translation.");
+      this.translationActive.add(current.id);
+      this.active.set(current.id, 1);
+      return current;
+    });
+    let root: string | undefined;
+    let sourceAuth: string | undefined;
+    let originalAuth: string | undefined;
+    let home: string | undefined;
+    try {
+      if (!this.cacheDir) throw new ConnectionError(503, "translation_unavailable", "Core-managed cache storage is required for translation.");
+      const parent = path.join(this.cacheDir, "translation-runs");
+      await mkdir(parent, { recursive: true, mode: 0o700 });
+      root = await mkdtemp(path.join(parent, "run-"));
+      home = path.join(root, "profile");
+      const cwd = path.join(root, "work");
+      await mkdir(home, { mode: 0o700 }); await mkdir(cwd, { mode: 0o700 });
+      const env = translationEnvironment();
+      if (connection.auth === "host-login") {
+        if (binding.connectionIdentity !== await this.hostIdentity(connection))
+          throw new ConnectionError(409, "translation_connection_changed", "Select the current host account again in translation settings.");
+        sourceAuth = path.join(connection.hostDirectory!, "auth.json");
+        originalAuth = await readFile(sourceAuth, "utf8").catch(() => undefined);
+        if (!originalAuth) throw new ConnectionError(503, "translation_unavailable", "Translation requires a file-backed Codex login. Select a managed connection for keychain-only logins.");
+      } else {
+        const secret = await this.secretGet(connection.secretKey);
+        if (!secret) throw new ConnectionError(503, "translation_unavailable", "Reconnect this account in Harness settings.");
+        if (connection.kind === "claude") env[connection.auth === "api-key" ? "ANTHROPIC_API_KEY" : "CLAUDE_CODE_OAUTH_TOKEN"] = secret;
+        else if (connection.auth === "api-key") originalAuth = JSON.stringify({ OPENAI_API_KEY: secret });
+        else {
+          const native = await this.nativeHome(connection);
+          sourceAuth = path.join(native, "auth.json");
+          originalAuth = await readFile(sourceAuth, "utf8").catch(() => secret);
+          await this.persistNativeAuth(connection, originalAuth);
+          await writeFile(sourceAuth, originalAuth, { mode: 0o600 });
+        }
+      }
+      if (connection.kind === "codex") {
+        if (!originalAuth || Buffer.byteLength(originalAuth) > 16_000)
+          throw new ConnectionError(503, "translation_unavailable", "The Codex credential cannot be used for translation.");
+        await writeFile(path.join(home, "auth.json"), originalAuth, { mode: 0o600 });
+        env.CODEX_HOME = home;
+      } else env.CLAUDE_CONFIG_DIR = home;
+      return await action({ kind: connection.kind, cwd, home, env });
+    } finally {
+      try {
+        if (home && sourceAuth && originalAuth) {
+          const refreshed = await readFile(path.join(home, "auth.json"), "utf8").catch(() => originalAuth);
+          if (refreshed !== originalAuth) {
+            await this.serialize(async () => {
+              if (await readFile(sourceAuth!, "utf8") !== originalAuth)
+                throw new ConnectionError(409, "translation_connection_changed", "The native account changed during translation. Reconnect it before continuing.");
+              if (connection.auth === "chatgpt") {
+                if (!await this.secretGet(connection.secretKey)) throw new Error("Credential removed.");
+                await this.persistNativeAuth(connection, refreshed!);
+              }
+              const temporary = `${sourceAuth}.${randomUUID()}.tmp`;
+              await writeFile(temporary, refreshed!, { mode: 0o600 });
+              await rename(temporary, sourceAuth!);
+            });
+          }
+        }
+      } catch {
+        this.syncErrors.set(connection.id, "Translation credential renewal could not be saved. Reconnect this account.");
+        throw new ConnectionError(503, "translation_credentials_unavailable", "Credential renewal could not be saved. Reconnect the translation account.");
+      } finally {
+        try { if (root) await rm(root, { recursive: true, force: true }); }
+        finally { this.translationActive.delete(connection.id); this.active.delete(connection.id); }
+      }
+    }
+  }
+
   /** Legacy records never prove an account. The caller requires explicit operator confirmation. */
   async adoptLegacySession(
     binding: ConnectionBinding,
@@ -858,6 +949,7 @@ export class AgentConnections {
       for (const connection of (await this.load()).connections.filter(
         (c) => c.auth === "chatgpt" || c.auth === "host-login",
       )) {
+        if (this.translationActive.has(connection.id)) continue;
         try {
           // Missing Core secret is revocation/reconnect, never an invitation to recreate it from cache.
           if (!(await this.secretGet(connection.secretKey))) {

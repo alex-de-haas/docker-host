@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { validRules, type ToolRule } from "../mcp/policy.js";
 import { CORE_PROVIDER_ID } from "./providers.js";
+import type { ConnectionBinding } from "../connections/registry.js";
+import { isTranslationModel } from "../translation/models.js";
 
 // Operator-owned assistant policy, living in the gateway's own data directory.
 //
@@ -16,6 +18,8 @@ import { CORE_PROVIDER_ID } from "./providers.js";
 
 export interface AssistantSettings {
   executionMode?: "native" | "docker";
+  translationConnections?: Partial<Record<"codex" | "claude", ConnectionBinding | null>>;
+  translationModels?: Partial<Record<"codex" | "claude", string | null>>;
   mcpToolRules?: Record<string, ToolRule>;
   mcpPolicyMigrated?: string[];
   immediateHandoffs?: boolean;
@@ -111,6 +115,8 @@ export class SettingsStore {
       const parsed = JSON.parse(await readFile(this.file, "utf8")) as Partial<AssistantSettings>;
       this.cached = withCoreDefaults({
         executionMode: parsed.executionMode === "docker" ? "docker" : "native",
+        translationConnections: validTranslationConnections(parsed.translationConnections) ? parsed.translationConnections : {},
+        translationModels: validTranslationModels(parsed.translationModels) ? parsed.translationModels : {},
         immediateHandoffs: parsed.immediateHandoffs === true,
         mcpToolRules: validRules(parsed.mcpToolRules) ? parsed.mcpToolRules : {},
         mcpPolicyMigrated: Array.isArray(parsed.mcpPolicyMigrated) ? parsed.mcpPolicyMigrated.filter(v => typeof v === "string") : [],
@@ -167,6 +173,8 @@ export class SettingsStore {
     const current = await this.read();
     const next: AssistantSettings = {
       executionMode: patch.executionMode ?? current.executionMode ?? "native",
+      translationConnections: patch.translationConnections ?? current.translationConnections ?? {},
+      translationModels: patch.translationModels ?? current.translationModels ?? {},
       mcpToolRules: patch.mcpToolRules ?? current.mcpToolRules ?? {},
       mcpPolicyMigrated: patch.mcpPolicyMigrated ?? current.mcpPolicyMigrated ?? [],
       immediateHandoffs: patch.immediateHandoffs ?? current.immediateHandoffs ?? false,
@@ -218,6 +226,19 @@ export class SettingsStore {
     }
     return this.update({ mcpProviders: kept, mcpAutoAllow: keptAutoAllow });
   }
+}
+
+function validTranslationModels(value: unknown): value is NonNullable<AssistantSettings["translationModels"]> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value)
+    && Object.entries(value).every(([kind, model]) => ["codex", "claude"].includes(kind) && isTranslationModel(model)));
+}
+
+function validTranslationConnections(value: unknown): value is NonNullable<AssistantSettings["translationConnections"]> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value)
+    && Object.entries(value).every(([kind, binding]) => ["codex", "claude"].includes(kind)
+      && (binding === null || (typeof binding === "object" && typeof binding.connectionId === "string"
+        && Number.isSafeInteger(binding.connectionRevision) && binding.connectionRevision > 0 && binding.harnessKind === kind
+        && (binding.connectionIdentity === undefined || typeof binding.connectionIdentity === "string")))));
 }
 
 function isStringRecord(value: unknown): value is Record<string, string> {

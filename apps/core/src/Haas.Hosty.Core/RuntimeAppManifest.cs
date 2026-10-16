@@ -1532,9 +1532,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var declaration in declarations)
             {
-                if (name is "assistant" or "speech-to-text" && (declaration.Version is null or < 1 || declaration.Capabilities is null))
+                if (name is "assistant" or "speech-to-text" or "translation" && (declaration.Version is null or < 1 || declaration.Capabilities is null))
                 {
-                    var code = name == "assistant" ? "app_manifest_assistant_contract_required" : "app_manifest_speech_to_text_contract_required";
+                    var code = $"app_manifest_{name.Replace('-', '_')}_contract_required";
                     errors.Add(new(code, $"The {name} interface requires a positive integer version and a capabilities array.", path));
                 }
                 if (declaration.Version is < 1 || declaration.Capabilities is { } capabilities &&

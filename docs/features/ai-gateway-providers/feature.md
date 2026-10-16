@@ -20,6 +20,12 @@ Each row keeps its actions in a three-dot menu: test, edit, remove, set default 
 where applicable. Device sign-in opens a modal with a copy-code button, browser link, status and
 cancellation; closing a pending modal cancels that attempt without replacing a working credential.
 
+The same tab has independent **Codex translation** and **Claude translation** selections. Each binds
+an existing connection/revision explicitly, without following the chat default. These supply the two
+static [translation interfaces](../translation-provider/feature.md) to authorized apps. Translation
+leases a connection exclusively to protect native credential renewal; an open chat on that account
+requires a dedicated translation connection or stopping the chat before translating.
+
 | Provider | Authentication | Setup |
 | --- | --- | --- |
 | Codex | ChatGPT sign-in | Open the supplied OpenAI browser link and enter the displayed device code. No ChatGPT app or callback to the Hosty host is needed. |

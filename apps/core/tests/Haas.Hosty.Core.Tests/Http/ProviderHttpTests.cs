@@ -9,6 +9,36 @@ namespace Haas.Hosty.Core.Tests.Http;
 
 public sealed class ProviderHttpTests
 {
+    [Fact]
+    public async Task TranslationSupportsTwoStaticKeysWithScopedAuthorityAndLiveRevocation()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var access = host.Services.GetRequiredService<ProviderAccessService>();
+        var caller = Record("example.consumer") with { GrantedCorePermissions = [CoreAppPermissions.TranslationProviders] };
+        var target = Speech("example.translation") with {
+            ConfirmedRoles = ["translation"],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> {
+                ["translation"] = [new("codex", "api", "/api/translation/v1/codex", 1, ["text"]),
+                    new("claude", "api", "/api/translation/v1/claude", 1, ["text"])] }
+        };
+        await apps.UpsertAppAsync(caller);
+        await apps.UpsertAppAsync(target with { ConfirmedRoles = [] });
+        Assert.Empty((await access.ListAsync(caller, "translation", default)).Providers);
+        await apps.UpsertAppAsync(target);
+        Assert.Equal(["codex", "claude"], (await access.ListAsync(caller, "translation", default)).Providers.Select(p => p.Key));
+        await Assert.ThrowsAsync<AppIdentityException>(() => access.ListAsync(caller with { GrantedCorePermissions = [] }, "translation", default));
+        var issued = await access.IssueAsync(caller, "translation", new(target.Id, "codex"), null, default);
+        var invocation = await access.ValidateAsync(target, new(issued.Token, "translation", "codex"), default);
+        Assert.Null(invocation.UserId);
+        await Assert.ThrowsAsync<AppIdentityException>(() => access.ValidateAsync(target, new(issued.Token, "translation", "claude"), default));
+        await Assert.ThrowsAsync<AppIdentityException>(() => access.ValidateAsync(target, new(issued.Token, "assistant", "codex"), default));
+        await apps.UpsertAppAsync(caller with { GrantedCorePermissions = [], PermissionRevision = "revoked" });
+        await Assert.ThrowsAsync<AppIdentityException>(() => access.ValidateAsync(target, new(issued.Token, "translation", "codex"), default));
+        Assert.Contains("translation", PlatformCapabilities.RequestedRoles(["translation"]));
+        Assert.Contains(CoreAppPermissions.TranslationProviders, CoreAppPermissions.ResolveGrants([], [CoreAppPermissions.TranslationProviders], [CoreAppPermissions.TranslationProviders]));
+    }
+
     [Theory]
     [InlineData("http://127.0.0.1:3456", null)]
     [InlineData("http://127.0.0.1:3456", "https://speech.example.test")]

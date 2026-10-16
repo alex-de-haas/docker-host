@@ -1,5 +1,5 @@
 /** Provider categories supported by Core. Agent execution is intentionally not part of this contract. */
-export type ProviderKind = "speech-to-text" | "assistant";
+export type ProviderKind = "speech-to-text" | "assistant" | "translation";
 export type ProviderDescriptor = {
   appId: string; displayName: string; kind: ProviderKind; key: string;
   version: number | null; capabilities: string[]; url: string | null; available: boolean;
@@ -13,6 +13,9 @@ export type AppPermissionState = { required: string[]; optional: string[]; grant
 export type ProviderInvocation = { callerAppId: string; callerInstallation: string; userId: string | null; hostRole: string | null; kind: ProviderKind; key: string };
 export type SpeechResult = { text: string; language?: string | null };
 export type SpeechCapabilities = { version: 1; mediaTypes: string[]; maxBytes: number; maxDurationSeconds: number; backend: string; ready: boolean };
+export type TranslationRequest = { text: string; targetLanguage: string; sourceLanguage?: string; format?: "text" | "markdown" };
+export type TranslationResult = { text: string; targetLanguage: string; sourceLanguage: string };
+export type TranslationCapabilities = { version: 1; formats: string[]; maxCharacters: number; maxSegmentCharacters: number; maxBytes: number; maxOutputBytes: number; timeoutSeconds: number; backend: string; ready: boolean; reason?: string };
 
 /** Errors retain Core/provider codes so consumers can distinguish denial from unavailable service. */
 export class ProviderError extends Error {

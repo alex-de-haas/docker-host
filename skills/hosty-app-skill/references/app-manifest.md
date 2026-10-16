@@ -202,7 +202,7 @@ Declare platform interfaces the app exposes for other components to discover wit
 }
 ```
 
-Core validates names and keys as kebab tokens, unique keys per interface and absolute paths. An `assistant` or `speech-to-text` declaration also requires a positive integer `version` and a list of unique capability names; clients support version 1 and refuse unsupported versions. Core preserves these fields through installation, persistence, update and discovery, and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell identifies assistants by the confirmed `assistant` role plus the `assistant` interface. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/feature.md` ("Manifest Interfaces And Registry").
+Core validates names and keys as kebab tokens, unique keys per interface and absolute paths. An `assistant`, `speech-to-text` or `translation` declaration also requires a positive integer `version` and a list of unique capability names; clients support version 1 and refuse unsupported versions. Core preserves these fields through installation, persistence, update and discovery, and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell identifies assistants by the confirmed `assistant` role plus the `assistant` interface. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/feature.md` ("Manifest Interfaces And Registry").
 
 The version-1 base contract accepts prompt text and app IDs through prepare/finalize, returning a conversation reference and provider-owned UI destination. `attachments` adds raw uploads of any type, with a guaranteed floor of ten files of 10,000,000 bytes each. Use `@hosty-sdk/app/assistant` and retain request/upload identities across retries. See `docs/features/hosty-harness-rename/feature.md` for routes, expiry and recovery. Interface metadata is separate from endpoint transport and UI navigation.
 
@@ -235,10 +235,12 @@ as a separate tab and owns its choice for Ask assistant. The role does not repla
 `role: system` restriction on delegated-token exchange. See
 `docs/features/assistant-provider-permissions/feature.md`.
 
-### Optional Permissions And Speech Providers
+### Optional Permissions And Inference Providers
 
-Core 0.115.0 adds `optionalCorePermissions` and category-wide `providers.speech-to-text` /
-`providers.assistant` consumer permissions. A grant covers listing and use of every confirmed provider
+A translation supplier declares `provides: ["translation"]` and `interfaces.translation` entries with version 1. Each key identifies an independently selectable implementation. Consumers request `providers.translation` and call the server SDK with the selected app ID/key. See `docs/features/translation-provider/feature.md` for the text/Markdown request contract and limits.
+
+Core supports `optionalCorePermissions` and category-wide `providers.speech-to-text` /
+`providers.translation` / `providers.assistant` consumer permissions. A grant covers listing and use of every confirmed provider
 in that category. Required/optional lists must be disjoint; optional offers start unchecked and can
 be changed in Shell app settings through Core confirmation. Apps read effective choices through
 `ProviderClient.permissions()` or `HostyProviderClient.PermissionsAsync()` and degrade on denial.

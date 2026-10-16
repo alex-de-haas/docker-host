@@ -55,6 +55,7 @@ import {
 } from "./provider-login-dialog";
 import { Button } from "@/components/ui/button";
 import { call } from "@/lib/api";
+import { TranslationProviders } from "./translation-providers";
 
 export type AgentConnection = {
   id: string;
@@ -211,6 +212,7 @@ export function AgentProviders() {
           </EmptyHeader>
         </Empty>
       )}
+      {directory && <TranslationProviders connections={directory.connections} />}
       {directory?.connections.map((connection) => (
         <div
           key={connection.id}

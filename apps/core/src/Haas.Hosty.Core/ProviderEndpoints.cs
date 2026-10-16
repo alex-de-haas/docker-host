@@ -27,6 +27,7 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
     internal static string Permission(string kind) => kind switch
     {
         "speech-to-text" => CoreAppPermissions.SpeechProviders,
+        "translation" => CoreAppPermissions.TranslationProviders,
         "assistant" => CoreAppPermissions.AssistantProviders,
         _ => throw new AppIdentityException("provider_kind_invalid", "Unknown provider category."),
     };

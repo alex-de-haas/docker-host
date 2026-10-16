@@ -1,6 +1,6 @@
 ---
 created: 2026-06-04
-updated: 2026-10-09
+updated: 2026-10-15
 summary: The app.0.1 manifest contract for installing and running runtime apps.
 components: [apps/core]
 ---
@@ -262,7 +262,7 @@ All fields are optional; blanks are dropped and an all-empty block is ignored. `
 `corePermissions` declares required operations. The catalogue recognizes `apps.install`, `apps.read`,
 `apps.logs`, `apps.notifications`, `apps.lifecycle`, `apps.configure`, `apps.sources.full`, `apps.sources.read`, `apps.workspaces.read`, `apps.skills.read`,
 `core.read`, `core.update`, `core.lifecycle`, `core.configure`, `core.logs`, `users.read`, `users.manage`,
-`providers.speech-to-text` and `providers.assistant`. See [App installation](../app-installation-sdk/feature.md)
+`providers.speech-to-text`, `providers.translation` and `providers.assistant`. See [App installation](../app-installation-sdk/feature.md)
 for currently wired delegated operations and management-API integration status.
 `apps.sources` is a legacy alias for `apps.sources.full`, normalized in manifests and persisted
 declarations/grants before startup cleanup. `apps.workspaces.read` grants current-administrator
@@ -280,9 +280,10 @@ optional authority to required, and removes grants for removed declarations. Sou
 grant authority. Shell app settings opens Core confirmation to change optional choices.
 
 Provider consumer permissions cover discovery and use of all confirmed providers in the category.
-Supply uses confirmed `provides: ["speech-to-text"]` or `provides: ["assistant"]`; a matching versioned
-interface alone conveys no authority. Speech interfaces require a positive version and unique
-capabilities, as assistant interfaces do. See [Provider consumption](../provider-consumption/feature.md)
+Supply uses confirmed `provides` roles `speech-to-text`, `translation` or `assistant`; a matching versioned
+interface alone conveys no authority. These interfaces require a positive version and unique
+capabilities. Several distinct keys in one app are supported, including Harness's two
+[translation entries](../translation-provider/feature.md). See [Provider consumption](../provider-consumption/feature.md)
 for the endpoint and SDK contracts and [App installation](../app-installation-sdk/feature.md) for review.
 
 ## Testing Expectations

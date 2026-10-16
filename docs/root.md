@@ -146,7 +146,7 @@ Plans: 10 In Progress · 1 Blocked · 40 Draft · 6 On Hold.
 - [Plan Tracking](features/plan-tracking/feature.md) — Administrator plan overview across installed source repositories and unreleased development workspaces, backed by bounded Core document reads.
 - [Private App Sources](features/private-app-sources/feature.md) — Core reads private repository manifests and sources through explicitly selected personal provider connections.
 - [Private Distribution Access](features/private-distribution-access/plan.md) — Authenticate private feeds, release assets and container registries independently of source access. · Draft, 0/4, updated 2026-09-28
-- [Provider Consumption And Speech Recognition](features/provider-consumption/feature.md) — Apps discover and call confirmed speech-to-text and assistant providers with short-lived Core credentials. · [plan](features/provider-consumption/plan.md): In Progress, 1/4, updated 2026-10-10
+- [Provider Consumption And Speech Recognition](features/provider-consumption/feature.md) — Apps discover and call confirmed speech, translation and assistant providers with short-lived Core credentials. · [plan](features/provider-consumption/plan.md): In Progress, 1/4, updated 2026-10-10
 - [Feature: Public Origins](features/public-origins/feature.md) — An endpoint's public origin is a durable property of the endpoint that exists before the app first starts.
 - [Raw L4 Port Publishing](features/raw-ports/feature.md) — A docker service port can opt into publishing on all interfaces over TCP and UDP with expose and transport.
 - [Removable System Apps — Distribution Catalog and One Lifecycle](features/removable-system-apps/feature.md) — First-party apps are ordinary runtime apps, seeded once from a distribution catalog and removable like any other.
@@ -168,6 +168,7 @@ Plans: 10 In Progress · 1 Blocked · 40 Draft · 6 On Hold.
 - [Source Providers](features/source-providers/feature.md) — Core owns a typed source-provider registry with built-in GitHub, owner-scoped connections and Shell account management.
 - [Swift Shell](features/swift-shell/feature.md) — A native SwiftUI client for iOS, iPadOS and macOS that manages a host's installed apps.
 - [Telemetry Over MCP](features/telemetry-mcp/feature.md) — Stored logs, traces and resource metrics exposed as an MCP interface behind a scoped credential.
+- [Translation Providers](features/translation-provider/feature.md) — Core translation discovery and scoped invocation, SDK clients, and two static Harness variants for translating text and Markdown plans.
 - [Isolated User Agent Sessions](features/user-agent-sessions/plan.md) — Deferred non-admin agent conversations with verified execution isolation and MCP calls limited to the acting user's current rights. · On Hold, 0/6, updated 2026-10-10
 - [User Management](features/user-management/feature.md) — Administrators invite, disable, delete and assign app access to Host users from the Shell User Management view.
 - [User Profile And Provider Connections](features/user-profile-connections/feature.md) — Shell manages personal GitHub accounts and Git identity through Core-owned connections and narrow app permissions.
