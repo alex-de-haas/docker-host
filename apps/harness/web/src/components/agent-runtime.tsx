@@ -5,16 +5,21 @@ import { call } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
 type Runtime = { docker: { available: boolean; reason?: string; image?: string; state?: { phase: string; sessionId: string } | null }; usage?: { memoryBytes: number; peakMemoryBytes: number; diskBytes?: number }; support: string };
+async function loadRuntime() {
+  const loaded = await (await call("/runtime")).json() as Runtime;
+  if (!loaded?.docker) throw new Error("Docker runtime status is unavailable.");
+  return loaded;
+}
 export function AgentRuntime({ mode, onMode }: { mode: "native" | "docker"; onMode: (mode: "native" | "docker") => Promise<void> }) {
   const [runtime, setRuntime] = useState<Runtime | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const refresh = useCallback(async () => {
-    const loaded = await (await call("/runtime")).json() as Runtime;
-    if (!loaded?.docker) throw new Error("Docker runtime status is unavailable.");
-    setRuntime(loaded);
+  const refresh = useCallback(async () => { setRuntime(await loadRuntime()); }, []);
+  useEffect(() => {
+    let active = true;
+    loadRuntime().then(loaded => { if (active) setRuntime(loaded); }, reason => { if (active) setError(String(reason)); });
+    return () => { active = false; };
   }, []);
-  useEffect(() => { void refresh().catch(reason => setError(String(reason))); }, [refresh]);
   const action = async (fn: () => Promise<unknown>) => {
     setBusy(true); setError(null);
     try { await fn(); await refresh(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Runtime operation failed."); }
