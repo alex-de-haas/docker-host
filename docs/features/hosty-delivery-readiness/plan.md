@@ -59,7 +59,14 @@ latest SDK correction and complete child cleanup. The
 [trusted-Core acceptance](../../reviews/2026-10-15-trusted-core-consent-acceptance.md) verifies saved
 consent and dedicated dependency/mount scenarios; the
 [offline daemon acceptance](../../reviews/2026-10-15-offline-sandbox-daemon-acceptance.md) verifies
-actual Docker-loss and interrupted cleanup recovery. Sandbox retains the composed Git/publication journey and unverified host/recipe cases.
+actual Docker-loss and interrupted cleanup recovery. The [D9 Git acceptance](../../reviews/2026-10-15-sandbox-d9-git-acceptance.md) composes the real shared-worker
+Demo change, child Core/browser, Core commit/push/PR, CI/review correction, crash recovery and Finish,
+with simultaneous workload measurements. PR #599 is merged and Core/CLI 0.135.1 plus Demo 0.17.2 are published. The
+[local D9 acceptance](../../reviews/2026-10-15-sandbox-d9-local-acceptance.md) records the local test ledger,
+client-transfer/dependency measurements and disposal. The [cold-engine acceptance](../../reviews/2026-10-15-sandbox-d9-cold-engine-acceptance.md)
+closes the local empty-engine import/extraction, uncached build/start, warm-repeat and full memory
+measurement gap as Sandbox D28, preserving existing workloads. Additional host/architecture/recipe
+guarantees remain open under D9.
 Stricter per-session agent containment, app authoring, feedback and redesign retain their separate approval and scope.
 This checkpoint does not approve implementation of this Draft umbrella.
 
@@ -69,10 +76,10 @@ This checkpoint does not approve implementation of this Draft umbrella.
 | --- | --- | --- |
 | Docker Development | [Mixed Development Runtimes](../mixed-development-runtimes/feature.md): Docker source mount, image/build recipe, watch command and cache volumes | Workspace/source and child ownership now ship; complete relevant [remaining platform acceptance](../mixed-development-runtimes/plan.md) |
 | Workspaces | [Session workspaces](../assistant-session-workspaces/feature.md) and [Workspaces viewer](../workspaces-app/feature.md) | Child runtime status and preview controls ship; complete the remaining integrated acceptance without making the viewer a second orchestrator |
-| Git and review | [PR lifecycle](../assistant-pr-lifecycle/feature.md): commits, push, draft/ready PRs, CI/review observation and completion | Verify access from the contained runner and compose it with sandbox evidence; do not reimplement publication |
+| Git and review | [PR lifecycle](../assistant-pr-lifecycle/feature.md): commits, push, draft/ready PRs, CI/review observation and completion | The shared-worker test PR journey is verified in Sandbox D9; merge/release and broader development-session acceptance retain their separate scope |
 | App creation | [Prototype Workspaces](../app-prototype-workspaces/plan.md), [Development Controls](../app-development-controls/plan.md), [App Authoring](../app-authoring/plan.md) | Durable creation, recovery and create/view/change flow; refresh older baseline tables against shipped workspace/publication APIs |
 | Agent boundary | [Shared Docker Agent Runtime](../assistant-shared-docker-runtime/feature.md) and [Containment](../assistant-runtime-containment/plan.md) | Shared worker implementation and both-provider local acceptance complete; stricter session isolation retains its separate Draft plan |
-| Sandbox | [App Sandbox](../app-sandbox-runtimes/plan.md) | Remaining cross-feature/Git acceptance and native Linux/Windows host verification |
+| Sandbox | [App Sandbox](../app-sandbox-runtimes/plan.md) | D27/D28 record verified local and cold-engine stages; native Linux/Windows, Linux amd64 worker and additional recipe acceptance remain under D9 |
 | Feedback | [App Feedback Inbox](../app-feedback-inbox/plan.md) and shipped [Overlay](../hosty-overlay/feature.md) | Durable draft annotations, intake, administrator triage and optional assistant grouping/delegation |
 | Redesign | [Design System](../design-system/plan.md), Ink and Signal | Apply foundations and prepared screens with functional parity; mockups are not a complete inventory of capabilities |
 

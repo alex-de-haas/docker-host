@@ -111,8 +111,8 @@ filesystem allocation limits. Storage violations revoke access and stop known co
 long setup. Instance metrics report sampled Docker memory/CPU and a sampled aggregate memory peak;
 this value is not a cgroup lifetime peak. The Core side reserves 10 GiB of the coordinated 30 GiB mutable budget for the separately managed
 agent/worktrees and limits sandbox storage to 20 GiB. The experiment coordinator monitors and stops
-its agent at 2 GiB state or 8 GiB worktree use. A supported production worker coordinator and the
-remaining interruption matrix stay tracked under D5 and the containment plan.
+its agent at 2 GiB state or 8 GiB worktree use. The [shared worker](../assistant-shared-docker-runtime/feature.md) supplies the supported agent
+coordinator; the remaining integrated matrix stays tracked under D9.
 
 ## Private Browser Verification
 
@@ -216,6 +216,11 @@ Each environment receives a unique Core instance ID, allocated port and local ho
 keys, connections, app registry, app data and caches. Parent credentials and provider connections are
 not copied. No workspace is required. Optional registered worktrees are retained as persistent
 consumers until Finish; they remain outside the temporary root.
+
+Docker CLI plugin discovery carries the installed plugin directories reported by Docker into the
+child's own configuration, preserving child-owned settings with an owner-only atomic JSON writer.
+Buildx remains available under the
+private HOME without copying the parent's registry logins or Docker configuration.
 
 `current` copies the parent's prepared executable closure; `release` copies its installed native
 Core binary; `source` builds an absolute selected Core project into a child-owned output directory.
@@ -440,7 +445,7 @@ its normal app-installation and shared-mount review are not replaced by parent-s
 
 The [2026-10-15 trusted-Core acceptance](../../reviews/2026-10-15-trusted-core-consent-acceptance.md) verifies one-run/saved consent, revocation, dedicated Redis dependencies, shared mount limits, ordinary roles, nested cleanup and Linux-in-Docker interrupted Finish. It records the measured resource envelope and remaining host-coverage limits.
 
-The [offline daemon acceptance](../../reviews/2026-10-15-offline-sandbox-daemon-acceptance.md) verifies interrupted prepare, actual Docker loss, revoked preview with retained data, observable failed cleanup, same-UUID disposal after coordinator death, browser recovery and complete resource removal on macOS. D5 retains production worker-monitor integration; this bounded run does not establish the entire D9 host and measurement matrix.
+The [offline daemon acceptance](../../reviews/2026-10-15-offline-sandbox-daemon-acceptance.md) verifies interrupted prepare, actual Docker loss, revoked preview with retained data, observable failed cleanup, same-UUID disposal after coordinator death, browser recovery and complete resource removal on macOS. D5 is complete through the shared worker integration below; this bounded run does not establish the entire D9 host and measurement matrix.
 
 ## Shared Agent Worker Accounting
 
@@ -455,6 +460,58 @@ Application start/restart capacity refusal returns a structured HTTP 409 with th
 code. Core settles the app to stopped/failed, preserves the diagnostic and permits a normal retry
 after capacity is available; it does not leave an app indefinitely starting. Stopped containers
 continue to reserve their limits until the owning runtime is removed.
+
+## Composed Git And Child-Core Acceptance
+
+The [D9 Git acceptance report](../../reviews/2026-10-15-sandbox-d9-git-acceptance.md) records a real
+Codex Docker conversation that edits/tests Demo, creates a child Core, survives Harness failure,
+publishes a test PR through Core, applies a real review finding and explicitly finishes the child.
+A separate authenticated Playwright browser verifies HMR and preview; the agent consumes its report.
+Harness displays the published head and observed CI. Independent cleanup verifies source retention
+and removal of the child process, ports, data, two containers, six cache volumes and its network.
+
+The selected simultaneous agent-plus-app peak is 5,473.4 MiB charged memory (3,942.2 MiB working
+set). Native Core/Harness/browser RSS is measured separately. This is one macOS arm64 Docker
+workload, not an all-host guarantee or a complete cold-start benchmark; remaining D9 coverage stays
+in the [plan](plan.md).
+
+## Released Local Acceptance
+
+The [local D9 report](../../reviews/2026-10-15-sandbox-d9-local-acceptance.md) verifies merged Core/CLI
+0.135.1, Demo 0.17.2 and worker 0.53.0 with a real Codex conversation, fresh child password login,
+source build/HMR, concurrent same-ID Start, stale-request refusal, independent QA without a workspace,
+private Docker config preservation and full Finish. Its L01-L22 ledger maps 209 unique Core cases,
+18 Harness tests and six Demo tests to profile-specific live evidence. Both child roots/processes,
+two app containers, six cache volumes and a network are removed while borrowed source remains intact.
+
+Cold client image transfers, dependency/cache preparation and warm lifecycle timing are recorded
+separately from the already-running Docker VM and shared base layers. The selected simultaneous
+worker-plus-child sample is 3,417.6 MiB charged / 2,154.3 MiB working set; native Core, Harness,
+browser and verification processes have separate measurements. The report retains the temporary
+helper failure and sampling boundaries. Local D27 records these verified stages; D28 below records
+the subsequent cold-engine measurement. D9 retains host/architecture/recipe acceptance and D11
+retains remote-preview acceptance.
+
+## Isolated Cold-Engine Acceptance
+
+The [cold-engine report](../../reviews/2026-10-15-sandbox-d9-cold-engine-acceptance.md) verifies an empty independent
+Docker engine with released Linux arm64 Core 0.135.1, Harness/worker 0.53.0 and source Demo 0.17.2.
+A real Harness agent prepares the worktree, changes Demo, starts a child and app, passes six tests,
+lint and production build, performs warm restart, and Finishes with identical-input replay. A normal
+password-authenticated browser verifies separate child identity, navigation and HMR with a retained
+page sentinel. Source is read-only in the two app containers and six caches are separate.
+
+Cold worker pull/import takes 19.38 seconds; first source-image build 16.28 seconds; cold Demo HTTP
+readiness 28.15 seconds versus 6.07 seconds warm. Whole-fixture cgroup peak is 8,458.59 MiB under a
+12 GiB ceiling, including daemon, BuildKit, native Core/Harness/browser, worker and app; no OOM occurs.
+The report separates tar extraction, dependency preparation, working set and native RSS. It records
+prepared tooling, Autonomous-mode execution, the temporary recipe and the already-running host VM.
+This is one Linux arm64-in-Docker measurement, not native-host or generic recipe acceptance.
+
+Independent cleanup proves child root/ports/containers/volumes/network removal and unchanged borrowed
+source. Removing the temporary parent, engine container and volume also removes its engine images,
+build cache and credentials. The primary Core process and all 41 existing containers, 153 images,
+505 build-cache records, 15 volumes and 26 networks remain unchanged.
 
 ## Testing Expectations
 
