@@ -174,13 +174,16 @@ export function DashboardPage({
   // re-read below so it can refresh what was requested without ever initiating a check itself.
   const statusRequestedRef = useRef<Set<string>>(new Set());
 
-  useEffect(() => {
+  // Drop detail for apps that left the list, in the render that receives the new list.
+  const [prunedFor, setPrunedFor] = useState(apps);
+  if (prunedFor !== apps) {
+    setPrunedFor(apps);
     const appIds = new Set(apps.map((app) => app.id));
     setUpdateStatusByApp((current) => {
       const entries = Object.entries(current).filter(([appId]) => appIds.has(appId));
       return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
     });
-  }, [apps]);
+  }
 
   // Returns both halves so a caller can tell a real failure from an auth redirect: the latter yields
   // no status *and* no error, because the page is already navigating to the login screen and has

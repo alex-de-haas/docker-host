@@ -51,20 +51,22 @@ export function IngressDiagnostics() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await sendCsrfJson(`${coreOrigin}/api/core/cloudflare/diagnostics`, undefined, "GET");
-      setDiagnostics((await response.json()) as CloudflareDiagnostics);
-      setError(null);
-    } catch (loadError) {
-      if (!isAuthRequiredRedirectError(loadError)) {
-        setError(loadError instanceof Error ? loadError.message : "Could not check the published addresses.");
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [coreOrigin, sendCsrfJson]);
+  // `loading` starts true for the first read; the Check again button sets it before reloading.
+  // State is written only in the promise callbacks.
+  const load = useCallback(() =>
+    sendCsrfJson(`${coreOrigin}/api/core/cloudflare/diagnostics`, undefined, "GET")
+      .then((response) => response.json() as Promise<CloudflareDiagnostics>)
+      .then((next) => {
+        setDiagnostics(next);
+        setError(null);
+      }, (loadError: unknown) => {
+        if (!isAuthRequiredRedirectError(loadError)) {
+          setError(loadError instanceof Error ? loadError.message : "Could not check the published addresses.");
+        }
+      })
+      .finally(() => {
+        setLoading(false);
+      }), [coreOrigin, sendCsrfJson]);
 
   useEffect(() => {
     void load();
@@ -89,7 +91,7 @@ export function IngressDiagnostics() {
             have no address at all.
           </p>
         </div>
-        <Button type="button" variant="outline" size="sm" disabled={loading} onClick={() => void load()}>
+        <Button type="button" variant="outline" size="sm" disabled={loading} onClick={() => { setLoading(true); void load(); }}>
           {loading ? <LoaderCircle className="mr-1 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1 h-3.5 w-3.5" />}
           Check again
         </Button>

@@ -19,8 +19,15 @@ export function SpeechInput({ disabled, onText }: { disabled: boolean; onText: (
   const [error, setError] = useState("");
   const [rosterError, setRosterError] = useState("");
   const active = useRef<Recording | null>(null);
-  const onResult = useRef(onText); onResult.current = onText;
-  const blocked = useRef(disabled); blocked.current = disabled;
+  const onResult = useRef(onText);
+  const blocked = useRef(disabled);
+  useEffect(() => { onResult.current = onText; blocked.current = disabled; }, [onText, disabled]);
+  // Disabling disposes the live recording (effect below); the phase follows in the same render.
+  const [wasDisabled, setWasDisabled] = useState(disabled);
+  if (disabled !== wasDisabled) {
+    setWasDisabled(disabled);
+    if (disabled) setPhase("idle");
+  }
   useEffect(() => {
     const controller = new AbortController();
     const refresh = () => { void call("/speech/providers", { signal: controller.signal }).then(r => r.json() as Promise<Roster>).then(value => { if (!controller.signal.aborted) { setRoster(value); setRosterError(""); } }).catch(cause => { if (!controller.signal.aborted) setRosterError(cause instanceof Error ? cause.message : "Speech providers are unavailable."); }); };
@@ -31,8 +38,8 @@ export function SpeechInput({ disabled, onText }: { disabled: boolean; onText: (
   useEffect(() => { if (disabled) { dispose(active.current); active.current = null; } }, [disabled]);
   const choice = selected || (roster?.providers.length === 1 ? identity(roster.providers[0]!) : "");
   const provider = roster?.providers.find(p => identity(p) === choice);
-  // A completed/cancelled operation has no live recording even if its last status was busy.
-  const busy = phase !== "idle" && active.current !== null;
+  // Every path that ends an operation (finish, cancel, disable) also returns the phase to idle.
+  const busy = phase !== "idle";
   function cancel() { dispose(active.current); active.current = null; setPhase("idle"); }
   async function start() {
     if (!provider || !provider.available || blocked.current || active.current) return;

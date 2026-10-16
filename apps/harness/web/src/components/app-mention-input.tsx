@@ -150,9 +150,8 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
       if (mounted.current) { setSaving(false); latest.current.onBusyChange(false); }
     }
   };
-  let position = 0;
-  const highlights = current.mentions.flatMap(mention => {
-    const before = value.slice(position, mention.start); position = mention.end;
+  const highlights = current.mentions.flatMap((mention, index) => {
+    const before = value.slice(index === 0 ? 0 : current.mentions[index - 1].end, mention.start);
     const included = session?.appIds?.includes(mention.id);
     return [before, <mark key={`${mention.start}:${mention.id}`} className={cn("rounded-sm bg-accent text-transparent", !included && "underline decoration-destructive decoration-dotted")}>
       {mention.label}
@@ -163,7 +162,7 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
     <PopoverPrimitive.Anchor asChild>
       <div ref={wrapper} className="relative w-full min-w-0">
         <div ref={mirror} aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3 py-3 text-base text-transparent md:text-sm">
-          {highlights}{value.slice(position)}{"\n"}
+          {highlights}{value.slice(current.mentions.at(-1)?.end ?? 0)}{"\n"}
         </div>
         <InputGroupTextarea {...props} ref={inputRef} value={value} disabled={disabled} readOnly={saving || props.readOnly} aria-busy={saving}
           className={cn("relative max-h-48 min-h-20 w-full px-3", className)}

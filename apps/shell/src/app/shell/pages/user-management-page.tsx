@@ -21,6 +21,15 @@ import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRe
 import type { AssignableAppSummary, HostUserSummary, InviteTtlOption, SessionResponse, UserInvitationSummary, UserManagementResponse } from "../types";
 import { CopyField, InlineError, RoleBadge } from "../ui";
 
+async function fetchUserManagement(coreOrigin: string): Promise<UserManagementResponse> {
+  const response = await fetchCore(`${coreOrigin}/api/auth/users`, { credentials: "include" });
+  redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+  if (!response.ok) {
+    throw new Error(await readCoreError(response));
+  }
+  return (await response.json()) as UserManagementResponse;
+}
+
 export function UserManagementPanel({
   coreOrigin,
   activeUser,
@@ -67,17 +76,11 @@ export function UserManagementPanel({
       user.role.toLowerCase().includes(query);
   });
 
-  const loadUsers = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetchCore(`${coreOrigin}/api/auth/users`, { credentials: "include" });
-      redirectToCoreLoginIfAuthRequired(response, coreOrigin);
-      if (!response.ok) {
-        throw new Error(await readCoreError(response));
-      }
-
-      const payload = (await response.json()) as UserManagementResponse;
+  // `loading` starts true for the first read; later reads go through `reloadUsers`, which sets it
+  // first. State is written only in the promise callbacks.
+  const loadUsers = useCallback(() =>
+    fetchUserManagement(coreOrigin).then((payload) => {
+      setError(null);
       setUsers(payload.users || []);
       setInvitations(payload.invitations || []);
       setApps(payload.apps || []);
@@ -85,16 +88,20 @@ export function UserManagementPanel({
         setTtlOptions(payload.inviteTtlOptions);
         setInviteTtlMs(payload.inviteTtlOptions[1]?.ttlMs ?? payload.inviteTtlOptions[0].ttlMs);
       }
-    } catch (caught) {
+    }, (caught: unknown) => {
       if (isAuthRequiredRedirectError(caught)) {
         return;
       }
 
       setError(caught instanceof Error ? caught.message : "Unable to load users.");
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
-  }, [coreOrigin]);
+    }), [coreOrigin]);
+  const reloadUsers = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    return loadUsers();
+  }, [loadUsers]);
 
   useEffect(() => {
     void loadUsers();
@@ -106,7 +113,7 @@ export function UserManagementPanel({
       setError(null);
       try {
         await action();
-        await loadUsers();
+        await reloadUsers();
       } catch (caught) {
         if (isAuthRequiredRedirectError(caught)) {
           return;
@@ -117,7 +124,7 @@ export function UserManagementPanel({
         setPendingAction(null);
       }
     },
-    [loadUsers],
+    [reloadUsers],
   );
 
   const submitInvite = (event: FormEvent<HTMLFormElement>) => {
