@@ -102,12 +102,13 @@ added. Telemetry pins both infrastructure families and offers Core in the Metric
 
 ## Dashboard
 
-App rows show a CPU value and sparkline plus a RAM value beside status unless the app is confirmed
-stopped. Stopped apps leave the resource cell empty, preserving column alignment without a resource
-button or historical popover. Expanded services also hide resources when the app is stopped or the
-service is stopped or exited. Starting, stopping and unknown app states retain the resource display;
-running services in partially unavailable apps keep their readings. Core and the all-app total remain
-visible, and resource sampling and history retention are independent of these display rules.
+App rows show a CPU value and sparkline plus a RAM value beside status only while the app runtime
+is running and no update is in progress. Degraded health keeps the display because the runtime is
+still running. Starting, stopping, stopped, unknown and updating apps leave the resource cell empty,
+preserving column alignment without a resource button or historical popover. Expanded services use
+the same app-level rule and also hide resources when the service is stopped or exited. Core and the
+all-app total remain visible, and resource sampling and history retention are independent of these
+display rules.
 
 Expanded service headers keep the service name and runtime badges on the left, with the stacked CPU/RAM block
 beside the health and runtime statuses on the right. A thin horizontal separator divides adjacent
@@ -147,9 +148,10 @@ Responsive rows retain values and actions without horizontal scrolling.
   confirmed stopped apps have zero load.
 - Shell tests cover per-service/app/fleet sums, Core exclusion, unavailable/stale values, history
   merging, common CPU scaling and sustained-activity thresholds.
-- Dashboard verification covers empty resource cells for stopped apps and hidden resource controls
-  for stopped/exited services, including retained samples; active and transitional apps, Core and
-  fleet totals retain their displays.
+- Dashboard verification covers empty resource cells and hidden expanded-service resource controls
+  for starting, stopping, stopped, unknown and updating apps, including retained samples. Running
+  apps retain their displays with healthy or degraded health; stopped/exited services stay hidden.
+  Core and fleet totals retain their displays.
 - Build Core, Shell and Telemetry; run their affected tests. Live macOS verification covers source
   Core restart/adoption, local and Docker values, SSE changes, service totals, chart popovers,
   narrow Dashboard containers, and arrival of the same metrics in Telemetry. Windows/Linux native

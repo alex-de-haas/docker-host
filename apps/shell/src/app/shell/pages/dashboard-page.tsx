@@ -80,7 +80,7 @@ import {
   resolveAvailableVersionLabel,
   type AppRevision,
 } from "../app-versions";
-import { isAppBusy, isAppIdle, isAppUp, matchesAppStateFilter, matchesAppSearch, type AppStateFilter } from "../runtime-states";
+import { isAppBusy, isAppUp, matchesAppStateFilter, matchesAppSearch, type AppStateFilter } from "../runtime-states";
 import { AppIcon } from "../app-icon";
 import { copyTextToClipboard } from "../clipboard";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
@@ -802,7 +802,7 @@ function AppServiceDetailsPanel({
                   ) : null}
                 </div>
                 <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
-                  {!isAppIdle(app.runtimeState) && service.status !== "stopped" && service.status !== "exited" && (
+                  {isAppUp(app.runtimeState) && app.operationStatus !== "updating" && service.status !== "stopped" && service.status !== "exited" && (
                     <div className="w-36 shrink-0"><ResourceUsage appId={app.id} service={service.service} label={`${app.displayName} · ${service.service}`} /></div>
                   )}
                   <div className="flex items-center gap-1.5">
@@ -1293,7 +1293,7 @@ function InstalledAppRow({
         </div>
       </TableCell>
       <TableCell role="cell" className="dashboard-resources">
-        {!isAppIdle(app.runtimeState) && <ResourceUsage appId={app.id} label={app.displayName} />}
+        {running && app.operationStatus !== "updating" && <ResourceUsage appId={app.id} label={app.displayName} />}
       </TableCell>
       <TableCell role="cell" className="dashboard-actions">
         <div className="flex items-center justify-end gap-1">
