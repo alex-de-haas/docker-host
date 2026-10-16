@@ -5,9 +5,11 @@ namespace Haas.Hosty.Core;
 
 internal sealed record RuntimeResourceSample(string AppId, string Service, string Runtime,
     DateTimeOffset Timestamp, double? CpuPercent, double? MemoryBytes, double? MemoryPercent = null);
-internal sealed record ResourceUsageFrame(DateTimeOffset Timestamp, IReadOnlyList<RuntimeResourceSample> Services);
+internal sealed record ResourceUsageFrame(DateTimeOffset Timestamp, IReadOnlyList<RuntimeResourceSample> Services, long Sequence = 0);
 internal sealed record ResourceUsageResponse(string RunId, DateTimeOffset Now, int LogicalProcessors,
-    IReadOnlyList<ResourceUsageFrame> History);
+    IReadOnlyList<ResourceUsageFrame> History, long Sequence = 0);
+internal sealed record ResourceUsageEvent(string RunId, long Sequence, DateTimeOffset Timestamp,
+    int LogicalProcessors, ResourceUsageFrame Frame);
 
 // RAM only. A single producer serves both the live Dashboard and the slower telemetry scrape.
 internal sealed class RuntimeResourceSampler(
@@ -17,6 +19,7 @@ internal sealed class RuntimeResourceSampler(
     private readonly object gate = new();
     private readonly Queue<ResourceUsageFrame> history = new();
     private readonly string runId = Guid.NewGuid().ToString("N");
+    private long sequence;
     private DateTimeOffset viewedUntil;
     private DateTimeOffset lastSample;
     private DateTimeOffset lastDocker;
@@ -54,15 +57,15 @@ internal sealed class RuntimeResourceSampler(
     private static bool IsFresh(RuntimeResourceSample sample, DateTimeOffset now)
         => sample.Runtime != "docker" || now - sample.Timestamp <= DockerMaxAge;
 
-    public ResourceUsageResponse Read(DateTimeOffset? after = null, string? previousRunId = null)
+    public ResourceUsageResponse Read(DateTimeOffset? after = null, string? previousRunId = null, bool stream = false)
     {
         lock (gate)
         {
             // Renewed by visible Dashboard reads, never by telemetry. A disconnected client costs
             // at most this grace period; no per-browser sampling loop or unbounded lease dictionary.
-            viewedUntil = clock.UtcNow.AddSeconds(20);
+            if (!stream) viewedUntil = clock.UtcNow.AddSeconds(20);
             Prune(clock.UtcNow);
-            return new(runId, clock.UtcNow, Environment.ProcessorCount, history.Where(f => previousRunId != runId || after is null || f.Timestamp > after).ToArray());
+            return new(runId, clock.UtcNow, Environment.ProcessorCount, history.Where(f => previousRunId != runId || after is null || f.Timestamp > after).ToArray(), sequence);
         }
     }
 
@@ -70,10 +73,17 @@ internal sealed class RuntimeResourceSampler(
     {
         lock (gate)
         {
+            frame = frame with { Sequence = ++sequence };
             history.Enqueue(frame);
             Prune(frame.Timestamp);
             latestFrame = frame;
+            events.PublishResources(new(runId, sequence, frame.Timestamp, Environment.ProcessorCount, frame));
         }
+    }
+
+    internal bool HasViewers
+    {
+        get { lock (gate) return viewedUntil > clock.UtcNow || events.HasResourceSubscribers; }
     }
 
     private void Prune(DateTimeOffset now)
@@ -163,8 +173,8 @@ internal sealed class RuntimeResourceSampler(
             try
             {
                 var now = clock.UtcNow;
-                bool viewed;
-                lock (gate) { viewed = viewedUntil > now; Prune(now); }
+                var viewed = HasViewers;
+                lock (gate) Prune(now);
                 if (now - lastSample < TimeSpan.FromSeconds(viewed ? 3 : 10)) continue;
                 var telemetry = await apps.GetAppAsync(CollectorBootstrap.AppId, stoppingToken);
                 if (!viewed && !AppRuntimeStates.IsUp(telemetry?.RuntimeState))
@@ -203,8 +213,8 @@ internal static class RuntimeResourceEndpoints
     public static void Map(WebApplication app)
     {
         app.MapGet("/api/core/resources", (HttpRequest request, UserDirectoryStore users, IClock clock,
-            RuntimeResourceSampler sampler, DateTimeOffset? after, string? runId, CancellationToken cancellationToken) =>
+            RuntimeResourceSampler sampler, DateTimeOffset? after, string? runId, bool? stream, CancellationToken cancellationToken) =>
             CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,
-                () => Task.FromResult(CoreJson.Json(sampler.Read(after, runId))), cancellationToken: cancellationToken));
+                () => Task.FromResult(CoreJson.Json(sampler.Read(after, runId, stream == true))), cancellationToken: cancellationToken));
     }
 }

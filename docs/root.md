@@ -96,7 +96,7 @@ Plans: 10 In Progress · 1 Blocked · 40 Draft · 6 On Hold.
 - [Core API](features/core-api/feature.md) — Core's browser and control APIs and the serialization rules every endpoint must follow.
 - [Core App Shell](features/core-app-shell/feature.md) — Shell is the Core-managed browser UI app that authenticates users and embeds app pages.
 - [Core Development Mode](features/core-dev-target/feature.md) — Run Core from source in Debug, restart into isolated build generations and switch back to the installed release. · [plan](features/core-dev-target/plan.md): In Progress, 0/3, updated 2026-09-18
-- [Core Event Bus — Ephemeral Domain Events Over A Unified SSE Stream](features/core-event-bus/feature.md) — An in-process event bus that tells session clients over one SSE stream that something changed.
+- [Core Event Bus — Ephemeral Domain Events Over A Unified SSE Stream](features/core-event-bus/feature.md) — One authorized SSE stream carries ephemeral domain hints, notifications and opt-in resource measurements.
 - [Core Extension Model](features/core-extension-model/feature.md) — Current boundaries between runtime apps, confirmed provider roles, Core permissions and platform-owned operations.
 - [Core Lifecycle Parallelism](features/core-lifecycle-parallelism/feature.md) — Core runs per-app lifecycle work concurrently and queries Docker in batches.
 - [Core MCP](features/core-mcp/feature.md) — Core MCP exposes app state, logs and bounded audit search, with explicit grants for lifecycle actions and reviewed updates.

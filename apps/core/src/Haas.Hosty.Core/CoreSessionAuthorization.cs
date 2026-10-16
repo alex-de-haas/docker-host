@@ -173,6 +173,17 @@ internal static class CoreSessionAuthorization
         return authorization.User;
     }
 
+    // An already-open stream observes authority without counting delivery/heartbeats as user activity.
+    internal static async Task<HostUserRecord?> RevalidateSessionAsync(
+        HttpRequest request,
+        UserDirectoryStore users,
+        IClock clock,
+        CancellationToken cancellationToken = default)
+    {
+        var authorization = await ResolveSessionAsync(request, users, clock, cancellationToken, touchSession: false);
+        return authorization.User;
+    }
+
     // Session resolution for top-level navigation endpoints (e.g. /api/apps/{id}/open). Distinguishes an
     // authenticated user, a terminal denial (a signed-in but disabled user — return Denied as-is so the
     // 403 contract holds), and a missing/expired session (both null — the caller recovers by sending the
@@ -266,7 +277,8 @@ internal static class CoreSessionAuthorization
         HttpRequest request,
         UserDirectoryStore users,
         IClock clock,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool touchSession = true)
     {
         if (AppManagementAuthorization.Caller(request) is { } caller)
             return new CoreSessionAuthorizationResult(caller.User, null);
@@ -347,7 +359,7 @@ internal static class CoreSessionAuthorization
                 Terminal: true);
         }
 
-        await TouchSessionAsync(users, session, now, cancellationToken);
+        if (touchSession) await TouchSessionAsync(users, session, now, cancellationToken);
         return new CoreSessionAuthorizationResult(user, null);
     }
 

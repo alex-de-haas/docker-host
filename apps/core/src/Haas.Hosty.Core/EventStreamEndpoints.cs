@@ -45,6 +45,11 @@ internal static class EventStreamEndpoints
             clock,
             async user =>
             {
+                var resources = request.Query["topics"].ToString().Split(',').Contains("resources", StringComparer.Ordinal);
+                if (resources && !AppAccessPolicy.IsAdmin(user))
+                    return CoreJson.Json(new ErrorResponse("admin_required", "Resource subscriptions require a Host administrator."), 403);
+                // The /api/events delegated policy already requires core.read + apps.read (and
+                // notifications), a superset of /api/core/resources. Resolve it again during delivery.
                 response.Headers.ContentType = "text/event-stream";
                 response.Headers.CacheControl = "no-cache";
                 response.Headers["X-Accel-Buffering"] = "no";
@@ -55,7 +60,7 @@ internal static class EventStreamEndpoints
                 using var subscription = events.Subscribe(
                     user.Id,
                     AppAccessPolicy.IsAdmin(user),
-                    CoreSessionAuthorization.ReadSessionId(request));
+                    CoreSessionAuthorization.ReadSessionId(request), resources);
 
                 // End the stream on Core shutdown, not only on client disconnect. Kestrel's graceful
                 // stop waits for in-flight requests and an SSE response never completes on its own —
@@ -66,7 +71,12 @@ internal static class EventStreamEndpoints
 
                 async Task<bool> IsStillAuthorizedAsync()
                 {
-                    if (AppManagementAuthorization.Caller(request) is null) return true;
+                    if (!subscription.IsActive) return false;
+                    if (AppManagementAuthorization.Caller(request) is null)
+                    {
+                        var currentUser = await CoreSessionAuthorization.RevalidateSessionAsync(request, users, clock, streamToken);
+                        return currentUser?.Id == user.Id && currentUser.Role == user.Role;
+                    }
                     var current = await AppManagementAuthorization.ResolveAsync(request, streamToken);
                     // A subscription captures its audience at creation. End it when the role changes,
                     // even if the user can still access the calling app, before delivering queued data.
@@ -79,6 +89,10 @@ internal static class EventStreamEndpoints
                     // forwards the response start with real body bytes. A header-only flush can be held
                     // back until the first byte and time out as a Cloudflare 524.
                     await response.WriteAsync(": connected\n\n", streamToken);
+                    // Older Core ignores the topic query and sends no acknowledgement. New clients
+                    // must see this before retiring their legacy hint/GET path.
+                    if (resources)
+                        await response.WriteAsync("event: stream.ready\ndata: {\"resources\":1}\n\n", streamToken);
                     await response.Body.FlushAsync(streamToken);
 
                     while (true)
