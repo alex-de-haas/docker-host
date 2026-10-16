@@ -1,6 +1,6 @@
 ---
 created: 2026-06-22
-updated: 2026-10-15
+updated: 2026-10-16
 summary: Apps declare dependencies on other installed apps, Core injects their URLs and reports their state.
 components: [apps/core, apps/shell]
 ---

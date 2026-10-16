@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/field";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { AgentRuntime } from "@/components/agent-runtime";
 import { AgentProviders } from "@/components/agent-providers";
 import { McpAccess } from "@/components/mcp-access";
 import {
@@ -121,6 +122,7 @@ export function GatewaySettings({
           forceMount
           className="data-[state=inactive]:hidden"
         >
+          <AgentRuntime mode={data.settings.executionMode ?? "native"} onMode={mode => save({ executionMode: mode })} />
           {data.agentConnections && <AgentProviders />}
         </TabsContent>
         <TabsContent value="sources"><p>Manage your GitHub connections and Git identity in Hosty Shell → Settings → Source connections.</p></TabsContent>

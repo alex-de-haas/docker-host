@@ -382,6 +382,36 @@ describe("provider connections", () => {
     expect((await registry.health(replacement)).available).toBe(true);
   });
 
+  it("imports only selected host authorization into a separate Docker home and preserves revocation", async () => {
+    const host = path.join(root, "host-login"); await mkdir(host);
+    const auth = { OPENAI_API_KEY: "selected-host-key", unrelated: "do-not-copy" };
+    await writeFile(path.join(host, "auth.json"), JSON.stringify(auth));
+    await writeFile(path.join(host, "config.toml"), "unrelated-host-hooks");
+    const connection = await registry.update({ name: "Portable", kind: "codex", auth: "host-login", hostDirectory: host });
+    const binding = (await registry.binding(connection.id))!;
+    await registry.adapter(binding, true);
+    const mounts = await registry.workerMounts(binding);
+    const home = mounts[0]!.source;
+    expect(home).toContain("agent-docker-providers"); expect(home).not.toBe(await realpath(host));
+    expect(JSON.parse(await readFile(path.join(home, "auth.json"), "utf8"))).toEqual({ OPENAI_API_KEY: "selected-host-key" });
+    expect(await readFile(path.join(home, "config.toml"), "utf8").catch(() => null)).toBeNull();
+    expect(mounts.every(m => m.source !== host && !m.source.endsWith("/data"))).toBe(true);
+    secrets.values.clear();
+    await expect(registry.adapter(binding, true)).rejects.toMatchObject({ code: "provider_reconnect_required" });
+    expect(JSON.parse(await readFile(path.join(host, "auth.json"), "utf8"))).toEqual(auth);
+  });
+
+  it("keeps Docker provider configuration out of native probes and homes", async () => {
+    const connection = await registry.update(api("split")); const binding = (await registry.binding(connection.id))!;
+    const docker = await registry.adapter(binding, true);
+    expect(await docker.probe()).toEqual({ available: true });
+    const home = (await registry.workerMounts(binding))[0]!.source;
+    await writeFile(path.join(home, "config.toml"), "container-only-settings");
+    await registry.adapter(binding);
+    const native = path.join(cache, "agent-providers", connection.id, String(connection.revision));
+    expect(await readFile(path.join(native, "config.toml"), "utf8").catch(() => null)).toBeNull();
+  });
+
   it("reserves a connection across dispatch preparation so a concurrent edit cannot race it", async () => {
     const c = await registry.update(api());
     const release = await registry.reserve((await registry.binding(c.id))!);

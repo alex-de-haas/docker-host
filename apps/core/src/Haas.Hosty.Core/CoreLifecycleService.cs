@@ -4127,7 +4127,7 @@ internal sealed partial class CoreLifecycleService(
     }
 
     private static bool IsRecordableLifecycleFailure(Exception ex)
-        => ex is AppLifecycleException or AppManifestException or IOException or UnauthorizedAccessException or JsonException;
+        => ex is AppLifecycleException or AppManifestException or SandboxException or IOException or UnauthorizedAccessException or JsonException;
 
     private AppSourceState? BuildSourceState(RuntimeAppManifestSelection selection, AppRecord? existing)
     {

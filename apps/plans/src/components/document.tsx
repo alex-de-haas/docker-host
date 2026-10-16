@@ -1,4 +1,5 @@
 "use client";
+import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { markdownTarget } from "@/lib/markdown";
@@ -8,12 +9,12 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
-export function TrackedDocument({ document, error, repositoryId, navigate }: { document: ParsedDocument | null; error: string | null; repositoryId: string; navigate: (url: string) => void }) {
+export function TrackedDocument({ document, error, repositoryId, navigate, children }: { document: ParsedDocument | null; error: string | null; repositoryId: string; navigate: (url: string) => void; children?: ReactNode }) {
   if (error) return <Alert variant="destructive"><AlertTitle>Tracked branch unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>;
-  return document ? <SourceDocument document={document} repositoryId={repositoryId} navigate={navigate} /> : <Empty><EmptyHeader><EmptyTitle>Workspace only</EmptyTitle><EmptyDescription>This plan exists only in a workspace.</EmptyDescription></EmptyHeader></Empty>;
+  return document ? children ?? <SourceDocument document={document} repositoryId={repositoryId} navigate={navigate} /> : <Empty><EmptyHeader><EmptyTitle>Workspace only</EmptyTitle><EmptyDescription>This plan exists only in a workspace.</EmptyDescription></EmptyHeader></Empty>;
 }
 
-export function SourceDocument({ document, repositoryId, navigate }: { document: ParsedDocument; repositoryId: string; navigate: (url: string) => void }) {
+export function SourceDocument({ document, repositoryId, navigate, body }: { document: ParsedDocument; repositoryId: string; navigate: (url: string) => void; body?: string }) {
   return <>
     {document.errors.length > 0 && <Alert variant="destructive"><AlertTitle>Document needs attention</AlertTitle><AlertDescription><ul className="list-disc pl-4">{document.errors.map((error, index) => <li key={index}>{error}</li>)}</ul><p>Progress is unknown until these errors are resolved.</p></AlertDescription></Alert>}
     <div className="markdown">
@@ -36,7 +37,7 @@ export function SourceDocument({ document, repositoryId, navigate }: { document:
         tr: ({ children }) => <TableRow>{children}</TableRow>,
         th: ({ children, style }) => <TableHead style={style}>{children}</TableHead>,
         td: ({ children, style }) => <TableCell style={style}>{children}</TableCell>,
-      }}>{document.body}</ReactMarkdown>
+      }}>{body ?? document.body}</ReactMarkdown>
     </div>
   </>;
 }

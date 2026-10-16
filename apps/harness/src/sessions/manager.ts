@@ -1,3 +1,7 @@
+import { WORKER_LIMITS } from "../runtime/image.js";
+import { SharedDockerWorker, WorkerError, type WorkerBindings } from "../runtime/worker.js";
+import { WorkerMcpBridge } from "../runtime/mcp-bridge.js";
+import type { AgentProcessTransport } from "../runtime/transport.js";
 import { McpToolPolicy } from "../mcp/policy.js";
 import { coreEnvironmentActions, type CoreEnvironmentAction, type CoreEnvironment, sandboxActions, type SandboxAction, type SandboxInstance, type SandboxPlan } from "@hosty-sdk/app/sandbox/server";
 import { DevelopmentClient, DevelopmentMcp, DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, developmentTools, workspaceInstructions, type DevelopmentAction, type DevelopmentWorkspace } from "./development.js";
@@ -6,7 +10,7 @@ import { AppContextError, parseAppIds, validateSelection, captureContext, withAp
 import { mkdir, stat } from "node:fs/promises";
 import { isWaitingStatus, WaitingNotifier } from "../notifications.js";
 import { composeSystemPrompt, partitionSkills, type AppSkill } from "../mcp/skills.js";
-import { HOST_SYSTEM_PROMPT } from "./host-prompt.js";
+import { HOST_SYSTEM_PROMPT, DOCKER_SYSTEM_PROMPT } from "./host-prompt.js";
 import { randomUUID } from "node:crypto";
 import { deriveTitleFromMessage, normalizeTitle } from "./title.js";
 import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapter.js";
@@ -43,6 +47,7 @@ interface LiveSession {
   mcpTargetSignature?: string;
   mcpNoticeSignature?: string;
   mcpAuthorizationNotice?: boolean;
+  workerObservationNotice?: string;
   record: SessionRecord;
   run: HarnessRun | null;
   listeners: Set<SessionListener>;
@@ -109,6 +114,9 @@ export class SessionManager {
   // the drain can find the set empty, return, and have that late event dispatch into a process that
   // is already exiting.
   private stopping = false;
+  private workerBridge: WorkerMcpBridge | null = null;
+  private workerBindings: WorkerBindings | null = null;
+  private workerObserving = false;
 
   constructor(
     readonly store: SessionStore,
@@ -124,6 +132,7 @@ export class SessionManager {
     private readonly notifier: WaitingNotifier | null = null,
     private readonly connections: AgentConnections | null = null,
     private readonly development: DevelopmentClient | null = null,
+    readonly worker: SharedDockerWorker | null = null,
   ) {
     this.mcpPolicy = new McpToolPolicy(settings,
       (id, event) => this.serialize(id, async () => {
@@ -240,6 +249,10 @@ export class SessionManager {
         await this.store.saveRecord(session.record);
       }
       const result = await this.development.call(id, token, action, input);
+      if (action === "prepare" && this.worker?.current?.sessionId === id && this.workerBindings) {
+        const verified = await this.development.workerBindings(id, token);
+        await this.worker.registerTrees(verified!.worktreePaths, this.workerBindings);
+      }
       if (action !== "diff" && action !== "viewer" && !action.startsWith("pr-")) {
         const workspaces = action === "list" ? (result as { workspaces: DevelopmentWorkspace[] }).workspaces : [result as DevelopmentWorkspace];
         const known = new Map((session.record.developmentWorkspaces ?? []).map(w => [w.id, w]));
@@ -431,6 +444,7 @@ export class SessionManager {
       const now = new Date().toISOString();
       const title = normalizeTitle(input.title);
       const record: SessionRecord = {
+        executionMode: (await this.settings?.read())?.executionMode ?? "native",
         id: input.reservedHandoffId ?? randomUUID(),
         ...(input.reservedHandoffId ? { handoffPending: true } : {}),
         ...binding,
@@ -513,8 +527,15 @@ export class SessionManager {
   async sessionHealth(id: string) {
     const record = await this.getSession(id);
     if (!record) throw new SessionNotFoundError(id);
-    if (!this.connections) return { name: this.adapter.name, capabilities: { ...this.adapter.capabilities, appContext: true }, ...await this.adapter.probe() };
-    return this.connections.health(this.bindingFor(record));
+    const executionMode = record.executionMode ?? "native";
+    const provider = this.connections ? await this.connections.health(this.bindingFor(record), executionMode === "docker")
+      : { name: this.adapter.name, capabilities: { ...this.adapter.capabilities, appContext: true }, ...await this.adapter.probe() };
+    if (executionMode === "native") return { ...provider, executionMode };
+    const runtime = await this.worker?.health();
+    const busy = this.worker?.activeSession && this.worker.activeSession !== id;
+    const reason = !provider.available ? provider.reason : busy ? "Another conversation occupies the shared Docker worker."
+      : !runtime?.available ? runtime?.reason ?? "Managed Docker execution is unavailable." : undefined;
+    return { ...provider, executionMode, available: provider.available && runtime?.available === true && !busy, ...(reason ? { reason } : {}) };
   }
 
   async sessionProviderLocked(record: SessionRecord): Promise<boolean> {
@@ -578,6 +599,7 @@ export class SessionManager {
    */
   async deleteSession(id: string, deletedBy: string): Promise<boolean> {
     return this.serialize(id, async () => {
+      if (this.worker?.activeSession === id) await this.finishDocker(await this.requireLive(id));
       const record = this.live.get(id)?.record ?? (await this.store.readRecord(id));
       if (!record) {
         return false;
@@ -689,6 +711,102 @@ export class SessionManager {
    * Their paths are appended to what the harness receives, in a fixed form, and never to the system
    * prompt: a file is the operator's input for one turn, not standing instruction.
    */
+  async observeWorker(): Promise<void> {
+    if (this.workerObserving || !this.worker?.current || this.worker.current.phase !== "running") return;
+    this.workerObserving = true;
+    const id = this.worker.current.sessionId;
+    try {
+      await this.serialize(id, async () => {
+        const session = this.live.get(id);
+        if (!session || this.worker?.current?.sessionId !== id || this.worker.current.phase !== "running") return;
+        try {
+          const sample = await this.worker.sample();
+          const previous = session.record.workerUsage;
+          const diskDue = !previous?.diskObservedAt || Date.now() - Date.parse(previous.diskObservedAt) > 30_000;
+          const diskBytes = diskDue ? await this.worker.diskUsage() : previous?.diskBytes;
+          session.record.workerUsage = { ...previous, ...sample, peakMemoryBytes: Math.max(sample.peakMemoryBytes, previous?.peakMemoryBytes ?? 0),
+            observedAt: new Date().toISOString(), diskBytes, ...(diskDue ? { diskObservedAt: new Date().toISOString() } : {}) };
+          await this.store.saveRecord(session.record);
+          session.workerObservationNotice = undefined;
+          if (diskBytes !== undefined && diskBytes > WORKER_LIMITS.diskBytes) throw new WorkerError("worker_disk_limit", "The worker's 20 GiB soft disk limit was exceeded. Source data was preserved; remove unused build/cache output before retrying.");
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Worker observation failed.";
+          if (session.workerObservationNotice !== message) {
+            await this.append(id, { type: "notice", message });
+            session.workerObservationNotice = message;
+          }
+          await this.finishDocker(session);
+          await this.setStatus(id, "failed");
+        }
+      });
+    } finally { this.workerObserving = false; }
+  }
+
+  async assertWorkerProviderInactive(connectionId: string): Promise<void> {
+    await this.worker?.load();
+    const state = this.worker?.current;
+    if (state && state.phase !== "stopped" && (await this.store.readRecord(state.sessionId))?.connectionId === connectionId)
+      throw new WorkerError("provider_in_use", "Stop/recover the Docker worker before changing its provider connection.");
+  }
+
+  async runtimeStatus(): Promise<unknown> {
+    return { defaultMode: (await this.settings?.read())?.executionMode ?? "native",
+      docker: this.worker ? await this.worker.health() : { available: false, reason: "Managed Docker storage is unavailable." },
+      usage: this.worker?.activeSession ? (await this.store.readRecord(this.worker.activeSession))?.workerUsage ?? null : null,
+      limits: WORKER_LIMITS,
+      support: "Initial target: macOS with Docker Desktop and Linux containers. Native Linux and Windows host acceptance remains pending." };
+  }
+
+  async setExecutionMode(value: unknown): Promise<void> {
+    if (value !== "native" && value !== "docker") throw new WorkerError("execution_mode_invalid", "Choose native or docker execution.", 400);
+    if ([...this.live.values()].some(session => ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)))
+      throw new WorkerError("worker_busy", "Finish active conversations before changing the default runtime.");
+    if (value === "docker") {
+      const health = await this.worker?.health();
+      if (!health?.available) throw new WorkerError("worker_unavailable", health?.reason ?? "Docker is unavailable.", 503);
+    }
+    await this.settings?.update({ executionMode: value });
+  }
+
+  async recoverDocker(actor: string, credential?: string | null): Promise<void> {
+    if (!this.worker) throw new WorkerError("worker_unavailable", "Docker execution is unavailable.", 503);
+    await this.worker.load();
+    const id = this.worker.current?.sessionId;
+    if (!id) return;
+    const session = await this.requireLive(id);
+    if (session.record.createdBy !== actor) throw new WorkerError("worker_forbidden", "Only the owning administrator can release this conversation's Core lease.", 403);
+    if (credential) session.workspaceCredential = credential;
+    await this.cancelSession(id);
+  }
+
+  private async finishDocker(session: LiveSession): Promise<void> {
+    const worker = this.worker, id = session.record.id;
+    if (!worker || worker.activeSession !== id) return;
+    session.runEpoch = undefined;
+    this.clearRefresh(session);
+    this.workerBridge?.unregister(id);
+    this.proxy?.unregister(id); this.developmentMcp.unregister(id);
+    if (worker.current?.phase === "running") {
+      const sample = await worker.sample().catch(() => null);
+      if (sample) { session.record.workerUsage = { ...session.record.workerUsage, ...sample,
+        peakMemoryBytes: Math.max(sample.peakMemoryBytes, session.record.workerUsage?.peakMemoryBytes ?? 0), observedAt: new Date().toISOString() }; await this.store.saveRecord(session.record); }
+    }
+    await worker.stop(); // Also kills detached commands. Failure retains reservation and Core lease.
+    if (session.run) { await session.run.stop(); session.run = null; }
+    const state = worker.current;
+    if (state) {
+      const token = session.workspaceCredential ?? session.credential;
+      if (!token || !this.development) throw new WorkerError("worker_credentials_required", "Refresh the owning administrator's Core login to release the stopped worker lease.", 401);
+      await this.development.workerBindings(id, token, { leaseId: state.leaseId, acquire: false });
+      // Keep the persisted generation until every source lease has been acknowledged.
+      // Otherwise a failed worktree release leaves busy admission with no recoverable state.
+      await this.leaseWorkspaces(session, false);
+      await worker.finish();
+    }
+    // Without a generation, preparation failed before this turn acquired any source leases.
+    worker.releaseClaim(id); this.workerBindings = null;
+  }
+
   async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null } = {}): Promise<void> {
     return this.serialize(id, async () => {
       const session = await this.requireLive(id);
@@ -702,14 +820,25 @@ export class SessionManager {
       if (["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
         throw new SessionBusyError();
       }
+      const docker = session.record.executionMode === "docker";
+      let claimed = false;
       let release: (() => void) | undefined;
       try {
+        if (docker) {
+          if (!this.worker || !this.connections || !this.development?.available || !this.proxyBaseUrl)
+            throw new WorkerError("worker_unavailable", "Docker execution requires a Core-managed Harness with managed provider connections.", 503);
+          await this.worker.load();
+          if (this.worker.busy) throw new WorkerError("worker_busy", "The shared Docker agent is busy. Finish or stop its current conversation before sending another turn.");
+          if (this.worker.current) throw new WorkerError("worker_recovery_required", "Stop/recover the previous Docker worker before sending another message.");
+          this.worker.claim(id); claimed = true;
+        }
+        let processTransport: AgentProcessTransport | undefined;
         let selectedAdapter = this.adapter;
         if (this.connections) {
           const binding = this.bindingFor(session.record);
           if (!binding) throw new ConnectionError(409, "provider_required", "Choose the provider for this chat before sending a message.");
           release = await this.connections.reserve(binding);
-          selectedAdapter = await this.connections.adapter(binding);
+          selectedAdapter = await this.connections.adapter(binding, docker);
           const health = await selectedAdapter.probe();
           if (!health.available) throw new ConnectionError(503, "provider_unavailable", health.reason ?? "This provider is unavailable.");
         }
@@ -751,6 +880,21 @@ export class SessionManager {
           // "the operator saying anything at all" restores nothing for up to three minutes.
           session.credential = credential;
           session.mcpAuthorizationNotice = false;
+        }
+        if (docker) {
+          const token = session.workspaceCredential ?? session.credential;
+          if (!token) throw new WorkerError("worker_credentials_required", "Sign in to Harness through Core before starting Docker execution.", 401);
+          const cwd = await this.store.ensureWorkspace(id);
+          if (!cwd) throw new WorkerError("worker_storage_required", "Docker execution requires managed session storage.", 503);
+          this.workerBindings = (await this.development!.workerBindings(id, token))!;
+          const bindings = this.workerBindings, leaseId = randomUUID();
+          processTransport = await this.worker!.prepare(id, leaseId, bindings, cwd,
+            await this.connections!.workerMounts(this.bindingFor(session.record)!), async () => {
+              const acquired = await this.development!.workerBindings(id, token, { leaseId, acquire: true });
+              if (!acquired || acquired.instanceId !== bindings.instanceId || acquired.installationId !== bindings.installationId
+                || acquired.treesRoot !== bindings.treesRoot || acquired.repositoriesRoot !== bindings.repositoriesRoot)
+                throw new WorkerError("worker_bindings_changed", "Core source bindings changed while starting the worker.");
+            });
         }
         await this.leaseWorkspaces(session, true);
         if (session.run) await this.refreshMcpServers(session);
@@ -800,7 +944,7 @@ export class SessionManager {
           // fenced, inside composeSystemPrompt. The facade's instructions deliberately do not carry the
           // preamble: an external client has no shell and no approval cards, so it would be false there.
           const systemPrompt = composeSystemPrompt(
-            [HOST_SYSTEM_PROMPT, operatorPrompt?.trim()].filter(Boolean).join("\n\n"),
+            [docker ? DOCKER_SYSTEM_PROMPT : HOST_SYSTEM_PROMPT, operatorPrompt?.trim()].filter(Boolean).join("\n\n"),
             await this.readDeliverableSkills(session));
           // The session's own directory, not the shared one. Every session used to start in the same
           // `workDir`, which defaulted to the home directory — a file placed "next to the session" was
@@ -819,6 +963,7 @@ export class SessionManager {
           this.mcpPolicy.cancel(id); // A new native client starts a fresh JSON-RPC request namespace.
           const runEpoch = session.runEpoch = randomUUID();
           session.run = selectedAdapter.start({
+            processTransport,
             sessionId: id,
             autonomy: session.record.autonomy ?? "normal",
             cwd: workspace ?? this.workDir,
@@ -840,6 +985,12 @@ export class SessionManager {
           if (session.record.handoffDispatch.state === "unknown") session.record.handoffDispatch.state = "running";
           await this.store.saveRecord(session.record);
         }
+      } catch (error) {
+        if (claimed) {
+          try { await this.finishDocker(session); }
+          catch { throw new WorkerError("worker_recovery_required", "The turn could not start and worker termination or Core lease release is uncertain. Use Stop/recovery; source data was preserved.", 503); }
+        }
+        throw error;
       } finally { release?.(); }
     });
   }
@@ -855,8 +1006,12 @@ export class SessionManager {
   private async buildMcpServers(session: LiveSession, knownCandidates?: McpProvider[]): Promise<Record<string, unknown> | undefined> {
     const raw = await this.buildAppMcpServers(session, knownCandidates);
     const appServers = raw && Object.fromEntries(Object.entries(raw).map(([key, server]) => [key, { ...(server as object), hostyPolicy: true }]));
-    if (!this.development?.available || !this.proxyBaseUrl || !(session.workspaceCredential ?? session.credential)) return appServers;
-    return { ...appServers, ...this.developmentMcp.config(session.record.id, this.proxyBaseUrl) };
+    const servers = !this.development?.available || !this.proxyBaseUrl || !(session.workspaceCredential ?? session.credential)
+      ? appServers : { ...appServers, ...this.developmentMcp.config(session.record.id, this.proxyBaseUrl) };
+    if (session.record.executionMode !== "docker") return servers;
+    if (!this.proxyBaseUrl) throw new WorkerError("worker_mcp_unavailable", "Docker MCP requires the Harness loopback endpoint.");
+    this.workerBridge ??= new WorkerMcpBridge(this.proxyBaseUrl);
+    return this.workerBridge.rewrite(session.record.id, servers);
   }
 
   private async buildAppMcpServers(session: LiveSession, knownCandidates?: McpProvider[]): Promise<Record<string, unknown> | undefined> {
@@ -1232,7 +1387,12 @@ export class SessionManager {
   }
 
   async cancelSession(id: string): Promise<void> {
+    await this.serialize(id, () => this.cancelSessionLocked(id));
+  }
+
+  private async cancelSessionLocked(id: string): Promise<void> {
     const session = await this.requireLive(id);
+    if (session.record.executionMode === "docker") await this.finishDocker(session);
     session.runEpoch = undefined;
     this.setActivity(session, null);
     if (session.run) {
@@ -1292,6 +1452,9 @@ export class SessionManager {
     this.mcpPolicy.close();
     this.stopping = true;
     for (const session of this.live.values()) {
+      if (session.record.executionMode === "docker") {
+        try { await this.finishDocker(session); } catch { continue; }
+      }
       if (session.run) {
         await session.run.stop().catch(() => undefined);
         session.run = null;
@@ -1302,6 +1465,8 @@ export class SessionManager {
     }
 
     await this.drainHarnessEvents();
+    await this.workerBridge?.close();
+    await this.worker?.stop().catch(() => undefined); // Persisted lease remains when no caller can release it.
   }
 
   /** Waits for handlers already dispatched, after the runs that feed them have stopped. */
@@ -1442,6 +1607,7 @@ export class SessionManager {
       case "error": {
         // The run is dead: drop it so the next message starts a fresh harness (resuming the
         // captured harness session when possible) instead of feeding a terminated input stream.
+        if (session.record.executionMode === "docker") await this.finishDocker(session);
         const failedRun = session.run;
         session.run = null;
         session.pendingApprovals.clear();
@@ -1528,7 +1694,7 @@ export class SessionManager {
     // nobody reopened would never be swept and would sit in the list — and in the attention count —
     // as permanently blocked.
     for (const record of await this.store.listRecords()) {
-      if (!isWaitingStatus(record.status) || this.live.has(record.id)) {
+      if (!isWaitingStatus(record.status) || this.live.has(record.id) || this.worker?.activeSession === record.id) {
         continue;
       }
 
@@ -1551,33 +1717,25 @@ export class SessionManager {
     }
 
     for (const [id, session] of this.live) {
-      if (!isWaitingStatus(session.record.status)) {
-        continue;
-      }
-
-      if (now - Date.parse(session.record.updatedAt) < maxWaitMs) {
-        continue;
-      }
-
-      // Captured before setStatus, which stamps updatedAt with *now*: computing it afterwards audited
-      // every abandonment as having waited about zero, which is the one number the record exists for.
-      const waitedMs = now - Date.parse(session.record.updatedAt);
-      const run = session.run;
-      session.run = null;
-      session.pendingApprovals.clear();
-      session.pendingQuestions.clear();
-      session.mcpAppIds = [];
-      this.proxy?.unregister(id);
-      this.developmentMcp.unregister(id);
-      if (run) {
-        // Released before the status flips, so nothing can answer an approval into a run that is
-        // already being torn down.
-        await run.stop().catch(() => undefined);
-      }
-
-      await this.setStatus(id, "abandoned");
-      this.audit.report("session_abandoned", { sessionId: id, waitedMs: String(waitedMs) });
-      abandoned.push(id);
+      await this.serialize(id, async () => {
+        if (!isWaitingStatus(session.record.status) || now - Date.parse(session.record.updatedAt) < maxWaitMs) return;
+        const waitedMs = now - Date.parse(session.record.updatedAt);
+        if (session.record.executionMode === "docker") {
+          // Do not release the provider or pending approvals while a detached writer may still run.
+          try { await this.finishDocker(session); } catch { return; }
+        }
+        session.runEpoch = undefined;
+        if (session.run) { await session.run.stop().catch(() => undefined); session.run = null; }
+        session.pendingApprovals.clear();
+        session.pendingQuestions.clear();
+        session.mcpAppIds = [];
+        this.clearRefresh(session);
+        this.proxy?.unregister(id);
+        this.developmentMcp.unregister(id);
+        await this.setStatus(id, "abandoned");
+        this.audit.report("session_abandoned", { sessionId: id, waitedMs: String(waitedMs) });
+        abandoned.push(id);
+      });
     }
 
     return abandoned;
@@ -1589,6 +1747,13 @@ export class SessionManager {
       return;
     }
 
+    if (session.record.executionMode === "docker" && !["running", "awaiting_approval", "awaiting_question"].includes(status)) {
+      try { await this.finishDocker(session); }
+      catch (error) {
+        await this.append(id, { type: "notice", message: "Docker worker termination or Core lease release is unconfirmed. Worktree leases remain held; use Stop/recovery before continuing." });
+        throw error;
+      }
+    }
     if (session.record.handoffDispatch?.state === "running" && status === "idle") session.record.handoffDispatch.state = "completed";
     if (session.record.handoffDispatch?.state === "running" && ["failed", "cancelled", "abandoned"].includes(status)) session.record.handoffDispatch.state = "failed";
     if (status === "idle") {

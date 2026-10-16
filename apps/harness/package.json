@@ -1,6 +1,6 @@
 {
   "name": "@haas/hosty-harness",
-  "version": "0.52.0",
+  "version": "0.54.0",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -15,7 +15,10 @@
     "@anthropic-ai/claude-agent-sdk": "0.3.288",
     "@hosty-sdk/app": "*",
     "@openai/codex": "0.160.0",
-    "tsx": "^4.23.15"
+    "tsx": "^4.23.15",
+    "mdast-util-from-markdown": "2.0.3",
+    "mdast-util-gfm": "3.1.0",
+    "micromark-extension-gfm": "3.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.19.1",

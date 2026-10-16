@@ -1,5 +1,5 @@
 import { AssistantClient } from "@hosty-sdk/app/assistant";
-import { ProviderError, type AppPermissionState, type ProviderDescriptor, type ProviderInvocation, type ProviderKind, type SpeechCapabilities, type SpeechResult } from "@hosty-sdk/app/providers";
+import { ProviderError, type AppPermissionState, type ProviderDescriptor, type ProviderInvocation, type ProviderKind, type SpeechCapabilities, type SpeechResult, type TranslationRequest, type TranslationResult, type TranslationCapabilities } from "@hosty-sdk/app/providers";
 
 export type ProviderServerOptions = {
   appId?: string; coreOrigin?: string; serviceToken?: string;
@@ -57,6 +57,20 @@ export class ProviderClient {
     if (options.language) url.searchParams.set("language", options.language);
     return read(await fetch(url, { method: "POST", redirect: "error", signal,
       headers: { authorization: `Bearer ${binding.token}`, "content-type": audio.type || "audio/wav" }, body: audio }));
+  }
+  async translationCapabilities(provider: Pick<ProviderDescriptor, "appId" | "key">, signal?: AbortSignal): Promise<TranslationCapabilities> {
+    const binding = await this.connect({ ...provider, kind: "translation" }, signal);
+    return read(await fetch(`${binding.url}/capabilities`, { redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000), headers: { authorization: `Bearer ${binding.token}` } }));
+  }
+  /** Translate text or Markdown through the explicitly selected provider; never retries or falls back. */
+  async translate(provider: Pick<ProviderDescriptor, "appId" | "key">, input: TranslationRequest, signal?: AbortSignal): Promise<TranslationResult> {
+    const deadline = signal ? AbortSignal.any([signal, AbortSignal.timeout(610_000)]) : AbortSignal.timeout(610_000);
+    const binding = await this.connect({ ...provider, kind: "translation" }, deadline);
+    const result = await read<TranslationResult>(await fetch(`${binding.url}/translations`, { method: "POST", redirect: "error", signal: deadline,
+      headers: { authorization: `Bearer ${binding.token}`, "content-type": "application/json" }, body: JSON.stringify(input) }));
+    if (typeof result.text !== "string" || result.targetLanguage !== input.targetLanguage || result.sourceLanguage !== (input.sourceLanguage ?? "auto"))
+      throw new ProviderError("provider_response_invalid", "Invalid translation response.", 502);
+    return result;
   }
   /** User-attributed requests preserve the assistant's existing handoff and dispatch policy. */
   async assistant(provider: Pick<ProviderDescriptor, "appId" | "key"> & { installationId?: string | null }, userToken: () => Promise<string>): Promise<AssistantClient> {

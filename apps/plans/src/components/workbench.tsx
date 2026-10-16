@@ -6,7 +6,7 @@ import { appFetch } from "@hosty-sdk/app/browser-auth";
 import { deliverableChanges, filterPlans, lineDiff, mapBounded, planLink, readFilters, statusCounts, writeFilters, type PlanFilters } from "@/lib/model";
 import { type PlanDetail, type RepositoryPlans, type SourceRepository, type WorkspacePlan } from "@/lib/types";
 import { Progress, VersionBrief, formatTime } from "./plan-metadata";
-import { SourceDocument, TrackedDocument } from "./document";
+import { TrackedDocument } from "./document";
 import { LoadingIndicator } from "./loading-indicator";
 import { WorkspaceOwner, WorkspaceSessionLink } from "./workspace-owner";
 import { PlanToolbar } from "./plan-toolbar";
@@ -20,6 +20,8 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { ArrowLeftIcon, FileTextIcon, GitBranchIcon, RefreshCwIcon } from "lucide-react";
+
+import { TranslateDocument } from "./translate-document";
 
 const PlanGrid = dynamic(() => import("./plan-grid").then(module => module.PlanGrid));
 
@@ -170,7 +172,7 @@ export function PlanVersions({ detail, workspaceId, navigate }: { detail: PlanDe
     </div>
     <TabsContent value="tracked" className="min-h-0 min-w-0 overflow-hidden">
       <Frame className="h-full min-h-0"><FrameHeader className="shrink-0 gap-2 sm:flex-row sm:items-center sm:justify-between"><DocumentPath detail={detail} />{detail.document && <div className="flex shrink-0 items-center gap-3"><Badge variant="secondary">{detail.document.status ?? "Document"}</Badge><Progress document={detail.document} /></div>}</FrameHeader><FramePanel className="min-h-0 flex-1 overflow-y-auto overscroll-contain focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" role="region" aria-label="Document content" tabIndex={0}>
-        <TrackedDocument document={detail.document} error={detail.error} repositoryId={repositoryId} navigate={navigate} />
+        <TrackedDocument document={detail.document} error={detail.error} repositoryId={repositoryId} navigate={navigate}>{detail.document && <TranslateDocument document={detail.document} repositoryId={repositoryId} workspaceId={null} navigate={navigate} />}</TrackedDocument>
       </FramePanel></Frame>
     </TabsContent>
     {detail.workspaces.map(version => <TabsContent key={version.workspace.id} value={version.workspace.id} className="min-h-0 min-w-0 overflow-hidden">
@@ -194,7 +196,7 @@ export function WorkspaceDocument({ version, repositoryId, navigate }: { version
     {(version.label === "completing" || version.label === "removed") && <Alert><AlertDescription><VersionBrief version={version} /></AlertDescription></Alert>}
     {changes && changes.length > 0 && <section className="flex min-w-0 flex-col gap-2"><h3 className="font-semibold">Deliverable changes</h3><Table><TableHeader><TableRow><TableHead>ID</TableHead><TableHead>Change</TableHead><TableHead>Deliverable</TableHead></TableRow></TableHeader><TableBody>{changes.map(change => <TableRow key={change.id}><TableCell><strong>{change.id}</strong></TableCell><TableCell>{change.kind}{change.previousText !== undefined && change.kind !== "modified" ? ", text edited" : ""}</TableCell><TableCell className="whitespace-normal">{change.text}{change.previousText !== undefined && <p className="text-xs text-muted-foreground">Previously: <del>{change.previousText}</del></p>}</TableCell></TableRow>)}</TableBody></Table></section>}
     <nav aria-label="Workspace document view"><ToggleGroup type="single" variant="outline" value={view} onValueChange={value => { if (value) setView(value as "document" | "diff"); }} aria-label="Workspace document view" className="flex-wrap"><ToggleGroupItem value="diff">Diff against its base</ToggleGroupItem><ToggleGroupItem value="document">Workspace document</ToggleGroupItem></ToggleGroup></nav>
-    {view === "document" ? version.document ? <SourceDocument document={version.document} repositoryId={repositoryId} navigate={navigate} /> : <Alert><AlertDescription>The workspace deleted this plan.</AlertDescription></Alert> : <>
+    {view === "document" ? version.document ? <TranslateDocument document={version.document} repositoryId={repositoryId} workspaceId={version.workspace.id} navigate={navigate} /> : <Alert><AlertDescription>The workspace deleted this plan.</AlertDescription></Alert> : <>
       {(!version.base && version.label !== "new" && !version.error) && <Alert><AlertDescription>Base document unavailable.</AlertDescription></Alert>}
       {version.error ? null : <><p className="text-xs text-muted-foreground">Base {version.workspace.baseCommit?.slice(0, 12) ?? "unknown"} to worktree</p>{diff.abbreviated && <Alert><AlertDescription>This large diff is abbreviated. Open the document to read the current version.</AlertDescription></Alert>}<pre className="diff" aria-label="Workspace changes against its base">{diff.lines.map((line, index) => <span key={index} className="diff-line" data-kind={line.kind}><span className="diff-marker" aria-hidden="true">{line.kind === "added" ? "+" : line.kind === "removed" ? "−" : " "}</span>{line.text}{"\n"}</span>)}</pre></>}
     </>}

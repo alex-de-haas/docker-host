@@ -27,6 +27,9 @@ export type SessionStatus =
 export type SessionAutonomy = "normal" | "autonomous";
 
 export interface SessionRecord {
+  /** Existing records remain native until an explicit new conversation selects Docker. */
+  executionMode?: "native" | "docker";
+  workerUsage?: { memoryBytes: number; peakMemoryBytes: number; pids: number; observedAt: string; diskBytes?: number; diskObservedAt?: string };
   autonomy?: SessionAutonomy;
   developmentWorkspaces?: import("./development.js").DevelopmentWorkspace[];
   developmentLease?: string;
@@ -234,11 +237,11 @@ export class SessionStore {
   }
 
   /** Deletes sessions whose last activity is older than the retention window. Returns deleted ids. */
-  async sweepRetention(retentionDays: number, now = new Date()): Promise<string[]> {
+  async sweepRetention(retentionDays: number, now = new Date(), protectedIds: ReadonlySet<string> = new Set()): Promise<string[]> {
     const cutoff = now.getTime() - retentionDays * 24 * 60 * 60 * 1000;
     const deleted: string[] = [];
     for (const record of await this.listRecords()) {
-      if (new Date(record.updatedAt).getTime() < cutoff) {
+      if (!protectedIds.has(record.id) && new Date(record.updatedAt).getTime() < cutoff) {
         await rm(this.sessionDir(record.id), { recursive: true, force: true });
         // The workspace goes with the session here and on delete — and nowhere else. Abandonment
         // stops a session and keeps it resumable, so its files must stay.

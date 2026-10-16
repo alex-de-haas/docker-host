@@ -16,6 +16,7 @@ import { FakeHarnessAdapter } from "./harness/fake.js";
 import { createGatewayServer } from "./server.js";
 import { AuditReporter } from "./audit.js";
 import { captureEnv } from "./test-env.js";
+import { AgentConnections } from "./connections/registry.js";
 
 // One ECDSA key pair for the suite: tokens are minted exactly the way Core mints them, and the
 // public half goes into the env the SDK validator reads.
@@ -116,6 +117,33 @@ describe("gateway", () => {
     headers.set("content-type", "application/json");
     return fetch(`${origin}${pathName}`, { ...init, headers });
   }
+
+  it("restricts translation settings to administrators and persists both explicit selections", async () => {
+    const values = new Map<string, string>();
+    const registry = new AgentConnections(path.join(dataDir, "connections"), path.join(dataDir, "cache"), {
+      get: async key => values.get(key) ?? null, set: async (key, value) => { values.set(key, value); }, delete: async key => { values.delete(key); },
+    });
+    const isolated = createGatewayServer(manager, new FakeHarnessAdapter(), settings, directory, null, null, registry);
+    await new Promise<void>(resolve => isolated.listen(0, resolve));
+    const base = `http://127.0.0.1:${(isolated.address() as AddressInfo).port}`;
+    try {
+      for (const token of [null, mintToken("host.user"), "hosty_provider.synthetic"]) {
+        const response = await fetch(base + "/api/settings/translation", { headers: token ? { authorization: `Bearer ${token}` } : {} });
+        expect(response.status).toBe(401);
+      }
+      for (const kind of ["codex", "claude"]) {
+        const c = await registry.update({ name: kind, kind, auth: "api-key", secret: "synthetic-only" });
+        const model = kind === "codex" ? "gpt-6-luna" : "haiku";
+        const response = await fetch(base + `/api/settings/translation/${kind}`, { method: "PUT", headers: { authorization: `Bearer ${mintToken("host.admin")}`, "content-type": "application/json" }, body: JSON.stringify({ connectionId: c.id, model }) });
+        expect(response.status).toBe(200);
+        expect((await settings.read()).translationConnections?.[kind as "codex" | "claude"]?.connectionId).toBe(c.id);
+        const configuration = await response.json() as { variants: { key: string; model: string }[] };
+        expect(configuration.variants.find(v => v.key === kind)?.model).toBe(model);
+      }
+      expect(Object.keys((await new SettingsStore(dataDir).read()).translationConnections!)).toHaveLength(2);
+      expect((await new SettingsStore(dataDir).read()).translationModels).toEqual({ codex: "gpt-6-luna", claude: "haiku" });
+    } finally { await new Promise(resolve => isolated.close(resolve)); await registry.shutdown(); }
+  });
 
   it("serves health and ordinary APIs after a rejected startup sweep", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);

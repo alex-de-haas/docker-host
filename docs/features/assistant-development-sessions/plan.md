@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-24
-updated: 2026-10-14
+updated: 2026-10-15
 summary: Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -141,8 +141,17 @@ when a worktree is selected; scheduling remains with the calling workflow.
 
 The [sandbox runtime acceptance summary](../app-sandbox-runtimes/feature.md#integrations-and-verification-boundary) verifies
 the Harness/worktree loop and independent QA without workspace allocation. Shell and Workspaces
-consume that same API. Git publication/CI acceptance and the supported production agent transport
-remain under their existing owners; no commits or PRs are created by this runtime experiment.
+consume that same API. The [shared Docker runtime](../assistant-shared-docker-runtime/feature.md) now provides supported
+Codex/Claude execution. The [D9 Git acceptance](../../reviews/2026-10-15-sandbox-d9-git-acceptance.md)
+records one real Codex conversation publishing a test PR through Core, observing CI, fixing review,
+recovering from a Harness crash and finishing its child sandbox with source preserved. It does not
+verify provider switching within this conversation or the broader D1-D2 matrix. PR #599 subsequently
+merged and published Core/CLI 0.135.1 and Demo 0.17.2; the
+[local continuation](../../reviews/2026-10-15-sandbox-d9-local-acceptance.md) verifies those releases,
+reconciles the local sandbox ledger and records Sandbox D27. The [cold-engine continuation](../../reviews/2026-10-15-sandbox-d9-cold-engine-acceptance.md)
+records Sandbox D28: empty-engine image import/extraction, uncached build/start, warm repeat, full
+engine/native memory and disposal without changing existing workloads. Broader host/recipe
+acceptance remains in Sandbox D9. This does not close this umbrella plan's remaining deliverables.
 
 [Feedback](../app-feedback-inbox/plan.md) adds optional durable collections and explicit assistant
 organization into several sessions/workspaces. Independent changes may use parallel worktrees/PRs;
