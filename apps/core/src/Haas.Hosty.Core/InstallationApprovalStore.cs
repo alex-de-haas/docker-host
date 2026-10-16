@@ -33,8 +33,9 @@ internal static class CoreAppPermissions
     public const string SourceConnections = "sources.connections";
     public const string ReadSkills = "apps.skills.read";
     public const string SpeechProviders = "providers.speech-to-text";
+    public const string TranslationProviders = "providers.translation";
     public const string AssistantProviders = "providers.assistant";
-    public static readonly string[] Known = [Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, SandboxesRead, SandboxesManage, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SandboxesInspect, SandboxesOperate, SourceConnections, ReadSkills, SpeechProviders, AssistantProviders];
+    public static readonly string[] Known = [Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, SandboxesRead, SandboxesManage, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SandboxesInspect, SandboxesOperate, SourceConnections, ReadSkills, SpeechProviders, TranslationProviders, AssistantProviders];
 
     // The old name grants exactly the same authority. Other retired permissions remain unsupported.
     public static string Normalize(string permission) => permission == LegacySources ? Sources : permission;
@@ -86,6 +87,7 @@ internal static class CoreAppPermissions
         ReadUsers => "Read user-management information",
         ManageUsers => "Manage users and their access",
         SpeechProviders => "List and use all current and future speech-to-text providers",
+        TranslationProviders => "Send text to all current and future translation providers, using their configured accounts",
         AssistantProviders => "Create draft assistant conversations on your behalf",
         ReadSkills => "Read agent skills published by installed apps",
         Install => "Install, update and remove applications; routine updates need no confirmation, other changes require Core review",

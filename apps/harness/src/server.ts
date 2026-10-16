@@ -4,6 +4,8 @@ import { createHostyUiResponse } from "@hosty-sdk/app/ui/server";
 import { readOwnPermissionNotice } from "@hosty-sdk/app/permissions/server";
 import { delegationCredential } from "./session-delegation.js";
 import { speechRoute } from "./speech.js";
+import { translationRoute } from "./translation/routes.js";
+import { isTranslationKind, TranslationService } from "./translation/service.js";
 import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { ProviderError, type ProviderInvocation } from "@hosty-sdk/app/providers";
 import { HandoffStore } from "./handoff/store.js";
@@ -57,6 +59,7 @@ export function createGatewayServer(
   connections: AgentConnections | null = null,
 ): Server {
   const handoffs = new HandoffStore(manager, settings, providers);
+  const translations = connections && settings ? new TranslationService(connections, settings) : null;
   const recovered = handoffs.sweep().then(() => manager.recoverMcpApprovals()).catch(error => {
     // A transient directory/storage failure is retried by the periodic sweep. Keep unrelated
     // endpoints available and attach the handler immediately, before the first request arrives.
@@ -65,7 +68,8 @@ export function createGatewayServer(
   const timer = setInterval(() => { void handoffs.sweep().catch(error => console.error("[handoff] cleanup failed", error)); }, 60_000);
   timer.unref();
   const server = createServer((request, response) => {
-    void recovered.then(() => route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs)).catch((error) => {
+    void recovered.then(() => route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations)).catch((error) => {
+      if (response.destroyed) return;
       if (error instanceof ProviderError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
       if (error instanceof SessionBusyError) {
         sendJson(response, 409, { code: "session_busy", message: error.message });
@@ -108,6 +112,7 @@ async function route(
   facade: McpFacade | null,
   connections: AgentConnections | null,
   handoffs: HandoffStore,
+  translations: TranslationService | null,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://gateway.local");
   const method = request.method ?? "GET";
@@ -117,6 +122,9 @@ async function route(
     response.writeHead(204).end();
     return;
   }
+
+  // This surface accepts only its exact Core provider credential, never operator cookies.
+  if (await translationRoute(request, response, url, translations)) return;
 
   // Outside /api and ahead of the operator gate, like the proxy below and for the same kind of
   // reason: an external agent client authenticates with a scoped access token of its own, which
@@ -291,6 +299,15 @@ async function route(
   }
 
   if (await speechRoute(request, response, url)) return;
+
+  if (url.pathname === "/api/settings/translation" && translations && method === "GET") {
+    sendJson(response, 200, await translations.configuration()); return;
+  }
+  const translationSetting = url.pathname.match(/^\/api\/settings\/translation\/(codex|claude)$/);
+  if (translationSetting && translations && method === "PUT" && isTranslationKind(translationSetting[1]!)) {
+    const body = await readJson(request);
+    sendJson(response, 200, await translations.configure(translationSetting[1], body.connectionId, body.model)); return;
+  }
 
   if (url.pathname === "/api/assistant/v1/handoffs" && method === "POST") {
     const prepared = await handoffs.prepare(actor.userId, await readJson(request), consumer);

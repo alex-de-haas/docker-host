@@ -121,6 +121,7 @@ public sealed class AppManifestServiceTests
     [Theory]
     [InlineData("assistant", "app_manifest_assistant_contract_required")]
     [InlineData("speech-to-text", "app_manifest_speech_to_text_contract_required")]
+    [InlineData("translation", "app_manifest_translation_contract_required")]
     public async Task LoadAsync_MissingProviderContract_IdentifiesTheInterface(string name, string code)
     {
         var path = await WriteManifestAsync("com.example.provider", role: $$""", "interfaces": { "{{name}}": [{}] } """);

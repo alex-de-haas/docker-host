@@ -1,7 +1,7 @@
 ---
 created: 2026-09-29
-updated: 2026-10-11
-summary: Apps discover and call confirmed speech-to-text and assistant providers with short-lived Core credentials.
+updated: 2026-10-15
+summary: Apps discover and call confirmed speech, translation and assistant providers with short-lived Core credentials.
 components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/whisper, apps/harness]
 ---
 
@@ -9,11 +9,17 @@ components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/whisper,
 
 ## Permissions And Review
 
-Core 0.115.1 accepts `providers.speech-to-text` and `providers.assistant`. Each grants discovery and
+Core 0.132.0 accepts `providers.speech-to-text`, `providers.translation` and `providers.assistant`. Each grants discovery and
 use of every confirmed provider in its category, including later installations. There is no separate
-use permission or per-provider ACL. Supply roles are `speech-to-text` and `assistant` in `provides`;
+use permission or per-provider ACL. Supply roles are `speech-to-text`, `translation` and `assistant` in `provides`;
 roles require installation/update confirmation. Ordinary runtime apps can supply and consume these
 interfaces. Agent connections remain inside Harness; `providers.agent` is not accepted.
+
+Translation uses the same app-authorized credential flow as speech. Harness exposes two static
+interface keys (`codex` and `claude`) backed by explicitly selected connections. Text and Markdown
+travel directly to that provider; Core stores neither source text nor translations. See
+[Translation providers](../translation-provider/feature.md) for limits, SDK calls, Markdown integrity
+checks, native execution controls and measured latency.
 
 `corePermissions` is required authority. `optionalCorePermissions` is optional authority. Lists must
 contain known, unique, disjoint names. Core confirmation offers optional choices unchecked on install,
