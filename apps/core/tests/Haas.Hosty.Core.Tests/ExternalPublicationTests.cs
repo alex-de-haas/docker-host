@@ -25,6 +25,20 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ExternalPublication_MergedEvidenceAcceptsCanonicalUrlCasingWithoutAcceptingOtherRepositories()
+    {
+        var f = await ExternalPublicationFixture();
+        var w = f.W with { PullRequests = ["https://GITHUB.COM/OWNER/REPO/pull/42"] };
+        await JsonStorage.WriteAsync(Path.Combine(f.F.Paths.CoreRoot, "development/workspaces", w.Id + ".json"), w);
+        f.Provider.State = "merged"; f.Provider.Complete = true;
+        var heads = await f.Service.MergedWorkspaceHeadsAsync(w.Owner, default);
+        Assert.Equal(w.Observation!.Head, heads[w.Id]);
+        w = w with { PullRequests = ["https://github.com/another/repo/pull/42"] };
+        await JsonStorage.WriteAsync(Path.Combine(f.F.Paths.CoreRoot, "development/workspaces", w.Id + ".json"), w);
+        Assert.Empty(await f.Service.MergedWorkspaceHeadsAsync(w.Owner, default));
+    }
+
+    [Fact]
     public async Task ExternalPublication_RefreshesPersistsAndTracksRemoteHeadWithoutMutations()
     {
         var f = await ExternalPublicationFixture();

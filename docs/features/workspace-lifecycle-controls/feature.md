@@ -68,6 +68,11 @@ A corrective publication after a completed cycle requires a successful Resume af
 workspace completion. Source observation can invalidate completion, but an older cycle's Resume
 does not authorize another corrective publication.
 
+Cleanup refreshes a stale resource revision only when Finish/Dispose has no durable operation
+receipt, and saves the replacement request before dispatch. Accepted operations retain their
+original request and revision through recovery. External GitHub completion evidence treats
+canonical owner/repository URL casing consistently with PR observation.
+
 ## Testing Expectations
 
 - Verify all-repository clean/merged evidence, dirty/current-unmerged rejection and exact-head merge

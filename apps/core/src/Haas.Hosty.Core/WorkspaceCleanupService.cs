@@ -70,8 +70,20 @@ internal sealed class WorkspaceCleanupService(CoreDataPaths paths, WorkspaceInsp
                 resources.Add(new(instance.Id, "sandbox", Guid.NewGuid().ToString("D"), instance.Revision));
             job = job with { Resources = resources.ToArray() };
             await JsonStorage.WriteAsync(path, job, restrictToOwner: true);
-            foreach (var resource in resources)
+            async Task<WorkspaceCleanupResource> RefreshUnaccepted(WorkspaceCleanupResource resource, long revision, bool recorded)
             {
+                // Revision changes prove the old expected revision cannot be admitted. Replace only
+                // an unjournaled request; accepted Finish/Dispose always retains its replay identity.
+                if (recorded || revision == resource.Revision) return resource;
+                var fresh = resource with { RequestId = Guid.NewGuid().ToString("D"), Revision = revision };
+                resources[resources.FindIndex(r => r.Kind == resource.Kind && r.Id == resource.Id)] = fresh;
+                job = job with { Resources = resources.ToArray() };
+                await JsonStorage.WriteAsync(path, job, restrictToOwner: true);
+                return fresh;
+            }
+            foreach (var entry in resources.ToArray())
+            {
+                var resource = entry;
                 // Context alone never grants access to another operator's data. Recheck each owner
                 // on recovery, then use the existing admin lifecycle path with its original UUID.
                 if (resource.Kind == "core")
@@ -81,6 +93,8 @@ internal sealed class WorkspaceCleanupService(CoreDataPaths paths, WorkspaceInsp
                     if (record is null || !Belongs(record.Owner, record.Request.Context, owner, workspaceId))
                         throw DevelopmentWorkspaceService.Error("consumer_unavailable", "Cannot verify the child Core owner.");
                     await RequirePermission(appId, CoreAppPermissions.CoreEnvironmentsManage, ct);
+                    resource = await RefreshUnaccepted(resource, record.Revision,
+                        record.Operations?.Any(o => o.Id == CoreEnvironmentService.RequestId(resource.RequestId)) == true);
                     var result = await environmentService.CommandAsync(new(userId), resource.Id, "finish", new(resource.RequestId, resource.Revision), ct);
                     if (result.State != "finished") throw DevelopmentWorkspaceService.Error("cleanup_pending", "Child Core cleanup is not finished. Retry this workspace action.");
                 }
@@ -90,6 +104,7 @@ internal sealed class WorkspaceCleanupService(CoreDataPaths paths, WorkspaceInsp
                     if (record.State == "disposed") continue;
                     if (!Belongs(record.Owner, record.Context, owner, workspaceId)) throw DevelopmentWorkspaceService.Error("forbidden", "Sandbox ownership changed.");
                     await RequirePermission(appId, CoreAppPermissions.SandboxesManage, ct);
+                    resource = await RefreshUnaccepted(resource, record.Revision, record.Operations.Any(o => o.Id == resource.RequestId));
                     var result = await sandboxOperations.CommandAsync(new(userId), resource.Id, "dispose", new(resource.RequestId, resource.Revision), ct);
                     if (result.State != "disposed") throw DevelopmentWorkspaceService.Error("cleanup_pending", "Sandbox cleanup is pending. Retry this workspace action.");
                 }

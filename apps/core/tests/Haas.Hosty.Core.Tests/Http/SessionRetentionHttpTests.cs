@@ -12,7 +12,8 @@ public sealed class SessionRetentionHttpTests
     [Fact]
     public async Task BackgroundRetentionScopesOwnershipAndRequiresReviewedCleanupWithFreshCompletion()
     {
-        await using var host = await CoreHttpHarness.StartAsync();
+        var runtime = new CleanupRuntime();
+        await using var host = await CoreHttpHarness.StartAsync(configure: services => services.AddSingleton<ICoreEnvironmentRuntime>(runtime));
         var services = host.Services;
         var now = services.GetRequiredService<IClock>().UtcNow;
         var users = services.GetRequiredService<UserDirectoryStore>();
@@ -47,7 +48,7 @@ public sealed class SessionRetentionHttpTests
         Assert.Equal("chat", other.Kind);
         var delete = new WorkspaceWorkflowCommand(Guid.NewGuid().ToString(), 0);
         Assert.Equal(HttpStatusCode.Forbidden, (await Read(command: delete)).StatusCode);
-        app = app with { GrantedCorePermissions = [CoreAppPermissions.Sources, CoreAppPermissions.WorkspacesCleanup] };
+        app = app with { GrantedCorePermissions = [CoreAppPermissions.Sources, CoreAppPermissions.WorkspacesCleanup, CoreAppPermissions.CoreEnvironmentsManage] };
         await apps.UpsertAppAsync(app);
         Assert.Equal(HttpStatusCode.Conflict, (await Read(command: delete)).StatusCode);
         Assert.True(Directory.Exists(tree.Path));
@@ -63,15 +64,44 @@ public sealed class SessionRetentionHttpTests
         var workflow = await workspaces.WorkflowAsync(owner, default);
         complete = await workspaces.ChangeWorkflowAsync(owner, "admin", "complete", new(Guid.NewGuid().ToString(), workflow.Revision), new Dictionary<string, string>(), default);
         delete = new(Guid.NewGuid().ToString(), complete.Revision);
+        var environments = services.GetRequiredService<CoreEnvironmentService>();
+        var actor = new SandboxActor(owner.UserId, owner.AppId, owner.Installation);
+        var stale = await environments.CreateAsync(actor, new(Guid.NewGuid().ToString(), "Unaccepted cleanup", Context: new(WorkspaceId: tree.WorkspaceId)), default, operatorApproved: true);
+        var accepted = await environments.CreateAsync(actor, new(Guid.NewGuid().ToString(), "Interrupted cleanup", Context: new(WorkspaceId: tree.WorkspaceId)), default, operatorApproved: true);
+        var staleRequest = Guid.NewGuid().ToString(); var acceptedRequest = Guid.NewGuid().ToString();
+        await environments.CommandAsync(new(owner.UserId), stale.Id, "stop", new(Guid.NewGuid().ToString(), stale.Revision), default);
+        runtime.FailOnce = accepted.Id;
+        var failed = await environments.CommandAsync(new(owner.UserId), accepted.Id, "finish", new(acceptedRequest, accepted.Revision), default);
+        Assert.Equal("cleanup-failed", failed.State);
+        var jobPath = Path.Combine(paths.CoreRoot, "development", "cleanup", delete.RequestId + ".json");
+        await JsonStorage.WriteAsync(jobPath, new WorkspaceCleanupJob(tree.WorkspaceId, owner.UserId, delete,
+            [new(stale.Id, "core", staleRequest, stale.Revision), new(accepted.Id, "core", acceptedRequest, accepted.Revision)]));
         var deleted = await Read(command: delete);
         Assert.Equal(HttpStatusCode.OK, deleted.StatusCode);
         Assert.Equal("deleted", (await deleted.Content.ReadFromJsonAsync(CoreJson.TypeInfo<SessionRetentionSnapshot>()))!.Workflow!.State);
         Assert.False(Directory.Exists(tree.Path));
+        Assert.False(Directory.Exists(stale.DataRoot)); Assert.False(Directory.Exists(accepted.DataRoot));
+        var journal = (await JsonStorage.ReadAsync<WorkspaceCleanupJob>(jobPath))!;
+        Assert.NotEqual(staleRequest, journal.Resources.Single(r => r.Id == stale.Id).RequestId);
+        Assert.Equal(acceptedRequest, journal.Resources.Single(r => r.Id == accepted.Id).RequestId);
+        Assert.Equal(accepted.Revision, journal.Resources.Single(r => r.Id == accepted.Id).Revision);
         Assert.Equal(HttpStatusCode.OK, (await Read(command: delete)).StatusCode);
         await apps.UpsertAppAsync(app with { InstalledAt = now.AddSeconds(1) });
         Assert.Equal("chat", (await (await Read()).Content.ReadFromJsonAsync(CoreJson.TypeInfo<SessionRetentionSnapshot>()))!.Kind);
         await users.UpdateAsync(state => state with { Users = state.Users.Select(u => u with { Disabled = true }).ToArray() });
         Assert.Equal(HttpStatusCode.Forbidden, (await Read()).StatusCode);
+    }
+    private sealed class CleanupRuntime : ICoreEnvironmentRuntime
+    {
+        public string? FailOnce;
+        public Task<string> PrepareAsync(CoreEnvironmentRecord record, string root, CancellationToken ct) => throw new NotSupportedException();
+        public Task<CoreEnvironmentProcess?> ObserveAsync(CoreEnvironmentRecord record, string root, CancellationToken ct) => Task.FromResult<CoreEnvironmentProcess?>(null);
+        public Task StartAsync(CoreEnvironmentRecord record, string root, Func<CoreEnvironmentProcess, Task> saveProcess, CancellationToken ct) => throw new NotSupportedException();
+        public Task StopAsync(CoreEnvironmentRecord record, string root, bool remove, CancellationToken ct)
+        {
+            if (FailOnce == record.Id) { FailOnce = null; throw new IOException("Interrupted Finish"); }
+            return Task.CompletedTask;
+        }
     }
     private static async Task Git(string dir, params string[] args)
     {

@@ -90,7 +90,7 @@ internal sealed partial class PublicationService
                 foreach (var url in tree.PullRequests.Where(SafeReference))
                 {
                     if (!int.TryParse(new Uri(url).AbsolutePath.Split('/').LastOrDefault(), out var number) ||
-                        number <= 0 || provider.PullRequestUrl(binding.Repository, number) != url) continue;
+                        number <= 0 || !string.Equals(provider.PullRequestUrl(binding.Repository, number), url, StringComparison.OrdinalIgnoreCase)) continue;
                     var record = new PublicationRecord { WorkspaceId = tree.Id, Owner = owner,
                         Repository = binding.Repository, HeadRepository = binding.Repository,
                         ConnectionId = binding.Connection.Id, Provider = binding.Source.Descriptor.Id,
