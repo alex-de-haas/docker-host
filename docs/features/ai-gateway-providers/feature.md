@@ -1,6 +1,6 @@
 ---
 created: 2026-09-17
-updated: 2026-10-15
+updated: 2026-10-16
 summary: Named Claude and Codex agent connections that administrators manage in the Harness Providers settings.
 components: [apps/harness]
 ---
