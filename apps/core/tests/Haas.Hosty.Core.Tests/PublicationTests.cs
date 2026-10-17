@@ -13,6 +13,7 @@ public sealed partial class CoreLifecycleServiceTests
         public List<int?> ObservedNumbers { get; } = [];
         public int? DelayedNumber;
         public TimeSpan ObservationDelay;
+        public Func<PublicationRecord, CancellationToken, Task>? BeforeObserve;
         public string NormalizeRepository(string url) => RepositoryOverride ?? GitHubPublicationProvider.Repository(url);
         public string PullRequestUrl(string repository, int number) => $"https://github.com/{repository}/pull/{number}";
         public string Head = "";
@@ -36,6 +37,7 @@ public sealed partial class CoreLifecycleServiceTests
         public async Task<PublicationObservation> ObserveAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
         {
             Observed++; ObservedNumbers.Add(r.Number);
+            if (BeforeObserve is not null) await BeforeObserve(r, ct);
             if (r.Number == DelayedNumber) await Task.Delay(ObservationDelay, ct);
             if (r.Number == FailedNumber) throw new PublicationException("pr_mismatch", "The PR branch does not match this workspace.");
             return new PublicationObservation(DateTimeOffset.UtcNow, State, Head, "main", "merge-sha", MergeState: "CLEAN", ReviewDecision: "APPROVED", Complete: Complete, Checks: [new("CI", "SUCCESS")], Reviews: [new("thread", "file.cs", 1, false, ["private review body"])]);

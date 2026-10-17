@@ -397,6 +397,13 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             }
         }, ct);
     }
+    internal Task<bool> WithPublicationAdmissionAsync(WorkspaceOwner owner, Func<WorkspaceWorkflow, Task> admit, CancellationToken ct)
+        => Locked(Hash(OwnerIdentity(owner)), async () =>
+        {
+            // Persist the publication receipt before Close can change admission state.
+            await admit(await WorkflowAsync(owner, ct));
+            return true;
+        }, ct);
     internal Task<T> WithPublicationAsync<T>(string id, WorkspaceOwner owner, string head, Func<DevelopmentWorkspace, Task<T>> action, CancellationToken ct)
         => Locked(Hash(OwnerIdentity(owner)), async () =>
         {

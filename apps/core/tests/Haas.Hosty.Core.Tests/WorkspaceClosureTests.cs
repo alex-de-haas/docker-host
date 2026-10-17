@@ -181,6 +181,42 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task WorkspaceClosure_FencesPublicationWaitingOnDependenciesBeforeReceiptAdmission()
+    {
+        var f = await PublicationFixture();
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", new(Guid.NewGuid().ToString(), f.W.OriginalBase, Title: "Contribution"), default);
+        var record = await f.Service.ObserveAsync(f.W.Id, f.W.Owner, default);
+        var dependencyId = "a".PadRight(64, '0');
+        var root = Path.Combine(f.F.Paths.CoreRoot, "development", "publications");
+        await JsonStorage.WriteAsync(Path.Combine(root, dependencyId + ".json"), record with {
+            WorkspaceId = dependencyId, Number = 43, Url = "https://github.com/owner/repo/pull/43", Dependencies = [], Operations = [] });
+        await JsonStorage.WriteAsync(Path.Combine(root, f.W.Id + ".json"), record with { Dependencies = [dependencyId] });
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Provider.BeforeObserve = async (r, ct) =>
+        {
+            f.Provider.State = r.Number == 43 ? "merged" : "open"; f.Provider.Complete = true;
+            if (r.Number != 43) return;
+            entered.TrySetResult();
+            await release.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
+        };
+        var merge = new PublicationCommand(Guid.NewGuid().ToString(), f.W.OriginalBase);
+        var command = f.Service.CommandAsync(f.W.Id, f.W.Owner, "merge", merge, default);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            Assert.Equal("closed", (await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "close", new(Guid.NewGuid().ToString(), 0), new Dictionary<string, string>(), default)).Closure);
+        }
+        finally { release.TrySetResult(); }
+        var error = await Assert.ThrowsAsync<PublicationException>(() => command);
+        Assert.Equal("publication_workspace_closed", error.Code);
+        var retained = await f.Service.ObserveAsync(f.W.Id, f.W.Owner, default);
+        Assert.DoesNotContain(retained.Operations, op => op.Id == merge.RequestId);
+        Assert.Equal(0, f.Provider.Merged);
+        Assert.True(Directory.Exists(f.W.Path));
+    }
+
+    [Fact]
     public async Task WorkspaceClosure_OtherWorkerBlocksConfirmationAndRetentionCannotRaceClose()
     {
         var (f, _) = await SourceFixtureAsync();
