@@ -276,7 +276,8 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             var current = await Read(id, null, ct);
             if (acquire)
             {
-                if ((await WorkflowAsync(current.Owner, ct)).State is "deleting" or "deleted")
+                var workflow = await WorkflowAsync(current.Owner, ct);
+                if (workflow.Closure is not null || workflow.State is "deleting" or "deleted")
                     throw Error("workflow_closed", "Workspace cleanup has started.");
                 if (current.State != "active" || current.Operations.Any(o => o.State == "pending"))
                     throw Error("not_active", "Cannot attach a sandbox while the source is being changed or released.");
@@ -396,6 +397,13 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             }
         }, ct);
     }
+    internal Task<bool> WithPublicationAdmissionAsync(WorkspaceOwner owner, Func<WorkspaceWorkflow, Task> admit, CancellationToken ct)
+        => Locked(Hash(OwnerIdentity(owner)), async () =>
+        {
+            // Persist the publication receipt before Close can change admission state.
+            await admit(await WorkflowAsync(owner, ct));
+            return true;
+        }, ct);
     internal Task<T> WithPublicationAsync<T>(string id, WorkspaceOwner owner, string head, Func<DevelopmentWorkspace, Task<T>> action, CancellationToken ct)
         => Locked(Hash(OwnerIdentity(owner)), async () =>
         {
@@ -422,6 +430,10 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 if (pending.BeforeHead != publishedHead) throw Error("stale_head", "Publication cleanup head changed.");
                 return await FinishCleanup(w, pending, ct, published: true);
             }
+            // A queued publication cleanup is not admission to delete retained source. Only a
+            // cleanup journal written before Close may recover through the branch above.
+            if ((await WorkflowAsync(owner, ct)).Closure is not null)
+                throw Error("workflow_closed", "Publication cleanup is suspended while the workspace is closing or closed.");
             w = await Observe(w, ct);
             if (w.Observation is not { State: "ok", Conflict: false, Local: { Files.Count: 0, Truncated: false } } || w.Observation.Head != publishedHead)
                 throw Error("dirty", "Published workspace changed; cleanup is unavailable.");

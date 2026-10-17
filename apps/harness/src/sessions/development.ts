@@ -17,11 +17,12 @@ export interface DevelopmentWorkspace {
 export type DevelopmentAction = "workflow-status" | "workflow-complete" | "workflow-resume" | "workflow-defer" | "workflow-delete" | CoreEnvironmentAction | SandboxAction | "viewer" | "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
 export interface RetentionSnapshot {
   kind: "chat" | "workspace" | "sandbox";
-  workflow: { state: string; revision: number; completedAt?: string | null } | null;
+  workflow: { state: string; revision: number; completedAt?: string | null; closure?: string | null } | null;
   resourcesFinished: boolean;
 }
 export class DevelopmentClient {
   constructor(private readonly origin: string | null, private readonly appId: string, private readonly token: string | null) {}
+  ownsApplication(appId: string): boolean { return this.appId === appId; }
   get available(): boolean { return Boolean(this.origin && this.token); }
   async retention(sessionId: string, userId: string, cleanup?: { requestId: string; expectedRevision: number }): Promise<RetentionSnapshot> {
     if (!this.available) throw new AppContextError(503, "core_unavailable", "Core cannot verify retention eligibility.");

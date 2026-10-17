@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-16
+updated: 2026-10-17
 ---
 
 # Hosty Platform Vision
@@ -164,7 +164,7 @@ Decisions 1–5: 2026-08-19.
    remain protected. Canonical protected roots under broadly accessible temporary directories need
    an explicit unsupported-placement policy, not an isolation promise. The remaining work and scope
    move to [session containment](features/assistant-runtime-containment/plan.md) and
-   [workspace lifecycle controls](features/workspace-lifecycle-controls/plan.md) under decision 32.
+   [workspace lifecycle controls](features/workspace-lifecycle-controls/feature.md) under decision 32.
    This historical native first-slice scope does not establish cross-session isolation for the later
    container backend.
 
@@ -348,7 +348,7 @@ Decisions 1–5: 2026-08-19.
     agents follow assigned-directory guidance, with no promised filesystem containment. The later
     direction mounts only the owning workspace's worktrees into its agent execution environment,
     excluding original sources and other workspaces. [Agent isolation](features/assistant-runtime-containment/plan.md)
-    owns the source/Git metadata boundary; [lifecycle controls](features/workspace-lifecycle-controls/plan.md)
+    owns the source/Git metadata boundary; [lifecycle controls](features/workspace-lifecycle-controls/feature.md)
     owns revocation, verified execution stop and safe cleanup. App Sandbox testing and agent switching
     remain separate deferred work. Decision 35 later prioritizes a shared host boundary before
     this stricter session boundary. This direction is not implementation approval.
@@ -423,7 +423,7 @@ Decisions 1–5: 2026-08-19.
     Normal/Autonomous are shipped dependencies; no every-write confirmation requirement is restored.
     [Execution Authorization](features/assistant-execution-authorization/plan.md) owns trusted Core
     execution credentials; [App Development Controls](features/app-development-controls/plan.md)
-    owns app/action lifecycle authority. [Workspace Lifecycle Controls](features/workspace-lifecycle-controls/plan.md)
+    owns app/action lifecycle authority. [Workspace Lifecycle Controls](features/workspace-lifecycle-controls/feature.md)
     coordinates close/revoke/cleanup using the execution backend's verified stop acknowledgement.
     App Sandbox and ordinary-user MCP-only acceptance keep their separate owners. Retired approval
     deliverable IDs are transferred with traceability, not marked complete or reused. Historical
@@ -613,7 +613,7 @@ Decisions 1–5: 2026-08-19.
     Agents prepare workspaces and preview data through existing authority. Technical restarts and
     iterations retain sandbox data until explicit lifecycle completion. External workspaces must
     remain inspectable without fabricated Harness conversations. [Harness development UI](features/harness-development-ui/feature.md)
-    owns layout/migration; [lifecycle controls](features/workspace-lifecycle-controls/plan.md) owns
+    owns layout/migration; [lifecycle controls](features/workspace-lifecycle-controls/feature.md) owns
     operator completion/removal. The owner also allows independent automatic retention for quick
     chats and completed development sessions, but explicitly rejects expiry of forgotten unfinished
     features: only verified completed/merged work becomes eligible. [Harness retention](features/harness-session-retention/feature.md)

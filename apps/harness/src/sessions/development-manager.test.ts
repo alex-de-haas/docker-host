@@ -54,7 +54,7 @@ describe("development session coordination", () => {
     call.mockResolvedValue({ status: 200 });
     await manager.workspaceAction(record.id, "environment-setup", { environmentId: environment.id, email: "test@example.test", password: "private-test-password" }, "fresh-token", "admin");
     expect(JSON.stringify(await store.readRecord(record.id))).not.toContain("private-test-password");
-    expect(client.call).not.toHaveBeenCalled();
+    expect(vi.mocked(client.call).mock.calls.every(call => call[2] === "workflow-status")).toBe(true);
     const other = await manager.createSession({ createdBy: "admin" });
     await expect(manager.workspaceAction(other.id, "environment-status", { environmentId: environment.id }, "token", "admin")).rejects.toThrow("not associated");
     await expect(manager.workspaceAction(record.id, "environment-status", { environmentId: environment.id }, "token", "other")).rejects.toThrow("another user");
@@ -81,7 +81,7 @@ describe("development session coordination", () => {
     const sandbox = vi.spyOn(client, "sandbox").mockResolvedValueOnce(plan).mockRejectedValueOnce(new Error("response lost"));
     await manager.workspaceAction(record.id, "sandbox-plan", { appId: "notes", profile: "sandbox", source: { kind: "appArtifact" } }, "token", "admin");
     expect(sandbox).toHaveBeenCalledWith("token", "sandbox-plan", expect.objectContaining({ context: { sessionId: record.id } }));
-    expect(client.call).not.toHaveBeenCalled();
+    expect(vi.mocked(client.call).mock.calls.every(call => call[2] === "workflow-status")).toBe(true);
     const input = { requestId: "a".repeat(32), planId: plan.id, digest: plan.digest };
     await expect(manager.workspaceAction(record.id, "sandbox-prepare", input, "token", "admin")).rejects.toThrow("response lost");
     expect((await store.readRecord(record.id))!.sandboxOperations?.[0]?.state).toBe("pending");
@@ -131,7 +131,7 @@ describe("development session coordination", () => {
     const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
     await manager.postMessage(record.id, "hello", "credential"); await finish(record.id);
     await manager.postMessage(record.id, "continue", "credential"); await finish(record.id);
-    expect(client.call).not.toHaveBeenCalled();
+    expect(vi.mocked(client.call).mock.calls.every(call => call[2] === "workflow-status")).toBe(true);
     expect(sent).toHaveLength(2);
     for (const prompt of sent) expect(prompt).toContain("Do not access or modify original source checkouts");
     expect(starts[0]!.mcpServers).toHaveProperty("hosty-workspaces");
@@ -178,7 +178,7 @@ it("binds shared MCP approvals to the session owner and persists denial after re
   expect((await store.readRecord(record.id))!.mcpPendingApprovals).toEqual([]);
   expect((await store.readEvents(record.id)).some(e => e.type === "approval_decision" && e.decision === "deny")).toBe(true);
   expect(await manager.resolveApproval(record.id, event.approvalId as string, "allow")).toBe(false);
-  expect(client.call).not.toHaveBeenCalled();
+  expect(vi.mocked(client.call).mock.calls.every(call => call[2] === "workflow-status")).toBe(true);
 });
 
 it("retains corrective PR history before completion and allows an explicit unpublished abandonment", async () => {
@@ -244,4 +244,56 @@ it("retention preserves unfinished development and waiting questions", async () 
   expect(await manager.sweepRetention()).toEqual([]);
   record.status = "idle";
   expect(await manager.sweepRetention()).toEqual([record.id]);
+});
+
+
+it.each([false, true])("retains native source leases on close without descendant stop proof (stop fails: %s)", async stopFails => {
+  const stop = vi.fn(async () => { if (stopFails) throw new Error("native stop unconfirmed"); });
+  vi.spyOn(adapter, "start").mockImplementation(options => {
+    starts.push(options);
+    return { send() {}, stop, interrupt: async () => {}, setMcpServers: async () => true,
+      resolveApproval: () => false, resolveQuestion: () => false };
+  });
+  const record = await manager.createSession({ createdBy: "admin" });
+  record.developmentLease = "0e5c0fab-95e6-4b9e-bebc-b9b233939dfb";
+  await store.saveRecord(record);
+  const workspaceId = "b".repeat(64);
+  vi.mocked(client.call).mockImplementation(async (_id, _credential, action) =>
+    action === "list" ? { workspaces: [{ ...tree, workspaceId }] } : { state: "in-progress" });
+  await manager.postMessage(record.id, "start native work", "credential");
+  expect(vi.mocked(client.call).mock.calls.some(call => call[2] === "lease")).toBe(true);
+  const input = { requestId: "568b93d2-cfe6-4d50-a39a-409a1e8a16b5", expectedRevision: 0 };
+  const route = `/${workspaceId}/workflow/close`;
+  const inspection = vi.spyOn(client, "inspection").mockImplementation(async (_credential, path, body) => {
+    if (!path) return { workspaces: [{ id: workspaceId, owner: { kind: "assistant", appId: "hosty.harness", reference: record.id } }] };
+    expect(body).toEqual(input);
+    if (path.endsWith("close-confirm")) throw new Error("Execution stop is unconfirmed: activity lease retained");
+    return { closure: "closing", operations: [{ id: input.requestId, state: "pending" }] };
+  });
+  await expect(manager.inspectWorkspaces("fresh", route, input, "admin")).rejects.toThrow("activity lease retained");
+  await expect(manager.inspectWorkspaces("fresh", route, input, "admin")).rejects.toThrow("activity lease retained");
+  expect(stop).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(client.call).mock.calls.some(call => call[2] === "release-lease")).toBe(false);
+  expect(inspection).toHaveBeenCalledWith("fresh", route + "-confirm", input);
+  expect((await store.readRecord(record.id))?.developmentLease).toBe(record.developmentLease);
+});
+
+
+it("accepts a legacy delegated-token chat without sending its token to workspace authorization", async () => {
+  const record = await manager.createSession({ createdBy: "admin" });
+  vi.mocked(client.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true });
+  vi.mocked(client.call).mockRejectedValue(new Error("reauth_required"));
+  await manager.postMessage(record.id, "hello", "hosty_delegated.1.legacy");
+  expect(starts).toHaveLength(1);
+  expect(client.retention).toHaveBeenCalledWith(record.id, "admin");
+  expect(client.call).not.toHaveBeenCalled();
+});
+
+it("still checks Core closure for a legacy client after local workspace associations are lost", async () => {
+  const record = await manager.createSession({ createdBy: "admin" });
+  vi.mocked(client.retention).mockResolvedValue({ kind: "workspace", workflow: { state: "in-progress", closure: "closed", revision: 2 }, resourcesFinished: true });
+  vi.mocked(client.call).mockRejectedValue(new Error("reauth_required"));
+  await expect(manager.postMessage(record.id, "continue", "hosty_delegated.1.legacy")).rejects.toMatchObject({ code: "workspace_closed" });
+  expect(starts).toHaveLength(0);
+  expect(client.call).not.toHaveBeenCalled();
 });

@@ -27,6 +27,8 @@ export function retentionStatus(record: SessionRecord, policy: RetentionSettings
   if (retentionBusy(record)) return { ...base, state: "protected", message: "Active work, pending input or unresolved operations are retained." };
   if (snapshot.kind === "chat" && hasResourceHistory(record)) return { ...base, state: "blocked", message: "Resource history could not be reconciled with Core." };
   const workflow = snapshot.workflow;
+  if (workflow?.closure === "closing")
+    return { ...base, state: "protected", message: "An interrupted workspace action must be recovered before retention." };
   if (snapshot.kind === "workspace" && (!workflow || !["completed", "deleted", "deleting"].includes(workflow.state)))
     return { ...base, state: "protected", message: "Unfinished or deferred workspace. No automatic deletion." };
   if (!snapshot.resourcesFinished && snapshot.kind !== "workspace")

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-16
+updated: 2026-10-17
 summary: Harness applies independent chat and completed-workspace retention, preserves unfinished work, and recovers coordinated cleanup with stable operation IDs.
 components: [apps/harness, apps/core]
 ---
@@ -97,6 +97,9 @@ Verification:
 - Prompt delivery is checked at the adapter boundary. This D5 probe makes no paid provider call and
   does not repeat D4's real-agent sandbox/browser acceptance. UI continuity and recovery acceptance is recorded in
   [Harness UI D6](../harness-development-ui/feature.md#d6-responsive-navigation-and-recovery-acceptance-2026-10-16).
+
+An interrupted workspace close is protected from expiry, including an older completed iteration.
+Close alone never establishes completion or starts a completed-workspace retention deadline.
 
 ## Testing Expectations
 

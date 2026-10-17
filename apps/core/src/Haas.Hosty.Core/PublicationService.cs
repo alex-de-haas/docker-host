@@ -163,6 +163,8 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         if (input.ConnectionId is not null && input.ConnectionId != r.ConnectionId) throw new PublicationException("connection_conflict", "This publication is bound to another connection.");
         var record = r;
         var workflow = await workspaces.WorkflowAsync(owner, ct);
+        if (workflow.Closure is not null && previous is null)
+            throw new PublicationException("workspace_closed", "Resume retained workspace source before starting a new publication operation.");
         var lastTransition = workflow.Operations?.LastOrDefault(o => o.State == "succeeded" && o.Kind is "complete" or "resume");
         var resumedCorrection = kind == "corrective" && record.Outcome == "merged" && workflow.State == "in-progress"
             && lastTransition is { Kind: "resume" }
@@ -175,6 +177,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         }
         if (kind is "publish" or "merge") await Dependencies(record, ct, true);
         if (kind == "complete" && input.Outcome != "abandoned") await RequireSessionCompletion(record, input, ct);
+        var journaled = previous is not null;
         try
         {
             record = await connections.UseForSourceAsync(owner.UserId, r.ConnectionId, async c =>
@@ -183,7 +186,13 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
                 var provider = Publication(c.Provider);
                 var op = previous is null ? new PublicationOperation(input.RequestId, kind, fingerprint, "pending", input) : previous with { State = "pending", Error = null };
                 record = record with { Operations = [.. record.Operations.Where(o => o.Id != op.Id), op] };
-                await Save(record);
+                await workspaces.WithPublicationAdmissionAsync(owner, async current =>
+                {
+                    if (current.Closure is not null && previous is null)
+                        throw new PublicationException("workspace_closed", "Resume retained workspace source before starting a new publication operation.");
+                    await Save(record);
+                }, ct);
+                journaled = true;
                 if (kind == "configure")
                 {
                     if (record.Number is not null || record.PublishedHead is not null) throw new PublicationException("policy_locked", "Configure completion policy before publication.");
@@ -294,6 +303,8 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         }
         catch (Exception ex) when (ex is PublicationException or UserConnectionException or HttpRequestException or IOException or OperationCanceledException or AppLifecycleException)
         {
+            // Rejected admission must not create a receipt through error recovery.
+            if (!journaled) throw;
             // Preserve pending intent: an HTTP error may follow a successful push, fork or PR mutation.
             record = record with { Operations = record.Operations.Select(o => o.Id == input.RequestId ? o with { State = ex is PublicationException pe && pe.Code is not ("publication_provider_unavailable" or "publication_push_uncertain" or "publication_merge_uncertain" or "publication_fork_unavailable" or "publication_commit_uncertain") ? "failed" : "pending", Error = "Operation did not complete. Inspect state before retrying; retain the request ID for an uncertain outcome." } : o).ToArray() };
             await Save(record); throw;

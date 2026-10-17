@@ -2,7 +2,7 @@
 import { appFetch } from "@hosty-sdk/app/browser-auth";
 import { useCallback, useEffect, useState } from "react";
 
-export type Workflow = { state: string; revision: number; completedAt?: string; operations?: { id: string; kind: string; state: string; expectedRevision: number; error?: string }[] };
+export type Workflow = { state: string; revision: number; completedAt?: string; closure?: string | null; operations?: { id: string; kind: string; state: string; expectedRevision: number; error?: string }[] };
 export type Change = { path: string; status: string; binary?: boolean; lineStats?: { additions: number; deletions: number } | null };
 export type PullRequest = { url: string; unavailable?: string; publishedHead?: string; observation?: {
   at: string; state: string; title?: string; commentCount?: number; head?: string; draft: boolean;

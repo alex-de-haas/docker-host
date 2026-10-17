@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-09
-updated: 2026-10-10
+updated: 2026-10-17
 summary: Deferred execution-scoped credentials for assistant and external-agent source operations, independently of the workspace viewer.
 components: [apps/core, apps/harness]
 ---
@@ -35,6 +35,6 @@ Containment, not to this credential contract.
 ## Related Work
 
 [Workspace inspection](../workspaces-app/feature.md) owns the read-only UI;
-[lifecycle controls](../workspace-lifecycle-controls/plan.md) owns later closing;
+[lifecycle controls](../workspace-lifecycle-controls/feature.md) owns coordinated closing;
 [agent isolation](../assistant-runtime-containment/plan.md) owns the future session execution boundary;
 [approval rules](../assistant-approval-rules/plan.md) owns permission choices, lifetime and decision audit.

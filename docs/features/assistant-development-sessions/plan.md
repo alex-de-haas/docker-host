@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-24
-updated: 2026-10-16
+updated: 2026-10-17
 summary: Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -168,7 +168,7 @@ workspace, changes, PR and preview composition. The owner approved its functiona
 optional. The side panel supports quick operations and a same-conversation transition to the full
 page. This revises the earlier separate Workspaces UI preference without moving source ownership.
 
-[Lifecycle controls](../workspace-lifecycle-controls/plan.md) owns explicit completion/removal.
+[Lifecycle controls](../workspace-lifecycle-controls/feature.md) owns explicit completion/removal.
 [Harness retention](../harness-session-retention/feature.md) owns independently configurable quick-chat
 and completed-development expiry. This revises unconditional completed-session retention above:
 manual removal and configured automatic deletion are both valid, but unfinished/blocked/paused
@@ -244,7 +244,7 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
 Existing owners retain their deliverables: [approval rules](../assistant-approval-rules/plan.md),
 [agent session containment](../assistant-runtime-containment/plan.md),
 [execution authorization](../assistant-execution-authorization/plan.md),
-[workspace lifecycle controls](../workspace-lifecycle-controls/plan.md),
+[workspace lifecycle controls](../workspace-lifecycle-controls/feature.md),
 [development controls](../app-development-controls/plan.md),
 [prototype workspaces](../app-prototype-workspaces/plan.md), [authoring](../app-authoring/plan.md),
 [app publication](../app-publication/plan.md), [AI Agent Bridge](../ai-agent-bridge/plan.md),

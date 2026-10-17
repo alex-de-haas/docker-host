@@ -49,7 +49,7 @@ internal static class DevelopmentWorkspaceEndpoints
                     return await cleanup.DeleteAsync(tree.WorkspaceId, owner.UserId, appId, input, ct);
                 }
                 var heads = kind is "complete" or "delete" ? await publications.MergedWorkspaceHeadsAsync(owner, ct) : new Dictionary<string, string>();
-                return await workspaces.ChangeWorkflowAsync(owner, owner.UserId, kind, input, heads, ct);
+                return await workspaces.ChangeWorkflowAsync(owner, owner.UserId, kind == "close-confirm" ? "close" : kind, input, heads, ct, prepareOnly: kind == "close");
             }));
         routes.MapGet(internalRoot + "/worker-bindings", async (string appId, string sessionId, HttpRequest request,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>

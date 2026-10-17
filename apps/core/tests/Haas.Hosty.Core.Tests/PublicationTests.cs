@@ -13,6 +13,7 @@ public sealed partial class CoreLifecycleServiceTests
         public List<int?> ObservedNumbers { get; } = [];
         public int? DelayedNumber;
         public TimeSpan ObservationDelay;
+        public Func<PublicationRecord, CancellationToken, Task>? BeforeObserve;
         public string NormalizeRepository(string url) => RepositoryOverride ?? GitHubPublicationProvider.Repository(url);
         public string PullRequestUrl(string repository, int number) => $"https://github.com/{repository}/pull/{number}";
         public string Head = "";
@@ -21,6 +22,8 @@ public sealed partial class CoreLifecycleServiceTests
         public bool LoseCreate;
         public int Created;
         public int Merged;
+        public bool LoseReady;
+        public int Readied;
         public PublicationReference? Reference;
         public Task<string> DestinationAsync(UserProviderConnection c, string r, bool fork, CancellationToken ct) => Task.FromResult(r);
         public Task PushAsync(UserProviderConnection c, DevelopmentWorkspace w, string destination, string branch, string head, CancellationToken ct) { Head = head; return Task.CompletedTask; }
@@ -34,12 +37,18 @@ public sealed partial class CoreLifecycleServiceTests
         public async Task<PublicationObservation> ObserveAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
         {
             Observed++; ObservedNumbers.Add(r.Number);
+            if (BeforeObserve is not null) await BeforeObserve(r, ct);
             if (r.Number == DelayedNumber) await Task.Delay(ObservationDelay, ct);
             if (r.Number == FailedNumber) throw new PublicationException("pr_mismatch", "The PR branch does not match this workspace.");
             return new PublicationObservation(DateTimeOffset.UtcNow, State, Head, "main", "merge-sha", MergeState: "CLEAN", ReviewDecision: "APPROVED", Complete: Complete, Checks: [new("CI", "SUCCESS")], Reviews: [new("thread", "file.cs", 1, false, ["private review body"])]);
         }
         public Task MergeAsync(UserProviderConnection c, PublicationRecord r, string head, string method, CancellationToken ct) { Assert.Equal(Head, head); State = "merged"; Merged++; return Task.CompletedTask; }
-        public Task ReadyAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct) => Task.CompletedTask;
+        public Task ReadyAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
+        {
+            Readied++;
+            if (LoseReady) { LoseReady = false; throw new HttpRequestException("Lost ready response"); }
+            return Task.CompletedTask;
+        }
         public Task ResolveReviewAsync(UserProviderConnection c, PublicationRecord r, string threadId, string head, CancellationToken ct) => Task.CompletedTask;
         public Task<PublicationIdentity> IdentityAsync(UserProviderConnection c, CancellationToken ct) => Task.FromResult(new PublicationIdentity("Verified Author", "verified@example.test"));
     }

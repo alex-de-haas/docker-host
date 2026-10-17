@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-06-09
-updated: 2026-10-11
+updated: 2026-10-17
 summary: Durable agent jobs and the ownership map for deferred user sessions, agent providers and workspace-based development.
 components: [apps/core, apps/harness]
 ---
@@ -189,7 +189,7 @@ documentation change. The source/workspace and Sandbox features now own its mech
 
 - [Session workspaces](../assistant-session-workspaces/feature.md) and
   [PR lifecycle](../assistant-pr-lifecycle/feature.md) already own checkout/Git/publication identities
-  and operations. [Workspace lifecycle controls](../workspace-lifecycle-controls/plan.md) and
+  and operations. [Workspace lifecycle controls](../workspace-lifecycle-controls/feature.md) and
   [execution authorization](../assistant-execution-authorization/plan.md) retain their pending scope.
 - [App Sandbox](../app-sandbox-runtimes/plan.md) D1–D8 own worktree execution, isolated test data,
   browser validation and revision-bound results. That feature stays On Hold.
