@@ -60,7 +60,8 @@ No new process supervisor or per-session Docker container is introduced.
 
 A failed stop or lease release retains the worker generation, source and pending Core operation.
 The panel displays Closing and Retry action. Retry uses the original UUID/revision from Core even
-when browser storage is unavailable, and survives Core/Harness restarts. Other mutations cannot
+when browser storage is unavailable, and survives Core/Harness restarts. Direct Close retries load the persisted worker generation
+before checking ownership, without requiring an earlier health or runtime request. Other mutations cannot
 replace an unfinished close. Delete controls, including an already-open confirmation dialog,
 remain blocked by a pending close and preserve its browser recovery journal.
 Previously requested publication cleanup cannot start while closure is Closing or Closed. An
@@ -72,7 +73,10 @@ Docker health does not remain stale until a page reload.
 External agents, older assistant installations and other sessions are not impersonated or stopped.
 Their outstanding source operations and leases block acknowledgement. Since the shared worker can
 see the shared source area, another session's active worker lease also blocks confirmation; this
-coordinator never releases it. Native execution without verified stop/lease acknowledgement remains
+coordinator never releases it. This is a stop/admission lifecycle, not a per-workspace filesystem
+boundary: later authorized sessions still receive the shared worktree root, including retained
+closed source. Close does not make those files read-only or block unrelated sessions; source
+separation belongs to the separately scoped containment work. Native execution without verified stop/lease acknowledgement remains
 a blocker. API admission is not revocation of arbitrary native filesystem access or a guarantee that
 an external process has stopped. Physical deletion retains its stricter independent consumer checks.
 

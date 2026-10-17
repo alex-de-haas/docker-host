@@ -907,7 +907,10 @@ export class SessionManager {
 
   private async finishDocker(session: LiveSession): Promise<void> {
     const worker = this.worker, id = session.record.id;
-    if (!worker || worker.activeSession !== id) return;
+    if (!worker) return;
+    // Close/Stop can be the first request after restart, before any health observation.
+    await worker.load();
+    if (worker.activeSession !== id) return;
     session.runEpoch = undefined;
     this.clearRefresh(session);
     this.workerBridge?.unregister(id);
