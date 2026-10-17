@@ -423,6 +423,10 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 if (pending.BeforeHead != publishedHead) throw Error("stale_head", "Publication cleanup head changed.");
                 return await FinishCleanup(w, pending, ct, published: true);
             }
+            // A queued publication cleanup is not admission to delete retained source. Only a
+            // cleanup journal written before Close may recover through the branch above.
+            if ((await WorkflowAsync(owner, ct)).Closure is not null)
+                throw Error("workflow_closed", "Publication cleanup is suspended while the workspace is closing or closed.");
             w = await Observe(w, ct);
             if (w.Observation is not { State: "ok", Conflict: false, Local: { Files.Count: 0, Truncated: false } } || w.Observation.Head != publishedHead)
                 throw Error("dirty", "Published workspace changed; cleanup is unavailable.");

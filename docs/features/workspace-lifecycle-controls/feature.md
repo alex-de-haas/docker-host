@@ -62,7 +62,10 @@ A failed stop or lease release retains the worker generation, source and pending
 The panel displays Closing and Retry action. Retry uses the original UUID/revision from Core even
 when browser storage is unavailable, and survives Core/Harness restarts. Other mutations cannot
 replace an unfinished close. Delete controls, including an already-open confirmation dialog,
-remain blocked by a pending close and preserve its browser recovery journal. Replaying a successful close after Resume returns its receipt without
+remain blocked by a pending close and preserve its browser recovery journal.
+Previously requested publication cleanup cannot start while closure is Closing or Closed. An
+already-admitted cleanup retains its recovery path; pending source cleanup prevents Close from
+being acknowledged until that earlier operation is resolved. Replaying a successful close after Resume returns its receipt without
 cancelling the new run. Terminal session events refresh worker availability in the chat, so recovered
 Docker health does not remain stale until a page reload.
 

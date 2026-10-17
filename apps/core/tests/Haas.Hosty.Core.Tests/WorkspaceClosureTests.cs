@@ -88,6 +88,53 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task WorkspaceClosure_DefersQueuedPublicationCleanupUntilResume()
+    {
+        var f = await PublicationFixture();
+        var head = f.W.Observation!.Head!;
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", new(Guid.NewGuid().ToString(), head, Title: "Contribution"), default);
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "complete", new(Guid.NewGuid().ToString(), head, Outcome: "submitted", Cleanup: true), default);
+        var lease = Guid.NewGuid().ToString();
+        await f.Workspaces.CommandAsync(f.W.Id, f.W.Owner, "lease", new(Guid.NewGuid().ToString(), LeaseId: lease), default);
+        await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.CleanupAsync(f.W.Id, default));
+        var close = new WorkspaceWorkflowCommand(Guid.NewGuid().ToString(), 0);
+        var heads = new Dictionary<string, string>();
+        await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "close", close, heads, default, prepareOnly: true);
+        await f.Workspaces.CommandAsync(f.W.Id, f.W.Owner, "release-lease", new(Guid.NewGuid().ToString(), LeaseId: lease), default);
+        Assert.Equal("workspace_workflow_closed", (await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.CleanupAsync(f.W.Id, default))).Code);
+        var closed = await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "close", close, heads, default);
+        Assert.Equal("workspace_workflow_closed", (await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.CleanupAsync(f.W.Id, default))).Code);
+        Assert.True(Directory.Exists(f.W.Path));
+        Assert.Equal("active", (await f.Workspaces.Read(f.W.Id, f.W.Owner, default)).State);
+        Assert.True((await f.Service.ObserveAsync(f.W.Id, f.W.Owner, default)).CleanupRequested);
+        await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "resume", new(Guid.NewGuid().ToString(), closed.Revision), heads, default);
+        Assert.True(Directory.Exists(f.W.Path));
+        await f.Service.CleanupAsync(f.W.Id, default);
+        Assert.False(Directory.Exists(f.W.Path));
+    }
+
+    [Fact]
+    public async Task WorkspaceClosure_AllowsRecoveryOfPublicationCleanupAdmittedBeforeClose()
+    {
+        var (f, _) = await SourceFixtureAsync();
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var owner = WorkspaceTestOwner(f);
+        var tree = await service.PrepareAsync(owner, WorkspaceRequest(), default);
+        var op = new WorkspaceOperation("publication-cleanup", "cleanup", tree.OriginalBase, "pending", tree.OriginalBase);
+        await JsonStorage.WriteAsync(Path.Combine(f.Paths.CoreRoot, "development", "workspaces", tree.Id + ".json"),
+            tree with { State = "releasing", Operations = [.. tree.Operations, op] });
+        var repo = Path.Combine(f.Paths.CoreRoot, "development", "repositories", tree.RepositoryId + ".git");
+        await RunGitAsync(repo, ["worktree", "remove", tree.Path]);
+        var close = new WorkspaceWorkflowCommand(Guid.NewGuid().ToString(), 0);
+        var heads = new Dictionary<string, string>();
+        await service.ChangeWorkflowAsync(owner, "admin", "close", close, heads, default, prepareOnly: true);
+        await Assert.ThrowsAsync<AppLifecycleException>(() => service.ChangeWorkflowAsync(owner, "admin", "close", close, heads, default));
+        service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        Assert.Equal("released", (await service.ReleasePublishedAsync(tree.Id, owner, tree.OriginalBase, default)).State);
+        Assert.Equal("closed", (await service.ChangeWorkflowAsync(owner, "admin", "close", close, heads, default)).Closure);
+    }
+
+    [Fact]
     public async Task WorkspaceClosure_OtherWorkerBlocksConfirmationAndRetentionCannotRaceClose()
     {
         var (f, _) = await SourceFixtureAsync();
