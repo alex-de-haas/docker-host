@@ -126,6 +126,10 @@ receipt, and saves the replacement request before dispatch. Accepted operations 
 original request and revision through recovery. External GitHub completion evidence treats
 canonical owner/repository URL casing consistently with PR observation.
 
+Close admission and confirmation serialize with workspace resource allocation. An already-admitted
+preview finishes attaching its source consumer before closure; new allocations are refused after
+closing starts. Resource, source-owner and shared-worker gates retain that acquisition order.
+
 ## Testing Expectations
 
 - Verify all-repository clean/merged evidence, dirty/current-unmerged rejection and exact-head merge

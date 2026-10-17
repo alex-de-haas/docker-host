@@ -44,8 +44,17 @@ internal sealed partial class DevelopmentWorkspaceService
             (o.Local?.Files.Count > 0 || o.Conflict || state.Heads?.GetValueOrDefault(tree.Id) != o.Head))
             await SaveWorkflow(tree.Owner, state with { State = "in-progress", Revision = state.Revision + 1, CompletedAt = null, ChangedBy = "source-observer" });
     }
-    internal async Task<WorkspaceWorkflow> ChangeWorkflowAsync(WorkspaceOwner owner, string actor,
+    internal Task<WorkspaceWorkflow> ChangeWorkflowAsync(WorkspaceOwner owner, string actor,
         string kind, WorkspaceWorkflowCommand input, IReadOnlyDictionary<string, string> mergedHeads, CancellationToken ct, bool prepareOnly = false)
+        // Resource allocation takes this gate before the source-owner gate when attaching a
+        // consumer. Close uses the same order so already-admitted previews finish before fencing.
+        => kind == "close"
+            ? Locked("workspace-resources-" + Hash("workspace\n" + OwnerIdentity(owner)),
+                () => ChangeWorkflowUnderOwnerLockAsync(owner, actor, kind, input, mergedHeads, ct, prepareOnly), ct)
+            : ChangeWorkflowUnderOwnerLockAsync(owner, actor, kind, input, mergedHeads, ct, prepareOnly);
+
+    private async Task<WorkspaceWorkflow> ChangeWorkflowUnderOwnerLockAsync(WorkspaceOwner owner, string actor,
+        string kind, WorkspaceWorkflowCommand input, IReadOnlyDictionary<string, string> mergedHeads, CancellationToken ct, bool prepareOnly)
         => await Locked(Hash(OwnerIdentity(owner)), async () =>
         {
             RequestId(input.RequestId);

@@ -47,6 +47,46 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(tree.Id, (await service.PrepareAsync(owner, WorkspaceRequest(), default)).Id);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task WorkspaceClosure_WaitsForAdmittedPreviewBeforeClosing(bool prepareOnly)
+    {
+        var (f, _) = await SourceFixtureAsync();
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var owner = WorkspaceTestOwner(f);
+        var tree = await service.PrepareAsync(owner, WorkspaceRequest(), default);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var attach = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var previewId = Guid.NewGuid().ToString("N");
+        var allocation = service.WithResourceContextAsync(new(owner.UserId), new(WorkspaceId: tree.WorkspaceId), async () =>
+        {
+            entered.SetResult();
+            await attach.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await service.SetSandboxConsumerAsync(tree.Id, previewId, true, default);
+            return previewId;
+        }, default);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var request = new WorkspaceWorkflowCommand(Guid.NewGuid().ToString(), 0);
+        var close = service.ChangeWorkflowAsync(owner, "admin", "close", request, new Dictionary<string, string>(), default, prepareOnly);
+        try
+        {
+            // An admitted allocation must finish its source attachment before close can fence it.
+            await Task.WhenAny(close, Task.Delay(100));
+            Assert.False(close.IsCompleted);
+            Assert.Null((await service.WorkflowAsync(owner, default)).Closure);
+        }
+        finally { attach.TrySetResult(); }
+        Assert.Equal(previewId, await allocation.WaitAsync(TimeSpan.FromSeconds(5)));
+        var result = await close.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(prepareOnly ? "closing" : "closed", result.Closure);
+        Assert.Contains(previewId, (await service.Read(tree.Id, owner, default)).SandboxConsumers);
+        var invoked = false;
+        await Assert.ThrowsAsync<AppLifecycleException>(() => service.WithResourceContextAsync(new(owner.UserId), new(WorkspaceId: tree.WorkspaceId),
+            () => Task.FromResult(invoked = true), default));
+        Assert.False(invoked);
+    }
+
     [Fact]
     public async Task WorkspaceClosure_OtherWorkerBlocksConfirmationAndRetentionCannotRaceClose()
     {
