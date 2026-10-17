@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-10-15
+updated: 2026-10-17
 summary: Remaining per-session execution isolation, scoped access and verified shutdown; the shared Docker worker is implemented and verified separately.
 components: [apps/harness, apps/core]
 ---
@@ -207,7 +207,7 @@ Own the complete execution process tree and expose a verifiable stopped/quiescen
 including detached child commands, before reporting that old filesystem access is gone. Permission
 revocation blocks subsequent dispatch but does not retroactively undo an already-dispatched operation.
 
-[Workspace lifecycle controls](../workspace-lifecycle-controls/plan.md) owns close/revoke coordination,
+[Workspace lifecycle controls](../workspace-lifecycle-controls/feature.md) owns close/revoke coordination,
 operator controls and safe worktree release. It consumes the backend's stop acknowledgement and mount
 release result; this plan implements those runtime primitives, not another workspace close workflow.
 Unknown process or mount state must retain a blocker and source. A cancelled RPC, closed chat tab or
@@ -220,7 +220,7 @@ deleted directory is not proof of termination. Live unmount is not assumed.
 | This plan | Session execution placement, filesystem/network/credential enforcement, native policy integration, runtime stop and mount-release evidence |
 | [Approval Rules](../assistant-approval-rules/plan.md) | Grant choices, scope/lifetime, confirmation policy, revocation UI and decision audit |
 | [Execution Authorization](../assistant-execution-authorization/plan.md) | Trusted execution registration and Core credentials scoped to the actor, workspace and operations |
-| [Workspace Lifecycle Controls](../workspace-lifecycle-controls/plan.md) | Coordinated close, access revocation, cancellation and safe physical cleanup |
+| [Workspace Lifecycle Controls](../workspace-lifecycle-controls/feature.md) | Coordinated close, access revocation, cancellation and safe physical cleanup |
 | [App Development Controls](../app-development-controls/plan.md), [PR Lifecycle](../assistant-pr-lifecycle/feature.md) | Operation-specific lifecycle/runtime-switch and source publication authority |
 | [Isolated User Sessions](../user-agent-sessions/plan.md) | Non-admin MCP-only profile, user-bound calls, history and profile acceptance |
 | [Agent Providers](../agent-provider-interface/plan.md) | Shared invocation contract and caller authority; tool-executing runs consume this boundary |

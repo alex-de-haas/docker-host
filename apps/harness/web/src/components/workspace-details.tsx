@@ -12,7 +12,7 @@ function readPendingAction(workspaceId: string): PendingAction | null {
   try {
     const raw = localStorage.getItem(`hosty.workspace.action.${workspaceId}`);
     const value = raw ? JSON.parse(raw) : null;
-    return value && ["complete", "resume", "defer", "delete"].includes(value.kind) && typeof value.requestId === "string" && Number.isSafeInteger(value.expectedRevision) ? value : null;
+    return value && ["complete", "resume", "defer", "delete", "close"].includes(value.kind) && typeof value.requestId === "string" && Number.isSafeInteger(value.expectedRevision) ? value : null;
   } catch { return null; }
 }
 const safeLink = (value: string) => { try { const u = new URL(value); return ["https:", "http:"].includes(u.protocol) && !u.username && !u.password ? u.href : undefined; } catch { return undefined; } };
@@ -66,24 +66,26 @@ export function WorkspaceDetails({ workspace, title, running, refresh, deleteCon
   return <aside aria-label="Workspace details" className="h-full overflow-y-auto">
     <div className="flex items-start gap-2 border-b p-4">
       <div className="min-w-0 flex-1"><h2 className="break-words text-base font-semibold">{title || "Workspace"}</h2>
-        <p className="mt-1 text-xs text-muted-foreground">{state.state.replaceAll("-", " ")}{state.completedAt ? ` · ${new Date(state.completedAt).toLocaleDateString()}` : ""}</p></div>
+        <p className="mt-1 text-xs text-muted-foreground">{state.state.replaceAll("-", " ")}{state.closure ? ` · ${state.closure}` : ""}{state.completedAt ? ` · ${new Date(state.completedAt).toLocaleDateString()}` : ""}</p></div>
       <Button size="icon-sm" variant="ghost" aria-label="Refresh workspace" onClick={refresh}><RefreshCw className="size-4" /></Button>
       <DropdownMenu><DropdownMenuTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="Workspace actions"><MoreHorizontal /></Button></DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem disabled={busy || running || state.state !== "in-progress"} onSelect={() => void run("complete")}>Complete workspace</DropdownMenuItem>
-          <DropdownMenuItem disabled={busy || running || state.state !== "in-progress"} onSelect={() => void run("defer")}>Defer workspace</DropdownMenuItem>
-          <DropdownMenuItem disabled={busy || !["completed", "deferred"].includes(state.state)} onSelect={() => void run("resume")}>Resume workspace</DropdownMenuItem>
+          <DropdownMenuItem disabled={busy || !!pending || running || state.state !== "in-progress"} onSelect={() => void run("complete")}>Complete workspace</DropdownMenuItem>
+          <DropdownMenuItem disabled={busy || !!pending || running || state.state !== "in-progress"} onSelect={() => void run("defer")}>Defer workspace</DropdownMenuItem>
+          <DropdownMenuItem disabled={busy || !!pending || !!state.closure || ["deleting", "deleted"].includes(state.state)} onSelect={() => void run("close")}>Close workspace</DropdownMenuItem>
+          <DropdownMenuItem disabled={busy || !!pending || !(state.closure === "closed" || ["completed", "deferred"].includes(state.state))} onSelect={() => void run("resume")}>Resume workspace</DropdownMenuItem>
           <DropdownMenuItem disabled={busy || running || !["completed", "deleting"].includes(state.state)} onSelect={() => setConfirmDelete(true)}>Delete workspace…</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
     <div className="space-y-5 p-4">
       {workspace.owner.kind === "external" && <p className="text-xs text-muted-foreground">External work: {workspace.owner.label}. Conversation and agent activity are not synchronized.</p>}
-      {running && <p className="text-xs text-muted-foreground">The agent is running. Complete or delete this workspace after it stops.</p>}
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {running && <p className="text-xs text-muted-foreground">The agent is running. Close workspace stops its owned execution and preserves unfinished changes.</p>}
+      {state.closure && <p role="status" className="text-xs text-muted-foreground">{state.closure === "closing" ? "Closing: new development work is blocked while execution stop is verified." : "Closed: source, previews and conversation are retained. Resume to continue development."}</p>}
+      {(error || operation?.error) && <p role="alert" className="text-sm text-destructive">{error || operation?.error}</p>}
       {pending && <div className="space-y-2 text-xs"><p>Pending action: {pending.kind}. Retry uses the original request.</p>
         <Button variant="outline" size="sm" disabled={busy} onClick={() => void run(pending.kind, true)}>Retry action</Button>
-        {state.state !== "deleting" && <Button variant="ghost" size="sm" disabled={busy} onClick={() => { setPending(null); try { localStorage.removeItem(`hosty.workspace.action.${workspace.id}`); } catch {} }}>Dismiss</Button>}
+        {state.state !== "deleting" && state.closure !== "closing" && <Button variant="ghost" size="sm" disabled={busy} onClick={() => { setPending(null); try { localStorage.removeItem(`hosty.workspace.action.${workspace.id}`); } catch {} }}>Dismiss</Button>}
       </div>}
       {state.state === "completed" && <Button variant="outline" size="sm" disabled={busy || running} onClick={() => setConfirmDelete(true)}>Delete workspace…</Button>}
       {trees.map(tree => {

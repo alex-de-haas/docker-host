@@ -276,7 +276,8 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             var current = await Read(id, null, ct);
             if (acquire)
             {
-                if ((await WorkflowAsync(current.Owner, ct)).State is "deleting" or "deleted")
+                var workflow = await WorkflowAsync(current.Owner, ct);
+                if (workflow.Closure is not null || workflow.State is "deleting" or "deleted")
                     throw Error("workflow_closed", "Workspace cleanup has started.");
                 if (current.State != "active" || current.Operations.Any(o => o.State == "pending"))
                     throw Error("not_active", "Cannot attach a sandbox while the source is being changed or released.");

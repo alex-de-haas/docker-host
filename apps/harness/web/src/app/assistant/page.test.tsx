@@ -414,3 +414,14 @@ it("synchronizes uploaded draft references with an already open second surface w
   expect(container.querySelector('[aria-label="Attachments to send"]')).toBeNull();
   expect(api.postMessage).not.toHaveBeenCalled();
 });
+
+it("refreshes unavailable worker health after a recovered stop without losing the draft", async () => {
+  vi.mocked(api.getHealth).mockResolvedValue({ name: "fake", available: false, reason: "Worker recovery required" });
+  await render(); await type("Retained draft");
+  expect(container.textContent).toContain("Worker recovery required");
+  vi.mocked(api.getHealth).mockResolvedValue({ name: "fake", available: true });
+  await status("cancelled");
+  expect(container.textContent).not.toContain("Worker recovery required");
+  expect(input().value).toBe("Retained draft");
+  expect(button("Send")?.disabled).toBe(false);
+});

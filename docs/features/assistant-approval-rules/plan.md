@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-02
-updated: 2026-10-10
+updated: 2026-10-17
 summary: Explicit session and development grants, native command approval rules, revocation controls and permission-decision audit.
 components: [apps/harness]
 ---
@@ -17,7 +17,7 @@ termination or Core operation authorization.
 
 [Agent Session Containment](../assistant-runtime-containment/plan.md) owns the deferred execution
 boundary. [Execution Authorization](../assistant-execution-authorization/plan.md) owns trusted Core
-execution credentials, and [Workspace Lifecycle Controls](../workspace-lifecycle-controls/plan.md)
+execution credentials, and [Workspace Lifecycle Controls](../workspace-lifecycle-controls/feature.md)
 owns close and cleanup. Those plans remain independently unapproved for implementation.
 
 ## Current Behavior And Target Delta

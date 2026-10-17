@@ -112,3 +112,12 @@ it("persists settings, keeps legacy ordinary duration, and never enables develop
   expect((await new SettingsStore(dir).read()).retention?.ordinaryDays).toBeNull();
 });
 it.each([{}, { ordinaryDays: 0, completedWorkspaceDays: 7 }, { ordinaryDays: -1, completedWorkspaceDays: null }, { ordinaryDays: 2.5, completedWorkspaceDays: null }, { ordinaryDays: 2, completedWorkspaceDays: 3651 }])("rejects invalid policy %j", value => expect(validRetention(value)).toBe(false));
+
+it("protects interrupted closure even when a previous iteration was marked completed", async () => {
+  const record = await old();
+  vi.mocked(core.retention).mockResolvedValue({ ...completed, workflow: { ...completed.workflow!, closure: "closing" } });
+  expect(await manager.sweepRetention(now)).toEqual([]);
+  expect((await manager.sessionRetention(record.id, now)).state).toBe("protected");
+  expect(await store.readRecord(record.id)).not.toBeNull();
+  expect(vi.mocked(core.retention).mock.calls.every(call => !call[2])).toBe(true);
+});

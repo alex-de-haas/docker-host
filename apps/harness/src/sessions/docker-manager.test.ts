@@ -98,3 +98,57 @@ it("rejects a second Docker turn before recording it, holds admission during app
   expect(await manager.sessionHealth(second.id)).toMatchObject({ executionMode: "docker", available: false, reason: "Docker daemon unavailable" });
   expect(providerHealth).toHaveBeenLastCalledWith(expect.any(Object), true);
 });
+
+it("closes only its own workspace, recovers stop failures and never cancels again on a completed replay", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hosty-close-manager-"));
+  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  const store = new SessionStore(root, path.join(root, "cache"));
+  const adapter: HarnessAdapter = { name: "test", capabilities: { questions: false, appMcp: true, liveReconfigure: true, autoAllow: false, denyReason: false },
+    probe: async () => ({ available: true }), start: vi.fn() as never };
+  const client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
+  const worker = new SharedDockerWorker(root, path.join(root, "cache"));
+  const manager = new SessionManager(store, adapter, new AuditReporter(null, null, "hosty.harness"), root, null, null, null, null, "http://127.0.0.1:1", null, null, client, worker);
+  const session = await manager.createSession({ createdBy: "admin" });
+  session.executionMode = "docker"; session.developmentLease = "d2200000-0000-4000-8000-000000000000";
+  await store.saveRecord(session);
+  const workspaceId = "b".repeat(64), tree = { id: "a".repeat(64), workspaceId, state: "active" };
+  let ownerKind = "assistant", admitted = false, succeeded = false, stopFails = true;
+  let state: WorkerState | null = { version: 1, phase: "running", sessionId: session.id, leaseId: session.developmentLease,
+    generation: session.developmentLease, name: "owned", instanceId: "c".repeat(64), installationId: "d".repeat(64), imageId: "test" };
+  vi.spyOn(worker, "load").mockResolvedValue();
+  vi.spyOn(worker, "activeSession", "get").mockImplementation(() => state?.sessionId ?? null);
+  vi.spyOn(worker, "current", "get").mockImplementation(() => state);
+  const stop = vi.spyOn(worker, "stop").mockImplementation(async () => { expect(admitted).toBe(true); if (stopFails) throw new Error("Docker unavailable"); if (state) state.phase = "stopped"; });
+  vi.spyOn(worker, "sample").mockResolvedValue({ memoryBytes: 1, peakMemoryBytes: 1, pids: 1 });
+  vi.spyOn(worker, "finish").mockImplementation(async () => { expect(state?.phase).toBe("stopped"); state = null; });
+  const release = vi.spyOn(client, "workerBindings").mockResolvedValue(null);
+  vi.spyOn(client, "call").mockImplementation(async (_id, _token, action) => action === "list" ? { workspaces: [tree] } : { closure: admitted ? "closing" : null });
+  const input = { requestId: "818b936d-cdcc-42f4-a449-9feb559cfc40", expectedRevision: 0 }, route = `/${workspaceId}/workflow/close`;
+  const inspection = vi.spyOn(client, "inspection").mockImplementation(async (_token, path, body) => {
+    if (!path) return { workspaces: [{ id: workspaceId, owner: { kind: ownerKind, appId: "hosty.harness", reference: session.id } }] };
+    expect(body).toEqual(input);
+    if (path.endsWith("close-confirm")) {
+      expect(state).toBeNull(); succeeded = true;
+      return { state: "in-progress", closure: "closed", revision: 1 };
+    }
+    admitted = true;
+    return { state: "in-progress", closure: "closing", operations: [{ id: input.requestId, state: succeeded ? "succeeded" : "pending" }] };
+  });
+  await expect(manager.inspectWorkspaces("fresh", route, input, "admin")).rejects.toMatchObject({ code: "workspace_stop_unconfirmed" });
+  expect(release).not.toHaveBeenCalled();
+  await expect(manager.postMessage(session.id, "new work", "fresh")).rejects.toMatchObject({ code: "workspace_closed" });
+  expect(adapter.start).not.toHaveBeenCalled();
+  stopFails = false;
+  expect(await manager.inspectWorkspaces("fresh", route, input, "admin")).toMatchObject({ closure: "closed", state: "in-progress" });
+  expect(release).toHaveBeenCalledWith(session.id, "fresh", { leaseId: session.developmentLease, acquire: false });
+  expect(await store.readRecord(session.id)).not.toBeNull();
+  const stopped = stop.mock.calls.length;
+  await manager.inspectWorkspaces("fresh", route, input, "admin");
+  expect(stop).toHaveBeenCalledTimes(stopped);
+  // An external owner's reference may collide with a local chat ID; it never grants stop authority.
+  succeeded = false; ownerKind = "external";
+  await manager.inspectWorkspaces("fresh", route, input, "admin");
+  expect(stop).toHaveBeenCalledTimes(stopped);
+  expect(inspection).toHaveBeenCalledWith("fresh", route + "-confirm", input);
+  await manager.shutdown();
+});

@@ -51,7 +51,7 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
         if (kind is null) return await workspaces.WorkflowAsync(owner, ct);
         var heads = kind is "complete" or "delete" && publications is not null
             ? await publications.MergedWorkspaceHeadsAsync(owner, ct) : new Dictionary<string, string>();
-        return await workspaces.ChangeWorkflowAsync(owner, userId, kind, input!, heads, ct);
+        return await workspaces.ChangeWorkflowAsync(owner, userId, kind == "close-confirm" ? "close" : kind, input!, heads, ct, prepareOnly: kind == "close");
     }
 
     private async Task RequireSourceAsync(DevelopmentWorkspace tree, string userId, IReadOnlyList<AppRecord> installed, CancellationToken ct)

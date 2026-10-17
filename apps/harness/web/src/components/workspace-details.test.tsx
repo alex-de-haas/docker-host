@@ -110,3 +110,18 @@ it("uses refreshed workflow state and stops offering a successful journal reques
   await act(async () => root.render(<WorkspaceDetails workspace={{ ...updated, workflow: { state: "in-progress", revision: 2 } }} title="Refresh" refresh={() => {}} />));
   expect(container.textContent).toContain("in progress");
 });
+
+it("recovers interrupted closure from Core without browser storage and retains the conversation", async () => {
+  const w = workspace(), requestId = "c6168d4b-26f9-40df-83f4-0452a9186626";
+  w.workflow = { state: "in-progress", closure: "closing", revision: 3,
+    operations: [{ id: requestId, kind: "close", expectedRevision: 3, state: "pending", error: "Execution stop is unconfirmed" }] };
+  replies(w); const remove = vi.fn();
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Unfinished" refresh={() => {}} deleteConversation={remove} />));
+  expect(container.textContent).toContain("Execution stop is unconfirmed");
+  expect(container.textContent).not.toContain("Dismiss");
+  vi.mocked(developmentRequest).mockResolvedValueOnce({ state: "in-progress", closure: "closed", revision: 4 });
+  await act(async () => [...container.querySelectorAll("button")].find(b => b.textContent === "Retry action")!.click());
+  expect(developmentRequest).toHaveBeenCalledWith("/workspace/workflow/close", { requestId, expectedRevision: 3 });
+  expect(container.textContent).toContain("source, previews and conversation are retained");
+  expect(remove).not.toHaveBeenCalled();
+});

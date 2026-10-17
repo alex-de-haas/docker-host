@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-16
+updated: 2026-10-17
 summary: Harness combines app-grouped conversations, multi-repository workspace details, sandbox previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -322,6 +322,11 @@ artifacts. The registered implementation worktree is retained for publication.
 The UI plan's D1–D7 are complete. Artifact versions for the accumulated feature are Core/CLI
 0.137.0 → 0.138.0, Harness 0.54.1 → 0.55.0, Shell 0.104.1 → 0.104.2 and npm app SDK
 0.31.0 → 0.32.0. These are source version changes, not a claim that releases are published.
+
+Workspace actions also offer non-destructive Close while the agent is active. Core journals admission,
+Harness coordinates its owned Docker stop and the panel retains Retry for interrupted closure.
+Closed source and conversation remain available; Resume is explicit. See
+[workspace lifecycle controls](../workspace-lifecycle-controls/feature.md).
 
 ## Testing Expectations
 

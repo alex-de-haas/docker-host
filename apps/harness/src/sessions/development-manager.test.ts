@@ -54,7 +54,7 @@ describe("development session coordination", () => {
     call.mockResolvedValue({ status: 200 });
     await manager.workspaceAction(record.id, "environment-setup", { environmentId: environment.id, email: "test@example.test", password: "private-test-password" }, "fresh-token", "admin");
     expect(JSON.stringify(await store.readRecord(record.id))).not.toContain("private-test-password");
-    expect(client.call).not.toHaveBeenCalled();
+    expect(vi.mocked(client.call).mock.calls.every(call => call[2] === "workflow-status")).toBe(true);
     const other = await manager.createSession({ createdBy: "admin" });
     await expect(manager.workspaceAction(other.id, "environment-status", { environmentId: environment.id }, "token", "admin")).rejects.toThrow("not associated");
     await expect(manager.workspaceAction(record.id, "environment-status", { environmentId: environment.id }, "token", "other")).rejects.toThrow("another user");
@@ -81,7 +81,7 @@ describe("development session coordination", () => {
     const sandbox = vi.spyOn(client, "sandbox").mockResolvedValueOnce(plan).mockRejectedValueOnce(new Error("response lost"));
     await manager.workspaceAction(record.id, "sandbox-plan", { appId: "notes", profile: "sandbox", source: { kind: "appArtifact" } }, "token", "admin");
     expect(sandbox).toHaveBeenCalledWith("token", "sandbox-plan", expect.objectContaining({ context: { sessionId: record.id } }));
-    expect(client.call).not.toHaveBeenCalled();
+    expect(vi.mocked(client.call).mock.calls.every(call => call[2] === "workflow-status")).toBe(true);
     const input = { requestId: "a".repeat(32), planId: plan.id, digest: plan.digest };
     await expect(manager.workspaceAction(record.id, "sandbox-prepare", input, "token", "admin")).rejects.toThrow("response lost");
     expect((await store.readRecord(record.id))!.sandboxOperations?.[0]?.state).toBe("pending");
@@ -131,7 +131,7 @@ describe("development session coordination", () => {
     const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
     await manager.postMessage(record.id, "hello", "credential"); await finish(record.id);
     await manager.postMessage(record.id, "continue", "credential"); await finish(record.id);
-    expect(client.call).not.toHaveBeenCalled();
+    expect(vi.mocked(client.call).mock.calls.every(call => call[2] === "workflow-status")).toBe(true);
     expect(sent).toHaveLength(2);
     for (const prompt of sent) expect(prompt).toContain("Do not access or modify original source checkouts");
     expect(starts[0]!.mcpServers).toHaveProperty("hosty-workspaces");
@@ -178,7 +178,7 @@ it("binds shared MCP approvals to the session owner and persists denial after re
   expect((await store.readRecord(record.id))!.mcpPendingApprovals).toEqual([]);
   expect((await store.readEvents(record.id)).some(e => e.type === "approval_decision" && e.decision === "deny")).toBe(true);
   expect(await manager.resolveApproval(record.id, event.approvalId as string, "allow")).toBe(false);
-  expect(client.call).not.toHaveBeenCalled();
+  expect(vi.mocked(client.call).mock.calls.every(call => call[2] === "workflow-status")).toBe(true);
 });
 
 it("retains corrective PR history before completion and allows an explicit unpublished abandonment", async () => {

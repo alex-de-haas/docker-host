@@ -39,8 +39,9 @@ internal sealed partial class DevelopmentWorkspaceService
 
     internal Task<DevelopmentWorkerBindings?> WorkerLeaseAsync(WorkspaceOwner owner,
         DevelopmentWorkerLeaseRequest input, CancellationToken ct)
-        => Locked("shared-worker-bindings", async () =>
+        => Locked(Hash(OwnerIdentity(owner)), () => Locked("shared-worker-bindings", async () =>
         {
+            if (input.Acquire) await RequireOpenWorkflow(owner, ct);
             if (owner.IsExternal) throw Error("forbidden", "Shared worker leases require an installed assistant.");
             if (!Guid.TryParseExact(input.LeaseId, "D", out var lease)) throw Error("request_invalid", "A UUID leaseId is required.");
             var file = System.IO.Path.Combine(WorkerLeases, lease.ToString("D") + ".json");
@@ -53,7 +54,7 @@ internal sealed partial class DevelopmentWorkspaceService
             // Keep a tombstone: a delayed acquire cannot resurrect a generation after Stop.
             await JsonStorage.WriteAsync(file, new DevelopmentWorkerLease(owner, input.LeaseId, input.Acquire), restrictToOwner: true);
             return bindings;
-        }, ct);
+        }, ct), ct);
 
     private async Task CheckSharedWorkersAsync(CancellationToken ct)
     {

@@ -4,7 +4,7 @@ internal sealed record WorkspaceWorkflowCommand(string RequestId, long ExpectedR
 internal sealed record WorkspaceWorkflowOperation(string Id, string Kind, long ExpectedRevision, string State, string? Error = null);
 internal sealed record WorkspaceWorkflow(string State = "in-progress", long Revision = 0,
     DateTimeOffset? CompletedAt = null, string? ChangedBy = null, Dictionary<string, string>? Heads = null,
-    WorkspaceWorkflowOperation[]? Operations = null);
+    WorkspaceWorkflowOperation[]? Operations = null, string? Closure = null);
 
 internal sealed partial class DevelopmentWorkspaceService
 {
@@ -19,8 +19,9 @@ internal sealed partial class DevelopmentWorkspaceService
         if (tree is null) return await action();
         return await Locked("workspace-resources-" + tree.WorkspaceId, async () =>
         {
-            if (!cleanup && (await WorkflowAsync(tree.Owner, ct)).State is "deleting" or "deleted")
-                throw Error("workflow_closed", "This workspace is being deleted. Start a new workspace for new previews.");
+            var workflow = await WorkflowAsync(tree.Owner, ct);
+            if (!cleanup && (workflow.Closure is not null || workflow.State is "deleting" or "deleted"))
+                throw Error("workflow_closed", "This workspace is closing, closed or being deleted. Resume retained source before creating new previews.");
             return await action();
         }, ct);
     }
@@ -31,7 +32,8 @@ internal sealed partial class DevelopmentWorkspaceService
         => JsonStorage.WriteAsync(WorkflowPath(owner), value, restrictToOwner: true);
     private async Task RequireOpenWorkflow(WorkspaceOwner owner, CancellationToken ct)
     {
-        if ((await WorkflowAsync(owner, ct)).State != "in-progress")
+        var workflow = await WorkflowAsync(owner, ct);
+        if (workflow.State != "in-progress" || workflow.Closure is not null)
             throw Error("workflow_closed", "Resume the workspace before starting source work.");
     }
     // Called under the same owner lock as every managed source mutation and observation.
@@ -47,7 +49,7 @@ internal sealed partial class DevelopmentWorkspaceService
         => await Locked(Hash(OwnerIdentity(owner)), async () =>
         {
             RequestId(input.RequestId);
-            if (kind is not ("complete" or "resume" or "defer" or "delete")) throw Error("operation_invalid", "Unknown workspace workflow action.");
+            if (kind is not ("complete" or "resume" or "defer" or "delete" or "close")) throw Error("operation_invalid", "Unknown workspace workflow action.");
             var state = await WorkflowAsync(owner, ct);
             var prior = state.Operations?.FirstOrDefault(o => o.Id == input.RequestId);
             if (prior is not null)
@@ -68,13 +70,14 @@ internal sealed partial class DevelopmentWorkspaceService
             }
             var trees = all.ToArray();
             if (trees.Length == 0) throw Error("not_found", "There is no workspace to complete.");
+            if (kind == "close") return await CloseWorkflow(owner, actor, input, state, trees, prepareOnly, ct);
             if (trees.Any(w => w.Operations.Any(o => o.State is "pending" or "unknown" && o.Kind != "cleanup")))
                 throw Error("operation_pending", "Resolve outstanding source operations before changing workspace state.");
             if (trees.Any(w => w.Leases.Length > 0)) throw Error("in_use", "An agent still holds an activity lease. Stop it and verify its exit first.");
             if (kind == "resume")
             {
                 if (trees.Any(w => w.State != "active")) throw Error("released", "Released source requires a new workspace.");
-                state = state with { State = "in-progress", CompletedAt = null, Heads = null };
+                state = state with { State = "in-progress", CompletedAt = null, Heads = null, Closure = null };
             }
             else if (kind == "defer") state = state with { State = "deferred", CompletedAt = null, Heads = null };
             else

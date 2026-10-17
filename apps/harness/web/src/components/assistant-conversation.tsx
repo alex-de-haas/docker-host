@@ -230,6 +230,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           if (!["running", "awaiting_approval", "awaiting_question"].includes(String(event.status))) {
             setActivity(null);
             setStreamed("");
+            // A recovered Docker stop can clear a previously unavailable generation without
+            // changing the selected provider or session. Refresh from its terminal event.
+            void getHealth(record.id).then(value => {
+              if (!abort.signal.aborted && activeSessionId.current === record.id) setHealth(value);
+            }).catch(() => {});
           }
           return;
         }

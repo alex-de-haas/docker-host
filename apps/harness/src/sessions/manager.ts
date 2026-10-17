@@ -216,9 +216,39 @@ export class SessionManager {
     return unavailable;
   }
 
-  async inspectWorkspaces(credential: string, path = "", body?: Record<string, unknown>): Promise<unknown> {
+  async inspectWorkspaces(credential: string, path = "", body?: Record<string, unknown>, userId?: string): Promise<unknown> {
     if (!this.development) throw new AppContextError(503, "workspaces_unavailable", "Workspace inspection requires Core.");
-    return this.development.inspection(credential, path, body);
+    const close = path.match(/^\/([a-f0-9]{64})\/workflow\/close$/);
+    if (!close || !body) return this.development.inspection(credential, path, body);
+    if (!userId) throw new AppContextError(401, "workspace_credentials_required", "An authenticated operator is required to close work.");
+    // Persist Core admission before touching execution. The receipt also survives a lost response
+    // or either service restarting; never cancel a later run when replaying a completed receipt.
+    const admitted = await this.development.inspection(credential, path, body) as {
+      operations?: { id: string; state: string }[];
+    };
+    if (admitted.operations?.some(o => o.id === body.requestId && o.state === "succeeded")) return admitted;
+    const inventory = await this.development.inspection(credential) as { workspaces: {
+      id: string; owner: { kind: string; appId?: string; reference: string };
+    }[] };
+    const owner = inventory.workspaces.find(w => w.id === close[1])?.owner;
+    if (owner?.kind === "assistant" && this.development.ownsApplication(owner.appId ?? "")) {
+      const record = await this.store.readRecord(owner.reference);
+      if (record?.createdBy === userId) await this.serialize(record.id, async () => {
+        // An old installation can have the same app/session ID. Core's current-installation
+        // association, not the display label, decides whether this Harness owns its execution.
+        const trees = await this.development!.call(record.id, credential, "list", {}) as { workspaces: DevelopmentWorkspace[] };
+        if (!trees.workspaces.some(w => w.workspaceId === close[1])) return;
+        const session = await this.requireLive(record.id);
+        session.workspaceCredential = credential;
+        try { await this.cancelSessionLocked(record.id); }
+        catch {
+          throw new AppContextError(503, "workspace_stop_unconfirmed", "Execution stop or lease release could not be confirmed. Source and the close request are retained. Restore Docker/Core access, then retry the original action.");
+        }
+      });
+    }
+    // External or unavailable owners are never impersonated. Core retains their activity leases
+    // and the pending close until the owning execution has actually released them.
+    return this.development.inspection(credential, path + "-confirm", body);
   }
 
   async workspaceAction(id: string, action: DevelopmentAction, input: Record<string, unknown>, credential?: string, userId?: string): Promise<unknown> {
@@ -402,12 +432,10 @@ export class SessionManager {
     if (!this.development || !session.record.developmentLease) return;
     const credential = session.workspaceCredential ?? session.credential;
     if (!credential) throw new AppContextError(401, "workspace_credentials_required", "Refresh Hosty credentials before continuing development.");
-    if (acquire) {
-      // A prepare response can be lost after Core allocated the tree. Recover associations before
-      // every subsequent turn, so a restart never resumes source work without its activity lease.
-      const result = await this.development.call(session.record.id, credential, "list", {}) as { workspaces: DevelopmentWorkspace[] };
-      session.record.developmentWorkspaces = result.workspaces;
-    }
+    // A prepare response can be lost after Core allocated the tree. Recover associations before
+    // both acquisition and release, including cancellation after a Harness restart.
+    const result = await this.development.call(session.record.id, credential, "list", {}) as { workspaces: DevelopmentWorkspace[] };
+    session.record.developmentWorkspaces = result.workspaces;
     const workspaces = session.record.developmentWorkspaces?.filter(w => w.state === "active") ?? [];
     await this.store.saveRecord(session.record);
     for (const workspace of workspaces) {
@@ -918,6 +946,14 @@ export class SessionManager {
       }
       if (["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
         throw new SessionBusyError();
+      }
+      const workspaceCredential = context.workspaceCredential ?? credential ?? session.workspaceCredential ?? session.credential;
+      if (this.development?.available && workspaceCredential) {
+        const workflow = await this.development.call(id, workspaceCredential, "workflow-status", {}) as { closure?: string | null; state?: string };
+        if (workflow.closure || ["deleting", "deleted"].includes(workflow.state ?? ""))
+          throw new AppContextError(409, "workspace_closed", "This workspace is closing or closed. Resume retained source explicitly before sending another agent turn.");
+      } else if (session.record.developmentWorkspaces?.length || session.record.developmentLease) {
+        throw new AppContextError(401, "workspace_credentials_required", "Refresh Hosty credentials to verify workspace admission before continuing.");
       }
       const docker = session.record.executionMode === "docker";
       let claimed = false;
