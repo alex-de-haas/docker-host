@@ -1541,6 +1541,8 @@ export class SessionManager {
       await session.run.stop().catch(() => undefined);
       session.run = null;
     }
+    // Native adapter stop does not verify process-tree exit or detached writers. Keep
+    // source leases until verified execution acknowledgement; finishDocker supplies that proof.
     session.pendingApprovals.clear();
     session.pendingQuestions.clear();
     this.clearRefresh(session);

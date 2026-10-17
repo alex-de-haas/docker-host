@@ -245,3 +245,35 @@ it("retention preserves unfinished development and waiting questions", async () 
   record.status = "idle";
   expect(await manager.sweepRetention()).toEqual([record.id]);
 });
+
+
+it.each([false, true])("retains native source leases on close without descendant stop proof (stop fails: %s)", async stopFails => {
+  const stop = vi.fn(async () => { if (stopFails) throw new Error("native stop unconfirmed"); });
+  vi.spyOn(adapter, "start").mockImplementation(options => {
+    starts.push(options);
+    return { send() {}, stop, interrupt: async () => {}, setMcpServers: async () => true,
+      resolveApproval: () => false, resolveQuestion: () => false };
+  });
+  const record = await manager.createSession({ createdBy: "admin" });
+  record.developmentLease = "0e5c0fab-95e6-4b9e-bebc-b9b233939dfb";
+  await store.saveRecord(record);
+  const workspaceId = "b".repeat(64);
+  vi.mocked(client.call).mockImplementation(async (_id, _credential, action) =>
+    action === "list" ? { workspaces: [{ ...tree, workspaceId }] } : { state: "in-progress" });
+  await manager.postMessage(record.id, "start native work", "credential");
+  expect(vi.mocked(client.call).mock.calls.some(call => call[2] === "lease")).toBe(true);
+  const input = { requestId: "568b93d2-cfe6-4d50-a39a-409a1e8a16b5", expectedRevision: 0 };
+  const route = `/${workspaceId}/workflow/close`;
+  const inspection = vi.spyOn(client, "inspection").mockImplementation(async (_credential, path, body) => {
+    if (!path) return { workspaces: [{ id: workspaceId, owner: { kind: "assistant", appId: "hosty.harness", reference: record.id } }] };
+    expect(body).toEqual(input);
+    if (path.endsWith("close-confirm")) throw new Error("Execution stop is unconfirmed: activity lease retained");
+    return { closure: "closing", operations: [{ id: input.requestId, state: "pending" }] };
+  });
+  await expect(manager.inspectWorkspaces("fresh", route, input, "admin")).rejects.toThrow("activity lease retained");
+  await expect(manager.inspectWorkspaces("fresh", route, input, "admin")).rejects.toThrow("activity lease retained");
+  expect(stop).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(client.call).mock.calls.some(call => call[2] === "release-lease")).toBe(false);
+  expect(inspection).toHaveBeenCalledWith("fresh", route + "-confirm", input);
+  expect((await store.readRecord(record.id))?.developmentLease).toBe(record.developmentLease);
+});
