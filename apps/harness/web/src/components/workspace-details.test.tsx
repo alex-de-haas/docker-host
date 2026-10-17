@@ -148,3 +148,19 @@ it("blocks deletion when an open confirmation is overtaken by a durable close", 
   await act(async () => [...container.querySelectorAll("button")].find(b => b.textContent === "Retry action")!.click());
   expect(developmentRequest).toHaveBeenCalledWith("/workspace/workflow/close", { requestId: request.requestId, expectedRevision: 3 });
 });
+
+
+it.each(["deleting", "deleted"])("does not offer Resume or retained-source guidance for a closed %s workspace", async state => {
+  const w = workspace(); w.workflow = { state, closure: "closed", revision: 4 };
+  w.worktrees = w.worktrees.map(tree => ({ ...tree, state: "released" }));
+  replies(w);
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Retained conversation" refresh={() => {}} />));
+  await act(async () => container.querySelector('[aria-label="Workspace actions"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  const resume = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === "Resume workspace")!;
+  expect(resume).toBeDefined();
+  expect(resume.getAttribute("aria-disabled")).toBe("true");
+  await act(async () => resume.click());
+  expect(vi.mocked(developmentRequest).mock.calls.some(([path]) => path?.endsWith("/workflow/resume"))).toBe(false);
+  expect(localStorage.getItem("hosty.workspace.action.workspace")).toBeNull();
+  expect(container.textContent).not.toContain("Resume to continue development");
+});

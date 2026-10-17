@@ -277,3 +277,23 @@ it.each([false, true])("retains native source leases on close without descendant
   expect(inspection).toHaveBeenCalledWith("fresh", route + "-confirm", input);
   expect((await store.readRecord(record.id))?.developmentLease).toBe(record.developmentLease);
 });
+
+
+it("accepts a legacy delegated-token chat without sending its token to workspace authorization", async () => {
+  const record = await manager.createSession({ createdBy: "admin" });
+  vi.mocked(client.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true });
+  vi.mocked(client.call).mockRejectedValue(new Error("reauth_required"));
+  await manager.postMessage(record.id, "hello", "hosty_delegated.1.legacy");
+  expect(starts).toHaveLength(1);
+  expect(client.retention).toHaveBeenCalledWith(record.id, "admin");
+  expect(client.call).not.toHaveBeenCalled();
+});
+
+it("still checks Core closure for a legacy client after local workspace associations are lost", async () => {
+  const record = await manager.createSession({ createdBy: "admin" });
+  vi.mocked(client.retention).mockResolvedValue({ kind: "workspace", workflow: { state: "in-progress", closure: "closed", revision: 2 }, resourcesFinished: true });
+  vi.mocked(client.call).mockRejectedValue(new Error("reauth_required"));
+  await expect(manager.postMessage(record.id, "continue", "hosty_delegated.1.legacy")).rejects.toMatchObject({ code: "workspace_closed" });
+  expect(starts).toHaveLength(0);
+  expect(client.call).not.toHaveBeenCalled();
+});

@@ -952,8 +952,12 @@ export class SessionManager {
       }
       const workspaceCredential = context.workspaceCredential ?? credential ?? session.workspaceCredential ?? session.credential;
       if (this.development?.available && workspaceCredential) {
-        const workflow = await this.development.call(id, workspaceCredential, "workflow-status", {}) as { closure?: string | null; state?: string };
-        if (workflow.closure || ["deleting", "deleted"].includes(workflow.state ?? ""))
+        // Legacy delegation cannot authenticate the workspace API. The service-owned snapshot
+        // still observes Core state even when the conversation lost its local associations.
+        const workflow = workspaceCredential.startsWith("hosty_delegated.")
+          ? (await this.development.retention(id, session.record.createdBy)).workflow
+          : await this.development.call(id, workspaceCredential, "workflow-status", {}) as { closure?: string | null; state?: string };
+        if (workflow?.closure || ["deleting", "deleted"].includes(workflow?.state ?? ""))
           throw new AppContextError(409, "workspace_closed", "This workspace is closing or closed. Resume retained source explicitly before sending another agent turn.");
       } else if (session.record.developmentWorkspaces?.length || session.record.developmentLease) {
         throw new AppContextError(401, "workspace_credentials_required", "Refresh Hosty credentials to verify workspace admission before continuing.");

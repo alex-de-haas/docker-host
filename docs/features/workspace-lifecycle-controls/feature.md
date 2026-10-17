@@ -88,6 +88,9 @@ Resume explicitly reopens retained source and clears completion, recorded heads/
 It starts no agent or preview automatically. A closed conversation retains readable history and its
 draft; sending another agent turn requires Resume rather than silently recreating development access.
 Read-only model conversation while retaining closed source is not a separate execution mode.
+Legacy delegated-token chats use the service-authenticated Core snapshot for this admission check;
+ordinary chats remain usable without forwarding that token to the app-credential workspace API.
+Deleting/deleted source offers no Resume action or retained-source continuation guidance.
 
 Close and Delete remain distinct. Optional owned sandbox/conversation cleanup uses the existing
 verified-completion Delete flow. Dirty/unmerged work cannot be deleted by that action or by scheduled

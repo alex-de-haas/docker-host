@@ -73,7 +73,7 @@ export function WorkspaceDetails({ workspace, title, running, refresh, deleteCon
           <DropdownMenuItem disabled={busy || !!pending || running || state.state !== "in-progress"} onSelect={() => void run("complete")}>Complete workspace</DropdownMenuItem>
           <DropdownMenuItem disabled={busy || !!pending || running || state.state !== "in-progress"} onSelect={() => void run("defer")}>Defer workspace</DropdownMenuItem>
           <DropdownMenuItem disabled={busy || !!pending || !!state.closure || ["deleting", "deleted"].includes(state.state)} onSelect={() => void run("close")}>Close workspace</DropdownMenuItem>
-          <DropdownMenuItem disabled={busy || !!pending || !(state.closure === "closed" || ["completed", "deferred"].includes(state.state))} onSelect={() => void run("resume")}>Resume workspace</DropdownMenuItem>
+          <DropdownMenuItem disabled={busy || !!pending || ["deleting", "deleted"].includes(state.state) || !(state.closure === "closed" || ["completed", "deferred"].includes(state.state))} onSelect={() => void run("resume")}>Resume workspace</DropdownMenuItem>
           <DropdownMenuItem disabled={busy || !!pending || running || !["completed", "deleting"].includes(state.state)} onSelect={() => setConfirmDelete(true)}>Delete workspace…</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -81,7 +81,7 @@ export function WorkspaceDetails({ workspace, title, running, refresh, deleteCon
     <div className="space-y-5 p-4">
       {workspace.owner.kind === "external" && <p className="text-xs text-muted-foreground">External work: {workspace.owner.label}. Conversation and agent activity are not synchronized.</p>}
       {running && <p className="text-xs text-muted-foreground">The agent is running. Close workspace stops its owned execution and preserves unfinished changes.</p>}
-      {state.closure && <p role="status" className="text-xs text-muted-foreground">{state.closure === "closing" ? "Closing: new development work is blocked while execution stop is verified." : "Closed: source, previews and conversation are retained. Resume to continue development."}</p>}
+      {state.closure && !["deleting", "deleted"].includes(state.state) && <p role="status" className="text-xs text-muted-foreground">{state.closure === "closing" ? "Closing: new development work is blocked while execution stop is verified." : "Closed: source, previews and conversation are retained. Resume to continue development."}</p>}
       {(error || operation?.error) && <p role="alert" className="text-sm text-destructive">{error || operation?.error}</p>}
       {pending && <div className="space-y-2 text-xs"><p>Pending action: {pending.kind}. Retry uses the original request.</p>
         <Button variant="outline" size="sm" disabled={busy} onClick={() => void run(pending.kind, true)}>Retry action</Button>
