@@ -134,6 +134,52 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal("closed", (await service.ChangeWorkflowAsync(owner, "admin", "close", close, heads, default)).Closure);
     }
 
+    [Theory]
+    [InlineData("configure")]
+    [InlineData("ready")]
+    [InlineData("merge")]
+    [InlineData("link")]
+    [InlineData("complete")]
+    [InlineData("resolve-review")]
+    [InlineData("corrective")]
+    [InlineData("commit")]
+    [InlineData("publish")]
+    public async Task WorkspaceClosure_RefusesNewPublicationCommandsButReplaysReceipts(string kind)
+    {
+        var f = await PublicationFixture();
+        var publish = new PublicationCommand(Guid.NewGuid().ToString(), f.W.OriginalBase, Title: "Contribution");
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", publish, default);
+        var close = new WorkspaceWorkflowCommand(Guid.NewGuid().ToString(), 0);
+        var heads = new Dictionary<string, string>();
+        await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "close", close, heads, default, prepareOnly: true);
+        foreach (var closing in new[] { true, false })
+        {
+            if (!closing) await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "close", close, heads, default);
+            var command = new PublicationCommand(Guid.NewGuid().ToString(), f.W.OriginalBase, Title: "New", Number: 42, Outcome: "submitted");
+            var error = await Assert.ThrowsAsync<PublicationException>(() => f.Service.CommandAsync(f.W.Id, f.W.Owner, kind, command, default));
+            Assert.Equal("publication_workspace_closed", error.Code);
+            var replay = await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", publish, default);
+            Assert.DoesNotContain(replay.Operations, op => op.Id == command.RequestId);
+            Assert.Equal(1, f.Provider.Created);
+        }
+    }
+
+    [Fact]
+    public async Task WorkspaceClosure_PermitsRecoveryOfAnAdmittedPublicationCommand()
+    {
+        var f = await PublicationFixture();
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", new(Guid.NewGuid().ToString(), f.W.OriginalBase, Title: "Contribution"), default);
+        var ready = new PublicationCommand(Guid.NewGuid().ToString(), f.W.OriginalBase);
+        var before = f.Provider.Readied;
+        f.Provider.LoseReady = true;
+        await Assert.ThrowsAsync<HttpRequestException>(() => f.Service.CommandAsync(f.W.Id, f.W.Owner, "ready", ready, default));
+        await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "close", new(Guid.NewGuid().ToString(), 0), new Dictionary<string, string>(), default);
+        var recovered = await f.Service.CommandAsync(f.W.Id, f.W.Owner, "ready", ready, default);
+        Assert.Equal("succeeded", recovered.Operations.Single(op => op.Id == ready.RequestId).State);
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "ready", ready, default);
+        Assert.Equal(before + 2, f.Provider.Readied);
+    }
+
     [Fact]
     public async Task WorkspaceClosure_OtherWorkerBlocksConfirmationAndRetentionCannotRaceClose()
     {

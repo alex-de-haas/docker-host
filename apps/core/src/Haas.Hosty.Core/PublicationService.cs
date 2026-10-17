@@ -163,6 +163,8 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         if (input.ConnectionId is not null && input.ConnectionId != r.ConnectionId) throw new PublicationException("connection_conflict", "This publication is bound to another connection.");
         var record = r;
         var workflow = await workspaces.WorkflowAsync(owner, ct);
+        if (workflow.Closure is not null && previous is null)
+            throw new PublicationException("workspace_closed", "Resume retained workspace source before starting a new publication operation.");
         var lastTransition = workflow.Operations?.LastOrDefault(o => o.State == "succeeded" && o.Kind is "complete" or "resume");
         var resumedCorrection = kind == "corrective" && record.Outcome == "merged" && workflow.State == "in-progress"
             && lastTransition is { Kind: "resume" }

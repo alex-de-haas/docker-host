@@ -64,6 +64,9 @@ when browser storage is unavailable, and survives Core/Harness restarts. Direct 
 before checking ownership, without requiring an earlier health or runtime request. Other mutations cannot
 replace an unfinished close. Delete controls, including an already-open confirmation dialog,
 remain blocked by a pending close and preserve its browser recovery journal.
+New publication commands, including PR metadata, merge, completion and policy changes, require
+Resume while closure is Closing or Closed. Existing request receipts retain replay/recovery instead
+of becoming new publication authority.
 Previously requested publication cleanup cannot start while closure is Closing or Closed. An
 already-admitted cleanup retains its recovery path; pending source cleanup prevents Close from
 being acknowledged until that earlier operation is resolved. Replaying a successful close after Resume returns its receipt without
