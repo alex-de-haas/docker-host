@@ -125,3 +125,26 @@ it("recovers interrupted closure from Core without browser storage and retains t
   expect(container.textContent).toContain("source, previews and conversation are retained");
   expect(remove).not.toHaveBeenCalled();
 });
+
+it("blocks deletion when an open confirmation is overtaken by a durable close", async () => {
+  const w = workspace(); w.workflow = { state: "completed", revision: 3 }; replies(w);
+  const render = (value: DevelopmentWorkspace) => act(async () => root.render(<WorkspaceDetails workspace={value} title="Completed" refresh={() => {}} />));
+  await render(w);
+  const deleteEntry = () => [...container.querySelectorAll("button")].find(b => b.textContent === "Delete workspace…")!;
+  await act(async () => deleteEntry().click());
+  const confirm = () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent === "Delete workspace")!;
+  expect(confirm().disabled).toBe(false);
+  const request = { kind: "close", requestId: "4637074a-7c1f-4227-9104-d6811dd4bea3", expectedRevision: 3 };
+  const journal = JSON.stringify(request);
+  localStorage.setItem("hosty.workspace.action.workspace", journal);
+  await render({ ...w, workflow: { ...w.workflow, closure: "closing", operations: [{ id: request.requestId, kind: "close", expectedRevision: 3, state: "pending" }] } });
+  expect(deleteEntry().disabled).toBe(true);
+  expect(confirm().disabled).toBe(true);
+  await act(async () => confirm().click());
+  expect(vi.mocked(developmentRequest).mock.calls.some(([path]) => path?.endsWith("/workflow/delete"))).toBe(false);
+  expect(localStorage.getItem("hosty.workspace.action.workspace")).toBe(journal);
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent === "Close")!.click());
+  vi.mocked(developmentRequest).mockResolvedValueOnce({ state: "completed", closure: "closed", revision: 4 });
+  await act(async () => [...container.querySelectorAll("button")].find(b => b.textContent === "Retry action")!.click());
+  expect(developmentRequest).toHaveBeenCalledWith("/workspace/workflow/close", { requestId: request.requestId, expectedRevision: 3 });
+});

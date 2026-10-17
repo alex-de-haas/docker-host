@@ -48,7 +48,7 @@ export function WorkspaceDetails({ workspace, title, running, refresh, deleteCon
     return () => abort.abort();
   }, [workspace]);
   const run = async (kind: string, retry = false) => {
-    if (executing.current) return; executing.current = true; setBusy(true); setError("");
+    if (executing.current || (pending && !retry)) return; executing.current = true; setBusy(true); setError("");
     const request = retry && pending ? pending : { kind, requestId: crypto.randomUUID(), expectedRevision: state.revision };
     setPending(request);
     try { localStorage.setItem(`hosty.workspace.action.${workspace.id}`, JSON.stringify(request)); } catch { /* Keep request in memory. */ }
@@ -74,7 +74,7 @@ export function WorkspaceDetails({ workspace, title, running, refresh, deleteCon
           <DropdownMenuItem disabled={busy || !!pending || running || state.state !== "in-progress"} onSelect={() => void run("defer")}>Defer workspace</DropdownMenuItem>
           <DropdownMenuItem disabled={busy || !!pending || !!state.closure || ["deleting", "deleted"].includes(state.state)} onSelect={() => void run("close")}>Close workspace</DropdownMenuItem>
           <DropdownMenuItem disabled={busy || !!pending || !(state.closure === "closed" || ["completed", "deferred"].includes(state.state))} onSelect={() => void run("resume")}>Resume workspace</DropdownMenuItem>
-          <DropdownMenuItem disabled={busy || running || !["completed", "deleting"].includes(state.state)} onSelect={() => setConfirmDelete(true)}>Delete workspace…</DropdownMenuItem>
+          <DropdownMenuItem disabled={busy || !!pending || running || !["completed", "deleting"].includes(state.state)} onSelect={() => setConfirmDelete(true)}>Delete workspace…</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
@@ -87,7 +87,7 @@ export function WorkspaceDetails({ workspace, title, running, refresh, deleteCon
         <Button variant="outline" size="sm" disabled={busy} onClick={() => void run(pending.kind, true)}>Retry action</Button>
         {state.state !== "deleting" && state.closure !== "closing" && <Button variant="ghost" size="sm" disabled={busy} onClick={() => { setPending(null); try { localStorage.removeItem(`hosty.workspace.action.${workspace.id}`); } catch {} }}>Dismiss</Button>}
       </div>}
-      {state.state === "completed" && <Button variant="outline" size="sm" disabled={busy || running} onClick={() => setConfirmDelete(true)}>Delete workspace…</Button>}
+      {state.state === "completed" && <Button variant="outline" size="sm" disabled={busy || !!pending || running} onClick={() => setConfirmDelete(true)}>Delete workspace…</Button>}
       {trees.map(tree => {
         const known = tree.sessionChanges !== undefined && tree.observation?.state === "ok" && !tree.detailError;
         const files = tree.sessionChanges ?? [];
@@ -131,7 +131,7 @@ export function WorkspaceDetails({ workspace, title, running, refresh, deleteCon
       <ul className="list-disc pl-5 text-sm">{workspace.worktrees.map(t => <li key={t.id}>{repositoryName(t.repository)}</li>)}</ul>
       {deleteConversation && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={withConversation} onChange={e => setWithConversation(e.target.checked)} />Also delete this conversation after cleanup succeeds</label>}
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      <Button disabled={busy || running} onClick={() => void run("delete", pending?.kind === "delete")}>{busy ? "Deleting…" : "Delete workspace"}</Button>
+      <Button disabled={busy || running || (!!pending && pending.kind !== "delete")} onClick={() => void run("delete", pending?.kind === "delete")}>{busy ? "Deleting…" : "Delete workspace"}</Button>
     </DialogContent></Dialog>
   </aside>;
 }

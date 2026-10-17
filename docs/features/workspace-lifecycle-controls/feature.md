@@ -61,7 +61,8 @@ No new process supervisor or per-session Docker container is introduced.
 A failed stop or lease release retains the worker generation, source and pending Core operation.
 The panel displays Closing and Retry action. Retry uses the original UUID/revision from Core even
 when browser storage is unavailable, and survives Core/Harness restarts. Other mutations cannot
-replace an unfinished close. Replaying a successful close after Resume returns its receipt without
+replace an unfinished close. Delete controls, including an already-open confirmation dialog,
+remain blocked by a pending close and preserve its browser recovery journal. Replaying a successful close after Resume returns its receipt without
 cancelling the new run. Terminal session events refresh worker availability in the chat, so recovered
 Docker health does not remain stale until a page reload.
 
