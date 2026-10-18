@@ -4261,7 +4261,9 @@ internal sealed partial class CoreLifecycleService(
                 ResolvedRef = resolvedRef ?? existing.SourceState.ResolvedRef,
                 Commit = source.Commit ?? (resolvedRefChanged ? null : existing.SourceState.Commit),
                 ManagedCheckoutPath = existing.SourceState.ManagedCheckoutPath ?? paths.ResolveManagedCheckoutPath(selection.Manifest.Id!),
-                LocalOverridePath = existing.SourceState.LocalOverridePath ?? localOverridePath,
+                // A cleared override is an explicit managed-source selection. Re-reading the
+                // original install manifest must not silently restore its folder as an override.
+                LocalOverridePath = existing.SourceState.LocalOverridePath,
                 ManifestSubpath = manifestSubpath ?? existing.SourceState.ManifestSubpath,
                 InspectionPaths = source.Paths,
             };

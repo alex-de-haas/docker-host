@@ -273,7 +273,9 @@ The operator chooses a provider and sends the next instruction in the resulting 
 
 Source replacement changes only the selected runtime folder. It does not overwrite the canonical
 repository or move an existing session to another repository. Clearing an override on a local Git app
-restores its own canonical source rather than leaving a missing source selection. Existing workspace
+restores its own canonical source rather than leaving a missing source selection. For a Git app,
+reconciling the same repository from its original install manifest preserves an explicitly cleared
+override instead of restoring the old folder. Existing workspace
 and chat retention guards still require verified completion and resource cleanup before deletion;
 canonical source belongs to the app and survives that deletion.
 
@@ -283,7 +285,10 @@ Existing workspace Git/PR actions retain their original authorization requiremen
 
 Core reads durable workspace activity when removing an app or selecting/clearing source. Active
 leases, sandbox consumers, releasing worktrees and pending/unknown source operations block mutation.
-Unreadable workspace records block it as unknown. Repository admission gates serialize those checks
+Legacy records with an omitted or null sandbox-consumer list are read as having no persistent sandbox
+consumers. Other incomplete activity lists remain unknown; this compatibility read never rewrites
+records or drops existing leases, operations or consumers. Unreadable workspace records block
+mutation as unknown. Repository admission gates serialize those checks
 with new consumers without blocking unrelated repositories. A removed or replaced source installation
 cannot acquire new worktree leases or sandbox consumers through its old binding; observation and
 release remain available.
@@ -419,6 +424,8 @@ are Core/CLI 0.140.0 and Harness 0.57.0; local acceptance does not attest to reg
   cannot prove the canonical target idle. Recovery reuses the original operation and preserves source.
 
 - Removal/source changes reject active, pending or unreadable consumers under repository admission.
+- Legacy omitted/null sandbox-consumer lists allow idle override removal and subsequent consumer
+  registration across restart, while active leases and malformed activity still block source changes.
 - Destructive review detects content-only edits; runtime failure and late edits retain source.
 - Repeated keep-source uninstall and restart preserve provenance and all retained source files;
   explicit reinstall does not accept new work or take over an old workspace.
