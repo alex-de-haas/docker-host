@@ -277,7 +277,10 @@ restores its own canonical source rather than leaving a missing source selection
 reconciling the same repository from its original install manifest preserves an explicitly cleared
 override instead of restoring the old folder. A source runtime then starts or restarts from its
 managed Git checkout, materializing it when needed even if the original installation used a local
-manifest. A folder-only app without a Git repository still requires an explicit source folder.
+manifest. Relative repositories in local manifests resolve against the original installation's
+Git root; a warm managed checkout remains usable after that original folder is retired. Remote
+manifests still require an absolute repository. A folder-only app without a Git repository still
+requires an explicit source folder.
 Existing workspace
 and chat retention guards still require verified completion and resource cleanup before deletion;
 canonical source belongs to the app and survives that deletion.

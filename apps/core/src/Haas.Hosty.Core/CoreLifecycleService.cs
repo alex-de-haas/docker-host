@@ -4880,7 +4880,8 @@ internal sealed partial class CoreLifecycleService(
                 $"Remote manifest runtime '{selection.RuntimeProfile.Key}' uses localCommand and must declare source.repository.");
         }
 
-        if (IsRelativeSourceRepository(selection.Manifest.Source.Repository))
+        var relativeRepository = IsRelativeSourceRepository(selection.Manifest.Source.Repository);
+        if (relativeRepository && !string.IsNullOrWhiteSpace(app.ManifestUrl))
         {
             throw new AppLifecycleException(
                 "source_repository_relative_remote_unsupported",
@@ -4894,6 +4895,19 @@ internal sealed partial class CoreLifecycleService(
             return app;
         }
 
+        // Relative local manifests use the same captured installation root as initial install,
+        // never the Core process's current directory. Keep the declared repository identity intact
+        // so the next live reconciliation does not turn the managed choice back into an override.
+        string? localRepositoryRoot = null;
+        if (relativeRepository)
+        {
+            var installedSelection = selection with { ManifestPath = app.InstallManifestPath ?? selection.ManifestPath };
+            localRepositoryRoot = ResolveInstallLocalSourcePath(installedSelection, selection.Manifest.Source);
+            if (localRepositoryRoot is null)
+                throw new AppLifecycleException("local_command_source_root_required",
+                    $"Runtime app '{app.Id}' has no resolved local Git repository to materialize.");
+        }
+
         await sources.ResolveManagedAsync(
             app.Id,
             new AppSourceResolveRequest(
@@ -4901,7 +4915,7 @@ internal sealed partial class CoreLifecycleService(
                 Tag: selection.Manifest.Source.Tag,
                 Commit: selection.Manifest.Source.Commit,
                 Fetch: !string.IsNullOrWhiteSpace(selection.Manifest.Source.Branch)),
-            cancellationToken);
+            cancellationToken, localRepositoryRoot);
 
         return await RequireAppAsync(app.Id, cancellationToken);
     }

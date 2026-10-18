@@ -27,24 +27,28 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(false, true)]
-    [InlineData(true, false)]
-    [InlineData(true, true)]
-    public async Task SourceSafety_ClearedFolderOverrideStartsAndRestartsFromManagedSource(bool materialized, bool restart)
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    public async Task SourceSafety_ClearedFolderOverrideStartsAndRestartsFromManagedSource(bool materialized, bool restart, bool relative)
     {
         var f = await LifecycleFixture.CreateAsync();
         var repository = await CreateLocalCommandGitRepositoryAsync(f.Root);
-        var manifestPath = Path.Combine(repository, "manifest.json");
-        var manifest = JsonNode.Parse(CreateRemoteLocalCommandManifestJson(repository))!;
+        var manifestPath = Path.Combine(repository, "apps", "remote-app", "manifest.json");
+        var manifest = JsonNode.Parse(CreateRemoteLocalCommandManifestJson(relative ? "." : repository))!;
         manifest["runtimeProfiles"]![0]!["development"] = true;
         await File.WriteAllTextAsync(manifestPath, manifest.ToJsonString());
-        await RunGitAsync(repository, ["add", "manifest.json"]);
+        await RunGitAsync(repository, ["add", "apps/remote-app/manifest.json"]);
         await RunGitAsync(repository, ["-c", "user.name=Hosty Test", "-c", "user.email=hosty@example.test", "commit", "-m", "Add manifest"]);
         await f.Service.InstallAsync(new AppInstallRequest(manifestPath, SelectedRuntime: "dev"));
         const string appId = "com.example.remote-local";
         Assert.Null((await f.Apps.GetAppAsync(appId))!.ManifestUrl);
-        if (materialized) await f.Sources.ResolveManagedAsync(appId, new(Branch: "main"));
+        if (materialized) await f.Sources.ResolveManagedAsync(appId, new(Branch: "main"), localRepositoryRoot: relative ? repository : null);
         await f.Sources.ClearLocalOverrideAsync(appId);
         var service = f.RecreateService();
         try
@@ -58,6 +62,14 @@ public sealed partial class CoreLifecycleServiceTests
             Assert.Equal(MountPathPolicy.ResolveRealPath(Path.Combine(app.SourceState.ManagedCheckoutPath!, "apps", "remote-app")), cwd.Trim());
             Assert.Equal("", await RunGitAsync(repository, ["status", "--porcelain"]));
             Assert.Equal(manifest.ToJsonString(), await File.ReadAllTextAsync(manifestPath));
+            if (relative)
+            {
+                // A warm managed checkout remains usable after the operator retires the old folder.
+                Directory.Move(repository, repository + "-retired");
+                Assert.Equal("running", (await service.RestartAsync(appId)).App?.RuntimeState);
+                Assert.Null((await f.Apps.GetAppAsync(appId))!.SourceState!.LocalOverridePath);
+                Assert.Equal(".", (await f.Apps.GetAppAsync(appId))!.SourceState!.Repository);
+            }
         }
         finally { await service.StopAsync(appId); }
     }
