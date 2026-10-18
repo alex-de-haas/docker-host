@@ -187,6 +187,32 @@ describe("per-app auto-allow", () => {
     expect((await store.readEvents(record.id)).filter(e => e.type === "approval_decision").map(e => e.decision)).toEqual(["allow"]);
   });
 
+  it("versions automatic status recovery even when its timestamp matches the prior record", async () => {
+    const record = await manager.createSession({ createdBy: "user_admin" });
+    await manager.shutdown();
+    record.status = "awaiting_approval";
+    await store.saveRecord(record);
+    manager = new SessionManager(store, new FakeHarnessAdapter(), new AuditReporter(null, null, "hosty.harness"), dataDir, settings);
+    await manager.mcpPolicy.catalog("hosty:development", "v1", [{ name: "status" }]);
+    await manager.mcpPolicy.update({ [ruleKey("hosty:development", "status")]: { identity: "v1", mode: "run" } });
+    const seen: import("../sessions/store.js").StoredEvent[] = [];
+    const subscription = await manager.subscribe(record.id, record.lastEventSeq, event => seen.push(event));
+    vi.spyOn(Date.prototype, "toISOString").mockReturnValue(record.updatedAt);
+
+    const guard = await manager.mcpPolicy.authorize(record.id, "hosty:development", "v1", "recover", "status", {}, new AbortController().signal);
+    await guard();
+    const current = (await manager.getSession(record.id))!;
+    expect(current.status).toBe("running");
+    expect(current.updatedAt).toBe(record.updatedAt);
+    expect(current.lastEventSeq).toBeGreaterThan(record.lastEventSeq);
+    expect(seen).toContainEqual(expect.objectContaining({ type: "session_status", status: "running", seq: current.lastEventSeq, ts: current.updatedAt }));
+    expect(await store.readEvents(record.id, record.lastEventSeq)).toEqual([
+      expect.objectContaining({ type: "session_status", status: "running", seq: current.lastEventSeq }),
+    ]);
+    expect((await store.readRecord(record.id))?.lastEventSeq).toBe(current.lastEventSeq);
+    subscription.unsubscribe();
+  });
+
   it("resets development RPC identity when an expired delegation replaces an idle client", async () => {
     const record = await manager.createSession({ createdBy: "user_admin" });
     await manager.postMessage(record.id, "hello", "hostyg_seed");

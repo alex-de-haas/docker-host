@@ -8,6 +8,7 @@ vi.mock("@/lib/development-api", async original => ({ ...await original<object>(
 let root: Root, container: HTMLDivElement;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); localStorage.clear();
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
@@ -31,7 +32,10 @@ it("shows each repository and honestly missing CI; opens a repository-specific d
   expect(changes).toHaveLength(2);
   await act(async () => changes[1].click());
   expect(developmentRequest).toHaveBeenCalledWith(expect.stringContaining("/workspace/worktrees/two/diff?"), undefined, expect.any(AbortSignal));
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("+new text");
+  await vi.waitFor(async () => {
+    await act(async () => {});
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("+new text");
+  });
 });
 it("recovers deletion from Core after browser storage loss and keeps the original revision and UUID", async () => {
   const w = workspace(); const id = "94fcd992-875a-46dd-a729-a4ae6b0f0b69";
@@ -53,8 +57,17 @@ it("keeps each PR's repository, head evidence, failed checks and review threads 
   } }, { url: "https://example.test/one/pull/2", observation: { title: "Earlier change", at: "2026-01-01", state: "merged", draft: false, unresolvedThreads: 0, checks: [] } }];
   replies(w);
   await act(async () => root.render(<WorkspaceDetails workspace={w} title="PR evidence" refresh={() => {}} />));
-  expect(container.textContent).toContain("one · CI 1/2 · 7 discussion comments");
-  expect(container.textContent).toContain("Tests: FAILURE");
+  expect(container.textContent).toContain("one · CI 2/2 · 7 discussion comments");
+  expect(container.textContent).not.toContain("Tests: FAILURE");
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  const checks = container.querySelector<HTMLButtonElement>('[aria-label="one #3: CI 2/2, show checks"]')!;
+  await act(async () => checks.click());
+  const popover = document.querySelector('[role="dialog"][aria-label="one #3: CI checks"]')!;
+  expect(popover.textContent).toContain("Build");
+  expect(popover.textContent).toContain("Success");
+  expect(popover.textContent).toContain("Tests");
+  expect(popover.textContent).toContain("Failure");
+  expect(popover.textContent).not.toContain("Earlier change");
   expect(container.textContent).toContain("CHANGES_REQUESTED · 2 unresolved threads");
   expect(container.textContent).toContain("merged · Stale / unobserved");
   expect(container.textContent).toContain("two · CI unknown");

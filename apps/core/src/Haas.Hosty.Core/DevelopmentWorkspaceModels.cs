@@ -62,5 +62,7 @@ internal sealed record DevelopmentWorkspace
     public string[] PullRequests { get; init; } = [];
     public LocalRemoteObservation? RemoteObservation { get; init; }
     public WorkspaceObservation? Observation { get; init; }
+    public DateTimeOffset? UpdatedAt { get; init; }
+    public string? SourceStamp { get; init; }
 }
 internal sealed record WorkspaceList(DevelopmentWorkspace[] Workspaces);

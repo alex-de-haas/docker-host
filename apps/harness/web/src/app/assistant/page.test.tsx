@@ -11,8 +11,8 @@ vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => ui }));
 
 vi.mock("@/lib/assistant-api", async original => ({
   ...await original<typeof api>(),
-  getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(),
-  listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(),
+  getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), deleteSession: vi.fn(),
+  listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(), setSessionAutonomy: vi.fn(), listAgentConnections: vi.fn(), renameSession: vi.fn(),
 }));
 vi.mock("@/lib/development-api", async original => ({ ...await original<typeof import("@/lib/development-api")>(), useDevelopmentInventory: () => ({ workspaces: [], error: "", refresh: () => {} }) }));
 vi.mock("@/components/speech-input", () => ({ SpeechInput: () => null }));
@@ -39,6 +39,7 @@ beforeEach(() => {
   vi.mocked(api.getSession).mockImplementation(async () => ({ ...record }));
   vi.mocked(api.createSession).mockResolvedValue(record);
   vi.mocked(api.listAppNames).mockResolvedValue({});
+  vi.mocked(api.listAgentConnections).mockResolvedValue({ connections: [], defaultId: null });
   vi.mocked(api.streamEvents).mockImplementation(async (_id, listener, _signal, onConnection) => {
     emit = listener; connection = onConnection!; connection("connected");
   });
@@ -424,4 +425,261 @@ it("refreshes unavailable worker health after a recovered stop without losing th
   expect(container.textContent).not.toContain("Worker recovery required");
   expect(input().value).toBe("Retained draft");
   expect(button("Send")?.disabled).toBe(false);
+});
+
+const openDelete = async (title = "Conversation") => {
+  await act(async () => button(`Delete ${title}`)!.click());
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent === "Delete session")!.click());
+};
+const renderDeletion = async () => {
+  window.history.replaceState({}, "", "/development?session=session-one");
+  ui.getNavigation.mockReturnValue({ entries: [] });
+  await act(async () => root.render(<AssistantConversation fullPage />));
+  await type("My retained draft");
+};
+it("detaches on a local deletion event even if the HTTP response is lost", async () => {
+  let reject!: (reason: Error) => void;
+  vi.mocked(api.deleteSession).mockImplementation(() => new Promise((_, no) => { reject = no; }));
+  await renderDeletion(); await openDelete();
+  await act(async () => emit({ type: "session_deleted", seq: 2, ts: "" }));
+  expect(localStorage.getItem("hosty.assistant.session")).toBeNull();
+  expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBeNull();
+  expect(window.location.search).toBe("");
+  expect(button("Delete Conversation")).toBeNull();
+  await act(async () => reject(new Error("Lost HTTP response")));
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(container.textContent).not.toContain("Lost HTTP response");
+  expect(container.textContent).not.toContain("deleted in another window");
+  expect(api.createSession).not.toHaveBeenCalled();
+});
+it("preserves an active conversation and draft when deletion is not confirmed", async () => {
+  vi.mocked(api.deleteSession).mockRejectedValue(new Error("Workspace is unfinished"));
+  await renderDeletion(); await openDelete();
+  expect(input().value).toBe("My retained draft");
+  expect(localStorage.getItem("hosty.assistant.session")).toBe(record.id);
+  expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBe("My retained draft");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Workspace is unfinished");
+  expect(window.location.search).toBe("?session=session-one");
+});
+it("ignores a late terminal event after HTTP deletion has already detached the session", async () => {
+  vi.mocked(api.deleteSession).mockResolvedValue(undefined);
+  await renderDeletion(); const previousEmit = emit; await openDelete();
+  await act(async () => previousEmit({ type: "session_deleted", seq: 2, ts: "" }));
+  expect(localStorage.getItem("hosty.assistant.session")).toBeNull();
+  expect(window.location.search).toBe("");
+  expect(container.textContent).not.toContain("deleted in another window");
+  expect(api.createSession).not.toHaveBeenCalled();
+});
+it("reports deletion from another window while detaching the active session", async () => {
+  await renderDeletion();
+  await act(async () => emit({ type: "session_deleted", seq: 2, ts: "" }));
+  expect(localStorage.getItem("hosty.assistant.session")).toBeNull();
+  expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBeNull();
+  expect(container.textContent).toContain("deleted in another window");
+  expect(api.deleteSession).not.toHaveBeenCalled();
+});
+
+it.each(["deleted", "retained", "unavailable"])("reconciles a lost non-active deletion response with %s inventory", async outcome => {
+  const other = { ...record, id: "other-session", title: "Other conversation" };
+  vi.mocked(api.listSessions).mockResolvedValue([record, other]);
+  vi.mocked(api.deleteSession).mockRejectedValue(new Error("Lost deletion response"));
+  localStorage.setItem("hosty.assistant.draft.other-session", "Other retained draft");
+  await renderDeletion();
+  expect(api.streamEvents).toHaveBeenCalledTimes(1);
+  expect(api.streamEvents).toHaveBeenCalledWith(record.id, expect.any(Function), expect.any(AbortSignal), expect.any(Function));
+  if (outcome === "deleted") vi.mocked(api.listSessions).mockResolvedValue([record]);
+  if (outcome === "unavailable") vi.mocked(api.listSessions).mockRejectedValue(new Error("Inventory unavailable"));
+  await openDelete("Other conversation");
+  expect(api.listSessions).toHaveBeenCalledTimes(2);
+  expect(input().value).toBe("My retained draft");
+  expect(localStorage.getItem("hosty.assistant.session")).toBe(record.id);
+  expect(window.location.search).toBe("?session=session-one");
+  if (outcome === "deleted") {
+    expect(button("Delete Other conversation")).toBeNull();
+    expect(localStorage.getItem("hosty.assistant.draft.other-session")).toBeNull();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.textContent).not.toContain("Lost deletion response");
+  } else {
+    expect(button("Delete Other conversation")).not.toBeNull();
+    expect(localStorage.getItem("hosty.assistant.draft.other-session")).toBe("Other retained draft");
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Lost deletion response");
+    vi.mocked(api.deleteSession).mockRejectedValue(new Error("Request failed (404)."));
+    vi.mocked(api.listSessions).mockResolvedValue([record]);
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent === "Delete session")!.click());
+    expect(button("Delete Other conversation")).toBeNull();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(input().value).toBe("My retained draft");
+  }
+});
+
+const navigationTitles = () => [...container.querySelectorAll('nav[aria-label="Sessions by application"] section:first-child button span.block:first-child')].map(node => node.textContent);
+const renderActivityOrder = async () => {
+  record = { ...record, appIds: ["one"], appContextRevision: 1, updatedAt: "2026-10-18T10:00:00Z" };
+  const newer = { ...record, id: "newer", title: "Newer conversation", updatedAt: "2026-10-18T11:00:00Z" };
+  vi.mocked(api.listSessions).mockResolvedValue([record, newer]);
+  vi.mocked(api.getSession).mockImplementation(async id => id === newer.id ? newer : record);
+  await renderDeletion();
+  expect(navigationTitles()).toEqual(["Newer conversation", "Conversation"]);
+};
+it("orders a locally changed autonomy immediately and retains its activity after switching chats", async () => {
+  await renderActivityOrder();
+  vi.mocked(api.setSessionAutonomy).mockResolvedValue({ ...record, autonomy: "autonomous", updatedAt: "2026-10-18T12:00:00Z" });
+  await act(async () => button("Autonomy: Normal")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  await act(async () => [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(item => item.textContent?.startsWith("Autonomous"))!.click());
+  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>('nav button')].find(item => item.textContent?.startsWith("Newer conversation"))!.click());
+  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+});
+it.each(["session_autonomy_changed", "session_provider_changed", "app_context_changed"])("orders %s activity without allowing replay or late responses to move it backwards", async type => {
+  await renderActivityOrder();
+  vi.mocked(api.getSession).mockResolvedValue({ ...record, autonomy: "autonomous", updatedAt: "2026-10-18T12:00:00Z" });
+  await act(async () => emit({ type, seq: 3, ts: "2026-10-18T12:00:00Z", appIds: ["one"], appContextRevision: 2 }));
+  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+  vi.mocked(api.getSession).mockResolvedValue({ ...record, updatedAt: "2026-10-18T10:30:00Z" });
+  await act(async () => emit({ type, seq: 1, ts: "2026-10-18T10:30:00Z", appIds: ["one"], appContextRevision: 1 }));
+  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+  if (type !== "app_context_changed") expect(button("Autonomy: Autonomous")).not.toBeNull();
+});
+
+it.each(["session_autonomy_changed", "session_provider_changed"])("uses %s activity when the record refresh fails", async type => {
+  await renderActivityOrder();
+  vi.mocked(api.getSession).mockRejectedValue(new Error("Record refresh unavailable"));
+  const settings = type === "session_autonomy_changed" ? { autonomy: "autonomous" }
+    : { connectionId: "new-provider", connectionRevision: 2, harnessKind: "claude", providerLocked: false };
+  await act(async () => emit({ type, seq: 3, ts: "2026-10-18T12:00:00Z", ...settings }));
+  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+  expect(button(type === "session_autonomy_changed" ? "Autonomy: Autonomous" : "Provider: claude")).not.toBeNull();
+  await act(async () => emit({ type, seq: 1, ts: "2026-10-18T10:30:00Z", autonomy: "normal", connectionId: "old-provider", connectionRevision: 1, harnessKind: "codex", providerLocked: false }));
+  expect(button(type === "session_autonomy_changed" ? "Autonomy: Autonomous" : "Provider: claude")).not.toBeNull();
+  expect(input().value).toBe("My retained draft");
+});
+
+it("refreshes non-selected running sessions through waiting and completion without losing the selected draft", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  const visible = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  try {
+    record = { ...record, appIds: ["one"], updatedAt: "2026-10-18T11:00:00Z" };
+    const other = { ...record, id: "background", title: "Background work", status: "running", updatedAt: "2026-10-18T10:00:00Z" };
+    vi.mocked(api.listSessions).mockResolvedValue([record, other]);
+    await renderDeletion();
+    expect(navigationTitles()).toEqual(["Conversation", "Background work"]);
+    let refresh!: (rows: api.AssistantSession[]) => void;
+    vi.mocked(api.listSessions).mockImplementationOnce(() => new Promise(resolve => { refresh = resolve; }));
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    await act(async () => emit({ type: "session_status", seq: 2, ts: "2026-10-18T11:30:00Z", status: "running" }));
+    await act(async () => refresh([record, { ...other, status: "awaiting_approval", updatedAt: "2026-10-18T12:00:00Z" }]));
+    expect(navigationTitles()).toEqual(["Background work", "Conversation"]);
+    expect(container.querySelector('[aria-label="Waiting for you"]')).not.toBeNull();
+    vi.mocked(api.listSessions).mockResolvedValue([record, { ...other, status: "idle", updatedAt: "2026-10-18T13:00:00Z" }]);
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(container.querySelector('[aria-label="Waiting for you"]')).toBeNull();
+    const calls = vi.mocked(api.listSessions).mock.calls.length;
+    await act(async () => { vi.advanceTimersByTime(15000); });
+    expect(api.listSessions).toHaveBeenCalledTimes(calls);
+    vi.mocked(api.listSessions).mockResolvedValue([record, { ...other, status: "running", updatedAt: "2026-10-18T14:00:00Z" }]);
+    await act(async () => { vi.advanceTimersByTime(15000); });
+    expect(api.listSessions).toHaveBeenCalledTimes(calls + 1);
+    expect(container.querySelector('[aria-label="Agent running"]')).not.toBeNull();
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(api.listSessions).toHaveBeenCalledTimes(calls + 2);
+    expect(input().value).toBe("My retained draft");
+    expect(window.location.search).toBe("?session=session-one");
+  } finally { visible.mockRestore(); vi.useRealTimers(); }
+});
+
+it("pauses hidden list refreshes and rejects a snapshot overtaken by session deletion", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  const visible = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  try {
+    const other = { ...record, id: "background", title: "Background work", status: "running" };
+    vi.mocked(api.listSessions).mockResolvedValue([record, other]);
+    await renderDeletion();
+    await act(async () => { vi.advanceTimersByTime(15000); window.dispatchEvent(new Event("focus")); });
+    expect(api.listSessions).toHaveBeenCalledTimes(1);
+    let finish!: (sessions: api.AssistantSession[]) => void;
+    vi.mocked(api.listSessions).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    visible.mockReturnValue("visible");
+    await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+    await act(async () => { vi.advanceTimersByTime(10000); window.dispatchEvent(new Event("focus")); });
+    expect(api.listSessions).toHaveBeenCalledTimes(2);
+    vi.mocked(api.deleteSession).mockResolvedValue(undefined);
+    await openDelete("Background work");
+    await act(async () => finish([record, other]));
+    expect(button("Delete Background work")).toBeNull();
+    expect(input().value).toBe("My retained draft");
+    vi.mocked(api.listSessions).mockRejectedValue(new Error("Temporary outage"));
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(input().value).toBe("My retained draft");
+    vi.mocked(api.listSessions).mockResolvedValue([record, { ...other, status: "idle" }]);
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(button("Delete Background work")).not.toBeNull();
+  } finally { visible.mockRestore(); vi.useRealTimers(); }
+});
+
+it("ignores a settings fetch overtaken by a later event even when both share a timestamp", async () => {
+  await renderActivityOrder();
+  let oldReply!: (value: api.AssistantSession) => void;
+  vi.mocked(api.getSession).mockImplementationOnce(() => new Promise(resolve => { oldReply = resolve; }));
+  await act(async () => emit({ type: "session_autonomy_changed", seq: 2, ts: "2026-10-18T12:00:00Z", autonomy: "normal" }));
+  vi.mocked(api.getSession).mockResolvedValue({ ...record, updatedAt: "2026-10-18T12:00:00Z", autonomy: "autonomous" });
+  await act(async () => emit({ type: "session_autonomy_changed", seq: 3, ts: "2026-10-18T12:00:00Z", autonomy: "autonomous" }));
+  await act(async () => oldReply({ ...record, updatedAt: "2026-10-18T12:00:00Z", autonomy: "normal" }));
+  expect(button("Autonomy: Autonomous")).not.toBeNull();
+});
+
+it("does not let a late rename response overwrite settings at the same timestamp", async () => {
+  record = { ...record, lastEventSeq: 1, updatedAt: "2026-10-18T10:00:00Z" };
+  await render();
+  await act(async () => button("Session history")!.click());
+  await act(async () => button("Rename Conversation")!.click());
+  let renameReply!: (value: api.AssistantSession) => void;
+  vi.mocked(api.renameSession).mockImplementation(() => new Promise(resolve => { renameReply = resolve; }));
+  await act(async () => container.querySelector<HTMLInputElement>('input[placeholder="Name this session…"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  vi.mocked(api.getSession).mockRejectedValue(new Error("Refresh unavailable"));
+  await act(async () => emit({ type: "session_autonomy_changed", seq: 3, ts: "2026-10-18T12:00:00Z", autonomy: "autonomous" }));
+  await act(async () => renameReply({ ...record, title: "Renamed", lastEventSeq: 2, updatedAt: "2026-10-18T12:00:00Z", autonomy: "normal" }));
+  await act(async () => button("Back to conversation")!.click());
+  expect(button("Autonomy: Autonomous")).not.toBeNull();
+  await act(async () => emit({ type: "session_autonomy_changed", seq: 2, ts: "2026-10-18T12:00:00Z", autonomy: "normal" }));
+  expect(button("Autonomy: Autonomous")).not.toBeNull();
+});
+
+it("retains a status event sequence against a late same-time rename after switching away", async () => {
+  record = { ...record, lastEventSeq: 1, updatedAt: "2026-10-18T10:00:00Z" };
+  const other = { ...record, id: "other", title: "Other conversation" };
+  vi.mocked(api.listSessions).mockResolvedValue([record, other]);
+  vi.mocked(api.getSession).mockImplementation(async id => id === other.id ? other : record);
+  await render();
+  await act(async () => button("Session history")!.click());
+  await act(async () => button("Rename Conversation")!.click());
+  let renameReply!: (value: api.AssistantSession) => void;
+  vi.mocked(api.renameSession).mockImplementation(() => new Promise(resolve => { renameReply = resolve; }));
+  await act(async () => container.querySelector<HTMLInputElement>('input[placeholder="Name this session…"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  await act(async () => emit({ type: "session_status", seq: 3, ts: "2026-10-18T12:00:00Z", status: "awaiting_question" }));
+  await act(async () => renameReply({ ...record, lastEventSeq: 2, updatedAt: "2026-10-18T12:00:00Z", status: "idle" }));
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent?.startsWith("Other conversation"))!.click());
+  vi.mocked(api.listSessions).mockRejectedValue(new Error("Offline"));
+  await act(async () => button("Session history")!.click());
+  const row = [...container.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent?.startsWith("Conversation"));
+  expect(row?.textContent).toContain("waiting for you");
+});
+
+it("keeps current busy controls while historical status chunks replay", async () => {
+  record.status = "awaiting_approval";
+  record.lastEventSeq = 10;
+  await render();
+  await type("keep this draft");
+  await act(async () => connection("reconnecting"));
+  for (const value of ["idle", "running", "cancelled"]) {
+    await act(async () => emit({ type: "session_status", seq: 2, ts: "", status: value, historical: true }));
+    expect(button("Stop")).not.toBeNull();
+    await submit();
+    expect(api.postMessage).not.toHaveBeenCalled();
+    expect(input().value).toBe("keep this draft");
+  }
+  await act(async () => {
+    emit({ type: "session_status", seq: 10, ts: "", status: "awaiting_approval" });
+    connection("connected");
+  });
+  expect(button("Stop")).not.toBeNull();
 });

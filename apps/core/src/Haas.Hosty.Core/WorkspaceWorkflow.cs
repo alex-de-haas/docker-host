@@ -4,7 +4,7 @@ internal sealed record WorkspaceWorkflowCommand(string RequestId, long ExpectedR
 internal sealed record WorkspaceWorkflowOperation(string Id, string Kind, long ExpectedRevision, string State, string? Error = null);
 internal sealed record WorkspaceWorkflow(string State = "in-progress", long Revision = 0,
     DateTimeOffset? CompletedAt = null, string? ChangedBy = null, Dictionary<string, string>? Heads = null,
-    WorkspaceWorkflowOperation[]? Operations = null, string? Closure = null);
+    WorkspaceWorkflowOperation[]? Operations = null, string? Closure = null, DateTimeOffset? UpdatedAt = null);
 
 internal sealed partial class DevelopmentWorkspaceService
 {
@@ -45,8 +45,12 @@ internal sealed partial class DevelopmentWorkspaceService
     private string WorkflowPath(WorkspaceOwner owner) => System.IO.Path.Combine(Root, "workflows", Hash(OwnerIdentity(owner)) + ".json");
     internal async Task<WorkspaceWorkflow> WorkflowAsync(WorkspaceOwner owner, CancellationToken ct)
         => await JsonStorage.ReadAsync<WorkspaceWorkflow>(WorkflowPath(owner), ct) ?? new();
-    private Task SaveWorkflow(WorkspaceOwner owner, WorkspaceWorkflow value)
-        => JsonStorage.WriteAsync(WorkflowPath(owner), value, restrictToOwner: true);
+    private async Task SaveWorkflow(WorkspaceOwner owner, WorkspaceWorkflow value)
+    {
+        var previous = await WorkflowAsync(owner, default);
+        var changed = CoreJson.Text(previous with { UpdatedAt = null }) != CoreJson.Text(value with { UpdatedAt = null });
+        await JsonStorage.WriteAsync(WorkflowPath(owner), value with { UpdatedAt = changed ? clock.UtcNow : previous.UpdatedAt }, restrictToOwner: true);
+    }
     private async Task RequireOpenWorkflow(WorkspaceOwner owner, CancellationToken ct)
     {
         var workflow = await WorkflowAsync(owner, ct);

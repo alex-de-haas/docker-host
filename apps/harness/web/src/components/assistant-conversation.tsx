@@ -29,14 +29,15 @@ import { DevelopmentNavigation } from "@/components/development-navigation";
 import { CreateApp } from "@/components/create-app";
 import { SessionRetention } from "@/components/session-retention";
 import { WorkspaceDetails } from "@/components/workspace-details";
-import { useDevelopmentInventory } from "@/lib/development-api";
+import { orderWorkspaces, useDevelopmentInventory } from "@/lib/development-api";
 import { SessionList } from "@/components/session-list";
 import { hasMessageContent, indexAttachments, takeChosenFiles, takePastedImages } from "@/lib/attachments";
 import { approvalDecisions, cancelledQuestions, ToolActivity, TranscriptEvent } from "@/components/transcript";
 import { retryHandoff } from "@/lib/assistant-api";
 import { composeAskDraft } from "@/lib/ask-draft";
 import { clearDraft, pruneDrafts, readDraft, writeDraft, readDraftAttachments, writeDraftAttachments } from "@/lib/draft-store";
-import { orderSessions, publishAttention, waitingCount } from "@/lib/attention";
+import { useSessionListRefresh } from "@/lib/use-session-list-refresh";
+import { activityTime, orderSessions, publishAttention, waitingCount } from "@/lib/attention";
 import {
   AssistantApiError,
   createSession,
@@ -118,9 +119,15 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const contextPickerRef = useRef<AppContextPickerHandle>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const openContextAfterMenu = useRef(false);
-  const onContextChange = useCallback((record: AssistantSession) => {
-    setSession(current => current?.id === record.id && (record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0) ? record : current);
-    setSessions(current => current.map(item => item.id === record.id && (record.appContextRevision ?? 0) >= (item.appContextRevision ?? 0) ? record : item));
+  const onSessionChange = useCallback((record: AssistantSession) => {
+    const merge = (current: AssistantSession) => current.id !== record.id ? current : {
+      ...((record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0) && activityTime(record) >= activityTime(current)
+        && (record.lastEventSeq === undefined || current.lastEventSeq === undefined || record.lastEventSeq >= current.lastEventSeq) ? record : current),
+      lastEventSeq: Math.max(record.lastEventSeq ?? 0, current.lastEventSeq ?? 0) || undefined,
+      updatedAt: activityTime(record) >= activityTime(current) ? record.updatedAt : current.updatedAt,
+    };
+    setSession(current => current ? merge(current) : current);
+    setSessions(current => current.map(merge));
   }, []);
   const [contextUnavailable, setContextUnavailable] = useState(false);
   const [withoutAppDetails, setWithoutAppDetails] = useState(false);
@@ -137,7 +144,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const [uploaded, setUploaded] = useState<StoredAttachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [historyOpen, setShowSessions] = useState(false);
-  const showSessions = historyOpen;
+  const showSessions = !fullPage && historyOpen;
   const setHistoryOpen = useCallback((open: boolean) => {
     setShowSessions(open);
     try {
@@ -148,20 +155,21 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   }, []);
   const [ready, setReady] = useState(false);
   const inventory = useDevelopmentInventory(fullPage && ready);
+  useSessionListRefresh(fullPage && ready, sessions, session?.id, setSessions);
   const [tab, setTab] = useState("sessions");
   const [externalId, setExternalId] = useState("");
   const [mobileDetails, setMobileDetails] = useState(false);
   const [mobileSessions, setMobileSessions] = useState(false);
   const workspace = inventory.workspaces.find(w => w.owner.kind === "assistant" && w.owner.appId === "hosty.harness" && w.owner.reference === session?.id && w.workflow.state !== "deleted");
-  const external = inventory.workspaces.filter(w => w.owner.kind === "external" && w.workflow.state !== "deleted");
+  const external = orderWorkspaces(inventory.workspaces.filter(w => w.owner.kind === "external" && w.workflow.state !== "deleted"));
   const selectedExternal = external.find(w => w.id === externalId) ?? external[0];
+  if (selectedExternal && externalId !== selectedExternal.id) setExternalId(selectedExternal.id);
   const activeSessionId = useRef<string | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   // Reach the current deletion handler from the stream without stale state.
-  const deletedElsewhereRef = useRef<(sessionId: string) => void>(() => {});
-  // Sessions this tab deleted itself. The deletion fans out to every subscriber including this one,
-  // and its own click must not come back as "this session was deleted" from somewhere else.
-  const selfDeleted = useRef(new Set<string>());
+  const deletedSessionRef = useRef<(sessionId: string, local: boolean) => void>(() => {});
+  // A terminal stream event can confirm a local deletion before its HTTP response arrives.
+  const pendingDeletes = useRef(new Map<string, { confirmed: boolean }>());
 
   const mentionInputRef = useRef<AppMentionInputHandle>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -197,6 +205,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     }
 
     const abort = new AbortController();
+    let settingsRefresh = 0;
     streamAbortRef.current = abort;
     void streamEvents(
       record.id,
@@ -208,7 +217,17 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           return;
         }
         if (event.type === "session_provider_changed" || event.type === "session_autonomy_changed") {
-          void getSession(record.id).then(value => { if (activeSessionId.current === record.id) setSession(value); }).catch(() => {});
+          const settings: Partial<AssistantSession> = event.type === "session_autonomy_changed"
+            ? (event.autonomy === "normal" || event.autonomy === "autonomous" ? { autonomy: event.autonomy } : {})
+            : typeof event.connectionId === "string" && typeof event.connectionRevision === "number"
+              && (event.harnessKind === "codex" || event.harnessKind === "claude") && typeof event.providerLocked === "boolean"
+              ? { connectionId: event.connectionId, connectionRevision: event.connectionRevision, harnessKind: event.harnessKind, providerLocked: event.providerLocked } : {};
+          const applySettings = (current: AssistantSession) => current.id === record.id && event.seq >= (current.lastEventSeq ?? 0) && activityTime({ updatedAt: event.ts }) >= activityTime(current)
+            ? { ...current, ...settings, updatedAt: event.ts, lastEventSeq: event.seq } : current;
+          setSessions(current => current.map(applySettings));
+          setSession(current => current ? applySettings(current) : current);
+          const revision = ++settingsRefresh;
+          void getSession(record.id).then(value => { if (!abort.signal.aborted && revision === settingsRefresh && activeSessionId.current === record.id) onSessionChange(value); }).catch(() => {});
           void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
           return;
         }
@@ -216,9 +235,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         if (event.type === "app_context_changed") {
           const revision = Number(event.appContextRevision);
           setSessions(current => current.map(item => item.id === record.id && revision > (item.appContextRevision ?? 0)
-            ? { ...item, appIds: event.appIds as string[], appContextRevision: revision } : item));
+            ? { ...item, appIds: event.appIds as string[], appContextRevision: revision, lastEventSeq: event.seq, updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(item) ? event.ts : item.updatedAt } : item));
           setSession(current => current?.id === record.id && revision > (current.appContextRevision ?? 0)
-            ? { ...current, appIds: event.appIds as string[], appContextRevision: revision } : current);
+            ? { ...current, appIds: event.appIds as string[], appContextRevision: revision, lastEventSeq: event.seq, updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(current) ? event.ts : current.updatedAt } : current);
         }
         if (event.type === "assistant_delta") {
           setStreamed((current) => current + String(event.text ?? ""));
@@ -230,9 +249,14 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         if (event.type === "session_status") {
           // Cancellation closes earlier approval cards, including when replaying a stopped turn.
           if (event.status === "cancelled") setEvents(current => [...current, event]);
+          if (event.historical === true) return;
           const value = String(event.status ?? "idle");
           setStatus(value);
-          setSessions(current => current.map(item => item.id === record.id ? { ...item, status: value } : item));
+          const applyStatus = (item: AssistantSession) => item.id === record.id ? { ...item, status: value,
+            lastEventSeq: Math.max(item.lastEventSeq ?? 0, event.seq),
+            updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(item) ? event.ts : item.updatedAt } : item;
+          setSessions(current => current.map(applyStatus));
+          setSession(current => current ? applyStatus(current) : current);
           if (!["running", "awaiting_approval", "awaiting_question"].includes(String(event.status))) {
             setActivity(null);
             setStreamed("");
@@ -245,14 +269,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           return;
         }
         if (event.type === "session_deleted") {
-          if (selfDeleted.current.delete(record.id)) {
-            // This tab's own delete, already handled where the button was pressed.
-            return;
-          }
-          // Deleted from somewhere else — another tab, another client. Handled through the ref:
-          // detaching clears the conversation and opens history, and depending on that here would
-          // tie this callback to state it must not go stale on.
-          deletedElsewhereRef.current(record.id);
+          const pending = pendingDeletes.current.get(record.id);
+          if (pending) pending.confirmed = true;
+          // Always detach immediately, even when this tab initiated the request. The HTTP response
+          // may never arrive; a confirmed terminal event is already sufficient evidence of success.
+          deletedSessionRef.current(record.id, !!pending);
           return;
         }
         setEvents((current) => [...current, event]);
@@ -265,19 +286,20 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         if (state === "disconnected") setStreamed("");
       },
     );
-  }, []);
+  }, [onSessionChange]);
 
   // A full-page selection is also a navigation: Shell must restore that exact session on reload.
-  const navigateSelection = useCallback(async (sessionId: string) => {
+  const navigateSelection = useCallback(async (sessionId: string | null) => {
     if (!fullPage) return;
-    const search = `?session=${encodeURIComponent(sessionId)}`;
+    const search = sessionId ? `?session=${encodeURIComponent(sessionId)}` : "";
     const entry = ui.getNavigation().entries.find(item => item.route?.split("?")[0] === "/development");
     if (entry) {
       const result = await ui.navigate(entry.key, { requestId: crypto.randomUUID(), placement: "main", search });
       if (result.status === "accepted") return;
     }
     const route = new URL(window.location.href);
-    route.searchParams.set("session", sessionId);
+    if (sessionId) route.searchParams.set("session", sessionId);
+    else route.searchParams.delete("session");
     window.history.replaceState(window.history.state, "", route);
   }, [fullPage, ui]);
   const selectedRoute = useRef<string | null>(null);
@@ -573,8 +595,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       if (!session.title) {
         const named = await getSession(session.id).catch(() => null);
         if (named?.title) {
-          setSession(current => current?.id === named.id && (current.appContextRevision ?? 0) <= (named.appContextRevision ?? 0) ? named : current);
-          setSessions((current) => current.map((record) => (record.id === named.id ? named : record)));
+          onSessionChange(named);
         }
       }
     } catch (cause) {
@@ -583,7 +604,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       if (cause instanceof AssistantApiError && cause.code === "app_context_unavailable") setContextUnavailable(true);
       if (cause instanceof AssistantApiError && cause.code === "app_context_conflict") {
         const current = await getSession(session.id).catch(() => null);
-        if (current) setSession(previous => previous?.id === current.id && (previous.appContextRevision ?? 0) <= (current.appContextRevision ?? 0) ? current : previous);
+        if (current) onSessionChange(current);
       }
       setError(cause instanceof Error ? cause.message : String(cause));
       const current = await getSession(session.id).catch(() => null);
@@ -593,7 +614,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       sendingRef.current = false;
       setSending(false);
     }
-  }, [input, pending, running, status, contextSaving, session, uploaded, withoutAppDetails, health?.available]);
+  }, [input, pending, running, status, contextSaving, session, uploaded, withoutAppDetails, health?.available, onSessionChange]);
 
   const stop = useCallback(async () => {
     if (!session || !running || sendingRef.current || providerSavingRef.current || stoppingRef.current) return;
@@ -627,37 +648,52 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setFailedUpload(null);
     setContextUnavailable(false);
     setWithoutAppDetails(false);
-    setHistoryOpen(true);
+    requestedSessionRef.current = null;
+    selectedRoute.current = null;
+    setRequestedSessionId(null);
+    setSurfaceSessionId(null);
+    setMobileDetails(false);
+    setHistoryOpen(!fullPage);
+    void navigateSelection(null).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
     try {
       window.localStorage.removeItem(SESSION_STORAGE_KEY);
     } catch {
       // An obsolete stored id is harmless: reattachment resolves it through the API.
     }
-  }, [setHistoryOpen]);
+  }, [setHistoryOpen, fullPage, navigateSelection]);
 
   const remove = useCallback(async (sessionId: string) => {
     setError(null);
     // The deletion event can arrive before its HTTP response.
-    selfDeleted.current.add(sessionId);
+    const pending = { confirmed: false };
+    pendingDeletes.current.set(sessionId, pending);
     try {
       await deleteSession(sessionId);
-      clearDraft(sessionId);
-      setSessions(current => current.filter(entry => entry.id !== sessionId));
-      detachDeleted(sessionId);
     } catch (cause) {
-      selfDeleted.current.delete(sessionId);
-      setError(cause instanceof Error ? cause.message : String(cause));
-      throw cause;
+      if (!pending.confirmed) {
+        // Other navigation rows have no active stream. Reconcile a lost response against the
+        // authenticated inventory, preserving local state if deletion cannot be established.
+        const observed = await listSessions().catch(() => null);
+        if (!pending.confirmed && (!observed || observed.some(entry => entry.id === sessionId))) {
+          setError(cause instanceof Error ? cause.message : String(cause));
+          throw cause;
+        }
+      }
+    } finally {
+      pendingDeletes.current.delete(sessionId);
     }
+    clearDraft(sessionId);
+    setSessions(current => current.filter(entry => entry.id !== sessionId));
+    detachDeleted(sessionId);
   }, [detachDeleted]);
 
   useEffect(() => {
-    deletedElsewhereRef.current = (sessionId: string) => {
+    deletedSessionRef.current = (sessionId: string, local: boolean) => {
       setSessions(current => current.filter(entry => entry.id !== sessionId));
       clearDraft(sessionId);
       if (activeSessionId.current === sessionId) {
         detachDeleted(sessionId);
-        setError("This session was deleted in another window. Choose a session or start a new one.");
+        if (!local) setError("This session was deleted in another window. Choose a session or start a new one.");
       }
     };
   }, [detachDeleted]);
@@ -666,12 +702,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setError(null);
     try {
       const record = await renameSession(sessionId, title);
-      setSessions((current) => current.map((entry) => (entry.id === record.id ? record : entry)));
-      setSession((current) => (current?.id === record.id ? record : current));
+      onSessionChange(record);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, []);
+  }, [onSessionChange]);
 
   const decide = useCallback(
     async (approvalId: string, decision: "allow" | "deny", message?: string) => {
@@ -728,7 +763,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       </div>}
       <div className={`${fullPage && tab !== "sessions" ? "hidden" : "flex"} min-h-0 flex-1`}>
       {fullPage && <div className={`${mobileSessions ? "block" : "hidden"} w-full shrink-0 border-r md:block md:w-52`}><DevelopmentNavigation sessions={listedSessions} activeId={session?.id} workspaces={inventory.workspaces}
-        onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} /></div>}
+        onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} onDelete={remove} /></div>}
       <main className={`${fullPage && mobileDetails && workspace ? "hidden min-[900px]:flex" : fullPage && mobileSessions ? "hidden md:flex" : "flex"} min-h-0 min-w-0 flex-1 flex-col`}>
 
       <header className="flex flex-wrap shrink-0 items-center gap-2 border-b px-3 py-2">
@@ -744,10 +779,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
             <StatusBadge value={status} />
             {session && (
               <AppContextPicker key={session.id} ref={contextPickerRef} opener={addButtonRef} compact side="bottom" session={session} busy={sending || mentionSaving || providerSaving} onBusyChange={setContextSaving} running={running}
-                onChange={onContextChange} />
+                onChange={onSessionChange} />
             )}
-            <div className="ml-auto flex items-center gap-1">
-              {!fullPage && <Button variant="ghost" size="sm" disabled={!session || sending} onClick={async () => {
+            {!fullPage && <div className="ml-auto flex items-center gap-1">
+              <Button variant="ghost" size="sm" disabled={!session || sending} onClick={async () => {
                 if (!session || sendingRef.current) return;
                 sendingRef.current = true; setSending(true); setError(null);
                 try {
@@ -766,17 +801,17 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                   window.open(`/development?session=${encodeURIComponent(session.id)}`, "_blank", "noopener");
                 } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
                 finally { sendingRef.current = false; setSending(false); }
-              }}>Open in Harness</Button>}
+              }}>Open in Harness</Button>
               <Button variant="ghost" size="icon-sm" title="Manage sessions" aria-label="Session history" disabled={!ready} onClick={() => {
                 setHistoryOpen(true);
                 void listSessions().then(setSessions).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
               }}><History /></Button>
               <Button variant="ghost" size="icon-sm" title="New session" aria-label="New session" disabled={!ready} onClick={() => void startNew()}><MessageSquarePlus /></Button>
-            </div>
+            </div>}
           </>
         )}
       </header>
-      {session && !showSessions && <CreateApp key={`creation-${session.id}`} session={session} busy={running || sending || stopping || providerSaving} onChange={record => { onContextChange(record); void inventory.refresh(); }} />}
+      {session && !showSessions && <CreateApp key={`creation-${session.id}`} session={session} busy={running || sending || stopping || providerSaving} onChange={record => { onSessionChange(record); void inventory.refresh(); }} />}
       {session && !showSessions && <SessionRetention sessionId={session.id} revision={`${status}:${workspace?.workflow.revision ?? ""}`} />}
 
       {!showSessions && session && <SessionCredentials key={`credentials-${session.id}`} sessionId={session.id} />}
@@ -877,7 +912,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                 inputRef={composerRef}
                 session={session}
                 contextBusy={contextSaving || sending || providerSaving}
-                onContextChange={onContextChange}
+                onContextChange={onSessionChange}
                 onBusyChange={onMentionSaving}
                 value={input}
                 onChange={setInput}
@@ -952,11 +987,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                       </DropdownMenuContent>
                     </DropdownMenu>
                     {session && <SessionAutonomy key={session.id} session={{ ...session, status }} busy={sending || stopping || mentionSaving || contextSaving || providerSaving}
-                      onSavingChange={onProviderSaving} onChange={record => {
-                        setSession(current => current?.id === record.id ? record : current);
-                      }} />}
+                      onSavingChange={onProviderSaving} onChange={onSessionChange} />}
                     {session && session.providerLocked !== undefined && <SessionProvider key={`${session.id}:${session.connectionId}:${session.connectionRevision}`} session={session} busy={sending || mentionSaving || contextSaving || providerSaving} onSavingChange={onProviderSaving} onChange={record => {
-                      setSession(current => current?.id === record.id ? record : current);
+                      onSessionChange(record);
                       void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
                     }} />}
                   </div>

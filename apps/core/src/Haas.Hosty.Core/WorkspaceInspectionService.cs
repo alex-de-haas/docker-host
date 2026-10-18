@@ -27,7 +27,9 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
             var children = group.OrderBy(w => w.Repository, StringComparer.Ordinal).Select(w => Project(w, installed)).ToArray();
             var state = children.All(w => w.State == "released") ? "released"
                 : children.Any(w => w.State != "active" || w.Observation?.State != "ok") ? "attention" : "active";
-            result.Add(new(group.Key, state, projection, children) { Workflow = await workspaces.WorkflowAsync(owner, ct) });
+            var workflow = await workspaces.WorkflowAsync(owner, ct);
+            result.Add(new(group.Key, state, projection, children) { Workflow = workflow,
+                UpdatedAt = group.Select(w => w.UpdatedAt ?? w.Observation?.At).Append(workflow.UpdatedAt ?? workflow.CompletedAt).Max() });
         }
         return new(result.ToArray(), clock.UtcNow);
     }

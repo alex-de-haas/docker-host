@@ -36,6 +36,7 @@ export type AssistantSession = {
   status: string;
   createdAt: string;
   updatedAt?: string;
+  lastEventSeq?: number;
   createdBy?: string;
   appIds?: string[];
   appContextRevision?: number;
@@ -262,7 +263,7 @@ export async function streamEvents(
             onEvent(event);
             // The server ends replay with its authoritative status. Until then, stale replay
             // must not be presented as a live observation of the last tool.
-            if (event.type === "session_status") onConnection?.("connected");
+            if (event.type === "session_status" && event.historical !== true) onConnection?.("connected");
             // Terminal, unlike every other end of this stream: the session is gone, so the EOF that
             // follows is not a dropped connection to retry. Reconnecting would fetch a 404 and put
             // an error in a transcript the operator has already deleted.

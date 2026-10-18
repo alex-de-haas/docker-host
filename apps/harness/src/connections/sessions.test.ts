@@ -261,6 +261,37 @@ describe("sessions with provider connections", () => {
     expect((await registry.summary()).available).toBe(true);
   });
 
+  it.each(["provider", "autonomy", "app-context"])("persists %s activity with the exact emitted timestamp across manager restarts", async kind => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-18T10:00:00Z"));
+      const c = await connection("codex");
+      const blank = await manager.createSession({ createdBy: "operator" });
+      vi.setSystemTime(new Date("2026-10-18T12:00:00Z"));
+      const toISOString = Date.prototype.toISOString;
+      const tickingClock = vi.spyOn(Date.prototype, "toISOString").mockImplementation(function (this: Date) {
+        const value = toISOString.call(this);
+        vi.setSystemTime(Date.now() + 1);
+        return value;
+      });
+      try {
+        const updated = kind === "provider" ? await manager.setConnection(blank.id, c.id, false)
+          : kind === "autonomy" ? await manager.setAutonomy(blank.id, "autonomous", "operator")
+          : await manager.setAppContext(blank.id, [], 0, "operator");
+        expect(Date.parse(updated.updatedAt)).toBeGreaterThan(Date.parse("2026-10-18T10:00:00Z"));
+        const restarted = newManager();
+        expect((await restarted.getSession(blank.id))!.updatedAt).toBe(updated.updatedAt);
+        expect((await restarted.listSessions()).find(record => record.id === blank.id)!.updatedAt).toBe(updated.updatedAt);
+        const eventType = kind === "provider" ? "session_provider_changed" : kind === "autonomy" ? "session_autonomy_changed" : "app_context_changed";
+        expect((await store.readEvents(blank.id)).find(event => event.type === eventType)!.ts).toBe(updated.updatedAt);
+      } finally {
+        tickingClock.mockRestore();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("allows empty-chat selection, requires explicit binding for old chats, and preserves removed connection history", async () => {
     const c = await connection("codex");
     await registry.setDefault(null);

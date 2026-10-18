@@ -1,5 +1,6 @@
 "use client";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
+import { activityTime } from "@/lib/attention";
 import { useCallback, useEffect, useState } from "react";
 
 export type Workflow = { state: string; revision: number; completedAt?: string; closure?: string | null; operations?: { id: string; kind: string; state: string; expectedRevision: number; error?: string }[] };
@@ -13,9 +14,12 @@ export type Worktree = { id: string; workspaceId: string; repository: string; br
   observation?: { at: string; state: string; conflict?: boolean; head?: string; error?: string; sessionFiles?: string[];
     local?: { files: Change[]; truncated: boolean; lineStats?: { additions: number; deletions: number } } };
   detailError?: string; leases: string[]; };
-export type DevelopmentWorkspace = { id: string; state: string; workflow: Workflow;
+export type DevelopmentWorkspace = { id: string; state: string; updatedAt?: string | null; workflow: Workflow;
   owner: { kind: string; label: string; reference: string; appId?: string }; worktrees: Worktree[] };
-export type Diff = { path: string; combined: string; truncated: boolean; binary: boolean; image?: unknown };
+export function orderWorkspaces(workspaces: readonly DevelopmentWorkspace[]): DevelopmentWorkspace[] {
+  return [...workspaces].sort((left, right) => activityTime(right) - activityTime(left) || left.id.localeCompare(right.id));
+}
+export type Diff = { path: string; combined: string; truncated: boolean; binary: boolean; image?: unknown; contentKind?: "patch" | "text" };
 export async function developmentRequest<T>(path = "", body?: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   const response = await appFetch(`/api/development-workspaces${path}`, { method: body ? "POST" : "GET", signal,
     cache: "no-store", ...(body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}) });

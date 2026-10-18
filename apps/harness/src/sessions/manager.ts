@@ -349,8 +349,9 @@ export class SessionManager {
           await this.worker.registerTrees(verified!.worktreePaths, this.workerBindings);
         }
         session.record.appCreations!.find(o => o.input.requestId === input.requestId)!.state = "observed";
+        session.record.updatedAt = new Date().toISOString();
         await this.store.saveRecord(session.record);
-        await this.append(id, { type: "app_context_changed", appIds, appContextRevision: session.record.appContextRevision, actor: session.record.createdBy });
+        await this.append(id, { type: "app_context_changed", ts: session.record.updatedAt, appIds, appContextRevision: session.record.appContextRevision, actor: session.record.createdBy });
         return created;
       }
       const result = await this.development.call(id, token, action, input);
@@ -732,8 +733,8 @@ export class SessionManager {
       const binding = await this.connections.binding(connectionId);
       if (!binding) throw new ConnectionError(400, "provider_required", "Choose a provider connection.");
       if (locked && session.record.harnessSessionId) await this.connections.adoptLegacySession(binding, session.record.harnessSessionId);
-      Object.assign(session.record, binding, { providerLocked: locked });
-      await this.append(id, { type: "session_provider_changed", ...binding, providerLocked: locked });
+      Object.assign(session.record, binding, { providerLocked: locked, updatedAt: new Date().toISOString() });
+      await this.append(id, { type: "session_provider_changed", ts: session.record.updatedAt, ...binding, providerLocked: locked });
       return session.record;
     });
   }
@@ -749,7 +750,7 @@ export class SessionManager {
       session.record.appIds = ids;
       session.record.appContextRevision = (session.record.appContextRevision ?? 0) + 1;
       session.record.updatedAt = new Date().toISOString();
-      await this.append(id, { type: "app_context_changed", appIds: ids, appContextRevision: session.record.appContextRevision, actor });
+      await this.append(id, { type: "app_context_changed", ts: session.record.updatedAt, appIds: ids, appContextRevision: session.record.appContextRevision, actor });
       return session.record;
     });
   }
@@ -931,7 +932,7 @@ export class SessionManager {
       session.record.autonomy = value;
       session.record.updatedAt = new Date().toISOString();
       await this.store.saveRecord(session.record);
-      await this.append(id, { type: "session_autonomy_changed", autonomy: value });
+      await this.append(id, { type: "session_autonomy_changed", ts: session.record.updatedAt, autonomy: value });
       this.audit.report("ai_session_autonomy_changed", { sessionId: id, autonomy: value });
       return session.record;
     });
@@ -1690,9 +1691,6 @@ export class SessionManager {
     // path that still mints app tokens.
     this.proxy?.unregister(id);
     this.developmentMcp.unregister(id);
-    // Persisted with the same type the live status fan-out uses, so a transcript replay and a
-    // live subscriber see one status vocabulary.
-    await this.append(id, { type: "session_status", status: "cancelled" });
     await this.setStatus(id, "cancelled");
     this.audit.report("ai_session_cancelled", { sessionId: id });
   }
@@ -1723,13 +1721,16 @@ export class SessionManager {
     const lastReplayed = replay.length > 0 ? replay[replay.length - 1]!.seq : afterSeq;
     const tail = buffered.filter((event) => event.seq > lastReplayed);
     passthrough = true;
-    // Status transitions are live-only. Always finish replay with the authoritative state,
-    // even if the caller already has every persisted event (e.g. idle arrived during reconnect).
+    // Finish with authoritative state even for legacy records whose status was live-only,
+    // or when the caller already has every persisted event.
     const status: StoredEvent = {
       seq: session.record.lastEventSeq, ts: session.record.updatedAt,
       type: "session_status", status: session.record.status,
     };
-    return { replay: [...replay, ...tail, this.activityEvent(session), status], unsubscribe: () => session.listeners.delete(wrapped) };
+    // Historical statuses still close old approval cards, but only the final snapshot describes
+    // current controls and signals replay readiness. Keep the flag out of the durable journal.
+    const history = [...replay, ...tail].map(event => event.type === "session_status" ? { ...event, historical: true } : event);
+    return { replay: [...history, this.activityEvent(session), status], unsubscribe: () => session.listeners.delete(wrapped) };
   }
 
   async shutdown(): Promise<void> {
@@ -2080,8 +2081,9 @@ export class SessionManager {
     if (isWaitingStatus(status)) {
       this.notifier?.waiting(id, status, session.record.createdBy ?? null);
     }
-    this.fanOut(session, {
-      seq: session.record.lastEventSeq,
+    // Status can change without another event (for example an automatic MCP decision).
+    // Persist its own cursor so same-millisecond record replies cannot restore the prior state.
+    await this.append(id, {
       ts: session.record.updatedAt,
       type: "session_status",
       status,

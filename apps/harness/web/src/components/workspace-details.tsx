@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { GitPullRequest, FileDiff, MoreHorizontal, RefreshCw } from "lucide-react";
+import dynamic from "next/dynamic";
+import { FileDiff, MoreHorizontal, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
@@ -9,6 +10,12 @@ import { LocalRepositoryActions } from "./local-repository-actions";
 import { AppDevMode } from "./app-dev-mode";
 import { LocalAppHandoff } from "./local-app-handoff";
 import { WorkspacePreviews } from "./workspace-previews";
+import { PullRequestStatus } from "./pull-request-status";
+import { PullRequestChecks } from "./pull-request-checks";
+
+const WorkspaceDiffView = dynamic(() => import("./workspace-diff-view"), {
+  ssr: false, loading: () => <p role="status" className="p-3 text-sm text-muted-foreground">Loading diff viewer…</p>,
+});
 
 type PendingAction = { kind: string; requestId: string; expectedRevision: number };
 function readPendingAction(workspaceId: string): PendingAction | null {
@@ -121,12 +128,12 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
       <WorkspacePreviews key={workspace.id} workspaceId={workspace.id} />
       {trees.some(t => t.pullRequests.length) && <section className="space-y-3 border-t pt-4"><h3 className="text-sm text-muted-foreground">Pull requests</h3>
         {trees.flatMap(tree => tree.pullRequests.map(pr => {
-          const o = pr.observation, stale = !o || now - Date.parse(o.at) > 90000;
-          const checks = o?.checks, passed = checks?.filter(c => ["SUCCESS", "NEUTRAL", "SKIPPED"].includes(c.state)).length;
-          return <div key={`${tree.id}:${pr.url}`} className="space-y-1 text-sm"><a href={safeLink(pr.url)} target="_blank" rel="noreferrer" className="flex items-start gap-2 hover:underline"><GitPullRequest className="mt-0.5 size-4 shrink-0 text-violet-500" /><span className="line-clamp-2">{o?.title || `Pull request #${pr.url.split("/").pop()}`}</span></a>
-            <p className="pl-6 text-xs text-muted-foreground">{repositoryName(pr.url.split("/pull/")[0])} · CI {checks ? `${passed}/${checks.length}` : "unknown"} · {o?.commentCount === undefined ? "Comments unknown" : `${o.commentCount} discussion comments`}</p>
+          const o = pr.observation, stale = !o || !Number.isFinite(Date.parse(o.at)) || now - Date.parse(o.at) > 90000;
+          const number = pr.url.match(/\/pull\/(\d+)(?:[/?#]|$)/)?.[1];
+          const repository = repositoryName(pr.url.split("/pull/")[0]);
+          return <div key={`${tree.id}:${pr.url}`} className="space-y-1 text-sm"><a href={safeLink(pr.url)} target="_blank" rel="noreferrer" className="flex items-start gap-2 hover:underline"><PullRequestStatus pr={pr} stale={stale} /><span className="line-clamp-2">{number && <span className="text-muted-foreground">#{number} · </span>}{o?.title || "Pull request"}</span></a>
+            <p className="pl-6 text-xs text-muted-foreground">{repository} · <PullRequestChecks pr={pr} stale={stale} label={`${repository}${number ? ` #${number}` : ""}`} /> · {o?.commentCount === undefined ? "Comments unknown" : `${o.commentCount} discussion comments`}</p>
             <p className="pl-6 text-xs text-muted-foreground">{o?.state ?? "State unknown"}{o?.draft ? " · Draft" : ""}{stale ? " · Stale / unobserved" : ""}{o?.reviewDecision ? ` · ${o.reviewDecision}` : ""}{o?.unresolvedThreads ? ` · ${o.unresolvedThreads} unresolved threads` : ""}</p>
-            {checks?.filter(c => !["SUCCESS", "NEUTRAL", "SKIPPED"].includes(c.state)).map((c,i) => <p key={i} className="pl-6 text-xs">{c.name}: {c.state}</p>)}
             {(pr.unavailable || o?.error) && <p className="pl-6 text-xs text-destructive">{pr.unavailable || o?.error}</p>}
           </div>;
         }))}
@@ -150,6 +157,8 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
 function WorkspaceDiff({ workspaceId, tree, choice, onChoice }: { workspaceId: string; tree: Worktree;
   choice: { view: string; path: string }; onChoice: (choice: { view: string; path: string }) => void }) {
   const { view, path } = choice;
+  const [layout, setLayout] = useState<"unified" | "split">("unified");
+  const [wrap, setWrap] = useState(true);
   const [result, setResult] = useState<{ key: string; diff?: Diff; error?: string } | null>(null);
   const files = view === "session" ? tree.sessionChanges ?? [] : tree.observation?.local?.files ?? [];
   const selected = files.some(f => f.path === path) ? path : files[0]?.path;
@@ -163,8 +172,14 @@ function WorkspaceDiff({ workspaceId, tree, choice, onChoice }: { workspaceId: s
       .then(diff => { if (!abort.signal.aborted) setResult({ key, diff }); }).catch(e => { if (!abort.signal.aborted) setResult({ key, error: e.message }); });
     return () => abort.abort();
   }, [workspaceId, tree.id, view, selected, key]);
-  return <><select aria-label="Diff scope" className="w-fit rounded border bg-background p-2 text-sm" value={view} onChange={e => onChoice({ ...choice, view: e.target.value })}><option value="session">All workspace changes</option><option value="local">Uncommitted changes</option></select>
+  return <><div className="flex flex-wrap items-center gap-2"><select aria-label="Diff scope" className="w-fit rounded border bg-background p-2 text-sm" value={view} onChange={e => onChoice({ ...choice, view: e.target.value })}><option value="session">All workspace changes</option><option value="local">Uncommitted changes</option></select>
+      <div role="group" aria-label="Diff layout" className="flex gap-1">
+        <Button size="sm" variant={layout === "unified" ? "secondary" : "ghost"} aria-pressed={layout === "unified"} onClick={() => setLayout("unified")}>Unified</Button>
+        <Button size="sm" variant={layout === "split" ? "secondary" : "ghost"} aria-pressed={layout === "split"} onClick={() => setLayout("split")}>Split</Button>
+      </div>
+      <Button size="sm" variant={wrap ? "secondary" : "ghost"} aria-pressed={wrap} onClick={() => setWrap(!wrap)}>Wrap lines</Button>
+    </div>
     <div className="flex min-h-0 flex-1 flex-col gap-3 sm:flex-row"><nav aria-label="Changed files" className="max-h-32 shrink-0 overflow-auto sm:max-h-none sm:w-56">{files.map(f => <button key={f.path} type="button" aria-current={selected === f.path ? "true" : undefined} onClick={() => onChoice({ ...choice, path: f.path })} className={`block w-full break-all rounded px-2 py-1.5 text-left text-xs hover:bg-muted ${selected === f.path ? "bg-muted" : ""}`}>{f.path}</button>)}</nav>
-      <div className="min-h-0 min-w-0 flex-1 overflow-auto rounded bg-muted p-3 text-xs">{error ? <p role="alert">{error}</p> : !selected ? "No changes in this scope." : !diff ? "Loading diff…" : diff.truncated ? "Diff exceeds the preview limit. Inspect it in your Git client." : diff.binary || diff.image ? "Binary file changed. Inspect it in your editor." : <pre>{diff.combined || "No text changes."}</pre>}</div>
+      <div className="min-h-0 min-w-0 flex-1 overflow-auto rounded border bg-background">{error ? <p role="alert" className="p-3 text-sm">{error}</p> : !selected ? <p className="p-3 text-sm">No changes in this scope.</p> : !diff ? <p role="status" className="p-3 text-sm">Loading diff…</p> : <WorkspaceDiffView diff={diff} layout={layout} wrap={wrap} />}</div>
     </div></>;
 }

@@ -61,3 +61,20 @@ it("leaves a silent but open heartbeat stream connected and cancels the retry ti
   await task;
   expect(appFetch).toHaveBeenCalledTimes(1);
 });
+
+it("waits for the authoritative snapshot across chunks containing historical statuses", async () => {
+  const controller = new AbortController();
+  const states: StreamConnection[] = [], events: AssistantEvent[] = [];
+  let source!: ReadableStreamDefaultController<Uint8Array>;
+  vi.mocked(appFetch).mockResolvedValue(new Response(new ReadableStream({ start(stream) { source = stream; } })));
+  const task = streamEvents("session", event => events.push(event), controller.signal, state => states.push(state));
+  source.enqueue(frame({ type: "session_status", seq: 1, status: "idle", historical: true }));
+  await vi.waitFor(() => expect(events).toHaveLength(1));
+  expect(states).toEqual(["connecting"]);
+  source.enqueue(frame({ type: "session_status", seq: 2, status: "running", historical: true }));
+  await vi.waitFor(() => expect(events).toHaveLength(2));
+  expect(states).toEqual(["connecting"]);
+  source.enqueue(frame({ type: "session_status", seq: 3, status: "awaiting_approval" }));
+  await vi.waitFor(() => expect(states).toEqual(["connecting", "connected"]));
+  controller.abort(); source.close(); await task;
+});

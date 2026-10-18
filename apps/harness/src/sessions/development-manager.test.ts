@@ -27,6 +27,24 @@ beforeEach(async () => {
 afterEach(async () => { await manager.shutdown(); vi.restoreAllMocks(); await rm(dir, { recursive: true, force: true }); });
 const finish = async (id: string) => { starts.at(-1)!.onEvent({ type: "result", status: "success" }); await vi.waitFor(async () => expect((await manager.getSession(id))?.status).toBe("idle")); };
 describe("development session coordination", () => {
+  it("persists app-creation activity and emits the same timestamp with observed state", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-18T10:00:00Z"));
+      const record = await manager.createSession({ createdBy: "admin" });
+      const input = { requestId: "12345678-1234-4234-8234-123456789abd", appId: "notes", name: "Notes", bootstrapCommit: true };
+      vi.mocked(client.call).mockResolvedValue({ operation: { stage: "installed" }, workspace: tree });
+      vi.setSystemTime(new Date("2026-10-18T12:00:00Z"));
+      await manager.workspaceAction(record.id, "app-create", input, "token", "admin");
+      const saved = (await store.readRecord(record.id))!;
+      const event = (await store.readEvents(record.id)).find(item => item.type === "app_context_changed")!;
+      expect(saved.updatedAt).toBe("2026-10-18T12:00:00.000Z");
+      expect(event.ts).toBe(saved.updatedAt);
+      expect(saved.appCreations![0]!.state).toBe("observed");
+      expect(saved.title).toBe("Notes");
+      expect(saved.lastEventSeq).toBe(event.seq);
+    } finally { vi.useRealTimers(); }
+  });
   it("keeps a refused unallocated building session deletable after Core confirms no worktree exists", async () => {
     vi.mocked(client.call).mockImplementation(async (_id, _token, action) => {
       if (action === "prepare") throw new AppContextError(409, "workspace_local_head_changed", "Refresh main");

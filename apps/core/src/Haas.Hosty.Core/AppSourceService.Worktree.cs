@@ -104,7 +104,7 @@ internal sealed partial class AppSourceService
             var binary = buffer.AsSpan(0, count).Contains((byte)0);
             var tooLarge = !binary && count > MaxDiffOutput;
             return new(file.Path, binary ? "New binary file" : tooLarge ? "" : Encoding.UTF8.GetString(buffer, 0, count),
-                "", tooLarge, status.Head, NewFile: true, Binary: binary);
+                "", tooLarge, status.Head, NewFile: true, Binary: binary, ContentKind: "text");
         }
         string[] common = ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--relative"];
         var combined = await WorktreeGitAsync(scope, [.. common, .. status.Head is null ? Array.Empty<string>() : new[] { status.Head }, "--", file.Path], cancellationToken, limit: MaxDiffOutput, indexPath: indexPath);
@@ -308,7 +308,7 @@ internal sealed record AppSourceStatus(string AppId, string State, string? Scope
 }
 internal sealed record AppSourceDiffRequest(string Path);
 internal sealed record AppSourceDiff(string Path, string Combined, string Staged, bool Truncated, string? Head, bool NewFile,
-    bool Binary = false, AppSourceImagePreview? Image = null);
+    bool Binary = false, AppSourceImagePreview? Image = null, string ContentKind = "patch");
 internal sealed record AppSourceDiscardRequest(string[] Paths);
 internal sealed record AppSourceDiscardPlan(string AppId, string ReviewId, string Head, string ScopePath, IReadOnlyList<AppSourceFile> Files, DateTimeOffset ExpiresAt);
 internal sealed record AppSourceDiscardApplyRequest(string ReviewId);
