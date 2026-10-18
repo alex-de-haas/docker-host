@@ -531,12 +531,13 @@ it("orders a locally changed autonomy immediately and retains its activity after
 });
 it.each(["session_autonomy_changed", "session_provider_changed", "app_context_changed"])("orders %s activity without allowing replay or late responses to move it backwards", async type => {
   await renderActivityOrder();
-  vi.mocked(api.getSession).mockResolvedValue({ ...record, updatedAt: "2026-10-18T12:00:00Z" });
+  vi.mocked(api.getSession).mockResolvedValue({ ...record, autonomy: "autonomous", updatedAt: "2026-10-18T12:00:00Z" });
   await act(async () => emit({ type, seq: 3, ts: "2026-10-18T12:00:00Z", appIds: ["one"], appContextRevision: 2 }));
   expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
   vi.mocked(api.getSession).mockResolvedValue({ ...record, updatedAt: "2026-10-18T10:30:00Z" });
   await act(async () => emit({ type, seq: 1, ts: "2026-10-18T10:30:00Z", appIds: ["one"], appContextRevision: 1 }));
   expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+  if (type !== "app_context_changed") expect(button("Autonomy: Autonomous")).not.toBeNull();
 });
 
 it.each(["session_autonomy_changed", "session_provider_changed"])("uses %s activity when the record refresh fails", async type => {
@@ -545,4 +546,57 @@ it.each(["session_autonomy_changed", "session_provider_changed"])("uses %s activ
   await act(async () => emit({ type, seq: 3, ts: "2026-10-18T12:00:00Z" }));
   expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
   expect(input().value).toBe("My retained draft");
+});
+
+it("refreshes non-selected running sessions through waiting and completion without losing the selected draft", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  const visible = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  try {
+    record = { ...record, appIds: ["one"], updatedAt: "2026-10-18T11:00:00Z" };
+    const other = { ...record, id: "background", title: "Background work", status: "running", updatedAt: "2026-10-18T10:00:00Z" };
+    vi.mocked(api.listSessions).mockResolvedValue([record, other]);
+    await renderDeletion();
+    expect(navigationTitles()).toEqual(["Conversation", "Background work"]);
+    vi.mocked(api.listSessions).mockResolvedValue([record, { ...other, status: "awaiting_approval", updatedAt: "2026-10-18T12:00:00Z" }]);
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(navigationTitles()).toEqual(["Background work", "Conversation"]);
+    expect(container.querySelector('[aria-label="Waiting for you"]')).not.toBeNull();
+    vi.mocked(api.listSessions).mockResolvedValue([record, { ...other, status: "idle", updatedAt: "2026-10-18T13:00:00Z" }]);
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(container.querySelector('[aria-label="Waiting for you"]')).toBeNull();
+    const calls = vi.mocked(api.listSessions).mock.calls.length;
+    await act(async () => { vi.advanceTimersByTime(15000); });
+    expect(api.listSessions).toHaveBeenCalledTimes(calls);
+    expect(input().value).toBe("My retained draft");
+    expect(window.location.search).toBe("?session=session-one");
+  } finally { visible.mockRestore(); vi.useRealTimers(); }
+});
+
+it("pauses hidden list refreshes and rejects a snapshot overtaken by session deletion", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  const visible = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  try {
+    const other = { ...record, id: "background", title: "Background work", status: "running" };
+    vi.mocked(api.listSessions).mockResolvedValue([record, other]);
+    await renderDeletion();
+    await act(async () => { vi.advanceTimersByTime(15000); window.dispatchEvent(new Event("focus")); });
+    expect(api.listSessions).toHaveBeenCalledTimes(1);
+    let finish!: (sessions: api.AssistantSession[]) => void;
+    vi.mocked(api.listSessions).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    visible.mockReturnValue("visible");
+    await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+    await act(async () => { vi.advanceTimersByTime(10000); window.dispatchEvent(new Event("focus")); });
+    expect(api.listSessions).toHaveBeenCalledTimes(2);
+    vi.mocked(api.deleteSession).mockResolvedValue(undefined);
+    await openDelete("Background work");
+    await act(async () => finish([record, other]));
+    expect(button("Delete Background work")).toBeNull();
+    expect(input().value).toBe("My retained draft");
+    vi.mocked(api.listSessions).mockRejectedValue(new Error("Temporary outage"));
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(input().value).toBe("My retained draft");
+    vi.mocked(api.listSessions).mockResolvedValue([record, { ...other, status: "idle" }]);
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(button("Delete Background work")).not.toBeNull();
+  } finally { visible.mockRestore(); vi.useRealTimers(); }
 });

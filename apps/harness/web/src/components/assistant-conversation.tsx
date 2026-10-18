@@ -36,6 +36,7 @@ import { approvalDecisions, cancelledQuestions, ToolActivity, TranscriptEvent } 
 import { retryHandoff } from "@/lib/assistant-api";
 import { composeAskDraft } from "@/lib/ask-draft";
 import { clearDraft, pruneDrafts, readDraft, writeDraft, readDraftAttachments, writeDraftAttachments } from "@/lib/draft-store";
+import { useSessionListRefresh } from "@/lib/use-session-list-refresh";
 import { activityTime, orderSessions, publishAttention, waitingCount } from "@/lib/attention";
 import {
   AssistantApiError,
@@ -120,7 +121,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const openContextAfterMenu = useRef(false);
   const onSessionChange = useCallback((record: AssistantSession) => {
     const merge = (current: AssistantSession) => current.id !== record.id ? current : {
-      ...((record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0) ? record : current),
+      ...((record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0) && activityTime(record) >= activityTime(current) ? record : current),
       updatedAt: activityTime(record) >= activityTime(current) ? record.updatedAt : current.updatedAt,
     };
     setSession(current => current ? merge(current) : current);
@@ -152,6 +153,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   }, []);
   const [ready, setReady] = useState(false);
   const inventory = useDevelopmentInventory(fullPage && ready);
+  useSessionListRefresh(fullPage && ready, sessions, session?.id, setSessions);
   const [tab, setTab] = useState("sessions");
   const [externalId, setExternalId] = useState("");
   const [mobileDetails, setMobileDetails] = useState(false);

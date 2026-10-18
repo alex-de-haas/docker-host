@@ -29,6 +29,12 @@ Core records managed operations, lease/consumer changes, workflow changes and ob
 source metadata changes; ignored build output does not affect order. Legacy workspace records use
 their last saved observation as a baseline until new activity is recorded. A Core predating this
 field leaves activity unknown, sorted deterministically after dated records.
+The selected chat uses its existing event stream. While another chat is running or waiting, the
+visible full-page navigation reconciles session inventory every five seconds. Hidden pages pause
+requests; focus and visibility recovery refresh even an idle list. Requests do not overlap within
+a subscription, and snapshots overtaken by local edits, events or deletions are discarded. Failed
+refreshes retain the list and drafts for retry. Older full-record replies cannot replace newer
+session settings.
 Each row offers Delete session with confirmation. It reuses the existing session deletion API,
 including unfinished-workspace protection, and keeps failures visible for retry without navigating
 away from the current conversation. Deleting the selected session clears its draft and route selection;
