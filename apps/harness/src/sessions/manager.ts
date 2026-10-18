@@ -1691,9 +1691,6 @@ export class SessionManager {
     // path that still mints app tokens.
     this.proxy?.unregister(id);
     this.developmentMcp.unregister(id);
-    // Persisted with the same type the live status fan-out uses, so a transcript replay and a
-    // live subscriber see one status vocabulary.
-    await this.append(id, { type: "session_status", status: "cancelled" });
     await this.setStatus(id, "cancelled");
     this.audit.report("ai_session_cancelled", { sessionId: id });
   }
@@ -1724,8 +1721,8 @@ export class SessionManager {
     const lastReplayed = replay.length > 0 ? replay[replay.length - 1]!.seq : afterSeq;
     const tail = buffered.filter((event) => event.seq > lastReplayed);
     passthrough = true;
-    // Status transitions are live-only. Always finish replay with the authoritative state,
-    // even if the caller already has every persisted event (e.g. idle arrived during reconnect).
+    // Finish with authoritative state even for legacy records whose status was live-only,
+    // or when the caller already has every persisted event.
     const status: StoredEvent = {
       seq: session.record.lastEventSeq, ts: session.record.updatedAt,
       type: "session_status", status: session.record.status,
@@ -2081,8 +2078,9 @@ export class SessionManager {
     if (isWaitingStatus(status)) {
       this.notifier?.waiting(id, status, session.record.createdBy ?? null);
     }
-    this.fanOut(session, {
-      seq: session.record.lastEventSeq,
+    // Status can change without another event (for example an automatic MCP decision).
+    // Persist its own cursor so same-millisecond record replies cannot restore the prior state.
+    await this.append(id, {
       ts: session.record.updatedAt,
       type: "session_status",
       status,
