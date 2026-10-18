@@ -22,7 +22,8 @@ Sessions within each app group and external workspaces are ordered by most recen
 stable ID ordering for equal or unavailable dates. Waiting sessions keep their indicators without
 being pinned above newer work. Sessions fall back to their creation date on older records; Core
 aggregates workspace activity across its repositories and workflow. Status polling, reconnects and
-opening details do not count as new activity. Reordering keeps the selected conversation/workspace.
+opening details do not count as new activity. Autonomy, provider and app-context changes update
+the list immediately; replayed events and late responses cannot regress its activity timestamp. Reordering keeps the selected conversation/workspace.
 Core records managed operations, lease/consumer changes, workflow changes and observed Git-visible
 source metadata changes; ignored build output does not affect order. Legacy workspace records use
 their last saved observation as a baseline until new activity is recorded. A Core predating this

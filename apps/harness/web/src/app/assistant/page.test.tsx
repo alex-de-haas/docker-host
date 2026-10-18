@@ -12,7 +12,7 @@ vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => ui }));
 vi.mock("@/lib/assistant-api", async original => ({
   ...await original<typeof api>(),
   getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), deleteSession: vi.fn(),
-  listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(),
+  listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(), setSessionAutonomy: vi.fn(),
 }));
 vi.mock("@/lib/development-api", async original => ({ ...await original<typeof import("@/lib/development-api")>(), useDevelopmentInventory: () => ({ workspaces: [], error: "", refresh: () => {} }) }));
 vi.mock("@/components/speech-input", () => ({ SpeechInput: () => null }));
@@ -509,4 +509,40 @@ it.each(["deleted", "retained", "unavailable"])("reconciles a lost non-active de
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(input().value).toBe("My retained draft");
   }
+});
+
+const navigationTitles = () => [...container.querySelectorAll('nav[aria-label="Sessions by application"] section:first-child button span.block:first-child')].map(node => node.textContent);
+const renderActivityOrder = async () => {
+  record = { ...record, appIds: ["one"], appContextRevision: 1, updatedAt: "2026-10-18T10:00:00Z" };
+  const newer = { ...record, id: "newer", title: "Newer conversation", updatedAt: "2026-10-18T11:00:00Z" };
+  vi.mocked(api.listSessions).mockResolvedValue([record, newer]);
+  vi.mocked(api.getSession).mockImplementation(async id => id === newer.id ? newer : record);
+  await renderDeletion();
+  expect(navigationTitles()).toEqual(["Newer conversation", "Conversation"]);
+};
+it("orders a locally changed autonomy immediately and retains its activity after switching chats", async () => {
+  await renderActivityOrder();
+  vi.mocked(api.setSessionAutonomy).mockResolvedValue({ ...record, autonomy: "autonomous", updatedAt: "2026-10-18T12:00:00Z" });
+  await act(async () => button("Autonomy: Normal")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  await act(async () => [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(item => item.textContent?.startsWith("Autonomous"))!.click());
+  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>('nav button')].find(item => item.textContent?.startsWith("Newer conversation"))!.click());
+  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+});
+it.each(["session_autonomy_changed", "session_provider_changed", "app_context_changed"])("orders %s activity without allowing replay or late responses to move it backwards", async type => {
+  await renderActivityOrder();
+  vi.mocked(api.getSession).mockResolvedValue({ ...record, updatedAt: "2026-10-18T12:00:00Z" });
+  await act(async () => emit({ type, seq: 3, ts: "2026-10-18T12:00:00Z", appIds: ["one"], appContextRevision: 2 }));
+  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+  vi.mocked(api.getSession).mockResolvedValue({ ...record, updatedAt: "2026-10-18T10:30:00Z" });
+  await act(async () => emit({ type, seq: 1, ts: "2026-10-18T10:30:00Z", appIds: ["one"], appContextRevision: 1 }));
+  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+});
+
+it.each(["session_autonomy_changed", "session_provider_changed"])("uses %s activity when the record refresh fails", async type => {
+  await renderActivityOrder();
+  vi.mocked(api.getSession).mockRejectedValue(new Error("Record refresh unavailable"));
+  await act(async () => emit({ type, seq: 3, ts: "2026-10-18T12:00:00Z" }));
+  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+  expect(input().value).toBe("My retained draft");
 });

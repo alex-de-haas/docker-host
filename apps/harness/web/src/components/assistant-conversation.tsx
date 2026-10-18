@@ -118,9 +118,13 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const contextPickerRef = useRef<AppContextPickerHandle>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const openContextAfterMenu = useRef(false);
-  const onContextChange = useCallback((record: AssistantSession) => {
-    setSession(current => current?.id === record.id && (record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0) ? record : current);
-    setSessions(current => current.map(item => item.id === record.id && (record.appContextRevision ?? 0) >= (item.appContextRevision ?? 0) ? record : item));
+  const onSessionChange = useCallback((record: AssistantSession) => {
+    const merge = (current: AssistantSession) => current.id !== record.id ? current : {
+      ...((record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0) ? record : current),
+      updatedAt: activityTime(record) >= activityTime(current) ? record.updatedAt : current.updatedAt,
+    };
+    setSession(current => current ? merge(current) : current);
+    setSessions(current => current.map(merge));
   }, []);
   const [contextUnavailable, setContextUnavailable] = useState(false);
   const [withoutAppDetails, setWithoutAppDetails] = useState(false);
@@ -208,7 +212,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           return;
         }
         if (event.type === "session_provider_changed" || event.type === "session_autonomy_changed") {
-          void getSession(record.id).then(value => { if (activeSessionId.current === record.id) setSession(value); }).catch(() => {});
+          setSessions(current => current.map(item => item.id === record.id && activityTime({ updatedAt: event.ts }) > activityTime(item) ? { ...item, updatedAt: event.ts } : item));
+          void getSession(record.id).then(value => { if (activeSessionId.current === record.id) onSessionChange(value); }).catch(() => {});
           void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
           return;
         }
@@ -216,9 +221,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         if (event.type === "app_context_changed") {
           const revision = Number(event.appContextRevision);
           setSessions(current => current.map(item => item.id === record.id && revision > (item.appContextRevision ?? 0)
-            ? { ...item, appIds: event.appIds as string[], appContextRevision: revision } : item));
+            ? { ...item, appIds: event.appIds as string[], appContextRevision: revision, updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(item) ? event.ts : item.updatedAt } : item));
           setSession(current => current?.id === record.id && revision > (current.appContextRevision ?? 0)
-            ? { ...current, appIds: event.appIds as string[], appContextRevision: revision } : current);
+            ? { ...current, appIds: event.appIds as string[], appContextRevision: revision, updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(current) ? event.ts : current.updatedAt } : current);
         }
         if (event.type === "assistant_delta") {
           setStreamed((current) => current + String(event.text ?? ""));
@@ -262,7 +267,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         if (state === "disconnected") setStreamed("");
       },
     );
-  }, []);
+  }, [onSessionChange]);
 
   // A full-page selection is also a navigation: Shell must restore that exact session on reload.
   const navigateSelection = useCallback(async (sessionId: string | null) => {
@@ -571,8 +576,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       if (!session.title) {
         const named = await getSession(session.id).catch(() => null);
         if (named?.title) {
-          setSession(current => current?.id === named.id && (current.appContextRevision ?? 0) <= (named.appContextRevision ?? 0) ? named : current);
-          setSessions((current) => current.map((record) => (record.id === named.id ? named : record)));
+          onSessionChange(named);
         }
       }
     } catch (cause) {
@@ -581,7 +585,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       if (cause instanceof AssistantApiError && cause.code === "app_context_unavailable") setContextUnavailable(true);
       if (cause instanceof AssistantApiError && cause.code === "app_context_conflict") {
         const current = await getSession(session.id).catch(() => null);
-        if (current) setSession(previous => previous?.id === current.id && (previous.appContextRevision ?? 0) <= (current.appContextRevision ?? 0) ? current : previous);
+        if (current) onSessionChange(current);
       }
       setError(cause instanceof Error ? cause.message : String(cause));
       const current = await getSession(session.id).catch(() => null);
@@ -591,7 +595,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       sendingRef.current = false;
       setSending(false);
     }
-  }, [input, pending, running, status, contextSaving, session, uploaded, withoutAppDetails, health?.available]);
+  }, [input, pending, running, status, contextSaving, session, uploaded, withoutAppDetails, health?.available, onSessionChange]);
 
   const stop = useCallback(async () => {
     if (!session || !running || sendingRef.current || providerSavingRef.current || stoppingRef.current) return;
@@ -679,12 +683,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setError(null);
     try {
       const record = await renameSession(sessionId, title);
-      setSessions((current) => current.map((entry) => (entry.id === record.id ? record : entry)));
-      setSession((current) => (current?.id === record.id ? record : current));
+      onSessionChange(record);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, []);
+  }, [onSessionChange]);
 
   const decide = useCallback(
     async (approvalId: string, decision: "allow" | "deny", message?: string) => {
@@ -757,7 +760,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
             <StatusBadge value={status} />
             {session && (
               <AppContextPicker key={session.id} ref={contextPickerRef} opener={addButtonRef} compact side="bottom" session={session} busy={sending || mentionSaving || providerSaving} onBusyChange={setContextSaving} running={running}
-                onChange={onContextChange} />
+                onChange={onSessionChange} />
             )}
             {!fullPage && <div className="ml-auto flex items-center gap-1">
               <Button variant="ghost" size="sm" disabled={!session || sending} onClick={async () => {
@@ -789,7 +792,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           </>
         )}
       </header>
-      {session && !showSessions && <CreateApp key={`creation-${session.id}`} session={session} busy={running || sending || stopping || providerSaving} onChange={record => { onContextChange(record); void inventory.refresh(); }} />}
+      {session && !showSessions && <CreateApp key={`creation-${session.id}`} session={session} busy={running || sending || stopping || providerSaving} onChange={record => { onSessionChange(record); void inventory.refresh(); }} />}
       {session && !showSessions && <SessionRetention sessionId={session.id} revision={`${status}:${workspace?.workflow.revision ?? ""}`} />}
 
       {!showSessions && session && <SessionCredentials key={`credentials-${session.id}`} sessionId={session.id} />}
@@ -890,7 +893,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                 inputRef={composerRef}
                 session={session}
                 contextBusy={contextSaving || sending || providerSaving}
-                onContextChange={onContextChange}
+                onContextChange={onSessionChange}
                 onBusyChange={onMentionSaving}
                 value={input}
                 onChange={setInput}
@@ -965,11 +968,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                       </DropdownMenuContent>
                     </DropdownMenu>
                     {session && <SessionAutonomy key={session.id} session={{ ...session, status }} busy={sending || stopping || mentionSaving || contextSaving || providerSaving}
-                      onSavingChange={onProviderSaving} onChange={record => {
-                        setSession(current => current?.id === record.id ? record : current);
-                      }} />}
+                      onSavingChange={onProviderSaving} onChange={onSessionChange} />}
                     {session && session.providerLocked !== undefined && <SessionProvider key={`${session.id}:${session.connectionId}:${session.connectionRevision}`} session={session} busy={sending || mentionSaving || contextSaving || providerSaving} onSavingChange={onProviderSaving} onChange={record => {
-                      setSession(current => current?.id === record.id ? record : current);
+                      onSessionChange(record);
                       void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
                     }} />}
                   </div>
