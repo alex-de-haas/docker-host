@@ -79,7 +79,13 @@ changes; the test Core, Harness process and credentials are removed.
 PR rows show the title followed by repository name, successful/total observed checks and the
 provider's discussion-comment count. Missing counts remain unknown. State, draft, stale evidence,
 review decision, unresolved threads and individual failed/pending checks remain distinct. No
-historical green PR implies that a new head passed CI.
+historical green PR implies that a new head passed CI. Merged PRs use a violet merge icon; open PRs
+use a pull-request icon with a green CI dot for successful checks, amber for pending checks and red
+for failed, cancelled or blocked checks. A failure takes precedence over pending checks. Missing,
+unrecognized, failed-to-observe or stale CI stays neutral, as does an empty check list. Drafts use
+a muted draft icon, closed unmerged PRs use a red closed icon, and unavailable PR identity uses an
+unknown icon. Accessible labels and hover descriptions explain the icons. Green describes CI only;
+review decisions and unresolved threads remain separate.
 
 The sandbox section is omitted when empty. Owned child Core environments show their label, runtime
 state and authorized Core/application preview links; app sandboxes show their runtime state and
