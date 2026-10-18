@@ -20,6 +20,16 @@ source, external-agent and system self-development workflows. This is deliberate
 approved ordinary-app implementation. Existing overrides remain available. Do not remove them or
 start a migration without a separate owner decision.
 
+## Default Workflow And Retained Compatibility (2026-10-18)
+
+The owner selects registered workspaces and child Core sandbox preview as the default development
+workflow. The recovered [source-recovery proposal](../runtime-source-workflows/plan.md) stays On Hold;
+the [external-client Draft](../external-development-workspaces/plan.md) owns missing direct adapters.
+D1 must retain private/local/no-Git and system/Harness self-development parity, including dependent
+apps and external agents. Evaluate restrictions on host-native localCommand separately from source
+runtime support. Clearing obsolete local Source settings is authorized operational cleanup, not
+removal of product APIs. The shipped unified live-data dev mode and Return remain supported.
+
 ## Settled Boundaries
 
 - Ordinary-data dev mode switches the installed app in its existing Core; sandbox preview retains

@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-12
-updated: 2026-10-15
+updated: 2026-10-18
 summary: Hosty's visual language — ink acts, lime answers — with its color, type, mark and ReUI token rules, and the Shell layouts built from it, including tools at narrow widths and on phones.
 components: [apps/shell, apps/shell-swift, packages/app-sdk, apps/core, apps/harness, assets/hosty-brand, apps/plans, apps/workspaces, apps/telemetry, apps/telemetry-ui, apps/demo-app, apps/marketplace, apps/whisper]
 ---
@@ -14,6 +14,25 @@ Give Hosty one visual language that reads as calm and corporate without being gr
 and apply it to Shell. Chrome stays ink and white; color is spent on what is alive on a host — app
 tiles, status and data. The same rules must hold from a wide desktop to a Shell window squeezed
 beside an agent and to a phone.
+
+## Incremental Adoption And Functional Parity (Owner Direction, 2026-10-13)
+
+The owner is still refining the visual references. Apply finished foundations first: colors,
+typography, logos/icons and common styling. Then adopt prepared Shell layouts and extend their
+patterns to screens without a dedicated reference. This is a sequence proposal, not a one-session
+implementation estimate or approval of unresolved interactions.
+
+Mockups describe appearance and may omit existing actions or states. Inventory the current
+functionality before replacing a screen; every supported action remains reachable, along with
+permissions, navigation, forms, drafts, selection, panel state and failure/recovery behavior.
+Absence from a mockup does not authorize removal. If placement is unspecified, retain the existing
+control with compatible styling or propose its new location explicitly. Functional regression
+blocks that screen's replacement even when the visual match is better.
+
+The [November milestone](../hosty-delivery-readiness/plan.md) prioritizes the working development
+journey. Foundation styling can proceed independently once approved; layout/activity changes need
+their own full verification. Existing deliverables remain outstanding, and D20 tracks the parity inventory
+and acceptance. Partial adoption does not mark the entire design plan complete.
 
 ## Source
 
@@ -489,6 +508,10 @@ the deliverable that changes it.
 - [ ] D15. Build the tool activity contract through Core as described under Activity: per-user reports keyed by the panel reference, an app-authenticated internal endpoint with an SDK server helper, time-to-live for working, re-reporting after a Core restart, a `tool.activity.changed` bus hint, "no connection" from Core readiness, and Shell's priority aggregation.
 - [ ] D17. In Harness, pin a pending approval under its panel header with a Review action, keep its composer at the bottom of its frame on phones, and report its activity through D15 as the first provider.
 
+### Functional Parity
+
+- [ ] D20. Inventory existing actions/states on each changed screen, preserve them where mockups are incomplete, and verify permissions, navigation, forms, drafts, panels and failure/recovery before accepting the visual replacement.
+
 ## Open Questions
 
 - The page minimums: are Dashboard 440 px and Settings 560 px right, and may an embedded app declare
@@ -499,6 +522,8 @@ the deliverable that changes it.
   limited to the fixed palette, or a table Shell keeps for first-party apps?
 
 ## Verification
+
+Compare changed screens against D20's functional inventory through Core/Shell, including actions absent from mockups.
 
 - `node scripts/docs-index.mjs --check` passes.
 - Per deliverable: Shell lint, type-check build and tests; affected app and SDK builds; version bumps

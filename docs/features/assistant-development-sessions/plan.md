@@ -36,10 +36,13 @@ independent Draft and approval boundary. No separate user-facing development tas
   unrelated subsequent work starts a new session, optionally with context from the old one.
 - Switching between connected internal Codex/Claude agents is a frequent, primary use case.
   Preserve a single visible conversation and identify the author of each response.
-- External direct editing is a rare, explicit, same-machine workflow against a local Hosty.
-  The user asks the external agent to read a session, work in its registered folders, and save
-  a report or summary back. Automatic transcript synchronization and explicit ownership handoff
-  are not first-version requirements.
+- External direct editing uses Core-prepared source through the local Hosty connector/MCP.
+  Owner clarification on 2026-10-16 treats this as a supported development client path, without
+  requiring a Harness conversation. Session-context exchange remains a separate optional workflow;
+  automatic transcript synchronization and explicit conversation ownership handoff are not required.
+  The same-day follow-up makes it an infrequent privileged-owner path; the built-in constrained
+  assistant is the normal choice, including restricted and remote operators. External native
+  Git/provider actions must reconcile into observed state without requiring exclusive Core mediation.
 - Remote operation uses clients of the server-resident agent. Owner follow-up, 2026-09-25 selects
   a dedicated [Hosty Harness Swift client](../hosty-harness-swift/plan.md), focused on sessions,
   approvals and changes over AHP, separately from the full Swift Shell. Generic side-panel support
@@ -178,6 +181,34 @@ Finish remains distinct from ending an agent turn. The separately approved D5 im
 provides retention; wider lifecycle and prototype choices remain in their owning plans. These
 policies do not authorize discarding current unfinished work.
 
+## Platform-Managed Internal And External Journey (2026-10-16)
+
+[Vision decision 46](../../vision.md) selects the target composition: Hosty prepares the authorized
+workspace/worktrees; the agent edits the returned source; Core runs separate app sandboxes; clients
+open previews and verify changes; Core coordinates publication, CI/review observations and eligible
+cleanup. Several apps in one repository share a compatible worktree, while another repository adds
+a child to the same logical workspace. Adding a dependency does not itself grant source access or
+start its installed instance. Sandbox data and runtime resources remain independent of source.
+
+[External workspace preparation](../external-development-workspaces/feature.md) already supplies the
+direct-client source path. Its [remaining plan](../external-development-workspaces/plan.md) owns the
+missing sandbox/publication client adapters and authority. D1-D2 here verify that the services form
+one recoverable journey without requiring an installed assistant for an external owner. The same
+workflow must not depend on changing installed-app overrides or invoking host-native localCommand.
+
+[Decision 47](../../vision.md) clarifies that this is a preferred managed workflow, not exclusive
+control over a privileged external client's native actions. D1-D2 acceptance includes native Git
+changes and external PR publication reconciled through the authorized provider, without fabricated
+Core mutation history. The normal built-in path must enforce the acting operator's rights;
+external-client flexibility does not weaken that requirement. Sandbox API usability belongs to
+its existing D6/D9, and direct-client reconciliation to External Development D12.
+
+The owner has not decided to remove those existing mechanisms.
+[Development Controls D1](../app-development-controls/plan.md#deliverables) owns the parity/retirement
+decision after practical acceptance. [Source recovery](../runtime-source-workflows/plan.md) is On Hold
+while that direction is evaluated. This recovered clarification does not reopen shipped Sandbox behavior or approve implementation
+of the remaining Draft adapters.
+
 ## Common Invariants
 
 These apply to the linked plans. Draft records intent; Ready requires explicit owner approval in
@@ -287,3 +318,8 @@ authorized client after a service restart and verify history, attribution and cu
 Verify that a selected feedback batch arrives as attributed evidence, summary links resolve to the
 same observed actions, and release/catalog operations remain distinct from code PR publication.
 Each child owns its own detailed acceptance tests; this umbrella checks their composition.
+
+Repeat the integrated journey with a directly connected external agent and no Harness conversation.
+Include same-repository apps and an authorized dependency repository, preview reuse, instance Finish,
+external PR linking and CI/review observations. Preserve installed-app data and unfinished worktrees;
+verify replay/reconnect without duplicating instances or PRs. This acceptance belongs to D1-D2.

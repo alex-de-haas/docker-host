@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-09-25
-updated: 2026-10-15
+updated: 2026-10-18
 summary: Remaining host and recipe acceptance plus optional remote preview after verified local release, cold-engine and agent workflows.
 components: [apps/core, apps/harness, apps/shell, apps/workspaces, packages/app-sdk]
 ---
@@ -238,6 +238,18 @@ scenario must expose those dependencies honestly: it does not test torrent inges
 metadata credentials or external identification without an appropriate isolated test setup.
 Transcode input/output mount labels must refer to the dedicated child provider, never silently
 fall back to the main installation. No shared production provider is authorized.
+
+## External-Client Usability Alignment (2026-10-18)
+
+Preserved owner guidance from 2026-10-16: the supported service should make source/artifact selection,
+preparation, readiness, preview/logs, retries and Finish easy to discover, with reusable operation IDs
+and actionable recipe, permission, quota and setup errors. Return observable state and ready preview
+destinations instead of making clients infer ports or success from acceptance. The built-in assistant
+is the normal constrained client; privileged external clients prefer the same API without a claim
+that Core exclusively mediates their OS/Git actions. Existing D6/D9 acceptance retains this scope;
+[external development D7-D12](../external-development-workspaces/plan.md#deliverables) owns the Draft
+direct-client adapters and reconciliation. Current shipped child Core architecture, statuses and
+checked deliverables remain unchanged; the obsolete single-Core realm proposal is not restored.
 
 ## Deliverables
 
