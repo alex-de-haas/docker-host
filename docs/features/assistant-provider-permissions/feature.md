@@ -1,8 +1,8 @@
 ---
 created: 2026-09-26
-updated: 2026-09-27
+updated: 2026-10-10
 summary: Apps request the assistant role with provides, and Core records administrator-confirmed roles.
-components: [apps/core, apps/harness]
+components: [apps/core, apps/shell, apps/harness]
 ---
 
 # Assistant Provider Permissions
@@ -32,8 +32,9 @@ corresponding role or skill access. Existing records with no confirmed roles rem
 
 ## Shell Selection And Routing
 
-Every confirmed app declaring `assistant` has one assistant panel tab. Its first declared panel is
-used, or its UI entrypoint when it has no panel. A stopped assistant retains an unavailable tab.
+Shell’s shared workspace lists accessible declared panels, including multiple panels from one
+assistant app. A stopped panel retains an unavailable tool entry. Navigation-only assistant
+handoffs retain their explicit separate-open destination.
 Shell's administrator entry points use the **Settings → Shell → Assistant for Shell** preference,
 stored as a per-user, per-Core cookie in Shell. Direct conversation in a panel belongs to that app.
 
@@ -42,14 +43,13 @@ An invalid stored choice remains stored and forces another choice even when only
 left. A stopped selected assistant reports unavailable rather than falling back. Cancelling the
 chooser sends nothing. Pending choices are cancelled when the acting user changes.
 
-Embedded workspace, settings and panel frames of eligible assistants receive only their own
-audience-bound delegated tokens through the existing source-window/origin-validated handshake.
-Assigned non-administrator users can authenticate non-system assistant frames; Core enforces app
-assignment and system-app access when minting tokens. Shell-owned shortcuts remain admin-only.
-Outbound drafts and session handoffs retain the selected app and acting user, so changing the
-preference cannot send an existing draft to another assistant or another signed-in user.
-Gateway notification links include `assistantApp` as well as `assistantSession`; Shell resolves the
-owner independently of the preference. An older ownerless link resolves only on a single-assistant host.
+Embedded frames authenticate directly with Core; Shell’s shared SDK frames install no delegated-token
+responder. Core enforces app assignment and system-app access for app-owned authentication. Shell-owned shortcuts remain admin-only.
+Outbound session commands retain the actor and resolved app/installation/panel/route, so they reach
+only the intended frame. Harness notification links include `assistantApp`, `assistantPanel` and
+`assistantSession`; Shell resolves the owner independently of the preference. An older ownerless
+link resolves only on a single-assistant host, and a link without a panel ID resolves only when
+that app declares one panel. Ambiguous or unavailable destinations remain pending.
 
 ## Transition And Boundaries
 
@@ -59,10 +59,11 @@ Update Core first, then confirm the Gateway update. Until confirmation, the olde
 no assistant tab and no cross-app skill access. No app-ID-based grants or grant migration run.
 An older Core rejects the new unknown permission. The Harness rename uses the same declarations.
 
-The gateway MCP facade and its OAuth resource resolution are unchanged. The delegated-token
-exchange and on-behalf-of route still require `role: system`: a confirmed non-system assistant can
-read skills and appear in Shell, but cannot exchange tokens to call another app. General delegation
-permissions belong to the [core extension model](../core-extension-model/plan.md).
+The gateway MCP facade retains a system-gated on-behalf-of route. The legacy exchange route
+rejects cross-app exchange. Assistant MCP access uses Core-owned per-assistant target grants and
+a separate MCP credential, including for confirmed non-system assistants; see
+[assistant MCP access](../agent-mcp-directory/feature.md). Remaining general delegation is tracked
+in [cross-app auth](../cross-app-auth/plan.md).
 
 ## Testing Expectations
 

@@ -1,6 +1,6 @@
 ---
 created: 2026-06-03
-updated: 2026-10-07
+updated: 2026-10-17
 summary: Source checkouts, local overrides and runtime switching for installed apps, with Git inspection.
 components: [apps/core, apps/shell]
 ---
@@ -37,6 +37,12 @@ The reviewed pin and the override's commit are separate fields because they answ
 Installation records predate this split at schema version 1, where both facts shared the `commit` field. Core migrates such a record on read — the commit of a record that has an override moves to the override's field and the pin re-resolves from the reviewed ref, exactly as a pre-split Core behaved — and the next write stores it at version 2, after which a recorded pin is taken as reviewed.
 
 Managed checkouts are for public-readable `http`/`https` Git repositories or local filesystem repositories. Core rejects embedded credentials and SSH-style repository URLs, and git subprocesses run with interactive credential prompts disabled. Private repositories should be cloned by an administrator and connected through `source-override` until Hosty has a Core-owned credential provider.
+
+For a manifest installed from a linked Git worktree, Core derives its repository-relative manifest
+subpath from that worktree's Git root, including when the manifest declares an absolute path or file
+URI for the original repository. The declared source repository retains its existing precedence as
+the source location; choosing the linked worktree for execution uses a repo-root source override.
+This preserves monorepo paths without treating the app subfolder as the checkout root.
 
 ## Development Profiles And Source Preservation
 
@@ -198,6 +204,8 @@ Runtime switching can move between Docker, `localCommand`, and mixed profiles. C
 
 When a running app is switched, Core stops the current runtime, updates selected runtime state, and starts the target runtime. If the target runtime fails to start, Core restores the selected runtime in installation state to the previous runtime, leaves the app stopped, records `LastError`, and returns `runtime_switch_restart_failed`. Any `pre-runtime-switch` backup created before mutation remains available through normal backup commands.
 
+Caller cancellation applies during lock acquisition and plan validation. Once mutation begins, Core owns completion using its application lifetime, so stopping Shell cannot cancel the switch by disconnecting its own proxy request. Core shutdown still cancels the operation.
+
 ## Default Hosty Apps
 
 Hosty Shell is also a runtime app. Its manifest declares Docker and `dev` local command runtime profiles, so administrators can use the same source commands for Shell-only local runtime work:
@@ -212,6 +220,8 @@ Core and combined-Host self-runtime changes are different from Shell-only change
 
 Shell also exposes Hosty Shell runtime switching in the Installed Apps System Apps table when Core reports multiple runtime profiles. System apps also use the ordinary lifecycle controls; stopping Shell interrupts its UI.
 
+For its own runtime switch, Shell waits for Core to report the requested runtime running after startup, then reloads the page. A dropped apply response does not trigger a second apply or an immediate failure message. Explicit Core refusals still appear as errors; an unconfirmed switch times out with CLI recovery instructions. If Core confirms the target is running but the browser-address probe times out, Shell retains the confirmed runtime selection, reports a completed switch with an unreachable page and asks the operator to reload when it becomes reachable. App-list responses from reads started before confirmation cannot restore the previous runtime; later authoritative reads remain accepted. Selecting that same runtime again, including from a stale row reference, does not submit another switch. Concurrent lifecycle clicks for the same app are suppressed while the switch is pending.
+
 ## Source Selection Authority
 
 App-mediated source override requires `apps.lifecycle`, an administrator actor and an isolated Core
@@ -221,18 +231,40 @@ Direct Core operators and CLI users can select permitted folders and worktrees w
 state, resolved folder, effective manifest digest and development commands; changed state requires
 another review. Core explicitly explains that future edits in the folder can execute on the host.
 
-All override writers, including CLI and bootstrap, reject app storage/managed-source directories,
-legacy source storage and external/shared mount directories, resolving symlink ancestors and the
+All override writers, including CLI and bootstrap, reject app storage/managed-source directories
+except the owning local Git app's validated canonical source, and reject legacy source storage and external/shared mount directories, resolving symlink ancestors and the
 effective manifest location. Protected paths cannot be approved. Core stores the resolved source
 path. Source selection/clear share the lifecycle operation lock, and source/mount mutations share
 a cross-app path lock. A background Git resolution preserves the current override rather than
 restoring its earlier snapshot.
 
+Source selection/clear and removal also share repository admission with registered workspace writers
+and sandbox consumers. Active leases/consumers, pending or unknown operations and unreadable records
+block mutation. Reviews display source/worktree loss facts; selection keeps existing files and does
+not retarget old workspaces. Local Git override clearing restores canonical source. Removal defaults
+to keeping source; explicit deletion requires fresh verifiable facts and successful runtime removal.
+See [local source protection](../app-prototype-workspaces/feature.md#source-protection-during-removal-and-selection)
+for retained-source reinstallation and the bounded destructive review.
+
 `apps.sources.full` permits modifying code that Hosty can execute on the host in development mode.
 This API policy does not sandbox native agents with direct filesystem access. Clearing an override,
 runtime switches and normal lifecycle operations keep their existing authorization.
 
+## Development Launch Observations
+
+App inventory exposes optional `launchProgress` and `development` observations. Core records its own
+preparation, Docker environment build/reuse, service start, readiness, failure and interruption.
+Successful configuration application records the source manifest digest. Live-source inventory
+compares the bounded manifest contents and source location with the applied state, detecting even
+same-size/same-mtime edits. A changed live manifest contributes to `restartRequired`; an unavailable
+manifest or missing historical baseline remains explicitly unverified. Generic app compiler/hot
+reload state is application-managed, not inferred from container health. Protected contract edits
+retain the normal review requirement instead of being adopted by a restart.
+
 ## Testing Expectations
+
+- A runtime switch survives caller disconnection during stop, persists the selected runtime, preserves its backup and starts the target. A target startup failure still rolls back after disconnection. Pre-admission cancellation leaves the running app intact; Core shutdown cancels the operation.
+- Shell self-switch recovery waits through the old runtime, proxy outages and target startup, without replaying apply. Explicit refusals, persisted rollback and bounded timeout remain distinct from a confirmed target startup. A confirmed switch with an unreachable page retains its selection across older in-flight app-list responses, prevents duplicate switches from stale row references and accepts later authoritative reads.
 
 - Changing the selected profile's development flag in either direction appears in the update plan and requires review, even alongside a version bump.
 - `source-override` records the folder's commit as the override's own and leaves the reviewed pin unchanged, including for a folder nested inside a repository; clearing the override drops both.

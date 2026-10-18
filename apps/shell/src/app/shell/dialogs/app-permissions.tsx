@@ -30,27 +30,36 @@ const permissionLabels: Record<string, string> = {
   "providers.assistant": "Assistant conversations",
 };
 
+async function fetchPermissions(coreOrigin: string, appId: string, signal?: AbortSignal): Promise<AppPermissionObservation> {
+  const response = await fetchCore(`${coreOrigin}/api/apps/${encodeURIComponent(appId)}/permissions`, { credentials: "include", cache: "no-store", signal });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.message ?? "Could not load permissions.");
+  return result as AppPermissionObservation;
+}
+
 export function AppPermissions({ app, active = true }: { app: CoreApp; active?: boolean }) {
   const { coreOrigin, refresh } = useShellActions();
   const coreReviewUrl = `${coreOrigin}/install/permissions/${encodeURIComponent(app.id)}`;
   const [state, setState] = useState<AppPermissionObservation | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(active);
   const [message, setMessage] = useState("");
-  const load = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
-    try {
-      const response = await fetchCore(`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/permissions`, { credentials: "include", cache: "no-store", signal });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message ?? "Could not load permissions.");
-      if (!signal?.aborted) setState(result as AppPermissionObservation);
-    } catch (error) { if (!signal?.aborted) setMessage(String(error)); }
-    finally { if (!signal?.aborted) setLoading(false); }
-  }, [app.id, coreOrigin]);
+  // Becoming active starts a read (effect below); it shows as loading from the same render.
+  const [wasActive, setWasActive] = useState(active);
+  if (active !== wasActive) {
+    setWasActive(active);
+    if (active) setLoading(true);
+  }
+  // State is written only in the promise callbacks; callers that reload set `loading` themselves.
+  const load = useCallback((signal?: AbortSignal) =>
+    fetchPermissions(coreOrigin, app.id, signal).then(
+      (result) => { if (!signal?.aborted) setState(result); },
+      (error: unknown) => { if (!signal?.aborted) setMessage(String(error)); },
+    ).finally(() => { if (!signal?.aborted) setLoading(false); }), [app.id, coreOrigin]);
   useEffect(() => {
     if (!active) return;
     const controller = new AbortController();
     void load(controller.signal);
-    const returned = () => { void load(controller.signal); void refresh(); };
+    const returned = () => { setLoading(true); void load(controller.signal); void refresh(); };
     window.addEventListener("focus", returned);
     return () => { controller.abort(); window.removeEventListener("focus", returned); };
   }, [active, load, refresh]);
@@ -63,7 +72,7 @@ export function AppPermissions({ app, active = true }: { app: CoreApp; active?: 
   return <section className="space-y-4 p-1 text-sm" aria-label="App permissions">
     <div className="flex items-center justify-between gap-3">
       <p className="text-muted-foreground">Review access. Expand a permission for details.</p>
-      <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => void load()}>Refresh</Button>
+      <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => { setLoading(true); void load(); }}>Refresh</Button>
     </div>
     {!state && <p role="status">{loading ? "Checking the app manifest…" : "Permission information is unavailable."}</p>}
     {state && state.status !== "known" && !state.error && <p role="status">Permission information is not ready. Refresh to check the current manifest.</p>}

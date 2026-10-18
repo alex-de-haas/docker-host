@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/field";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { AgentRuntime } from "@/components/agent-runtime";
 import { AgentProviders } from "@/components/agent-providers";
 import { McpAccess } from "@/components/mcp-access";
 import {
@@ -31,6 +32,9 @@ export function GatewaySettings({
   const [feedbackAppId, setFeedbackAppId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [prompt, setPrompt] = useState("");
+  const [workflow, setWorkflow] = useState("");
+  const [ordinaryDays, setOrdinaryDays] = useState("");
+  const [completedDays, setCompletedDays] = useState("");
 
   useEffect(() => {
     // The session first, then the data: a launch code that has not been spent yet means every
@@ -39,6 +43,9 @@ export function GatewaySettings({
       .then((loaded) => {
         setData(loaded);
         setPrompt(loaded.settings.systemPrompt);
+        setWorkflow(loaded.settings.workflowPrompt ?? "");
+        setOrdinaryDays(loaded.settings.retention?.ordinaryDays?.toString() ?? "");
+        setCompletedDays(loaded.settings.retention?.completedWorkspaceDays?.toString() ?? "");
       })
       .catch((reason: unknown) =>
         setError(
@@ -63,7 +70,7 @@ export function GatewaySettings({
       const live = saved.harness?.capabilities?.liveReconfigure;
       const immediate = patch.mcpAutoAllow;
       setStatus(
-        patch.mcpToolRules
+        patch.retention ? "Saved — used by the next daily cleanup sweep." : patch.mcpToolRules
           ? "Applied to subsequent tool calls. Already running calls continue."
           : immediate && live
           ? "Applied to running sessions."
@@ -106,7 +113,7 @@ export function GatewaySettings({
             {(
               [
                 ["providers", "Agent providers"],
-                ["prompt", "System prompt"],
+                ["prompt", "Instructions and retention"],
                 ["access", "MCP access"],
               ] as const
             ).map(([value, label]) => (
@@ -121,6 +128,7 @@ export function GatewaySettings({
           forceMount
           className="data-[state=inactive]:hidden"
         >
+          <AgentRuntime mode={data.settings.executionMode ?? "native"} onMode={mode => save({ executionMode: mode })} />
           {data.agentConnections && <AgentProviders />}
         </TabsContent>
         <TabsContent value="sources"><p>Manage your GitHub connections and Git identity in Hosty Shell → Settings → Source connections.</p></TabsContent>
@@ -130,6 +138,27 @@ export function GatewaySettings({
           className="data-[state=inactive]:hidden"
         >
           <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="workflow-prompt">Development workflow</FieldLabel>
+              <FieldDescription>Edit or clear the default process. Plans and specification-driven development are optional. Changes apply when the next agent session starts; permissions and Core completion checks remain enforced.</FieldDescription>
+              <Textarea id="workflow-prompt" className="min-h-64 resize-y" value={workflow} maxLength={8000} onChange={event => setWorkflow(event.target.value)} />
+              <div className="flex gap-2">
+                <Button size="sm" disabled={busy} onClick={() => void save({ workflowPrompt: workflow })}>Save workflow</Button>
+                <Button size="sm" variant="outline" disabled={busy || !data.defaults} onClick={() => setWorkflow(data.defaults!.workflowPrompt)}>Restore default draft</Button>
+              </div>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="ordinary-retention">Ordinary chat retention (days)</FieldLabel>
+              <FieldDescription>After the last conversation activity. Leave empty for Off. Live sandbox-only sessions remain protected until Finish.</FieldDescription>
+              <input id="ordinary-retention" type="number" min={1} max={3650} step={1} placeholder="Off" className="rounded-md border bg-background px-3 py-2" value={ordinaryDays} onChange={event => setOrdinaryDays(event.target.value)} />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="workspace-retention">Completed workspace retention (days)</FieldLabel>
+              <FieldDescription>After explicit Core-verified completion or later conversation activity. Leave empty for Off. Unfinished and deferred workspaces never expire. Core rechecks all repositories before deleting worktrees, owned previews and the conversation. Background source cleanup requires the reviewed apps.workspaces.cleanup permission.</FieldDescription>
+              <input id="workspace-retention" type="number" min={1} max={3650} step={1} placeholder="Off" className="rounded-md border bg-background px-3 py-2" value={completedDays} onChange={event => setCompletedDays(event.target.value)} />
+            </Field>
+            <div><Button size="sm" disabled={busy || [ordinaryDays, completedDays].some(value => value !== "" && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 3650))}
+              onClick={() => void save({ retention: { ordinaryDays: ordinaryDays === "" ? null : Number(ordinaryDays), completedWorkspaceDays: completedDays === "" ? null : Number(completedDays) } })}>Save retention</Button></div>
             <Field>
               <label className="flex items-center gap-2">
                 <input type="checkbox" checked={data.settings.immediateHandoffs === true} disabled={busy}

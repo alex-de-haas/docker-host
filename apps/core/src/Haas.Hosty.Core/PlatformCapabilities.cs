@@ -21,14 +21,17 @@ internal static class PlatformCapabilities
 {
     public const string Assistant = "assistant";
     public const string SpeechToText = "speech-to-text";
+    public const string Translation = "translation";
+    public static readonly IReadOnlyList<string> ConsentRoles = [Assistant, SpeechToText, Translation];
 
     // Only recognized consent-bearing roles participate; legacy provisioning slots stay unchanged.
     public static IReadOnlyList<string> RequestedRoles(IReadOnlyList<string> provides)
-        => provides.Where(slot => slot is Assistant or SpeechToText).Distinct(StringComparer.Ordinal).ToArray();
+        => provides.Where(slot => ConsentRoles.Contains(slot, StringComparer.Ordinal)).Distinct(StringComparer.Ordinal).ToArray();
 
     public static string DescribeRole(string role) => role switch
     {
         SpeechToText => "Provide speech recognition for authorized apps",
+        Translation => "Provide text translation for authorized apps using configured translation accounts",
         Assistant => "Provide an assistant that receives conversations and app context chosen in Shell",
         _ => role,
     };

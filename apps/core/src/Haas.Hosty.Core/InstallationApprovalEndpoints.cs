@@ -10,7 +10,7 @@ internal sealed record InstallationCaller(string UserId, string? AppId, string? 
 internal sealed class InstallationApprovalService(
     InstallationApprovalStore approvals, CoreLifecycleService lifecycle, AppRegistryStore apps,
     AppIdentityService identity, AppServiceTokenService serviceTokens, AuditStore audit, IClock clock,
-    PrivateSourceService? privateSources = null, AppManifestService? manifests = null, HostPathApprovalService? hostPaths = null, AgentMcpDirectory? agents = null)
+    PrivateSourceService? privateSources = null, AppManifestService? manifests = null, HostPathApprovalService? hostPaths = null, AgentMcpDirectory? agents = null, CoreEnvironmentConsentService? environments = null)
 {
     public async Task<InstallationCaller> AuthenticateAppAsync(string appId, HttpRequest request, CancellationToken ct)
     {
@@ -175,11 +175,12 @@ internal sealed class InstallationApprovalService(
     }
 
     public Task RecordAsync(InstallationApproval entry, string outcome, CancellationToken ct)
-        => audit.AppendAsync(new AuditRecord($"audit_{Guid.NewGuid():N}", entry.AssistantAccessPlan is not null ? "app.mcp.approval" : entry.PermissionPlan is null ? "app.installation.approval" : "app.permissions.approval", "app",
-            entry.AssistantAccessPlan?.AssistantId ?? entry.HostPathPlan?.Change.AppId ?? entry.PermissionPlan?.AppId ?? entry.RemovalPlan?.AppId ?? entry.InstallPlan?.AppId ?? entry.UpdatePlan?.AppId, outcome, entry.UserId, clock.UtcNow,
+        => audit.AppendAsync(new AuditRecord($"audit_{Guid.NewGuid():N}", entry.EnvironmentPlan is not null ? "core.environment.approval" : entry.AssistantAccessPlan is not null ? "app.mcp.approval" : entry.PermissionPlan is null ? "app.installation.approval" : "app.permissions.approval", "app",
+            entry.EnvironmentPlan?.AppId ?? entry.AssistantAccessPlan?.AssistantId ?? entry.HostPathPlan?.Change.AppId ?? entry.PermissionPlan?.AppId ?? entry.RemovalPlan?.AppId ?? entry.InstallPlan?.AppId ?? entry.UpdatePlan?.AppId, outcome, entry.UserId, clock.UtcNow,
             new Dictionary<string, string> { ["requestId"] = entry.Id, ["caller"] = entry.CallerAppId ?? "operator",
                 ["hostPathChange"] = entry.HostPathPlan is { } path ? CoreJson.Text(path.Change) : "",
-                ["operation"] = entry.AssistantAccessPlan is not null ? "mcp-access" : entry.HostPathPlan?.Change.Kind ?? (entry.RemovalPlan is not null ? "remove" : entry.PermissionPlan is not null ? "permissions" : entry.UpdatePlan is not null ? "update" : "install"),
+                ["environmentConsentSaved"] = entry.SaveEnvironmentConsent.ToString(),
+                ["operation"] = entry.EnvironmentPlan is not null ? "core-environment" : entry.AssistantAccessPlan is not null ? "mcp-access" : entry.HostPathPlan?.Change.Kind ?? (entry.RemovalPlan is not null ? "remove" : entry.PermissionPlan is not null ? "permissions" : entry.UpdatePlan is not null ? "update" : "install"),
                 ["removalOptions"] = entry.RemovalPlan is { } removal ? CoreJson.Text(removal.Options) : "",
                 ["assistantTarget"] = entry.AssistantAccessPlan?.Target.Id ?? "",
                 ["assistantAccessEnabled"] = entry.AgentEnabled.ToString(),
@@ -218,7 +219,9 @@ internal sealed class InstallationApprovalService(
                     throw new AppIdentityException("admin_required", "The requesting administrator no longer has access.");
                 await RequireRequestPermissionsAsync(new(entry.UserId, appId, entry.IdentityToken, entry.CallerName), entry, ct);
             }
-            if (entry.AssistantAccessPlan is { } agentPlan)
+            if (entry.EnvironmentPlan is { } environmentPlan)
+                await (environments ?? throw new InvalidOperationException()).ApproveAsync(environmentPlan, entry.SaveEnvironmentConsent, ct);
+            else if (entry.AssistantAccessPlan is { } agentPlan)
                 await (agents ?? throw new InvalidOperationException()).ApplyAssistantReviewAsync(agentPlan,
                     entry.AgentEnabled, entry.AgentSkills, entry.UserId, ct);
             else if (entry.HostPathPlan is { } pathPlan)
@@ -278,6 +281,13 @@ internal static class InstallationApprovalEndpoints
                     return CoreJson.Json(store.View(pending, origins.Effective));
                 }
             }, ct));
+        app.MapGet("/api/apps/permissions", async (HttpRequest request,
+            UserDirectoryStore users, IClock clock, CoreLifecycleService lifecycle, CancellationToken ct) =>
+            await BrowserAsync(request, users, clock, async _ =>
+            {
+                request.HttpContext.Response.Headers.CacheControl = "no-store";
+                return CoreJson.Json(await lifecycle.GetAppPermissionOverviewAsync(ct));
+            }, ct, csrf: false));
         app.MapGet("/api/apps/{id}/permissions", async (string id, HttpRequest request,
             UserDirectoryStore users, IClock clock, CoreLifecycleService lifecycle, CancellationToken ct) =>
             await BrowserAsync(request, users, clock, async _ =>
@@ -405,7 +415,7 @@ internal static class InstallationApprovalEndpoints
                 else if (form["decision"] == "runtime")
                     throw new AppLifecycleException("approval_invalid", "This request has no runtime choice.");
                 store.Decide(entry, nonce, sessionId, approve, form["optionalPermission"].Select(p => p!).ToArray(),
-                    form["agentEnabled"] == "true", form["agentSkill"].Select(p => p!).ToArray(), autostart);
+                    form["agentEnabled"] == "true", form["agentSkill"].Select(p => p!).ToArray(), autostart, form["saveEnvironmentConsent"] == "true");
                 try
                 {
                     await service.RecordAsync(entry, approve ? "approved" : "denied", lifetime.ApplicationStopping);
@@ -499,8 +509,8 @@ internal static class InstallationApprovalEndpoints
     {
         static string E(string? text) => WebUtility.HtmlEncode(text ?? "");
         var installing = entry.InstallPlan is not null;
-        var title = entry.AssistantAccessPlan is not null ? "Review assistant MCP access" : entry.HostPathPlan is not null ? "Confirm host path access" : entry.RemovalPlan is not null ? "Confirm app removal" : entry.PermissionPlan is not null ? "Review app permissions" : installing ? "Confirm app installation" : "Confirm app update";
-        var name = entry.AssistantAccessPlan?.DisplayName ?? entry.HostPathPlan?.DisplayName ?? entry.RemovalPlan?.DisplayName ?? entry.PermissionPlan?.DisplayName ?? entry.InstallPlan?.DisplayName ?? entry.UpdatePlan?.DisplayName ?? entry.UpdatePlan?.AppId;
+        var title = entry.EnvironmentPlan is not null ? "Approve trusted Core launch" : entry.AssistantAccessPlan is not null ? "Review assistant MCP access" : entry.HostPathPlan is not null ? "Confirm host path access" : entry.RemovalPlan is not null ? "Confirm app removal" : entry.PermissionPlan is not null ? "Review app permissions" : installing ? "Confirm app installation" : "Confirm app update";
+        var name = entry.EnvironmentPlan?.DisplayName ?? entry.AssistantAccessPlan?.DisplayName ?? entry.HostPathPlan?.DisplayName ?? entry.RemovalPlan?.DisplayName ?? entry.PermissionPlan?.DisplayName ?? entry.InstallPlan?.DisplayName ?? entry.UpdatePlan?.DisplayName ?? entry.UpdatePlan?.AppId;
         var permissions = entry.PermissionPlan?.Required ?? entry.InstallPlan?.CorePermissions ?? entry.UpdatePlan?.TargetCorePermissions ?? [];
         var before = entry.PermissionPlan?.Granted ?? entry.UpdatePlan?.CurrentCorePermissions ?? [];
         var optional = entry.PermissionPlan?.Optional ?? entry.InstallPlan?.OptionalCorePermissions ?? entry.UpdatePlan?.TargetOptionalCorePermissions ?? [];
@@ -554,22 +564,31 @@ internal static class InstallationApprovalEndpoints
                 + $"<p class=source>Manifest: {E(feedInstall.ManifestPath)}</p>";
         var sourceAndRoles = entry.PermissionPlan is not null ? "" : sourceReview
             + (roles.Count == 0 && previousRoles.Count == 0 ? "" : $"<h2>Provider roles</h2><ul>{roleItems}</ul>");
-        var review = entry.AssistantAccessPlan is not null ? "" : entry.HostPathPlan is { } pathPlan ? "<ul>" + string.Join("", pathPlan.Details.Select(d => $"<li>{E(d)}</li>")) + "</ul>" : entry.RemovalPlan is { } removal ? RenderRemoval(removal, entry.CallerAppId)
+        var review = entry.EnvironmentPlan is { } environment ? RenderEnvironmentConsent(environment) : entry.AssistantAccessPlan is not null ? "" : entry.HostPathPlan is { } pathPlan ? "<ul>" + string.Join("", pathPlan.Details.Select(d => $"<li>{E(d)}</li>")) + "</ul>" : entry.RemovalPlan is { } removal ? RenderRemoval(removal, entry.CallerAppId)
             : $"{sourceAndRoles}{(permissions.Count == 0 && !removed.Any() ? "" : $"<h2>Core permissions</h2><ul>{rights}{string.Join("", removed)}</ul>")}{warning}{accessReview}";
         if (entry.UpdatePlan is { } updatePlan)
             review = RenderUpdateMetadata(updatePlan) + review;
         if (entry.InstallPlan is { ConfigurationReadiness.Required: true } installPlan)
             review += RenderConfigurationWarning(installPlan.ConfigurationReadiness, installPlan.AppId == "hosty.shell");
+        if (entry.EnvironmentPlan is not null) optionalReview = "<p><label><input type=checkbox name=saveEnvironmentConsent value=true>Remember for matching launches by this installation until revoked</label></p><p class=muted>Leave unchecked to allow only this creation request and its lifecycle.</p>";
         var installChoices = entry.InstallPlan is { } installation ? RenderInstallChoices(installation, entry.Autostart) : "";
         var unavailableRuntime = entry.InstallPlan is { RuntimeChoices.Count: > 0 } runtimePlan &&
             !runtimePlan.RuntimeChoices.Any(choice => choice.Key == runtimePlan.TargetRuntime && choice.Available);
         if (entry.AssistantAccessPlan is { } agentPlan) optionalReview = RenderAssistantAccess(agentPlan);
-        var action = entry.AssistantAccessPlan is not null ? "Save MCP access" : entry.HostPathPlan is not null ? "Approve change" : entry.RemovalPlan is not null ? "Remove app" : entry.PermissionPlan is not null ? "Save permissions" : installing ? "Install app" : "Apply update";
+        var action = entry.EnvironmentPlan is not null ? "Allow launch" : entry.AssistantAccessPlan is not null ? "Save MCP access" : entry.HostPathPlan is not null ? "Approve change" : entry.RemovalPlan is not null ? "Remove app" : entry.PermissionPlan is not null ? "Save permissions" : installing ? "Install app" : "Apply update";
         var body = entry.Status == "pending"
             ? $"{nameLine}<p class=muted>Requested by {E(entry.CallerName)}</p>{(notice is null ? "" : $"<p role=status>{E(notice)}</p>")}{review}<form method=post>{installChoices}{optionalReview}<div class=actions><input type=hidden name=nonce value=\"{E(nonce)}\"><button name=decision value=deny>Cancel</button><button class=primary name=decision value=approve{(unavailableRuntime ? " disabled" : "")}>{action}</button></div></form>"
             : $"<p role=status>{E(entry.Status switch { "succeeded" => "Completed. You can close this window.", "denied" => "Cancelled. Nothing was changed. You can close this window.", "failed" => entry.Error ?? "The operation failed.", "executing" => "Your request was accepted. Follow its progress in the app. You can close this window.", _ => "Finish preparing this request in the app first." })}</p>";
         if (closeWindow) body += $"<script>{CloseWindowScript}</script>";
-        return $"<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>{title} — Hosty Core</title><style>:root{{color-scheme:light dark;font-family:system-ui}}body{{margin:0;padding:24px;background:Canvas;color:CanvasText}}main{{max-width:560px;margin:0 auto}}h1{{font-size:1.5rem}}h2{{font-size:1rem}}li{{margin:8px 0}}.muted{{font-size:.9rem;opacity:.75}}dl{{display:grid;grid-template-columns:110px 1fr;gap:8px;font-size:.9rem}}dt{{opacity:.75}}dd{{margin:0;overflow-wrap:anywhere}}select{{font:inherit;padding:8px;max-width:100%}}button:disabled{{opacity:.5;cursor:default}}.source{{overflow-wrap:anywhere;font-size:.9rem;opacity:.75}}.warning{{padding:12px;border:1px solid #b7791f;border-radius:8px}}form{{margin-top:20px}}.actions{{display:flex;justify-content:flex-end;gap:12px;margin-top:24px}}fieldset{{border:1px solid GrayText;border-radius:8px}}button{{font:inherit;padding:10px 18px;border:1px solid GrayText;border-radius:8px;cursor:pointer}}.primary{{background:#2563eb;color:white;border-color:#2563eb}}button:focus-visible{{outline:3px solid #60a5fa;outline-offset:3px}}</style><main><p>HOSTY CORE</p><h1>{title}</h1>{body}</main></html>";
+        return $"<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>{title} — Hosty Core</title><style>:root{{color-scheme:light dark;font-family:system-ui}}body{{margin:0;padding:24px;background:Canvas;color:CanvasText}}main{{max-width:560px;margin:0 auto}}h1{{font-size:1.5rem}}h2{{font-size:1rem}}li{{margin:8px 0;overflow-wrap:anywhere}}.muted{{font-size:.9rem;opacity:.75}}dl{{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px;font-size:.9rem}}dt{{opacity:.75}}dd{{margin:0;overflow-wrap:anywhere}}select{{font:inherit;padding:8px;max-width:100%}}button:disabled{{opacity:.5;cursor:default}}.source{{overflow-wrap:anywhere;font-size:.9rem;opacity:.75}}.warning{{padding:12px;border:1px solid #b7791f;border-radius:8px}}form{{margin-top:20px}}.actions{{display:flex;justify-content:flex-end;gap:12px;margin-top:24px}}fieldset{{min-width:0;border:1px solid GrayText;border-radius:8px}}button{{font:inherit;padding:10px 18px;border:1px solid GrayText;border-radius:8px;cursor:pointer}}.primary{{background:#2563eb;color:white;border-color:#2563eb}}button:focus-visible{{outline:3px solid #60a5fa;outline-offset:3px}}</style><main><p>HOSTY CORE</p><h1>{title}</h1>{body}</main></html>";
+    }
+
+    private static string RenderEnvironmentConsent(CoreEnvironmentConsentPlan plan)
+    {
+        static string E(string value) => WebUtility.HtmlEncode(value);
+        var policy = plan.Policy;
+        return $"<p>{E(CoreEnvironmentConsentService.Description)}</p><dl><dt>Caller</dt><dd>{E(plan.AppId)}</dd><dt>Mode</dt><dd>{E(policy.Mode)}</dd><dt>Core target</dt><dd>{E(policy.Target)}</dd><dt>Limits</dt><dd>{policy.Limits.MemoryBytes / 1073741824.0:0.##} GiB memory, {policy.Limits.Cpus} CPUs, {policy.Limits.Pids} PIDs, {policy.Limits.DiskBytes / 1073741824.0:0.##} GiB data</dd></dl>"
+            + (policy.Mode == "source" ? "<p>Trusts edits to this Core project in its selected worktree. A different project requires new consent.</p>" : "<p>A changed Core build requires new consent.</p>");
     }
 
     private static string RenderInstallChoices(AppInstallPlan plan, bool autostart)
@@ -604,7 +623,11 @@ internal static class InstallationApprovalEndpoints
     private static string RenderUpdateMetadata(AppUpdatePlan plan)
     {
         static string E(string? value) => WebUtility.HtmlEncode(value ?? "");
-        var metadata = $"<dl><dt>Version</dt><dd>{E(plan.CurrentVersion)} → {E(plan.TargetVersion)}</dd><dt>Runtime</dt><dd>{E(plan.CurrentRuntime)} → {E(plan.TargetRuntime)}{(plan.TargetRuntimeType is null ? "" : " · " + E(plan.TargetRuntimeType))}</dd><dt>Backup</dt><dd>{(plan.WillCreatePreUpdateBackup ? "App data is backed up before updating" : "No app data backup is needed")}</dd></dl>";
+        var runtime = plan.CurrentRuntime == plan.TargetRuntime
+            ? E(plan.TargetRuntime) : $"{E(plan.CurrentRuntime)} → {E(plan.TargetRuntime)}";
+        if (plan.TargetRuntimeType is not null && plan.TargetRuntimeType != plan.TargetRuntime)
+            runtime += " · " + E(plan.TargetRuntimeType);
+        var metadata = $"<dl><dt>Version</dt><dd>{E(plan.CurrentVersion)} → {E(plan.TargetVersion)}</dd><dt>Runtime</dt><dd>{runtime}</dd><dt>Backup</dt><dd>{(plan.WillCreatePreUpdateBackup ? "App data is backed up before updating" : "No app data backup is needed")}</dd></dl>";
         if (plan.FeedsUrl is not null) metadata += $"<p class=source>Feed: {E(plan.FeedsUrl)}{(plan.FeedId is null ? "" : " · " + E(plan.FeedId))}</p>";
         if (!plan.SourceConfigured) metadata += "<p class=warning>No external update source is configured. This review uses the selected manifest.</p>";
         if (plan.Error is not null) metadata += $"<p class=warning>{E(plan.Error)}</p>";
@@ -619,8 +642,7 @@ internal static class InstallationApprovalEndpoints
             && !change.StartsWith("Core permission ", StringComparison.Ordinal)
             && !change.StartsWith("Optional permission ", StringComparison.Ordinal)
             && !change.StartsWith("Provider role ", StringComparison.Ordinal)
-            && change != "configuration:required").Select(change => change.StartsWith("source-access:", StringComparison.Ordinal)
-                ? "Private source access changed; review the listed connections" : DescribeMountChange(change)).ToArray();
+            && change != "configuration:required").Select(DescribeUpdateChange).OfType<string>().ToArray();
         if (other.Length > 0)
         {
             var list = "<ul>" + string.Join("", other.Select(change => $"<li>{E(change)}</li>")) + "</ul>";
@@ -629,6 +651,29 @@ internal static class InstallationApprovalEndpoints
         if (plan.ConfigurationReadiness is { Required: true } readiness) metadata += RenderConfigurationWarning(readiness, plan.AppId == "hosty.shell");
         if (plan.TargetRuntimeType is "localCommand" or "mixed") metadata += "<p class=warning>This update runs commands directly on your host, outside a container.</p>";
         return metadata;
+    }
+
+    private static string? DescribeUpdateChange(string change)
+    {
+        // Keep exact references and digests in the frozen plan; consent highlights source changes.
+        var parts = change.Split(':', 3);
+        if (parts.Length == 3 && parts[0] is "image" or "artifact" && parts[1].Length > 0)
+        {
+            var references = parts[2].Split("->", 2, StringSplitOptions.None);
+            if (references.Length == 2 && references.All(reference => !string.IsNullOrWhiteSpace(reference)))
+            {
+                if (parts[0] == "artifact")
+                    return references[1] == "unknown" ? $"Image for {parts[1]} could not be verified" : null;
+                if (CoreLifecycleService.IsSameRepositoryImageChange(change)) return null;
+                var current = CoreLifecycleService.ImageRepository(references[0]);
+                var target = CoreLifecycleService.ImageRepository(references[1]);
+                return references[0] == "none" ? $"Image source for {parts[1]} added: {target}"
+                    : references[1] == "none" ? $"Image source for {parts[1]} removed: {current}"
+                    : $"Image source for {parts[1]} changed: {current} → {target}";
+            }
+        }
+        return change.StartsWith("source-access:", StringComparison.Ordinal)
+            ? "Private source access changed; review the listed connections" : DescribeMountChange(change);
     }
 
     private static string DescribeMountChange(string change)
@@ -680,6 +725,7 @@ internal static class InstallationApprovalEndpoints
         var consumers = string.Join("", impact.Capabilities.SelectMany(c => c.Consumers.Select(d => $"<li>{E(d.DisplayName)} ({E(d.AppId)}) uses {E(c.Slot)} provided by this app.</li>")));
         var publications = string.Join("", impact.PublicOrigins.Select(p => $"<li>{E(p.Hostname)}: tunnel route removed; {(p.OwnershipState == "adopted" ? "existing DNS record kept" : "Hosty-created DNS record removed")}.</li>"));
         return $"<p>App ID: <code>{E(plan.AppId)}</code></p><p>This stops and removes the app's runtime services.</p><h2>Removal options</h2><ul>{cleanup}</ul>"
+            + (plan.SourceReview is { } source ? "<h2>Source and workspace state</h2><ul>" + string.Join("", source.Details.Select(d => $"<li>{E(d)}</li>")) + "</ul>" : "")
             + (options.DeleteData || options.DeleteBackups || options.DeleteSource ? "<p class=warning>Selected data is permanently deleted. This cannot be undone through Hosty.</p>" : "")
             + (callerAppId == plan.AppId ? "<p class=warning>This removes the app requesting confirmation. Its interface becomes unavailable; Core continues the operation.</p>" : "")
             + (dependents.Length + consumers.Length > 0 ? $"<h2>Affected apps</h2><ul>{dependents}{consumers}</ul>" : "")

@@ -123,6 +123,7 @@ public sealed class AssistantMcpAccessHttpTests
             return await client.SendAsync(request);
         }
         Assert.Equal(HttpStatusCode.OK, (await Call("list_apps")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Call("get_app_development_guide")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await Call("get_host_status")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await Call("restart_core")).StatusCode);
         await apps.UpsertAppAsync(caller with { GrantedCorePermissions = [CoreAppPermissions.ReadApps, CoreAppPermissions.ReadCore] });
@@ -130,6 +131,7 @@ public sealed class AssistantMcpAccessHttpTests
         var state = await users.ReadAsync();
         await users.WriteAsync(state with { Users = state.Users.Select(u => u with { Role = "host.member" }).ToArray(), Assignments = [new(caller.Id, "admin", now)] });
         Assert.Equal(HttpStatusCode.Forbidden, (await Call("list_apps")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await Call("get_app_development_guide")).StatusCode);
     }
 
     internal static AppRecord Record(string id, DateTimeOffset now) => new(id, id, null, "1.0.0", "runtime", false,

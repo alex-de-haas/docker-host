@@ -28,7 +28,7 @@ internal static class AssistantMcpDiscovery
             using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
             return CoreJson.Json(await ReadCatalogAsync(new Uri(endpoint.Url), token.Token, client, timeout.Token));
         }
-        catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code is "token_invalid" or "reauth_required" ? 401 : 403); }
+        catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), AuthEndpoints.MapIdentityErrorStatus(ex.Code)); }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or ModelContextProtocol.McpException or InvalidOperationException)
         { return CoreJson.Json(new ErrorResponse("mcp_catalog_unavailable", "The tool catalog could not be read. Existing rules are unchanged."), 503); }
     });

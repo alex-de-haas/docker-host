@@ -1,6 +1,6 @@
 "use client";
 
-import { HostyOverlay } from "@hosty-sdk/app/react";
+import { HostyNextOverlay as HostyOverlay } from "@hosty-sdk/app/next";
 import { PlansWorkbench } from "./workbench";
 
 export function PlansSession() {

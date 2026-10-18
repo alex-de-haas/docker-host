@@ -5,6 +5,65 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed class DockerRuntimeAdapterTests
 {
+    [Theory]
+    [InlineData("")]
+    [InlineData("0123456789abcdef0123456789abcdef")]
+    public async Task TopologyReconcile_RemovesOnlyObsoleteServicesOfThisAppAndInstance(string instance)
+    {
+        var context = CreateDockerContext(CreateDockerAppRecord(null, null));
+        var ids = Enumerable.Range(0, 6).Select(i => new string((char)('a' + i), 64)).ToArray();
+        var inventory = string.Join('\n',
+            $"{ids[0]}\t{context.App.Id}\t{instance}\tplaceholder",
+            $"{ids[1]}\t{context.App.Id}\t{instance}\tapp",
+            $"{ids[2]}\tother.app\t{instance}\tplaceholder",
+            $"{ids[3]}\t{context.App.Id}\tother-instance\tplaceholder",
+            $"{ids[4]}\t{context.App.Id}\t{instance}\t",
+            $"{ids[5]}\t{context.App.Id}\t{instance}\tsibling");
+        context = context with { GraphServices = [..context.Manifest.Services, context.Manifest.Services[0] with { Key = "sibling" }] };
+        var runner = new FakeDockerCommandRunner(args => new(0,
+            args[0] == "ps" ? inventory : args[0] == "inspect" ? $"{context.App.Id}\t{instance}" : "", ""));
+        await CreateAdapter(runner, instanceId: instance).RemoveObsoleteServicesAsync(context, default);
+        Assert.Equal(new[] { "rm", "-f", ids[0] }, Assert.Single(runner.Commands, c => c[0] == "rm"));
+        Assert.DoesNotContain(runner.Commands, c => c[0] is "volume" or "network");
+    }
+
+    [Theory]
+    [InlineData("ps")]
+    [InlineData("inspect")]
+    [InlineData("rm")]
+    public async Task TopologyReconcile_DoesNotReportSuccessWhenDockerCannotReconcile(string failingCommand)
+    {
+        var context = CreateDockerContext(CreateDockerAppRecord(null, null));
+        var id = new string('a', 64);
+        var runner = new FakeDockerCommandRunner(args => args[0] == failingCommand
+            ? new(1, "", "Docker unavailable")
+            : new(0, args[0] == "ps" ? $"{id}\t{context.App.Id}\t\tplaceholder" : $"{context.App.Id}\t", ""));
+        await Assert.ThrowsAsync<AppLifecycleException>(() => CreateAdapter(runner).RemoveObsoleteServicesAsync(context, default));
+        Assert.False(runner.Ran("run"));
+    }
+
+    [Fact]
+    public async Task StartAsync_LocalOnlyImage_PinsContentIdAndRestartsWithoutFollowingTag()
+    {
+        var digest = "sha256:" + new string('d', 64);
+        var runner = new FakeDockerCommandRunner(args => args switch
+        {
+            ["pull", ..] => new DockerCommandResult(1, "", "local image"),
+            ["image", "inspect", "--format", "{{.Id}}", ..] => new DockerCommandResult(0, digest, ""),
+            ["image", "inspect", ..] => new DockerCommandResult(0, "[{}]", ""),
+            _ => new DockerCommandResult(0, "", ""),
+        });
+        var result = await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", locks: null)));
+        Assert.Equal("local-image", result.ArtifactLocks!["app"].Kind);
+        Assert.Equal(digest, result.ArtifactLocks["app"].ImageDigest);
+        Assert.Equal(digest, runner.Find("run")![^1]);
+        var restart = new FakeDockerCommandRunner(args => args is ["image", "inspect", ..]
+            ? new DockerCommandResult(0, "[{}]", "") : new DockerCommandResult(0, "", ""));
+        await CreateAdapter(restart).StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", result.ArtifactLocks)));
+        Assert.DoesNotContain(restart.Commands, c => c[0] == "pull");
+        Assert.Equal(digest, restart.Find("run")![^1]);
+    }
+
     [Fact]
     public async Task GetLogsAsync_IncludesCompilerErrorsWrittenToStandardError()
     {
@@ -83,6 +142,24 @@ public sealed class DockerRuntimeAdapterTests
 
         Assert.Equal(coreOrigin, result);
     }
+
+    [Theory]
+    [InlineData("redis://127.0.0.1:6379", "redis://host.docker.internal:6379")]
+    [InlineData("http://127.0.0.1:3000", "http://host.docker.internal:3000")]
+    [InlineData("http://localhost:80", "http://host.docker.internal:80")]
+    [InlineData("https://localhost:443/", "https://host.docker.internal:443/")]
+    [InlineData("http://[::1]:3000?mode=test#item", "http://host.docker.internal:3000?mode=test#item")]
+    [InlineData("redis://user:pass@localhost:6379/2", "redis://user:pass@host.docker.internal:6379/2")]
+    [InlineData("http://localhost:3000/a%2Fb?uri=http://localhost:4000", "http://host.docker.internal:3000/a%2Fb?uri=http://localhost:4000")]
+    [InlineData("http://localhost", "http://host.docker.internal")]
+    [InlineData("postgresql://localhost:5432/test?sslmode=disable", "postgresql://host.docker.internal:5432/test?sslmode=disable")]
+    [InlineData("redis://[::1]:6379/2", "redis://host.docker.internal:6379/2")]
+    [InlineData("http://0.0.0.0:8080/api?mode=test", "http://host.docker.internal:8080/api?mode=test")]
+    [InlineData("redis://database.example:6379/2", "redis://database.example:6379/2")]
+    [InlineData("file://localhost/tmp/database", "file://localhost/tmp/database")]
+    [InlineData("not-a-url", "not-a-url")]
+    public void BuildDockerDependencyUrl_RewritesOnlyLocalHostsAcrossProtocols(string endpoint, string expected)
+        => Assert.Equal(expected, DockerRuntimeAdapter.BuildDockerDependencyUrl(endpoint));
 
     [Fact]
     public void BuildPortArguments_DefaultPort_PublishesLoopbackTcpOnlyAndInjectsHostPortOnce()
@@ -286,6 +363,86 @@ public sealed class DockerRuntimeAdapterTests
         => Assert.Equal(
             "hosty-0123456789ab-com-example-app-web",
             DockerRuntimeAdapter.BuildContainerName("0123456789abcdef0123456789abcdef", "com.example.app", "web"));
+
+    [Theory]
+    [InlineData("|", true)]
+    [InlineData("<no value>|<no value>", true)]
+    [InlineData("0123456789abcdef0123456789abcdef|com.example.app", true)]
+    [InlineData("another-instance|com.example.app", false)]
+    [InlineData("0123456789abcdef0123456789abcdef|another-app", false)]
+    [InlineData("0123456789abcdef0123456789abcdef|", false)]
+    public async Task StartAsync_NonDefaultInstance_ReusesLegacyNetworkButRejectsConflictingOwner(string owner, bool allowed)
+    {
+        const string instance = "0123456789abcdef0123456789abcdef";
+        var runner = new FakeDockerCommandRunner(args => args switch
+        {
+            ["network", "create", ..] => new(1, "", "network already exists"),
+            ["network", "inspect", ..] => new(0, owner, ""),
+            ["pull", ..] => new(0, "Digest: sha256:" + new string('a', 64), ""),
+            _ => new(0, "", ""),
+        });
+        var context = CreateMultiServiceDockerContext("api", "web");
+        context = context with { Manifest = context.Manifest with { Services = context.Manifest.Services
+            .Select(s => s.Key == "web" ? s with { DependsOn = [new("api", null)] } : s).ToArray() } };
+        var adapter = CreateAdapter(runner, instanceId: instance);
+        if (allowed)
+        {
+            await adapter.StartAsync(context);
+            Assert.Equal(2, runner.Commands.Count(c => c[0] == "run"));
+        }
+        else
+        {
+            var error = await Assert.ThrowsAsync<AppLifecycleException>(() => adapter.StartAsync(context));
+            Assert.Equal("runtime_network_unverified", error.Code);
+            Assert.False(runner.Ran("run"));
+        }
+        Assert.Equal(DockerRuntimeAdapter.BuildNetworkName(instance, context.App.Id), runner.Find("network", "inspect")![^1]);
+        Assert.False(runner.Ran("network", "rm"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("|")]
+    [InlineData("<no value>|<no value>")]
+    [InlineData("0123456789abcdef0123456789abcdef|com.example.app")]
+    public async Task StartAsync_PartialStartRemovesOnlyNewDependencyNetwork(string? existingOwner)
+    {
+        const string instance = "0123456789abcdef0123456789abcdef";
+        var running = new HashSet<string>(StringComparer.Ordinal);
+        var runner = new FakeDockerCommandRunner(args =>
+        {
+            switch (args)
+            {
+                case ["network", "create", ..]:
+                    return existingOwner is null ? new(0, "", "") : new(1, "", "network already exists");
+                case ["network", "inspect", ..]:
+                    return new(0, existingOwner!, "");
+                case ["pull", ..]:
+                    return new(0, "Digest: sha256:" + new string('a', 64), "");
+                case ["run", ..]:
+                    var name = args[args.ToList().IndexOf("--name") + 1];
+                    if (name.EndsWith("-web", StringComparison.Ordinal)) return new(1, "", "web failed to start");
+                    running.Add(name);
+                    return new(0, "", "");
+                case ["inspect", "--format", var format, ..] when format.Contains("hosty.app.id", StringComparison.Ordinal):
+                    return running.Contains(args[^1]) ? new(0, "com.example.app\t" + instance, "") : new(1, "", "no such container");
+                case ["rm", ..]:
+                    running.Remove(args[^1]);
+                    return new(0, "", "");
+                default:
+                    return new(0, "", "");
+            }
+        });
+        var context = CreateMultiServiceDockerContext("api", "web");
+        context = context with { Manifest = context.Manifest with { Services = context.Manifest.Services
+            .Select(s => s.Key == "web" ? s with { DependsOn = [new("api", null)] } : s).ToArray() } };
+
+        await Assert.ThrowsAsync<AppLifecycleException>(() => CreateAdapter(runner, instanceId: instance).StartAsync(context));
+
+        Assert.Empty(running);
+        Assert.True(runner.Ran("rm", "-f", DockerRuntimeAdapter.BuildContainerName(instance, context.App.Id, "api")));
+        Assert.Equal(existingOwner is null, runner.Ran("network", "rm", DockerRuntimeAdapter.BuildNetworkName(instance, context.App.Id)));
+    }
 
     [Fact]
     public void RequiresUserNetwork_OnlyWhenAServiceDependsOnAnother()
@@ -1242,7 +1399,7 @@ public sealed class DockerRuntimeAdapterTests
         var runner = new FakeDockerCommandRunner(args =>
             args is ["inspect", "--format", _, ..] && args[2].Contains("hosty.app.id", StringComparison.Ordinal)
                 ? new DockerCommandResult(0, "some.other.app", "")
-                : new DockerCommandResult(0, "", ""));
+                : new DockerCommandResult(0, args[0] == "pull" ? "Digest: sha256:" + new string('a', 64) : "", ""));
 
         await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord(updatePolicy: null, locks: null)));
 
@@ -1257,6 +1414,8 @@ public sealed class DockerRuntimeAdapterTests
         {
             switch (args[0])
             {
+                case "pull":
+                    return new DockerCommandResult(0, "Digest: sha256:" + new string('a', 64), "");
                 case "run":
                     var runName = args[args.ToList().IndexOf("--name") + 1];
                     if (runName.EndsWith("-worker", StringComparison.Ordinal))
@@ -1300,6 +1459,14 @@ public sealed class DockerRuntimeAdapterTests
             CreateAdapter(runner).StopAsync(CreateDockerContext(CreateDockerAppRecord(updatePolicy: null, locks: null))));
 
         Assert.Equal("docker_stop_incomplete", ex.Code);
+    }
+
+    [Fact]
+    public async Task StopAsync_DaemonUnavailable_DoesNotReportStopped()
+    {
+        var runner = new FakeDockerCommandRunner(_ => new DockerCommandResult(1, "", "Cannot connect to Docker daemon"));
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => CreateAdapter(runner).StopAsync(CreateDockerContext(CreateDockerAppRecord(null, null))));
+        Assert.Equal("docker_state_unknown", error.Code);
     }
 
     [Fact]
@@ -1454,7 +1621,7 @@ public sealed class DockerRuntimeAdapterTests
         : IDockerCommandRunner
     {
         private readonly Func<IReadOnlyList<string>, DockerCommandResult> responder =
-            responder ?? (_ => new DockerCommandResult(0, "", ""));
+            responder ?? (args => new DockerCommandResult(0, args[0] == "pull" ? "Digest: sha256:" + new string('a', 64) : "", ""));
 
         public List<IReadOnlyList<string>> Commands { get; } = [];
 

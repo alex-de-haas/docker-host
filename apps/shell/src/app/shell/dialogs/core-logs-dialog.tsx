@@ -39,6 +39,18 @@ const LEVELS: { value: Level; label: string }[] = [
 
 type State = { loading: boolean; error: string | null; records: CoreLogRecord[]; runId: string | null };
 
+async function fetchCoreLogs(coreOrigin: string, ring: Ring, level: Level, signal?: AbortSignal): Promise<CoreLogsResponse> {
+  const response = await fetchCore(
+    `${coreOrigin}/api/core/logs?ring=${ring}&level=${level}&tail=500`,
+    { credentials: "include", signal },
+  );
+  redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+  if (!response.ok) {
+    throw new Error(await readCoreError(response));
+  }
+  return (await response.json()) as CoreLogsResponse;
+}
+
 export function CoreLogsDialog({
   open,
   coreOrigin,
@@ -52,21 +64,20 @@ export function CoreLogsDialog({
   const [level, setLevel] = useState<Level>("trace");
   const [state, setState] = useState<State>({ loading: false, error: null, records: [], runId: null });
 
+  // Opening the dialog or switching ring/level starts a read; mark it loading in the same render
+  // rather than from the effect that issues it.
+  const requestKey = open ? `${ring}:${level}` : null;
+  const [loadingKey, setLoadingKey] = useState<string | null>(null);
+  if (requestKey !== loadingKey) {
+    setLoadingKey(requestKey);
+    if (requestKey) setState((current) => ({ ...current, loading: true, error: null }));
+  }
+
   const loadLogs = useCallback(
-    async (signal?: AbortSignal) => {
-      setState((current) => ({ ...current, loading: true, error: null }));
-      try {
-        const response = await fetchCore(
-          `${coreOrigin}/api/core/logs?ring=${ring}&level=${level}&tail=500`,
-          { credentials: "include", signal },
-        );
-        redirectToCoreLoginIfAuthRequired(response, coreOrigin);
-        if (!response.ok) {
-          throw new Error(await readCoreError(response));
-        }
-        const payload = (await response.json()) as CoreLogsResponse;
+    (signal?: AbortSignal) =>
+      fetchCoreLogs(coreOrigin, ring, level, signal).then((payload) => {
         setState({ loading: false, error: null, records: payload.records ?? [], runId: payload.runId ?? null });
-      } catch (error) {
+      }, (error: unknown) => {
         // A superseded request (ring switched, dialog closed) aborts — leave the newer request's state.
         if (error instanceof DOMException && error.name === "AbortError") {
           return;
@@ -80,8 +91,7 @@ export function CoreLogsDialog({
           records: [],
           runId: null,
         });
-      }
-    },
+      }),
     [coreOrigin, level, ring],
   );
 
@@ -108,7 +118,7 @@ export function CoreLogsDialog({
         </DialogHeader>
         <DialogBody className="flex min-h-0 flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => void loadLogs()} disabled={state.loading}>
+            <Button variant="outline" size="sm" onClick={() => { setState((current) => ({ ...current, loading: true, error: null })); void loadLogs(); }} disabled={state.loading}>
               <RefreshCw className={cn("h-4 w-4", state.loading && "animate-spin")} />
               Refresh
             </Button>

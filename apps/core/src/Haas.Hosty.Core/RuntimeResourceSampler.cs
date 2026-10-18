@@ -1,12 +1,15 @@
+using System.Diagnostics;
 using System.Text;
 
 namespace Haas.Hosty.Core;
 
 internal sealed record RuntimeResourceSample(string AppId, string Service, string Runtime,
     DateTimeOffset Timestamp, double? CpuPercent, double? MemoryBytes, double? MemoryPercent = null);
-internal sealed record ResourceUsageFrame(DateTimeOffset Timestamp, IReadOnlyList<RuntimeResourceSample> Services);
+internal sealed record ResourceUsageFrame(DateTimeOffset Timestamp, IReadOnlyList<RuntimeResourceSample> Services, long Sequence = 0);
 internal sealed record ResourceUsageResponse(string RunId, DateTimeOffset Now, int LogicalProcessors,
-    IReadOnlyList<ResourceUsageFrame> History);
+    IReadOnlyList<ResourceUsageFrame> History, long Sequence = 0);
+internal sealed record ResourceUsageEvent(string RunId, long Sequence, DateTimeOffset Timestamp,
+    int LogicalProcessors, ResourceUsageFrame Frame);
 
 // RAM only. A single producer serves both the live Dashboard and the slower telemetry scrape.
 internal sealed class RuntimeResourceSampler(
@@ -16,25 +19,53 @@ internal sealed class RuntimeResourceSampler(
     private readonly object gate = new();
     private readonly Queue<ResourceUsageFrame> history = new();
     private readonly string runId = Guid.NewGuid().ToString("N");
+    private long sequence;
     private DateTimeOffset viewedUntil;
     private DateTimeOffset lastSample;
     private DateTimeOffset lastDocker;
-    private string dockerText = "";
-    private volatile string exposition = "";
+    private volatile ResourceUsageFrame? latestFrame;
+    private int dockerFailures;
+    private DateTimeOffset? lastDockerWarning;
     internal static readonly TimeSpan Retention = TimeSpan.FromMinutes(5);
+    internal static readonly TimeSpan DockerTimeout = TimeSpan.FromSeconds(8);
+    internal static readonly TimeSpan DockerMaxAge = TimeSpan.FromSeconds(20);
     internal const int MaxFrames = 110;
 
-    public string CurrentPrometheusText => exposition;
+    public string CurrentPrometheusText
+    {
+        get
+        {
+            var frame = latestFrame;
+            if (frame is null) return "";
+            var now = clock.UtcNow;
+            var builder = new StringBuilder();
+            // Check freshness at scrape time too: an in-flight probe can outlive a cached sample.
+            foreach (var sample in frame.Services.Where(s => s.Runtime != "unknown" && IsFresh(s, now)))
+            {
+                var prefix = sample.Runtime == "docker" ? "container" : "process";
+                if (sample.CpuPercent is { } cpu)
+                    DockerStatsExposition.AppendSample(builder, prefix + ".cpu.percent", sample.AppId, sample.Service, cpu);
+                if (sample.MemoryBytes is { } memory)
+                    DockerStatsExposition.AppendSample(builder, prefix + ".memory.bytes", sample.AppId, sample.Service, memory);
+                if (sample.Runtime == "docker" && sample.MemoryPercent is { } percent)
+                    DockerStatsExposition.AppendSample(builder, "container.memory.percent", sample.AppId, sample.Service, percent);
+            }
+            return builder.ToString();
+        }
+    }
 
-    public ResourceUsageResponse Read(DateTimeOffset? after = null, string? previousRunId = null)
+    private static bool IsFresh(RuntimeResourceSample sample, DateTimeOffset now)
+        => sample.Runtime != "docker" || now - sample.Timestamp <= DockerMaxAge;
+
+    public ResourceUsageResponse Read(DateTimeOffset? after = null, string? previousRunId = null, bool stream = false)
     {
         lock (gate)
         {
             // Renewed by visible Dashboard reads, never by telemetry. A disconnected client costs
             // at most this grace period; no per-browser sampling loop or unbounded lease dictionary.
-            viewedUntil = clock.UtcNow.AddSeconds(20);
+            if (!stream) viewedUntil = clock.UtcNow.AddSeconds(20);
             Prune(clock.UtcNow);
-            return new(runId, clock.UtcNow, Environment.ProcessorCount, history.Where(f => previousRunId != runId || after is null || f.Timestamp > after).ToArray());
+            return new(runId, clock.UtcNow, Environment.ProcessorCount, history.Where(f => previousRunId != runId || after is null || f.Timestamp > after).ToArray(), sequence);
         }
     }
 
@@ -42,9 +73,17 @@ internal sealed class RuntimeResourceSampler(
     {
         lock (gate)
         {
+            frame = frame with { Sequence = ++sequence };
             history.Enqueue(frame);
             Prune(frame.Timestamp);
+            latestFrame = frame;
+            events.PublishResources(new(runId, sequence, frame.Timestamp, Environment.ProcessorCount, frame));
         }
+    }
+
+    internal bool HasViewers
+    {
+        get { lock (gate) return viewedUntil > clock.UtcNow || events.HasResourceSubscribers; }
     }
 
     private void Prune(DateTimeOffset now)
@@ -88,6 +127,44 @@ internal sealed class RuntimeResourceSampler(
         ReconcileApp(samples, app.Id, app.RuntimeState, services, at);
     }
 
+    internal async Task<IReadOnlyList<RuntimeResourceSample>> ReadDockerSamplesAsync(CancellationToken stoppingToken)
+    {
+        var now = clock.UtcNow;
+        if (now - lastDocker >= TimeSpan.FromSeconds(10))
+        {
+            lastDocker = now;
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            deadline.CancelAfter(DockerTimeout);
+            var timer = Stopwatch.StartNew();
+            try
+            {
+                await docker.BuildSnapshotAsync(deadline.Token);
+                if (dockerFailures > 0)
+                    logger.LogInformation("Docker resource acquisition recovered after {FailureCount} failed attempts in {ElapsedMilliseconds} ms.",
+                        dockerFailures, timer.Elapsed.TotalMilliseconds);
+                dockerFailures = 0;
+                lastDockerWarning = null;
+            }
+            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+            {
+                dockerFailures++;
+                now = clock.UtcNow;
+                if (lastDockerWarning is null || now - lastDockerWarning.Value >= TimeSpan.FromMinutes(1))
+                {
+                    lastDockerWarning = now;
+                    if (ex is OperationCanceledException && deadline.IsCancellationRequested)
+                        logger.LogWarning("Docker resource acquisition timed out after {ElapsedMilliseconds} ms (limit {TimeoutSeconds} s, {FailureCount} failed attempts). Cached observations expire after {MaxAgeSeconds} s.",
+                            timer.Elapsed.TotalMilliseconds, DockerTimeout.TotalSeconds, dockerFailures, DockerMaxAge.TotalSeconds);
+                    else
+                        logger.LogWarning(ex, "Docker resource acquisition failed after {ElapsedMilliseconds} ms ({FailureCount} failed attempts). Cached observations expire after {MaxAgeSeconds} s.",
+                            timer.Elapsed.TotalMilliseconds, dockerFailures, DockerMaxAge.TotalSeconds);
+                }
+            }
+        }
+        now = clock.UtcNow;
+        return docker.Samples.Where(s => IsFresh(s, now)).ToArray();
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
@@ -96,33 +173,22 @@ internal sealed class RuntimeResourceSampler(
             try
             {
                 var now = clock.UtcNow;
-                bool viewed;
-                lock (gate) { viewed = viewedUntil > now; Prune(now); }
+                var viewed = HasViewers;
+                lock (gate) Prune(now);
                 if (now - lastSample < TimeSpan.FromSeconds(viewed ? 3 : 10)) continue;
                 var telemetry = await apps.GetAppAsync(CollectorBootstrap.AppId, stoppingToken);
                 if (!viewed && !AppRuntimeStates.IsUp(telemetry?.RuntimeState))
                 {
-                    exposition = "";
+                    latestFrame = null;
                     local.Reset();
                     continue;
                 }
                 lastSample = now;
-                // Docker --no-stream itself waits for a CPU delta. Never run it per client, and
-                // bound daemon waits so an outage cannot stall acquisition indefinitely.
-                if (now - lastDocker >= TimeSpan.FromSeconds(10))
-                {
-                    lastDocker = now;
-                    using var deadline = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                    deadline.CancelAfter(TimeSpan.FromSeconds(4));
-                    try { dockerText = await docker.BuildSnapshotAsync(deadline.Token); }
-                    catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
-                    {
-                        dockerText = "";
-                        logger.LogDebug(ex, "Docker resource sample unavailable.");
-                    }
-                }
+                // Docker --no-stream waits for a CPU delta. Share acquisition across clients and
+                // retain successful observations across transient failures until their age limit.
+                var dockerSamples = await ReadDockerSamplesAsync(stoppingToken);
                 var samples = (await local.ReadAsync(stoppingToken)).ToList();
-                if (dockerText.Length > 0) samples.AddRange(docker.Samples);
+                samples.AddRange(dockerSamples.Where(s => IsFresh(s, clock.UtcNow)));
                 // During runtime switches both adapters can briefly report the same service.
                 // Attribute it once, to the freshest observation.
                 samples = samples.GroupBy(s => (s.AppId, s.Service))
@@ -134,18 +200,6 @@ internal sealed class RuntimeResourceSampler(
                 foreach (var app in roster)
                     await ReconcileAppAsync(samples, app, at, stoppingToken);
                 Record(new(at, samples));
-                var builder = new StringBuilder();
-                foreach (var sample in samples.Where(s => s.Runtime != "unknown"))
-                {
-                    var prefix = sample.Runtime == "docker" ? "container" : "process";
-                    if (sample.CpuPercent is { } cpu)
-                        DockerStatsExposition.AppendSample(builder, prefix + ".cpu.percent", sample.AppId, sample.Service, cpu);
-                    if (sample.MemoryBytes is { } memory)
-                        DockerStatsExposition.AppendSample(builder, prefix + ".memory.bytes", sample.AppId, sample.Service, memory);
-                    if (sample.Runtime == "docker" && sample.MemoryPercent is { } percent)
-                        DockerStatsExposition.AppendSample(builder, "container.memory.percent", sample.AppId, sample.Service, percent);
-                }
-                exposition = builder.ToString();
                 if (viewed) events.PublishAppEvent("resources.changed");
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
@@ -159,8 +213,8 @@ internal static class RuntimeResourceEndpoints
     public static void Map(WebApplication app)
     {
         app.MapGet("/api/core/resources", (HttpRequest request, UserDirectoryStore users, IClock clock,
-            RuntimeResourceSampler sampler, DateTimeOffset? after, string? runId, CancellationToken cancellationToken) =>
+            RuntimeResourceSampler sampler, DateTimeOffset? after, string? runId, bool? stream, CancellationToken cancellationToken) =>
             CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,
-                () => Task.FromResult(CoreJson.Json(sampler.Read(after, runId))), cancellationToken: cancellationToken));
+                () => Task.FromResult(CoreJson.Json(sampler.Read(after, runId, stream == true))), cancellationToken: cancellationToken));
     }
 }

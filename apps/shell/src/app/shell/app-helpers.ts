@@ -269,9 +269,13 @@ export function getAppPageLinks(app: CoreApp): AppPageLink[] {
 export function findAppPageLink(app: CoreApp, path: string) {
   const targetPath = normalizeAppPath(path);
   const pages = getAppPageLinks(app);
-  const exact = pages.find((page) => normalizeAppPath(page.path) === targetPath);
+  const exact = pages.find((page) => normalizeAppPath(page.path) === targetPath)
+    ?? pages.find((page) => normalizeAppPath(page.path).split(/[?#]/, 1)[0] === targetPath.split(/[?#]/, 1)[0]);
   if (exact) {
-    return { ...exact, path: targetPath };
+    const requested = new URL(targetPath, "https://app.invalid");
+    const destination = new URL(exact.redirectUri);
+    destination.search = requested.search; destination.hash = requested.hash;
+    return { ...exact, path: targetPath, redirectUri: destination.href };
   }
 
   const redirectUri = buildRedirectUriFromAppPath(app, targetPath);
@@ -291,9 +295,12 @@ export function buildRedirectUriFromAppPath(app: CoreApp, path: string) {
     const url = new URL(base);
     const basePath = url.pathname.endsWith("/") ? url.pathname.slice(0, -1) : url.pathname;
     const appPath = path.startsWith("/") ? path : `/${path}`;
-    url.pathname = `${basePath}${appPath}`;
-    url.search = "";
-    url.hash = "";
+    // Parse the path separately so workspace selection stays a query, not an encoded pathname.
+    // Only copy URL components; a protocol-relative input cannot replace the installed origin.
+    const destination = new URL(`http://app.invalid${appPath}`);
+    url.pathname = `${basePath}${destination.pathname}`;
+    url.search = destination.search;
+    url.hash = destination.hash;
     return url.toString();
   } catch {
     return base;

@@ -518,6 +518,18 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         }
 
         ValidateProvides(manifest.Provides, errors);
+        var panelIds = new HashSet<string>(StringComparer.Ordinal);
+        if (manifest.Ui is { } panelUi)
+        {
+            for (var index = 0; index < panelUi.Panels.Count; index++)
+            {
+                if (panelUi.Panels[index].Id is not { } id) continue;
+                if (!PanelIdentity.IsExplicitId(id))
+                    errors.Add(new("app_manifest_ui_panel_id_invalid", "Panel IDs must be lowercase kebab tokens of at most 64 characters and cannot start with legacy-.", $"$.ui.panels[{index}].id"));
+                else if (!panelIds.Add(id))
+                    errors.Add(new("app_manifest_ui_panel_id_duplicate", "Panel IDs must be unique within the app.", $"$.ui.panels[{index}].id"));
+            }
+        }
         foreach (var permission in manifest.CorePermissions.Concat(manifest.OptionalCorePermissions))
         {
             if (!allowUnsupportedPermissions && !CoreAppPermissions.Known.Contains(permission, StringComparer.Ordinal))
@@ -836,8 +848,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         if (manifest.Data?.Enabled == true && selectedProfile is not null)
         {
             dataTarget = manifest.Data.Targets.FirstOrDefault(target =>
-                string.Equals(target.Runtime, selectedProfile.Key, StringComparison.Ordinal) ||
-                string.Equals(target.Runtime, selectedProfile.Type, StringComparison.Ordinal));
+                string.Equals(target.Runtime, selectedProfile.Key, StringComparison.Ordinal))
+                ?? manifest.Data.Targets.FirstOrDefault(target =>
+                    string.Equals(target.Runtime, selectedProfile.Type, StringComparison.Ordinal));
 
             if (selectedProfile.Type == "docker" && dataTarget is null)
             {
@@ -855,8 +868,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         if (manifest.Cache?.Enabled == true && selectedProfile is not null)
         {
             cacheTarget = manifest.Cache.Targets.FirstOrDefault(target =>
-                string.Equals(target.Runtime, selectedProfile.Key, StringComparison.Ordinal) ||
-                string.Equals(target.Runtime, selectedProfile.Type, StringComparison.Ordinal));
+                string.Equals(target.Runtime, selectedProfile.Key, StringComparison.Ordinal))
+                ?? manifest.Cache.Targets.FirstOrDefault(target =>
+                    string.Equals(target.Runtime, selectedProfile.Type, StringComparison.Ordinal));
 
             if (selectedProfile.Type == "docker" && cacheTarget is null)
             {
@@ -1219,19 +1233,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         // A panel tab is labelled by its own text, not by the app's name — several apps' tools share
         // one strip, and one app may contribute several, so "Notes" beats a second copy of the app
         // name. Required for that reason.
-        var seenPanelLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var panel in ui.Panels)
         {
             ValidateSystemUiSurface(manifest, panel, "$.ui.panels[]", labelRequired: true, errors);
-            // Two tabs of one app under the same name are indistinguishable on the strip, which is
-            // the only place they appear.
-            if (!string.IsNullOrWhiteSpace(panel.Label) && !seenPanelLabels.Add(panel.Label.Trim()))
-            {
-                errors.Add(new(
-                    "app_manifest_system_ui_panel_label_duplicate",
-                    $"System app UI declares panel label '{panel.Label.Trim()}' more than once.",
-                    "$.ui.panels[].label"));
-            }
         }
     }
 
@@ -1528,9 +1532,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var declaration in declarations)
             {
-                if (name is "assistant" or "speech-to-text" && (declaration.Version is null or < 1 || declaration.Capabilities is null))
+                if (name is "assistant" or "speech-to-text" or "translation" && (declaration.Version is null or < 1 || declaration.Capabilities is null))
                 {
-                    var code = name == "assistant" ? "app_manifest_assistant_contract_required" : "app_manifest_speech_to_text_contract_required";
+                    var code = $"app_manifest_{name.Replace('-', '_')}_contract_required";
                     errors.Add(new(code, $"The {name} interface requires a positive integer version and a capabilities array.", path));
                 }
                 if (declaration.Version is < 1 || declaration.Capabilities is { } capabilities &&
@@ -1750,6 +1754,8 @@ internal interface IDockerCommandRunner
     // `environment` is injected into the docker CLI process (not the argv), so secret-bearing values
     // referenced by `-e KEY` (name only) never appear in ps/`/proc/*/cmdline` (C-M5).
     Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, IReadOnlyDictionary<string, string>? environment = null, CancellationToken cancellationToken = default);
+    Task<DockerCommandResult> RunBoundedAsync(IReadOnlyList<string> args, int outputLimit, CancellationToken cancellationToken)
+        => RunAsync(args, null, cancellationToken);
 }
 
 internal sealed record DockerCommandResult(int ExitCode, string StandardOutput, string StandardError);
@@ -1764,7 +1770,13 @@ internal sealed class ProcessDockerCommandRunner(TimeSpan? timeout = null) : IDo
 {
     private readonly TimeSpan timeout = timeout ?? TimeSpan.FromMinutes(30);
 
-    public async Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, IReadOnlyDictionary<string, string>? environment = null, CancellationToken cancellationToken = default)
+    public Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, IReadOnlyDictionary<string, string>? environment = null, CancellationToken cancellationToken = default)
+        => RunCoreAsync(args, environment, cancellationToken, null);
+
+    public Task<DockerCommandResult> RunBoundedAsync(IReadOnlyList<string> args, int outputLimit, CancellationToken cancellationToken)
+        => RunCoreAsync(args, null, cancellationToken, outputLimit);
+
+    private async Task<DockerCommandResult> RunCoreAsync(IReadOnlyList<string> args, IReadOnlyDictionary<string, string>? environment, CancellationToken cancellationToken, int? outputLimit)
     {
         var startInfo = new System.Diagnostics.ProcessStartInfo { FileName = "docker" };
         foreach (var arg in args)
@@ -1785,7 +1797,7 @@ internal sealed class ProcessDockerCommandRunner(TimeSpan? timeout = null) : IDo
         ProcessRunResult result;
         try
         {
-            result = await ProcessRunner.RunAsync(startInfo, timeout, cancellationToken);
+            result = await ProcessRunner.RunAsync(startInfo, timeout, cancellationToken, outputLimit);
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
@@ -1860,6 +1872,10 @@ internal sealed class DockerRuntimeAdapter(
         if (dockerCoreListener is not null) await dockerCoreListener.EnsureReadyAsync(cancellationToken);
         var endpoints = new List<AppEndpointContract>();
         var services = OrderServices(context.Manifest.Services);
+        await RemoveObsoleteServicesAsync(context, cancellationToken);
+        using var admission = await CoreEnvironmentResources.AdmitAsync(config, runner, context.App.Id, services.Count, cancellationToken,
+            replacementServices: services.Select(s => s.Key).ToHashSet(StringComparer.Ordinal),
+            totalServices: context.AllServices.Count(s => s.Runtime.Type == "docker"));
         var resolvedLocks = new Dictionary<string, ArtifactLock>(StringComparer.Ordinal);
 
         MaybeAdviseWslMirroredNetworking(context, services);
@@ -1868,9 +1884,22 @@ internal sealed class DockerRuntimeAdapter(
         // per-app user network, so the internal port never needs host publishing. Containers
         // run standalone otherwise, so only create the network when discovery is actually used.
         var dependencyNetwork = RequiresUserNetwork(context.AllServices) ? BuildNetworkName(config.InstanceId, context.App.Id) : null;
+        var createdDependencyNetwork = false;
         if (dependencyNetwork is not null)
         {
-            _ = await RunDockerAsync(["network", "create", dependencyNetwork], ignoreFailures: true, cancellationToken);
+            var network = await runner.RunAsync(["network", "create", "--label", "hosty.instance=" + config.InstanceId,
+                "--label", "hosty.app.id=" + context.App.Id, dependencyNetwork], cancellationToken: cancellationToken);
+            createdDependencyNetwork = network.ExitCode == 0;
+            if (!createdDependencyNetwork)
+            {
+                var owner = await runner.RunAsync(["network", "inspect", "--format", "{{ index .Labels \"hosty.instance\" }}|{{ index .Labels \"hosty.app.id\" }}", dependencyNetwork], cancellationToken: cancellationToken);
+                // Before ownership labels, every instance used this exact app network name. Reuse
+                // those networks on upgrade without deleting live endpoints or asserting ownership
+                // for Finish; destructive cleanup still requires the full instance label.
+                if (owner.ExitCode != 0 || owner.StandardOutput.Trim() != config.InstanceId + "|" + context.App.Id
+                    && owner.StandardOutput.Trim() is not ("|" or "<no value>|<no value>"))
+                    throw new AppLifecycleException("runtime_network_unverified", "Cannot verify the app network owner: " + network.StandardError);
+            }
         }
 
         // Track containers this start actually created so a later service failing can unwind them (C-H5):
@@ -1886,7 +1915,7 @@ internal sealed class DockerRuntimeAdapter(
                 throw new AppLifecycleException("runtime_profile_invalid", $"Docker service '{service.Key}' does not declare an image.");
             }
 
-            var sourceCommand = await DockerSourceRuntime.PrepareAsync(context, service, runner, cancellationToken);
+            var sourceCommand = await DockerSourceRuntime.PrepareAsync(context, service, runner, cancellationToken, config.InstanceId);
             var hostNetwork = service.Runtime.IsHostNetwork;
             var containerName = BuildContainerName(config.InstanceId, context.App.Id, service.Key);
             var existingLock = context.App.ArtifactLocks?.GetValueOrDefault(service.Key);
@@ -1899,7 +1928,7 @@ internal sealed class DockerRuntimeAdapter(
             // through to the normal recreate path below. Adopted
             // containers are intentionally NOT added to startedContainers: this start did not create
             // them, so a later sibling's failure must not tear a healthy running service down.
-            if (service.Runtime.SourceMount is null && await TryAdoptRunningContainerAsync(context.App.Id, containerName, service.Image, existingLock, cancellationToken))
+            if (service.Runtime.SourceMount is null && (admission is null || await admission.MatchesAsync(runner, containerName, cancellationToken)) && await TryAdoptRunningContainerAsync(context.App.Id, containerName, service.Image, existingLock, cancellationToken))
             {
                 resolvedLocks[service.Key] = existingLock!;
                 AppendServiceEndpoints(endpoints, service, AssignServicePorts(context, service, hostNetwork), config);
@@ -1925,6 +1954,7 @@ internal sealed class DockerRuntimeAdapter(
                 (runReference, resolvedLock) = await DockerSourceRuntime.ResolveLocalImageAsync(runReference, null, runner, cancellationToken);
             resolvedLocks[service.Key] = resolvedLock;
             if (context.ReportUpdateProgress is not null) await context.ReportUpdateProgress("starting", service.Key);
+            if (context.ReportLaunchProgress is not null) await context.ReportLaunchProgress("starting", service.Key);
 
             // Secret-bearing env (app settings + the service token) is passed by NAME on the argv and by
             // VALUE through the docker process environment, so the values never land in ps/cmdline (C-M5).
@@ -1978,6 +2008,7 @@ internal sealed class DockerRuntimeAdapter(
 
             // Privileged extras (validated + install-review gated): Linux capabilities and host
             // device nodes, e.g. NET_ADMIN + /dev/net/tun for an in-container VPN.
+            if (admission is not null) runArgs.AddRange(admission.Arguments);
             runArgs.AddRange(BuildPrivilegedArguments(service.Runtime));
             runArgs.AddRange(BuildHealthcheckArguments(service.Runtime));
 
@@ -2031,10 +2062,10 @@ internal sealed class DockerRuntimeAdapter(
             {
                 runArgs.Add("-e");
                 // A dependency endpoint published on the host's loopback is unreachable from inside
-                // this container, so rewrite a loopback URL to host.docker.internal (same rewrite
-                // used for HOSTY_CORE_ORIGIN). The dependency must publish the endpoint host-reachable
+                // this container, so rewrite its host for HTTP and non-HTTP protocols alike.
+                // The dependency must publish the endpoint host-reachable
                 // (expose:host) for this to connect — see cross-app-dependencies.md.
-                runArgs.Add($"HOSTY_DEPENDENCY_{RuntimePortHelper.NormalizeEnvironmentKey(dependency.Key)}_URL={BuildDockerCoreOrigin(dependency.Value)}");
+                runArgs.Add($"HOSTY_DEPENDENCY_{RuntimePortHelper.NormalizeEnvironmentKey(dependency.Key)}_URL={BuildDockerDependencyUrl(dependency.Value)}");
             }
 
             foreach (var serviceUrl in RuntimeServiceDiscovery.BuildEnvironment(context.AllServices, service, (target, port) =>
@@ -2128,7 +2159,7 @@ internal sealed class DockerRuntimeAdapter(
                 await RemoveContainerIfOwnedAsync(context.App.Id, containerName, CancellationToken.None);
             }
 
-            if (dependencyNetwork is not null)
+            if (createdDependencyNetwork && dependencyNetwork is not null)
             {
                 _ = await RunDockerAsync(["network", "rm", dependencyNetwork], ignoreFailures: true, CancellationToken.None);
             }
@@ -2412,9 +2443,12 @@ internal sealed class DockerRuntimeAdapter(
     {
         if (!string.IsNullOrWhiteSpace(existingLock?.ImageDigest))
         {
-            var pinnedReference = (image with { Digest = existingLock!.ImageDigest }).Reference;
+            var pinnedReference = existingLock!.Kind == "local-image" ? existingLock.ImageDigest!
+                : (image with { Digest = existingLock.ImageDigest }).Reference;
             if (!await ImageExistsLocallyAsync(pinnedReference, cancellationToken))
             {
+                if (existingLock.Kind == "local-image")
+                    throw new AppLifecycleException("docker_local_image_missing", "The locked local image is missing. Restore it or explicitly review an image update.");
                 if (onDownload is not null) await onDownload();
                 _ = await RunDockerAsync(["pull", pinnedReference], ignoreFailures: false, cancellationToken);
             }
@@ -2448,9 +2482,10 @@ internal sealed class DockerRuntimeAdapter(
         var digest = ParsePullDigest(pullOutput) ?? await ResolveRepoDigestByTagAsync(tagReference, cancellationToken);
         if (string.IsNullOrWhiteSpace(digest))
         {
-            // A local-only image may have no repo digest; run the tag as-is and record a lock that
-            // still captures the resolved-from ref so the policy/plan machinery has something to show.
-            return (tagReference, new ArtifactLock("image", null, tagReference, null, null, DateTimeOffset.UtcNow));
+            // Local content IDs are immutable too, but are not registry digests: never append one
+            // to a repository reference or try to pull it. Persist the distinction for adoption.
+            var local = await DockerSourceRuntime.ResolveLocalImageAsync(tagReference, null, runner, cancellationToken);
+            return (local.Reference, local.Lock with { Kind = "local-image" });
         }
 
         var runReference = (image with { Digest = digest }).Reference;
@@ -2472,6 +2507,26 @@ internal sealed class DockerRuntimeAdapter(
         }
     }
 
+    internal async Task RemoveObsoleteServicesAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken)
+    {
+        // A reviewed topology change may rename/remove services. Stop retains their containers;
+        // reconcile the complete selected Docker graph before admission, retaining data and caches.
+        // Inspect immutable IDs and exact labels rather than normalized name prefixes.
+        var desired = context.AllServices.Where(s => s.Runtime.Type == "docker")
+            .Select(s => s.Key).ToHashSet(StringComparer.Ordinal);
+        var inventory = await RunDockerAsync(["ps", "-a", "--no-trunc", "--filter", "label=hosty.app.id=" + context.App.Id,
+            "--format", "{{.ID}}\t{{.Label \"hosty.app.id\"}}\t{{.Label \"hosty.instance\"}}\t{{.Label \"hosty.app.service\"}}"],
+            ignoreFailures: false, cancellationToken);
+        foreach (var line in inventory.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var fields = line.TrimEnd('\r').Split('\t');
+            if (fields.Length != 4 || fields[0].Length != 64 || !fields[0].All(Uri.IsHexDigit)
+                || fields[1] != context.App.Id || fields[2] != config.InstanceId
+                || string.IsNullOrWhiteSpace(fields[3]) || desired.Contains(fields[3])) continue;
+            await RemoveContainerIfOwnedAsync(context.App.Id, fields[0], cancellationToken, requireSuccess: true);
+        }
+    }
+
     // BuildContainerName normalizes every non-alphanumeric char to '-', so `my.app` and `my-app` (and
     // app `x-y`/service `z` vs app `x`/service `y-z`) collide on the same container name. A blind
     // `docker rm -f <name>` could therefore destroy a *different* app's — or a user's — container that
@@ -2481,13 +2536,15 @@ internal sealed class DockerRuntimeAdapter(
     // place (the later `docker run --name` surfaces a clear name-conflict error) and an absent
     // container is a no-op (C-M2). The instance check is what makes removal unable to cross roots
     // even if a name ever collides.
-    private async Task RemoveContainerIfOwnedAsync(string appId, string containerName, CancellationToken cancellationToken)
+    private async Task RemoveContainerIfOwnedAsync(string appId, string containerName, CancellationToken cancellationToken, bool requireSuccess = false)
     {
         var inspect = await RunRawAsync(
             ["inspect", "--format", "{{ index .Config.Labels \"hosty.app.id\" }}\t{{ index .Config.Labels \"hosty.instance\" }}", containerName],
             cancellationToken);
         if (inspect.ExitCode != 0)
         {
+            if (requireSuccess && !inspect.StandardError.Contains("No such", StringComparison.OrdinalIgnoreCase))
+                throw new AppLifecycleException("docker_state_unknown", "Cannot verify the obsolete service container owner.");
             return;
         }
 
@@ -2510,14 +2567,15 @@ internal sealed class DockerRuntimeAdapter(
             return;
         }
 
-        _ = await RunDockerAsync(["rm", "-f", containerName], ignoreFailures: true, cancellationToken);
+        _ = await RunDockerAsync(["rm", "-f", containerName], ignoreFailures: !requireSuccess, cancellationToken);
     }
 
     private async Task<bool> IsContainerRunningAsync(string containerName, CancellationToken cancellationToken)
     {
         var inspect = await RunRawAsync(["inspect", "--format", "{{.State.Running}}", containerName], cancellationToken);
-        return inspect.ExitCode == 0 &&
-            string.Equals(inspect.StandardOutput.Trim(), "true", StringComparison.OrdinalIgnoreCase);
+        if (inspect.ExitCode != 0 && !inspect.StandardError.Contains("No such", StringComparison.OrdinalIgnoreCase))
+            throw new AppLifecycleException("docker_state_unknown", "Docker is unavailable; the container cannot be reported stopped.");
+        return inspect.ExitCode == 0 && string.Equals(inspect.StandardOutput.Trim(), "true", StringComparison.OrdinalIgnoreCase);
     }
 
     // True when a Core-owned container of this name is already running the exact image the app's lock
@@ -2563,7 +2621,8 @@ internal sealed class DockerRuntimeAdapter(
         // The instance label must equal this Core's id (absent = the default instance's empty id):
         // adoption must never cross roots — a second-root Core adopting the default root's container
         // is exactly the disaster instance identity exists to prevent.
-        var pinnedReference = (image with { Digest = existingLock.ImageDigest }).Reference;
+        var pinnedReference = existingLock.Kind == "local-image" ? existingLock.ImageDigest
+            : (image with { Digest = existingLock.ImageDigest }).Reference;
         return string.Equals(parts[0].Trim(), "true", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(parts[1].Trim(), appId, StringComparison.Ordinal) &&
             string.Equals(parts[2].Trim(), config.InstanceId, StringComparison.Ordinal) &&
@@ -3253,6 +3312,24 @@ internal sealed class DockerRuntimeAdapter(
             .ToArray();
     }
 
+    internal static string BuildDockerDependencyUrl(string endpoint)
+    {
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.IsFile || !IsHostLocalBinding(uri.Host))
+            return endpoint;
+        // Replace only the original authority's host: URI reserialization can add a root slash,
+        // drop an explicit default port or normalize protocol-specific paths/options.
+        var authorityStart = endpoint.IndexOf("://", StringComparison.Ordinal);
+        if (authorityStart < 0) return endpoint;
+        authorityStart += 3;
+        var authorityEnd = endpoint.IndexOfAny(['/', '?', '#'], authorityStart);
+        if (authorityEnd < 0) authorityEnd = endpoint.Length;
+        var hostStart = authorityStart + endpoint[authorityStart..authorityEnd].LastIndexOf('@') + 1;
+        var hostEnd = endpoint[hostStart] == '[' ? endpoint.IndexOf(']', hostStart) + 1
+            : endpoint.IndexOf(':', hostStart, authorityEnd - hostStart);
+        if (hostEnd < 0) hostEnd = authorityEnd;
+        return endpoint[..hostStart] + "host.docker.internal" + endpoint[hostEnd..];
+    }
+
     internal static string BuildDockerCoreOrigin(string coreOrigin)
     {
         if (!Uri.TryCreate(coreOrigin, UriKind.Absolute, out var uri) ||
@@ -3320,7 +3397,9 @@ internal sealed record RuntimeLifecycleContext(
     string? AppCachePath = null,
     [property: System.Text.Json.Serialization.JsonIgnore]
     Func<string, string?, Task>? ReportUpdateProgress = null,
-    IReadOnlyList<RuntimeSelectedService>? GraphServices = null)
+    IReadOnlyList<RuntimeSelectedService>? GraphServices = null,
+    [property: System.Text.Json.Serialization.JsonIgnore]
+    Func<string, string?, Task>? ReportLaunchProgress = null)
 {
     public IReadOnlyList<RuntimeSelectedService> AllServices => GraphServices ?? Manifest.Services;
 }
@@ -3374,6 +3453,8 @@ internal sealed record RuntimeDockerImage(string Repository, string Tag, string?
 
 internal sealed class RuntimeAppManifest
 {
+    // Explicit opt-in: older SDKs cannot safely interpret instance-scoped test administrators.
+    public SandboxManifest? Sandbox { get; init; }
     // Collection properties coalesce null to empty in the getter so that members absent
     // from the JSON behave the same under the source generator (used for Native AOT) as
     // under the reflection serializer, which preserved the `= []` initializer.
@@ -3774,6 +3855,8 @@ internal sealed class RuntimeAppUiManifest
 /// </remarks>
 internal sealed class RuntimeAppUiSurfaceManifest
 {
+    // Optional stable panel identity; absent in older manifests and on settings surfaces.
+    public string? Id { get; init; }
     // Required for newly installed/updated panels; nullable for legacy records and settings.
     public string? Icon { get; init; }
     public string? Endpoint { get; init; }

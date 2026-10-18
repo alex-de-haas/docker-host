@@ -26,7 +26,7 @@ export function McpAccess({ data, busy, error, status, feedbackAppId, onSave, on
   const [reviewPending, setReviewPending] = useState(false);
   const [reviewUrl, setReviewUrl] = useState<string | null>(null);
   const refreshRef = useRef(onRefresh);
-  refreshRef.current = onRefresh;
+  useEffect(() => { refreshRef.current = onRefresh; }, [onRefresh]);
   useEffect(() => {
     if (!reviewPending) return;
     let refreshing = false;

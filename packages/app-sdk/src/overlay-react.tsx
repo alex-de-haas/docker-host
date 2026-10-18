@@ -7,6 +7,8 @@ import { useAppActivity } from "./activity-react";
 import { APP_SESSION_ENDED, APP_SESSION_RESTORED, APP_ACTIVITY_RENEWED, acceptAppAuthProtocol } from "./browser-auth";
 import { buildCoreOpenUrl, readRecoveryParams } from "./index";
 import { permissionReviewUrl, requestPermissionReview, type PermissionNoticeState } from "./permissions";
+import type { UiChromeOverrides, UiRouterAdapter } from "./ui-types";
+import { HostyUiRoot } from "./ui-react";
 
 type Setup = "ready" | "missing" | "unsupported" | "unavailable" | "incompatible";
 type Snapshot = {
@@ -35,8 +37,10 @@ function sessionReady(session: Snapshot | null): boolean {
 }
 
 /** Mount once around protected content. Presentation and recovery belong to Hosty. */
-export function HostyOverlay({ children, probePath = "/api/hosty/session", appCodePath = "/api/auth/app-code" }: {
-  children: ReactNode; probePath?: string; appCodePath?: string;
+export function HostyOverlay({ children, probePath = "/api/hosty/session", appCodePath = "/api/auth/app-code", uiPath, panelLayout = "auto", localContent, chrome, navigation }: {
+  /** Explicitly public/local content available during an outage; never put protected actor data here. */
+  localContent?: ReactNode; chrome?: UiChromeOverrides; navigation?: { renderer: "standard" | "custom"; router?: UiRouterAdapter };
+  children: ReactNode; probePath?: string; appCodePath?: string; uiPath?: string; panelLayout?: "auto" | "slot" | "none";
 }) {
   const actor = useRef<string | null>(null);
   const changingActor = useRef(false);
@@ -83,7 +87,7 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
     if (session?.setup === "ready") setReviewing(false);
   }, [session?.setup]);
   useEffect(() => {
-    // No keepalive polling. Focus and a pending Core review are the only readiness refreshes.
+    // Continuous sessions own their maintenance; this also observes pending permission reviews.
     let loading = false;
     const refresh = () => {
       if (loading || !actor.current || activity.pending || (activity.needed && !renewedAwaitingReadiness.current)) return;
@@ -147,11 +151,14 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
     action = activity.renew; actionLabel = "Renew access";
   }
 
+  const localOffline = (identity.ui.kind === "unavailable" || (identity.ui.kind === "active" && session?.setup === "unavailable"))
+    && localContent !== undefined;
   return <>
+    {localOffline && <div data-hosty-local-content><p role="status">Hosty is unavailable. Local content remains available.</p>{localContent}</div>}
     <div data-hosty-content hidden={!ready} inert={!ready} style={ready ? { display: "contents" } : { display: "none" }}>
-      {mounted.current ? children : null}
+      <HostyUiRoot chrome={chrome} navigation={navigation} uiPath={uiPath} panelLayout={panelLayout} active={ready}>{mounted.current ? children : null}</HostyUiRoot>
     </div>
-    {!ready && <OverlaySurface pending={pending} title={title} message={message} action={action} actionLabel={actionLabel} reviewUrl={reviewUrl} />}
+    {!ready && !localOffline && <OverlaySurface pending={pending} title={title} message={message} action={action} actionLabel={actionLabel} reviewUrl={reviewUrl} />}
   </>;
 }
 

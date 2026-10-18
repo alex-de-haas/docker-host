@@ -5,8 +5,8 @@ import dynamic from "next/dynamic";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
 import { deliverableChanges, filterPlans, lineDiff, mapBounded, planLink, readFilters, statusCounts, writeFilters, type PlanFilters } from "@/lib/model";
 import { type PlanDetail, type RepositoryPlans, type SourceRepository, type WorkspacePlan } from "@/lib/types";
-import { Progress, VersionBrief, formatTime } from "./plan-metadata";
-import { SourceDocument, TrackedDocument } from "./document";
+import { DocumentMetadata, Progress, VersionBrief, formatTime } from "./plan-metadata";
+import { TrackedDocument } from "./document";
 import { LoadingIndicator } from "./loading-indicator";
 import { WorkspaceOwner, WorkspaceSessionLink } from "./workspace-owner";
 import { PlanToolbar } from "./plan-toolbar";
@@ -20,6 +20,8 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { ArrowLeftIcon, FileTextIcon, GitBranchIcon, RefreshCwIcon } from "lucide-react";
+
+import { TranslateDocument } from "./translate-document";
 
 const PlanGrid = dynamic(() => import("./plan-grid").then(module => module.PlanGrid));
 
@@ -36,7 +38,7 @@ export function PlansWorkbench() {
   const workspaceId = query.get("workspace");
   function navigate(url: string) { window.history.pushState(null, "", url); window.scrollTo({ top: 0 }); }
   function refresh() { setEpoch(value => value + 1); }
-  return <main className="mx-auto flex max-w-[1500px] flex-col gap-4 px-4 py-4 text-sm sm:px-6 lg:px-8"><header className="hosty-shell-chrome"><h1 className="text-2xl font-semibold tracking-tight">Hosty Plans</h1><p className="mt-1 text-muted-foreground">Plans in Git, across your apps.</p></header>
+  return <main className={`mx-auto flex max-w-[1500px] flex-col px-4 py-4 text-sm sm:px-6 lg:px-8 ${documentPath && repositoryId ? "h-dvh min-h-0 gap-2 overflow-hidden" : "gap-4"}`}>
     {documentPath && repositoryId ? <Detail key={`${repositoryId}:${documentPath}`} repositoryId={repositoryId} path={documentPath} workspaceId={workspaceId} epoch={epoch} navigate={navigate} onRefresh={refresh} /> : <Overview query={new URLSearchParams(query.toString())} epoch={epoch} navigate={navigate} onRefresh={refresh} />}
   </main>;
 }
@@ -140,26 +142,26 @@ function Detail({ repositoryId, path, workspaceId, epoch, navigate, onRefresh }:
     return () => { controller.abort(); clearInterval(interval); document.removeEventListener("visibilitychange", refreshVisible); };
   }, [repositoryId, path, epoch]);
   const current = detail?.path === path ? detail : null;
-  const selected = current?.workspaces.find(item => item.workspace.id === workspaceId);
   return <>
-    <DiscussPlan key={`${repositoryId}:${path}:${workspaceId ?? "target"}`} detail={current} workspaceId={workspaceId}
+    <div className="shrink-0"><DiscussPlan key={`${repositoryId}:${path}:${workspaceId ?? "target"}`} detail={current} workspaceId={workspaceId}
       back={<Button variant="ghost" className="min-w-0 shrink" asChild><a href={`/?${new URLSearchParams({ repository: repositoryId })}`} title="All plans in this repository" onClick={event => { event.preventDefault(); navigate(`/?${new URLSearchParams({ repository: repositoryId })}`); }}><ArrowLeftIcon data-icon="inline-start" /><span className="truncate">All plans in this repository</span></a></Button>}
       refresh={<Button variant="outline" className="shrink-0" aria-label="Refresh sources" title="Refresh sources" onClick={onRefresh}><RefreshCwIcon data-icon="inline-start" /><span className="hidden sm:inline">Refresh sources</span></Button>}
-    />
+    /></div>
     {error && <Alert variant="destructive"><AlertTitle>Document unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
     {!current && !error && <LoadingIndicator message="Loading document versions…" />}
-    {current && <>
-      <div className="flex flex-col gap-2"><h1 className="text-2xl font-semibold tracking-tight">{current.document?.title ?? selected?.document?.title ?? path}</h1><p className="break-all text-xs text-muted-foreground">{repoName(current.repository)} / {current.repository.branch} / {path}</p></div>
-      <PlanVersions detail={current} workspaceId={workspaceId} navigate={navigate} />
-    </>}
+    {current && <PlanVersions detail={current} workspaceId={workspaceId} navigate={navigate} />}
   </>;
+}
+function DocumentPath({ detail }: { detail: PlanDetail }) {
+  const label = `${repoName(detail.repository)} / ${detail.path}`;
+  return <p className="min-w-0 truncate text-xs text-muted-foreground" title={label}><span className="hidden lg:inline">{repoName(detail.repository)} / </span>{detail.path}</p>;
 }
 export function PlanVersions({ detail, workspaceId, navigate }: { detail: PlanDetail; workspaceId: string | null; navigate: (url: string) => void }) {
   const selected = detail.workspaces.find(version => version.workspace.id === workspaceId);
   const unavailable = workspaceId !== null && !selected;
   const repositoryId = detail.repository.id;
-  return <Tabs value={workspaceId ?? "tracked"} onValueChange={value => navigate(planLink(repositoryId, detail.path, value === "tracked" ? undefined : value))} className="min-w-0 gap-4">
-    <div className="min-w-0 overflow-x-auto border-b pb-1">
+  return <Tabs value={workspaceId ?? "tracked"} onValueChange={value => navigate(planLink(repositoryId, detail.path, value === "tracked" ? undefined : value))} className="min-h-0 min-w-0 flex-1 gap-2 overflow-hidden">
+    <div className="min-w-0 shrink-0 overflow-x-auto border-b pb-1">
       <TabsList variant="line" aria-label="Document versions">
         <TabsTrigger value="tracked" className="shrink-0"><GitBranchIcon />Tracked branch<span className="max-w-40 truncate text-muted-foreground" title={detail.repository.branch}>{detail.repository.branch}</span></TabsTrigger>
         {detail.workspaces.map(({ workspace }) => <TabsTrigger key={workspace.id} value={workspace.id} className="shrink-0" title={workspace.branch}>
@@ -168,24 +170,30 @@ export function PlanVersions({ detail, workspaceId, navigate }: { detail: PlanDe
         {unavailable && <TabsTrigger value={workspaceId} className="shrink-0">Unavailable workspace</TabsTrigger>}
       </TabsList>
     </div>
-    <TabsContent value="tracked" className="min-w-0">
-      <Frame><FrameHeader className="gap-2"><FrameTitle><h2>Tracked branch</h2></FrameTitle><div className="flex flex-wrap items-center gap-3"><Badge variant="outline"><GitBranchIcon />{detail.repository.branch}</Badge>{detail.document && <><Badge variant="secondary">{detail.document.status ?? "Document"}</Badge><Progress document={detail.document} /></>}</div></FrameHeader><FramePanel>
-        <TrackedDocument document={detail.document} error={detail.error} repositoryId={repositoryId} navigate={navigate} />
+    <TabsContent value="tracked" className="min-h-0 min-w-0 overflow-hidden">
+      <Frame className="h-full min-h-0"><FrameHeader className="shrink-0 gap-2 sm:flex-row sm:items-center sm:justify-between"><DocumentPath detail={detail} />{detail.document && <div className="flex shrink-0 items-center gap-3"><Badge variant="secondary">{detail.document.status ?? "Document"}</Badge><Progress document={detail.document} /></div>}</FrameHeader><FramePanel className="min-h-0 flex-1 overflow-y-auto overscroll-contain focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" role="region" aria-label="Document content" tabIndex={0}>
+        <TrackedDocument document={detail.document} error={detail.error} repositoryId={repositoryId} navigate={navigate}>{detail.document && <div className="flex min-w-0 flex-col gap-4">
+          <DocumentMetadata document={detail.document} repository={detail.repository} />
+          <TranslateDocument document={detail.document} repositoryId={repositoryId} workspaceId={null} navigate={navigate} />
+        </div>}</TrackedDocument>
       </FramePanel></Frame>
     </TabsContent>
-    {detail.workspaces.map(version => <TabsContent key={version.workspace.id} value={version.workspace.id} className="min-w-0">
-      <Frame><FrameHeader className="gap-2"><FrameTitle><h2 className="break-all">{version.workspace.branch}</h2></FrameTitle><VersionBrief version={version} /><FrameDescription>Changes against this workspace’s own base.</FrameDescription></FrameHeader><FramePanel>
-        <WorkspaceDocument version={version} repositoryId={repositoryId} navigate={navigate} />
+    {detail.workspaces.map(version => <TabsContent key={version.workspace.id} value={version.workspace.id} className="min-h-0 min-w-0 overflow-hidden">
+      <Frame className="h-full min-h-0"><FrameHeader className="shrink-0 gap-1"><DocumentPath detail={detail} /><FrameTitle><h2 className="truncate" title={version.workspace.branch}>{version.workspace.branch}</h2></FrameTitle><VersionBrief version={version} /><FrameDescription>Changes against this workspace’s own base.</FrameDescription></FrameHeader><FramePanel className="min-h-0 flex-1 overflow-y-auto overscroll-contain focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" role="region" aria-label="Workspace content" tabIndex={0}>
+        <div className="flex min-w-0 flex-col gap-4">
+          {version.document && <DocumentMetadata document={version.document} repository={detail.repository} />}
+          <WorkspaceDocument version={version} repositoryId={repositoryId} navigate={navigate} />
+        </div>
       </FramePanel></Frame>
     </TabsContent>)}
-    {unavailable && <TabsContent value={workspaceId}><Alert><AlertTitle>Workspace version unavailable</AlertTitle><AlertDescription>The selected workspace no longer changes this document. Select the tracked branch or another workspace.</AlertDescription></Alert></TabsContent>}
+    {unavailable && <TabsContent value={workspaceId} className="min-h-0 overflow-y-auto"><Alert><AlertTitle>Workspace version unavailable</AlertTitle><AlertDescription>The selected workspace no longer changes this document. Select the tracked branch or another workspace.</AlertDescription></Alert></TabsContent>}
   </Tabs>;
 }
 export function WorkspaceDocument({ version, repositoryId, navigate }: { version: WorkspacePlan; repositoryId: string; navigate: (url: string) => void }) {
   const [view, setView] = useState<"document" | "diff">("diff");
   const changes = useMemo(() => deliverableChanges(version.base, version.document), [version.base, version.document]);
   const diff = useMemo(() => lineDiff(version.base?.content ?? "", version.document?.content ?? ""), [version.base, version.document]);
-  return <div className="flex min-w-0 flex-col gap-4"><div className="flex flex-col items-start gap-3"><WorkspaceOwner workspace={version.workspace} /><p className="text-xs text-muted-foreground">Workspace {version.workspace.state}. Observed {formatTime(version.workspace.observationAt)}{version.workspace.observationState ? ` (${version.workspace.observationState})` : ""}.</p><p className="text-xs text-muted-foreground">Document updated {version.document?.updated ?? "unknown"}. Last change {formatTime(version.change.modifiedAt)}.</p>
+  return <div className="flex min-w-0 flex-col gap-4"><div className="flex flex-col items-start gap-3"><WorkspaceOwner workspace={version.workspace} /><p className="text-xs text-muted-foreground">Workspace {version.workspace.state}. Observed {formatTime(version.workspace.observationAt)}{version.workspace.observationState ? ` (${version.workspace.observationState})` : ""}.</p><p className="text-xs text-muted-foreground">Last change {formatTime(version.change.modifiedAt)}.</p>
     <WorkspaceSessionLink workspace={version.workspace} button />
     {version.change.targetChanged && <Alert><AlertTitle>Tracked branch changed</AlertTitle><AlertDescription>The tracked branch also changed this document since the workspace base. The diff below shows this workspace’s own changes.</AlertDescription></Alert>}
   </div>
@@ -194,7 +202,7 @@ export function WorkspaceDocument({ version, repositoryId, navigate }: { version
     {(version.label === "completing" || version.label === "removed") && <Alert><AlertDescription><VersionBrief version={version} /></AlertDescription></Alert>}
     {changes && changes.length > 0 && <section className="flex min-w-0 flex-col gap-2"><h3 className="font-semibold">Deliverable changes</h3><Table><TableHeader><TableRow><TableHead>ID</TableHead><TableHead>Change</TableHead><TableHead>Deliverable</TableHead></TableRow></TableHeader><TableBody>{changes.map(change => <TableRow key={change.id}><TableCell><strong>{change.id}</strong></TableCell><TableCell>{change.kind}{change.previousText !== undefined && change.kind !== "modified" ? ", text edited" : ""}</TableCell><TableCell className="whitespace-normal">{change.text}{change.previousText !== undefined && <p className="text-xs text-muted-foreground">Previously: <del>{change.previousText}</del></p>}</TableCell></TableRow>)}</TableBody></Table></section>}
     <nav aria-label="Workspace document view"><ToggleGroup type="single" variant="outline" value={view} onValueChange={value => { if (value) setView(value as "document" | "diff"); }} aria-label="Workspace document view" className="flex-wrap"><ToggleGroupItem value="diff">Diff against its base</ToggleGroupItem><ToggleGroupItem value="document">Workspace document</ToggleGroupItem></ToggleGroup></nav>
-    {view === "document" ? version.document ? <SourceDocument document={version.document} repositoryId={repositoryId} navigate={navigate} /> : <Alert><AlertDescription>The workspace deleted this plan.</AlertDescription></Alert> : <>
+    {view === "document" ? version.document ? <TranslateDocument document={version.document} repositoryId={repositoryId} workspaceId={version.workspace.id} navigate={navigate} /> : <Alert><AlertDescription>The workspace deleted this plan.</AlertDescription></Alert> : <>
       {(!version.base && version.label !== "new" && !version.error) && <Alert><AlertDescription>Base document unavailable.</AlertDescription></Alert>}
       {version.error ? null : <><p className="text-xs text-muted-foreground">Base {version.workspace.baseCommit?.slice(0, 12) ?? "unknown"} to worktree</p>{diff.abbreviated && <Alert><AlertDescription>This large diff is abbreviated. Open the document to read the current version.</AlertDescription></Alert>}<pre className="diff" aria-label="Workspace changes against its base">{diff.lines.map((line, index) => <span key={index} className="diff-line" data-kind={line.kind}><span className="diff-marker" aria-hidden="true">{line.kind === "added" ? "+" : line.kind === "removed" ? "−" : " "}</span>{line.text}{"\n"}</span>)}</pre></>}
     </>}

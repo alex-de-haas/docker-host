@@ -149,6 +149,21 @@ public sealed class CoreIdentityValidatorTests
     }
 
     [Fact]
+    public async Task PreservesFractionalContinuityIntervalForShortIdlePolicies()
+    {
+        var handler = new StubHandler(HttpStatusCode.OK, new
+        {
+            active = true, appId = "com.example.app", userId = "user_1", hostRole = "host.admin",
+            expiresAt = DateTimeOffset.UtcNow.AddHours(1),
+            continuity = new { version = 1, mode = "browser", grantId = "reference",
+                expiresAt = DateTimeOffset.UtcNow.AddHours(1), checkAfterSeconds = 0.5 },
+        });
+        var session = await Validator(handler, Options()).ValidateAsync("hostyg_x", CancellationToken.None);
+        Assert.NotNull(session?.Continuity);
+        Assert.Equal(0.5, session.Continuity.CheckAfterSeconds);
+    }
+
+    [Fact]
     public async Task FailsClosedOnAudienceMismatchAndCoreErrors()
     {
         var mismatch = new StubHandler(HttpStatusCode.OK, new

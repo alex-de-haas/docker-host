@@ -12,6 +12,10 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
     private readonly ConcurrentDictionary<string, SemaphoreSlim> operationLocks = new(StringComparer.Ordinal);
     internal SemaphoreSlim OperationLock(string appId) => operationLocks.GetOrAdd(appId, _ => new SemaphoreSlim(1, 1));
     internal SemaphoreSlim HostPathMutationLock { get; } = new(1, 1);
+    // Last admission gate: app/owner/repository or host-path locks precede this gate.
+    // Source changes read activity without acquiring workspace locks while holding it.
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> sourceActivityGates = new(StringComparer.Ordinal);
+    internal SemaphoreSlim SourceActivityGate(string repositoryId) => sourceActivityGates.GetOrAdd(repositoryId, _ => new(1, 1));
     private readonly ConcurrentDictionary<string, long> dataRemovalGenerations = new(StringComparer.Ordinal);
 
     // Parsed records, keyed by app id (== directory name). The registry is read on every list poll,
@@ -346,13 +350,14 @@ internal sealed record AppStateDocument(int SchemaVersion, AppRecord App);
 
 // Operator-configured state retained across an uninstall that keeps app data, so a later reinstall
 // restores it instead of resetting to manifest defaults. Written to apps/<id>/retained-config.json
-// by RemoveAsync (when data is kept) and consumed by InstallAsync. Holds setting values (including
-// secrets), external mount bindings, and the autostart toggle.
+// by RemoveAsync and consumed by InstallAsync. Kept data carries settings (including secrets),
+// mounts and autostart. Kept local source carries only its provenance when data is deleted.
 internal sealed record RetainedAppConfig(
     int SchemaVersion,
     IReadOnlyDictionary<string, AppSettingValue> Settings,
     IReadOnlyList<AppMountBinding> Mounts,
-    bool? Autostart);
+    bool? Autostart,
+    AppSourceState? LocalSource = null);
 
 internal sealed record AppRecord(
     string Id,
@@ -463,7 +468,10 @@ internal sealed record AppRecord(
     string? AppliedBrowserOrigin = null,
     // Host paths retained by a runtime until a verified stop or complete fresh start replaces them.
     IReadOnlyList<string>? ActiveMountPaths = null,
-    IReadOnlyList<string>? ActiveSourcePaths = null)
+    IReadOnlyList<string>? ActiveSourcePaths = null,
+    AppLaunchProgress? LaunchProgress = null,
+    string? AppliedSourceManifestDigest = null,
+    string? DevModeId = null)
 {
     [System.Text.Json.Serialization.JsonIgnore]
     public string BrowserOriginScope { get; init; } = "";
@@ -696,7 +704,8 @@ internal sealed record AppSourceState(
     // start path to distrust it: a reviewed update's commit was discarded on the very next start of any
     // app that had an override. Additive/nullable; older records read back as null.
     string? OverrideCommit = null,
-    IReadOnlyList<string>? InspectionPaths = null);
+    IReadOnlyList<string>? InspectionPaths = null,
+    LocalSourceRemote? Remote = null);
 
 internal sealed record AppUiContract(
     string? Category,
@@ -748,7 +757,8 @@ internal sealed record AppUiContract(
                 Path: NormalizePath(surface.Path),
                 EndpointKey: FirstNonBlank(surface.Endpoint, surface.PortKey, entry.EndpointKey),
                 Label: NullIfBlank(surface.Label),
-                Icon: NullIfBlank(surface.Icon));
+                Icon: NullIfBlank(surface.Icon),
+                Id: surface.Id);
 
     // Raw declared entrypoint (endpoint key + un-normalized path) shared with the strict system-app
     // manifest validation, which must see exactly what the author wrote before any normalization.
@@ -806,7 +816,7 @@ internal sealed record AppUiContract(
 internal sealed record AppNavigationContract(string Label, string Path, string? EndpointKey, string? IconAsset = null);
 
 /// <summary>A settings or panel surface as declared, before its endpoint is resolved to a URL.</summary>
-internal sealed record AppSurfaceContract(string Path, string? EndpointKey, string? Label, string? Icon = null);
+internal sealed record AppSurfaceContract(string Path, string? EndpointKey, string? Label, string? Icon = null, string? Id = null);
 
 // Normalized platform-interface declarations (top-level `interfaces`), denormalized onto the app
 // record and projected onto the summary so clients discover interface providers from the registry
@@ -1093,7 +1103,12 @@ internal sealed record AppSummary(
     AppPermissionObservation? PermissionState = null,
     // Effective launch requirements, derived by Core from the installed contract and current
     // values/shared mounts. Presence only; secret values and host paths never appear here.
-    AppConfigurationReadiness? ConfigurationReadiness = null)
+    AppConfigurationReadiness? ConfigurationReadiness = null,
+    string? InstallationId = null,
+    UiFramePolicy? FramePolicy = null,
+    AppLaunchProgress? LaunchProgress = null,
+    AppDevelopmentStatus? Development = null,
+    AppDevSummary? DevMode = null)
 {
     public static AppSummary From(
         AppRecord app,
@@ -1141,7 +1156,12 @@ internal sealed record AppSummary(
 
         var settingsSurface = Surface(ui?.Settings, app.DisplayName);
         var panelSurfaces = (ui?.Panels ?? [])
-            .Select(panel => Surface(panel, app.DisplayName)!)
+            .Select(panel =>
+            {
+                var surface = Surface(panel, app.DisplayName)!;
+                return surface with { PanelId = PanelIdentity.Resolve(panel, surface.Endpoint) };
+            })
+            .DistinctBy(panel => panel.PanelId, StringComparer.Ordinal)
             .ToArray();
 
         // Source settings remain available for any source-capable profile, including reviewed ones.
@@ -1195,12 +1215,15 @@ internal sealed record AppSummary(
             ConfirmedRoles: app.ConfirmedRoles ?? [],
             EntryEndpoint: ui is null ? null : ResolveEndpoint(endpoints, ui.EndpointKey)?.Key,
             RequiredCorePermissions: app.RequiredCorePermissions ?? app.GrantedCorePermissions ?? [],
-            OptionalCorePermissions: app.OptionalCorePermissions ?? []);
+            OptionalCorePermissions: app.OptionalCorePermissions ?? [],
+            InstallationId: PanelIdentity.Installation(app),
+            FramePolicy: UiFramePolicy.From(app));
     }
 
-    private static IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceSummary>>? BuildInterfaceSummaries(
+    internal static IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceSummary>>? BuildInterfaceSummaries(
         IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceContract>>? interfaces,
-        IReadOnlyList<AppEndpointContract> endpoints)
+        IReadOnlyList<AppEndpointContract> endpoints,
+        bool useTransportUrls = false)
     {
         if (interfaces is null || interfaces.Count == 0)
         {
@@ -1211,11 +1234,15 @@ internal sealed record AppSummary(
         foreach (var (name, declarations) in interfaces)
         {
             result[name] = declarations
-                .Select(declaration => new AppInterfaceSummary(
-                    declaration.Key,
-                    declaration.Path,
-                    BuildUiUrl(ResolveEndpointUrl(endpoints, declaration.EndpointKey), declaration.Path),
-                    ResolveEndpoint(endpoints, declaration.EndpointKey)?.Service, declaration.Version, declaration.Capabilities))
+                .Select(declaration =>
+                {
+                    var endpoint = ResolveEndpoint(endpoints, declaration.EndpointKey);
+                    return new AppInterfaceSummary(
+                        declaration.Key,
+                        declaration.Path,
+                        BuildUiUrl(useTransportUrls ? endpoint?.Url : ResolveEndpointOpenUrl(endpoint), declaration.Path),
+                        endpoint?.Service, declaration.Version, declaration.Capabilities);
+                })
                 .ToArray();
         }
 
@@ -1423,7 +1450,7 @@ internal sealed record AppNavigationSummary(string Label, string Path, string? E
 
 /// <summary>A placed surface as a client consumes it: what to call the tab, and what to embed.</summary>
 // `Service` as on AppNavigationSummary: which service's health gates embedding this surface.
-internal sealed record AppSurfaceSummary(string? Label, string Path, string? EmbeddedUrl, string? Service = null, string? Icon = null, string? Endpoint = null);
+internal sealed record AppSurfaceSummary(string? Label, string Path, string? EmbeddedUrl, string? Service = null, string? Icon = null, string? Endpoint = null, string? PanelId = null);
 
 internal sealed record AppMountSummary(
     string Key,

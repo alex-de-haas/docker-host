@@ -202,7 +202,7 @@ Declare platform interfaces the app exposes for other components to discover wit
 }
 ```
 
-Core validates names and keys as kebab tokens, unique keys per interface and absolute paths. An `assistant` or `speech-to-text` declaration also requires a positive integer `version` and a list of unique capability names; clients support version 1 and refuse unsupported versions. Core preserves these fields through installation, persistence, update and discovery, and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell identifies assistants by the confirmed `assistant` role plus the `assistant` interface. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/feature.md` ("Manifest Interfaces And Registry").
+Core validates names and keys as kebab tokens, unique keys per interface and absolute paths. An `assistant`, `speech-to-text` or `translation` declaration also requires a positive integer `version` and a list of unique capability names; clients support version 1 and refuse unsupported versions. Core preserves these fields through installation, persistence, update and discovery, and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell identifies assistants by the confirmed `assistant` role plus the `assistant` interface. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/feature.md` ("Manifest Interfaces And Registry").
 
 The version-1 base contract accepts prompt text and app IDs through prepare/finalize, returning a conversation reference and provider-owned UI destination. `attachments` adds raw uploads of any type, with a guaranteed floor of ten files of 10,000,000 bytes each. Use `@hosty-sdk/app/assistant` and retain request/upload identities across retries. See `docs/features/hosty-harness-rename/feature.md` for routes, expiry and recovery. Interface metadata is separate from endpoint transport and UI navigation.
 
@@ -235,10 +235,12 @@ as a separate tab and owns its choice for Ask assistant. The role does not repla
 `role: system` restriction on delegated-token exchange. See
 `docs/features/assistant-provider-permissions/feature.md`.
 
-### Optional Permissions And Speech Providers
+### Optional Permissions And Inference Providers
 
-Core 0.115.0 adds `optionalCorePermissions` and category-wide `providers.speech-to-text` /
-`providers.assistant` consumer permissions. A grant covers listing and use of every confirmed provider
+A translation supplier declares `provides: ["translation"]` and `interfaces.translation` entries with version 1. Each key identifies an independently selectable implementation. Consumers request `providers.translation` and call the server SDK with the selected app ID/key. See `docs/features/translation-provider/feature.md` for the text/Markdown request contract and limits.
+
+Core supports `optionalCorePermissions` and category-wide `providers.speech-to-text` /
+`providers.translation` / `providers.assistant` consumer permissions. A grant covers listing and use of every confirmed provider
 in that category. Required/optional lists must be disjoint; optional offers start unchecked and can
 be changed in Shell app settings through Core confirmation. Apps read effective choices through
 `ProviderClient.permissions()` or `HostyProviderClient.PermissionsAsync()` and degrade on denial.
@@ -303,7 +305,7 @@ it looks like settings:
   "settings": { "endpoint": "http", "path": "/settings" },
 
   // Any number. Tabs on Shell's right panel, docked beside the content.
-  "panels": [ { "label": "Session", "icon": "contact-round", "endpoint": "http", "path": "/panel" } ]
+  "panels": [ { "id": "session", "label": "Session", "icon": "contact-round", "endpoint": "http", "path": "/panel" } ]
 }
 ```
 
@@ -324,7 +326,13 @@ place in the navigation. Declare navigation for every page you want offered.
 Both fields are additive under `app.0.1` and need no `schemaVersion` bump. `endpoint` is optional and
 defaults to the entrypoint's; `path` is absolute on that origin. A panel's `label` names its tab —
 several apps' tools share one strip, so the app's own name is a poor label, and a system app must
-declare one. Two panels of one app may not share a label.
+declare one. Use distinct labels to make different tools recognizable.
+
+Give each panel a stable optional `id`: a lowercase letter followed by up to 63 lowercase letters,
+digits or hyphens, unique within that app. The `legacy-` prefix is reserved. Core derives IDs for
+older declarations from endpoint and route; changing those fields changes their identity. An explicit
+ID survives route, label, icon and array-order changes. SDK references also include the installation
+identity, so a reinstall never silently rebinds an old panel target.
 
 Every panel in a new install or update must declare a non-empty `icon`: a Lucide icon
 name describing that tool (for example `bot` or `contact-round`), following the `ui.icon`

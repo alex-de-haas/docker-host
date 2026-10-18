@@ -99,6 +99,10 @@ export class McpProxy {
       targets: new Map(),
     };
 
+    // An app route can disappear independently of the session's development MCP server.
+    for (const old of registration.targets.values()) {
+      if (!targets.some(target => target.appId === old.appId && target.url === old.url)) this.policy?.cancel(sessionId, old.appId);
+    }
     registration.targets = new Map(targets.map((target) => [target.appId, target]));
     this.sessions.set(sessionId, registration);
     return registration.key;
@@ -106,7 +110,7 @@ export class McpProxy {
 
   /** Drops the session's routes. */
   unregister(sessionId: string): void {
-    this.policy?.cancel(sessionId);
+    for (const appId of this.sessions.get(sessionId)?.targets.keys() ?? []) this.policy?.cancel(sessionId, appId);
     this.sessions.delete(sessionId);
   }
 

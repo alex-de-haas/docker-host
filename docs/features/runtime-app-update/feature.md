@@ -1,6 +1,6 @@
 ---
 created: 2026-06-04
-updated: 2026-10-08
+updated: 2026-10-09
 summary: Reviewed update plans and their apply behavior, including permission changes and routine updates.
 components: [apps/core, apps/shell]
 ---
@@ -142,6 +142,12 @@ Failures are captured per app: one dark feed marks that app's verdict with an `e
 
 Neither is reached on a healthy host, where a check is a handful of registry round-trips.
 
+Unresolved image errors name each affected service and its candidate image reference. The message
+includes an unpublished tag as a possible cause alongside registry access problems; the detailed
+probe diagnostics remain in Core logs. A source manifest can advance before its image build finishes,
+so retrying after publication clears the error without changing the installed app. The sweep logs
+and counts plans carrying an error as failed checks, as well as checks that throw exceptions.
+
 An app with no update source (see [Digest Semantics](#digest-semantics)) is also recorded as an `error` verdict. Its plan still builds and is cached for review, but the verdict offers no one-click apply, and a sweep that meets one reports the check as incomplete rather than every app up to date.
 
 ### Resolving a Digest
@@ -270,6 +276,10 @@ Failed updates leave enough state for diagnosis and retry. Runtime state and app
 - **Shell self-update wait** — the page stays put through `"updating"` and through the intermediate `"updated"` while the restart is still to report, settles on that restart's `"started"` (and on `"updated"` when no restart is coming), reports a `"failed"` record with its error, treats a failed read as no outcome at all, and gives up on its deadline (and when the app is gone) without reloading.
 - **Fleet check** — availability projected into summaries (target version and revisions alongside the verdict, and nothing named for a probe that did not resolve), live-source apps skipped and an earlier verdict suppressed, per-app failures captured without failing the sweep, an app with no update source reported as an error rather than as up to date (and cleared by a plan from an explicit manifest), per-app timeout recorded as that app's error while the rest of the fleet still completes, shutdown not recorded as timeouts, single-flight joining, and the finish announced only once the run no longer reports running.
 - **Version cell** — the target version shown whether or not it advances, and nothing shown when the verdict names no version; installed revisions read from the app record alone, so the tooltip stands without an update.
+- **Check diagnostics** — unresolved images name the candidate service and reference; returned plan
+  errors and exceptions both contribute to the fleet failure count. A tag published after its
+  manifest clears the error on recheck, preserves the installed version, and replaces the retained
+  offer only after a successful probe.
 - **Digest resolution** — reference parsing (Docker Hub defaults, `library/` normalization, host detection) and rejection of references that cannot be turned into a URL unambiguously; bearer-challenge handling with token reuse and one re-challenge when a cached token stops working; the hash-the-manifest path when the digest header is absent; fallback to the docker CLI on every unclean answer (auth, redirect, malformed digest, transport failure); cancellation propagating rather than being swallowed as a fallback.
 
 Digest resolution is covered offline against a stub transport — the suite must not depend on reaching a registry. Agreement with `docker buildx imagetools inspect` on real registries is verified out of band when the resolver changes.

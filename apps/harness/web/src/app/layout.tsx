@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
-import { launchModeBootstrapScript } from "@hosty-sdk/app";
-import { HostyOverlay, HostLaunchBridge, HostThemeBridge } from "@hosty-sdk/app/react";
+import { launchModeBootstrapScript, chromeBootstrapScript } from "@hosty-sdk/app";
+import { HostyNextOverlay as HostyOverlay } from "@hosty-sdk/app/next";
+import { HostLaunchBridge, HostThemeBridge } from "@hosty-sdk/app/react";
 import { themeBootstrapScript } from "@hosty-sdk/app/theme";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Assistant settings",
-  description: "Operator configuration for the Hosty assistant.",
+  title: "Hosty Harness",
+  description: "Conversations, source workspaces and sandbox previews.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -27,7 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           copy of the SDK's contract while the workspace carried no SDK dependency; it now carries
           one, and a second implementation of a protocol is what this fleet keeps paying for.
         */}
-        <script dangerouslySetInnerHTML={{ __html: launchModeBootstrapScript }} />
+        <script dangerouslySetInnerHTML={{ __html: chromeBootstrapScript() }} /><script dangerouslySetInnerHTML={{ __html: launchModeBootstrapScript }} />
         {/*
           The theme, from the SDK slice that owns the protocol: the `hosty_theme` launch parameters
           decide what this document paints with, the value stored for the tab carries it across
@@ -44,7 +45,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         */}
         <HostLaunchBridge />
         <HostThemeBridge />
-        <HostyOverlay>{children}</HostyOverlay>
+        <HostyOverlay navigation={{ renderer: "custom" }}>{children}</HostyOverlay>
       </body>
     </html>
   );

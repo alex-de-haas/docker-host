@@ -9,6 +9,7 @@
     "apps/demo-app",
     "apps/marketplace",
     "apps/plans",
+    "apps/workspaces",
     "apps/shell",
     "apps/telemetry-ui",
     "packages/app-sdk"
@@ -19,9 +20,9 @@
   "scripts": {
     "dev": "node scripts/dev-local.mjs",
     "check-versions": "node scripts/check-versions.mjs",
-    "lint": "npm run shell:lint && npm run demo-app:lint && npm run marketplace:lint && npm run telemetry-ui:lint && npm run harness:lint && npm run plans:lint",
-    "build": "npm run core:build && npm run cli:build && npm run telemetry-backend:build && npm run marketplace:build && npm run telemetry-ui:build && npm run shell:build && npm run demo-app:build && npm run plans:build",
-    "test": "npm run sdk:test && npm run sdk:dotnet:test && npm run core:test && npm run cli:test && npm run telemetry-backend:test && npm run marketplace:test && npm run telemetry-ui:test && npm run shell:test && npm run harness:test && npm run cardputer:test && npm run plans:test",
+    "lint": "npm run shell:lint && npm run demo-app:lint && npm run marketplace:lint && npm run telemetry-ui:lint && npm run harness:lint && npm run plans:lint && npm run workspaces:lint",
+    "build": "npm run core:build && npm run cli:build && npm run telemetry-backend:build && npm run marketplace:build && npm run telemetry-ui:build && npm run shell:build && npm run demo-app:build && npm run plans:build && npm run workspaces:build",
+    "test": "npm run sdk:test && npm run sdk:dotnet:test && npm run core:test && npm run cli:test && npm run telemetry-backend:test && npm run marketplace:test && npm run telemetry-ui:test && npm run shell:test && npm run harness:test && npm run cardputer:test && npm run plans:test && npm run workspaces:test",
     "ci": "npm run lint && npm run build && npm run test",
     "core:dev": "dotnet run --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj --launch-profile dev",
     "core:build": "dotnet build apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj",
@@ -70,6 +71,12 @@
     "plans:start": "npm run start --workspace @haas/hosty-plans",
     "plans:lint": "npm run lint --workspace @haas/hosty-plans",
     "plans:test": "npm run test --workspace @haas/hosty-plans",
-    "plans:docker:build": "docker build -f apps/plans/Dockerfile -t ghcr.io/alex-de-haas/hosty-plans:latest ."
+    "plans:docker:build": "docker build -f apps/plans/Dockerfile -t ghcr.io/alex-de-haas/hosty-plans:latest .",
+    "workspaces:dev": "npm run dev --workspace @haas/hosty-workspaces",
+    "workspaces:build": "npm run build --workspace @haas/hosty-workspaces",
+    "workspaces:start": "npm run start --workspace @haas/hosty-workspaces",
+    "workspaces:lint": "npm run lint --workspace @haas/hosty-workspaces",
+    "workspaces:test": "npm run test --workspace @haas/hosty-workspaces",
+    "workspaces:docker:build": "docker build -f apps/workspaces/Dockerfile -t ghcr.io/alex-de-haas/hosty-workspaces:latest ."
   }
 }

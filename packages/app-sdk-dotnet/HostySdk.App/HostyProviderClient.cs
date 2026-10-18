@@ -16,6 +16,13 @@ public sealed record HostyProviderInvocation(string CallerAppId, string CallerIn
 public sealed record HostySpeechResult(string Text, string? Language = null);
 /// <summary>A provider's speech input contract and readiness.</summary>
 public sealed record HostySpeechCapabilities(int Version, string[] MediaTypes, long MaxBytes, int MaxDurationSeconds, string Backend, bool Ready);
+/// <summary>Text or Markdown and language tags for one translation.</summary>
+public sealed record HostyTranslationRequest(string Text, string TargetLanguage, string SourceLanguage = "auto", string Format = "text");
+/// <summary>Translated text and the requested language tags.</summary>
+public sealed record HostyTranslationResult(string Text, string TargetLanguage, string SourceLanguage);
+/// <summary>The selected translation implementation's limits and current configuration readiness.</summary>
+public sealed record HostyTranslationCapabilities(int Version, string[] Formats, int MaxCharacters, int MaxSegmentCharacters, int MaxBytes,
+    int MaxOutputBytes, int TimeoutSeconds, string Backend, bool Ready, string? Reason = null);
 /// <summary>An error with a stable code and HTTP status.</summary>
 public sealed class HostyProviderException(string code, string message, int statusCode) : Exception(message)
 {
@@ -25,7 +32,7 @@ public sealed class HostyProviderException(string code, string message, int stat
     public int StatusCode { get; } = statusCode;
 }
 
-/// <summary>Server-side discovery, speech consumption and provider authorization. Never expose its service token to clients.</summary>
+/// <summary>Server-side discovery, speech/translation consumption and provider authorization. Never expose its service token to clients.</summary>
 /// <param name="http">An HTTP client with automatic redirects disabled and a suitable inference timeout.</param>
 /// <param name="options">The consuming or providing app's Core credentials.</param>
 public sealed class HostyProviderClient(HttpClient http, HostyAppOptions options)
@@ -68,6 +75,30 @@ public sealed class HostyProviderClient(HttpClient http, HostyAppOptions options
         request.Content.Headers.ContentType = new MediaTypeHeaderValue(mediaType);
         using var response = await http.SendAsync(request, cancellationToken);
         return await ReadAsync<HostySpeechResult>(response, cancellationToken);
+    }
+
+    /// <summary>Read the selected translation provider's input contract and readiness.</summary>
+    public async Task<HostyTranslationCapabilities> TranslationCapabilitiesAsync(HostyProvider provider, CancellationToken cancellationToken = default)
+    {
+        var binding = await ConnectAsync(provider, "translation", null, cancellationToken);
+        using var request = ProviderRequest(binding, HttpMethod.Get, "/capabilities");
+        using var response = await http.SendAsync(request, cancellationToken);
+        return await ReadAsync<HostyTranslationCapabilities>(response, cancellationToken);
+    }
+
+    /// <summary>Translate text through the selected provider without retry or fallback.</summary>
+    public async Task<HostyTranslationResult> TranslateAsync(HostyProvider provider, HostyTranslationRequest input, CancellationToken cancellationToken = default)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(610));
+        var binding = await ConnectAsync(provider, "translation", null, deadline.Token);
+        using var request = ProviderRequest(binding, HttpMethod.Post, "/translations");
+        request.Content = JsonContent.Create(input, ProviderJsonContext.Default.HostyTranslationRequest);
+        using var response = await http.SendAsync(request, deadline.Token);
+        var result = await ReadAsync<HostyTranslationResult>(response, deadline.Token);
+        if (result.Text is null || result.TargetLanguage != input.TargetLanguage || result.SourceLanguage != input.SourceLanguage)
+            throw new HostyProviderException("provider_response_invalid", "Invalid translation response.", 502);
+        return result;
     }
 
     /// <summary>Send a version-one assistant handoff operation, authenticated as the supplied acting user.
@@ -132,7 +163,7 @@ public sealed class HostyProviderClient(HttpClient http, HostyAppOptions options
     }
     private static void RequireKind(string kind)
     {
-        if (kind is not ("speech-to-text" or "assistant")) throw new ArgumentException("Unknown provider category.", nameof(kind));
+        if (kind is not ("speech-to-text" or "assistant" or "translation")) throw new ArgumentException("Unknown provider category.", nameof(kind));
     }
 }
 
@@ -151,4 +182,7 @@ internal sealed record ProviderFailure(string Code, string Message);
 [JsonSerializable(typeof(HostyProviderInvocation))]
 [JsonSerializable(typeof(HostySpeechResult))]
 [JsonSerializable(typeof(HostySpeechCapabilities))]
+[JsonSerializable(typeof(HostyTranslationRequest))]
+[JsonSerializable(typeof(HostyTranslationResult))]
+[JsonSerializable(typeof(HostyTranslationCapabilities))]
 internal partial class ProviderJsonContext : JsonSerializerContext;

@@ -22,6 +22,8 @@ export type AssistantQuestion = {
 };
 
 export type AssistantSession = {
+  appCreations?: { input: Record<string, unknown>; state: "pending" | "observed" | "rejected"; prompt?: string }[];
+  executionMode?: "native" | "docker";
   autonomy?: "normal" | "autonomous";
   handoffDraft?: { text: string; attachments: StoredAttachment[] };
   handoffDispatch?: { id: string; state: string; error?: string };
@@ -98,6 +100,10 @@ export async function listSessions(): Promise<AssistantSession[]> {
 
 export async function createSession(input: { connectionId?: string; title?: string; context?: Record<string, string>; appIds?: string[]; clientRequestId?: string } = {}): Promise<AssistantSession> {
   return (await call("/sessions", { method: "POST", body: JSON.stringify(input) })).json() as Promise<AssistantSession>;
+}
+
+export async function newBuildingSession(input: { appId: string; requestId: string; expectedLocalHead: string }): Promise<AssistantSession> {
+  return (await call("/building-sessions", { method: "POST", body: JSON.stringify(input) })).json();
 }
 
 /** Renames a session. An empty title clears the name, and the next message derives one again. */
@@ -296,6 +302,9 @@ export async function stopSession(id: string): Promise<void> {
 
 /** Retry the same accepted dispatch; this never creates a new request or conversation. */
 export async function retryHandoff(id: string): Promise<AssistantSession> {
+  const session = await getSession(id);
+  const creation = session.appCreations?.find(o => o.input.requestId === session.handoffDispatch?.id);
+  if (creation?.prompt) return dispatchAppCreation(id, String(creation.input.requestId), creation.prompt);
   const record = await (await call(`/assistant/v1/handoffs/${encodeURIComponent(id)}`)).json() as { attachments: { attachmentId: string }[] };
   await call(`/assistant/v1/handoffs/${encodeURIComponent(id)}/finalize`, { method: "POST", body: JSON.stringify({ attachmentIds: record.attachments.map(a => a.attachmentId) }) });
   return getSession(id);
@@ -323,4 +332,10 @@ export interface Publication {
 
 export async function setSessionAutonomy(id: string, autonomy: "normal" | "autonomous"): Promise<AssistantSession> {
   return (await call(`/sessions/${encodeURIComponent(id)}/autonomy`, { method: "PUT", body: JSON.stringify({ autonomy }) })).json();
+}
+
+export async function dispatchAppCreation(sessionId: string, requestId: string, prompt: string): Promise<AssistantSession> {
+  return (await call("/sessions/" + encodeURIComponent(sessionId) + "/app-creations/dispatch", {
+    method: "POST", body: JSON.stringify({ requestId, prompt }),
+  })).json() as Promise<AssistantSession>;
 }

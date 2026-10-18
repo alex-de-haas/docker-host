@@ -1,0 +1,58 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createHostyUiResponse, UiServerClient } from "./ui-server";
+const options = { appId: "plans", coreOrigin: "https://core.test", serviceToken: "own-service" };
+const context = { session: { status: "active" as const, identity: { hostRole: "host.admin" } }, token: "own-user" };
+const target = { panel: { appId: "assistant", installationId: "install", panelId: "chat" }, route: "/chat?session=existing" };
+afterEach(() => vi.unstubAllGlobals());
+describe("fixed panel adapter", () => {
+  it("projects only this app's navigation and resolves pinned entries through fixed operations", async () => {
+    const fetcher = vi.fn(async () => Response.json({ entries: [] })); vi.stubGlobal("fetch", fetcher);
+    expect((await createHostyUiResponse(new Request("https://plans.test/api/hosty/ui/navigation"), context, options)).status).toBe(200);
+    expect(fetcher.mock.calls[0]?.[0]).toEqual(new URL("https://core.test/api/internal/apps/plans/ui/navigation"));
+    fetcher.mockClear();
+    expect((await createHostyUiResponse(new Request("https://plans.test/api/hosty/ui/navigation?appId=foreign"), context, options)).status).toBe(400);
+    const resolve = (origin: string) => new Request("https://plans.test/api/hosty/ui/navigation/resolve", { method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ appId: "plans", installationId: "install", entryKey: "opaque" }) });
+    expect((await createHostyUiResponse(resolve("https://foreign.test"), context, options)).status).toBe(403);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect((await createHostyUiResponse(resolve("https://plans.test"), context, options)).status).toBe(200);
+    expect(fetcher.mock.calls[0]?.[0]).toEqual(new URL("https://core.test/api/internal/apps/plans/ui/navigation/resolve"));
+  });
+  it("uses only its own service and revalidated user credentials for fixed Core operations", async () => {
+    const fetcher = vi.fn(async () => Response.json({ target })); vi.stubGlobal("fetch", fetcher);
+    const response = await createHostyUiResponse(new Request("https://plans.test/api/hosty/ui/panels/resolve", {
+      method: "POST", headers: { Origin: "https://plans.test", "Content-Type": "application/json", "X-Hosty-User-Token": "forged" }, body: JSON.stringify(target),
+    }), context, options);
+    expect(response.status).toBe(200); expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(fetcher.mock.calls[0]).toMatchObject([new URL("https://core.test/api/internal/apps/plans/ui/panels/resolve"), {
+      redirect: "error", headers: { authorization: "Bearer own-service", "X-Hosty-User-Token": "own-user" }, body: JSON.stringify(target),
+    }]);
+  });
+  it("rejects cross-origin, oversized and arbitrary proxy requests before Core work", async () => {
+    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    const request = (origin: string, body: string) => new Request("https://plans.test/api/hosty/ui/panels/resolve", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body });
+    expect((await createHostyUiResponse(request("https://foreign.test", "{}"), context, options)).status).toBe(403);
+    expect((await createHostyUiResponse(request("https://plans.test", '"' + "я".repeat(9_000) + '"'), context, options)).status).toBe(413);
+    expect((await createHostyUiResponse(new Request("https://plans.test/api/hosty/ui/arbitrary"), context, options)).status).toBe(404);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("preserves access refusals and explicitly identifies an unsupported Core", async () => {
+    const fetcher = vi.fn(async () => Response.json({}, { status: 404 })); vi.stubGlobal("fetch", fetcher);
+    await expect(new UiServerClient(options).bootstrap({}, "own-user")).rejects.toMatchObject({ code: "unsupported_core" });
+    fetcher.mockClear();
+    const request = new Request("https://plans.test/api/hosty/ui/bootstrap");
+    expect((await createHostyUiResponse(request, { session: { status: "expired" }, token: "old" }, options)).status).toBe(401);
+    expect((await createHostyUiResponse(request, { ...context, session: { status: "active", identity: { hostRole: "host.user" } } }, { ...options, administratorOnly: true })).status).toBe(403);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
+
+it.each(["sandbox", "core"] as const)("does not bridge a %s sandbox viewer into global UI authority", async identityRealm => {
+  const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+  const sandbox = { runtimeInstanceId: "a".repeat(32), generation: "b".repeat(32), dataRevision: "c".repeat(32), identityRealm, appRole: "admin", permissions: [] };
+  const response = await createHostyUiResponse(new Request("https://sandbox.test/api/hosty/ui/bootstrap"),
+    { ...context, session: { status: "active", identity: { hostRole: identityRealm === "core" ? "host.admin" : null, sandbox } } }, options);
+  expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ code: "unsupported_sandbox_ui" });
+  expect(fetcher).not.toHaveBeenCalled();
+});

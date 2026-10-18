@@ -1,6 +1,6 @@
 {
   "name": "@hosty-sdk/app",
-  "version": "0.24.0",
+  "version": "0.32.0",
   "description": "Hosty app auth: session state machine, recovery bridge, Core revalidation, and the embedder responder.",
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -15,6 +15,11 @@
     "./oauth-resource": "./src/oauth-resource.ts",
     "./react": "./src/react.tsx",
     "./embedder": "./src/embedder.ts",
+    "./ui": "./src/ui.ts",
+    "./ui/types": "./src/ui-types.ts",
+    "./ui/host": "./src/ui-host.ts",
+    "./ui/react": "./src/ui-react.tsx",
+    "./ui/server": "./src/ui-server.ts",
     "./theme": "./src/theme.ts",
     "./install": "./src/install.ts",
     "./install/react": "./src/install-react.tsx",
@@ -24,7 +29,13 @@
     "./providers/server": "./src/providers-server.ts",
     "./permissions": "./src/permissions.ts",
     "./permissions/server": "./src/permissions-server.ts",
-    "./permissions/react": "./src/permissions-react.tsx"
+    "./permissions/react": "./src/permissions-react.tsx",
+    "./background/server": "./src/background-server.ts",
+    "./continuity": "./src/continuity.ts",
+    "./continuity/browser": "./src/continuity-browser.ts",
+    "./next": "./src/next.tsx",
+    "./sandbox/server": "./src/sandbox-server.ts",
+    "./sandbox/react": "./src/sandbox-react.tsx"
   },
   "scripts": {
     "test": "vitest run",
@@ -35,7 +46,7 @@
     "server-only": "^0.0.1"
   },
   "peerDependencies": {
-    "next": "^16.3.8",
+    "next": "^16.4.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
@@ -51,10 +62,10 @@
     }
   },
   "devDependencies": {
-    "@types/node": "^24.19.1",
+    "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "jsdom": "^30.1.1",
+    "jsdom": "^30.1.2",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "typescript": "^6",

@@ -25,6 +25,7 @@ import { SettingsIngressSection } from "./settings-ingress-section";
 import { SettingsMountsSection } from "./settings-mounts-section";
 import { SettingsAgentsSection } from "./settings-agents-section";
 import { SettingsTokensSection } from "./settings-tokens-section";
+import { SettingsPermissionsSection } from "./settings-permissions-section";
 import { SourceProviders } from "./source-providers";
 import { UserProfilePage } from "./user-profile-page";
 import { UserManagementPanel } from "./user-management-page";
@@ -115,6 +116,8 @@ export function SettingsPage({
       {canManageApps && resolvedTab === "connections" && <SourceProviders coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />}
 
       {canManageApps && resolvedTab === "agents" && <SettingsAgentsSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />}
+
+      {canManageApps && resolvedTab === "permissions" && <SettingsPermissionsSection coreOrigin={coreOrigin} apps={apps} />}
 
       {resolvedTab === "tokens" && (
         <SettingsTokensSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />

@@ -1,9 +1,13 @@
 "use client";
+import { captureChromeHints } from "./ui-composition";
+import { replaceConsumedUrl } from "./consumed-url";
 
 // React slice: the client identity bridge — probe, silent recovery, and the fallback
 // cards. Prop-less by design: the app id and browser-reachable Core origin arrive in the
 // probe response's `recovery` field (request-time values, never build-time props).
 
+import { readAppContinuity, type AppContinuity } from "./continuity";
+import { configureAppContinuity } from "./continuity-browser";
 import { AppActivityBridge } from "./activity-react";
 import { AuthNotice, AuthNoticeButton, authNoticeActionStyle } from "./auth-notice";
 import { useEffect, useRef, useState } from "react";
@@ -156,6 +160,7 @@ function currentLaunchMode(): AppLaunchMode {
  */
 export function HostLaunchBridge() {
   useEffect(() => {
+    captureChromeHints();
     const url = new URL(window.location.href);
     const param = url.searchParams.get(LAUNCH_MODE_PARAM);
     const { mode, fromParam } = resolveLaunchMode({
@@ -179,7 +184,7 @@ export function HostLaunchBridge() {
     // ignored must not survive into a link someone copies.
     if (url.searchParams.has(LAUNCH_MODE_PARAM)) {
       url.searchParams.delete(LAUNCH_MODE_PARAM);
-      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      replaceConsumedUrl(url);
     }
   }, []);
 
@@ -250,10 +255,23 @@ export function useAppIdentity({
   const silentError = useRef<"login_required" | "access_denied" | null>(null);
   const returnedLegacyAttempt = useRef<{ appId: string; coreOrigin: string; protocolRequired: boolean } | null>(null);
   const upgradedAttempt = useRef(false);
-  const [activity, setActivity] = useState<{ openUrl: string; appAuthProtocol: AppAuthProtocol; activeUntil?: string | null; activityRequired?: boolean } | null>(null);
+  const [activity, setActivity] = useState<{ openUrl: string; appAuthProtocol: AppAuthProtocol; activeUntil?: string | null; activityRequired?: boolean; continuity?: AppContinuity } | null>(null);
   const exchangeRef = useRef<{ path: string; revision: number; response: Promise<Response> } | null>(null);
   const onSessionRef = useRef(onSession);
   useEffect(() => { onSessionRef.current = onSession; }, [onSession]);
+
+  const continuity = activity?.continuity;
+  const continuityCoreOrigin = activity?.openUrl ? new URL(activity.openUrl).origin : null;
+  const continuityActor = (session as { userId?: string } | null)?.userId;
+  useEffect(() => {
+    if (!continuity || !continuityCoreOrigin || !continuityActor) return;
+    return configureAppContinuity({ coreOrigin: continuityCoreOrigin, authority: continuity,
+      probe: async () => {
+        const next = await refreshRef.current() as { status?: string; userId?: string; hosty?: { version?: number; setup?: string } } | null;
+        return next?.status === "active" && next.userId === continuityActor
+          && (!next.hosty || (next.hosty.version === 1 && next.hosty.setup === "ready"));
+      } });
+  }, [continuity?.grantId, continuityCoreOrigin, continuityActor]);
 
   useEffect(() => {
     let cancelled = false;
@@ -261,7 +279,16 @@ export function useAppIdentity({
     const controller = new AbortController();
     if (initialGrantPresent.current === null) initialGrantPresent.current = restoreAppGrant();
 
-    async function probeAndRecover(): Promise<unknown> {
+    let pendingProbe: Promise<unknown> | null = null;
+    // Focus, continuity maintenance and setup review can request the same identity at once.
+    // Share its result: a superseded successful probe must not look like an access outage.
+    function probeAndRecover(): Promise<unknown> {
+      if (pendingProbe) return pendingProbe;
+      pendingProbe = runProbeAndRecover().finally(() => { pendingProbe = null; });
+      return pendingProbe;
+    }
+
+    async function runProbeAndRecover(): Promise<unknown> {
       const sequence = ++probeSequence;
       // Dedicated controller + setTimeout instead of AbortSignal.any/timeout, which are not
       // available in every browser (a synchronous throw here would stop the bridge from
@@ -275,7 +302,7 @@ export function useAppIdentity({
       let openUrl: string | null = null;
       let appId: string | null = null;
       let protocol: AppAuthProtocol | null = null;
-      let activityMetadata: { activeUntil?: string | null; activityRequired?: boolean } | null = null;
+      let activityMetadata: { activeUntil?: string | null; activityRequired?: boolean; continuity?: AppContinuity } | null = null;
       let rejectionCode: unknown;
       let sessionBody: unknown = null;
       const revision = appGrantRevision();
@@ -295,7 +322,7 @@ export function useAppIdentity({
         appId = recovery.appId;
         openUrl = appId ? buildCoreOpenUrl(recovery.corePublicOrigin, appId, window.location) : null;
         protocol = openUrl ? acceptAppAuthProtocol(new URL(openUrl).origin, recovery.appAuthProtocol) : recovery.appAuthProtocol;
-        activityMetadata = body as { activeUntil?: string | null; activityRequired?: boolean };
+        activityMetadata = body as { activeUntil?: string | null; activityRequired?: boolean; continuity?: AppContinuity };
       } catch {
         // A failed or timed-out probe (Core unreachable) classifies as unavailable below.
         status = null;
@@ -308,11 +335,11 @@ export function useAppIdentity({
       }
       if (revision !== appGrantRevision()) {
         initialGrantPresent.current ||= restoreAppGrant();
-        return probeAndRecover();
+        return runProbeAndRecover();
       }
       forgetRejectedAppGrant(rejectionCode, revision);
       if (openUrl && protocol) setActivity({ openUrl, appAuthProtocol: protocol,
-        activeUntil: activityMetadata?.activeUntil, activityRequired: activityMetadata?.activityRequired });
+        activeUntil: activityMetadata?.activeUntil, activityRequired: activityMetadata?.activityRequired, continuity: readAppContinuity(activityMetadata?.continuity) });
 
       const initialLoad = firstProbe.current;
       firstProbe.current = false;
@@ -410,7 +437,7 @@ export function useAppIdentity({
       url.searchParams.delete("code");
       url.searchParams.delete("state");
       if (isSilentError || protocolRequired) url.searchParams.delete("error");
-      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      replaceConsumedUrl(url);
     }
     if (code && !error && !upgradedLegacy && attempt && !exchangeRef.current) {
       exchangeRef.current = {
@@ -461,6 +488,7 @@ export function useAppIdentity({
       window.removeEventListener(APP_SESSION_ENDED, recover);
     };
   }, [probePath, appCodePath]);
+
 
   return { ui, session, activity, hasBeenActive: wasActive.current, refresh: () => refreshRef.current() };
 }
@@ -603,7 +631,7 @@ export function HostThemeBridge({ followSystem = true, onTheme }: HostThemeBridg
     if (url.searchParams.has(THEME_PARAM) || url.searchParams.has(THEME_PREFERENCE_PARAM)) {
       url.searchParams.delete(THEME_PARAM);
       url.searchParams.delete(THEME_PREFERENCE_PARAM);
-      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      replaceConsumedUrl(url);
     }
 
     const handleMessage = (event: MessageEvent) => {
@@ -635,3 +663,5 @@ export { MissingPermissionsNotice } from "./permissions-react";
 
 export { AppActivityBridge } from "./activity-react";
 export { HostyOverlay } from "./overlay-react";
+
+export { HostyNavigation, HostyNavigationBoundary, useHostyChrome, useHostyNavigation } from "./ui-navigation-react";

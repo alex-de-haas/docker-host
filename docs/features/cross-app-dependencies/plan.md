@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-07-28
-updated: 2026-08-17
+updated: 2026-10-10
 summary: Let a consumer reach a provider endpoint that is not reachable from the host or the LAN.
 components: [apps/core]
 ---
@@ -71,6 +71,10 @@ defence-in-depth improvement, not a hole being closed — worth doing carefully,
       `localCommand` producers, which run as host processes) and let containers reach the collector
       over the network by alias. Then "any installed app may write, and nothing off-host can" is what
       the configuration does rather than what its documentation claims.
+
+Telemetry producer authentication and protection against forged app attribution are owned by
+[Observability D1](../observability/plan.md#deliverables). D6 controls reachability only; an internal
+network is not producer identity. The credential shape is not settled by this network plan.
 
 ## Verification
 

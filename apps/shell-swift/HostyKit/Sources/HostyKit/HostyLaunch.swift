@@ -28,8 +28,11 @@ public enum HostyLaunch {
               components.host != nil
         else { return urlString }
 
-        var items = (components.queryItems ?? []).filter { $0.name != parameter }
-        items.append(URLQueryItem(name: parameter, value: nativeMode))
+        let hints = [(parameter, nativeMode), ("hosty_navigation", "hide"),
+                     ("hosty_tools", "disabled"), ("hosty_tool_launcher", "hide")]
+        let names = Set(hints.map { $0.0 })
+        var items = (components.queryItems ?? []).filter { !names.contains($0.name) }
+        items.append(contentsOf: hints.map { URLQueryItem(name: $0.0, value: $0.1) })
         components.queryItems = items
 
         return components.string ?? urlString

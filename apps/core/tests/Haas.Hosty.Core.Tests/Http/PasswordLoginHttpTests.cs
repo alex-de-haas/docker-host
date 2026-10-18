@@ -33,6 +33,11 @@ public sealed class PasswordLoginHttpTests
         var session = await client.GetFromJsonAsync<JsonElement>("/api/auth/session");
         Assert.True(session.GetProperty("authenticated").GetBoolean());
         Assert.Equal("admin", session.GetProperty("user").GetProperty("id").GetString());
+        var audit = await harness.Services.GetRequiredService<AuditStore>().ReadRecentAsync();
+        Assert.Contains(audit, entry => entry.Action == "auth.login.succeeded");
+        var persisted = await File.ReadAllTextAsync(harness.Services.GetRequiredService<CoreDataPaths>().AuditLogPath);
+        Assert.DoesNotContain(Password, persisted);
+        Assert.DoesNotContain(cookie.Split(';')[0]["hosty_session=".Length..], persisted);
     }
 
     [Theory]
@@ -147,7 +152,7 @@ public sealed class PasswordLoginHttpTests
         appClient.DefaultRequestHeaders.Authorization = new("Bearer", harness.Services.GetRequiredService<AppServiceTokenService>().CreateToken("example.app"));
         using var exchanged = await appClient.PostAsJsonAsync("/api/auth/apps/token", new { code, codeVerifier = AuthCodeProof.Verifier });
         exchanged.EnsureSuccessStatusCode();
-        Assert.True((await exchanged.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>()).GetProperty("activeUntil").GetDateTimeOffset() > now);
+        Assert.Equal(1, (await exchanged.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>()).GetProperty("continuity").GetProperty("version").GetInt32());
         if (popup)
         {
             using var replay = await appClient.PostAsJsonAsync("/api/auth/apps/token", new { code, codeVerifier = AuthCodeProof.Verifier });

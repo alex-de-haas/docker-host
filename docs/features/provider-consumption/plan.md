@@ -1,8 +1,8 @@
 ---
-status: Blocked
+status: In Progress
 created: 2026-09-29
-updated: 2026-09-29
-summary: Hardware acceptance of the CPU speech provider on the owner's Windows host.
+updated: 2026-10-10
+summary: Remaining hardware measurements and edge-case acceptance evidence after the owner confirmed working speech recognition and dictation.
 components: [apps/whisper]
 ---
 
@@ -19,23 +19,36 @@ assistant handoffs and Harness dictation are described in [feature.md](feature.m
 complete implementation. This plan retains the remaining acceptance work instead of claiming that a
 macOS run or generic Windows CI establishes performance on the owner's hardware.
 
+## Owner-Reported Functional Acceptance
+
+On 2026-10-10 the owner confirmed that the speech provider has been tested and works, including
+text dictation. The functional scenario is therefore no longer awaiting an initial owner test.
+The report does not specify the machine, model, measurements or individual edge cases below.
+Record existing results where available; this plan does not require repeating the successful
+functional scenario merely because the agent did not perform it.
+
 ## Deliverables
 
-- [ ] D1. Run the Core-managed Whisper app on the target Windows/AMD machine; verify CPU native loading,
-      Russian and mixed-language recordings, silence, cancellation, repeated requests and restart.
-      Record OS/CPU capabilities, selected model, latency, peak memory and recognition quality.
-- [ ] D2. Confirm browser microphone capture into Harness through the deployed Shell origin and check
-      that recognized text remains editable, permissions can be revoked, and audio is not persisted.
+- [x] D4. Record the owner's functional acceptance of the speech provider and text dictation, confirmed
+      on 2026-10-10. This does not substitute for the detailed evidence in D1/D2.
+- [ ] D1. Complete the hardware acceptance record beyond the confirmed functional scenario: identify
+      the target Windows/AMD machine, OS/CPU capabilities and selected model; record latency, peak
+      memory and recognition quality, plus results for CPU native loading, Russian and mixed-language
+      recordings, silence, cancellation, repeated requests and restart.
+- [ ] D2. Complete the browser acceptance record beyond confirmed dictation: identify the deployed
+      Shell/Harness microphone path and record editable text, permission revocation and audio
+      non-persistence checks.
 - [ ] D3. Update the verified platform evidence in `feature.md`, remove this plan and regenerate the index
       after these checks pass.
 
-## Blocker
+## Evidence Boundary
 
-The development session has access to a macOS ARM64 host, not the owner's Windows/AMD server or its
-microphone/browser deployment. Local Core-managed TypeScript and .NET consumer calls and native CPU
-inference pass. CI runs the native model test on generic Windows/Linux/macOS runners. Those checks do
-not replace target-device acceptance, and no Windows latency, GPU acceleration or human-dictation
-accuracy claim is made.
+The earlier blocker was the development session's lack of access to the owner's Windows/AMD server
+and microphone/browser deployment. The owner's functional report now supplies direct usage evidence;
+agent access is not required to accept that report. Local Core-managed TypeScript and .NET consumer
+calls and native CPU inference also pass, and CI runs the native model test on generic
+Windows/Linux/macOS runners. Neither those runs nor the functional report supplies the unreported
+details in D1/D2. No Windows latency, GPU acceleration or human-dictation accuracy measurement is claimed.
 
 ## Verification
 
@@ -51,5 +64,7 @@ accuracy claim is made.
 
 ## Scope Boundary
 
-`providers.agent` remains a name reserved for separate design work. This acceptance does not authorize
-agent extraction, agent execution APIs, other Core Extension Model phases or Vulkan integration.
+`providers.agent` remains a name reserved for the separate
+[agent and model provider Draft](../agent-provider-interface/plan.md). That plan owns agent
+extraction and app-facing invocation design under the owner's 2026-10-10 direction. This speech
+acceptance does not authorize those APIs, other Core Extension Model phases or Vulkan integration.

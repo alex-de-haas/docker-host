@@ -225,6 +225,7 @@ export type CoreReassignResult = {
 
 /** A settings or panel surface as Core resolved it: what to call the tab, and what to embed. */
 export type CoreAppSurface = {
+  panelId?: string | null;
   endpoint?: string | null;
   icon?: string | null;
   label?: string | null;
@@ -251,6 +252,8 @@ export type CoreNavigationItem = {
 };
 
 export type CoreApp = {
+  installationId?: string | null;
+  framePolicy?: { microphone: boolean; popupEscape: boolean } | null;
   configurationReadiness?: { required: boolean; missingSettings: string[]; mounts: { key: string; label?: string | null; reason: string }[]; error?: string | null } | null;
   id: string;
   grantedCorePermissions?: string[] | null;
@@ -265,6 +268,7 @@ export type CoreApp = {
   system: boolean;
   source: string;
   selectedRuntime?: string | null;
+  devMode?: { operationId: string; phase: string; previousRuntime?: string | null } | null;
   autostart?: boolean | null;
   operationStatus: string;
   runtimeState: string;
@@ -493,6 +497,7 @@ export type CoreSettingItem = Pick<CoreSetting, "key" | "type" | "label" | "desc
 
 export type CoreSettingsState = {
   settings: CoreSettingItem[];
+  authenticationDiagnostics?: string[];
 };
 
 export type CoreBackup = {
@@ -738,7 +743,7 @@ export type ShellView =
 
 // Host-level configuration surfaces, resolved from the settings group and section URL parameters. Distinct from the per-app
 // `SettingsTab` above, which describes one app rather than the host.
-export type HostSettingsTab = "profile" | "general" | "agents" | "connections" | "shell" | "users" | "tokens" | "policies" | "core" | "mounts" | "ingress";
+export type HostSettingsTab = "profile" | "general" | "agents" | "connections" | "shell" | "users" | "tokens" | "permissions" | "policies" | "core" | "mounts" | "ingress";
 
 // A device waiting for someone to approve the code it is showing. Held in memory by Core and gone ten
 // minutes later, so this is never a durable record of anything.

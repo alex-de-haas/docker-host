@@ -1,0 +1,54 @@
+{
+  "schemaVersion": "app.0.1",
+  "id": "hosty.sandbox-qa-fixture",
+  "name": "Sandbox QA Fixture",
+  "description": "Independent sandbox API acceptance fixture for an isolated Core.",
+  "version": "0.1.0",
+  "runtimeProfiles": [
+    {
+      "key": "local",
+      "type": "localCommand",
+      "default": true
+    }
+  ],
+  "defaultRuntime": "local",
+  "services": [
+    {
+      "key": "api",
+      "runtimes": {
+        "local": {
+          "type": "localCommand",
+          "command": "node --import tsx qa-client.mjs",
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3791,
+              "protocol": "http",
+              "public": true
+            }
+          ],
+          "healthcheck": {
+            "type": "http",
+            "port": 3791,
+            "path": "/healthz",
+            "timeoutSeconds": 5
+          },
+          "workingDirectory": "scripts/experiments/sandbox-core"
+        }
+      }
+    }
+  ],
+  "endpoints": [
+    {
+      "key": "http",
+      "service": "api",
+      "port": "http",
+      "protocol": "http",
+      "public": true
+    }
+  ],
+  "corePermissions": [
+    "apps.sandboxes.read",
+    "apps.sandboxes.manage"
+  ]
+}

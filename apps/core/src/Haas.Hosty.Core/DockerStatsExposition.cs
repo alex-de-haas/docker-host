@@ -56,12 +56,14 @@ internal sealed class DockerStatsExposition(
     // Internal (not private) so the owner-map caching can be exercised without driving the timer.
     internal async Task<string> BuildSnapshotAsync(CancellationToken cancellationToken)
     {
-        Samples = [];
+        // Publish only complete successful acquisitions. A failed command must not erase the
+        // previous observations; the sampler bounds their age without renewing their timestamps.
         if (owners.Count == 0)
         {
             owners = await LoadContainerOwnersAsync(cancellationToken);
             if (owners.Count == 0)
             {
+                Samples = [];
                 return string.Empty;
             }
         }
@@ -70,18 +72,19 @@ internal sealed class DockerStatsExposition(
         // fail the call over a container that stopped since the last refresh, and — the real problem —
         // would hide the containers that started since, which are the only signal that the owner map
         // needs refreshing.
-        var stats = DockerStatsParser.Parse(await RunDockerOrEmptyAsync(
+        var stats = DockerStatsParser.Parse(await RunDockerAsync(
             ["stats", "--no-stream", "--format", "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}"],
             cancellationToken));
 
         if (stats.Count == 0)
         {
-            // Nothing to sample at all: every container has stopped, or docker is unavailable. Drop
+            // A successful empty result confirms there is nothing to sample. Drop
             // the map so the next tick goes back through the cheap `docker ps` and can take the
             // skip-sampling path above. Without this a stale non-empty map would keep the expensive
             // sampling call running every tick over a host with nothing to report — turning the
             // cheapest case into the most expensive one.
             owners = EmptyOwners;
+            Samples = [];
             return string.Empty;
         }
 
@@ -134,7 +137,7 @@ internal sealed class DockerStatsExposition(
         // absent", which is what the default instance's containers look like): a secondary-root Core
         // must not attribute the default root's containers to its own apps.
         var loaded = ParseContainerOwners(
-            await RunDockerOrEmptyAsync(
+            await RunDockerAsync(
                 ["ps", "--no-trunc", "--filter", "label=hosty.app.id", "--format",
                     "{{.Names}}\t{{.Label \"hosty.app.id\"}}\t{{.Label \"hosty.app.service\"}}\t{{.Label \"hosty.instance\"}}"],
                 cancellationToken),
@@ -194,17 +197,19 @@ internal sealed class DockerStatsExposition(
         return owners;
     }
 
-    private async Task<string> RunDockerOrEmptyAsync(IReadOnlyList<string> args, CancellationToken cancellationToken)
+    private async Task<string> RunDockerAsync(IReadOnlyList<string> args, CancellationToken cancellationToken)
     {
-        try
+        var result = await dockerRunner.RunAsync(args, cancellationToken: cancellationToken);
+        if (result.ExitCode != 0)
         {
-            var result = await dockerRunner.RunAsync(args, cancellationToken: cancellationToken);
-            return result.ExitCode == 0 ? result.StandardOutput : string.Empty;
+            // These commands contain no secret arguments. Bound stderr and flatten control
+            // characters so a daemon error remains useful without flooding multiline logs.
+            var error = result.StandardError.Trim();
+            if (error.Length > 1024) error = error[..1024] + "…";
+            error = string.Concat(error.Select(c => char.IsControl(c) ? ' ' : c));
+            throw new DockerUnavailableException($"docker {args[0]} exited with code {result.ExitCode}: {error}");
         }
-        catch (DockerUnavailableException)
-        {
-            return string.Empty;
-        }
+        return result.StandardOutput;
     }
 }
 

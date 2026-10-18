@@ -70,7 +70,7 @@ export function ShellSidebar({
   selectedSettings: string;
   onOpenSettings(key: string): void;
   onOpenApps: () => void;
-  onLaunchApp: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
+  onLaunchApp: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<boolean>;
   /**
    * Starts a stopped app from its own row. Undefined for a user who cannot start apps — Core refuses
    * them, so the control would only ever fail; the same rule the right panel's start action follows.
@@ -240,7 +240,7 @@ function AppNavigationItem({
   compact: boolean;
   busyAction: string | null;
   workspace: EmbeddedWorkspace | null;
-  onLaunch: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
+  onLaunch: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<boolean>;
   onStartApp?: (appId: string) => void;
   getStandaloneHref: (app: CoreApp, page: AppPageLink) => string;
 }) {
@@ -429,7 +429,7 @@ function CompactAppMenu({
   active: boolean;
   busyAction: string | null;
   workspace: EmbeddedWorkspace | null;
-  onLaunch: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
+  onLaunch: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<boolean>;
   getStandaloneHref: (app: CoreApp, page: AppPageLink) => string;
 }) {
   const menu = useCompactMenu();

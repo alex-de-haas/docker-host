@@ -173,7 +173,7 @@ export function AppDetailsDialog({
             onLoadImpact={onLoadRemovalImpact}
           />
         )}
-        {view === "logs" && <ConsoleLogsPanel app={app} coreOrigin={coreOrigin} />}
+        {view === "logs" && <ConsoleLogsPanel key={app.id} app={app} coreOrigin={coreOrigin} />}
       </SurfaceDialogContent>
     </SurfaceDialog>
   );
@@ -181,32 +181,36 @@ export function AppDetailsDialog({
 
 type ConsoleLogsState = { loading: boolean; error: string | null; text: string; services: LogsServiceSegment[] };
 
+async function fetchConsoleLogs(coreOrigin: string, appId: string, signal?: AbortSignal): Promise<LogsResponse> {
+  const response = await fetchCore(`${coreOrigin}/api/apps/${encodeURIComponent(appId)}/logs?tail=200`, {
+    credentials: "include",
+    signal,
+  });
+  redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+  if (!response.ok) {
+    throw new Error(await readCoreError(response));
+  }
+  return (await response.json()) as LogsResponse;
+}
+
 // Per-app console logs (docker logs) tail, opened from the Installed Apps actions menu. Served
 // on-demand by Core, so it works even when the telemetry backend is off — deliberately distinct from
 // the structured OTLP-logs stream in the Observability section. Multi-service apps get a tab per service.
+// Keyed by app id, so switching apps remounts it in the loading state.
 function ConsoleLogsPanel({ app, coreOrigin }: { app: CoreApp; coreOrigin: string }) {
-  const [state, setState] = useState<ConsoleLogsState>({ loading: false, error: null, text: "", services: [] });
+  const [state, setState] = useState<ConsoleLogsState>({ loading: true, error: null, text: "", services: [] });
   const [activeService, setActiveService] = useState<string | null>(null);
 
-  const loadLogs = useCallback(async (signal?: AbortSignal) => {
-    setState((current) => ({ ...current, loading: true, error: null }));
-    try {
-      const response = await fetchCore(`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/logs?tail=200`, {
-        credentials: "include",
-        signal,
-      });
-      redirectToCoreLoginIfAuthRequired(response, coreOrigin);
-      if (!response.ok) {
-        throw new Error(await readCoreError(response));
-      }
-      const payload = (await response.json()) as LogsResponse;
+  // State is written only in the promise callbacks; callers that reload set `loading` themselves.
+  const loadLogs = useCallback((signal?: AbortSignal) =>
+    fetchConsoleLogs(coreOrigin, app.id, signal).then((payload) => {
       const services = payload.services ?? [];
       setState({ loading: false, error: null, text: payload.text || "", services });
       setActiveService((current) =>
         current && services.some((segment) => segment.service === current) ? current : services[0]?.service ?? null,
       );
-    } catch (error) {
-      // A superseded request (app switched / dialog closed) aborts — leave the newer request's state.
+    }, (error: unknown) => {
+      // A superseded request (dialog closed) aborts — leave the newer request's state.
       if (error instanceof DOMException && error.name === "AbortError") {
         return;
       }
@@ -219,8 +223,7 @@ function ConsoleLogsPanel({ app, coreOrigin }: { app: CoreApp; coreOrigin: strin
         text: "",
         services: [],
       });
-    }
-  }, [app.id, coreOrigin]);
+    }), [app.id, coreOrigin]);
 
   // Abort an in-flight fetch when the app changes or the dialog closes, so a slow response for a
   // previous app can never overwrite the current one's logs.
@@ -241,7 +244,7 @@ function ConsoleLogsPanel({ app, coreOrigin }: { app: CoreApp; coreOrigin: strin
   return (
     <DialogBody className="flex min-h-0 flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="sm" onClick={() => void loadLogs()} disabled={state.loading}>
+        <Button variant="outline" size="sm" onClick={() => { setState((current) => ({ ...current, loading: true, error: null })); void loadLogs(); }} disabled={state.loading}>
           <RefreshCw className={cn("h-4 w-4", state.loading && "animate-spin")} />
           Refresh
         </Button>
@@ -551,7 +554,9 @@ function SettingsForm({
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    onConfigure(app, buildAppSettingsPayload(settings, draft), autostartDraft);
+    // Browser addresses are edited by the endpoint control with its own stale-address check.
+    // Resending hidden/read-only values here turns an ordinary save into an unreviewed rename.
+    onConfigure(app, buildAppSettingsPayload(appSettings, draft), autostartDraft);
   };
 
   return (
@@ -630,6 +635,17 @@ type MountRow = { source: "global" | "local"; globalMountName: string; label: st
 const MOUNT_CONTROL_CLASS =
   "flex h-9 rounded-md border border-input bg-transparent px-2 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
+function mountRowsFromSlots(slots: CoreMountSlot[]): Record<string, MountRow[]> {
+  return Object.fromEntries(slots.map((slot) => [
+    slot.key,
+    slot.bindings.map((binding) => ({
+      source: binding.source === "global" ? "global" : "local",
+      globalMountName: binding.globalMountName ?? "",
+      label: binding.label,
+      hostPath: binding.hostPath,
+    } satisfies MountRow)),
+  ]));
+}
 function MountsForm({
   app,
   busyAction,
@@ -647,21 +663,14 @@ function MountsForm({
   const slotsSignature = JSON.stringify(
     slots.map((slot) => [slot.key, slot.bindings.map((binding) => [binding.source ?? "local", binding.globalMountName ?? "", binding.label, binding.hostPath])]),
   );
-  const [rows, setRows] = useState<Record<string, MountRow[]>>({});
-
-  useEffect(() => {
-    setRows(Object.fromEntries(slots.map((slot) => [
-      slot.key,
-      slot.bindings.map((binding) => ({
-        source: binding.source === "global" ? "global" : "local",
-        globalMountName: binding.globalMountName ?? "",
-        label: binding.label,
-        hostPath: binding.hostPath,
-      } satisfies MountRow)),
-    ])));
-    // slotsSignature captures app.mounts contents so user edits are not reset on every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [app.id, slotsSignature]);
+  // Rows reset when the app or its saved mounts change (not on every render, so edits survive).
+  const rowsKey = `${app.id}\n${slotsSignature}`;
+  const [rows, setRows] = useState<Record<string, MountRow[]>>(() => mountRowsFromSlots(slots));
+  const [loadedRowsKey, setLoadedRowsKey] = useState(rowsKey);
+  if (loadedRowsKey !== rowsKey) {
+    setLoadedRowsKey(rowsKey);
+    setRows(mountRowsFromSlots(slots));
+  }
 
   const globalByName = useMemo(() => new Map(globalMounts.map((mount) => [mount.name, mount])), [globalMounts]);
 

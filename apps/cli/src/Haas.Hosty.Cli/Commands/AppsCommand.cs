@@ -1,5 +1,6 @@
 namespace Haas.Hosty.Cli.Commands;
 
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Haas.Hosty.Cli.Configuration;
 using Spectre.Console;
@@ -10,6 +11,9 @@ internal sealed partial class AppsCommand(CommandContext context)
         PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
+    [JsonSerializable(typeof(AppDevelopmentGuideResponse))]
+    [JsonSerializable(typeof(AppDevRequest))]
+    [JsonSerializable(typeof(JsonElement))]
     [JsonSerializable(typeof(AppsResponse))]
     [JsonSerializable(typeof(AppHealthSummary))]
     [JsonSerializable(typeof(AppServiceHealthSummary))]
@@ -55,6 +59,7 @@ internal sealed partial class AppsCommand(CommandContext context)
 
         return args[0] switch
         {
+            "guide" => await GuideAsync(args[1..]),
             "list" => await ListAsync(args[1..]),
             "install" => await InstallAsync(args[1..]),
             "autostart" => await AutostartAsync(args[1..]),
@@ -64,6 +69,9 @@ internal sealed partial class AppsCommand(CommandContext context)
             "update-plan" => await UpdatePlanAsync(args[1..]),
             "update" => await UpdateAsync(args[1..]),
             "switch-runtime-plan" => await SwitchRuntimePlanAsync(args[1..]),
+            "dev-status" => await DevModeAsync(args[1..], "status"),
+            "dev-plan" => await DevModeAsync(args[1..], "plan"),
+            "dev-apply" => await DevModeAsync(args[1..], "apply"),
             "switch-runtime" => await SwitchRuntimeAsync(args[1..]),
             "remove" => await RemoveAsync(args[1..]),
             "backup" => await BackupAsync(args[1..]),
@@ -80,6 +88,44 @@ internal sealed partial class AppsCommand(CommandContext context)
             "open" => await OpenAsync(args[1..]),
             _ => throw new CommandUsageException($"Unknown apps command '{args[0]}'.", Usage),
         };
+    }
+
+    internal sealed record GuideTopic(string Id, string Title);
+    internal sealed record AppDevelopmentGuideResponse(string Revision, string Text, string CoreVersion,
+        string ManifestSchema, string Topic, IReadOnlyList<GuideTopic> Topics);
+
+    private async Task<int> GuideAsync(string[] args)
+    {
+        string? topic = null;
+        var format = "text";
+        for (var index = 0; index < args.Length; index++)
+        {
+            switch (args[index])
+            {
+                case "--topic": topic = RequireOptionValue(args, ref index, "--topic"); break;
+                case "--format": format = RequireOptionValue(args, ref index, "--format"); break;
+                default: throw new CommandUsageException($"Unknown apps guide argument '{args[index]}'.", Usage);
+            }
+        }
+        if (format is not "text" and not "json")
+            throw new CommandUsageException("apps guide --format must be text or json.", Usage);
+        using var core = await OpenCoreAsync();
+        var result = await core.GetAsync<AppDevelopmentGuideResponse>("apps/development-guide" +
+            (topic is null ? "" : "?topic=" + Uri.EscapeDataString(topic)));
+        if (result is null)
+        {
+            context.Error.WriteLine("Hosty Core returned an empty development guide.");
+            return 1;
+        }
+        var output = context.Console.Profile.Out.Writer;
+        if (format == "json") output.WriteLine(CliJson.Serialize(result));
+        else
+        {
+            output.WriteLine($"Core {result.CoreVersion} | Guide {result.Revision} | Manifest {result.ManifestSchema} | Topic {result.Topic}");
+            output.WriteLine(result.Text);
+            output.WriteLine("Topics: " + string.Join(", ", result.Topics.Select(t => t.Id + " (" + t.Title + ")")));
+        }
+        return 0;
     }
 
     private async Task<int> ListAsync(string[] args)
@@ -169,6 +215,35 @@ internal sealed partial class AppsCommand(CommandContext context)
             ManifestPath: options.ManifestPath,
             SelectedRuntime: options.SelectedRuntime));
         RenderLifecycle(response);
+        return 0;
+    }
+
+    internal sealed record AppDevRequest(string RequestId, string Action, string? TargetRuntime = null,
+        string? WorktreeId = null, string? PlanDigest = null, bool AcceptDataChanges = false);
+
+    private async Task<int> DevModeAsync(string[] args, string kind)
+    {
+        if (args.Length == 0) throw new CommandUsageException("Supply an app id.", Usage);
+        string? requestId = null, action = null, runtime = null, tree = null, digest = null;
+        var acceptData = false;
+        for (var i = 1; i < args.Length; i++)
+            switch (args[i])
+            {
+                case "--request-id": requestId = RequireOptionValue(args, ref i, "--request-id"); break;
+                case "--action": action = RequireOptionValue(args, ref i, "--action"); break;
+                case "--runtime": runtime = RequireOptionValue(args, ref i, "--runtime"); break;
+                case "--worktree": tree = RequireOptionValue(args, ref i, "--worktree"); break;
+                case "--plan-digest": digest = RequireOptionValue(args, ref i, "--plan-digest"); break;
+                case "--accept-data-changes": acceptData = true; break;
+                default: throw new CommandUsageException($"Unknown dev-mode argument '{args[i]}'.", Usage);
+            }
+        if (kind != "status" && (!Guid.TryParseExact(requestId, "D", out _) || action is not ("enter" or "return" or "restart") || kind == "apply" && string.IsNullOrEmpty(digest)))
+            throw new CommandUsageException("Supply --action and a stable UUID --request-id; apply also needs the reviewed --plan-digest. Preserve all arguments after uncertainty.", Usage);
+        using var core = await OpenCoreAsync();
+        var route = $"apps/{Uri.EscapeDataString(args[0])}/dev-mode";
+        var result = kind == "status" ? await core.GetAsync<JsonElement>(route) :
+            await core.PostAsync<JsonElement>(route + "/" + kind, new AppDevRequest(requestId!, action!, runtime, tree, digest, acceptData));
+        context.Console.Profile.Out.Writer.WriteLine(result.GetRawText());
         return 0;
     }
 
@@ -1701,6 +1776,9 @@ internal sealed partial class AppsCommand(CommandContext context)
           restart <app-id>
           update-plan <app-id> [--manifest <http(s)-manifest-url|manifest-path|app-directory>] [--runtime <key>]
           update <app-id> --plan-digest <digest> [--manifest <http(s)-manifest-url|manifest-path|app-directory>] [--runtime <key>]
+          dev-status <app-id>
+          dev-plan <app-id> --action <enter|restart|return> --request-id <uuid> [--runtime <key>] [--worktree <id>] [--accept-data-changes]
+          dev-apply <app-id> --action <enter|restart|return> --request-id <uuid> --plan-digest <digest> [--runtime <key>] [--worktree <id>] [--accept-data-changes]
           switch-runtime-plan <app-id> --runtime <key>
           switch-runtime <app-id> --runtime <key> --plan-digest <digest>
           remove <app-id> [--delete-data] [--delete-backups] [--delete-source] [--keep-state] [--ignore-runtime-errors]
@@ -1719,6 +1797,7 @@ internal sealed partial class AppsCommand(CommandContext context)
           source-resolve <app-id> [--branch <name>|--tag <tag>|--commit <sha>] [--fetch] [--format table|json]
           source-override <app-id> --path <worktree> [--commit <sha>] [--format table|json]
           source-clear-override <app-id> [--format table|json]
+          guide [--topic <id>] [--format text|json]
           identity <app-id> --user <email-or-id> [--format token|header|env|json]
           open <app-id> [--mode shell|standalone] [--redirect-uri <uri>] [--format url|json]
 

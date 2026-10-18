@@ -47,7 +47,6 @@ export function AppContextPicker({ session, busy, running, onChange, onBusyChang
       if (!cancelled) { setLabels(Object.fromEntries(found.map(app => [app.id, app]))); setLabelsUnavailable(false); }
     }).catch(() => { if (!cancelled) { setLabels({}); setLabelsUnavailable(true); } });
     if (open) {
-      setLoading(true);
       const timer = setTimeout(() => {
         void listContextApps(search).then(page => {
           if (cancelled || generation.current !== current) return;
@@ -62,7 +61,8 @@ export function AppContextPicker({ session, busy, running, onChange, onBusyChang
 
   const changeOpen = (nextOpen: boolean) => {
     if (saving || (nextOpen && busy)) return;
-    if (nextOpen) { setSelected(ids); setRevision(session.appContextRevision ?? 0); setSearch(""); }
+    // Loading starts with the change that triggers a roster read, not inside the effect that runs it.
+    if (nextOpen) { setSelected(ids); setRevision(session.appContextRevision ?? 0); setSearch(""); setLoading(true); }
     setOpen(nextOpen);
   };
   useImperativeHandle(ref, () => ({ open: () => changeOpen(true) }));
@@ -119,7 +119,7 @@ export function AppContextPicker({ session, busy, running, onChange, onBusyChang
                 onClick={() => setSelected(current => current.filter(value => value !== id))}><X className="size-3" /></button>
             </Badge>)}
           </div>}
-          <Input aria-label="Search apps" placeholder="Search installed apps…" value={search} onChange={event => setSearch(event.target.value)} />
+          <Input aria-label="Search apps" placeholder="Search installed apps…" value={search} onChange={event => { setSearch(event.target.value); setLoading(true); }} />
           <fieldset className="flex min-h-0 flex-col gap-1 overflow-y-auto" style={{ maxHeight: "18rem" }}>
             <legend className="sr-only">Installed apps</legend>
             {loading ? <div role="status" className="flex items-center gap-2 p-2 text-muted-foreground"><Loader2 className="size-4 animate-spin" />Loading apps…</div> : apps.map(app => <label key={app.id} className="flex cursor-pointer items-center gap-3 rounded-md p-2 hover:bg-muted">
@@ -134,7 +134,7 @@ export function AppContextPicker({ session, busy, running, onChange, onBusyChang
             void listContextApps(search, next).then(page => { if (generation.current === current) { setApps(previous => [...previous, ...page.apps]); setNext(page.nextOffset); } })
               .catch(cause => { if (generation.current === current) setRosterError(String(cause.message ?? cause)); }).finally(() => { if (generation.current === current) setLoading(false); });
           }}>Load more</Button>}
-          {(error || rosterError || labelsUnavailable) && <div className="flex items-center gap-2"><p role="alert" className="text-xs text-destructive">{error ?? rosterError ?? "App context is unavailable."}</p><Button type="button" variant="ghost" size="sm" onClick={() => { setError(null); setRetry(value => value + 1); }}>Retry</Button></div>}
+          {(error || rosterError || labelsUnavailable) && <div className="flex items-center gap-2"><p role="alert" className="text-xs text-destructive">{error ?? rosterError ?? "App context is unavailable."}</p><Button type="button" variant="ghost" size="sm" onClick={() => { setError(null); setLoading(true); setRetry(value => value + 1); }}>Retry</Button></div>}
           <div className="flex shrink-0 justify-end gap-2">
             <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={close}>Cancel</Button>
             <Button type="button" size="sm" disabled={saving || busy} onClick={() => void save(selected, revision)}>{saving ? "Applying…" : "Apply"}</Button>

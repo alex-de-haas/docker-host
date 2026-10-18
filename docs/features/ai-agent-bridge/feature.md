@@ -1,6 +1,6 @@
 ---
 created: 2026-08-14
-updated: 2026-10-05
+updated: 2026-10-10
 summary: The umbrella model for Hosty's AI integration, covering component boundaries, execution profiles, token mechanics and the decision log.
 ---
 
@@ -55,24 +55,25 @@ flowchart LR
 Arrows from Core to system apps and runtime apps are lifecycle ownership, not request orchestration.
 The gateway's arrow to app MCP is the shipped path of
 [delegated-token-exchange](../delegated-token-exchange/feature.md): providers discovered at session
-start, one branched token per app, and a per-session forwarding proxy carrying the calls. One planned
-data path is still deliberately absent — apps calling a gateway model API (rollout step 10) — because
-it is not built ([plan.md](plan.md)).
+start, one branched token per app, and a per-session forwarding proxy carrying the calls.
+[Provider consumption](../provider-consumption/feature.md) separately supports app-to-speech calls
+and assistant handoffs. There is no general app-facing model/agent result API; its contract belongs
+to the [agent provider Draft](../agent-provider-interface/plan.md).
 
 Core is responsible for runtime lifecycle, manifest and app-state storage, user identity, app
-assignment and token issuance, interface discovery, read-only control-plane MCP tools, and audit and
+assignment and token issuance, interface discovery, scoped control-plane MCP operations, and audit and
 revocation primitives. Everything else belongs to an app.
 
-The `Ext` path is reachable today — the endpoints exist and were driven live over HTTP — but no stock
-MCP client has connected to either endpoint yet. That gap is rollout
+Stock Claude Code and Codex clients have exercised Core and app MCP paths, and external Core OAuth
+has been verified. The dated evidence and transport distinctions are recorded in rollout
 [step 6](plan.md#step-6--stock-client-validation).
 
 ## Execution Profiles
 
-A chat session runs in one of two execution profiles, and the actor's Host role selects it. Roles
-never filter tools inside a shared full-access agent: an agent that has shell and filesystem access
-cannot be constrained by an MCP allowlist or a prompt, so the enforcement boundary is the execution
-environment plus the credentials it holds.
+Harness currently exposes only the administrator operator profile. Its Normal/Autonomous approval
+mode does not create an ordinary-user execution profile. An agent with native shell and filesystem
+access is not constrained by an MCP allowlist or a prompt; its effective execution environment and
+credentials determine its reach.
 
 **Operator profile (admin only)** — shipped. A host-resident CLI agent harness supervised by the
 gateway, with shell and filesystem access on the host: it reads live logs and telemetry, diagnoses
@@ -82,9 +83,10 @@ native tool policy remains adapter-specific. See
 [ai-gateway](../ai-gateway/feature.md) for the harnesses, the approval mechanics and the Shell
 surface.
 
-**User profile (non-admin)** — not built. The design is rollout
-[step 9](plan.md#step-9--the-user-profile); the credential dependency it was blocked on,
-[delegated-token-exchange](../delegated-token-exchange/feature.md), has since shipped.
+**User profile (non-admin)** — absent. Harness rejects ordinary-user sessions and provider handoffs.
+The [isolated user-session plan](../user-agent-sessions/plan.md) owns the deferred design;
+[delegated-token-exchange](../delegated-token-exchange/feature.md) is an existing building block,
+not evidence of an isolated user runtime.
 
 The first shipped assistant is admin-only because every scenario driving the feature — realtime
 diagnosis, log investigation, app fixes, update installation — is an operator scenario.
@@ -95,15 +97,15 @@ The operator profile is often justified on the grounds that it grants no privile
 does not already have over SSH. **That equivalence does not settle the matter, and the claim is
 recorded here so it is not reconstructed from silence later.** The SSH comparison assumes the
 administrator decides what runs; an operator session's input includes live logs and app data, which
-are untrusted content that can carry instructions. The approval gate is then the only boundary, and
-it rests on a human reading a proposed command rather than its consequences — behind an approved
-shell call the `hosty` CLI has unconditional host-operator power over the local control channel, with
-no second rubric. Restricting the assistant to administrators does not move this: the risk lives
-inside the admin's own session.
+are untrusted content that can carry instructions. Native approval prompts, where enabled, rely on
+a human reading a proposed command rather than its consequences. Autonomous deliberately removes
+those prompts. A shell call can reach the `hosty` CLI's host-operator authority over the local control
+channel; Core API grants do not restrict that OS-level path. Restricting the assistant to
+administrators does not move this: the risk lives inside the admin's own session.
 
-Containment — a docker runtime profile by default with `localCommand` as an explicit opt-in — is the
-fix. It is designed in [assistant runtime containment](../assistant-runtime-containment/plan.md)
-and deliberately deferred: an accepted risk, not an absent one.
+There is no enforced boundary between native agent sessions. The deferred
+[agent session containment plan](../assistant-runtime-containment/plan.md) owns that work; a shared
+Docker profile for Harness alone does not provide it. This remains an accepted risk.
 
 ## Manifest Interfaces And Registry
 
@@ -160,19 +162,21 @@ direct.
 
 | Token | Validator | Mechanics |
 | --- | --- | --- |
-| CLI login and external agent tokens presented to Core | Core itself | Opaque value plus a server-side record; instant revocation, no signing. [access-tokens](../access-tokens/feature.md) |
+| Access tokens presented to Core, including external agent credentials | Core itself | Opaque value plus a server-side record; instant revocation and optional audience/scopes. [scoped-access-tokens](../scoped-access-tokens/feature.md) |
 | Browser app identity tokens presented to Core for revalidation | Core itself | Opaque app session grant plus a server-side record. |
 | Delegated tokens presented to apps and system apps | The receiving app, locally | Signed ECDSA P-256, 5-minute TTL, public half injected as `HOSTY_DELEGATED_TOKEN_PUBLIC_KEY`. [ai-gateway](../ai-gateway/feature.md) |
+| Provider invocation tokens presented to confirmed providers | Core introspection through the receiving provider | Separate signed two-minute credentials bound to caller/provider installations and permission revisions. [provider-consumption](../provider-consumption/feature.md) |
 
-Shell's Core session cookie never leaves the browser↔Core pair. When a UI client needs a system app it
-exchanges its session for a delegated token with that app as audience and calls the app directly.
-Every issue re-runs the full identity access policy, so revocation propagates within one TTL and
-refresh is simply calling again.
+Shell's Core session cookie never leaves the browser↔Core pair. Browser app entry uses Core's
+[code exchange](../app-code-exchange/feature.md) and an app-owned session; delegated tokens remain
+a distinct short-lived path. Issuance rechecks access, and locally validated delegated tokens remain
+valid up to their TTL unless the receiving contract performs additional online checks.
 
-**Core has no token scopes.** An access token carries its approver's full role, which is why Core MCP
-requires an admin credential and ships read-only tools only. Every scoped-token idea in
-[plan.md](plan.md#step-7--the-hosty-mcp-connector) — discovery-only connector credentials, read-only
-monitoring, per-tool agent scopes — depends on scopes existing first.
+Core supports audience-bound [scoped access tokens](../scoped-access-tokens/feature.md).
+[Core MCP](../core-mcp/feature.md) distinguishes read access from explicitly authorized lifecycle,
+update, source and Core-restart operations. A scope narrows a credential; it does not grant an
+ordinary user administrator status. Core applies assignments to system and ordinary apps alike;
+Harness independently requires an administrator for its conversation API.
 
 ### Core authenticates, the app authorizes
 
@@ -223,8 +227,8 @@ These bound every step of the rollout, built or not:
   filesystem secrets in model context. (An operator session can read secrets from disk through its
   shell access; that is admin-equivalent by design and does not license handing credentials to the
   model.)
-- Non-admin sessions get no shell, no file tools, no arbitrary HTTP and no database writes — MCP with
-  the acting user's delegated tokens is their entire tool surface.
+- Harness admits no non-admin sessions. The retained MCP-only user-profile requirements and isolation
+  gate live in [their plan](../user-agent-sessions/plan.md).
 - Browser and UI automation is not the integration path for Hosty-aware apps.
 - Development work never edits live runtime app data.
 - Core never owns runtime app domain actions; apps own their MCP endpoints, tools, permission checks
@@ -255,6 +259,8 @@ wonder why.
 - **Core MCP is control-plane only** (2026-07-11). First batch is read-only discovery plus
   admin-scoped read-only observability; no mutation tools, because a mutation reachable by any
   credential-holding client would bypass the harness approval gate entirely.
+  The read-only rollout restriction was superseded by explicit scoped mutations in
+  [Core MCP](../core-mcp/feature.md); the control-plane ownership boundary still applies.
 - **App-owned MCP is the only v1 action contract** (2026-08-08) — stronger than the original
   recommendation. An optional Hosty HTTP action contract is not designed or built until a concrete
   app asks for it.
@@ -271,8 +277,12 @@ wonder why.
   receiving app verifies locally.
 - **Every write is approval-gated in v1** (2026-08-08), with allowlists deferred to a second
   iteration.
+  Superseded for current Harness MCP calls by [per-tool policy](../assistant-approval-rules/feature.md)
+  and explicitly selected [session autonomy](../assistant-session-autonomy/feature.md).
 - **External clients get no write scopes** (2026-08-08) until an audit callback/reporting contract
   exists.
+  Later scoped Core operations use Core-side authorization and audit; ordinary app/facade MCP
+  credentials remain read-only. See [scoped access tokens](../scoped-access-tokens/feature.md).
 - **Ambiguous app targets are not a platform mechanism** (2026-08-08). The rule — prefer apps
   declaring `mcp`, ask the user when several are plausible — lives in the Hosty skill.
 - **No voice in the first implementation** (2026-08-08). The session API is text-first; speech
@@ -290,6 +300,10 @@ wonder why.
   existing dev-mode workflows.
 - **Development requests from non-admins are declined** (2026-08-08) and pointed at an administrator;
   the user profile has no development surface at all.
+- **Deferred work has explicit owners** (2026-10-10). The owner retains isolated ordinary-user
+  conversations and independently provided agents/models; their plans own the unbuilt contracts.
+  Workspace, publication, Sandbox and development-session features replace the separate Bridge D12.
+  See [vision decisions 28–30](../../vision.md) and the [rollout ownership map](plan.md).
 
 ## Testing Expectations
 

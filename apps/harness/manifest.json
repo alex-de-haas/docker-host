@@ -3,7 +3,7 @@
   "id": "hosty.harness",
   "name": "Hosty Harness",
   "description": "Host-resident operator assistant with managed Claude and Codex connections, chat and settings UI.",
-  "version": "0.47.1",
+  "version": "0.58.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -116,6 +116,28 @@
           "attachments"
         ]
       }
+    ],
+    "translation": [
+      {
+        "key": "codex",
+        "endpoint": "http",
+        "path": "/api/translation/v1/codex",
+        "version": 1,
+        "capabilities": [
+          "text",
+          "markdown"
+        ]
+      },
+      {
+        "key": "claude",
+        "endpoint": "http",
+        "path": "/api/translation/v1/claude",
+        "version": 1,
+        "capabilities": [
+          "text",
+          "markdown"
+        ]
+      }
     ]
   },
   "settings": [
@@ -125,7 +147,7 @@
       "default": "30",
       "required": false,
       "label": "Transcript retention (days)",
-      "description": "Sessions and transcripts older than this are deleted by the daily cleanup sweep."
+      "description": "Initial ordinary-chat retention. Harness Settings → Instructions and retention overrides this value and separately controls verified completed workspaces. Unfinished work never expires."
     }
   ],
   "capabilities": [
@@ -138,14 +160,16 @@
   "ui": {
     "entrypoint": {
       "endpoint": "http",
-      "path": "/settings"
+      "path": "/development"
     },
     "settings": {
       "endpoint": "http",
       "path": "/settings"
     },
+    "navigation": [{ "label": "Harness", "endpoint": "http", "path": "/development" }],
     "panels": [
       {
+        "id": "assistant",
         "label": "Assistant",
         "endpoint": "http",
         "path": "/assistant",
@@ -154,20 +178,27 @@
     ]
   },
   "provides": [
-    "assistant"
+    "assistant",
+    "translation"
   ],
   "corePermissions": [
     "apps.read",
+    "apps.workspaces.read",
     "apps.skills.read",
     "apps.sources.full"
   ],
   "optionalCorePermissions": [
+    "apps.workspaces.cleanup",
     "providers.speech-to-text",
     "core.read",
     "core.logs",
     "apps.logs",
     "apps.lifecycle",
     "apps.install",
-    "core.lifecycle"
+    "core.lifecycle",
+    "apps.sandboxes.read",
+    "apps.sandboxes.manage",
+    "core.environments.read",
+    "core.environments.manage"
   ]
 }

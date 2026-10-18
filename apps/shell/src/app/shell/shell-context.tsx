@@ -67,7 +67,7 @@ export type ShellActionsContextValue = {
   shellAppId: string;
   refresh: () => Promise<void>;
   sendCsrfJson: (endpoint: string, body?: unknown, method?: string) => Promise<Response>;
-  launchAppPage: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
+  launchAppPage: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<boolean>;
   getStandaloneAppHref: (app: CoreApp, page: AppPageLink) => string;
   // Opens the direct-manifest install review dialog. Feed intents use the separate iframe handoff
   // and Core's digest-bound feed plan path.

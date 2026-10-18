@@ -1,3 +1,4 @@
+import type { AppContinuity } from "@hosty-sdk/app/browser-auth";
 import {
   getAppId,
   getCoreOrigin,
@@ -38,6 +39,7 @@ export interface TelemetryIdentity {
   expiresAt: string | null;
   activeUntil?: string | null;
   activityRequired?: boolean;
+  continuity?: AppContinuity;
   error: { code: string; message: string; status: number | null } | null;
 }
 
@@ -73,6 +75,7 @@ export async function getTelemetryIdentity(headersList: HeaderReader): Promise<T
     expiresAt: resolution.identity.expiresAt,
     activeUntil: resolution.identity.activeUntil,
     activityRequired: resolution.identity.activityRequired,
+    continuity: resolution.identity.continuity,
     error: null,
   };
 }

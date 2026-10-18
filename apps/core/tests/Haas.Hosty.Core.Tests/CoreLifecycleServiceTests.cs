@@ -1716,6 +1716,71 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ApplyRuntimeSwitchAsync_WhenTheRequestDisconnectsDuringStop_CompletesTheSwitch()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteSwitchableDockerManifestAsync()));
+        await fixture.Service.StartAsync("com.example.notes");
+        var plan = await fixture.Service.CreateRuntimeSwitchPlanAsync("com.example.notes", new("docker-alt"));
+        using var request = new CancellationTokenSource();
+        fixture.Adapter.StopProbe = () =>
+        {
+            request.Cancel();
+            return Task.CompletedTask;
+        };
+
+        var result = await fixture.Service.ApplyRuntimeSwitchAsync("com.example.notes", new("docker-alt", plan.PlanDigest), request.Token);
+
+        Assert.Equal("runtime-switched", result.Status);
+        Assert.Equal("running", result.App?.RuntimeState);
+        Assert.Equal("docker-alt", result.App?.SelectedRuntime);
+        Assert.Equal("docker-alt", (await fixture.Apps.GetAppAsync("com.example.notes"))?.SelectedRuntime);
+        Assert.Equal("pre-runtime-switch", result.Backup?.Reason);
+        Assert.Equal(2, fixture.Adapter.StartCount);
+        Assert.Equal(1, fixture.Adapter.StopCount);
+    }
+
+    [Fact]
+    public async Task ApplyRuntimeSwitchAsync_WhenTheRequestIsAlreadyCancelled_DoesNotStopTheApp()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteSwitchableDockerManifestAsync()));
+        await fixture.Service.StartAsync("com.example.notes");
+        var plan = await fixture.Service.CreateRuntimeSwitchPlanAsync("com.example.notes", new("docker-alt"));
+        using var request = new CancellationTokenSource();
+        request.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            fixture.Service.ApplyRuntimeSwitchAsync("com.example.notes", new("docker-alt", plan.PlanDigest), request.Token));
+
+        Assert.Equal(0, fixture.Adapter.StopCount);
+        var app = (await fixture.Apps.GetAppAsync("com.example.notes"))!;
+        Assert.Equal("running", app.RuntimeState);
+        Assert.Equal("docker", app.SelectedRuntime);
+    }
+
+    [Fact]
+    public async Task ApplyRuntimeSwitchAsync_WhenCoreShutsDownDuringStop_CancelsTheSwitch()
+    {
+        using var lifetime = new RestartTestLifetime();
+        var fixture = await LifecycleFixture.CreateAsync(hostLifetime: lifetime);
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteSwitchableDockerManifestAsync()));
+        await fixture.Service.StartAsync("com.example.notes");
+        var plan = await fixture.Service.CreateRuntimeSwitchPlanAsync("com.example.notes", new("docker-alt"));
+        fixture.Adapter.StopProbe = () =>
+        {
+            lifetime.StopApplication();
+            return Task.CompletedTask;
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            fixture.Service.ApplyRuntimeSwitchAsync("com.example.notes", new("docker-alt", plan.PlanDigest)));
+
+        Assert.Equal(1, fixture.Adapter.StartCount);
+        Assert.Equal("docker", (await fixture.Apps.GetAppAsync("com.example.notes"))?.SelectedRuntime);
+    }
+
+    [Fact]
     public async Task ApplyRuntimeSwitchAsync_PreservesAssignedHostPortOverride()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -1743,8 +1808,10 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal("7171", app?.Settings.GetValueOrDefault("HOSTY_PORT_HTTP")?.Value);
     }
 
-    [Fact]
-    public async Task ApplyRuntimeSwitchAsync_RollsBackSelectedRuntimeWhenRestartFails()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ApplyRuntimeSwitchAsync_RollsBackSelectedRuntimeWhenRestartFails(bool disconnectDuringStop)
     {
         var fixture = await LifecycleFixture.CreateAsync();
         var manifest = await fixture.WriteSwitchableDockerManifestAsync();
@@ -1754,6 +1821,12 @@ public sealed partial class CoreLifecycleServiceTests
             "local-data");
         await fixture.Service.StartAsync("com.example.notes");
         fixture.Adapter.FailOnStartCount = 2;
+        using var request = new CancellationTokenSource();
+        fixture.Adapter.StopProbe = () =>
+        {
+            if (disconnectDuringStop) request.Cancel();
+            return Task.CompletedTask;
+        };
 
         var plan = await fixture.Service.CreateRuntimeSwitchPlanAsync(
             "com.example.notes",
@@ -1761,7 +1834,7 @@ public sealed partial class CoreLifecycleServiceTests
         var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
             fixture.Service.ApplyRuntimeSwitchAsync(
                 "com.example.notes",
-                new AppRuntimeSwitchApplyRequest("docker-alt", plan.PlanDigest)));
+                new AppRuntimeSwitchApplyRequest("docker-alt", plan.PlanDigest), request.Token));
         var app = await fixture.Apps.GetAppAsync("com.example.notes");
         var backup = Assert.Single(await fixture.Backups.ListBackupsAsync("com.example.notes"));
 
@@ -1904,6 +1977,32 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal("running", result.App?.RuntimeState);
         Assert.Equal("degraded", result.App?.Health?.Status);
         Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10), $"start took {stopwatch.Elapsed}");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StartOrRestart_WhenEnvironmentCapacityIsExhausted_SettlesTheAppAndAllowsRetry(bool restart)
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        if (restart) await fixture.Service.StartAsync("com.example.notes");
+        fixture.Adapter.StartProbe = () => throw new SandboxException("environment_application_capacity", "Environment capacity exhausted.");
+
+        var error = await Assert.ThrowsAsync<SandboxException>(() => restart
+            ? fixture.Service.RestartAsync("com.example.notes")
+            : fixture.Service.StartAsync("com.example.notes"));
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("environment_application_capacity", error.Code);
+        Assert.Equal(409, error.Status);
+        Assert.Equal(AppRuntimeStates.Stopped, app!.RuntimeState);
+        Assert.Equal("failed", app.OperationStatus);
+        Assert.Equal(error.Message, app.LastError);
+
+        fixture.Adapter.StartProbe = null;
+        var retried = await fixture.Service.StartAsync("com.example.notes");
+        Assert.Equal(AppRuntimeStates.Running, retried.App!.RuntimeState);
+        Assert.Null(retried.App.LastError);
     }
 
     [Fact]
@@ -7142,9 +7241,12 @@ public sealed partial class CoreLifecycleServiceTests
             IHealthProbe? healthProbe = null,
             TimeSpan? readinessTimeout = null,
             IAppRuntimeAdapter? localRuntimeAdapter = null,
-            IHostApplicationLifetime? hostLifetime = null)
+            IHostApplicationLifetime? hostLifetime = null,
+            bool shortPaths = false)
         {
-            var root = Path.Combine(Path.GetTempPath(), $"hosty-core-lifecycle-tests-{Guid.NewGuid():N}");
+            // Git for Windows also bounds linked-worktree metadata paths; keep deep fixtures short.
+            var root = shortPaths ? Directory.CreateTempSubdirectory("hp-").FullName
+                : Path.Combine(Path.GetTempPath(), $"hosty-core-lifecycle-tests-{Guid.NewGuid():N}");
             Directory.CreateDirectory(root);
             await File.WriteAllTextAsync(Path.Combine(root, ".keep"), "test");
             var paths = new CoreDataPaths(
@@ -7197,12 +7299,12 @@ public sealed partial class CoreLifecycleServiceTests
             return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localAdapter, localProcesses, clock, coreSettings, publications);
         }
 
-        public CoreLifecycleService RecreateService(CorePublicOriginResolver? coreOrigins = null)
+        public CoreLifecycleService RecreateService(CorePublicOriginResolver? coreOrigins = null, PrivateSourceService? privateSources = null)
         {
             var registry = new AppRegistryStore(Paths);
             return new CoreLifecycleService(Paths, registry, Manifests, new AppBackupService(Paths, Clock),
                 new AppSourceService(Paths, registry, Clock), [Adapter, LocalAdapter], new NoopIngressController(),
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, clock: Clock, coreOrigins: coreOrigins);
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, clock: Clock, coreOrigins: coreOrigins, privateSources: privateSources);
         }
 
         // Shared-mounts library over the same data root the lifecycle service reads from.
@@ -7682,8 +7784,12 @@ public sealed partial class CoreLifecycleServiceTests
             return new AppRuntimeOperationResult(StopRuntimeState);
         }
 
-        public Task<AppRuntimeOperationResult> RemoveAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
-            => Task.FromResult(new AppRuntimeOperationResult("removed"));
+        public Func<Task>? RemoveProbe { get; set; }
+        public async Task<AppRuntimeOperationResult> RemoveAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
+        {
+            if (RemoveProbe is { } probe) await probe();
+            return new AppRuntimeOperationResult("removed");
+        }
 
         public Task<AppRuntimeLogsResult> GetLogsAsync(RuntimeLifecycleContext context, int tail, CancellationToken cancellationToken = default)
         {

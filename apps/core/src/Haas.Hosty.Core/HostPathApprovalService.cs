@@ -49,6 +49,10 @@ internal sealed class HostPathApprovalService(CoreDataPaths paths, AppRegistrySt
                 }
                 if (app.PrivateSources is not null)
                     await (privateSources ?? throw PrivateSourceService.Denied()).ValidateAsync(app.PrivateSources, ct);
+                var sourceReview = await new AppSourceSafety(paths, apps).ReviewAsync(id, false, ct);
+                fingerprint.Add(sourceReview.Fingerprint);
+                details.AddRange(sourceReview.Details);
+                details.Add("Changing source selects a runtime folder. It does not move, overwrite or delete the previous source or retarget existing worktrees.");
                 var real = await policy.OverrideAsync(app, source.Path, ct);
                 var manifestPath = Path.Combine(real, app.SourceState?.ManifestSubpath ?? "");
                 var selection = await manifests.LoadAsync(manifestPath, app.SelectedRuntime, ct,

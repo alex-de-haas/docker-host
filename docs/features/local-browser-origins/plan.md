@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-09-30
-updated: 2026-10-08
+updated: 2026-10-10
 summary: Every local browser workflow works without a domain, DNS or configured public origin.
 components: [apps/core, apps/shell, packages/app-sdk, apps/harness]
 ---
@@ -193,7 +193,7 @@ revalidation and parent-session revocation. It does not yet provide all of Shell
 operations under app permission checks. Do not reinterpret an ordinary app grant as a full Core
 session or turn a generic proxy into an implicit management permission.
 
-The broader permission model remains owned by [Core extension model](../core-extension-model/plan.md)
+The current permission model is documented in [app permission management](../app-permission-management/feature.md)
 and vision decisions 9 and 14. This feature needs a concrete inventory of Shell's calls: which use
 existing app permissions, which need a narrowly defined generic permission, and which remain on a
 Core-owned operator surface. That includes OAuth consent, credentials/private sources, events and

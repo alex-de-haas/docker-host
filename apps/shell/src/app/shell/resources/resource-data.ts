@@ -2,17 +2,19 @@ export type ResourceSample = {
   appId: string; service: string; runtime: string; timestamp: string;
   cpuPercent: number | null; memoryBytes: number | null;
 };
-export type ResourceFrame = { timestamp: string; services: ResourceSample[] };
-export type ResourceSnapshot = { runId: string; now: string; logicalProcessors: number; history: ResourceFrame[] };
+export type ResourceFrame = { timestamp: string; services: ResourceSample[]; sequence?: number };
+export type ResourceSnapshot = { runId: string; now: string; logicalProcessors: number; history: ResourceFrame[]; sequence?: number };
+export type ResourceEvent = { runId: string; sequence: number; timestamp: string; logicalProcessors: number; frame: ResourceFrame };
 export type ResourcePoint = { timestamp: number; cpu: number | null; memory: number | null };
 export const RETENTION_MS = 5 * 60_000;
 export const STALE_MS = 20_000;
 
 export function mergeResources(previous: ResourceSnapshot | null, next: ResourceSnapshot): ResourceSnapshot {
   const frames = previous?.runId === next.runId ? [...previous.history, ...next.history] : next.history;
-  const byTime = new Map(frames.map(frame => [frame.timestamp, frame]));
-  return { ...next, history: [...byTime.values()].filter(f => Date.parse(f.timestamp) >= Date.parse(next.now) - RETENTION_MS)
-    .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp)).slice(-110) };
+  const metadata = previous?.runId === next.runId && (previous.sequence ?? 0) > (next.sequence ?? 0) ? previous : next;
+  const bySequence = new Map(frames.map(frame => [frame.sequence ?? frame.timestamp, frame]));
+  return { ...metadata, history: [...bySequence.values()].filter(f => Date.parse(f.timestamp) >= Date.parse(metadata.now) - RETENTION_MS)
+    .sort((a, b) => (a.sequence !== undefined && b.sequence !== undefined) ? a.sequence - b.sequence : Date.parse(a.timestamp) - Date.parse(b.timestamp)).slice(-110) };
 }
 
 export function resourceSeries(snapshot: ResourceSnapshot | null, appId?: string, service?: string): ResourcePoint[] {

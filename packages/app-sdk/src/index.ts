@@ -202,7 +202,7 @@ export function buildCoreOpenUrl(
 }
 
 /**
- * How a shell is presenting this app.
+ * Legacy launch/transport context. Navigation visibility uses the independent composition policy.
  *
  * - `embedded` — framed by the browser Shell. The shell renders navigation for this app. The
  *   app restores its per-tab grant, tries a silent Core redirect on first load, then uses its
@@ -213,10 +213,9 @@ export function buildCoreOpenUrl(
  * - `standalone` — a plain browser tab on the app's own origin. Nothing else renders navigation
  *   for this app, so it keeps its own.
  *
- * Two independent decisions read this one value and they do not split it the same way: chrome
- * is hidden whenever the mode is not `standalone` (`hidesAppChrome`), while frame-local silent
- * sign-in and popup recovery belong to `embedded` alone (`AppIdentityBridge`). A native web
- * view keeps standalone recovery even though its app chrome is hidden.
+ * Legacy consumers can still use `hidesAppChrome`. New consumers use `useHostyChrome` and
+ * `HostyNavigationBoundary`; a desktop host can keep navigation visible in embedded apps.
+ * Authentication continues to use the actual transport environment.
  */
 export type AppLaunchMode = "embedded" | "native" | "standalone";
 
@@ -224,9 +223,10 @@ export type AppLaunchMode = "embedded" | "native" | "standalone";
 export const LAUNCH_MODE_PARAM = "hosty_launch";
 /** Where a resolved mode is kept for the life of the tab or web view. */
 export const LAUNCH_MODE_STORAGE_KEY = "hosty.launch.mode";
-/** The root attribute the launch bridge writes; CSS hides duplicated chrome off it. */
+/** Legacy launch attribute. Use data-hosty-navigation for composition visibility. */
 export const LAUNCH_MODE_ATTRIBUTE = "data-hosty-launch";
 /**
+ * @deprecated Use HostyNavigationBoundary or the effective navigation policy.
  * Marks an element that duplicates chrome a shell already renders — the app's own name and the
  * navigation between its manifest pages. Contextual controls and information a shell does not
  * render (a project picker, a refresh action, an identity badge) are not chrome in this sense
@@ -286,6 +286,7 @@ export function resolveLaunchMode(input: {
 }
 
 /**
+ * @deprecated Use the effective composition navigation policy instead.
  * True when a shell around this app already renders its name and page navigation, so the app's
  * own copies are duplication. False for `standalone`, where nothing else renders them.
  */
@@ -378,4 +379,36 @@ export function decideRecoveryAction(input: {
     return { kind: "redirect", openUrl };
   }
   return { kind: "card", card: "signin" };
+}
+
+/** Paint-time navigation policy. Kept in the pure entry point for Node and edge consumers. */
+export function chromeBootstrapScript(defaults: import("./ui-types").UiChromeOverrides = {}): string {
+  const navigation = defaults.navigation;
+  if (navigation !== undefined && navigation !== "show" && navigation !== "hide") throw new Error("Invalid navigation default.");
+  return `(()=>{try{const d=${JSON.stringify({ navigation })},p=new URLSearchParams(location.search),h=new URLSearchParams();for(const k of ["hosty_navigation","hosty_tools","hosty_tool_launcher","hosty_launch"])for(const v of p.getAll(k))h.append(k,v);document.documentElement.setAttribute('data-hosty-chrome-hints',h.toString());const one=k=>p.getAll(k).length===1?p.get(k):null,n=one('hosty_navigation'),l=one('hosty_launch');document.documentElement.setAttribute('data-hosty-navigation',n==='show'||n==='hide'?n:d.navigation??(l==='native'||l==='embedded'?'hide':'show'));}catch{}})();`;
+}
+/** Execution scope is independent of the principal's role. Never infer it from an app ID. */
+import type { SandboxTarget, SandboxIdentityContext } from "./sandbox-identity.js";
+export type { SandboxTarget, SandboxIdentityContext } from "./sandbox-identity.js";
+
+export function readSandboxTarget(environment: Record<string, string | undefined>): SandboxTarget | null {
+  const fields = [environment.HOSTY_SANDBOX_INSTANCE_ID, environment.HOSTY_SANDBOX_GENERATION, environment.HOSTY_SANDBOX_DATA_REVISION];
+  if (!environment.HOSTY_SANDBOX_PROTOCOL && fields.every(value => !value)) return null;
+  if (environment.HOSTY_SANDBOX_PROTOCOL !== "hosty-sandbox-v1" || fields.some(value => !/^[a-f0-9]{32}$/.test(value ?? "")))
+    throw new Error("The sandbox execution target is missing or unsupported.");
+  return { runtimeInstanceId: fields[0]!, generation: fields[1]!, dataRevision: fields[2]! };
+}
+
+export function readSandboxIdentity(payload: Record<string, unknown>, expected: SandboxTarget | null): SandboxIdentityContext | null {
+  if (!expected) {
+    if (payload.identityRealm === "sandbox" || payload.runtimeInstanceId != null || payload.generation != null || payload.dataRevision != null)
+      throw new Error("An installed app cannot accept a sandbox identity.");
+    return null;
+  }
+  if (payload.runtimeInstanceId !== expected.runtimeInstanceId || payload.generation !== expected.generation || payload.dataRevision !== expected.dataRevision
+      || (payload.identityRealm !== "sandbox" && payload.identityRealm !== "core") || typeof payload.appRole !== "string"
+      || !Array.isArray(payload.permissions) || !payload.permissions.every(value => typeof value === "string")
+      || (payload.identityRealm === "sandbox" && payload.hostRole != null))
+    throw new Error("The identity belongs to a different or unsupported sandbox target.");
+  return { ...expected, identityRealm: payload.identityRealm, appRole: payload.appRole, permissions: payload.permissions };
 }

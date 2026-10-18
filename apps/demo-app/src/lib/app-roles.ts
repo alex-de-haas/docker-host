@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getDemoConfig } from "@/lib/demo-config";
+import type { SandboxIdentityContext } from "@hosty-sdk/app";
 
 export type DemoAppRole = "viewer" | "operator" | "admin";
 export type DemoAppResolvedRole = "anonymous" | DemoAppRole;
@@ -9,7 +10,8 @@ export type DemoAppRoleSource =
   | "stored"
   | "host-admin-bootstrap"
   | "host-assignment"
-  | "host-authenticated";
+  | "host-authenticated"
+  | "sandbox-scenario";
 
 export interface DemoAppRoleDefinition {
   role: DemoAppRole;
@@ -35,6 +37,7 @@ export interface DemoRoleIdentityInput {
   status: string;
   userId: string | null;
   hostRole: string | null;
+  sandbox?: SandboxIdentityContext;
 }
 
 export interface DemoAppPermissionSnapshot {
@@ -202,14 +205,15 @@ export function resolveDemoAppPermissions(
   }
 
   const assignment = findRoleAssignment(assignments, identity.userId);
-  const role = assignment?.role ?? getDefaultRoleForIdentity(identity);
-  const permissions = roleDefinitions[role].permissions;
+  const synthetic = identity.sandbox?.identityRealm === "sandbox" ? identity.sandbox : null;
+  const role = synthetic && isDemoAppRole(synthetic.appRole) ? synthetic.appRole : assignment?.role ?? getDefaultRoleForIdentity(identity);
+  const permissions = [...new Set([...roleDefinitions[role].permissions, ...(synthetic?.permissions ?? [])])];
 
   return {
     principal: identity.userId,
     role,
     roleLabel: roleDefinitions[role].label,
-    source: assignment ? "stored" : getDefaultRoleSourceForIdentity(identity),
+    source: synthetic ? "sandbox-scenario" : assignment ? "stored" : getDefaultRoleSourceForIdentity(identity),
     assignment,
     permissions,
     canManageRoles:
@@ -219,17 +223,17 @@ export function resolveDemoAppPermissions(
 }
 
 export function resolveDemoDirectoryUserRole(
-  user: { id: string; hostRole: string },
+  user: { id: string; hostRole: string | null; sandboxRole?: string },
   assignments: DemoAppRoleAssignment[]
 ): DemoDirectoryUserRoleSnapshot {
   const assignment = findRoleAssignment(assignments, user.id);
-  const role = assignment?.role ?? (user.hostRole === "host.admin" ? "admin" : "operator");
+  const role = isDemoAppRole(user.sandboxRole) ? user.sandboxRole : assignment?.role ?? (user.hostRole === "host.admin" ? "admin" : "operator");
 
   return {
     userId: user.id,
     role,
     roleLabel: roleDefinitions[role].label,
-    source: assignment ? "stored" : user.hostRole === "host.admin" ? "host-admin-bootstrap" : "host-assignment",
+    source: user.sandboxRole ? "sandbox-scenario" : assignment ? "stored" : user.hostRole === "host.admin" ? "host-admin-bootstrap" : "host-assignment",
     assignment,
     permissions: roleDefinitions[role].permissions,
   };

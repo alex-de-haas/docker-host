@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-16
-updated: 2026-10-05
+updated: 2026-10-18
 summary: Epic for prompt-driven app creation, live iteration, integration with installed apps and optional publication.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -13,8 +13,8 @@ components: [apps/core, apps/harness, apps/shell]
 [Shared assistant development sessions](../assistant-development-sessions/plan.md) captures the
 new owner direction for Git-backed work and links independently scoped plans for shared history,
 session workspaces, source selection and PR lifecycle. It owns cross-feature session acceptance;
-those child features own implementation, while this umbrella retains app creation and integration.
-The earlier direct-source iteration below remains the no-Git prototype path. For Git-backed work,
+those child features own implementation, while this umbrella retains authoring integration and adaptation.
+The earlier direct-source iteration below remains a manual external-folder recipe. For Git-backed work,
 consume the session workspace rather than treating isolated branches as non-interactive-only.
 The new plan is Draft and does not approve either feature's implementation.
 
@@ -34,14 +34,13 @@ below are proposals, not approved owner decisions.
 Owner follow-up, 2026-09-16: selects the create/view/change cycle as the first milestone and requests
 general assistant app associations immediately: a multi-app picker in chat and a new-session action
 in each app's Dashboard menu (the owner's follow-up keeps the sidebar focused on navigation). The shared [assistant-app-context](../assistant-app-context/feature.md) feature
-owns that prerequisite; [prototype workspaces](../app-prototype-workspaces/plan.md) now details the
-first complete authoring cycle. Agreement on the milestone does not approve the new technical defaults.
+owns that prerequisite. [Local app creation](../app-prototype-workspaces/feature.md) implements the
+local authoring cycle under the later approval below; this umbrella retains its own open scope.
 
 Further owner direction: the initial app must not prescribe a language/framework or one-service
 architecture. Start with minimal platform metadata and an optional disposable HTML preview; the
-agent builds the requested topology using appropriate SDKs or the direct Core protocol. The prototype
-plan owns runtime delivery of the Core
-development guide needed for this flow.
+agent builds the requested topology using appropriate SDKs or the direct Core protocol. The [local creation feature](../app-prototype-workspaces/feature.md#docker-preview-and-agent-guidance)
+packages the running Core's development guide for this flow.
 
 Owner source-policy decisions: reuse `apps/<id>/source`, existing dev mode and lifecycle wherever
 compatible with the requirements. Add no-Git source support, change observations and warnings before
@@ -54,60 +53,58 @@ integration workflow below, not copies of its child plans' deliverables. Each ch
 approval and one complete feature PR; phases inside a child remain on that child's single branch.
 No implementation is authorized by this Draft.
 
+Owner approval, 2026-10-17: all five [local creation decisions](../app-prototype-workspaces/feature.md)
+are approved: local Git without publication, one consented bootstrap commit, immediate stopped
+app registration, local acceptance into main and explicit ordinary local use. New no-Git creation
+is deferred; existing no-Git apps remain compatible. That local flow is implemented and verified as recorded in its feature document.
+This does not approve the unrelated integration/adaptation/publication work in this umbrella.
+
 ## Existing Foundation And Gaps
 
-Initial repository inspection: `76da3d7f`, 2026-09-16; runtime-profile behavior updated with the
-profile-bound development change on the same date. These are code/document findings, not a live
-end-to-end verification of app generation.
+Local creation checkpoint, 2026-10-18: the feature branch implements and verifies the local
+Git/worktree/child-Core flow, optional existing-remote publication and versioned development guide.
+This is working-copy acceptance, not evidence of a merged PR or published release.
 
-| Concern | Present today | Missing for this experience |
+| Concern | Verified foundation | Remaining owner |
 | --- | --- | --- |
-| Local source without Git | Local manifest installs infer a source folder without `.git` or `source.repository` | Internal no-Git source recognition, change/loss warnings and creation UI |
-| Live iteration | Source `localCommand`, declared development profiles, live manifest reconciliation on start/restart | App-bound assistant session and reliable edit/preview workflow |
-| Runtime selection | CLI/Core digest-reviewed switch between declared compatible profiles | Typed agent workflow; a source-less image cannot be turned into source by a switch |
-| Development entry | Reviewed selection of a `development: true` profile | Typed Core MCP runtime-switch workflow |
-| Assistant | Host-resident Claude/Codex harnesses with files, commands, sessions and approval handling | Development context and persistent app workspace binding |
-| Core MCP | Reads, lifecycle and update tools | Source/development/runtime-switch tools; built-in assistant mutations also need an authority design |
-| Session workspace | `cache/sessions/<id>/workspace`, removed on session deletion/retention | App source must outlive both session and gateway cache |
-| App integrations | Dependency URL injection, identity/SDK contracts, app MCP and approved app skills | Guided selection of compatible interfaces, generated integration and verification |
-| Distribution | App-owned feeds, reviewed Core updates, Marketplace catalog handoff | Repository/release preparation and catalog submission workflow |
+| Durable source | Canonical local Git, one consented bootstrap commit, removal/source-loss review and retained-source reinstall | New no-Git creation is deferred by owner decision; existing no-Git compatibility is retained |
+| Session workspaces | Multi-app worktrees, leases, continuation, local acceptance and protected cleanup | General development-session integration stays in its own plan |
+| Assistant and UI | Codex/Claude Docker worker, Create app/Continue building, recoverable form and guide access | Cross-provider session continuity and broader instruction/approval policy stay separate |
+| Preview | Multi-service Docker in a reusable child Core, separate data/users, optional checks and Finish | Broader host/architecture acceptance belongs to sandbox and mixed-runtime plans |
+| Source publication | Existing remote connection, reviewed commit/push/draft PR and CI/review observation | Hosted repository/release/feed/catalog provisioning belongs to App Publication |
+| App integrations | Dependency discovery/configuration, identity/SDK contracts, app MCP and skills | This umbrella owns guided compatible-interface selection, generated integration and verification |
+| Upstream adaptation | Existing manifest/source/runtime contracts | This umbrella owns repository/image/Compose assessment and wrapper generation |
 
-Evidence entry points:
+Evidence owners: [local creation](../app-prototype-workspaces/feature.md),
+[session workspaces](../assistant-session-workspaces/feature.md),
+[shared worker](../assistant-shared-docker-runtime/feature.md),
+[Harness UI](../harness-development-ui/feature.md),
+[workspace lifecycle](../assistant-pr-lifecycle/feature.md),
+[sandbox environments](../app-sandbox-runtimes/feature.md) and
+[source workflows](../runtime-source-workflows/feature.md). Reuse these existing registries and
+contracts rather than adding authoring-only source/workspace state.
 
-- [Source behavior](../runtime-source-workflows/feature.md) and
-  `CoreLifecycleService.ResolveInstallLocalSourcePath`; the no-Git inference also has a regression
-  test, `InstallAsync_StripsDotSegmentFromWorkingDirectoryWhenInferringLocalSourceRoot`.
-- `CoreLifecycleService.ApplyRuntimeSwitchAsync` and the CLI use reviewed profile selection. The
-  old development-mode endpoint and stored overrides are removed; no separate toggle is needed.
-  `McpEndpoints.cs` still has no runtime-switch tool.
-- `apps/harness/src/sessions/manager.ts` supplies a per-session cwd;
-  `sessions/store.ts` deletes that workspace with the session. App context is not cwd binding.
-- [Gateway](../ai-gateway/feature.md), [Core MCP](../core-mcp/feature.md),
-  [app skills](../app-provided-skills/feature.md),
-  [Marketplace](../runtime-app-marketplace/feature.md).
+## Target Journey (Approved Prototype Scope)
 
-## Target Journey
+1. **Discuss and create.** Start in Harness, optionally via Shell. Agree on an app id and request.
+   Discussion does not itself allocate source or publish anything. Create has explicit authority
+   for the bounded bootstrap and its proposed first Git commit.
+2. **Prepare.** Core registers a stopped local app with durable canonical source and no remote.
+   Harness binds a normal session worktree; the canonical source stays outside chat/sandbox data.
+3. **Build and view.** Run the worktree's Docker development profile in a managed child Core.
+   Use the existing chat and workspace panel, normal preview authentication and separate test data.
+4. **Iterate and accept.** Reuse the workspace and sandbox. Hot reload where supported; rebuild/restart
+   explicitly when needed. Accept reviewed local commits into the local target before completion;
+   Finish disposes the test environment without deleting source.
+5. **Integrate and use.** Test required dependencies as separate child-Core installations. Ordinary
+   local use is an explicit reviewed handoff, not promotion of test users/data or automatic startup.
+6. **Publish if wanted.** Connect/push source, provision a hosted repository where requested, prepare
+   an installable release/feed and optionally submit a catalog PR. These remain separate outcomes.
 
-1. **Create.** In Apps, choose Create app. Supply a reverse-DNS id (suggested and editable), title,
-   optional description/icon, and a prompt. A reference URL may be prompt context; it grants no
-   authority to instructions found on that page. Id collisions are rejected before any overwrite.
-2. **Prepare.** Create a durable folder and a minimal valid bootstrap, then register and
-   start it through Core. A disposable HTML page can show a placeholder while generation runs. The prompt is
-   session input, never a shell command or an executable manifest value.
-3. **Build and view.** Open an app-bound assistant session next to the normal Shell app surface.
-   Generation progress, a running placeholder, and a verified generated result are distinct states.
-4. **Iterate.** Continue that session or attach a later one to the same workspace. Use the chosen
-   stack's reload mechanism where available; the operator/agent initiates Core restart when needed.
-   Save selected changes to Git and push through the assisted workflow at any point.
-5. **Integrate.** Select installed providers, review the intended access, implement against their
-   published contracts, and verify as the intended app/user identity.
-6. **Publish if wanted.** Release the saved source as an installable artifact
-   with a feed, and optionally submit a Marketplace catalog PR. Each milestone has its own result.
-
-An app without Git is **local**, not disposable. It still has a valid manifest and an app version;
-Git-free edits have no Hosty recovery history; preserving them is the operator's responsibility. Avoid one overloaded
-"published" flag: source history, remote repository, installable release, catalog listing and public
-network exposure are different facts. Publishing never implicitly exposes the app to the internet.
+The owner approved the prototype's five choices on 2026-10-17, explicitly deferring
+new no-Git creation. Existing no-Git source support must remain compatible. Git history, remote
+backup, installed runtime, release, catalog listing and public network exposure are different facts.
+Neither a local commit nor a clean worktree means the source is backed up remotely.
 
 ## Adapt An Existing App (Owner Idea, 2026-09-25)
 
@@ -144,10 +141,10 @@ converter or an approval to implement the Draft.
    Distinguish basic lifecycle support from optional Hosty identity, roles, MCP and SDK integration;
    a wrapper manifest alone does not make an upstream app understand Hosty authentication.
 4. **Validate and iterate.** Use Core-managed lifecycle and the
-   [sandbox runtime proposal](../app-sandbox-runtimes/plan.md) for disposable test data and scoped
-   execution once available. Check actual readiness and useful behavior, persistence/restart,
-   configuration and UI/auth or service connectivity as applicable. Until protected execution is
-   implemented, do not describe ordinary dev mode as isolated. Preserve diagnostics and unresolved
+   [sandbox environments](../app-sandbox-runtimes/feature.md) for separate test data and dependencies.
+   Check actual readiness and useful behavior, persistence/restart, configuration and UI/auth or
+   service connectivity as applicable. Ordinary dev mode on the primary installation still does
+   not provide disposable data. Preserve diagnostics and unresolved
    incompatibilities rather than reporting success merely because a manifest validates.
 5. **Publish when requested.** Hand the verified wrapper and its upstream references to
    [app publication](../app-publication/plan.md) for a versioned release/feed and optional catalog PR.
@@ -201,10 +198,11 @@ their authority.
 | Marketplace | Catalog MCP discovery for reuse, submission instructions/schema and separately scoped publication tools; no Core lifecycle authority |
 | App repository | Source history, release artifacts, manifests and feeds |
 
-Keep an internal authoring record separate from `manifest.json`: workspace id, app id, canonical
-source root, manifest-relative path, bootstrap/guide revisions, linked session ids and observed publication
-references. These are host-local facts. Reuse `app.0.1`; no schema bump or invented `source.type`
-value is needed merely because a folder has no Git. Reserve adapters at concrete boundaries
+Keep creation operation correlations separate from `manifest.json`. Resolve app/source/workspace
+identity and manifest-relative paths from the existing Core records; retain bootstrap/guide revisions
+and operation/session references without a second source registry. Preserve canonical local identity
+when attaching a remote. These are host-local facts. Reuse `app.0.1`; local creation alone needs
+no manifest schema bump. Reserve adapters at concrete boundaries
 (project generation, repository provider, catalog submission), not a generic plugin framework.
 
 The agent chooses languages and one or several services from the request and host capabilities;
@@ -217,22 +215,25 @@ being a Hosty app. The disposable preview server does not constrain the generate
 
 | Order | Feature and owner of implementation work | Independently useful outcome |
 | --- | --- | --- |
-| 0 | Current assistant + existing lifecycle, recipe below | Demonstrate a local prototype without waiting for new MCP tools |
+| 0 | Current workspaces, Harness UI and sandbox lifecycle | Existing-app development provides the foundation for the implemented local creation flow |
 | 1a | [Assistant app context](../assistant-app-context/feature.md) | Associate any apps in chat; open a fresh session from an app menu |
-| 1a prerequisite for autonomous development | [Assistant approval rules](../assistant-approval-rules/plan.md) | Verified source-write and command grants for one or more contextual apps, existing or new |
-| 1b | [App prototype workspaces](../app-prototype-workspaces/plan.md) | Create → open → edit using existing source/dev mode, loss warnings and assisted Git save/push |
+| Bounded development permissions | [Assistant approval rules](../assistant-approval-rules/plan.md), consuming [session containment](../assistant-runtime-containment/plan.md) | Explicit source-write and command grants for contextual apps; the execution backend owns enforcement |
+| 1b | [Local app creation](../app-prototype-workspaces/feature.md) | Verified local Git → worktree → Docker preview → Accept/Use locally, with optional existing-remote publication |
 | 2 | [App development controls](../app-development-controls/plan.md) | Reliably edit an existing app and enter/leave development through typed controls |
 | 3 | Integration deliverables in this umbrella | A generated app uses an installed app through its real contract |
 | 3 extension | Existing-app adaptation in this umbrella | Turn a compatible repository or image into a verified Hosty wrapper |
 | 4 | [App publication](../app-publication/plan.md) | Hosted repository creation where needed, release/feed and catalog PR |
 
-Order 2 can precede 1b if editing existing apps becomes the priority; typed MCP mutations are not a
-prerequisite for the manual diagnostic below. The autonomous authoring loop requires verified
-development permissions and app-scoped lifecycle execution from assistant approval rules.
+Order 1b is implemented; primary-installation development controls in order 2 retain their own scope.
+Typed MCP mutations are not a prerequisite for the manual diagnostic below. Shipped administrator
+Autonomous mode remains available. Local creation uses the shared-worker and trusted-child-Core contracts, with existing
+grants and lifecycle authority. It does not infer authority from an autonomy toggle or wait for a
+stronger per-session containment model. Primary-installation development controls retain their own scope.
 
-### What can be tried with today's assistant
+### Existing Manual Local-Command Recipe
 
-An administrator can ask the existing host assistant to create a minimal app in an explicitly chosen
+This diagnostic recipe is not the local creation default and provides no runtime data isolation.
+An administrator using an authorized host workflow can ask the assistant to create a minimal app in an explicitly chosen
 durable folder outside the gateway's session cache and Core's internal app-state folders. The app
 needs a complete valid manifest, a source `localCommand` profile with `development: true`, a runnable
 service and an assigned-port-compatible command. Git and a remote repository can be omitted.
@@ -243,7 +244,7 @@ The operator opens the installed app in Shell and asks for another edit. Use `ho
 when the change needs a restart. This is a manual recipe supported by the inspected building blocks,
 not a claimed tested wizard. It assumes the required runtime/harness tools exist on that host.
 This existing external-folder recipe is only a current-code diagnostic; the new creation UI uses
-`apps/<id>/source` and the narrow source-recognition changes recorded in the prototype plan.
+`apps/<id>/source` and the source-recognition rules recorded in the local creation feature.
 
 For existing apps, inspect source and profiles first; select a declared development profile through
 Shell or the CLI plan/digest apply pair. Returning to a reviewed profile preserves source and is not
@@ -254,10 +255,12 @@ a discard, save or publish operation. Pinned starts refuse dirty checkouts.
 - [Vision decision 2](../../vision.md) already endorses interactive dev-mode editing on the executing
   installation. It does not provide an isolated copy of app data. Git owns source history; Core data
   backups do not protect source edits. Loss warnings and Git save/push belong to the first slice.
-- [AI Agent Bridge step 12](../ai-agent-bridge/plan.md#step-12--development-agent-bridge) remains the
-  isolated, non-interactive branch/PR workflow. Its Git and disposable-validation prerequisites do
-  not apply to a local interactive prototype, and its Core-owned bridge proposal does not move model
-  execution into Core.
+- Owner clarification, 2026-10-10: [workspaces](../assistant-session-workspaces/feature.md),
+  [PR lifecycle](../assistant-pr-lifecycle/feature.md) and [Sandbox](../app-sandbox-runtimes/plan.md)
+  replace the separate AI Agent Bridge D12 workflow. General scheduled source jobs remain within
+  [Bridge D11](../ai-agent-bridge/plan.md#step-11--durable-jobs-and-notifications). Their Git and
+  disposable-validation prerequisites do not gate a local interactive prototype; Core owns source
+  and runtime operations, not model execution.
 - [Assistant entry points](../assistant-entry-points/plan.md) owns generic panel and context handoff.
   Reuse it. Third-party app messages still only fill a draft; an operator pressing Create with their
   own prompt is a separate explicit submission. Do not turn `ask-assistant` into auto-send.
@@ -265,17 +268,19 @@ a discard, save or publish operation. Pinned starts refuse dirty checkouts.
   and the picker/new-session entry points. An association is conversational context, independent
   of provider grants and the registered repository workspaces selected for development.
 - [Assistant approval rules](../assistant-approval-rules/plan.md) owns reusable approval policy.
-  Per vision decision 6, it also owns general source bindings and explicit session grants for source
-  writes/project commands across selected apps, plus scoped lifecycle authority. Authoring requires
-  this verified boundary; every-write approval is not an acceptable normal development experience.
-  This explicitly weakens the old every-write-asks posture inside the granted boundary. Core-started
-  localCommand code remains the administrator's responsibility and is not isolated by the agent sandbox.
-- [Core MCP](../core-mcp/plan.md) owns its existing audit/update backlog. Development controls must
-  record their own actions while composing with that work, without copying that backlog here.
+  Per vision decisions 6 and 32, it owns explicit session grant choices for source writes/project
+  commands across selected apps. [Containment](../assistant-runtime-containment/plan.md) owns the
+  execution boundary, [execution authorization](../assistant-execution-authorization/plan.md) owns
+  Core execution credentials, and development controls owns app/action lifecycle authority.
+  Routine authorized work does not require a card for every write. Core-started localCommand code
+  remains the administrator's responsibility and is not isolated by the agent container.
+- [Core MCP](../core-mcp/feature.md) provides bounded audit search and planned updates. Development controls must
+  record their own actions using that audit contract without duplicating the existing machinery.
 - [Cross-app dependencies](../cross-app-dependencies/plan.md) owns network reachability changes.
   A dependency URL is not an authorization grant; assistant access to a provider does not grant a
   generated app the same access. Unsupported identity paths remain explicit product constraints.
-- [Core extension model](../core-extension-model/plan.md) owns new contribution points. A template
+- [Core extension boundaries](../core-extension-model/feature.md) describe the current seams; new
+  contracts belong to their owning feature plans. A template
   marketplace, scale-to-zero runtime and general development environment are not prerequisites.
 
 ## Deliverables
@@ -301,9 +306,6 @@ a discard, save or publish operation. Pinned starts refuse dirty checkouts.
 ## Open Questions
 
 1. Which installed provider is the first integration example, and which identity should call it?
-2. How does a no-Git prototype enter the registered Git session workflow without losing local
-   work? Session worktrees can also supply the live development runtime; see the new session plan.
-
 3. Which source web app and image-only service form the first adaptation examples, and which
    host OS/architectures must they support?
 4. Which Compose directives are supported, and which cross-architecture execution paths can Core verify?

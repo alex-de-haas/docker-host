@@ -1,7 +1,7 @@
 ---
 created: 2026-07-24
-updated: 2026-07-24
-summary: An in-process event bus that tells session clients over one SSE stream that something changed.
+updated: 2026-10-16
+summary: One authorized SSE stream carries ephemeral domain hints, notifications and opt-in resource measurements.
 components: [apps/core, apps/shell]
 ---
 
@@ -11,13 +11,14 @@ Core runs an in-process event bus and serves it to session clients over one Serv
 endpoint. Clients use it to learn that something changed and re-read it, which is how the Shell
 Installed Apps page stays current without polling.
 
-## Semantics: hints, not facts
+## Delivery semantics
 
 The bus stores nothing. Durability belongs to the data — the app registry, `NotificationStore`,
 `AuditStore` — never to the transport:
 
-- The source of truth is always the Core API. An event says "re-read this", it is not a record of
-  what happened, and it carries no state beyond the id of the app it concerns.
+- The source of truth is always the Core API. App events are refresh hints carrying the app ID.
+  Notifications carry their notification view. Opt-in resource samples carry measurements plus a
+  run identity and resource sequence; gaps are recovered from bounded HTTP history.
 - A Core restart drops everything in flight. A disconnected subscriber misses events until it
   reconnects. A slow subscriber loses its oldest buffered events.
 - **Subscriber contract:** open the stream, resync through the API, then react — repeated on every
@@ -51,6 +52,9 @@ data: {"name":"app.changed","appId":"com.haas.demo-app","occurredAt":"2026-07-24
 | `app.removed` | An app record is deleted. |
 | `app.update-check.changed` | An app's update-availability verdict changes. |
 | `apps.update-check.changed` | The fleet update sweep starts or finishes. |
+| `resources.changed` | Legacy resource refresh hint while a viewer is active. |
+| `resources.sample` | A sampler frame, delivered only to authorized subscribers requesting `topics=resources`. |
+| `stream.ready` | Resource topic acknowledgement (`{"resources":1}`) at connection start. |
 | `notification` | A notification is published for the subscriber (payload: the same view `GET /api/notifications` returns). |
 
 `app.changed` does not distinguish create from update: consumers re-read the list either way, and the
@@ -78,7 +82,8 @@ open a window in which a second concurrent sweep could start.
 ## Endpoint
 
 ```text
-GET /api/events        # Core session; named events; live-only
+GET /api/events                    # Named events; live-only
+GET /api/events?topics=resources   # Also receive sequenced resource measurements
 ```
 
 One stream carries both domain events and the session's notifications, so a tab opens one connection
@@ -94,20 +99,30 @@ cancellation to `ApplicationStopping` — an SSE response never completes on its
 link one open tab holds Kestrel's graceful stop for the full shutdown budget and starves the
 runtime-app stop sweep behind it.
 
-Shell is the only subscriber. There is no app-facing subscription or producer endpoint; apps neither
-read nor write the bus. [core-extension-model](../core-extension-model/plan.md) is where that
-possibility is tracked, and its durable-log design would attach to this hub as one more subscriber
-rather than change what exists here.
+Shell uses its BFF to reach this stream with app-bound user authority; direct Core sessions are
+also supported. Delegated access requires `apps.read`, `core.read` and `apps.notifications`, and
+resource interest additionally requires an administrator. Delivery rechecks current authority,
+including role changes and direct-session expiry. Resource subscriptions own fast sampler demand;
+completion/disposal releases it. There is no app producer endpoint. Durable app-facing replay is a
+separate contract tracked by the
+[notifications plan](../notifications/plan.md); the current bus provides no persistence or cursor guarantees.
 
 ## Shell consumer
 
 `subscribeToCoreEvents` (`apps/shell/src/app/shell/events/core-event-stream.ts`) owns one
 `EventSource` per origin, shared by every subscriber in the tab. Its API makes the subscriber
-contract structural: `onSync` is required, runs on connect, on every browser reconnect, when the tab
-becomes visible again, and — debounced 300 ms — after matching events. An event that lands while a
-sync is in flight collapses into one follow-up sync instead of being applied on top of half-read
-state. Subscribers that can use a payload directly (the notification bell) pass an optional
-`onEvent`. The module is shaped like the SDK slice it becomes if app-facing subscriptions ever ship.
+contract structural: `onSync` is required. Hint consumers load immediately, on reconnect and on
+visibility return; matching hints debounce synchronization by 300 ms. An event arriving during a
+hint consumer's sync collapses into one follow-up. Consumers that apply payloads directly (the
+notification bell) use `onEvent`.
+
+Resource consumers request `topic: "resources"`, receive connection/capability state and explicitly
+opt into delivery while syncing so they can buffer and reconcile sequences themselves. They load
+history after acknowledgement, then update without per-event requests or healthy-stream polling.
+The connection owns the union of visible consumers' topics; topic changes reconnect the shared
+stream without losing other subscriptions. Page hiding releases resource demand, and page
+restoration reconnects and synchronizes. See [resource usage](../runtime-resource-usage/feature.md)
+for payload, recovery, compatibility and freshness details.
 
 `ShellClient` subscribes for admin sessions and reacts by re-reading `GET /api/apps` only — the one
 response every domain event can affect — without touching `loading`, so another operator's action
@@ -121,6 +136,9 @@ launcher list refreshes on navigation and on demand as before.
 
 - Hub: per-user notification fan-out, admin-only domain fan-out (the leak guard), drop-oldest under
   a stalled reader, and disposal completing the reader.
+- Resource topics: capability acknowledgement, admin/delegated gates, sequenced payloads, queue
+  drops, multiple viewers and demand cleanup. Shell tests exercise initial/recovery synchronization,
+  visibility and page restoration, compatibility fallback and unchanged notification delivery.
 - Publish points: both public store writers emit `app.changed` and removal emits `app.removed`,
   proving the choke point rather than the call sites; a store constructed without a hub still
   commits.

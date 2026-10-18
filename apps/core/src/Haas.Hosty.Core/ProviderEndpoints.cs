@@ -6,8 +6,8 @@ namespace Haas.Hosty.Core;
 
 internal sealed record ProviderDescriptor(string AppId, string DisplayName, string Kind, string Key,
     int? Version, IReadOnlyList<string> Capabilities, string? Url, bool Available,
-    IReadOnlyList<ProviderUiSurface>? UiSurfaces = null);
-internal sealed record ProviderUiSurface(string? Endpoint, string Path, string? Url);
+    IReadOnlyList<ProviderUiSurface>? UiSurfaces = null, string? InstallationId = null);
+internal sealed record ProviderUiSurface(string? Endpoint, string Path, string? Url, string? Kind = null, string? PanelId = null);
 internal sealed record ProviderDirectory(IReadOnlyList<ProviderDescriptor> Providers);
 internal sealed record AppPermissionState(IReadOnlyList<string> Required, IReadOnlyList<string> Optional, IReadOnlyList<string> Granted, bool ReviewAvailable = true, IReadOnlyList<string>? UnsupportedRequired = null, string Status = "known");
 internal sealed record ProviderTokenRequest(string ProviderAppId, string Key = "default");
@@ -27,6 +27,7 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
     internal static string Permission(string kind) => kind switch
     {
         "speech-to-text" => CoreAppPermissions.SpeechProviders,
+        "translation" => CoreAppPermissions.TranslationProviders,
         "assistant" => CoreAppPermissions.AssistantProviders,
         _ => throw new AppIdentityException("provider_kind_invalid", "Unknown provider category."),
     };
@@ -55,14 +56,17 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
     {
         if (provider.ConfirmedRoles?.Contains(kind, StringComparer.Ordinal) != true) yield break;
         var summary = AppSummary.From(provider);
-        if (summary.Interfaces is null || !summary.Interfaces.TryGetValue(kind, out var entries)) yield break;
+        // Provider credentials are consumed by backends. Browser origins (including *.localhost)
+        // need not resolve there and must not route audio through an app's public ingress.
+        var interfaces = AppSummary.BuildInterfaceSummaries(provider.Interfaces, provider.Endpoints, useTransportUrls: true);
+        if (interfaces is null || !interfaces.TryGetValue(kind, out var entries)) yield break;
         // Browser destinations use declared UI endpoints, which can differ from the provider API.
         // Consumers need no wider apps.read grant to validate a handoff's returned destination.
         ProviderUiSurface[]? surfaces = kind == "assistant"
-            ? summary.PanelSurfaces.Select(s => new ProviderUiSurface(s.Endpoint, s.Path, s.EmbeddedUrl))
-                .Concat(summary.Navigation.Select(s => new ProviderUiSurface(s.Endpoint, s.Path, s.EmbeddedUrl)))
+            ? summary.PanelSurfaces.Select(s => new ProviderUiSurface(s.Endpoint, s.Path, s.EmbeddedUrl, "panel", s.PanelId))
+                .Concat(summary.Navigation.Select(s => new ProviderUiSurface(s.Endpoint, s.Path, s.EmbeddedUrl, "navigation")))
                 .Concat(summary.EntryPath is { } path
-                    ? [new ProviderUiSurface(summary.EntryEndpoint, path, summary.EmbeddedUrl)] : [])
+                    ? [new ProviderUiSurface(summary.EntryEndpoint, path, summary.EmbeddedUrl, "entrypoint")] : [])
                 .Where(s => s.Url is not null).Distinct().ToArray()
             : null;
         foreach (var entry in entries)
@@ -70,7 +74,7 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
             var healthy = summary.Health is null || summary.Health.Services.Where(s => s.Service == entry.Service).All(s => s.Status == "running" && s.Health is not "unhealthy" and not "starting");
             yield return new(provider.Id, provider.DisplayName, kind, entry.Key, entry.Version,
                 entry.Capabilities ?? [], entry.Url,
-                provider.RuntimeState == "running" && healthy && entry.Url is not null, surfaces);
+                provider.RuntimeState == "running" && healthy && entry.Url is not null, surfaces, PanelIdentity.Installation(provider));
         }
     }
 
@@ -89,15 +93,16 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
         string? userId = null;
         if (!string.IsNullOrEmpty(userCredential))
         {
-            if (kind == "assistant")
+            var delegatedClaims = delegated.ValidateToken(userCredential, caller.Id);
+            if (delegatedClaims is not null && kind != "assistant") userId = delegatedClaims.Sub;
+            else
             {
-                if (!userCredential.StartsWith("hostyg_", StringComparison.Ordinal))
-                    throw new AppIdentityException("reauth_required", "Assistant requests require browser-established app activity.");
-                await identity.RequireActivityAsync(userCredential, caller.Id, ct);
+                var actor = await identity.RequireOperationHashAsync(AppIdentityService.HashToken(userCredential), caller.Id,
+                    s => s.Kind == "provider" && s.TargetAppId == provider.Id && s.ProviderKind == kind && s.Key == input.Key,
+                    ct, requireActivity: kind == "assistant");
+                userId = actor.UserId;
                 activityHash = AppIdentityService.HashToken(userCredential);
             }
-            var delegatedClaims = delegated.ValidateToken(userCredential, caller.Id);
-            userId = delegatedClaims is not null ? delegatedClaims.Sub : (await identity.RevalidateAsync(userCredential, caller.Id, ct)).UserId;
             await identity.RequireAccessibleUserAsync(caller.Id, userId, ct);
         }
         if (kind == "assistant")
@@ -130,10 +135,12 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
             || claims.Expires <= clock.UtcNow.ToUnixTimeSeconds() || claims.ProviderInstalledAt != provider.InstalledAt
             || claims.ProviderRevision != provider.PermissionRevision)
             throw new AppIdentityException("token_invalid", "Provider credential expired or does not match this interface.");
-        if (claims.Kind == "assistant")
+        if (claims.Kind == "assistant" || claims.ActivityGrantHash is not null)
         {
             if (claims.ActivityGrantHash is null) throw new AppIdentityException("reauth_required", "Renew assistant authority through Core.");
-            var actor = await identity.RequireActivityHashAsync(claims.ActivityGrantHash, claims.Caller, ct);
+            var actor = await identity.RequireOperationHashAsync(claims.ActivityGrantHash, claims.Caller,
+                s => s.Kind == "provider" && s.TargetAppId == provider.Id && s.ProviderKind == input.Kind && s.Key == input.Key,
+                ct, requireActivity: claims.Kind == "assistant");
             if (actor.UserId != claims.UserId) throw new AppIdentityException("token_invalid", "Provider actor changed.");
         }
         var caller = await apps.GetAppAsync(claims.Caller, ct);

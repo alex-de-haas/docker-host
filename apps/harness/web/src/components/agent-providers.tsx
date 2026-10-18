@@ -55,6 +55,7 @@ import {
 } from "./provider-login-dialog";
 import { Button } from "@/components/ui/button";
 import { call } from "@/lib/api";
+import { TranslationProviders } from "./translation-providers";
 
 export type AgentConnection = {
   id: string;
@@ -90,9 +91,9 @@ export function AgentProviders() {
   const [notice, setNotice] = useState<string | null>(null);
   const [login, setLogin] = useState<Login | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
-  const refresh = useCallback(async () => {
-    setDirectory((await (await call("/connections")).json()) as Directory);
-  }, []);
+  // A promise chain rather than async/await, so the mount effect's call is recognizably asynchronous.
+  const refresh = useCallback(() =>
+    call("/connections").then(response => response.json()).then(value => setDirectory(value as Directory)), []);
   useEffect(() => {
     void refresh().catch((e: unknown) =>
       setError(e instanceof Error ? e.message : String(e)),
@@ -211,6 +212,7 @@ export function AgentProviders() {
           </EmptyHeader>
         </Empty>
       )}
+      {directory && <TranslationProviders connections={directory.connections} />}
       {directory?.connections.map((connection) => (
         <div
           key={connection.id}
@@ -451,7 +453,8 @@ export function AgentProviders() {
                     <Select
                       value={kind}
                       disabled={busy || editing !== "new"}
-                      onValueChange={(value: AgentConnection["kind"]) => {
+                      onValueChange={(selected: string) => {
+                        const value = selected as AgentConnection["kind"];
                         setKind(value);
                         setAuth(value === "codex" ? "chatgpt" : "api-key");
                         setSecret("");
@@ -490,8 +493,8 @@ export function AgentProviders() {
                   <Select
                     value={auth}
                     disabled={busy || editing !== "new"}
-                    onValueChange={(value: AgentConnection["auth"]) => {
-                      setAuth(value);
+                    onValueChange={(selected: string) => {
+                      setAuth(selected as AgentConnection["auth"]);
                       setSecret("");
                     }}
                   >

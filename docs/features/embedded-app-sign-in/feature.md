@@ -1,6 +1,6 @@
 ---
 created: 2026-10-05
-updated: 2026-10-08
+updated: 2026-10-11
 summary: Embedded apps keep their own per-tab sign-in grant and sign in silently through Core without Shell handling their codes.
 components: [apps/core, apps/shell, packages/app-sdk]
 ---
@@ -61,9 +61,9 @@ and its server authenticates to Core with its own service token. A code alone ca
 silent frame to `/login`, whose framing policy remains restrictive. Ordinary top-level `/open`
 navigation and the app-owned `web_message` popup retain their existing behavior.
 
-Silent codes establish identity only. They do not establish privileged app activity; an action that
-needs activity still uses the Core popup. Their Core-session provenance participates in explicit
-logout revocation. Logout clears a stored grant when the app next presents it and receives identity
+Silent codes establish continuous identity and already-granted authority under a live Core session.
+They require no separate hourly activity renewal. Their Core-session provenance participates in
+explicit logout revocation and is checked for liveness on revalidation. Logout clears a stored grant when the app next presents it and receives identity
 rejection.
 
 A bridge that has been active never starts a silent redirect after session expiry. It keeps the
@@ -167,7 +167,7 @@ npm run demo-app:build
 - Core requires exact app Origin, iframe navigation, a locally created S256 attempt and its nonce;
   a known silent nonce refusal returns only a state-bound login-required callback.
 - Core preserves redirect-origin validation and atomic one-time intent claim, returns code,
-  login-required and access-denied outcomes, never frames login, establishes no silent activity and
+  login-required and access-denied outcomes, never frames login, establishes continuous authority and
   revokes silent grants on explicit logout.
 - The bridge's preconditions and once-per-tab guard prevent redirect loops. Missing/mismatched
   state cannot exchange a code; login-required and access-denied returns show their respective UI.

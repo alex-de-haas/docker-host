@@ -1,11 +1,14 @@
 "use client";
 import { useDemoAuth } from "./DemoSession";
 import type { DemoConfig } from "@/lib/demo-config";
+import { useEffect } from "react";
+import { ui } from "@hosty-sdk/app/ui";
 
 
 // The panel resolves its own app identity through the common client transport.
 export function DemoPanel({ config }: { config: DemoConfig }) {
   const { appSession, appPermissions } = useDemoAuth();
+  useEffect(() => { ui.reportSurfaceState({ route: window.location.pathname + window.location.search + window.location.hash, state: "ready" }); }, []);
 
   return (
     <div className="flex h-full flex-col gap-3 p-3 text-sm">
@@ -35,6 +38,7 @@ export function DemoPanel({ config }: { config: DemoConfig }) {
           <p className="text-xs text-muted-foreground">None — this app grants none to the current user.</p>
         )}
       </div>
+      <label>Unsent tool draft<textarea aria-label="Unsent tool draft" className="mt-1 block min-h-24 w-full rounded border p-2" placeholder="Retained while switching, collapsing or moving this view" /></label>
     </div>
   );
 }

@@ -1,8 +1,8 @@
 ---
 created: 2026-09-27
-updated: 2026-10-08
-summary: Core-owned Git worktrees per assistant session, with managed Git operations, observation and cleanup.
-components: [apps/core, apps/harness, apps/shell]
+updated: 2026-10-16
+summary: Session-owned logical workspaces group repository worktrees with compatible Git operations and a separately authorized inspection API.
+components: [apps/core, apps/harness, apps/workspaces]
 ---
 
 # Assistant Session Workspaces
@@ -11,34 +11,29 @@ components: [apps/core, apps/harness, apps/shell]
 
 Core owns a shared bare Git repository per canonical source under
 `core/development/repositories/<repository-id>.git` and real linked worktrees under
-`core/development/trees/<workspace-id>`. These are independent of application source/cache folders
+`core/development/trees/<worktree-id>`. These are independent of application source/cache folders
 and assistant transcript retention. The bare repository is shared infrastructure, not a separate
 clone for every session. Preparing a workspace does not change the installed app's runtime or data.
 
-A workspace belongs to an assistant app installation, administrator user, opaque session ID and
-repository. Apps in the same repository share its branch and worktree; their installation identities
-and manifest subpaths remain separate bindings. Different sessions get separate branches. Reinstalling
-an assistant does not inherit earlier bindings. Released sessions cannot reallocate the same binding.
-Core retains a relative assistant session UI path but does not own conversations.
+A logical workspace belongs exclusively to one assistant installation, administrator and opaque
+session ID, or to one typed external principal/user/task reference. It contains one worktree per
+canonical repository under the existing allocation rule. Apps in the same repository share that
+worktree; their installation identities and manifest subpaths remain separate bindings. Another
+repository adds a child to the same logical workspace. A conflicting target branch is refused.
+Question-only sessions have no workspace until source preparation.
 
-[External development workspaces](../external-development-workspaces/feature.md) reuse this storage
-and observer with a typed external owner: current administrator, durable directly authorized MCP
-principal and opaque task ID. These records have no assistant installation or session UI path.
-Installed-assistant owner serialization and allocation identities remain unchanged. OAuth access-token
-refresh preserves external bindings; another grant does not inherit them. Native edits remain visible
-without importing the external application's conversation.
+The aggregate ID is `SHA256("workspace\n" + OwnerIdentity(owner))`. It is derived from persisted
+owner records and excludes external display labels. The legacy `DevelopmentWorkspace` record
+represents a worktree; its existing `id` remains the identifier in mutation, publication, document
+and external MCP APIs. Its additional `workspaceId` identifies the logical group. This additive
+projection preserves paths, branches, original/integration bases, grants, leases and replay IDs;
+no Git migration or new allocation store is needed. Different assistant installations, users,
+sessions or external grants remain separate. Public labels never grant authority.
 
-Preparation is explicit. Attaching app context or sending an ordinary message allocates no source.
-Core fetches an explicit development branch, otherwise the manifest source branch, otherwise the
-repository's default branch. It records the exact fetched commit as the immutable original base.
-The installed package version is unrelated. Fetch failure never selects stale cached source.
-Repeated preparation reuses the existing binding without moving its base; conflicting target choices
-are refused. A local repository supplies its current branch head, without implicitly fetching its
-own remote. Source identities support canonical local Git repositories and credential-free HTTP(S)
-URLs. File URLs and equivalent absolute paths share the same canonical Git repository binding.
-Relative local declarations such as `source.repository: "."` use the resolved source root
-recorded at installation; a missing root is an error, never a fallback to Core's working directory.
-Private source can be supplied through an operator-maintained local repository.
+A group reports `released` only when every authorized child is released; otherwise an unavailable,
+preparing or partially released group reports `attention`. There is no aggregate HEAD or branch. A separate [workflow record](../workspace-lifecycle-controls/feature.md)
+tracks explicit verified completion and cleanup across children. Child failures do not hide other
+authorized repositories.
 
 ## Authorization And APIs
 
@@ -49,7 +44,7 @@ review. Install Core before updating Harness to the canonical name. `apps.source
 authorize workspace operations. The manifest schema version is unchanged.
 
 Assistant requests use `/api/internal/apps/{assistant}/sessions/{session}/workspaces` with the app
-service bearer and `X-Hosty-User-Token`: a browser app identity with current app activity and a live
+service bearer and `X-Hosty-User-Token`: a browser app identity with continuous authority and a live
 authorizing Core sign-in. The conversation ID scopes ownership; it requires no separate approval.
 Delegated and read-only MCP credentials do not authorize preparation.
 Core checks the persisted permission and the user's current administrator/access state on every
@@ -61,6 +56,7 @@ and session ownership. Existing read-only Core MCP credentials confer no workspa
 | GET collection | List this session's bindings, including released records |
 | POST collection | Prepare with `requestId`, `sessionId`, `appId`, `sessionPath`, optional `targetBranch` / `leaseId` |
 | GET `/{id}` | Observe current source state |
+| GET `/{id}/viewer` | Resolve the installed Workspaces app URL with aggregate and worktree selection |
 | POST `/{id}/diff` | Preview `{ path, view: "session" or "local" }` |
 | POST `/{id}/operations/{kind}` | Run a managed operation with a UUID `requestId` |
 
@@ -69,8 +65,52 @@ Administrators use `/api/development/workspaces` to list active records across a
 CSRF. Responses use `Cache-Control: no-store`. Managed requests produce Core audit records; observed
 external Git activity does not acquire a fabricated managed-operation audit entry.
 
-Shell's development-workspaces section links to source-capable tools. Shell does not declare
-`apps.sources.full`, so it no longer reads workspace files or performs workspace Git operations.
+[Workspaces](../workspaces-app/feature.md) remains a standalone inspector. The
+[Harness development page](../harness-development-ui/feature.md) also reads the same Core projection. Shell displays its
+manifest navigation entry without reading source; the former dashboard launcher is removed.
+Harness resolves the viewer destination through the owning session's existing Core authorization.
+The link opens the current installed `hosty.workspaces` browser origin with workspace and worktree
+IDs; an unavailable installation produces a reason instead of a fabricated destination.
+
+## Read-Only Inspection Contract
+
+The routes below live under `/api/internal/apps/{appId}/workspace-inspection`:
+
+| Method / suffix | Result |
+| --- | --- |
+| GET collection | Authorized logical groups, typed owners and all child records, including clean and released worktrees |
+| GET `/{workspaceId}/worktrees/{id}` | Local Git observation, original-base file statuses, up to 100 commits, recorded PR evidence and known consumers |
+| GET `/{workspaceId}/worktrees/{id}/diff?path=...&view=session\|local` | Existing bounded, contained regular-file diff; local means uncommitted, session means original base to current files |
+
+All routes require the matching app service bearer, the explicitly reviewed `apps.workspaces.read`
+permission and that app's active `hostyg_` user credential. The acting user must currently be an
+enabled administrator. Core cookies, delegated credentials and MCP-only credentials do not satisfy
+this ordinary app contract. Neither `apps.sources.full` nor `apps.sources.read` implicitly grants
+inspection; inspection grants no source, Git or lifecycle mutation authority. The retired
+`apps.workspaces.manage` name remains unsupported. Existing assistant and external mutation
+credentials retain their original checks; task IDs are not execution authorization boundaries.
+
+Every inventory, detail and diff revalidates effective private-source grants, current app bindings
+and source ownership. An inaccessible child is omitted entirely from inventory, including counts;
+direct reads refuse access. Diff access is checked again before returning bytes. Historical source
+records do not revive a revoked or cleared connection. Administrators may inspect public-source
+worktrees across owners; private worktree reads remain with the source owner.
+
+Responses use `Cache-Control: no-store`. The projection excludes source credentials, publication
+connection IDs, operation command bodies and transcript content. Local observations do not fetch,
+merge, commit, publish or change runtime source. Ahead/behind compares HEAD with the last fetched
+target ref. Source previews reuse the regular-file, traversal, binary and output limits of the
+existing worktree diff service.
+
+PR URLs remain references when no verified observation exists. Provider facts require a matching
+worktree owner, repository, current user-owned unexpired connection and published HEAD. The view
+shows the observation timestamp, check states and review summary, without review comment bodies.
+It does not call the provider to refresh facts. Older PR cycles retain their URLs and known heads,
+not an inferred live state. One merged PR does not close the group.
+
+Known consumers include Core-registered running local services and installed source overrides.
+Leases are retained activity claims, not proof of a live agent. This read projection does not
+inventory all native processes or Docker mounts and introduces no filesystem isolation.
 
 ## Git Operations And Recovery
 
@@ -158,7 +198,32 @@ including Shell. Registered worktrees have no exception to this rule. Direct CLI
 still select them subject to the common source-path restrictions. Harness's workspace API and source
 editing keep their existing `apps.sources.full` authorization; Shell does not acquire that permission.
 
+## Shared Docker Consumers
+
+The [shared Harness worker](../assistant-shared-docker-runtime/feature.md) uses coordinator-only
+`GET .../workspaces/worker-bindings` and `POST .../workspaces/worker-bindings/lease` (`leaseId`,
+`acquire`). Existing app-service, reviewed source permission and administrator/session checks apply;
+external principals cannot obtain this binding descriptor. It exposes canonical shared roots and
+verified tree paths, not an isolated per-owner projection. Enabling this administrator-wide mode
+explicitly shares source across workspaces/users; the ordinary inspection API remains scoped.
+
+An active worker lease protects every tree against cleanup, including later allocations. Core
+serializes binding acquisition with cleanup and retains released UUID tombstones. Harness releases
+only after Docker confirms all writers stopped. An unknown worker outcome requires explicit recovery;
+lease age and a stopped local Docker client do not prove termination.
+
 ## Testing Expectations
+
+- Aggregate identity survives serialization, restart and external label changes; two repositories
+  join one owner while legacy worktree IDs, paths and operations remain unchanged.
+- Inspection requires its distinct grant and current app/admin identity, rejects mixed/Core or
+  delegated credentials, and does not authorize legacy mutation routes.
+- Test private-source removal, reassignment and credential revocation; unrelated authorized groups
+  remain visible while inaccessible metadata and bytes are withheld.
+- Exercise clean, unavailable, preparing and released children, path traversal, staged/untracked
+  changes, commits and a substituted worktree/group pair without mutating Git state.
+- Verify current-origin session links and missing installations, multiple PR cycles, expired or
+  removed provider connections, repository/head mismatch and absence of private review bodies.
 
 - Exercise duplicate/concurrent preparation, monorepo bindings, distinct owners, reinstall ownership,
   latest target versus existing base, fetch failure and registry restart without baseline mutation.

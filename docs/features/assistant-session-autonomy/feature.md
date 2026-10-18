@@ -1,6 +1,6 @@
 ---
 created: 2026-10-05
-updated: 2026-10-08
+updated: 2026-10-11
 summary: A per-chat Normal or Autonomous mode that controls whether native commands and file changes ask for approval.
 components: [apps/core, apps/harness]
 ---
@@ -41,9 +41,9 @@ have detached from the provider. Restoring Normal does not undo completed change
 Native approval mode and Core authorization are separate. MCP and workspace calls use the
 assistant app's [active authorization](../app-activity-window/feature.md#assistant-activity-authorization),
 with no additional approval for each conversation. Core checks the live authorizing sign-in, app
-activity deadline, user access, installation identity and existing grants. Normal and Autonomous
-neither add permissions nor extend this activity window. Standard app recovery updates the selected
-conversation's credentials while preserving its run and draft.
+user access, installation identity and existing grants. Continuous sessions have no independent
+hourly deadline. Normal and Autonomous neither add permissions nor extend principal lifetime.
+Standard app recovery updates all live conversations of that actor while preserving runs and drafts.
 
 ## Testing Expectations
 

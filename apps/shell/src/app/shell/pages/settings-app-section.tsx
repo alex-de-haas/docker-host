@@ -135,6 +135,7 @@ export function AppSettingsTabPanel({
     <div className="relative h-full min-h-0 overflow-hidden bg-background">
       <EmbeddedAppFrame
         src={src}
+        standaloneHref={tab.embeddedUrl}
         title={`${tab.label} settings`}
         appId={tab.appId}
         grantedCorePermissions={tab.grantedCorePermissions}

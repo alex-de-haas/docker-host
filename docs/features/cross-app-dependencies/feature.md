@@ -1,6 +1,6 @@
 ---
 created: 2026-06-22
-updated: 2026-09-09
+updated: 2026-10-16
 summary: Apps declare dependencies on other installed apps, Core injects their URLs and reports their state.
 components: [apps/core, apps/shell]
 ---
@@ -60,8 +60,8 @@ dependency may not be installed yet) — that surfaces as reported state instead
 
 At start, for each wired endpoint Core resolves the dependency app's endpoint by `key` and injects
 its URL as `HOSTY_DEPENDENCY_{ALIAS}_URL`. For a **docker** consumer the URL's loopback host is
-rewritten to `host.docker.internal` (the same rewrite used for `HOSTY_CORE_ORIGIN`), so the value is
-reachable from inside the container; **localCommand** consumers get the URL as-is.
+rewritten to `host.docker.internal` for HTTP and non-HTTP protocols such as Redis. Protocol, explicit port,
+original path and query options are preserved without adding a root slash; **localCommand** consumers get the URL as-is.
 
 > **Connectivity caveat (current).** Reachability via `host.docker.internal:{hostPort}` requires the
 > dependency to publish that endpoint host-reachable (`expose: "host"`). A loopback-only endpoint is
@@ -92,7 +92,9 @@ answer, read per service from the provider's last health reading
 ([App Readiness](../app-readiness/feature.md)) so a dead sidecar on the provider is not an outage
 here; and `ready` is the computed `running && healthy` a dependent waits on. Deciding what deserves attention
 belongs to the client, which is what lets one projection serve both the required and optional cases.
-The Shell derives its Installed Apps problem icons from it:
+Shell hides dependency problem icons and expanded-row alerts when the consumer app is stopped.
+The provider state remains available from Core, and the consumer's other diagnostics remain visible.
+For consumers in other runtime states, Shell derives its Installed Apps problem icons from it:
 
 | Dependency state | Surfaced as |
 | --- | --- |
@@ -164,3 +166,5 @@ required/optional policy on the server and split problem derivation across two c
 - `apps/shell/test/app-problems.test.mjs`: every row of the state table above, including the silent
   one, the severity split on `required`, the env-var name in the unresolved-endpoint detail, the
   stopped-provider case raising exactly one problem, and an older Core sending no `dependencies` at all.
+- A stopped consumer hides all dependency diagnostics, including missing providers, stopped providers,
+  failed readiness and unresolved endpoints. They reappear after the consumer starts; unrelated errors remain visible while it is stopped.

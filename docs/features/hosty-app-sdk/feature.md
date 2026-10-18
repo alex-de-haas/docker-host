@@ -1,6 +1,6 @@
 ---
 created: 2026-07-15
-updated: 2026-10-08
+updated: 2026-10-11
 summary: The shared app-side Host integration published as an npm package and a NuGet package.
 components: [packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -8,7 +8,7 @@ components: [packages/app-sdk, packages/app-sdk-dotnet]
 # Hosty App SDK
 
 Shared Host integration for runtime apps, in two published packages: **`@hosty-sdk/app`** on npmjs
-(TypeScript) and **`HostySdk.App`** on NuGet (.NET, 0.6.0). They own the app half of the
+(TypeScript) and **`HostySdk.App`** on NuGet (.NET, 0.9.0). They own the app half of the
 [auth session lifecycle](../auth-session-lifecycle/feature.md) contract — session classification,
 recovery, Core revalidation, launch-mode awareness — plus the app secrets client, delegated-token
 validation, and (TypeScript only) the theme protocol between a shell and the pages it embeds.
@@ -26,6 +26,20 @@ Installation also has a pure client/state flow, a React dialog and an app-local 
 [App installation](../app-installation-sdk/feature.md) owns their permission and Core confirmation
 contract; none depends on the default Shell or its embedding messages.
 
+## Continuous access
+
+The SDK carries Core's versioned continuity metadata through standard session adapters. The browser
+coordinator performs correlated Core-frame maintenance, same-actor app probes, outage backoff and
+coalesced pre-request checks. Server revalidation cannot keep a browser principal alive. Explicit
+local/public content can remain usable through `HostyOverlay.localContent` while the protected root
+is gated. Older Core metadata preserves the legacy activity behavior.
+
+TypeScript `BackgroundGrantClient` (`/background/server`) and .NET `HostyBackgroundClient` acquire
+short request credentials for an explicitly reviewed grant/scope. Both coalesce issuance, refresh
+before expiry and never replay ambiguous writes. See
+[Continuous App Access](../continuous-app-access/feature.md) for scope, maintenance, migration,
+revocation and upgrade-order contracts.
+
 ## Packages And Slices
 
 ```text
@@ -33,6 +47,8 @@ contract; none depends on the default Shell or its embedding messages.
 @hosty-sdk/app/server          # import "server-only": Core revalidation, code exchange, app secrets
 @hosty-sdk/app/session/server  # framework-neutral validated-session and required-setup response
 @hosty-sdk/app/delegated       # local ECDSA validation of Core-issued delegated tokens
+@hosty-sdk/app/next            # optional Next App Router composition adapter
+@hosty-sdk/app/ui/react        # policy/navigation hooks, boundaries, frames and retained workspaces
 @hosty-sdk/app/react           # 'use client': HostyOverlay, legacy bridges, launch/theme helpers
 @hosty-sdk/app/embedder        # theme sender and legacy message parsers
 @hosty-sdk/app/browser-auth    # app-local proof attempts, grant persistence, appFetch and popup sign-in
@@ -176,8 +192,9 @@ an old attempt and restarts once with fresh proof. See [App Code Exchange](../ap
 
 The SDK reports how an app is running — `embedded`, `native`, or `standalone` — as a first-class
 helper, resolved from the `hosty_launch` parameter with a `sessionStorage` fallback and exposed as the
-`data-hosty-launch` attribute plus the `hosty-shell-chrome` class, so an app can drop the navigation
-its embedder already renders without a flash.
+`data-hosty-launch` attribute for legacy consumers. New navigation visibility uses the independent
+[UI composition policy](../sdk-ui-composition/feature.md), `chromeBootstrapScript`, and
+`HostyNavigationBoundary`. Framing and copied launch storage do not hide navigation in that contract.
 
 Logout UI is the app's discretion, gated by that helper: embedded can hide logout to avoid duplicating the host account controls (the app still owns
 its session), standalone may offer a control that drops the app cookie and navigates to Core's

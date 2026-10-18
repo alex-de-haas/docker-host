@@ -121,6 +121,7 @@ public sealed class AppManifestServiceTests
     [Theory]
     [InlineData("assistant", "app_manifest_assistant_contract_required")]
     [InlineData("speech-to-text", "app_manifest_speech_to_text_contract_required")]
+    [InlineData("translation", "app_manifest_translation_contract_required")]
     public async Task LoadAsync_MissingProviderContract_IdentifiesTheInterface(string name, string code)
     {
         var path = await WriteManifestAsync("com.example.provider", role: $$""", "interfaces": { "{{name}}": [{}] } """);
@@ -252,6 +253,36 @@ public sealed class AppManifestServiceTests
             """);
         var selection = await new AppManifestService().LoadAsync(manifestPath, validateAllProfiles: true, requirePanelIcons: true);
         Assert.Equal(new[] { "bot", "contact-round" }, selection.Manifest.Ui!.Panels.Select(panel => panel.Icon));
+    }
+
+    [Theory]
+    [InlineData("", "app_manifest_ui_panel_id_invalid")]
+    [InlineData("Upper", "app_manifest_ui_panel_id_invalid")]
+    [InlineData("legacy-old", "app_manifest_ui_panel_id_invalid")]
+    [InlineData("chat", "app_manifest_ui_panel_id_duplicate")]
+    public async Task LoadAsync_RejectsInvalidOrDuplicatePanelIds(string id, string expected)
+    {
+        var manifestPath = await WriteSystemUiManifestAsync(null, $$"""
+            , "ui": { "panels": [
+                { "id": "chat", "path": "/one", "label": "Chat", "icon": "bot" },
+                { "id": {{JsonSerializer.Serialize(id)}}, "path": "/two", "label": "Chat", "icon": "bot" }
+            ] }
+            """);
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+        Assert.Contains(error.Errors, e => e.Code == expected);
+    }
+
+    [Fact]
+    public async Task LoadAsync_DistinctPanelIdsMayShareLabelsAndPaths()
+    {
+        var manifestPath = await WriteSystemUiManifestAsync("system", """
+            , "ui": { "entrypoint": { "endpoint": "web", "path": "/" }, "panels": [
+                { "id": "one", "endpoint": "web", "path": "/panel", "label": "Tool", "icon": "bot" },
+                { "id": "two", "endpoint": "web", "path": "/panel", "label": "Tool", "icon": "bot" }
+            ] }
+            """);
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+        Assert.Equal(["one", "two"], selection.Manifest.Ui!.Panels.Select(p => p.Id));
     }
 
     [Fact]
@@ -1315,6 +1346,25 @@ public sealed class AppManifestServiceTests
         Assert.Equal("/app/cache", selection.CacheTarget?.ContainerPath);
         Assert.Equal("HOSTY_APP_CACHE_DIR", selection.CacheTarget?.Environment);
         Assert.Equal("app", selection.CacheTarget?.Service);
+    }
+
+    [Theory]
+    [InlineData("data")]
+    [InlineData("cache")]
+    public async Task LoadAsync_ProfileStorageTargetWinsOverEarlierTypeFallback(string area)
+    {
+        var path = await WriteRawManifestAsync("""
+            {"schemaVersion":"app.0.1","id":"com.example.notes","name":"Notes","version":"1.0.0",
+             "runtimeProfiles":[{"key":"sandbox","type":"docker","default":true}],
+             "services":[{"key":"app","runtimes":{"sandbox":{"type":"docker","image":"example/notes:1"}}}],
+             "__AREA__":{"enabled":true,"targets":[
+               {"runtime":"docker","service":"app","containerPath":"/fallback"},
+               {"runtime":"sandbox","containerPath":"/isolated"}]}}
+            """.Replace("__AREA__", area));
+        var selection = await new AppManifestService().LoadAsync(path);
+        var target = area == "data" ? selection.DataTarget : selection.CacheTarget;
+        Assert.Equal("/isolated", target?.ContainerPath);
+        Assert.Null(target?.Service);
     }
 
     [Fact]

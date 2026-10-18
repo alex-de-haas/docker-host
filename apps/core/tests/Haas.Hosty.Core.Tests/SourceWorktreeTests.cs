@@ -6,9 +6,9 @@ public sealed partial class CoreLifecycleServiceTests
 {
     private const string SourceTestApp = "com.example.notes";
 
-    private static async Task<(LifecycleFixture Fixture, string Repository)> SourceFixtureAsync()
+    private static async Task<(LifecycleFixture Fixture, string Repository)> SourceFixtureAsync(bool shortPaths = false)
     {
-        var fixture = await LifecycleFixture.CreateAsync();
+        var fixture = await LifecycleFixture.CreateAsync(shortPaths: shortPaths);
         var repository = await CreateGitRepositoryAsync(fixture.Root);
         await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository)));
         await fixture.Sources.SetLocalOverrideAsync(SourceTestApp, new AppSourceOverrideRequest(repository));

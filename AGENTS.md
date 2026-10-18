@@ -13,7 +13,7 @@ Documentation-only changes (`docs/`, `README.md`, `AGENTS.md`) are the exception
 Where the version lives:
 
 - **Platform (`apps/core` + `apps/cli`)** share one version in the root `Directory.Build.props`. Bump it there; do not add `<Version>` to individual `.csproj` files.
-- **`apps/shell`**, **`apps/marketplace`**, **`apps/plans`**, and **`apps/demo-app`** are first-party runtime apps: bump `version` in their respective `manifest.json` (the artifact source of truth) and keep their `package.json` in step. They version independently from the platform.
+- **`apps/shell`**, **`apps/marketplace`**, **`apps/plans`**, **`apps/workspaces`**, and **`apps/demo-app`** are first-party runtime apps: bump `version` in their respective `manifest.json` (the artifact source of truth) and keep their `package.json` in step. They version independently from the platform.
 - **`apps/harness`** (Hosty Harness, including its web UI) continues the former Gateway release line. Bump `version` in `apps/harness/manifest.json`, `apps/harness/package.json` and `apps/harness/web/package.json` together. It versions independently from Core and Shell.
 - **`apps/telemetry`** (collector + backend + `apps/telemetry-ui`) ships as one app: bump `version` in `apps/telemetry/manifest.json` and keep the first-party service image tags (`backend`, `ui`) and `apps/telemetry-ui/package.json` in step (`scripts/check-versions.mjs` enforces this). The collector is a third-party image and is exempt.
 - **`apps/whisper`** is an independent local speech runtime app: bump `version` in `apps/whisper/manifest.json` and keep `<Version>` in `apps/whisper/Hosty.Whisper/Hosty.Whisper.csproj` in step. `scripts/check-versions.mjs` checks both.
@@ -179,6 +179,27 @@ generated block by hand; run `--fix` after changing any document.
 lives in docker-host and the others carry a byte-identical copy, so change it
 there first.
 
+## Background UI Updates
+
+- First decide whether a screen needs background updates, based on its intended behavior, the
+  user's request and the value of fresh data. Dashboard metrics and active Harness conversations
+  benefit from live updates; rarely changed settings usually need only loading on entry, refresh
+  after an action or explicit refresh. Preserve unsaved form edits when refreshing data.
+- Where background updates are warranted, prefer SSE over recurring requests, especially for
+  frequent changes or when a suitable stream already exists. Prefer payloads the client can
+  render directly when practical, and reuse existing infrastructure.
+- This is a recommendation, not a requirement to add SSE to every screen. Use engineering judgment
+  to balance freshness, request volume and implementation/maintenance cost. Polling, event-triggered
+  fetching or manual refresh are valid choices when they fit the scenario better; they do not
+  require a separate exception approval.
+- When using streams, share connections where appropriate within the same authorized backend and
+  browser context, preserve app/user boundaries, and handle visibility, reconnect and missed-data
+  recovery. Browser suspension and automatic reconnect alone do not guarantee up-to-date state.
+- Keep transport keep-alives and server-side sampling distinct from UI data refresh. Scope
+  subscriptions to actual consumers so a screen does not observe data it does not need.
+- The [resource delivery implementation](docs/features/runtime-resource-usage/feature.md) applies this
+  preference to Dashboard. Changes to other screens are evaluated individually in their own scope.
+
 ## Core Development Feedback Loop
 
 - Identify the intended data root and factual launch mode/project before changing its lifecycle. See [Core development mode](docs/features/core-dev-target/feature.md).
@@ -204,11 +225,10 @@ there first.
   accounts need explicit recovery. In-process tests may seed only their isolated test stores; do not
   use such sessions as evidence that browser login works.
 - Do not validate Hosty identity, Shell embedding, app assignments, or scoped directory behavior by running an app only in standalone mode.
-- Use Core-managed runtime app lifecycle for local app work that depends on Hosty identity. Install the app manifest with the local/source runtime profile, then start it through Core:
+- Use a Core-managed sandbox for runtime verification. When an authorized test requires a supported local/source profile, target the test instance explicitly and install from the registered worktree:
   ```bash
-  hosty core start
-  hosty apps install apps/demo-app/manifest.json --runtime dev
-  hosty apps start com.haas.demo-app
+  hosty --data-root <test-instance-root> apps install <managed-worktree>/apps/demo-app/manifest.json --runtime dev
+  hosty --data-root <test-instance-root> apps start com.haas.demo-app
   ```
 - If Core is already running from another terminal or debugger, use normal `hosty apps ...` commands against that Core process instead of starting another Core process.
 - For direct API probes against the local app origin, request a real Hosty-signed app identity token through Core:
@@ -218,11 +238,39 @@ there first.
   ```
 - Treat `hosty apps identity` as a diagnostic helper for direct endpoint probes only. Gateway and Shell integration still need to be checked through Core/Shell URLs and `hosty apps open`.
 
-## External Local Development
+## Managed Development And Sandbox Verification
 
-For an authorized local external-agent workflow, follow
-[External development workspaces](docs/features/external-development-workspaces/feature.md).
-Connect directly to the intended local Core with reviewed workspace authority, prepare before source
-edits, and use the returned directory. Keep verified plan progress current; task IDs do not isolate
-grants. Preserve replay IDs and leases, and follow explicit user/repository authority for commits,
-publication and cleanup.
+- For Hosty-managed source, prepare or resume a registered Core workspace before editing. Use
+  Harness's workspace tools or a directly authorized local Core connection; external clients use
+  `prepare_workspace` and edit its returned absolute path. Confirm the intended Core instance,
+  repository and branch, and read the instructions in that worktree. Keep the original checkout
+  and Core's shared managed-source checkout unchanged. Do not use a Source override as a substitute
+  for a development workspace.
+- Reuse a stable task/workspace context, keep required activity leases while native edits or
+  processes run, and preserve request IDs when recovering uncertain operations. Several apps may
+  share one repository worktree; another repository needs its own authorized binding. Workspace
+  authority does not grant lifecycle, publication, secret-copying or broader source access.
+- Run affected unit tests and builds in the worktree. For integration/browser checks, use a
+  Core-managed sandbox, normally a child Core with Docker app services, separate test users/data
+  and dedicated dependency instances. Use the supported Harness/Core lifecycle and inspect actual
+  readiness. Verify Hosty identity through normal setup/login and Core/Shell preview URLs.
+  Documentation-only changes need document/link checks, not an artificial runtime deployment.
+- Reuse the sandbox and its test data while iterating. Report relevant startup/resource and recovery
+  results when the change calls for them. Keep ordinary app data separate; explicitly authorized
+  shared inputs should be mounted read-only where possible. Do not alter unrelated running apps or
+  copy provider credentials merely to make a test pass. Existing scoped user authorization remains
+  valid; ask only for missing authority or a material new intervention.
+- A live-data dev trial is a separate, explicitly authorized switch in the existing Core, using
+  unified dev-mode controls and Return. Sandbox success never authorizes it automatically. Preserve
+  live edits, source and data; Return is not a Git reset or data restore. Native/system workloads
+  retain their supported test paths; do not invent Docker support or remove runtime capabilities.
+- Follow repository planning, versioning and commit/publication rules. Keep verified plan progress
+  current in the worktree. On completion, export useful summaries, Finish the test sandbox through
+  its owner and verify resource removal. Keep raw evidence JSON, logs, credentials and experimental
+  patches out of PRs. Release a lease only after its native consumers stop; remove a workspace only
+  with authorization and successful dirty/unmerged/consumer checks. Preserve incomplete work.
+- If this repository is not registered Hosty source, or the client lacks the supported operation,
+  state that limitation and use the repository's already-authorized workflow. Do not install an app,
+  invent a grant, change source selection or claim sandbox verification just to bypass the gap.
+
+Follow the [External development workflow](docs/features/external-development-workspaces/feature.md) for ownership, replay, leases and cleanup details.

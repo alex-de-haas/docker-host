@@ -1,7 +1,11 @@
+import { WorkerError } from "./runtime/worker.js";
 import { createHostySessionResponse } from "@hosty-sdk/app/session/server";
+import { createHostyUiResponse } from "@hosty-sdk/app/ui/server";
 import { readOwnPermissionNotice } from "@hosty-sdk/app/permissions/server";
 import { delegationCredential } from "./session-delegation.js";
 import { speechRoute } from "./speech.js";
+import { translationRoute } from "./translation/routes.js";
+import { isTranslationKind, TranslationService } from "./translation/service.js";
 import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { ProviderError, type ProviderInvocation } from "@hosty-sdk/app/providers";
 import { HandoffStore } from "./handoff/store.js";
@@ -25,6 +29,8 @@ const APP_SESSION_STREAM_SECONDS = 3600;
 import { SessionBusyError, SessionNotFoundError, type SessionManager } from "./sessions/manager.js";
 import type { HarnessAdapter } from "./harness/adapter.js";
 import { MAX_SYSTEM_PROMPT_CHARS, type SettingsStore } from "./settings/store.js";
+import { validRetention } from "./settings/store.js";
+import { DEFAULT_WORKFLOW_PROMPT } from "./settings/workflow.js";
 import type { PendingSkill } from "./mcp/skills.js";
 import type { ProviderDirectory } from "./settings/providers.js";
 import { serverName } from "./mcp/exchange.js";
@@ -55,6 +61,7 @@ export function createGatewayServer(
   connections: AgentConnections | null = null,
 ): Server {
   const handoffs = new HandoffStore(manager, settings, providers);
+  const translations = connections && settings ? new TranslationService(connections, settings) : null;
   const recovered = handoffs.sweep().then(() => manager.recoverMcpApprovals()).catch(error => {
     // A transient directory/storage failure is retried by the periodic sweep. Keep unrelated
     // endpoints available and attach the handler immediately, before the first request arrives.
@@ -63,13 +70,14 @@ export function createGatewayServer(
   const timer = setInterval(() => { void handoffs.sweep().catch(error => console.error("[handoff] cleanup failed", error)); }, 60_000);
   timer.unref();
   const server = createServer((request, response) => {
-    void recovered.then(() => route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs)).catch((error) => {
+    void recovered.then(() => route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations)).catch((error) => {
+      if (response.destroyed) return;
       if (error instanceof ProviderError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
       if (error instanceof SessionBusyError) {
         sendJson(response, 409, { code: "session_busy", message: error.message });
         return;
       }
-      if (error instanceof AppContextError || error instanceof ConnectionError) {
+      if (error instanceof AppContextError || error instanceof ConnectionError || error instanceof WorkerError) {
         sendJson(response, error.status, { code: error.code, message: error.message });
         return;
       }
@@ -106,6 +114,7 @@ async function route(
   facade: McpFacade | null,
   connections: AgentConnections | null,
   handoffs: HandoffStore,
+  translations: TranslationService | null,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://gateway.local");
   const method = request.method ?? "GET";
@@ -115,6 +124,9 @@ async function route(
     response.writeHead(204).end();
     return;
   }
+
+  // This surface accepts only its exact Core provider credential, never operator cookies.
+  if (await translationRoute(request, response, url, translations)) return;
 
   // Outside /api and ahead of the operator gate, like the proxy below and for the same kind of
   // reason: an external agent client authenticates with a scoped access token of its own, which
@@ -141,10 +153,29 @@ async function route(
     return;
   }
 
+  if (url.pathname.startsWith("/api/hosty/ui/")) {
+    const token = readAppCredential(request);
+    const session = await resolveAppSession(token);
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(request.headers)) if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+    const body = method === "POST" ? JSON.stringify(await readJson(request)) : undefined;
+    const incoming = new Request(url, { method, headers, body });
+    const result = await createHostyUiResponse(incoming, { session, token }, { administratorOnly: true, appId: process.env.HOSTY_APP_ID ?? "hosty.harness" });
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, result.status, await result.json());
+    return;
+  }
+
   if (method === "GET" && url.pathname === "/api/hosty/session") {
     const [session, recovery] = await Promise.all([
       resolveAppSession(readAppCredential(request)), getAppRecoveryParams(),
     ]);
+    const credential = readAppCredential(request);
+    if (session.status === "active" && session.identity.hostRole === "host.admin" && credential) {
+      // A same-actor probe after recovery updates all live runs, including those whose UI is closed.
+      // Updating credentials neither starts a turn nor resends a message; transport retry stays with the manager.
+      await manager.refreshActorCredentials(session.identity.userId, credential).catch(() => undefined);
+    }
     const result = await createHostySessionResponse(session, recovery, { administratorOnly: true });
     response.setHeader("Cache-Control", "no-store");
     sendJson(response, result.status, await result.json());
@@ -164,7 +195,7 @@ async function route(
     response.setHeader("Cache-Control", "no-store");
     const session = await resolveAppSession(readAppCredential(request));
     sendJson(response, 200, { status: session.status === "active" && session.identity.hostRole !== "host.admin" ? "forbidden" : session.status,
-      ...(session.status === "active" ? { activeUntil: session.identity.activeUntil, activityRequired: session.identity.activityRequired } : {}),
+      ...(session.status === "active" ? { userId: session.identity.userId, activeUntil: session.identity.activeUntil, activityRequired: session.identity.activityRequired, continuity: session.identity.continuity } : {}),
       ...(session.status !== "active" && session.error ? { error: session.error } : {}),
       recovery: await getAppRecoveryParams() });
     return;
@@ -271,6 +302,15 @@ async function route(
 
   if (await speechRoute(request, response, url)) return;
 
+  if (url.pathname === "/api/settings/translation" && translations && method === "GET") {
+    sendJson(response, 200, await translations.configuration()); return;
+  }
+  const translationSetting = url.pathname.match(/^\/api\/settings\/translation\/(codex|claude)$/);
+  if (translationSetting && translations && method === "PUT" && isTranslationKind(translationSetting[1]!)) {
+    const body = await readJson(request);
+    sendJson(response, 200, await translations.configure(translationSetting[1], body.connectionId, body.model)); return;
+  }
+
   if (url.pathname === "/api/assistant/v1/handoffs" && method === "POST") {
     const prepared = await handoffs.prepare(actor.userId, await readJson(request), consumer);
     sendJson(response, prepared.created ? 201 : 200, prepared.value); return;
@@ -297,6 +337,15 @@ async function route(
   // an operator sees `com-haas-media-server-f9a077 · add_torrent`. The wire name cannot change: the
   // client builds `mcp__<server>__<tool>` from it and the grant set is keyed on it. So the id stays
   // and the label is translated, here, where the roster already is.
+  if (url.pathname === "/api/runtime" && method === "GET") { sendJson(response, 200, await manager.runtimeStatus()); return; }
+  if (url.pathname === "/api/runtime/image" && method === "POST") {
+    if (!manager.worker) throw new WorkerError("worker_unavailable", "Managed worker storage is unavailable.", 503);
+    await manager.worker.install(); sendJson(response, 200, await manager.runtimeStatus()); return;
+  }
+  if (url.pathname === "/api/runtime/stop" && method === "POST") {
+    await manager.recoverDocker(actor.userId, actor.via === "app-session" ? readAppCredential(request) : undefined);
+    sendJson(response, 200, await manager.runtimeStatus()); return;
+  }
   if (method === "GET" && url.pathname === "/api/apps") {
     const discovered = providers ? await providers.read() : null;
     const core = providers?.core() ?? null;
@@ -341,6 +390,7 @@ async function route(
   const connectionMatch = url.pathname.match(/^\/api\/connections\/([a-zA-Z0-9-]+)(\/test|\/login)?$/);
   if (connections && connectionMatch) {
     const id = connectionMatch[1]!; const action = connectionMatch[2] ?? "";
+    if (method !== "GET" && action !== "/test") await manager.assertWorkerProviderInactive(id);
     if (action === "/test" && method === "POST") { sendJson(response, 200, await connections.health(await connections.binding(id))); return; }
     if (action === "/login" && method === "POST") { sendJson(response, 200, await connections.startLogin(id)); return; }
     if (!action && method === "PUT") { sendJson(response, 200, await connections.update(await readJson(request), id)); return; }
@@ -368,6 +418,12 @@ async function route(
   if (url.pathname === "/api/settings" && settings && (method === "GET" || method === "PUT")) {
     if (method === "PUT") {
       const body = await readJson(request);
+      if (body.retention !== undefined && !validRetention(body.retention)) {
+        sendJson(response, 400, { code: "retention_invalid", message: "Choose Off or whole days from 1 to 3650 for both retention policies." }); return;
+      }
+      if (body.workflowPrompt !== undefined && (typeof body.workflowPrompt !== "string" || body.workflowPrompt.length > MAX_SYSTEM_PROMPT_CHARS)) {
+        sendJson(response, 400, { code: "workflow_prompt_invalid", message: `Workflow instructions must be text up to ${MAX_SYSTEM_PROMPT_CHARS} characters.` }); return;
+      }
       if (body.systemPrompt !== undefined && typeof body.systemPrompt !== "string") {
         sendJson(response, 400, {
           code: "system_prompt_invalid",
@@ -400,7 +456,10 @@ async function route(
         try { await manager.mcpPolicy.update(body.mcpToolRules as Record<string, import("./mcp/policy.js").ToolRule>); }
         catch (error) { sendJson(response, 409, { code: "tool_policy_changed", message: error instanceof Error ? error.message : "Refresh the tool catalog." }); return; }
       }
+      if (body.executionMode !== undefined) await manager.setExecutionMode(body.executionMode);
       await settings.update({
+        workflowPrompt: typeof body.workflowPrompt === "string" ? body.workflowPrompt : undefined,
+        retention: validRetention(body.retention) ? body.retention : undefined,
         immediateHandoffs: typeof body.immediateHandoffs === "boolean" ? body.immediateHandoffs : undefined,
         systemPrompt: typeof body.systemPrompt === "string" ? body.systemPrompt : undefined,
         mcpAutoAllow: isBooleanRecord(body.mcpAutoAllow) ? body.mcpAutoAllow : undefined,
@@ -443,6 +502,7 @@ async function route(
       discovery: discovered ? "ok" : "unavailable",
       harness: connections ? { name: "Selected chat provider", capabilities: { autoAllow: true, liveReconfigure: false } } : { name: adapter.name, capabilities: adapter.capabilities },
       agentConnections: Boolean(connections),
+      defaults: { workflowPrompt: DEFAULT_WORKFLOW_PROMPT },
       limits: { systemPromptChars: MAX_SYSTEM_PROMPT_CHARS },
     });
     return;
@@ -494,6 +554,25 @@ async function route(
     return;
   }
 
+  if (url.pathname === "/api/building-sessions" && method === "POST") {
+    const credential = actor.via === "app-session" ? readAppCredential(request) : null;
+    if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to continue building.");
+    const body = await readJson(request);
+    sendJson(response, 200, await manager.newBuildingSession(actor.userId, credential, {
+      appId: body.appId as string, requestId: body.requestId as string, expectedLocalHead: body.expectedLocalHead as string }));
+    return;
+  }
+
+  const inspection = url.pathname.match(/^\/api\/development-workspaces(\/local-apps|\/[a-f0-9]{64}(?:\/previews(?:\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))?|\/worktrees\/[a-f0-9]{64}(?:\/diff)?|\/workflow(?:\/(?:complete|resume|defer|delete|close))?)?)?$/);
+  if (inspection && (method === "GET" || method === "POST")) {
+    const credential = actor.via === "app-session" ? readAppCredential(request) : null;
+    if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to inspect workspaces.");
+    if (method === "POST" && !/\/(?:workflow\/(?:complete|resume|defer|delete|close)|previews\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))$/.test(inspection[1] ?? ""))
+      throw new AppContextError(400, "workspace_action_invalid", "Choose a workspace lifecycle action.");
+    sendJson(response, 200, await manager.inspectWorkspaces(credential, (inspection[1] ?? "") + url.search,
+      method === "POST" ? await readJson(request) : undefined, actor.userId)); return;
+  }
+
   const sessionMatch = url.pathname.match(/^\/api\/sessions\/([a-zA-Z0-9-]+)(\/.*)?$/);
   if (!sessionMatch) {
     sendJson(response, 404, { code: "not_found", message: "Unknown route." });
@@ -502,7 +581,7 @@ async function route(
 
   const sessionId = sessionMatch[1]!;
   if (sessionMatch[2] === "/workspaces" && method === "POST") {
-    const body = await readJson(request);
+    const body = await readJson(request, 256 * 1024);
     const action = body.action;
     if (typeof action !== "string") throw new AppContextError(400, "workspace_action_invalid", "Workspace action is required.");
     sendJson(response, 200, await manager.workspaceAction(sessionId, action as import("./sessions/development.js").DevelopmentAction,
@@ -510,6 +589,12 @@ async function route(
   }
 
   const rest = sessionMatch[2] ?? "";
+  if (rest === "/app-creations/dispatch" && method === "POST") {
+    const body = await readJson(request, 128 * 1024);
+    sendJson(response, 200, await manager.dispatchAppCreation(sessionId, body.requestId, body.prompt, actor.userId,
+      await delegationCredential(request, false), actor.via === "app-session" ? readAppCredential(request) ?? undefined : undefined));
+    return;
+  }
   if (rest === "/autonomy" && method === "PUT") {
     const body = await readJson(request);
     sendJson(response, 200, await manager.setAutonomy(sessionId, body.autonomy, actor.userId)); return;
@@ -519,6 +604,7 @@ async function route(
     if (actor.via !== "app-session" || !credential)
       throw new AppContextError(401, "reauth_required", "Sign in through Core to refresh this conversation.");
     await manager.refreshSessionCredentials(sessionId, actor.userId, credential);
+    await manager.refreshActorCredentials(actor.userId, credential);
     response.setHeader("Cache-Control", "no-store");
     sendJson(response, 200, { updated: true }); return;
   }
@@ -531,6 +617,14 @@ async function route(
 
   if ((await manager.getSession(sessionId))?.handoffPending) {
     sendJson(response, 409, { code: "handoff_pending", message: "Finalize or cancel the prepared handoff first." }); return;
+  }
+
+  if (rest === "/retention" && method === "POST") {
+    const deleted = await manager.sweepRetention(new Date(), sessionId);
+    sendJson(response, 200, deleted.includes(sessionId) ? { state: "deleted" } : await manager.sessionRetention(sessionId)); return;
+  }
+  if (rest === "/retention" && method === "GET") {
+    sendJson(response, 200, await manager.sessionRetention(sessionId)); return;
   }
 
   if (rest === "/apps" && method === "PUT") {
@@ -570,7 +664,7 @@ async function route(
   }
 
   if (rest === "" && method === "DELETE") {
-    const deleted = await manager.deleteSession(sessionId, actor.userId);
+    const deleted = await manager.deleteSession(sessionId, actor.userId, await delegationCredential(request, false));
     if (!deleted) {
       sendJson(response, 404, { code: "session_not_found", message: "Session not found." });
       return;
@@ -891,13 +985,13 @@ function readBearer(request: IncomingMessage): string | undefined {
   return header?.toLowerCase().startsWith("bearer ") ? header.slice("bearer ".length).trim() : undefined;
 }
 
-async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
+async function readJson(request: IncomingMessage, maxBytes = MAX_BODY_BYTES): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
     size += (chunk as Buffer).length;
-    if (size > MAX_BODY_BYTES) {
-      throw new PayloadTooLargeError(`Request body exceeds ${MAX_BODY_BYTES} bytes.`);
+    if (size > maxBytes) {
+      throw new PayloadTooLargeError(`Request body exceeds ${maxBytes} bytes.`);
     }
     chunks.push(chunk as Buffer);
   }

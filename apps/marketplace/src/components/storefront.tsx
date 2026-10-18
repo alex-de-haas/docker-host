@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Download, LoaderCircle, Package, PackageSearch, RefreshCw, Search, Store, TriangleAlert } from "lucide-react";
-import { SHELL_DUPLICATED_CHROME_CLASS } from "@hosty-sdk/app";
+import { HostyNavigationBoundary } from "@hosty-sdk/app/react";
 import type {
   CatalogAppDetailResponse,
   CatalogAppFeed,
@@ -52,15 +52,16 @@ export function Storefront() {
   const [notice, setNotice] = useState<string | null>(null);
   const requestRef = useRef<AbortController | null>(null);
 
-  const loadCatalog = useCallback(async (refresh: boolean, signal?: AbortSignal) => {
-    try {
-      const response = await fetchCatalogApps(refresh, signal);
+  // A promise chain rather than async/await: every state write then sits in a callback the
+  // React Compiler lint recognizes as asynchronous when the mount effect starts this load.
+  const loadCatalog = useCallback((refresh: boolean, signal?: AbortSignal) =>
+    fetchCatalogApps(refresh, signal).then(response => {
       if (signal?.aborted) return;
       setCatalog(response);
       setHasCatalog(true);
       setSessionExpired(false);
       setError(null);
-    } catch (loadError) {
+    }, (loadError: unknown) => {
       if (loadError instanceof Error && loadError.name === "AbortError") {
         return;
       }
@@ -71,12 +72,11 @@ export function Storefront() {
         setSessionExpired(loadError.status === 401);
       }
       setError(loadError instanceof Error ? loadError.message : "The catalog could not be loaded.");
-    } finally {
+    }).finally(() => {
       if (!signal?.aborted) {
         setLoading(false);
       }
-    }
-  }, []);
+    }), []);
 
   const loadInstalledAppIds = useCallback((signal?: AbortSignal) => {
     // Asks Core (via a Marketplace server route + app service token) which apps are already
@@ -193,12 +193,12 @@ export function Storefront() {
         onInstalled={() => { closeInstallation(); loadInstalledAppIds(); }} />}
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         {/* Shell already renders the app name; Refresh acts on the catalog below. */}
-        <div className={cn("min-w-0 space-y-1", SHELL_DUPLICATED_CHROME_CLASS)}>
+        <HostyNavigationBoundary><div className="min-w-0 space-y-1">
           <h1 className="truncate text-xl font-semibold leading-7">Marketplace</h1>
           <p className="text-sm text-muted-foreground">
             Discover runtime apps from your configured catalog. Hosty Core validates every feed again before installation.
           </p>
-        </div>
+        </div></HostyNavigationBoundary>
         <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2 sm:ml-auto sm:justify-end">
           <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={loading}>
             <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />

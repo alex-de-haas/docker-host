@@ -133,7 +133,41 @@ internal sealed class GitHubPublicationProvider(HttpClient http, IClock clock) :
     }
     private async Task<JsonNode> Graph(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
     {
-        const string query = "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){id number url state isDraft headRefName headRefOid baseRefName headRepository{nameWithOwner} mergeCommit{oid} mergeStateStatus reviewDecision reviewThreads(first:100){pageInfo{hasNextPage} nodes{id path line isResolved comments(first:20){pageInfo{hasNextPage} nodes{body}}}} commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){pageInfo{hasNextPage} nodes{... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}}}}";
+        const string query = """
+            query($owner: String!, $repo: String!, $number: Int!) {
+              repository(owner: $owner, name: $repo) {
+                pullRequest(number: $number) {
+                  id number url title state isDraft headRefName headRefOid baseRefName
+                  comments { totalCount }
+                  headRepository { nameWithOwner }
+                  mergeCommit { oid }
+                  mergeStateStatus reviewDecision
+                  reviewThreads(first: 100) {
+                    pageInfo { hasNextPage }
+                    nodes {
+                      id path line isResolved
+                      comments(first: 20) { pageInfo { hasNextPage } nodes { body } }
+                    }
+                  }
+                  commits(last: 1) {
+                    nodes {
+                      commit {
+                        statusCheckRollup {
+                          contexts(first: 100) {
+                            pageInfo { hasNextPage }
+                            nodes {
+                              ... on CheckRun { name status conclusion }
+                              ... on StatusContext { context state }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """;
         var parts = Slug(r.Repository).Split('/');
         var data = await Request(c, HttpMethod.Post, "/graphql", new JsonObject { ["query"] = query,
             ["variables"] = new JsonObject { ["owner"] = parts[0], ["repo"] = parts[1], ["number"] = r.Number } }, ct);
@@ -163,7 +197,7 @@ internal sealed class GitHubPublicationProvider(HttpClient http, IClock clock) :
             t?["isResolved"]?.GetValue<bool>() == true, (t?["comments"]?["nodes"]?.AsArray().Select(n => Text(n, "body")) ?? []).Concat(t?["comments"]?["pageInfo"]?["hasNextPage"]?.GetValue<bool>() == true ? ["Additional comments are available on the PR."] : []).ToArray())).ToArray();
         return new(clock.UtcNow, state, Text(pr, "headRefOid"), Text(pr, "baseRefName"), merge,
             pr["isDraft"]?.GetValue<bool>() ?? false, Text(pr, "mergeStateStatus"), Text(pr, "reviewDecision"),
-            threads["nodes"]!.AsArray().Count(t => t?["isResolved"]?.GetValue<bool>() != true), complete, checks, completionError, reviews);
+            threads["nodes"]!.AsArray().Count(t => t?["isResolved"]?.GetValue<bool>() != true), complete, checks, completionError, reviews, Text(pr, "title"), pr["comments"]?["totalCount"]?.GetValue<int>());
     }
     private async Task<bool> Completion(UserProviderConnection c, PublicationRecord r, string commit, CancellationToken ct)
     {

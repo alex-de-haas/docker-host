@@ -68,3 +68,17 @@ current user, scopes and `CallerAppId`. Require `mcp:read` for reads or `mcp:inv
 mutations and apply app user permissions. Never cache introspection. Ordinary APIs retain
 `IntrospectAsync`, which rejects MCP-only credentials. Core checks the explicit assistant-target
 relationship, installations and parent app session on every MCP validation.
+
+## Continuous and background access
+
+Core 0.130.0 supplies `HostySession.Continuity` for browser/native grants bound to a live principal.
+Forward it to a browser adapter; server revalidation alone cannot maintain a browser parent's idle
+window. Missing metadata retains the older server's authorization behavior.
+
+`HostyBackgroundClient` consumes an explicitly authorized Core grant/scope reference. Supply app
+options and an `HttpClient` with automatic redirects disabled. `TokenAsync` coalesces short-credential
+issuance and refreshes before expiry. `SendCoreAsync` sends one exact Core app operation without
+replaying a possibly completed mutation. Provider/MCP clients can use `TokenAsync` through their
+existing user credential input. Keep these credentials on the server. See
+[Continuous App Access](../../../docs/features/continuous-app-access/feature.md) for scope creation,
+ordinary logout versus explicit revocation, and installation/permission checks.

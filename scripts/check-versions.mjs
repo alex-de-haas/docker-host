@@ -140,6 +140,17 @@ expectEqual("plans version", {
 expectEqual("plans feed identity", { manifest: plansManifest.id, feeds: json("apps/plans/feeds.json").appId });
 if (json("apps/plans/feeds.json").schemaVersion !== "app-feeds.0.1") problems.push("plans feeds schema must be app-feeds.0.1");
 
+// workspaces: independently versioned runtime app and its first-party image/feed.
+const workspacesManifest = json("apps/workspaces/manifest.json");
+expectEqual("workspaces version", {
+  manifest: workspacesManifest.version,
+  packageJson: json("apps/workspaces/package.json").version,
+  imageTag: workspacesManifest.services?.find(service => service.key === "api")?.runtimes?.docker?.image?.tag,
+  healthz: capture(read("apps/workspaces/src/app/healthz/route.ts"), /version:\s*"([^"]+)"/),
+});
+expectEqual("workspaces feed identity", { manifest: workspacesManifest.id, feeds: json("apps/workspaces/feeds.json").appId });
+if (json("apps/workspaces/feeds.json").schemaVersion !== "app-feeds.0.1") problems.push("workspaces feeds schema must be app-feeds.0.1");
+
 // harness: manifest ↔ package (localCommand-only app, no image tag to pin).
 expectEqual("harness version", {
   manifest: json("apps/harness/manifest.json").version,
@@ -157,6 +168,13 @@ for (const channel of channels) {
     });
   }
 }
+
+// The worker ships with Harness, and uses the exact same provider protocol versions.
+expectEqual("Harness worker version", { harness: json("apps/harness/manifest.json").version, worker: json("apps/harness/worker/package.json").version, workerLock: json("apps/harness/worker/package-lock.json").packages[""].version });
+for (const provider of ["@openai/codex", "@anthropic-ai/claude-agent-sdk"]) {
+  expectEqual(`worker ${provider}`, { harness: json("apps/harness/package.json").dependencies[provider], worker: json("apps/harness/worker/package.json").dependencies[provider] });
+}
+expectEqual("worker image release", { harness: json("apps/harness/manifest.json").version, image: read("apps/harness/src/runtime/image.ts").match(/hosty-agent-worker:([^"\s]+)/)?.[1] });
 
 if (problems.length > 0) {
   console.error("Version drift detected:");

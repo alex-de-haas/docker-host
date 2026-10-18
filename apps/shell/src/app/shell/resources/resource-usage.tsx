@@ -1,54 +1,24 @@
 "use client";
 
-import { fetchCore } from "../core-transport.js";
-
-
-import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { Cpu, MemoryStick } from "lucide-react";
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
 import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
-import { CoreEventNames, subscribeToCoreEvents } from "../events/core-event-stream";
-import { cpuScale, elevatedCpu, formatCpu, formatMemory, mergeResources, resourceSeries, STALE_MS, type ResourceSnapshot } from "./resource-data";
+import { watchResources } from "./resource-stream";
+import { cpuScale, elevatedCpu, formatCpu, formatMemory, resourceSeries, type ResourceSnapshot } from "./resource-data";
 
 const Resources = createContext<{ snapshot: ResourceSnapshot | null; fresh: boolean; scale: number }>({ snapshot: null, fresh: false, scale: 100 });
 
 export function ResourceUsageProvider({ coreOrigin, children }: { coreOrigin: string; children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<ResourceSnapshot | null>(null);
   const [fresh, setFresh] = useState(false);
-  const cache = useRef<ResourceSnapshot | null>(null);
-  useEffect(() => {
-    const controller = new AbortController();
-    let busy = false;
-    let lastSuccess = 0;
-    const sync = async () => {
-      if (document.visibilityState !== "visible" || busy) return;
-      busy = true;
-      try {
-        const previous = cache.current;
-        const last = previous?.history.at(-1)?.timestamp;
-        const query = last ? `?after=${encodeURIComponent(last)}&runId=${encodeURIComponent(previous!.runId)}` : "";
-        const response = await fetchCore(`${coreOrigin}/api/core/resources${query}`, { credentials: "include", signal: controller.signal });
-        if (!response.ok) { setFresh(false); return; }
-        const next = mergeResources(previous, await response.json() as ResourceSnapshot);
-        if (controller.signal.aborted) return;
-        cache.current = next;
-        lastSuccess = Date.now();
-        setSnapshot(next);
-        setFresh(Boolean(next.history.length && Date.parse(next.now) - Date.parse(next.history.at(-1)!.timestamp) < STALE_MS));
-      } catch { if (!controller.signal.aborted) setFresh(false); }
-      finally { busy = false; }
-    };
-    const unsubscribe = subscribeToCoreEvents(coreOrigin, { names: [CoreEventNames.resourcesChanged], onSync: sync });
-    // Shared SSE is primary; this keeps a lease alive and recovers when an intermediary drops events.
-    const timer = setInterval(() => {
-      if (Date.now() - lastSuccess >= STALE_MS) setFresh(false);
-      void sync();
-    }, 10_000);
-    return () => { controller.abort(); unsubscribe(); clearInterval(timer); };
-  }, [coreOrigin]);
+  useEffect(() => watchResources(coreOrigin, view => {
+    setSnapshot(view.snapshot);
+    setFresh(view.fresh);
+  }), [coreOrigin]);
   const scale = useMemo(() => cpuScale(snapshot), [snapshot]);
   return <Resources.Provider value={{ snapshot, fresh, scale }}>{children}</Resources.Provider>;
 }

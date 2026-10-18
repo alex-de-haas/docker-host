@@ -88,6 +88,8 @@ internal static class AppSignInIntentEndpoints
             if (!request.Query.ContainsKey("requestId"))
             {
                 if (post) return await InvalidIntentAsync(auditAppId, audit, clock, context.RequestAborted);
+                if (request.Query.ContainsKey("installationId"))
+                    return await OpenPinnedSurfaceAsync(appId, context, identity, apps, users, clock);
                 if (request.Query.Keys.Any(key => key != "redirectUri"))
                     return await RefuseLegacyAttemptAsync(appId, context, identity, auditAppId, audit, clock);
                 var redirect = request.Query["redirectUri"].ToString();
@@ -284,6 +286,45 @@ internal static class AppSignInIntentEndpoints
         }
     }
 
+    private static async Task<IResult> OpenPinnedSurfaceAsync(string appId, HttpContext context,
+        AppIdentityService identity, AppRegistryStore apps, UserDirectoryStore users, IClock clock)
+    {
+        var request = context.Request;
+        if (request.Query.Count != 3 || request.Query.Any(p => p.Value.Count != 1 || p.Key is not ("installationId" or "endpoint" or "route")))
+            return CoreJson.Json(new ErrorResponse("destination_invalid", "Invalid installation-bound destination."), 400);
+        var installation = request.Query["installationId"].ToString();
+        var endpoint = request.Query["endpoint"].ToString();
+        var route = request.Query["route"].ToString();
+        if (string.IsNullOrEmpty(installation) || string.IsNullOrEmpty(endpoint) || !UiSurfaceRoutes.Valid(route))
+            return CoreJson.Json(new ErrorResponse("destination_invalid", "Invalid app surface destination."), 400);
+        var navigation = await CoreSessionAuthorization.ResolveNavigationSessionAsync(request, users, clock, context.RequestAborted);
+        if (navigation.Denied is not null) return navigation.Denied;
+        if (navigation.User is null)
+            return Results.Redirect($"/login?returnTo={Uri.EscapeDataString(request.Path + request.QueryString)}");
+        var (_, app) = await identity.RequireAccessibleUserAsync(appId, navigation.User.Id, context.RequestAborted);
+        if (PanelIdentity.Installation(app) != installation)
+            return CoreJson.Json(new ErrorResponse("installation_changed", "The original app installation is no longer available."), 409);
+        var summary = AppSummary.From(app);
+        var surfaces = summary.PanelSurfaces.Where(p => p.Endpoint == endpoint && UiSurfaceRoutes.Within(route, p.Path)).Select(p => (p.EmbeddedUrl, p.Service))
+            .Concat(summary.Navigation.Where(p => p.Endpoint == endpoint && UiSurfaceRoutes.Within(route, p.Path)).Select(p => (p.EmbeddedUrl, p.Service)))
+            .Concat(summary.EntryEndpoint == endpoint && summary.EntryPath is { } path && UiSurfaceRoutes.Within(route, path)
+                ? [(summary.EmbeddedUrl, summary.Endpoints.FirstOrDefault(e => e.Key == endpoint)?.Service)] : []);
+        var origin = surfaces.Where(p => UiPanelService.Available(app, p.Service, p.EmbeddedUrl))
+            .Select(p => UiPanelService.Origin(p.EmbeddedUrl)).OfType<string>().FirstOrDefault();
+        if (origin is null)
+            return CoreJson.Json(new ErrorResponse("destination_unavailable", "The original app surface is not available."), 409);
+        var destinationUri = new UriBuilder(new Uri(new Uri(origin), route));
+        // Replace the SDK's reserved parameter without normalizing the app's opaque query.
+        // In particular, preserve repeated fields and distinct names that differ only by case.
+        destinationUri.Query = string.Join('&', destinationUri.Query.TrimStart('?').Split('&')
+            .Where(part => Uri.UnescapeDataString(part.Split('=', 2)[0].Replace('+', ' ')) != "hosty_launch"));
+        var destination = QueryHelpers.AddQueryString(destinationUri.Uri.AbsoluteUri, "hosty_launch", "standalone");
+        // The route is already constrained to a declared surface. Validate its origin separately:
+        // app navigation may carry a fragment, unlike an OAuth authorization-code callback.
+        await identity.RequireAllowedRedirectUriAsync(appId, origin, context.RequestAborted);
+        return Results.Redirect(destination);
+    }
+
     private static async Task RecordTerminalStorageRefusalAsync(HttpContext context, string? appId, string reason, AuditStore audit, IClock clock)
     {
         try
@@ -453,4 +494,4 @@ internal static class AppSignInIntentEndpoints
     }
 }
 
-internal sealed record AppAuthProtocolResponse(int Version);
+internal sealed record AppAuthProtocolResponse(int Version, int SessionContinuityVersion = 1);

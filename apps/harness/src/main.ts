@@ -1,3 +1,4 @@
+import { SharedDockerWorker } from "./runtime/worker.js";
 import { DevelopmentClient } from "./sessions/development.js";
 import { AgentConnections } from "./connections/registry.js";
 import { CoreConnectionSecrets } from "./connections/secrets.js";
@@ -36,7 +37,7 @@ const connections = config.harness === "fake" ? null : new AgentConnections(conf
 const store = new SessionStore(config.dataDir, config.cacheDir);
 const audit = new AuditReporter(config.coreOrigin, config.serviceToken, config.appId);
 const notifier = new WaitingNotifier(config.coreOrigin, config.serviceToken, config.appId);
-const settings = new SettingsStore(config.dataDir);
+const settings = new SettingsStore(config.dataDir, config.retentionDays);
 // Core's MCP endpoint, resolved once for both consumers: the facade lists it beside the apps for
 // external clients, and the provider directory offers it to the assistant's own sessions.
 const coreMcpUrl = config.coreOrigin ? `${config.coreOrigin.replace(/\/$/, "")}/api/mcp` : null;
@@ -50,6 +51,9 @@ const proxy: McpProxy = new McpProxy((sessionId, appId) => manager.mintAppToken(
 // Literal IPv4 on purpose: the harness is a child process on this host, and a `localhost` that
 // resolves to ::1 first has cost this project a hang before (docs/features/observability).
 const proxyBaseUrl = `http://127.0.0.1:${config.port}`;
+const worker = config.cacheDir ? new SharedDockerWorker(config.dataDir, config.cacheDir) : null;
+await worker?.load();
+await worker?.stop().catch(() => console.warn("[worker] Previous generation requires Docker recovery; its source lease was retained."));
 const manager: SessionManager = new SessionManager(
   store,
   adapter,
@@ -63,16 +67,17 @@ const manager: SessionManager = new SessionManager(
   notifier,
   connections,
   new DevelopmentClient(config.coreOrigin, config.appId, config.serviceToken),
+  worker,
 );
 
-// Retention: once at boot, then daily. The sweep is cheap (a directory listing), and running it
-// in-process keeps retention working without any external scheduler.
+// Retention: once at boot, then daily. The manager reconciles Core resources and completion
+// before removal; running it in-process avoids a separate scheduler.
 const sweep = (): void => {
-  void store
-    .sweepRetention(config.retentionDays)
+  void manager
+    .sweepRetention()
     .then((deleted) => {
       if (deleted.length > 0) {
-        console.log(`[retention] deleted ${deleted.length} session(s) older than ${config.retentionDays}d`);
+        console.log(`[retention] deleted ${deleted.length} session(s) under the configured policy`);
       }
     })
     .catch((error) => console.warn("[retention] sweep failed", error));
@@ -112,6 +117,7 @@ const facade = new McpFacade(
   settings,
 );
 
+const workerMonitor = setInterval(() => { void manager.observeWorker().catch(() => console.warn("[worker] Observation/recovery is pending; source leases remain held.")); }, 5000);
 const server = createGatewayServer(manager, adapter, settings, providers, proxy, facade, connections);
 server.listen(config.port, () => {
   console.log(
@@ -120,6 +126,7 @@ server.listen(config.port, () => {
 });
 
 const shutdown = (): void => {
+  clearInterval(workerMonitor);
   clearInterval(sweepTimer);
   clearInterval(abandonTimer);
   server.close();

@@ -35,21 +35,24 @@ export function CoreSettingsForm({
   onDraftChange?: (draft: Record<string, string>) => void;
 }) {
   const items = useMemo(() => settings?.settings ?? [], [settings]);
-  const [draft, setDraft] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
   // Reseed the editable draft whenever Core returns a fresh snapshot (initial load and after a save).
   // Seeded from every item, not just the visible ones: a hidden field still has a value, and dropping it
   // here would make the change set look like a clear.
-  useEffect(() => {
-    const next = Object.fromEntries(items.map((item) => [item.key, item.value]));
-    setDraft(next);
-    onDraftChange?.(next);
+  const seed = useMemo(() => Object.fromEntries(items.map((item) => [item.key, item.value])), [items]);
+  const [draft, setDraft] = useState<Record<string, string>>(seed);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [seededFrom, setSeededFrom] = useState(seed);
+  if (seededFrom !== seed) {
+    setSeededFrom(seed);
+    setDraft(seed);
     setSaveError(null);
+  }
+  useEffect(() => {
+    onDraftChange?.(seed);
     // onDraftChange is a notification, not an input: including it would reseed on every parent render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items]);
+  }, [seed]);
 
   const shown = useMemo(
     () => items.filter((item) => (visible ? visible(item, draft) : true)),

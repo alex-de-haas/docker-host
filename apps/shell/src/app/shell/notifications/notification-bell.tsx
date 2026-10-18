@@ -26,6 +26,14 @@ import type {
 const LIST_LIMIT = 20;
 const POLL_INTERVAL_MS = 30_000;
 
+async function fetchNotifications(coreOrigin: string): Promise<NotificationsResponse | null> {
+  const response = await fetchCore(`${coreOrigin}/api/notifications?limit=${LIST_LIMIT}`, {
+    credentials: "include",
+  });
+  // A background poll must not hijack navigation; the main shell refresh owns auth redirects.
+  return response.ok ? ((await response.json()) as NotificationsResponse) : null;
+}
+
 // Rendered only in Shell's top strip since app-ui-surfaces moved it there, so it is sized and placed
 // for a header rather than carrying a second set of sidebar-footer styles nothing uses.
 export function NotificationBell() {
@@ -46,28 +54,18 @@ export function NotificationBell() {
     };
   }, []);
 
-  const load = useCallback(async () => {
-    try {
-      const response = await fetchCore(`${coreOrigin}/api/notifications?limit=${LIST_LIMIT}`, {
-        credentials: "include",
-      });
-      // A background poll must not hijack navigation; the main shell refresh owns auth redirects.
-      if (!response.ok) {
-        return;
-      }
-
-      const data = (await response.json()) as NotificationsResponse;
-      if (!mounted.current) {
+  const load = useCallback(() =>
+    fetchNotifications(coreOrigin).then((data) => {
+      if (!data || !mounted.current) {
         return;
       }
 
       data.notifications.forEach((n) => knownIds.current.add(n.id));
       setItems(data.notifications);
       setUnread(data.unreadCount);
-    } catch {
+    }, () => {
       // Transient network error; the next poll or SSE event recovers.
-    }
-  }, [coreOrigin]);
+    }), [coreOrigin]);
 
   // Polling fallback for when the stream is unavailable entirely. The initial load comes from the
   // subscription below, which syncs on connect — no need to fire the same request twice on mount.

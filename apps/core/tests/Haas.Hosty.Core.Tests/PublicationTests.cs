@@ -7,7 +7,14 @@ public sealed partial class CoreLifecycleServiceTests
 {
     private sealed class PublicationProviderFixture : IPublicationProvider
     {
-        public string NormalizeRepository(string url) => GitHubPublicationProvider.Repository(url);
+        public string? RepositoryOverride;
+        public int Observed;
+        public int? FailedNumber;
+        public List<int?> ObservedNumbers { get; } = [];
+        public int? DelayedNumber;
+        public TimeSpan ObservationDelay;
+        public Func<PublicationRecord, CancellationToken, Task>? BeforeObserve;
+        public string NormalizeRepository(string url) => RepositoryOverride ?? GitHubPublicationProvider.Repository(url);
         public string PullRequestUrl(string repository, int number) => $"https://github.com/{repository}/pull/{number}";
         public string Head = "";
         public string State = "open";
@@ -15,9 +22,20 @@ public sealed partial class CoreLifecycleServiceTests
         public bool LoseCreate;
         public int Created;
         public int Merged;
+        public bool LoseReady;
+        public int Readied;
         public PublicationReference? Reference;
         public Task<string> DestinationAsync(UserProviderConnection c, string r, bool fork, CancellationToken ct) => Task.FromResult(r);
-        public Task PushAsync(UserProviderConnection c, DevelopmentWorkspace w, string destination, string branch, string head, CancellationToken ct) { Head = head; return Task.CompletedTask; }
+        public string? PushFailure;
+        public int Pushed;
+        public Task PushAsync(UserProviderConnection c, DevelopmentWorkspace w, string destination, string branch, string head, CancellationToken ct)
+        {
+            Pushed++;
+            if (PushFailure == "rejected") throw new PublicationException("push_rejected", "Remote rejected this push.");
+            Head = head;
+            if (PushFailure == "lost") throw new HttpRequestException("Push response lost.");
+            return Task.CompletedTask;
+        }
         public Task<PublicationReference?> FindAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct) => Task.FromResult(r.History.Any(h => h.Number == Reference?.Number) ? null : Reference);
         public Task<PublicationReference> PublishAsync(UserProviderConnection c, PublicationRecord r, PublicationCommand input, CancellationToken ct)
         {
@@ -25,9 +43,21 @@ public sealed partial class CoreLifecycleServiceTests
             if (LoseCreate) { LoseCreate = false; throw new HttpRequestException("Lost provider response"); }
             return Task.FromResult(Reference!);
         }
-        public Task<PublicationObservation> ObserveAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct) => Task.FromResult(new PublicationObservation(DateTimeOffset.UtcNow, State, Head, "main", "merge-sha", MergeState: "CLEAN", ReviewDecision: "APPROVED", Complete: Complete, Checks: [new("CI", "SUCCESS")]));
+        public async Task<PublicationObservation> ObserveAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
+        {
+            Observed++; ObservedNumbers.Add(r.Number);
+            if (BeforeObserve is not null) await BeforeObserve(r, ct);
+            if (r.Number == DelayedNumber) await Task.Delay(ObservationDelay, ct);
+            if (r.Number == FailedNumber) throw new PublicationException("pr_mismatch", "The PR branch does not match this workspace.");
+            return new PublicationObservation(DateTimeOffset.UtcNow, State, Head, "main", "merge-sha", MergeState: "CLEAN", ReviewDecision: "APPROVED", Complete: Complete, Checks: [new("CI", "SUCCESS")], Reviews: [new("thread", "file.cs", 1, false, ["private review body"])]);
+        }
         public Task MergeAsync(UserProviderConnection c, PublicationRecord r, string head, string method, CancellationToken ct) { Assert.Equal(Head, head); State = "merged"; Merged++; return Task.CompletedTask; }
-        public Task ReadyAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct) => Task.CompletedTask;
+        public Task ReadyAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
+        {
+            Readied++;
+            if (LoseReady) { LoseReady = false; throw new HttpRequestException("Lost ready response"); }
+            return Task.CompletedTask;
+        }
         public Task ResolveReviewAsync(UserProviderConnection c, PublicationRecord r, string threadId, string head, CancellationToken ct) => Task.CompletedTask;
         public Task<PublicationIdentity> IdentityAsync(UserProviderConnection c, CancellationToken ct) => Task.FromResult(new PublicationIdentity("Verified Author", "verified@example.test"));
     }
@@ -137,6 +167,66 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Single(repeated.Operations);
     }
     [Fact]
+    public async Task Publication_ExplicitResumeAllowsCorrectiveWorkAfterMergedOutcomeWithoutLosingHistory()
+    {
+        var f = await PublicationFixture(); var head = f.W.Observation!.Head!;
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", new(Guid.NewGuid().ToString(), head, Title: "Feature"), default);
+        f.Provider.State = "merged"; f.Provider.Complete = true;
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "complete", new(Guid.NewGuid().ToString(), head, Outcome: "merged"), default);
+        await Assert.ThrowsAsync<PublicationException>(() => f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), head), default));
+        await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "complete", new(Guid.NewGuid().ToString(), 0), new Dictionary<string, string> { [f.W.Id] = head }, default);
+        await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "resume", new(Guid.NewGuid().ToString(), 1), new Dictionary<string, string>(), default);
+        var result = await f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), head), default);
+        Assert.Null(result.Outcome); Assert.Null(result.CompletedAt); Assert.False(result.CleanupRequested);
+        Assert.Equal(42, Assert.Single(result.History).Number);
+    }
+    [Fact]
+    public async Task Publication_OldResumeCannotAuthorizeCorrectionAfterAnotherCompletion()
+    {
+        var f = await PublicationFixture(); var head = f.W.Observation!.Head!;
+        for (var cycle = 0; cycle < 2; cycle++)
+        {
+            await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", new(Guid.NewGuid().ToString(), head, Title: "Feature"), default);
+            f.Provider.State = "merged"; f.Provider.Complete = true;
+            await f.Service.CommandAsync(f.W.Id, f.W.Owner, "complete", new(Guid.NewGuid().ToString(), head, Outcome: "merged"), default);
+            await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "complete", new(Guid.NewGuid().ToString(), cycle * 2), new Dictionary<string, string> { [f.W.Id] = head }, default);
+            if (cycle == 0)
+            {
+                await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "resume", new(Guid.NewGuid().ToString(), 1), new Dictionary<string, string>(), default);
+                await f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), head), default);
+            }
+        }
+        // A native edit invalidates completion, but it is not operator consent to resume this cycle.
+        await File.WriteAllTextAsync(Path.Combine(f.W.Path, "correction.txt"), "new correction");
+        await RunGitAsync(f.W.Path, ["add", "correction.txt"]);
+        await RunGitAsync(f.W.Path, ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "test correction"]);
+        var edited = await f.Workspaces.ObserveAsync(f.W.Id, f.W.Owner, default);
+        var workflow = await f.Workspaces.WorkflowAsync(f.W.Owner, default);
+        Assert.Equal("in-progress", workflow.State);
+        var error = await Assert.ThrowsAsync<PublicationException>(() => f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), edited.Observation!.Head), default));
+        Assert.Equal("publication_completed", error.Code);
+        await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "resume", new(Guid.NewGuid().ToString(), workflow.Revision), new Dictionary<string, string>(), default);
+        var result = await f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), edited.Observation!.Head), default);
+        Assert.Null(result.Outcome);
+        Assert.Equal(2, result.History.Length);
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Publication_ResumeWithoutCompletedWorkspaceCannotAuthorizeCorrection(bool deferFirst)
+    {
+        var f = await PublicationFixture(); var head = f.W.Observation!.Head!;
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", new(Guid.NewGuid().ToString(), head, Title: "Feature"), default);
+        f.Provider.State = "merged"; f.Provider.Complete = true;
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "complete", new(Guid.NewGuid().ToString(), head, Outcome: "merged"), default);
+        if (deferFirst)
+            await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "defer", new(Guid.NewGuid().ToString(), 0), new Dictionary<string, string>(), default);
+        var resumed = await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "resume", new(Guid.NewGuid().ToString(), deferFirst ? 1 : 0), new Dictionary<string, string>(), default);
+        Assert.Equal("in-progress", resumed.State);
+        var error = await Assert.ThrowsAsync<PublicationException>(() => f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), head), default));
+        Assert.Equal("publication_completed", error.Code);
+    }
+    [Fact]
     public async Task Publication_CorrectiveCycleKeepsPriorPrAndChangesRemoteBranch()
     {
         var f = await PublicationFixture(); var head = f.W.Observation!.Head;
@@ -190,4 +280,33 @@ public sealed partial class CoreLifecycleServiceTests
         foreach (var bad in new[] { good with { Head = "old" }, good with { Draft = true }, good with { MergeState = "UNKNOWN" }, good with { UnresolvedThreads = 1 }, good with { ReviewDecision = "CHANGES_REQUESTED" }, good with { Checks = [new("test", "PENDING")] }, good with { Checks = null } })
             Assert.Throws<PublicationException>(() => PublicationService.RequireMerge(bad, "head"));
     }
+    [Theory]
+    [InlineData("rejected", "failed")]
+    [InlineData("lost", "pending")]
+    public async Task Publication_FailedPushPreservesLocalHistoryAndReplaysBeforeCreatingPr(string failure, string state)
+    {
+        var f = await PublicationFixture();
+        await File.WriteAllTextAsync(Path.Combine(f.W.Path, "local.txt"), "local history survives");
+        var committed = await f.Workspaces.CommandAsync(f.W.Id, f.W.Owner, "commit",
+            new(Guid.NewGuid().ToString(), f.W.Observation!.Head, "feat: local change", ["local.txt"], "Test", "test@example.test"), default);
+        var head = committed.Observation!.Head;
+        f.Provider.PushFailure = failure;
+        var input = new PublicationCommand(Guid.NewGuid().ToString(), head, Title: "Local feature");
+        await Assert.ThrowsAnyAsync<Exception>(() => f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", input, default));
+        var saved = Assert.Single((await f.Service.ListAsync(f.W.Owner, default)).Publications);
+        Assert.Equal(state, saved.Operations.Last().State);
+        Assert.Equal(0, f.Provider.Created);
+        Assert.Equal(head, (await f.Workspaces.ObserveAsync(f.W.Id, f.W.Owner, default)).Observation!.Head);
+        Assert.Equal("local history survives", await File.ReadAllTextAsync(Path.Combine(f.W.Path, "local.txt")));
+        f.Provider.PushFailure = null;
+        var recovered = await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", input, default);
+        Assert.Equal("succeeded", recovered.Operations.Last().State);
+        Assert.Equal(head, recovered.PublishedHead);
+        Assert.Equal(1, f.Provider.Created);
+        var pushes = f.Provider.Pushed;
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", input, default);
+        Assert.Equal(pushes, f.Provider.Pushed);
+        Assert.Equal(1, f.Provider.Created);
+    }
+
 }

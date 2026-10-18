@@ -84,7 +84,7 @@ function fail(reason) {
 function handle(msg) {
   if (process.env.HOSTY_TEST_AUTONOMY && ["thread/start", "thread/resume", "turn/start"].includes(msg.method)) {
     const autonomous = process.env.HOSTY_TEST_AUTONOMY === "autonomous";
-    const expected = msg.method === "turn/start" ? (autonomous ? "dangerFullAccess" : "readOnly") : (autonomous ? "danger-full-access" : "read-only");
+    const expected = msg.method === "turn/start" ? (process.env.HOSTY_TEST_EXTERNAL_SANDBOX ? "externalSandbox" : autonomous ? "dangerFullAccess" : "readOnly") : (autonomous ? "danger-full-access" : "read-only");
     if ((msg.method === "turn/start" ? msg.params?.sandboxPolicy?.type : msg.params?.sandbox) !== expected ||
         msg.params?.approvalPolicy !== (autonomous ? "never" : "untrusted")) fail("incorrect explicit autonomy policy");
   }
@@ -165,6 +165,7 @@ function handle(msg) {
     if (typeof policy !== "object" || policy === null || typeof policy.type !== "string") {
       fail("turn/start sandboxPolicy must be an internally tagged object");
     }
+    if (process.env.HOSTY_TEST_EXTERNAL_SANDBOX && policy.networkAccess !== "enabled") fail("missing external network policy");
     currentTurnText = String(msg.params?.input?.[0]?.text ?? "");
     if (currentTurnText.startsWith("[Hosty operator instructions]")) currentTurnText = currentTurnText.slice(currentTurnText.lastIndexOf("\n\n") + 2);
     send({ jsonrpc: "2.0", id: msg.id, result: {} });

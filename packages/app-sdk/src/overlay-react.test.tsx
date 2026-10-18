@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HostyOverlay } from "./react";
 import { appFetch, cancelActivityRenewal, forgetAppGrant, APP_SESSION_ENDED, APP_SESSION_RESTORED } from "./browser-auth";
 
+// Identity tests isolate panel metadata I/O; ui-react.test.tsx covers the shared root.
+vi.mock("./ui-react", () => ({ HostyUiRoot: ({ children }: { children: ReactNode }) => children }));
+
 const core = "http://overlay-core.localhost:7070";
 const recovery = { appId: "sample", corePublicOrigin: core, appAuthProtocol: 2 };
 function active(setup = "ready", userId = "alice", admin = false) {
@@ -28,12 +31,61 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount()); node.remove(); cancelActivityRenewal(); forgetAppGrant();
   vi.unstubAllGlobals(); vi.restoreAllMocks(); sessionStorage.clear();
+  window.history.replaceState(null, "", "/");
 });
 async function render(children: ReactNode = <input aria-label="Draft" defaultValue="Unsaved work" />) {
   await act(async () => root.render(<StrictMode><HostyOverlay>{children}</HostyOverlay></StrictMode>));
 }
 
 describe("HostyOverlay", () => {
+  it.each(["identity", "setup"])("keeps local content usable during a %s outage without revealing protected content", async outage => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      if (outage === "identity") throw new TypeError("offline");
+      return Response.json(active("unavailable"));
+    }));
+    await act(async () => root.render(<HostyOverlay localContent={<input aria-label="Local note" defaultValue="Offline draft" />}>
+      <input aria-label="Private document" defaultValue="Private" />
+    </HostyOverlay>));
+    expect(node.querySelector<HTMLInputElement>('[aria-label="Local note"]')?.value).toBe("Offline draft");
+    expect(node.querySelector('[aria-label="Private document"]')).toBeNull();
+    expect(document.querySelector("dialog[open]")).toBeNull();
+  });
+  it("does not dispatch protected work when continuous identity is cached but required setup is unavailable", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL) => Response.json({ ...active("unavailable"),
+      continuity: { version: 1, mode: "native", grantId: "reference", expiresAt: "2030-01-01T00:00:00Z", checkAfterSeconds: 300 } }));
+    vi.stubGlobal("fetch", fetcher);
+    await render();
+    const response = await appFetch("/api/write", { method: "POST", body: "draft" });
+    expect(response.status).toBe(503);
+    expect(fetcher.mock.calls.every(args => String(args[0]).includes("/api/hosty/session"))).toBe(true);
+  });
+  it.each([false, true])("shares the continuity and overlay focus probe (route changed: %s)", async routeChanged => {
+    const session = { ...active(), continuity: { version: 1, mode: "native", grantId: "reference",
+      expiresAt: "2030-01-01T00:00:00Z", checkAfterSeconds: 300 } };
+    const waiting: Array<(response: Response) => void> = [];
+    let hold = false;
+    const fetcher = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).includes("/api/hosty/session")) {
+        if (hold) return new Promise<Response>(resolve => waiting.push(resolve));
+        return Promise.resolve(Response.json(session));
+      }
+      return Promise.resolve(Response.json({ ok: true }));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    await render();
+    if (routeChanged) window.history.replaceState(null, "", "/dashboard?view=apps");
+    hold = true;
+    // Force continuity to check again without waiting for the normal cache interval.
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      window.dispatchEvent(new Event("focus"));
+    });
+    await act(async () => { for (const resolve of waiting) resolve(Response.json(session)); });
+    const response = await appFetch("/api/apps");
+    expect(response.status).toBe(200);
+    expect(waiting).toHaveLength(1);
+    expect(fetcher).toHaveBeenCalledWith("/api/apps", expect.anything());
+  });
   it("opens only the connected portal after layout effects resume with retained state", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(active("missing"))));
     const renderMode = (mode: "visible" | "hidden") => act(async () => root.render(

@@ -1,3 +1,4 @@
+import { readAppContinuity, type AppContinuity } from "@hosty-sdk/app/continuity";
 import type { IncomingMessage } from "node:http";
 import { isValidCodeVerifier, resolveAppAuthProtocol, appAuthProtocolMinimum } from "@hosty-sdk/app/app-code";
 
@@ -19,7 +20,7 @@ export async function getAppRecoveryParams() {
     appAuthProtocol: await resolveAppAuthProtocol(process.env.HOSTY_CORE_ORIGIN?.trim() || null) };
 }
 
-export type AppSessionIdentity = { userId: string; hostRole: string | null; activeUntil?: string | null; activityRequired?: boolean };
+export type AppSessionIdentity = { userId: string; hostRole: string | null; activeUntil?: string | null; activityRequired?: boolean; continuity?: AppContinuity };
 
 export type AppSessionResult =
   | { status: "active"; identity: AppSessionIdentity }
@@ -97,7 +98,7 @@ export async function resolveAppSession(token: string | null): Promise<AppSessio
   // field that carries the answer, and reading only the identity would let a future negative result
   // pass as a session.
   const payload = (await response.json().catch(() => null)) as
-    | { active?: unknown; userId?: unknown; hostRole?: unknown; activeUntil?: unknown; activityRequired?: unknown }
+    | { active?: unknown; userId?: unknown; hostRole?: unknown; activeUntil?: unknown; activityRequired?: unknown; continuity?: unknown }
     | null;
   const userId = typeof payload?.userId === "string" ? payload.userId : "";
   if (payload?.active !== true || !userId) {
@@ -106,7 +107,7 @@ export async function resolveAppSession(token: string | null): Promise<AppSessio
 
   return {
     status: "active",
-    identity: { userId, hostRole: typeof payload.hostRole === "string" ? payload.hostRole : null, activeUntil: typeof payload.activeUntil === "string" ? payload.activeUntil : null, activityRequired: payload.activityRequired === true },
+    identity: { userId, hostRole: typeof payload.hostRole === "string" ? payload.hostRole : null, activeUntil: typeof payload.activeUntil === "string" ? payload.activeUntil : null, activityRequired: payload.activityRequired === true, continuity: readAppContinuity(payload.continuity) },
   };
 }
 

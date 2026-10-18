@@ -39,7 +39,7 @@ internal sealed class AuditStore(CoreDataPaths paths)
 
     public async Task AppendAsync(AuditRecord record, CancellationToken cancellationToken = default)
     {
-        var line = JsonSerializer.Serialize(record, CoreJsonSerializerContext.Default.AuditRecord);
+        var line = JsonSerializer.Serialize(record with { Details = AuditDetailsPolicy.Constrain(record) }, CoreJsonSerializerContext.Default.AuditRecord);
         var payload = Encoding.UTF8.GetBytes($"{line}{Environment.NewLine}");
 
         await appendGate.WaitAsync(cancellationToken);
@@ -129,9 +129,8 @@ internal sealed class AuditStore(CoreDataPaths paths)
     /// Recent entries narrowed to one question, newest first.
     /// </summary>
     /// <remarks>
-    /// Reads backwards from the end of the log and stops once the window is left behind, rather than
-    /// reading the whole file and filtering — so the cost is set by the size of the answer, not by how
-    /// long the host has been up.
+    /// Reads backwards from the end of the log, bounded by the result limit and scan ceiling.
+    /// Timestamp filtering does not assume concurrent writers append in timestamp order.
     /// <para>
     /// <paramref name="scanCeiling"/> bounds the work even when nothing matches — a filter that finds
     /// three entries in a million-line file must not read the million.
@@ -149,7 +148,6 @@ internal sealed class AuditStore(CoreDataPaths paths)
 
         var matches = new List<AuditRecord>();
         var scanned = 0;
-        var reachedWindowStart = false;
 
         await foreach (var line in ReadLinesNewestFirstAsync(cancellationToken))
         {
@@ -164,12 +162,12 @@ internal sealed class AuditStore(CoreDataPaths paths)
                 continue;
             }
 
-            // The log is append-ordered, so the first entry older than the window means every
-            // entry before it is too.
-            if (record.CreatedAt < since)
+            // Append order is not timestamp order: concurrent writers can capture time before
+            // waiting for the write gate, and the wall clock can move backwards. Keep scanning
+            // within the fixed ceiling so an older entry cannot hide a later timestamp before it.
+            if (record.CreatedAt < since || record.CreatedAt > now)
             {
-                reachedWindowStart = true;
-                break;
+                continue;
             }
 
             if (!Matches(record, query))
@@ -192,17 +190,10 @@ internal sealed class AuditStore(CoreDataPaths paths)
                 limit,
                 limit != query.Limit,
                 matches.Count,
-                // "There may be more", never a count: the scan stopped early, and saying how many were
-                // missed would be a number this read did not earn. Reported when the limit filled, when
-                // the ceiling was hit, or when the retained trail simply ran out — each without having
-                // reached the window's start, and each meaning the answer is partial.
-                //
-                // The last of those is what rotation introduced. Running out of file is only an honest
-                // "you saw everything" while nothing has ever been discarded; once a generation has
-                // been dropped, the same exhaustion means older matching events may have existed. The
-                // marker is what tells the two apart — a young host still reports a complete answer.
+                // Conservative completeness: limits, the scan ceiling and discarded generations
+                // can all hide matches. Timestamps cannot prove that unseen records are older.
                 matches.Count >= limit ||
-                (!reachedWindowStart && (scanned >= scanCeiling || File.Exists(HistoryDiscardedMarkerPath)))));
+                scanned >= scanCeiling || File.Exists(HistoryDiscardedMarkerPath)));
     }
 
     private static bool Matches(AuditRecord record, AuditQuery query)

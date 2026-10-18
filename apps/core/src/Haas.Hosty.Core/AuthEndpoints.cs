@@ -167,12 +167,11 @@ internal static class AuthEndpoints
                     {
                         var credential = CoreSessionAuthorization.ReadSessionCredential(request);
                         var parent = (await users.ReadAsync(cancellationToken)).Sessions.FirstOrDefault(session => session.Id == credential.Value);
-                        // Only a native client holding the primary session can assert its validated
-                        // interactive renewal. Ambient cookies and app/access credentials cannot.
-                        if (credential.Source != SessionCredentialSource.Bearer || parent is not
-                            { Kind: null, Audience: null, GrantId: null, BrowserOrigin: not null } || (parent.Scopes?.Count ?? 0) != 0)
-                            return CoreJson.Json(new ErrorResponse("native_session_required", "Interactive native renewal requires a primary Core session bearer."), statusCode: 403);
-                        await identity.RequireLiveAuthorizingSessionAsync(parent.Id, user.Id, cancellationToken);
+                        // An unscoped device credential is already explicit authority; renewing an
+                        // app does not require a second password session on the same device.
+                        if (credential.Source != SessionCredentialSource.Bearer || parent is null
+                            || await identity.TryLivePrincipalAsync(parent.Id, user.Id, cancellationToken) is null)
+                            return CoreJson.Json(new ErrorResponse("native_session_required", "Native renewal requires an unscoped Core session bearer."), statusCode: 403);
                     }
                     return CoreJson.Json(await identity.CreateAuthorizationCodeAsync(
                         appId, user.Id, input.RedirectUri, input.CodeChallenge, input.CodeChallengeMethod, CoreSessionAuthorization.ReadSessionId(request), cancellationToken,
@@ -398,7 +397,7 @@ internal static class AuthEndpoints
 
     internal static bool IsAllowedLoginReturnTo(string? returnTo)
         => IsRelativeContinuation(returnTo, out var path) &&
-            (path is "/account/tokens" or "/oauth/consent" ||
+            (path is "/account/tokens" or "/oauth/consent" || SandboxAuthEndpoints.IsOperatorContinuation(path) ||
              (path.StartsWith("/api/apps/", StringComparison.Ordinal) &&
               path.EndsWith("/open", StringComparison.Ordinal)) ||
              (path.StartsWith("/install/permissions/", StringComparison.Ordinal) && path.Length is > 21 and <= 84 &&

@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
-import { launchModeBootstrapScript } from "@hosty-sdk/app";
-import { HostyOverlay, HostLaunchBridge, HostThemeBridge } from "@hosty-sdk/app/react";
+import { launchModeBootstrapScript, chromeBootstrapScript } from "@hosty-sdk/app";
+import { HostLaunchBridge, HostThemeBridge } from "@hosty-sdk/app/react";
 import { themeBootstrapScript } from "@hosty-sdk/app/theme";
 import "./globals.css";
 import { DemoSession } from "@/components/DemoSession";
+import { DemoOverlay } from "@/components/DemoOverlay";
 
 export const metadata: Metadata = {
   title: "Hosty Demo App",
@@ -20,13 +21,13 @@ export default function RootLayout({
       <head>
         {/* Ahead of any body markup, so chrome a shell already renders is never painted, and the
             first paint is already in the shell's theme. */}
-        <script dangerouslySetInnerHTML={{ __html: launchModeBootstrapScript }} />
+        <script dangerouslySetInnerHTML={{ __html: chromeBootstrapScript() }} /><script dangerouslySetInnerHTML={{ __html: launchModeBootstrapScript }} />
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
       </head>
       <body className="font-sans antialiased">
         <HostThemeBridge />
         <HostLaunchBridge />
-        <HostyOverlay><DemoSession>{children}</DemoSession></HostyOverlay>
+        <DemoOverlay><DemoSession>{children}</DemoSession></DemoOverlay>
       </body>
     </html>
   );

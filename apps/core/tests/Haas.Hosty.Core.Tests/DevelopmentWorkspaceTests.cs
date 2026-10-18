@@ -12,6 +12,82 @@ public sealed partial class CoreLifecycleServiceTests
         => new(Guid.NewGuid().ToString(), head, message, files, "Test Agent", "agent@example.test");
 
     [Fact]
+    public async Task Workspace_AgentBudgetCreditRequiresAnActiveOwnedLeaseAndExactContainer()
+    {
+        var (f, _) = await SourceFixtureAsync();
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var owner = WorkspaceTestOwner(f);
+        var request = new DevelopmentWorkerLeaseRequest(Guid.NewGuid().ToString(), true);
+        var binding = (await service.WorkerLeaseAsync(owner, request, default))!;
+        var name = $"/hosty-agent-{binding.InstanceId[..12]}-{binding.InstallationId[..12]}-{request.LeaseId}";
+        var labels = new Dictionary<string, string> { ["hosty.agent-worker"] = "1",
+            ["hosty.agent-worker.instance"] = binding.InstanceId, ["hosty.agent-worker.installation"] = binding.InstallationId,
+            ["hosty.agent-worker.generation"] = request.LeaseId };
+        System.Text.Json.JsonDocument Container(string containerName) => System.Text.Json.JsonDocument.Parse(
+            System.Text.Json.JsonSerializer.Serialize(new { Name = containerName, Config = new { Labels = labels }, HostConfig = new { Memory = 4294967296L } }));
+        using var valid = Container(name);
+        Assert.Equal(4294967296L, await SandboxDockerRuntime.SharedWorkerReservationAsync(valid.RootElement, f.Paths.DataRoot, 4294967296L, default));
+        Assert.Equal(1024L, await SandboxDockerRuntime.SharedWorkerReservationAsync(valid.RootElement, f.Paths.DataRoot, 1024L, default));
+        using var wrong = Container(name + "-unowned");
+        Assert.Equal(0L, await SandboxDockerRuntime.SharedWorkerReservationAsync(wrong.RootElement, f.Paths.DataRoot, 4294967296L, default));
+        await service.WorkerLeaseAsync(owner, request with { Acquire = false }, default);
+        Assert.Equal(0L, await SandboxDockerRuntime.SharedWorkerReservationAsync(valid.RootElement, f.Paths.DataRoot, 4294967296L, default));
+    }
+
+    [Fact]
+    public async Task Workspace_SharedWorkerProtectsAllTreesAcrossRestartUntilVerifiedRelease()
+    {
+        var (f, _) = await SourceFixtureAsync();
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var owner = WorkspaceTestOwner(f);
+        var tree = await service.PrepareAsync(owner, WorkspaceRequest(), default);
+        var request = new DevelopmentWorkerLeaseRequest(Guid.NewGuid().ToString(), true);
+        var bindings = (await service.WorkerLeaseAsync(owner, request, default))!;
+        Assert.Equal([tree.Path], bindings.WorktreePaths);
+        Assert.Equal(Path.GetDirectoryName(tree.Path), bindings.TreesRoot);
+        Assert.NotEqual(bindings.TreesRoot, bindings.RepositoriesRoot);
+        Assert.Equal(bindings.InstallationId, (await service.WorkerLeaseAsync(owner, request, default))!.InstallationId);
+        service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var other = await service.PrepareAsync(owner with { SessionId = "other" }, WorkspaceRequest("other"), default);
+        Assert.Contains(other.Path, (await service.WorkerBindingsAsync(owner, default)).WorktreePaths);
+        var denied = await Assert.ThrowsAsync<AppLifecycleException>(() => service.CommandAsync(other.Id, null,
+            "cleanup", new(Guid.NewGuid().ToString(), other.Observation!.Head), default));
+        Assert.Equal("workspace_in_use", denied.Code);
+        await Assert.ThrowsAsync<AppLifecycleException>(() => service.WorkerLeaseAsync(owner with { SessionId = "other" }, request with { Acquire = false }, default));
+        await service.WorkerLeaseAsync(owner, request with { Acquire = false }, default);
+        await service.WorkerLeaseAsync(owner, request with { Acquire = false }, default);
+        await Assert.ThrowsAsync<AppLifecycleException>(() => service.WorkerLeaseAsync(owner, request, default));
+        var cleaned = await service.CommandAsync(other.Id, null, "cleanup", new(Guid.NewGuid().ToString(), other.Observation!.Head), default);
+        Assert.Equal("released", cleaned.State);
+    }
+
+    [Fact]
+    public async Task Workspace_SandboxConsumerSurvivesOrdinaryLeaseReleaseAndCoreRestart()
+    {
+        var (f, _) = await SourceFixtureAsync();
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var owner = WorkspaceTestOwner(f);
+        var tree = await service.PrepareAsync(owner, WorkspaceRequest(), default);
+        var sandbox = Guid.NewGuid().ToString("N");
+        await service.SetSandboxConsumerAsync(tree.Id, sandbox, true, default);
+        await service.SetSandboxConsumerAsync(tree.Id, sandbox, true, default);
+        var released = await service.CommandAsync(tree.Id, owner, "release-lease",
+            new(Guid.NewGuid().ToString(), LeaseId: sandbox), default);
+        Assert.Equal([sandbox], released.SandboxConsumers);
+        service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var denied = await Assert.ThrowsAsync<AppLifecycleException>(() => service.CommandAsync(tree.Id, owner,
+            "cleanup", new(Guid.NewGuid().ToString(), released.Observation!.Head), default));
+        Assert.Equal("workspace_in_use", denied.Code);
+        Assert.True(Directory.Exists(tree.Path));
+        // Damaged Git metadata does not prevent releasing a stopped consumer.
+        File.Delete(Path.Combine(tree.Path, ".git"));
+        await service.SetSandboxConsumerAsync(tree.Id, sandbox, false, default);
+        await service.SetSandboxConsumerAsync(tree.Id, sandbox, false, default);
+        Assert.Empty((await service.Read(tree.Id, owner, default)).SandboxConsumers);
+        Assert.True(Directory.Exists(tree.Path));
+    }
+
+    [Fact]
     public async Task Workspace_AllocatesOncePerOwnerAndRepositoryWithoutChangingBaseline()
     {
         var (f, origin) = await SourceFixtureAsync();
@@ -328,6 +404,30 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.True(Directory.Exists(w.Path));
         docker.Unavailable = false; docker.Source = null;
         Assert.Equal("released", (await Cleanup()).State);
+    }
+    [Fact]
+    public async Task EnvironmentFromWorkspace_ValidatesSelectionAndRetainsAssistantOwnership()
+    {
+        var (f, _) = await SourceFixtureAsync();
+        var workspaces = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var tree = await workspaces.PrepareAsync(WorkspaceTestOwner(f), WorkspaceRequest(), default);
+        var inspection = new WorkspaceInspectionService(workspaces, f.Apps, f.Clock);
+        var environments = new CoreEnvironmentService(new(f.Paths), null!, f.Clock, workspaces, inspection);
+        var actor = new SandboxActor("admin", null, null);
+        var input = new CoreEnvironmentWorkspaceCreate(Guid.NewGuid().ToString(), "Workspace QA", tree.WorkspaceId, [tree.Id]);
+        var item = await environments.CreateFromWorkspaceAsync(actor, input, default);
+        Assert.Equal(tree.Owner.AppId, (await new CoreEnvironmentStore(f.Paths).ReadAsync(item.Id, default))!.Owner.AppId);
+        Assert.Equal(tree.Owner.SessionId, item.Context!.SessionId);
+        Assert.Equal(tree.WorkspaceId, item.Context.WorkspaceId);
+        Assert.Equal(item.Id, (await environments.CreateFromWorkspaceAsync(actor, input, default)).Id);
+        Assert.Contains(item.Id, (await workspaces.Read(tree.Id, null, default)).SandboxConsumers!);
+        await Assert.ThrowsAsync<AppLifecycleException>(() => environments.CreateFromWorkspaceAsync(actor,
+            input with { RequestId = Guid.NewGuid().ToString(), WorkspaceId = "another" }, default));
+        foreach (var project in new[] { "../Core.csproj", "/tmp/Core.csproj", "apps/../Core.csproj" })
+            await Assert.ThrowsAsync<SandboxException>(() => environments.CreateFromWorkspaceAsync(actor,
+                input with { RequestId = Guid.NewGuid().ToString(), CoreWorktreeId = tree.Id, CoreProject = project }, default));
+        await Assert.ThrowsAsync<SandboxException>(() => environments.CreateFromWorkspaceAsync(actor,
+            input with { RequestId = Guid.NewGuid().ToString(), CoreWorktreeId = "unselected", CoreProject = "Core.csproj" }, default));
     }
     private sealed class WorkspaceDockerRunner : IDockerCommandRunner
     {

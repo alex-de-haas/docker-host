@@ -11,6 +11,15 @@ export function SettingsCoreSection({ section, settings, settingsError, onSaveSe
   onSaveSettings: (values: Record<string, string>) => Promise<void>;
 }) {
   return (
+    <div className="space-y-4">
+    {section === "policies" && Boolean(settings?.authenticationDiagnostics?.length) && (
+      <details className="rounded-md border p-3 text-sm text-muted-foreground">
+        <summary className="cursor-pointer font-medium">App session policy migration</summary>
+        <ul className="mt-2 space-y-2">
+          {settings?.authenticationDiagnostics?.map(message => <li key={message}>{message}</li>)}
+        </ul>
+      </details>
+    )}
     <CoreSettingsForm
       key={section}
       layout="core"
@@ -19,5 +28,6 @@ export function SettingsCoreSection({ section, settings, settingsError, onSaveSe
       onSave={onSaveSettings}
       visible={item => coreSettingsSection(item) === section}
     />
+    </div>
   );
 }

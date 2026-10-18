@@ -3,13 +3,18 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import AssistantPage from "./page";
+import { AssistantConversation } from "@/components/assistant-conversation";
 import * as api from "@/lib/assistant-api";
+
+const ui = vi.hoisted(() => ({ reportSurfaceState: vi.fn(), getNavigation: vi.fn(), navigate: vi.fn() }));
+vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => ui }));
 
 vi.mock("@/lib/assistant-api", async original => ({
   ...await original<typeof api>(),
   getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(),
   listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(),
 }));
+vi.mock("@/lib/development-api", async original => ({ ...await original<typeof import("@/lib/development-api")>(), useDevelopmentInventory: () => ({ workspaces: [], error: "", refresh: () => {} }) }));
 vi.mock("@/components/speech-input", () => ({ SpeechInput: () => null }));
 vi.mock("@/components/session-credentials", () => ({ SessionCredentials: () => null }));
 vi.mock("@/components/app-context-picker", () => ({ AppContextPicker: () => <button aria-label="Select app context" /> }));
@@ -60,6 +65,54 @@ const status = (value: string) => act(async () => {
 const submit = () => act(async () => {
   input().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+});
+
+const openSession = (sessionId: string) => act(async () => window.dispatchEvent(new MessageEvent("message", {
+  source: window.parent, data: { type: "hosty:open-assistant-session", sessionId },
+})));
+
+it("reports the mounted default route only after its message-selected session attaches", async () => {
+  window.history.replaceState({}, "", "/assistant?hosty_launch=embedded&hosty_theme=dark&hosty_theme_preference=system");
+  await render(); ui.reportSurfaceState.mockClear();
+  let finish!: (value: api.AssistantSession) => void;
+  vi.mocked(api.getSession).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  await openSession("requested");
+  expect(ui.reportSurfaceState).not.toHaveBeenCalled();
+  await act(async () => finish({ ...record, id: "requested" }));
+  expect(ui.reportSurfaceState).toHaveBeenCalledExactlyOnceWith({ route: "/assistant", state: "ready" });
+  expect(api.postMessage).not.toHaveBeenCalled();
+});
+
+it("waits for a message-selected session received before initial authentication completes", async () => {
+  let healthReady!: (value: api.HarnessHealth) => void;
+  vi.mocked(api.getHealth).mockImplementationOnce(() => new Promise(resolve => { healthReady = resolve; }));
+  let finish!: (value: api.AssistantSession) => void;
+  vi.mocked(api.getSession).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  await render(); await openSession("requested");
+  await act(async () => healthReady({ name: "fake", available: true }));
+  expect(api.getSession).toHaveBeenCalledWith("requested");
+  expect(ui.reportSurfaceState).not.toHaveBeenCalled();
+  await act(async () => finish({ ...record, id: "requested" }));
+  expect(ui.reportSurfaceState).toHaveBeenCalledExactlyOnceWith({ route: "/assistant", state: "ready" });
+  expect(api.createSession).not.toHaveBeenCalled();
+});
+
+it.each(["failure", "mismatch"])("does not report an old or different session ready after requested-session %s", async outcome => {
+  await render(); ui.reportSurfaceState.mockClear();
+  if (outcome === "failure") vi.mocked(api.getSession).mockRejectedValueOnce(new Error("Unavailable"));
+  else vi.mocked(api.getSession).mockResolvedValueOnce({ ...record, id: "different" });
+  await openSession("requested");
+  expect(ui.reportSurfaceState).not.toHaveBeenCalled();
+});
+
+it("preserves exact URL-session readiness when a different session is requested by message", async () => {
+  window.history.replaceState({}, "", "/assistant?session=session-one");
+  await render();
+  expect(ui.reportSurfaceState).toHaveBeenCalledWith({ route: "/assistant?session=session-one", state: "ready" });
+  ui.reportSurfaceState.mockClear();
+  vi.mocked(api.getSession).mockResolvedValueOnce({ ...record, id: "other" });
+  await openSession("other");
+  expect(ui.reportSurfaceState).not.toHaveBeenCalled();
 });
 
 it.each(["running", "awaiting_approval", "awaiting_question"])("keeps a draft unsent and shows only composer Stop while %s", async value => {
@@ -305,4 +358,70 @@ it("clears the previous activity when opening a different session", async () => 
   await act(async () => button("New session")!.click());
   await act(async () => previousEmit(activityEvent(3, { phase: "thinking", tool: null, toolCount: 0 })));
   expect(activityRow()).toBeNull();
+});
+
+
+it("promotes the exact session to the host main area without sending or creating a conversation", async () => {
+  await render(); await type("Keep my draft");
+  ui.getNavigation.mockReturnValue({ entries: [{ key: "development", route: "/development" }] });
+  ui.navigate.mockResolvedValue({ status: "accepted" });
+  vi.mocked(api.createSession).mockClear();
+  const open = [...container.querySelectorAll("button")].find(b => b.textContent === "Open in Harness")!;
+  await act(async () => open.click());
+  expect(ui.navigate).toHaveBeenCalledWith("development", { requestId: expect.any(String), placement: "main", search: "?session=session-one" });
+  expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBe("Keep my draft");
+  expect(api.postMessage).not.toHaveBeenCalled(); expect(api.createSession).not.toHaveBeenCalled();
+});
+
+it("updates the host destination when selecting another full-page session and preserves its draft", async () => {
+  const next = { ...record, id: "next-session", title: "Other conversation" };
+  window.history.replaceState({}, "", "/development?session=session-one");
+  localStorage.setItem("hosty.assistant.draft.next-session", "Keep next draft");
+  vi.mocked(api.listSessions).mockResolvedValue([record, next]);
+  vi.mocked(api.getSession).mockImplementation(async id => id === next.id ? next : record);
+  ui.getNavigation.mockReturnValue({ entries: [{ key: "development", route: "/development" }] });
+  ui.navigate.mockResolvedValue({ status: "accepted" });
+  await act(async () => root.render(<AssistantConversation fullPage />));
+  const pick = [...container.querySelectorAll("button")].find(b => b.textContent?.startsWith("Other conversation"))!;
+  await act(async () => pick.click());
+  expect(ui.navigate).toHaveBeenCalledWith("development", expect.objectContaining({ placement: "main", search: "?session=next-session" }));
+  expect(input().value).toBe("Keep next draft");
+  expect(api.createSession).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
+});
+it("updates standalone selection URLs when the host has no main destination", async () => {
+  const next = { ...record, id: "standalone-next", title: "Standalone next" };
+  window.history.replaceState({}, "", "/development?session=session-one");
+  vi.mocked(api.listSessions).mockResolvedValue([record, next]);
+  vi.mocked(api.getSession).mockImplementation(async id => id === next.id ? next : record);
+  ui.getNavigation.mockReturnValue({ entries: [] });
+  await act(async () => root.render(<AssistantConversation fullPage />));
+  await act(async () => [...container.querySelectorAll("button")].find(b => b.textContent?.startsWith("Standalone next"))!.click());
+  expect(window.location.search).toBe("?session=standalone-next");
+  expect(localStorage.getItem("hosty.assistant.session")).toBe(next.id);
+});
+
+it("synchronizes uploaded draft references with an already open second surface without sending", async () => {
+  await render();
+  const key = "hosty.assistant.attachments.session-one";
+  await act(async () => {
+    localStorage.setItem(key, JSON.stringify([{ name: "reference.txt", size: 44 }]));
+    window.dispatchEvent(new StorageEvent("storage", { key, newValue: localStorage.getItem(key), storageArea: localStorage }));
+  });
+  expect(container.querySelector('[aria-label="Attachments to send"]')?.textContent).toContain("reference.txt");
+  await act(async () => {
+    localStorage.setItem(key, "[]"); window.dispatchEvent(new StorageEvent("storage", { key, newValue: "[]", storageArea: localStorage }));
+  });
+  expect(container.querySelector('[aria-label="Attachments to send"]')).toBeNull();
+  expect(api.postMessage).not.toHaveBeenCalled();
+});
+
+it("refreshes unavailable worker health after a recovered stop without losing the draft", async () => {
+  vi.mocked(api.getHealth).mockResolvedValue({ name: "fake", available: false, reason: "Worker recovery required" });
+  await render(); await type("Retained draft");
+  expect(container.textContent).toContain("Worker recovery required");
+  vi.mocked(api.getHealth).mockResolvedValue({ name: "fake", available: true });
+  await status("cancelled");
+  expect(container.textContent).not.toContain("Worker recovery required");
+  expect(input().value).toBe("Retained draft");
+  expect(button("Send")?.disabled).toBe(false);
 });

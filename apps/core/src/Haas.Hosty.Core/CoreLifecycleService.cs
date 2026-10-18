@@ -31,7 +31,7 @@ internal sealed partial class CoreLifecycleService(
     // allocation; production DI always supplies it. When absent, install skips reservation and ports are
     // resolved at first start as before. See RuntimePortAllocator.
     RuntimePortAllocator? portAllocator = null,
-    // Application lifetime for updates and the stop/start portion of restarts. Losing the triggering
+    // Application lifetime for updates and the stop/start portion of restarts/runtime switches. Losing the triggering
     // request must not strand an app after stopping it. Optional only for unit fixtures; production
     // DI always supplies it. When absent, these operations run unlinked from any token.
     IHostApplicationLifetime? hostLifetime = null,
@@ -64,7 +64,8 @@ internal sealed partial class CoreLifecycleService(
     LocalCommandProcessRegistry? localProcesses = null,
     AgentPolicyStore? agentPolicies = null,
     PrivateSourceService? privateSources = null,
-    CorePublicOriginResolver? coreOrigins = null)
+    CorePublicOriginResolver? coreOrigins = null,
+    AuditStore? audit = null)
 {
     private async Task ValidatePrivateSelectionAsync(RuntimeAppManifestSelection selection, CancellationToken ct)
     {
@@ -108,12 +109,22 @@ internal sealed partial class CoreLifecycleService(
     // NOT reentrant: verbs that internally start an app (ApplyUpdate,
     // ApplyRuntimeSwitch, CreateManualBackup) call StartCoreAsync — the unlocked body — never StartAsync.
 
-    internal async Task<T> WithAppLockAsync<T>(string appId, Func<Task<T>> operation, CancellationToken cancellationToken)
+    internal async Task<T> WithAppLockAsync<T>(string appId, Func<Task<T>> operation, CancellationToken cancellationToken, bool allowDevelopment = false, bool developmentOperation = false, bool startsDevelopmentRuntime = false)
     {
         var mutex = apps.OperationLock(appId);
         await mutex.WaitAsync(cancellationToken);
         try
         {
+            if (!developmentOperation && await apps.GetAppAsync(appId, cancellationToken) is { } installed &&
+                await AppDevStore.ReadAsync(paths, installed, cancellationToken) is { Active: true } development)
+            {
+                if (!allowDevelopment || development.Phase != "active")
+                    throw new AppLifecycleException("dev_mode_active", "Return from development mode before changing this app. An interrupted transition must be recovered using its original requestId.");
+                // Generic lifecycle callers have no source-owner identity. Private development code
+                // must use the reviewed dev operation, which rechecks ownership and current grants.
+                if (startsDevelopmentRuntime && installed.PrivateSources is { Git: not null } or { Manifest: not null })
+                    throw new AppLifecycleException("dev_source_authority_required", "Restart private development code using the development operation so its source authority can be checked. Stop and Return remain available.");
+            }
             return await operation();
         }
         finally
@@ -491,7 +502,7 @@ internal sealed partial class CoreLifecycleService(
         return await WithAppLockAsync(selection.Manifest.Id!, () => InstallCoreAsync(request, selection, cancellationToken), cancellationToken);
     }
 
-    private async Task<AppLifecycleResponse> InstallCoreAsync(AppInstallRequest request, RuntimeAppManifestSelection selection, CancellationToken cancellationToken, IReadOnlyList<AppServiceArtifactProbe>? reviewedArtifacts = null)
+    private async Task<AppLifecycleResponse> InstallCoreAsync(AppInstallRequest request, RuntimeAppManifestSelection selection, CancellationToken cancellationToken, IReadOnlyList<AppServiceArtifactProbe>? reviewedArtifacts = null, AppSourceState? authoredSource = null)
     {
         // Planning reports an existing record as "already-installed"; this is the enforcement. Without
         // it, apply rebuilt the record with existing: null — resetting settings, mounts, source state,
@@ -505,6 +516,20 @@ internal sealed partial class CoreLifecycleService(
             throw new AppLifecycleException(
                 "already_installed",
                 $"App '{selection.Manifest.Id}' is already installed (version {alreadyInstalled.Version}). Apply an update to change it, or remove it first.");
+        }
+
+        var retainedSource = (await TryReadRetainedConfigAsync(selection.Manifest.Id!, cancellationToken))?.LocalSource;
+        if (retainedSource is { Type: "local-git" })
+        {
+            var canonical = paths.ResolveManagedCheckoutPath(selection.Manifest.Id!);
+            var selectedPath = selection.ManifestPath;
+            if (retainedSource.Repository != canonical || retainedSource.ManagedCheckoutPath != canonical ||
+                !Path.IsPathFullyQualified(selectedPath) || Path.GetFullPath(selectedPath) != Path.Combine(canonical, "manifest.json") ||
+                CoreDataPaths.ContainsSymbolicLink(paths.AppsRoot, canonical))
+                throw new AppLifecycleException("retained_source_conflict", "This app has retained local source. Reinstall its canonical manifest explicitly, or review deleting that source before replacing it.");
+            // Installing that exact manifest is the explicit adoption. Preserve accepted history;
+            // dirty/newer source remains visible and does not become accepted by reinstalling it.
+            authoredSource ??= retainedSource with { LocalOverridePath = canonical };
         }
 
         var grantedPermissions = CoreAppPermissions.ResolveGrants(selection.Manifest.CorePermissions, selection.Manifest.OptionalCorePermissions, request.OptionalPermissions);
@@ -535,6 +560,7 @@ internal sealed partial class CoreLifecycleService(
             // start pulls repository@sha256 from the review instead of whatever the tag means by
             // then. Null on the unbound bootstrap path and for plan-time-unresolvable services —
             // those TOFU-backfill at first start.
+            SourceState = authoredSource ?? BuildSourceState(selection, null),
             ArtifactLocks = reviewedArtifacts is null ? null : BuildReviewedArtifactLocks(selection, reviewedArtifacts),
             OperationStatus = "installed",
             RuntimeState = "stopped",
@@ -936,12 +962,12 @@ internal sealed partial class CoreLifecycleService(
         => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
     public Task<AppLifecycleResponse> StartAsync(string appId, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => StartCoreAsync(appId, afterOwnStop: false, cancellationToken), cancellationToken);
+        => WithAppLockAsync(appId, () => StartCoreAsync(appId, afterOwnStop: false, cancellationToken), cancellationToken, allowDevelopment: true, startsDevelopmentRuntime: true);
 
     // `afterOwnStop` marks the start half of a stop->start pair this same operation performed (update
     // apply, runtime switch, dev-mode toggle, operator backup) — as opposed to a cold start, where the app
     // was already down when we were called. It only governs the port preflight below.
-    private async Task<AppLifecycleResponse> StartCoreAsync(string appId, bool afterOwnStop, CancellationToken cancellationToken)
+    private async Task<AppLifecycleResponse> StartCoreAsync(string appId, bool afterOwnStop, CancellationToken cancellationToken, bool preserveOperationStatus = false)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
         // Legacy source behavior remains valid for ordinary starts. Requiring a profile migration
@@ -966,9 +992,10 @@ internal sealed partial class CoreLifecycleService(
                 // Reset, so a previous run's `healthy` cannot survive into this start; the readiness
                 // wait below fills in the services once the runtime has launched them.
                 Health = new AppHealthSummary("starting", [], clock.UtcNow),
+                LaunchProgress = new("preparing", clock.UtcNow),
             }, cancellationToken)).App;
 
-            var load = await LoadSelectionWithStatusAsync(app, cancellationToken);
+            var load = await LoadSelectionWithStatusAsync(app, cancellationToken, validateDevelopmentContract: true);
             var selection = load.Selection;
             // Adopt a live source folder edit before the gates below so they see the live contract
             // (e.g. a newly-required setting blocks start, R8; a new required mount slot is enforced).
@@ -1012,6 +1039,7 @@ internal sealed partial class CoreLifecycleService(
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
             await new HostPathAuthority(paths, apps).AppAsync(context.App, cancellationToken);
             context = await ReserveRuntimePathsAsync(EnsureMountsReadyForStart(context), cancellationToken);
+            context = context with { ReportLaunchProgress = (stage, service) => SetLaunchProgressAsync(appId, stage, service, cancellationToken) };
             var appliedConfigurationHash = AppConfigurationFingerprint.Compute(context.App, context.Mounts);
             if (app.OperationStatus == "updating")
                 context = context with { ReportUpdateProgress = (stage, service) => SetUpdateProgressAsync(appId, stage, service, cancellationToken) };
@@ -1045,6 +1073,7 @@ internal sealed partial class CoreLifecycleService(
             // The wait probes the endpoint set the record is about to persist — the same merge the write
             // below applies — so the start and the supervisor's later observations target the same ports.
             if (context.ReportUpdateProgress is not null) await context.ReportUpdateProgress("checking", null);
+            await context.ReportLaunchProgress!("checking", null);
             var readiness = await WaitForReadinessAsync(appId, adapter, context, selection, MergeEndpointUrls(app.Endpoints, result.Endpoints, selection), cancellationToken);
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
@@ -1054,7 +1083,9 @@ internal sealed partial class CoreLifecycleService(
                 ActiveSourcePaths = configurationApplied ? HostPathAuthority.CodePaths(context.App with { ActiveSourcePaths = null }).Select(MountPathPolicy.ResolveRealPath).Distinct().ToArray() : current.ActiveSourcePaths,
                 AppliedBrowserOrigin = configurationApplied ? coreOrigins?.Effective ?? runtimeConfig?.EffectiveCorePublicOrigin : current.AppliedBrowserOrigin,
                 Health = readiness,
-                OperationStatus = current.OperationStatus == "updating" ? "updating" : "started",
+                LaunchProgress = new("ready", clock.UtcNow, BuildState: current.LaunchProgress?.BuildState),
+                AppliedSourceManifestDigest = configurationApplied ? selection.ManifestDigest : current.AppliedSourceManifestDigest,
+                OperationStatus = preserveOperationStatus || current.OperationStatus == "updating" ? current.OperationStatus : "started",
                 LastOperation = current.OperationStatus == "updating" ? "update" : "start",
                 LastError = null,
                 Endpoints = MergeEndpointUrls(current.Endpoints, result.Endpoints, selection),
@@ -1092,7 +1123,7 @@ internal sealed partial class CoreLifecycleService(
     }
 
     public Task<AppLifecycleResponse> StopAsync(string appId, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => StopCoreAsync(appId, cancellationToken), cancellationToken);
+        => WithAppLockAsync(appId, () => StopCoreAsync(appId, cancellationToken), cancellationToken, allowDevelopment: true);
 
     private async Task<AppLifecycleResponse> StopCoreAsync(string appId, CancellationToken cancellationToken)
     {
@@ -1398,9 +1429,9 @@ internal sealed partial class CoreLifecycleService(
     }
 
     public Task<AppLifecycleResponse> RestartAsync(string appId, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => RestartCoreAsync(appId, cancellationToken), cancellationToken);
+        => WithAppLockAsync(appId, () => RestartCoreAsync(appId, cancellationToken), cancellationToken, allowDevelopment: true, startsDevelopmentRuntime: true);
 
-    private async Task<AppLifecycleResponse> RestartCoreAsync(string appId, CancellationToken cancellationToken)
+    private async Task<AppLifecycleResponse> RestartCoreAsync(string appId, CancellationToken cancellationToken, bool preserveOperationStatus = false)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
         IAppRuntimeAdapter? adapter = null;
@@ -1409,7 +1440,7 @@ internal sealed partial class CoreLifecycleService(
         var stopAttempted = false;
         try
         {
-            var load = await LoadSelectionWithStatusAsync(app, cancellationToken);
+            var load = await LoadSelectionWithStatusAsync(app, cancellationToken, validateDevelopmentContract: true);
             var selection = load.Selection;
             await ValidatePinnedSourceCheckoutAsync(app, selection, cancellationToken);
             // Stop must target the contract the running process was started with — the last-good
@@ -1436,6 +1467,7 @@ internal sealed partial class CoreLifecycleService(
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
             await new HostPathAuthority(paths, apps).AppAsync(context.App, cancellationToken);
             context = await ReserveRuntimePathsAsync(EnsureMountsReadyForStart(context), cancellationToken);
+            context = context with { ReportLaunchProgress = (stage, service) => SetLaunchProgressAsync(appId, stage, service, cancellationToken) };
             var appliedConfigurationHash = AppConfigurationFingerprint.Compute(context.App, context.Mounts);
             // From the first stop onward Core owns completion. A self-restart of Shell disconnects
             // its proxy request as soon as Stop kills the server carrying that request. Keep caller
@@ -1454,6 +1486,7 @@ internal sealed partial class CoreLifecycleService(
             {
                 RuntimeState = AppRuntimeStates.Starting,
                 Health = new AppHealthSummary("starting", [], clock.UtcNow),
+                LaunchProgress = new("preparing", clock.UtcNow),
             }, cancellationToken);
             // Restart must materialize the reviewed pin just like Start. In particular, a previous
             // failed update may have saved a new pin while the checkout still contains the old code.
@@ -1461,6 +1494,7 @@ internal sealed partial class CoreLifecycleService(
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
             await new HostPathAuthority(paths, apps).AppAsync(context.App, cancellationToken);
             context = await ReserveRuntimePathsAsync(EnsureMountsReadyForStart(context), cancellationToken);
+            context = context with { ReportLaunchProgress = (stage, service) => SetLaunchProgressAsync(appId, stage, service, cancellationToken) };
             appliedConfigurationHash = AppConfigurationFingerprint.Compute(context.App, context.Mounts);
             // Re-run capability provisioning on restart too, so a config-template change ships forward
             // and the app comes back with fresh Core-owned files (see PlatformCapabilities). Ordered
@@ -1478,6 +1512,7 @@ internal sealed partial class CoreLifecycleService(
                 selection.Services.All(service => start.CreatedServices.Contains(service.Key));
             // The same wait a cold start runs: this verb calls the adapter directly rather than through
             // StartCoreAsync, so a start-only wait would leave every restart without one.
+            await context.ReportLaunchProgress!("checking", null);
             var readiness = await WaitForReadinessAsync(appId, adapter, context, selection, MergeEndpointUrls(app.Endpoints, start.Endpoints, selection), cancellationToken);
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
@@ -1487,7 +1522,9 @@ internal sealed partial class CoreLifecycleService(
                 ActiveSourcePaths = configurationApplied ? HostPathAuthority.CodePaths(context.App with { ActiveSourcePaths = null }).Select(MountPathPolicy.ResolveRealPath).Distinct().ToArray() : current.ActiveSourcePaths,
                 AppliedBrowserOrigin = configurationApplied ? coreOrigins?.Effective ?? runtimeConfig?.EffectiveCorePublicOrigin : current.AppliedBrowserOrigin,
                 Health = readiness,
-                OperationStatus = "restarted",
+                LaunchProgress = new("ready", clock.UtcNow, BuildState: current.LaunchProgress?.BuildState),
+                AppliedSourceManifestDigest = configurationApplied ? selection.ManifestDigest : current.AppliedSourceManifestDigest,
+                OperationStatus = preserveOperationStatus ? current.OperationStatus : "restarted",
                 LastOperation = "restart",
                 LastError = null,
                 Endpoints = MergeEndpointUrls(current.Endpoints, start.Endpoints, selection),
@@ -1643,7 +1680,7 @@ internal sealed partial class CoreLifecycleService(
             await apps.UpdateAppAsync(
                 appId,
                 current => AppRuntimeStates.IsBusy(current.RuntimeState)
-                    ? current with { RuntimeState = AppRuntimeStates.Unknown, Health = null }
+                    ? current with { RuntimeState = AppRuntimeStates.Unknown, Health = null, LaunchProgress = new("interrupted", clock.UtcNow, BuildState: current.LaunchProgress?.BuildState == "building" ? "interrupted" : current.LaunchProgress?.BuildState) }
                     : current,
                 cancellationToken);
         }
@@ -1855,7 +1892,17 @@ internal sealed partial class CoreLifecycleService(
         if (verdict.Error is null && !sourceConfigured)
             verdict = verdict with { Error = MissingUpdateSourceError(appId) };
         if (verdict.Error is null && artifactProbes.Any(probe => string.IsNullOrEmpty(probe.CandidateDigest)))
-            verdict = verdict with { Error = "Could not resolve one or more image revisions. Check the registry connection and retry." };
+        {
+            var unresolvedImages = artifactProbes
+                .Where(probe => string.IsNullOrEmpty(probe.CandidateDigest))
+                .Select(probe => $"{probe.Service} ({selection.Services.First(service => service.Key == probe.Service).Image!.TagReference})");
+            verdict = verdict with
+            {
+                Error = $"Could not resolve Docker image revisions: {string.Join(", ", unresolvedImages)}. " +
+                    "An image tag may not be published yet, or registry access may have failed. " +
+                    "Retry after publication or check registry access. See Core logs for details.",
+            };
+        }
         // A failed older apply can leave the record at the new pin while the running app's checkout
         // is still old. Comparing two recorded pins alone would call that installation up to date.
         // Stopped apps materialize on Start; available updates keep their normal recovery path.
@@ -1940,7 +1987,8 @@ internal sealed partial class CoreLifecycleService(
     // keeps the synchronous ApplyUpdateAsync. Completion flips the record (existing apply path),
     // publishes a notification, and re-plans the app so its row settles without waiting for the
     // next sweep. See docs/features/runtime-app-update/feature.md.
-    public async Task<AppLifecycleResponse> EnqueueUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default, bool requireRoutine = false)
+    public async Task<AppLifecycleResponse> EnqueueUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default, bool requireRoutine = false,
+        LifecycleAuditOperation? auditOperation = null)
     {
         // Advisory pre-checks — the background run re-validates both under the app lock. Cheap and
         // local (no network): the confirmed plan must exist and match, and the base must not have
@@ -1989,7 +2037,9 @@ internal sealed partial class CoreLifecycleService(
             throw;
         }
 
-        var run = ExecuteBackgroundUpdateAsync(appId, request, hostLifetime?.ApplicationStopping ?? CancellationToken.None, requireRoutine);
+        auditOperation ??= new LifecycleAuditOperation(appId, "update", null, "core");
+        await auditOperation.AcceptAsync(audit, clock);
+        var run = ExecuteBackgroundUpdateAsync(appId, request, hostLifetime?.ApplicationStopping ?? CancellationToken.None, requireRoutine, auditOperation);
         runningBackgroundUpdates[appId] = run;
         _ = RemoveWhenCompleteAsync(appId, run);
 
@@ -2035,24 +2085,37 @@ internal sealed partial class CoreLifecycleService(
     // The detached apply body. Exception-total: every outcome lands on the record, because there is
     // no request left to surface it to. Deliberately silent in the notification inbox — an update is
     // always something the operator just asked for, and its outcome is already on the app row.
-    private async Task ExecuteBackgroundUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken, bool requireRoutine)
+    private async Task ExecuteBackgroundUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken, bool requireRoutine,
+        LifecycleAuditOperation auditOperation)
     {
+        var outcome = "failed";
         try
         {
             await ApplyUpdateAsync(appId, request, cancellationToken, preserveGrants: true, requireRoutine: requireRoutine);
-            await RebuildPlanAfterApplyAsync(appId, cancellationToken);
+            outcome = "succeeded";
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // Core is shutting down mid-apply. The record stays "updating" and the boot sweep flips
             // it to failed/interrupted on the next start (RecoverInterruptedUpdatesAsync).
             logger.LogWarning("Background update for app {AppId} was cancelled by shutdown; the boot sweep will mark it interrupted.", appId);
+            outcome = "cancelled";
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Background update for app {AppId} failed.", appId);
             await SetUpdateProgressAsync(appId, "failed", null, CancellationToken.None);
             await RecordBackgroundLifecycleFailureAsync(appId, "update", ex.Message, CancellationToken.None);
+        }
+        finally
+        {
+            await auditOperation.WriteAsync(audit, clock, outcome);
+        }
+        // A refresh failure after a completed apply must not rewrite its settled audit outcome.
+        if (outcome == "succeeded" && !cancellationToken.IsCancellationRequested)
+        {
+            try { await RebuildPlanAfterApplyAsync(appId, cancellationToken); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         }
     }
 
@@ -2537,9 +2600,15 @@ internal sealed partial class CoreLifecycleService(
         var app = await RequireAppAsync(appId, cancellationToken);
         var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
         var wasRunning = AppRuntimeStates.IsUp(app.RuntimeState);
+        var stopContext = wasRunning ? await CreateRuntimeContextAsync(app, currentSelection, cancellationToken) : null;
+        // Like restart, an admitted switch belongs to Core once mutation begins. Stopping Shell
+        // disconnects the proxy carrying this request; that must not cancel persistence or startup.
+        // Caller cancellation still governs lock acquisition, plan validation and stop preparation.
+        cancellationToken.ThrowIfCancellationRequested();
+        cancellationToken = hostLifetime?.ApplicationStopping ?? CancellationToken.None;
         if (wasRunning)
         {
-            await ResolveAdapter(currentSelection.RuntimeProfile.Type).StopAsync(await CreateRuntimeContextAsync(app, currentSelection, cancellationToken), cancellationToken);
+            await ResolveAdapter(currentSelection.RuntimeProfile.Type).StopAsync(stopContext!, cancellationToken);
             _ = await apps.UpdateAppAsync(appId, current => current with { RuntimeState = "stopped" }, cancellationToken);
         }
 
@@ -2691,9 +2760,9 @@ internal sealed partial class CoreLifecycleService(
     // and the control plane behave identically here. Consequences are surfaced ahead of the call by
     // GetRemovalImpactAsync, never enforced as a refusal.
     public Task<AppLifecycleResponse> RemoveAsync(string appId, AppRemoveRequest request, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => RemoveCoreAsync(appId, request, cancellationToken), cancellationToken);
+        => WithAppLockAsync(appId, () => RemoveWithSourceProtectionAsync(appId, request, null, cancellationToken), cancellationToken);
 
-    private async Task<AppLifecycleResponse> RemoveCoreAsync(string appId, AppRemoveRequest request, CancellationToken cancellationToken)
+    private async Task<AppLifecycleResponse> RemoveCoreAsync(string appId, AppRemoveRequest request, CancellationToken cancellationToken, AppSourceReview sourceReview)
     {
         await ClearUpdateAvailability(appId);
         var app = await apps.GetAppAsync(appId, cancellationToken);
@@ -2713,26 +2782,55 @@ internal sealed partial class CoreLifecycleService(
             }
         }
 
-        // Keep the operator's configuration alongside retained app data so a reinstall restores it.
-        // Written before state.json is deleted; skipped (and any stale snapshot purged) when data is
-        // being deleted, since the whole app root is then removed. The snapshot keeps the app root
-        // non-empty, so it survives TryDeleteDirectoryIfEmpty even for data-less apps.
-        if (!request.DeleteData && app is not null)
+        if (request.DeleteSource)
         {
-            // Best-effort: a disk/permission failure to snapshot config must not abort the
-            // uninstall the operator asked for. The cost is losing config retention on reinstall.
+            // Stop/remove must really succeed before deleting executable source. IgnoreRuntimeErrors
+            // cannot waive this constraint. Failed deletion retains the app record for a fresh review.
+            var safety = new AppSourceSafety(paths, apps);
+            var current = await safety.ReviewAsync(appId, true, cancellationToken);
+            if (current.Unknown || current.Fingerprint != sourceReview.Fingerprint)
+                throw new AppLifecycleException("removal_source_changed", "Source changed while stopping the runtime. Files are kept; review removal again.");
             try
             {
-                await WriteRetainedConfigAsync(app, cancellationToken);
+                foreach (var source in safety.DeletionPaths(appId))
+                    if (Directory.Exists(source)) Directory.Delete(source, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new AppLifecycleException("source_delete_failed", "Source cleanup is incomplete. The app record is retained; inspect the remaining files and prepare a fresh removal review.");
+            }
+        }
+
+        // Keep the operator's configuration alongside retained app data so a reinstall restores it.
+        // Written before state.json is deleted. Deleting data clears settings/mounts while retaining
+        // the local source binding when source is kept; it is needed for explicit reinstallation.
+        if (app is not null && (!request.DeleteData || !request.DeleteSource && app.SourceState?.Type == "local-git"))
+        {
+            // Configuration retention is best-effort, but losing a kept local source binding must
+            // stop uninstall before the installation record is removed.
+            try
+            {
+                await WriteRetainedConfigAsync(app, request, cancellationToken);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
             {
+                if (!request.DeleteSource && app.SourceState?.Type == "local-git")
+                    throw new AppLifecycleException("source_retention_failed", "Could not retain the local source binding. The app record and source are kept; retry removal after resolving storage errors.");
                 logger.LogWarning(ex, "Failed to retain configuration for app {AppId} during uninstall.", appId);
             }
         }
         else if (request.DeleteData)
         {
-            TryDelete(GetRetainedConfigPath(appId));
+            // Repeating cleanup after uninstall must not drop the provenance of source kept on disk.
+            // Read strictly: an unreadable retention record cannot authorize losing that binding.
+            var retained = !request.DeleteSource
+                ? await JsonStorage.ReadAsync<RetainedAppConfig>(GetRetainedConfigPath(appId), cancellationToken) : null;
+            if (retained?.LocalSource is { Type: "local-git" })
+                await JsonStorage.WriteAsync(GetRetainedConfigPath(appId), retained with
+                {
+                    Settings = new Dictionary<string, AppSettingValue>(), Mounts = [], Autostart = null,
+                }, restrictToOwner: true, cancellationToken);
+            else TryDelete(GetRetainedConfigPath(appId));
         }
 
         // Removal revokes agent offers even when the operator retains runtime state.
@@ -2767,14 +2865,6 @@ internal sealed partial class CoreLifecycleService(
         if (request.DeleteBackups)
         {
             await backups.DeleteAllBackupsAsync(appId, cancellationToken);
-        }
-
-        if (request.DeleteSource)
-        {
-            // Both locations: the current default inside the app root, and the legacy top-level
-            // sources tree that pre-move installs still use (their records were never migrated).
-            TryDeleteDirectory(paths.ResolveManagedCheckoutPath(appId));
-            TryDeleteDirectory(CoreDataPaths.ResolveContainedPath(paths.SourcesRoot, appId));
         }
 
         // The hostnames this app published can never serve it again. Best-effort: a publication that cannot
@@ -2859,11 +2949,14 @@ internal sealed partial class CoreLifecycleService(
     }
 
     public Task<AppBackupResponse> RestoreBackupAsync(string appId, string backupId, AppRestoreBackupRequest request, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => RestoreBackupCoreAsync(appId, backupId, request, cancellationToken), cancellationToken);
+        => WithAppLockAsync(appId, () => RestoreBackupCoreAsync(appId, backupId, request, cancellationToken), cancellationToken, developmentOperation: true);
 
     private async Task<AppBackupResponse> RestoreBackupCoreAsync(string appId, string backupId, AppRestoreBackupRequest request, CancellationToken cancellationToken)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
+        // Valid stopped trials may restore data, but a missing/corrupt referenced journal still
+        // blocks mutation: its binding cannot be recovered or verified.
+        _ = await AppDevStore.ReadAsync(paths, app, cancellationToken);
         // IsIdle, not !IsUp: restoring over the data directory of an app that is still shutting down
         // (or coming up) races the runtime for those files.
         if (!AppRuntimeStates.IsIdle(app.RuntimeState))
@@ -3569,6 +3662,21 @@ internal sealed partial class CoreLifecycleService(
             !(app.Autostart ?? true) && localProcesses?.HasApp(app.Id) != true).OrderByDescending(app => app.Id, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            // An explicitly entered dev trial retains its binding and live container across a
+            // keep-apps Core restart. Autostart remains the ordinary-installation preference; it
+            // must not turn a deliberate trial into an implicit Stop. A stopped trial stays stopped.
+            try
+            {
+                if (await AppDevStore.ReadAsync(paths, app, cancellationToken) is { Active: true }) continue;
+            }
+            catch (AppLifecycleException ex) when (ex.Code == "dev_state_unavailable")
+            {
+                // One damaged journal must not abort boot processing for unrelated apps. Keep
+                // this app's runtime and record untouched, and report its recoverable failure.
+                logger.LogWarning(ex, "Skipped startup stop for {AppId}: development journal is unavailable", app.Id);
+                results.Add(new(app.Id, "autostart-disabled-stop", Succeeded: false, ErrorCode: ex.Code, Message: ex.Message));
+                continue;
+            }
             results.Add(await RunBackgroundLifecycleActionAsync(
                 app.Id,
                 "autostart-disabled-stop",
@@ -3778,7 +3886,8 @@ internal sealed partial class CoreLifecycleService(
             PrivateSources: selection.PrivateSources ?? existing?.PrivateSources,
             RequiredCorePermissions: existing?.RequiredCorePermissions,
             OptionalCorePermissions: existing?.OptionalCorePermissions,
-            PermissionRevision: existing?.PermissionRevision);
+            PermissionRevision: existing?.PermissionRevision,
+            DevModeId: existing?.DevModeId);
 
         return ApplyManifestProjections(record, manifest);
     }
@@ -3874,6 +3983,18 @@ internal sealed partial class CoreLifecycleService(
         var profiles = await ResolveRuntimeProfilesAsync(app, cancellationToken);
         var liveSourcePath = ResolveLiveSourcePath(app, profiles);
         var summary = AppSummary.From(app, profiles, liveSourcePath is not null, liveSourcePath);
+        var development = await ReadDevelopmentStatusAsync(app, liveSourcePath, cancellationToken);
+        AppDevSummary? devMode = null;
+        try
+        {
+            var operation = await AppDevStore.ReadAsync(paths, app, cancellationToken);
+            if (operation is { Active: true }) devMode = new(operation.Id, operation.Phase, operation.PreviousRuntime);
+        }
+        catch (Exception ex) when (ex is AppLifecycleException or System.Text.Json.JsonException or IOException or UnauthorizedAccessException)
+        {
+            // An unreadable journal must block this app's mutations, not hide the whole dashboard.
+            if (app.DevModeId is { } id) devMode = new(id, "unavailable", null);
+        }
         var configuration = await ReadConfigurationSnapshotAsync(app, cancellationToken, installed);
         // Last-known update verdict (plan-first updates): null until a check has run for this app.
         // Suppressed for a live-source runtime — it has no reviewed-update path, so a verdict from
@@ -3882,8 +4003,11 @@ internal sealed partial class CoreLifecycleService(
         return summary with
         {
             RestartRequired = AppRuntimeStates.IsUp(app.RuntimeState) && (
-                configuration.Library is null || AppConfigurationFingerprint.RequiresRestart(app, configuration.Library) ||
+                development?.RestartRequired == true || configuration.Library is null || AppConfigurationFingerprint.RequiresRestart(app, configuration.Library) ||
                 (coreOrigins is not null && !string.Equals(app.AppliedBrowserOrigin, coreOrigins.Effective, StringComparison.Ordinal))),
+            LaunchProgress = app.LaunchProgress,
+            Development = development,
+            DevMode = devMode,
             PermissionState = CachedPermissions(app),
             UpdateProgress = app.UpdateProgress,
             UpdateCheck = (await ReadUpdateSnapshotAsync(app, cancellationToken, summary.Live))?.Verdict,
@@ -4052,6 +4176,7 @@ internal sealed partial class CoreLifecycleService(
                 OperationStatus = "failed",
                 LastOperation = operation,
                 LastError = message,
+                LaunchProgress = operation is "start" or "restart" ? new("failed", clock.UtcNow, BuildState: current.LaunchProgress?.BuildState == "building" ? "failed" : current.LaunchProgress?.BuildState) : current.LaunchProgress,
             }, cancellationToken);
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or JsonException)
@@ -4075,6 +4200,7 @@ internal sealed partial class CoreLifecycleService(
                 OperationStatus = "failed",
                 LastOperation = operation,
                 LastError = message,
+                LaunchProgress = operation is "start" or "restart" ? new("failed", clock.UtcNow, BuildState: current.LaunchProgress?.BuildState == "building" ? "failed" : current.LaunchProgress?.BuildState) : current.LaunchProgress,
             }, cancellationToken);
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or JsonException)
@@ -4094,10 +4220,11 @@ internal sealed partial class CoreLifecycleService(
     }
 
     private static bool IsRecordableLifecycleFailure(Exception ex)
-        => ex is AppLifecycleException or AppManifestException or IOException or UnauthorizedAccessException or JsonException;
+        => ex is AppLifecycleException or AppManifestException or SandboxException or IOException or UnauthorizedAccessException or JsonException;
 
     private AppSourceState? BuildSourceState(RuntimeAppManifestSelection selection, AppRecord? existing)
     {
+        if (existing?.SourceState?.Type == "local-git") return existing.SourceState;
         var source = selection.Manifest.Source;
         var localOverridePath = ResolveInstallLocalSourcePath(selection, source);
         if (source?.Repository is null)
@@ -4183,6 +4310,9 @@ internal sealed partial class CoreLifecycleService(
             && !string.IsNullOrWhiteSpace(localSourceRoot))
         {
             var manifestDirectory = Path.GetDirectoryName(Path.GetFullPath(selection.ManifestPath));
+            if (manifestDirectory is not null && FindGitRoot(manifestDirectory) is { } treeRoot
+                && File.Exists(Path.Combine(treeRoot, ".git")))
+                localSourceRoot = treeRoot;
             return string.IsNullOrWhiteSpace(manifestDirectory)
                 ? null
                 : NormalizeManifestSubpath(Path.GetRelativePath(Path.GetFullPath(localSourceRoot), manifestDirectory));
@@ -4920,7 +5050,7 @@ internal sealed partial class CoreLifecycleService(
     private async Task<RuntimeAppManifestSelection> LoadSelectionForAppAsync(AppRecord app, CancellationToken cancellationToken)
         => (await LoadSelectionWithStatusAsync(app, cancellationToken)).Selection;
 
-    internal async Task<AppSelectionLoad> LoadSelectionWithStatusAsync(AppRecord app, CancellationToken cancellationToken)
+    internal async Task<AppSelectionLoad> LoadSelectionWithStatusAsync(AppRecord app, CancellationToken cancellationToken, bool validateDevelopmentContract = false)
     {
         if (string.IsNullOrWhiteSpace(app.ManifestPath))
         {
@@ -4930,6 +5060,20 @@ internal sealed partial class CoreLifecycleService(
         // The reviewed internal copy is always valid (validated + saved at install/update); it is the
         // last-good snapshot a live source app falls back to when its folder manifest is mid-edit.
         var lastGood = await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken, allowUnsupportedPermissions: true);
+        if (await AppDevStore.ReadAsync(paths, app, cancellationToken) is { Active: true } development)
+        {
+            // Launching code requires the reviewed live contract. Stop, logs and health use the
+            // installed recipe even when a source edit is invalid or changes that contract.
+            if (validateDevelopmentContract && app.SelectedRuntime == development.TargetRuntime &&
+                app.SourceState?.LocalOverridePath == development.SourcePath && !development.Phase.StartsWith("return-", StringComparison.Ordinal))
+            {
+                var live = await manifests.LoadAsync(CombineManifestSubpath(development.SourcePath, app.SourceState?.ManifestSubpath),
+                    app.SelectedRuntime, cancellationToken, forceRead: true);
+                if (live.ManifestDigest != development.ManifestDigest)
+                    throw new AppLifecycleException("dev_contract_changed", "The development manifest changed. Return and review the new contract; ordinary source edits remain live.");
+            }
+            return new AppSelectionLoad(lastGood, LiveReconciled: false, ManifestError: null);
+        }
 
         // Legacy records may predate persisted RuntimeProfiles; fall back to the profiles of the
         // just-loaded internal copy (same source as ResolveRuntimeProfilesAsync, but reusing lastGood so
@@ -5206,10 +5350,12 @@ internal sealed partial class CoreLifecycleService(
     private string GetRetainedConfigPath(string appId)
         => Path.Combine(GetAppRoot(appId), "retained-config.json");
 
-    private async Task WriteRetainedConfigAsync(AppRecord app, CancellationToken cancellationToken)
+    private async Task WriteRetainedConfigAsync(AppRecord app, AppRemoveRequest options, CancellationToken cancellationToken)
         => await JsonStorage.WriteAsync(
             GetRetainedConfigPath(app.Id),
-            new RetainedAppConfig(1, app.Settings, app.Mounts ?? [], app.Autostart),
+            new RetainedAppConfig(1, options.DeleteData ? new Dictionary<string, AppSettingValue>() : app.Settings,
+                options.DeleteData ? [] : app.Mounts ?? [], options.DeleteData ? null : app.Autostart,
+                !options.DeleteSource && app.SourceState?.Type == "local-git" ? app.SourceState : null),
             // Holds secret setting values, so keep it owner-only on Unix like other secret stores.
             restrictToOwner: true,
             cancellationToken);
@@ -5489,7 +5635,7 @@ internal sealed partial class CoreLifecycleService(
     // even when the target digest resolves. Parses the entry this class itself emits (AddImageChange):
     // service keys cannot contain ':' and docker references cannot contain '>', so the format is
     // unambiguous. Anything that does not parse cleanly is review-class.
-    private static bool IsSameRepositoryImageChange(string change)
+    internal static bool IsSameRepositoryImageChange(string change)
     {
         const string prefix = "image:";
         if (!change.StartsWith(prefix, StringComparison.Ordinal))
@@ -5518,7 +5664,7 @@ internal sealed partial class CoreLifecycleService(
 
     // Repository part of a docker reference: strips an `@sha256:...` digest pin, then a trailing
     // `:tag` — a colon followed by a '/' belongs to a registry port, not a tag.
-    private static string ImageRepository(string reference)
+    internal static string ImageRepository(string reference)
     {
         var digestSeparator = reference.IndexOf('@');
         if (digestSeparator >= 0)

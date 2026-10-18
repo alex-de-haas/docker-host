@@ -3,7 +3,7 @@
   "id": "hosty.shell",
   "name": "Hosty Shell",
   "description": "Hosty browser management shell.",
-  "version": "0.97.3",
+  "version": "0.105.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -119,6 +119,10 @@
   ],
   "optionalCorePermissions": [
     "providers.assistant",
-    "sources.connections"
+    "sources.connections",
+    "apps.sandboxes.inspect",
+    "apps.sandboxes.operate",
+    "core.environments.inspect",
+    "core.environments.operate"
   ]
 }

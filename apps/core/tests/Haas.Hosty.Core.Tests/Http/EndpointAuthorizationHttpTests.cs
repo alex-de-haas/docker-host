@@ -21,6 +21,8 @@ public sealed class EndpointAuthorizationHttpTests
         // Auth handshake and login surface — public by definition. (Logout is intentionally NOT here:
         // it now requires CSRF, so it answers 403 to an anonymous caller like any other mutation.)
         "/api/auth/csrf",
+        // Public inert frame; only its separate cookie/CSRF POST can maintain a session.
+        "/api/auth/apps/continuity/frame",
         "/api/auth/session",
         "/api/auth/bootstrap",
         "/api/auth/recovery",
@@ -51,6 +53,8 @@ public sealed class EndpointAuthorizationHttpTests
         "/api/auth/oauth/register",
         // Fixed read-only app sign-in protocol metadata; no authority or code is returned.
         "/api/auth/apps/protocol",
+        // Sandbox protocol discovery is fixed public metadata; all realm issuance remains guarded.
+        "/api/sandbox-runtime/{id}/protocol",
     ];
 
     // Browser broker routes have their own Origin/nonce guards and a credential-free bootstrap.
@@ -59,6 +63,8 @@ public sealed class EndpointAuthorizationHttpTests
     [
         "/api/apps/{appId}/open",
         "/api/apps/{appId}/sign-in-intent",
+        // Ordinary Core login navigation; issuance and invalid targets are covered by SandboxHttpTests.
+        "/api/sandbox-instances/{id}/authorize",
     ];
 
     // Service-token (bearer) app->Core routes. The no-credential loop already proves they reject a

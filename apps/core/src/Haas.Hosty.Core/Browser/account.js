@@ -137,6 +137,7 @@ async function tokensPage() {
     });
   }
   if (session.user?.role === 'host.admin') {
+    await backgroundSection(roster.apps);
     const clients = await read('/api/auth/oauth/clients');
     const registered = section('Registered OAuth clients');
     for (const client of clients.clients) {
@@ -147,6 +148,48 @@ async function tokensPage() {
       });
     }
   }
+}
+
+async function backgroundSection(apps) {
+  const root = section('Background app access');
+  element('p', 'These explicit grants allow an app to work after tabs close and after ordinary sign-out. Revoke a grant here to stop new calls. Updating an app cannot add actions to a saved grant.', root);
+  const create = form(root, 'Authorize background work', async () => {
+    const scope = { id: 'work', kind: kind.value, targetAppId: target.value, actions: [] };
+    if (kind.value === 'core') scope.actions = actions.filter(i => i.checked).map(i => i.value);
+    if (kind.value === 'mcp') scope.actions = tools.value.split(',').map(v => v.trim()).filter(Boolean);
+    if (kind.value === 'provider') { scope.providerKind = provider.value; scope.key = key.value; }
+    const expiresAt = expiry.value ? new Date(expiry.value).toISOString() : null;
+    if (!confirm(`Allow ${consumer.value} to use ${scope.kind} access on ${scope.targetAppId}: ${scope.actions.join(', ') || scope.providerKind + '/' + scope.key}? ${expiresAt ? 'Expires ' + expiresAt : 'Until revoked'}. This survives sign-out.`)) return;
+    await mutate('/api/auth/background-grants', { appId: consumer.value, label: label.value, scopes: [scope], expiresAt });
+    await tokensPage();
+  });
+  const label = input(create, 'Purpose'); label.required = true;
+  const consumer = select(create, 'App performing the work', apps.map(a => [a.id, a.displayName]));
+  const kind = select(create, 'Access type', [['core', 'Manage a selected app'], ['provider', 'Use a selected provider'], ['mcp', 'Call selected MCP tools']]);
+  const target = select(create, 'Target', [...apps.map(a => [a.id, a.displayName]), ['hosty:core', 'Core MCP (MCP access only)']]);
+  const coreFields = element('div', undefined, create);
+  const actions = ['health', 'update-status', 'update-plan', 'update', 'start', 'stop', 'restart'].map(a => input(coreFields, a, a, 'checkbox'));
+  const providerFields = element('div', undefined, create);
+  const provider = select(providerFields, 'Provider', [['assistant', 'Assistant'], ['speech-to-text', 'Speech to text']]);
+  const key = input(providerFields, 'Interface key', 'default');
+  const mcpFields = element('div', undefined, create);
+  const tools = input(mcpFields, 'Exact tool names, separated by commas');
+  element('p', 'Each selected tool may use its full argument domain at this target. This does not restrict file paths or workspaces.', mcpFields);
+  const expiry = input(create, 'Optional expiry — leave empty for until revoked', '', 'datetime-local');
+  kind.onchange = () => { coreFields.hidden = kind.value !== 'core'; providerFields.hidden = kind.value !== 'provider'; mcpFields.hidden = kind.value !== 'mcp'; };
+  kind.onchange(); submit(create, 'Authorize selected background access');
+  const grants = await read('/api/auth/background-grants');
+  for (const grant of grants) {
+    const entry = row(root, grant.label, `${grant.appId} · ${grant.revokedAt ? 'Revoked' : grant.expiresAt ? 'Expires ' + grant.expiresAt : 'Until revoked'}`);
+    element('p', `Reference: ${grant.id}`, entry);
+    for (const scope of grant.scopes) element('p', `${scope.id}: ${scope.kind} → ${scope.targetAppId} · ${scope.actions.join(', ') || scope.providerKind + '/' + scope.key}`, entry);
+    if (!grant.revokedAt) button(entry, 'Revoke background access', async () => { await mutate('/api/auth/background-grants/' + id(grant.id), undefined, 'DELETE'); await tokensPage(); });
+  }
+  button(root, 'Revoke all my authorizations', async () => {
+    if (!confirm('End all your browser sessions, device/access tokens and background grants? You will need to sign in again.')) return;
+    await mutate('/api/auth/background-grants/revoke-all-authorizations', {});
+    location.assign('/login');
+  });
 }
 
 async function consentPage() {

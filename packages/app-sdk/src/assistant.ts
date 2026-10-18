@@ -1,3 +1,6 @@
+import type { ProviderDescriptor } from "./providers.js";
+import { isSurfaceRoute, routeWithin, type AppSurfaceRef, type PanelTarget } from "@hosty-sdk/app/ui/types";
+
 /** Preserve provider refusal details through app-owned server transports. */
 export class AssistantError extends Error {
   readonly code: string;
@@ -11,7 +14,7 @@ export class AssistantError extends Error {
 
 /** Version 1 of the manifest-discovered assistant handoff. */
 export type AssistantContract = { version?: number | null; capabilities?: readonly string[] | null };
-export type AssistantDestination = { endpoint: string; path: string };
+export type AssistantDestination = { endpoint: string; path: string; panelId?: string };
 export type AssistantHandoffResult = { conversationId: string; disposition: "draft" | "accepted"; open: AssistantDestination; dispatchId?: string };
 export type AssistantHandoff = {
   handoffId: string; requestId: string; conversationId: string;
@@ -40,7 +43,7 @@ export function createAssistantRequestId(now = Date.now()): string {
 
 /** Resolve only inside a declared UI surface on the selected app's resolved endpoint. */
 export function resolveAssistantDestination(destination: AssistantDestination, surfaces: readonly { endpoint?: string | null; path?: string | null; url?: string | null }[]): string {
-  if (!destination || typeof destination.path !== "string" || !destination.path.startsWith("/") || destination.path.startsWith("//") || /[\\\u0000-\u001f]/.test(destination.path)) throw new Error("Invalid assistant UI destination.");
+  if (!destination || !isSurfaceRoute(destination.path)) throw new Error("Invalid assistant UI destination.");
   if (/%(?:2f|5c|25)/i.test(destination.path.split(/[?#]/, 1)[0]!)) throw new Error("Invalid assistant UI destination.");
   for (const surface of surfaces) {
     if (surface.endpoint !== destination.endpoint || !surface.url) continue;
@@ -50,6 +53,37 @@ export function resolveAssistantDestination(destination: AssistantDestination, s
     if (url.origin === base.origin && (root === "/" || url.pathname === root || url.pathname.startsWith(`${root}/`))) return url.href;
   }
   throw new Error("The assistant returned a destination outside its declared UI.");
+}
+
+/** Pure mapping after finalization; the presentation host separately checks current access. */
+export function resolveAssistantPresentation(provider: ProviderDescriptor, result: AssistantHandoffResult,
+  options: { expectedProvider: { appId: string; installationId: string; key: string } }): {
+    target: PanelTarget | null; destination: AppSurfaceRef; reason?: "no_panel" | "ambiguous_surface";
+  } {
+  const expected = options.expectedProvider;
+  if (!provider.installationId) throw new AssistantError("unsupported_core", "Update Core to identify assistant installations.", 409);
+  if (provider.appId !== expected.appId || provider.key !== expected.key || provider.installationId !== expected.installationId)
+    throw new AssistantError("provider_changed", "The original assistant installation is no longer available.", 409);
+  try { resolveAssistantDestination(result.open, provider.uiSurfaces ?? []); }
+  catch { throw new AssistantError("destination_invalid", "The assistant returned an undeclared destination.", 409); }
+  const destination = { appId: provider.appId, installationId: provider.installationId,
+    endpoint: result.open.endpoint, route: result.open.path };
+  const panels = (provider.uiSurfaces ?? []).filter(s => s.kind === "panel" && s.panelId && s.url
+    && s.endpoint === destination.endpoint && routeWithin(destination.route, s.path));
+  let selected: (typeof panels)[number] | undefined;
+  if (result.open.panelId !== undefined) {
+    selected = panels.find(s => s.panelId === result.open.panelId);
+    if (!selected) throw new AssistantError("destination_invalid", "The assistant panel does not match its destination.", 409);
+  } else {
+    if (!panels.length) return { target: null, destination, reason: "no_panel" };
+    const length = (path: string) => new URL(path, "https://surface.invalid").pathname.replace(/\/$/, "").length;
+    const longest = Math.max(...panels.map(s => length(s.path)));
+    const matches = panels.filter(s => length(s.path) === longest);
+    if (new Set(matches.map(s => s.panelId)).size !== 1) return { target: null, destination, reason: "ambiguous_surface" };
+    selected = matches[0];
+  }
+  return { target: { panel: { appId: provider.appId, installationId: provider.installationId, panelId: selected!.panelId! },
+    route: destination.route }, destination };
 }
 
 export class AssistantClient {

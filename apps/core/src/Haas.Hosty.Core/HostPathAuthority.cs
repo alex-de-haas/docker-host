@@ -33,8 +33,18 @@ internal sealed class HostPathAuthority(CoreDataPaths paths, AppRegistryStore ap
         // Any mounted descendant can contain executable code, even if the manifest is outside it.
         foreach (var root in mountRoots)
             if (Exposes(root, real) || Exposes(root, lexical)) throw Forbidden();
+        var ownedPath = Path.GetFullPath(paths.ResolveManagedCheckoutPath(app.Id));
+        var owned = MountPathPolicy.ResolveRealPath(ownedPath);
+        var localGit = app.SourceState is { Type: "local-git" } binding &&
+            binding.Repository is { } repository && MountPathPolicy.ResolveRealPath(repository) == owned &&
+            binding.ManagedCheckoutPath is { } checkout && MountPathPolicy.ResolveRealPath(checkout) == owned &&
+            binding.LocalOverridePath is { } local && MountPathPolicy.ResolveRealPath(local) == owned &&
+            real == owned && !CoreDataPaths.ContainsSymbolicLink(paths.AppsRoot, ownedPath);
         foreach (var root in new[] { paths.AppsRoot, paths.SourcesRoot })
         {
+            // Core-created canonical Git sources are explicitly owned code, never an arbitrary
+            // override into app storage. Shared mounts and manifest containment were checked above.
+            if (localGit && root == paths.AppsRoot) continue;
             var resolvedRoot = MountPathPolicy.ResolveRealPath(root);
             if (Within(root, lexical) || Within(resolvedRoot, real) || Within(resolvedRoot, realManifest)) throw Forbidden();
         }

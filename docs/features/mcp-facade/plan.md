@@ -1,7 +1,7 @@
 ---
 status: On Hold
 created: 2026-08-24
-updated: 2026-09-26
+updated: 2026-10-10
 summary: Remaining MCP facade work, on hold since agents moved to the host.
 components: [apps/harness]
 ---
@@ -30,7 +30,7 @@ Until it resumes, the gateway facade keeps working and follows the Core policy t
   skills in `instructions`; and the distinct failure answers.
 - Acting for a user without a browser interaction uses the on-behalf-of route today, which requires
   `role: system`. The bridge gets that ability through the delegation permission of the
-  [core extension model](../core-extension-model/plan.md) instead of the system label.
+  [cross-app auth plan](../cross-app-auth/plan.md) instead of the system label. This replacement remains unbuilt.
 - When the bridge ships, the gateway facade and Core's special case for it in
   `OAuthEndpoints.ResolveResourceAsync` are removed, and external clients re-register once.
 
@@ -45,6 +45,8 @@ Until it resumes, the gateway facade keeps working and follows the Core policy t
       and a proxy in the path remain unexercised for this endpoint.
 - [ ] D5. Remove the gateway facade, update `feature.md`, the ai-agent-bridge topology-4 note and decision
       log, and regenerate the index.
+
+- [ ] D6. Adopt the reviewed delegation contract from [cross-app auth D7](../cross-app-auth/plan.md#deliverables) for the extracted bridge and remove its legacy system-only on-behalf-of dependency; verify target/user restrictions, revocation and denial for ungranted apps.
 
 ## Earlier Decisions (2026-08-24, owner approval in chat)
 

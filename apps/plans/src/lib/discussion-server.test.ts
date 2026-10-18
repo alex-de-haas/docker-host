@@ -6,19 +6,20 @@ import { createDiscussion, discussionOptions } from "./discussion-server";
 import type { DiscussionInput } from "./discussion";
 
 const mocks = vi.hoisted(() => ({ authenticate: vi.fn(), list: vi.fn(), assistant: vi.fn(), prepare: vi.fn(), upload: vi.fn(), finalize: vi.fn(),
-  repositories: vi.fn(), workspaces: vi.fn(), listing: vi.fn(), content: vi.fn() }));
+  bootstrap: vi.fn(), repositories: vi.fn(), workspaces: vi.fn(), listing: vi.fn(), content: vi.fn() }));
 vi.mock("./auth", async original => ({ ...await original<typeof import("./auth")>(), requireAdministratorIdentity: mocks.authenticate }));
 vi.mock("@hosty-sdk/app/providers/server", () => ({ ProviderClient: class { list = mocks.list; assistant = mocks.assistant; } }));
+vi.mock("@hosty-sdk/app/ui/server", () => ({ UiServerClient: class { bootstrap = mocks.bootstrap; } }));
 vi.mock("./core-client", () => ({ CoreSourceReader: class {
   repositories = mocks.repositories; workspaces = mocks.workspaces; listing = mocks.listing; content = mocks.content;
 } }));
 
 const markdown = "---\nstatus: Ready\n---\n# План\n\nDiscuss **this** full document.\n";
 const input: DiscussionInput = { repositoryId: "repo", path: "docs/features/example/plan.md", workspaceId: null,
-  contentHash: createHash("sha256").update(markdown).digest("hex"), providerAppId: "assistant", key: "default", requestId: "01990000-0000-7000-8000-000000000001" };
-const provider: ProviderDescriptor = { appId: "assistant", displayName: "Assistant", key: "default", kind: "assistant", version: 1,
+  contentHash: createHash("sha256").update(markdown).digest("hex"), providerAppId: "assistant", installationId: "installed-1", key: "default", requestId: "01990000-0000-7000-8000-000000000001" };
+const provider: ProviderDescriptor = { appId: "assistant", installationId: "installed-1", displayName: "Assistant", key: "default", kind: "assistant", version: 1,
   available: true, capabilities: ["attachments"], url: "http://internal.example:4400/api/assistant/v1",
-  uiSurfaces: [{ endpoint: "web", path: "/assistant", url: "https://assistant.example/assistant" }] };
+  uiSurfaces: [{ kind: "panel", panelId: "assistant", endpoint: "web", path: "/assistant", url: "https://assistant.example/assistant" }] };
 const finalized = { handoffId: "handoff", conversationId: "conversation", state: "finalized", result: {
   disposition: "draft", conversationId: "conversation", open: { endpoint: "web", path: "/assistant?session=conversation" } } };
 function request(value: unknown = input, origin = "https://plans.example") {
@@ -27,6 +28,7 @@ function request(value: unknown = input, origin = "https://plans.example") {
 beforeEach(() => {
   vi.resetAllMocks();
   vi.stubEnv("HOSTY_CORE_PUBLIC_ORIGIN", "https://core.example");
+  mocks.bootstrap.mockResolvedValue({ coreOrigin: "https://core.example", pinnedOpen: true });
   mocks.authenticate.mockResolvedValue({ token: "user-token", userId: "admin" });
   mocks.list.mockResolvedValue([provider]);
   mocks.assistant.mockResolvedValue({ prepare: mocks.prepare, upload: mocks.upload, finalize: mocks.finalize });
@@ -42,18 +44,18 @@ afterEach(() => vi.unstubAllEnvs());
 describe("Plans assistant handoff", () => {
   it("discovers choices without exposing service URLs or credentials", async () => {
     const response = await discussionOptions(new Request("https://plans.example/api/assistant"));
-    expect(await response.json()).toEqual({ userId: "admin", providers: [{ appId: "assistant", displayName: "Assistant", key: "default", problem: null }] });
+    expect(await response.json()).toEqual({ userId: "admin", providers: [{ appId: "assistant", installationId: "installed-1", displayName: "Assistant", key: "default", problem: null }] });
     expect(response.headers.get("cache-control")).toBe("no-store");
   });
   it("uploads exact UTF-8 Markdown and creates a draft with source provenance", async () => {
     const response = await createDiscussion(request());
     expect(response.status).toBe(200);
     const body = await response.json();
-    const url = new URL(body.url), destination = new URL(url.searchParams.get("redirectUri")!);
+    const url = new URL(body.url);
     expect(url.origin + url.pathname).toBe("https://core.example/api/apps/assistant/open");
-    expect(destination.origin + destination.pathname).toBe("https://assistant.example/assistant");
-    expect(destination.searchParams.get("session")).toBe("conversation");
-    expect(destination.searchParams.get("hosty_launch")).toBe("standalone");
+    expect(url.searchParams.get("route")).toBe("/assistant?session=conversation");
+    expect(url.searchParams.get("installationId")).toBe("installed-1");
+    expect(body.target).toEqual({ panel: { appId: "assistant", installationId: "installed-1", panelId: "assistant" }, route: "/assistant?session=conversation" });
     expect(mocks.prepare).toHaveBeenCalledWith({ requestId: input.requestId, appIds: [], prompt: expect.stringContaining(`File: ${input.path}`) });
     expect(mocks.prepare.mock.calls[0][0].prompt).toContain("Tracked branch: main");
     expect(mocks.prepare.mock.calls[0][0].prompt).toContain(input.contentHash);
@@ -115,12 +117,14 @@ describe("Plans assistant handoff", () => {
   it.each(["/settings", "//outside.example/assistant", "/assistant/../settings", "/assistant/%2fother"])("rejects undeclared or ambiguous destination %s", async path => {
     mocks.finalize.mockResolvedValue({ ...finalized, result: { ...finalized.result, open: { endpoint: "web", path } } });
     const response = await createDiscussion(request());
-    expect(response.status).toBe(502); expect(await response.json()).not.toHaveProperty("url");
+    expect(response.status).toBe(409); expect(await response.json()).not.toHaveProperty("url");
   });
   it("resolves against updated UI metadata after finalization", async () => {
-    mocks.list.mockResolvedValueOnce([provider]).mockResolvedValueOnce([{ ...provider, uiSurfaces: [{ endpoint: "web", path: "/assistant", url: "https://new.example/assistant" }] }]);
+    mocks.list.mockResolvedValueOnce([provider]).mockResolvedValueOnce([{ ...provider, uiSurfaces: [{ kind: "panel", panelId: "assistant", endpoint: "web", path: "/assistant", url: "https://new.example/assistant" }] }]);
     const body = await (await createDiscussion(request())).json();
-    expect(new URL(new URL(body.url).searchParams.get("redirectUri")!).origin).toBe("https://new.example");
+    expect(new URL(body.url).searchParams.get("route")).toBe("/assistant?session=conversation");
+    expect(body.destination.installationId).toBe("installed-1");
+    expect(body.url).not.toContain("assistant.example");
   });
   it.each([{ ...provider, capabilities: [] }, { ...provider, uiSurfaces: undefined }, { ...provider, available: false }])("rejects an unusable provider before preparing", async selected => {
     mocks.list.mockResolvedValue([selected]);

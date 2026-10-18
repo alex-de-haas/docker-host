@@ -1,6 +1,6 @@
 ---
 created: 2026-09-17
-updated: 2026-09-29
+updated: 2026-10-16
 summary: Named Claude and Codex agent connections that administrators manage in the Harness Providers settings.
 components: [apps/harness]
 ---
@@ -19,6 +19,12 @@ the form; Cancel, Escape and the close button dismiss it and clear unsaved crede
 Each row keeps its actions in a three-dot menu: test, edit, remove, set default and ChatGPT sign-in
 where applicable. Device sign-in opens a modal with a copy-code button, browser link, status and
 cancellation; closing a pending modal cancels that attempt without replacing a working credential.
+
+The same tab has independent **Codex translation** and **Claude translation** selections. Each binds
+an existing connection/revision explicitly, without following the chat default. These supply the two
+static [translation interfaces](../translation-provider/feature.md) to authorized apps. Translation
+leases a connection exclusively to protect native credential renewal; an open chat on that account
+requires a dedicated translation connection or stopping the chat before translating.
 
 | Provider | Authentication | Setup |
 | --- | --- | --- |
@@ -138,8 +144,9 @@ All routes below use the existing administrator authentication and cookie CSRF g
   acknowledges the account for an older unbound chat.
 - `GET /api/health?sessionId=:id`: the selected chat's capabilities/readiness.
 
-The MCP application-provider controls are separate. This feature does not implement the tool-level
-Ask/Run/Disabled policy tracked in [Assistant Approval Rules](../assistant-approval-rules/plan.md).
+The MCP application-provider controls are separate from native provider connections. The shipped
+tool-level Ask / Run unprompted / Disabled policy is documented in
+[Assistant MCP Approval Rules](../assistant-approval-rules/feature.md).
 
 ## Verification
 
@@ -154,6 +161,16 @@ refresh, concurrent accounts, partial failures, migration and same-/fresh-host r
 Browser checks cover the provider action menu, sign-in modal, copy confirmation and cancellation,
 and the default connection and persisted provider override in an empty chat.
 Gateway version: **0.29.0 → 0.30.0**; Core and SDK contracts are unchanged.
+
+## Docker Connections
+
+The [shared Docker runtime](../assistant-shared-docker-runtime/feature.md) uses the same connection
+selection, revision and account binding. It maintains a separate managed Docker home, mounts only
+that connection's history and imports only selected portable Codex host-login authorization. Host
+configuration and unrelated sessions are not copied. Native and Docker refresh synchronization keeps
+Core's secret authoritative; removed authorization requires reconnecting. Native probes do not execute
+container-written configuration. A persisted unreconciled worker blocks credential changes until
+Stop/recovery confirms termination.
 
 ## Testing Expectations
 

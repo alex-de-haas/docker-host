@@ -13,7 +13,11 @@ struct HostyLaunchTests {
         let url = URL(string: HostyLaunch.declaringNativeMode("http://192.168.1.10:49152/metrics"))
 
         #expect(url?.path == "/metrics")
-        #expect(url?.query == "hosty_launch=native")
+        let items = URLComponents(url: url!, resolvingAgainstBaseURL: false)?.queryItems
+        #expect(items?.first { $0.name == "hosty_launch" }?.value == "native")
+        #expect(items?.first { $0.name == "hosty_navigation" }?.value == "hide")
+        #expect(items?.first { $0.name == "hosty_tools" }?.value == "disabled")
+        #expect(items?.first { $0.name == "hosty_tool_launcher" }?.value == "hide")
     }
 
     @Test("Existing query items and the fragment survive")

@@ -65,6 +65,8 @@ function MessageScrollerContent({
   )
 }
 
+// Keep message geometry measurable during autoscroll. Skipping entire messages with
+// content-visibility destabilizes the observer-driven scroll in long approval histories.
 function MessageScrollerItem({
   className,
   scrollAnchor = false,
@@ -75,7 +77,7 @@ function MessageScrollerItem({
       data-slot="message-scroller-item"
       scrollAnchor={scrollAnchor}
       className={cn(
-        "min-w-0 shrink-0 [contain-intrinsic-size:auto_10rem] [content-visibility:auto]",
+        "min-w-0 shrink-0",
         className
       )}
       {...props}

@@ -1,115 +1,76 @@
 ---
-status: Draft
+status: In Progress
 created: 2026-09-16
-updated: 2026-09-27
-summary: Typed inspect, enter, run and leave operations for app development, with runtime verification and authority checks.
-components: [apps/core, apps/harness]
+updated: 2026-10-18
+summary: Deferred source-override migration assessment after unified ordinary-app dev mode, live data, shared manual and MCP control, and recoverable runtime return.
+components: [apps/core, apps/cli, apps/harness, apps/shell]
 ---
 
-# App Development Controls
+# Development Controls For Existing Apps
 
-## Session Source Selection Dependency (2026-09-24)
+## Remaining Goal
 
-[Assistant session workspaces](../assistant-session-workspaces/feature.md) adds session
-worktree identity. Source selection and test execution are deferred to
-[sandbox runtimes](../app-sandbox-runtimes/plan.md) by the owner on 2026-09-27. This plan continues
-to own typed inspect/enter/run/leave operations, runtime verification and their authority integration.
-Consume the registered source selection in those operations; do not implement another workspace
-registry or encode the selection as a hidden rewrite of an operator source override. Runtime profile
-and source selection are separate inputs. The no-Git path remains valid. Runtime controls remain Draft.
+Unified ordinary-app development is implemented and verified under the owner's 2026-10-18
+approval. Its current contract is in [feature.md](feature.md); the bounded acceptance results,
+coverage limits and fixture cleanup are in the
+[QA report](../../reviews/2026-10-18-unified-app-dev-mode-qa.md). The subsequent
+[published-build acceptance](../../reviews/2026-10-18-unified-app-dev-mode-release-qa.md)
+passes the real Codex/browser journey on released artifacts, including restart/replay and cleanup.
+It does not change D1's scope or approval boundary.
 
-## Goal
+The remaining work is D1: assess whether removing source overrides can preserve private/local
+source, external-agent and system self-development workflows. This is deliberately outside the
+approved ordinary-app implementation. Existing overrides remain available. Do not remove them or
+start a migration without a separate owner decision.
 
-Let an operator ask the assistant to change an existing source-capable app, inspect its development
-state, enter the correct source runtime, iterate, and deliberately leave development. This is the
-control-plane companion to [app authoring](../app-authoring/plan.md).
+## Default Workflow And Retained Compatibility (2026-10-18)
 
-## Current And Target Behavior
+The owner selects registered workspaces and child Core sandbox preview as the default development
+workflow. The recovered [source-recovery proposal](../runtime-source-workflows/plan.md) stays On Hold;
+the [external-client Draft](../external-development-workspaces/plan.md) owns missing direct adapters.
+D1 must retain private/local/no-Git and system/Harness self-development parity, including dependent
+apps and external agents. Evaluate restrictions on host-native localCommand separately from source
+runtime support. Clearing obsolete local Source settings is authorized operational cleanup, not
+removal of product APIs. The shipped unified live-data dev mode and Return remain supported.
 
-[Source workflows](../runtime-source-workflows/feature.md) provide source resolution/override and
-reviewed runtime switching. Development belongs to a declared `development: true` profile; there is
-no independent toggle. A key named `dev` is insufficient without that marker. Commands define reload
-behavior. The profile declaration and source-preservation contract live in source workflows.
+## Settled Boundaries
 
-The owner approved prioritizing existing applications before prototype creation on 2026-09-16.
-The next acceptance loop is: select a development profile → grant the assistant source access →
-change visible app content → inspect the result and source diff → explicitly discard the selected
-Git changes → verify the original content and clean status. Use an ordinary app and a clean isolated
-checkout, preserving unrelated operator work. This approval does not settle the authority contract below.
-
-Recommended tool family (names are not shipped API):
-
-| Operation | Required result/behavior |
-| --- | --- |
-| `get_app_development_context` | Profiles, declared development capability, resolved source/manifest paths, source state and failure reasons |
-| `plan_app_runtime_switch` / `apply_app_runtime_switch` | Existing plan/digest semantics, data compatibility and settled result |
-
-Use the implemented source status, diff and explicit Git discard from
-[source workflows](../runtime-source-workflows/feature.md) for existing apps. Core does not
-invent session checkpoints, automatically commit work, or promise source recovery without Git.
-
-## Authority Is Part Of The Feature
-
-The built-in assistant's delegated `hosty:core` token cannot invoke the already shipped lifecycle or
-update mutations. Adding tool names alone cannot make the new controls usable there. External
-read-only/facade clients must not gain writes as a side effect either.
-
-Use the app/action-scoped authority owned by
-[assistant approval rules](../assistant-approval-rules/plan.md) for the built-in assistant. That feature
-verifies a Core-enforced grant or narrow trusted execution bridge; this feature extends the contract
-to runtime-switch actions. Broad CLI approval is only the current manual fallback,
-not the normal autonomous development path. Do not add write scopes to all delegated tokens,
-infer write power from an admin role on a read-only credential, or expose the host control secret.
-Do not expand the meaning of existing `mcp:lifecycle` silently; choose and document standing-grant
-semantics for these more powerful source/runtime changes.
-
-## Enter, Edit, Leave
-
-Inspect → resolve/attach source → capture the current runtime and Git baseline → review/apply a declared
-development profile → verify the effective working directory and Core health → bind the session → edit/test.
-Re-read state between operations; this sequence is not atomic. Selecting contextual apps alone grants
-neither writes nor command execution.
-
-Leaving development selects a reviewed profile while preserving source. Pinned source starts refuse
-dirty checkouts; Docker switching leaves source intact. Git discard is a separate explicit operation,
-not a side effect of switching runtime. No-Git source has no promised rollback baseline. Hot reload
-depends on the profile commands; other changes need a deliberate restart.
-
-Do not automatically cycle the gateway hosting the editing session or promise seamless system-app
-self-editing. A failed runtime-switch restart restores the prior selection and leaves the app stopped.
-Data compatibility and backup/restore decisions remain distinct from source discard.
+- Ordinary-data dev mode switches the installed app in its existing Core; sandbox preview retains
+  its separate child Core, users and data. Do not mount ordinary data into the child.
+- Manual controls, CLI, Harness and direct MCP use one Core operation. Existing Ask / Run
+  unprompted / Disabled settings govern agent confirmation; they do not grant missing authority.
+- Live mutable Git source and profile-defined hot reload remain supported, without a mandatory
+  commit or repeated runtime approval for ordinary edits.
+- Entry requires a verified backup of managed app data and identifies uncovered external state.
+  Return restores runtime/source selection, keeps current data and edits, and never restores data
+  automatically. Failed trials remain visible until explicitly retried or returned.
+- System applications and unsupported native/mixed/non-Git profiles retain their existing manual
+  behavior. Their parity must be assessed before any broader migration.
 
 ## Deliverables
 
-- [ ] D1. **Deferred migration:** demonstrate private/local-source, external-agent and self-development parity
-      before proposing removal of source overrides; obtain separate approval for a non-destructive migration.
-      Existing overrides remain available throughout workspace delivery.
 
-- [ ] D2. Decide the authorization route, scope semantics and public tool/CLI contract; make the built-in
-      assistant path explicit before claiming MCP-based development works there.
-- [ ] D3. Implement bounded development-context reads and runtime-switch MCP wrappers with honest
-      mutation annotations and Core-enforced grants; reuse the existing runtime-switch CLI.
-- [ ] D4. Compose existing source APIs with enter/edit/leave orchestration, preserving prior settings,
-      shared source-loss warnings/Git choices and partial-failure state. Reuse the general session
-      source binding from assistant approval rules; do not introduce a prototype-only binding.
-- [ ] D5. Expose an Edit with assistant entry point and effective source/runtime state, including absent
-      source/profile, non-source runtimes, restart requirements and partial-failure results.
-- [ ] D6. Audit each new mutation's actor, target, outcome and reviewed operation reference without
-      credentials. Compose with [Core MCP audit work](../core-mcp/plan.md), without duplicating it.
-- [ ] D7. Verify permission, failure and data-compatibility cases, update affected feature documentation,
-      remove this plan, regenerate the index and bump affected release artifacts.
+Stable D1–D7 IDs are retained; D8–D9 identify the additional trial-specific work.
+The approved first scope is D2–D9 for ordinary apps under the decisions above. D1's broader
+migration assessment remains explicitly deferred and unchecked; it must not be treated as completed
+by ordinary-app acceptance or silently removed when this milestone ships.
 
-## Phases And Open Questions
+- [ ] D1. **Deferred migration assessment:** demonstrate private/local-source, external-agent and system self-development parity before proposing removal of source overrides; obtain separate approval for any non-destructive migration. Existing overrides remain available.
+- [x] D2. Implement the settled Q1–Q5 actor/app/action contract for manual and agent entry, ongoing edits and return; reuse current Core authority and shipped MCP Ask / Run unprompted / Disabled, without an additional mandatory browser gate or dependence on future execution-scoped credentials.
+- [x] D3. Implement one Core prepare/apply/status/return contract with bounded context reads and expose it through manual UI, CLI, Harness and direct MCP; migrate supported manual controls to the same backend and retain existing unsupported-profile/manual compatibility paths.
+- [x] D4. Implement durable enter/return orchestration with prior-state capture, one active trial per installation, exact replay, consumer admission, disconnect/restart recovery and observable partial failures; preserve unrelated source/runtime changes.
+- [x] D5. Add manual and Harness entry/return controls, live-data consequences, source/runtime/health/restart state and logs; wire agent tools into existing permission settings and verify both prompted and unprompted execution, preserving Accept locally / Use locally and manual use without a conversation.
+- [x] D6. Audit actor, installation, source/manifest revision, approval reference, operation ID, progress/outcome and refusals through existing Core audit infrastructure, without secrets; distinguish approval, execution and observed readiness.
+- [x] D7. Verify the selected host/profile/authority matrix and real Harness/browser journey, document shipped behavior and remaining boundaries, regenerate the index and bump affected artifacts when implementation ships; close this plan only when every deliverable is complete.
+- [x] D8. Implement live-worktree consumer/writer coordination and cleanup guards; verify uncommitted edits/hot reload against ordinary data, concurrent preview with separate identity/data/caches, prior source/artifact selection restoration and preservation of all source edits without Git reset/discard.
+- [x] D9. Integrate verified managed-data backups and explicit external-coverage warnings with the selected policy; verify data compatibility, failed backup behavior, separate reviewed restore and preservation of ordinary data through runtime return.
 
-One feature PR: contract/authority → service wrappers and CLI → assistant/UI orchestration → live
-verification. Open decisions: which authority route above; exact scope name and audience; whether initial scope excludes system-app editing entirely. Initial
-recommendation is ordinary user apps, with system-app capability reported but automatic cycling absent.
+## Verification For D1
 
-## Verification
-
-Test read-only versus authorized direct callers, delegated/facade refusals, stale runtime digests,
-data-incompatible switches, source-less apps, dirty managed checkouts and no-Git local folders.
-Verify interruption leaves observable recoverable state, not an invented rollback success.
-Live: switch an ordinary Docker app to a declared development profile, edit/view through Shell,
-inspect the diff, explicitly discard the selected Git changes and verify the original page and clean
-worktree. Return to the prior runtime with unrelated local work preserved. Never start a second Core for validation on the same host.
+- Inventory actual source-override consumers and supported private/local source paths.
+- Demonstrate manual and external-agent source selection without changing ownership or authority.
+- Exercise system self-development and recovery independently of ordinary-app runtime switching.
+- Preserve existing source, data, runtime selection and recoverable state through any proposed
+  migration; document unsupported cases and obtain the owner's migration approval.
+- Keep D1 unchecked until its separate assessment and decision are complete. Do not interpret the
+  ordinary-app test result as approval to retire existing source overrides.

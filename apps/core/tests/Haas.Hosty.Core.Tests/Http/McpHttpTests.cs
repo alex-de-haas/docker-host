@@ -33,13 +33,23 @@ public sealed class McpHttpTests
             .ToArray();
         Assert.Equal(
             [
-                "abort_workspace_merge", "acquire_workspace_lease", "apply_app_update", "cleanup_workspace", "commit_workspace",
-                "get_app", "get_core_development", "get_core_operation", "get_host_status", "get_workspace", "get_workspace_diff",
-                "list_apps", "list_workspaces", "merge_workspace_target", "plan_app_update", "prepare_workspace",
+                "abort_workspace_merge", "acquire_workspace_lease", "apply_app_dev_mode", "apply_app_update", "cleanup_workspace", "commit_workspace",
+                "get_app", "get_app_dev_mode", "get_app_development_guide", "get_core_development", "get_core_operation", "get_host_status", "get_workspace", "get_workspace_diff",
+                "list_apps", "list_workspaces", "merge_workspace_target", "plan_app_dev_mode", "plan_app_update", "prepare_workspace",
                 "record_workspace_pull_requests", "refresh_workspace", "release_workspace_lease", "restart_app", "restart_core",
                 "search_audit", "start_app", "stop_app", "tail_app_logs",
             ],
             names);
+
+        Assert.True(tools.GetProperty("tools").EnumerateArray().Single(t =>
+            t.GetProperty("name").GetString() == "get_app_development_guide").GetProperty("annotations").GetProperty("readOnlyHint").GetBoolean());
+        foreach (var topic in AppDevelopmentGuideReader.Read().Topics)
+        {
+            var guide = await CallToolAsync(client, admin, "get_app_development_guide", new { topic = topic.Id });
+            Assert.Equal(AppDevelopmentGuideReader.Read(topic.Id).Text, guide.GetProperty("text").GetString());
+        }
+        var invalidGuide = await CallToolAsync(client, admin, "get_app_development_guide", new { topic = "../secret" });
+        Assert.Equal(AppDevelopmentGuideReader.InvalidTopicCode, invalidGuide.GetProperty("code").GetString());
 
         var listed = await CallToolAsync(client, admin, "list_apps", new { });
         var summaries = listed.GetProperty("apps").EnumerateArray().ToArray();
@@ -151,7 +161,7 @@ public sealed class McpHttpTests
 
         // plan_app_update is here too: it changes nothing, but it reaches the app's source and reports
         // what is available, which is not the "safe to call unattended" promise readOnlyHint makes.
-        string[] mutations = ["start_app", "stop_app", "restart_app", "restart_core", "plan_app_update", "apply_app_update",
+        string[] mutations = ["apply_app_dev_mode", "start_app", "stop_app", "restart_app", "restart_core", "plan_app_update", "apply_app_update",
             "prepare_workspace", "refresh_workspace", "commit_workspace", "merge_workspace_target", "abort_workspace_merge",
             "acquire_workspace_lease", "release_workspace_lease", "record_workspace_pull_requests", "cleanup_workspace"];
         var tools = await CallAsync(client, admin, "tools/list", new { });

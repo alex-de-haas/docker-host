@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assistantMessageFor, findAssistantGateways, selectAssistant } from "../src/app/shell/assistant/assistant-client.ts";
+import { assistantMessageFor, assistantSupportsContext, createAppSession, findAssistantGateways, pendingAssistantIntent, selectAssistant } from "../src/app/shell/assistant/assistant-client.ts";
 import { getAppPanelTabs } from "../src/app/shell/surfaces/app-surface-tabs.ts";
 
-const app = (id, extra = {}) => ({ id, displayName: id, runtimeState: "running", confirmedRoles: ["assistant"],
+const app = (id, extra = {}) => ({ id, installationId: `${id}-installed`, displayName: id, runtimeState: "running", confirmedRoles: ["assistant"],
   interfaces: { "assistant": [{ version: 1, capabilities: ["attachments"], url: `http://${id}/api` }] },
   panelSurfaces: [{ path: "/chat", embeddedUrl: `http://${id}/chat` }], ...extra });
 test("interfaces and system labels do not grant assistant discovery or a panel", () => {
@@ -26,6 +26,22 @@ test("one assistant is implicit only until a choice is made; stale choice never 
   assert.equal(selectAssistant(assistants.slice(0, 1), null).appId, "first");
   assert.equal(selectAssistant([], null), null);
 });
+for (const installationId of [undefined, null, ""]) {
+  test(`missing installation metadata is actionable before selection, storage or handoff: ${installationId}`, async t => {
+    const [gateway] = findAssistantGateways([app("assistant", { installationId })]);
+    assert.match(gateway.problem, /Update Core/);
+    assert.equal(selectAssistant([gateway], null), null);
+    assert.equal(selectAssistant([gateway], "assistant"), null);
+    assert.equal(await assistantSupportsContext(gateway), false);
+    const writes = [], calls = [];
+    Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: { setItem: (...args) => writes.push(args) } });
+    t.after(() => delete globalThis.sessionStorage);
+    await assert.rejects(pendingAssistantIntent("alice", "assistant", "prompt", [], installationId), /Update Core/);
+    await assert.rejects(createAppSession(gateway, async (...args) => { calls.push(args); }, "notes", "request"), /Update Core/);
+    assert.deepEqual(writes, []);
+    assert.deepEqual(calls, []);
+  });
+}
 
 
 test("drafts and session links stay with their chosen assistant and actor", () => {

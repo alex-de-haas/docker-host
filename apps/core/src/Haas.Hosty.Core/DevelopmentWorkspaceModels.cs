@@ -24,13 +24,17 @@ internal sealed record WorkspaceOwner(string AppId, DateTimeOffset Installation,
 internal sealed record WorkspaceApp(string AppId, DateTimeOffset Installation, string? Subpath);
 internal sealed record WorkspacePrepare(string RequestId, string SessionId, string AppId, string? SessionPath, string? TargetBranch = null,
     string? LeaseId = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ExternalLabel = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ExternalLabel = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ExpectedLocalHead = null);
 internal sealed record WorkspaceCommand(string RequestId, string? ExpectedHead = null, string? Message = null,
     string[]? Paths = null, string? AuthorName = null, string? AuthorEmail = null, string? LeaseId = null,
-    string[]? PullRequests = null);
+    string[]? PullRequests = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ExpectedRemoteHead = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? AllowUnrelatedHistories = null);
 internal sealed record WorkspaceDiffRequest(string Path, string View = "session");
 internal sealed record WorkspaceOperation(string Id, string Kind, string Fingerprint, string State,
-    string? BeforeHead = null, string? ResultHead = null, string? Error = null, WorkspaceCommand? Command = null);
+    string? BeforeHead = null, string? ResultHead = null, string? Error = null, WorkspaceCommand? Command = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] LocalRemoteCommand? RemoteCommand = null);
 internal sealed record WorkspaceObservation(DateTimeOffset At, string State, string? Head = null,
     string? TargetHead = null, int? Ahead = null, int? Behind = null, bool Conflict = false,
     AppSourceStatus? Local = null, string[]? SessionFiles = null, string? Error = null);
@@ -38,6 +42,8 @@ internal sealed record DevelopmentWorkspace
 {
     public required string Id { get; init; }
     public required WorkspaceOwner Owner { get; init; }
+    // Derived from the persisted owner; existing worktree allocation and replay IDs stay unchanged.
+    public string WorkspaceId => DevelopmentWorkspaceService.Hash("workspace\n" + DevelopmentWorkspaceService.OwnerIdentity(Owner));
     public required string Repository { get; init; }
     public required string RepositoryId { get; init; }
     public required string Path { get; init; }
@@ -51,7 +57,10 @@ internal sealed record DevelopmentWorkspace
     public WorkspaceApp[] Apps { get; init; } = [];
     public WorkspaceOperation[] Operations { get; init; } = [];
     public string[] Leases { get; init; } = [];
+    // Only Core resource owners can release persistent consumer references.
+    public string[] SandboxConsumers { get; init; } = [];
     public string[] PullRequests { get; init; } = [];
+    public LocalRemoteObservation? RemoteObservation { get; init; }
     public WorkspaceObservation? Observation { get; init; }
 }
 internal sealed record WorkspaceList(DevelopmentWorkspace[] Workspaces);

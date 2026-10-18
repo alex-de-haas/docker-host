@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-24
-updated: 2026-09-29
+updated: 2026-10-18
 summary: Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -36,10 +36,13 @@ independent Draft and approval boundary. No separate user-facing development tas
   unrelated subsequent work starts a new session, optionally with context from the old one.
 - Switching between connected internal Codex/Claude agents is a frequent, primary use case.
   Preserve a single visible conversation and identify the author of each response.
-- External direct editing is a rare, explicit, same-machine workflow against a local Hosty.
-  The user asks the external agent to read a session, work in its registered folders, and save
-  a report or summary back. Automatic transcript synchronization and explicit ownership handoff
-  are not first-version requirements.
+- External direct editing uses Core-prepared source through the local Hosty connector/MCP.
+  Owner clarification on 2026-10-16 treats this as a supported development client path, without
+  requiring a Harness conversation. Session-context exchange remains a separate optional workflow;
+  automatic transcript synchronization and explicit conversation ownership handoff are not required.
+  The same-day follow-up makes it an infrequent privileged-owner path; the built-in constrained
+  assistant is the normal choice, including restricted and remote operators. External native
+  Git/provider actions must reconcile into observed state without requiring exclusive Core mediation.
 - Remote operation uses clients of the server-resident agent. Owner follow-up, 2026-09-25 selects
   a dedicated [Hosty Harness Swift client](../hosty-harness-swift/plan.md), focused on sessions,
   approvals and changes over AHP, separately from the full Swift Shell. Generic side-panel support
@@ -62,7 +65,7 @@ Three roles stay distinct:
 
 | Role | Responsibility | Current location |
 | --- | --- | --- |
-| Agent provider | Access to an agent (Codex, Claude) behind one agent interface | Inside Harness until that interface can be defined; later the candidate `agent` role of the [core extension model](../core-extension-model/plan.md) |
+| Agent provider | Access to an agent (Codex, Claude) behind one agent interface | Inside Harness until that interface can be defined; the [agent/model provider plan](../agent-provider-interface/plan.md) owns extraction and the proposed contract |
 | Assistant | An app that owns and manages sessions | Harness; other assistant apps may bring their own session engine |
 | UI client | Presents and controls an assistant's sessions | Harness web UI, the Swift client, or another app's UI |
 
@@ -112,6 +115,100 @@ evaluation for full session clients, including Swift; protocol adoption does not
 authoritative storage lives. User-controlled hiding/restoring of app panel entries is tracked
 separately in [app UI surfaces](../app-ui-surfaces/plan.md), without uninstalling the backend.
 
+## Workspace Terminology Clarification (Owner Decision, 2026-10-09)
+
+Use one optional workspace for the session's development work, containing multiple repository
+worktrees. Earlier repository-workspace wording in this document refers to today's per-repository
+records; the [workspace model](../assistant-session-workspaces/feature.md) owns grouping and
+compatibility. Sessions and context remain assistant-owned, with successive agent execution inside
+the same session. Workspaces does not become a provider or a second conversation engine.
+
+The [Workspaces app](../workspaces-app/feature.md) begins with read-only inventory and per-worktree
+changes/PRs. Testing and browser execution use the independent Core Sandbox feature under acceptance; plan associations
+and implementation handoffs stay deferred. Source allocation starts with authorized edits, not
+ordinary questions. Future operator close ends development authority while retaining discussion;
+closing, cancellation and physical cleanup are distinct and must not assume native processes stopped.
+
+## Workspace Sandbox Journey (Owner Clarification, 2026-10-13)
+
+The [November demonstration plan](../hosty-delivery-readiness/plan.md) selects one local agent,
+host-first container protection, workspace Docker app instances with synthetic data and real Core
+users, operator preview and Playwright verification. Commit/push/PR/CI/review use the shipped
+publication path and belong in that journey. D1-D2 here integrate those facts across restarts;
+Sandbox owns an independent Core runtime/identity/data/browser API available to authorized apps.
+This journey supplies optional workspace/worktree context and consumes the same lifecycle. It does
+not make Harness sessions or source changes prerequisites for sandbox use: independent QA clients
+can test a pinned app artifact. A workspace can link several app instances, and an app can retain
+its installed instance beside sandbox instances. Source ownership and consumer cleanup still apply
+when a worktree is selected; scheduling remains with the calling workflow.
+
+The [sandbox runtime acceptance summary](../app-sandbox-runtimes/feature.md#integrations-and-verification-boundary) verifies
+the Harness/worktree loop and independent QA without workspace allocation. Shell and Workspaces
+consume that same API. The [shared Docker runtime](../assistant-shared-docker-runtime/feature.md) now provides supported
+Codex/Claude execution. The [D9 Git acceptance](../../reviews/2026-10-15-sandbox-d9-git-acceptance.md)
+records one real Codex conversation publishing a test PR through Core, observing CI, fixing review,
+recovering from a Harness crash and finishing its child sandbox with source preserved. It does not
+verify provider switching within this conversation or the broader D1-D2 matrix. PR #599 subsequently
+merged and published Core/CLI 0.135.1 and Demo 0.17.2; the
+[local continuation](../../reviews/2026-10-15-sandbox-d9-local-acceptance.md) verifies those releases,
+reconciles the local sandbox ledger and records Sandbox D27. The [cold-engine continuation](../../reviews/2026-10-15-sandbox-d9-cold-engine-acceptance.md)
+records Sandbox D28: empty-engine image import/extraction, uncached build/start, warm repeat, full
+engine/native memory and disposal without changing existing workloads. Broader host/recipe
+acceptance remains in Sandbox D9. This does not close this umbrella plan's remaining deliverables.
+
+[Feedback](../app-feedback-inbox/plan.md) adds optional durable collections and explicit assistant
+organization into several sessions/workspaces. Independent changes may use parallel worktrees/PRs;
+source access, execution authority and repository commit rules still apply to every child.
+Provider switching and the broader acceptance below remain tracked requirements of this umbrella,
+but are not prerequisites for the one-provider first demonstration. Partial integration does not
+close this plan.
+
+## Unified Harness Experience (Owner Revision, 2026-10-16)
+
+[Harness development UI](../harness-development-ui/feature.md) owns the full-page conversation,
+workspace, changes, PR and preview composition. The owner approved its functional structure on
+2026-10-16; that UI is implemented and verified; detailed styling stays with Design System. Core APIs stay independent; Plans/SDD remains
+optional. The side panel supports quick operations and a same-conversation transition to the full
+page. This revises the earlier separate Workspaces UI preference without moving source ownership.
+
+[Lifecycle controls](../workspace-lifecycle-controls/feature.md) owns explicit completion/removal.
+[Harness retention](../harness-session-retention/feature.md) owns independently configurable quick-chat
+and completed-development expiry. This revises unconditional completed-session retention above:
+manual removal and configured automatic deletion are both valid, but unfinished/blocked/paused
+work is preserved regardless of age. Verify all repository completion evidence, not merely PR
+closure. New work invalidates eligibility. Sandbox reuse preserves test data between iterations;
+Finish remains distinct from ending an agent turn. The separately approved D5 implementation now
+provides retention; wider lifecycle and prototype choices remain in their owning plans. These
+policies do not authorize discarding current unfinished work.
+
+## Platform-Managed Internal And External Journey (2026-10-16)
+
+[Vision decision 46](../../vision.md) selects the target composition: Hosty prepares the authorized
+workspace/worktrees; the agent edits the returned source; Core runs separate app sandboxes; clients
+open previews and verify changes; Core coordinates publication, CI/review observations and eligible
+cleanup. Several apps in one repository share a compatible worktree, while another repository adds
+a child to the same logical workspace. Adding a dependency does not itself grant source access or
+start its installed instance. Sandbox data and runtime resources remain independent of source.
+
+[External workspace preparation](../external-development-workspaces/feature.md) already supplies the
+direct-client source path. Its [remaining plan](../external-development-workspaces/plan.md) owns the
+missing sandbox/publication client adapters and authority. D1-D2 here verify that the services form
+one recoverable journey without requiring an installed assistant for an external owner. The same
+workflow must not depend on changing installed-app overrides or invoking host-native localCommand.
+
+[Decision 47](../../vision.md) clarifies that this is a preferred managed workflow, not exclusive
+control over a privileged external client's native actions. D1-D2 acceptance includes native Git
+changes and external PR publication reconciled through the authorized provider, without fabricated
+Core mutation history. The normal built-in path must enforce the acting operator's rights;
+external-client flexibility does not weaken that requirement. Sandbox API usability belongs to
+its existing D6/D9, and direct-client reconciliation to External Development D12.
+
+The owner has not decided to remove those existing mechanisms.
+[Development Controls D1](../app-development-controls/plan.md#deliverables) owns the parity/retirement
+decision after practical acceptance. [Source recovery](../runtime-source-workflows/plan.md) is On Hold
+while that direction is evaluated. This recovered clarification does not reopen shipped Sandbox behavior or approve implementation
+of the remaining Draft adapters.
+
 ## Common Invariants
 
 These apply to the linked plans. Draft records intent; Ready requires explicit owner approval in
@@ -147,8 +244,13 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
   development source. Chat retention must not silently remove unpublished work or live runtime roots.
 - Earlier authoring plans distinguish live interactive editing from isolated non-interactive PR
   jobs. For Git-backed interactive work, this direction adds session worktrees that can be selected
-  for live testing. Durable no-Git prototypes remain a separate supported path, without invented
-  Git/PR guarantees. Disposable job validation in Agent Bridge remains distinct.
+  for live testing. New durable no-Git creation is an earlier requested path, not a shipped
+  worktree capability. The approved 2026-10-17 [local creation feature](../app-prototype-workspaces/feature.md)
+  implements local Git without publication, child-Core Docker preview and local-target integration;
+  new no-Git creation is deferred and a single consented bootstrap commit is approved. Do not invent Git/PR
+  guarantees for existing no-Git folders. Owner clarification, 2026-10-10: Sandbox now owns disposable validation for
+  both interactive and automated callers; the separate Agent Bridge D12 is retired. This umbrella's
+  D1–D2 retain integration and acceptance, and Bridge D11 retains general durable job orchestration.
 - The current MCP facade is read-only. Neither adding AHP nor installing a client plugin grants
   its tokens write access. Explicit local development integration requires its own approved authority.
 
@@ -161,6 +263,8 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
 | [Agent MCP directory](../agent-mcp-directory/feature.md) | Core-owned policy for which apps' MCP servers agents use, published without credentials; agents call apps directly and Core never proxies |
 | [AHP client interface](../assistant-ahp/plan.md) | Bounded client/ingress spike and replaceable projection over Hosty sessions; existing web REST/SSE remains |
 | [Shared history and switching](../assistant-shared-history/plan.md) | Hosty session journal/adapters, provider context reconciliation and session sharing |
+| [Harness development UI](../harness-development-ui/feature.md) | Full-page and panel continuity, unified source/PR/preview presentation and Workspaces UI migration |
+| [Harness retention](../harness-session-retention/feature.md) | Separate quick-chat and verified completed-development expiry, with manual removal and recovery |
 | [Session workspaces](../assistant-session-workspaces/feature.md) | Registered linked worktrees, agent instructions, diffs and cleanup; Core API authorization remains required, new filesystem isolation is deferred |
 | [PR lifecycle](../assistant-pr-lifecycle/feature.md) | Publish/review/Merge/Complete, credentials, CI, ordered dependencies and corrective PRs |
 | [Action summary](../assistant-action-summary/plan.md) | Evidence-linked aggregation/UI over Hosty invocation events |
@@ -168,12 +272,15 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
 | [Feedback inbox](../app-feedback-inbox/plan.md) | Independent ordinary-user intake and admin triage/batch delivery outside the privileged Harness process |
 | [External context exchange](../assistant-external-session-context/plan.md) | Later explicit local-agent read/prepare/report workflow |
 | [Harness Swift](../hosty-harness-swift/plan.md) | Dedicated native client with independent delivery and notification decisions |
-| [Sandbox runtimes](../app-sandbox-runtimes/plan.md) | Worktree runtime selection, runtime/data isolation and deterministic browser validation |
+| [Sandbox runtimes](../app-sandbox-runtimes/plan.md) | Independent Core instance API, optional worktree integration, runtime/data/user isolation and deterministic browser validation |
 | [Synthetic app evaluations](../agent-app-evaluations/plan.md) | Later exploratory agents and controlled variant comparisons |
 
 Existing owners retain their deliverables: [approval rules](../assistant-approval-rules/plan.md),
+[agent session containment](../assistant-runtime-containment/plan.md),
+[execution authorization](../assistant-execution-authorization/plan.md),
+[workspace lifecycle controls](../workspace-lifecycle-controls/feature.md),
 [development controls](../app-development-controls/plan.md),
-[prototype workspaces](../app-prototype-workspaces/plan.md), [authoring](../app-authoring/plan.md),
+[prototype workspaces](../app-prototype-workspaces/feature.md), [authoring](../app-authoring/plan.md),
 [app publication](../app-publication/plan.md), [AI Agent Bridge](../ai-agent-bridge/plan.md),
 [entry points](../assistant-entry-points/plan.md) and [attachments](../assistant-attachments/feature.md).
 App publication owns installable releases/feeds/catalog work; PR publication is source review.
@@ -211,3 +318,8 @@ authorized client after a service restart and verify history, attribution and cu
 Verify that a selected feedback batch arrives as attributed evidence, summary links resolve to the
 same observed actions, and release/catalog operations remain distinct from code PR publication.
 Each child owns its own detailed acceptance tests; this umbrella checks their composition.
+
+Repeat the integrated journey with a directly connected external agent and no Harness conversation.
+Include same-repository apps and an authorized dependency repository, preview reuse, instance Finish,
+external PR linking and CI/review observations. Preserve installed-app data and unfinished worktrees;
+verify replay/reconnect without duplicating instances or PRs. This acceptance belongs to D1-D2.

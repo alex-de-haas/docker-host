@@ -1,6 +1,6 @@
 ---
 created: 2026-09-25
-updated: 2026-10-08
+updated: 2026-10-12
 summary: Shell separates confirmations, transient operation results and persistent diagnostics.
 components: [apps/shell]
 ---
@@ -66,6 +66,9 @@ The confirmation adapter in `apps/shell/src/components/reui/confirmation.tsx` de
 The rich error/details/actions layout in `apps/shell/src/components/reui/operation-toast.tsx` derives from free [ReUI c-sonner-14](https://reui.io/r/radix-vega/c-sonner-14.json), with the colored feedback pattern from [c-sonner-4](https://reui.io/r/radix-vega/c-sonner-4.json). Hosty adapts the inverse palette to its popover tokens, replaces sample log/retry actions with Copy/Ask assistant, adds a dismiss button and bounded scrolling, and keeps Sonner as the underlying library. The ReUI MIT notice is retained beside these components in `LICENSE`. No Pro block is incorporated.
 
 Shell configures `@reui` as `https://reui.io/r/radix-vega/{name}.json`. The shared upstream Alert Dialog and Separator are local editable dependencies, not a replacement of the whole design system.
+
+App-list load failures retain the server or SDK error message, including session-verification
+failures, instead of replacing the cause with only an HTTP status.
 
 ## Testing Expectations
 

@@ -95,8 +95,8 @@ it("reuses a request ID on failed handoff and ignores double clicks while openin
 it("hands off the error prompt with explicit app context and stable retry identity", async () => {
   const send = vi.fn().mockRejectedValueOnce(new TypeError("connection lost"))
     .mockResolvedValueOnce(Response.json({ id: "fresh-session", result: { conversationId: "fresh-session", disposition: "draft", open: { endpoint: "web", path: "/chat" } } }));
-  const result = await createErrorSession({ appId: "harness", running: true, baseUrl: "https://harness.test/api", version: 1, capabilities: [] }, send, "demo.app", "same-request", "Port occupied");
+  const result = await createErrorSession({ appId: "harness", installationId: "installed-1", running: true, baseUrl: "https://harness.test/api", version: 1, capabilities: [] }, send, "demo.app", "same-request", "Port occupied");
   expect(result.id).toBe("fresh-session");
-  expect(send.mock.calls[0]).toEqual(["/api/assistant/handoff", { providerAppId: "harness", key: "default", requestId: "same-request", prompt: "Port occupied", appIds: ["demo.app"] }]);
+  expect(send.mock.calls[0]).toEqual(["/api/assistant/handoff", { providerAppId: "harness", installationId: "installed-1", key: "default", requestId: "same-request", prompt: "Port occupied", appIds: ["demo.app"] }]);
   expect(send.mock.calls[1]).toEqual(send.mock.calls[0]);
 });

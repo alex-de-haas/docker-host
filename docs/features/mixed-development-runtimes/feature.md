@@ -1,6 +1,6 @@
 ---
 created: 2026-09-17
-updated: 2026-09-17
+updated: 2026-10-17
 summary: Development profiles can combine Docker and local-command services and run editable source inside Docker.
 components: [apps/core]
 ---
@@ -74,6 +74,12 @@ in reverse order. It aggregates health and logs. Failure cleanup removes service
 start while preserving adopted containers; cleanup failures are reported. Local processes retain
 the existing process-tree supervision and container services retain Docker ownership checks.
 
+Before starting Docker services, Core removes obsolete service containers against the complete
+selected Docker graph. It uses immutable container IDs and exact app/instance labels, retaining
+current sibling services, foreign containers, persistent data and cache volumes. Docker inventory
+or removal failures fail the start. Reviewed topology replacement can therefore retire a bootstrap
+container without leaving it in the child Core's resource accounting.
+
 Peer URLs depend on the consumer: Docker-to-Docker uses the app network's service DNS; host
 consumers use assigned loopback ports. A container-to-host edge requires an explicit host-exposed
 port and a listener reachable through `host.docker.internal` (Core supplies Docker's host-gateway
@@ -106,6 +112,18 @@ loopback dev process; Docker continues listening on its declared internal port.
 
 Source scopes can also name individual files. Exact file matches and directory descendants are
 included in inspection, preview and discard; similarly named neighboring files remain excluded.
+
+## Generated Source Files
+
+A Docker source mount can declare `generatedFiles`, up to 16 relative file paths such as
+`apps/demo-app/next-env.d.ts`. Core overlays each file with a separate service-owned app-cache
+file while keeping the source bind read-only. Existing source contents seed the first cache;
+missing files receive empty mountpoints in existing source directories. Restart preserves the
+runtime's generated contents. Other services and Core environments receive separate files.
+These non-secret files are writable by the container UID independently of Core's host UID;
+the enclosing app cache remains private. Traversal, symlinks, directory collisions and overlaps
+with cache directories or other declared files are rejected. The declaration is part of the
+reviewed source-mount contract. Removing the owning child Core removes these cached files.
 
 ## Testing Expectations
 

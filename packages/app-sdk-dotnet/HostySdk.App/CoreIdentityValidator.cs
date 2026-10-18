@@ -92,7 +92,7 @@ public sealed class CoreIdentityValidator(
                 payload.Email,
                 payload.DisplayName,
                 payload.HostRole ?? string.Empty,
-                payload.ExpiresAt);
+                payload.ExpiresAt, payload.Continuity);
         }
     }
 
@@ -105,5 +105,5 @@ public sealed class CoreIdentityValidator(
         string? Email,
         string? DisplayName,
         string? HostRole,
-        DateTimeOffset ExpiresAt);
+        DateTimeOffset ExpiresAt, HostyContinuity? Continuity = null);
 }

@@ -1,8 +1,11 @@
 import type { CoreApp } from "../types";
+import type { UiHost } from "@hosty-sdk/app/ui/host";
 import { assistantContractError, createAssistantRequestId, resolveAssistantDestination, type AssistantHandoffResult } from "@hosty-sdk/app/assistant";
 export { createAssistantRequestId };
 export const ASSISTANT_INTERFACE = "assistant";
+const installationMetadataError = "Update Core to identify assistant installations.";
 export type AssistantGateway = {
+  installationId?: string | null;
   appId: string; key?: string; baseUrl: string; running: boolean;
   version?: number | null; capabilities?: readonly string[] | null; problem?: string | null;
 };
@@ -12,9 +15,9 @@ export function findAssistantGateways(apps: readonly CoreApp[]): AssistantGatewa
     const declarations = app.interfaces?.assistant;
     if (!declarations?.length) return [];
     const declaration = declarations.find(item => item.key === "default") ?? declarations[0]!;
-    return [{ appId: app.id, key: declaration.key, baseUrl: declaration.url?.replace(/\/$/, "") ?? "",
+    return [{ appId: app.id, installationId: app.installationId, key: declaration.key, baseUrl: declaration.url?.replace(/\/$/, "") ?? "",
       running: app.runtimeState === "running" && !!declaration.url, version: declaration.version,
-      capabilities: declaration.capabilities, problem: assistantContractError(declaration) }];
+      capabilities: declaration.capabilities, problem: app.installationId ? assistantContractError(declaration) : installationMetadataError }];
   });
 }
 export function selectAssistant(assistants: readonly AssistantGateway[], selectedId: string | null): AssistantGateway | null {
@@ -35,7 +38,18 @@ export function assistantMessageFor<T extends { userId: string | null; appId: st
 
 
 export function assistantSupportsContext(gateway: AssistantGateway): Promise<boolean> {
-  return Promise.resolve(gateway.running && !assistantContractError(gateway));
+  return Promise.resolve(gateway.running && !gatewayProblem(gateway));
+}
+function gatewayProblem(gateway: AssistantGateway) {
+  return !gateway.installationId ? installationMetadataError : gateway.problem ?? assistantContractError(gateway);
+}
+/** Select the requested assistant before expansion can trigger a default tool. */
+export async function toggleAssistantPanel(host: UiHost, appId: string) {
+  const state = host.getSnapshot();
+  if (state.expanded && state.selected?.appId === appId) { host.setExpanded(false); return; }
+  await host.refresh();
+  const panel = host.getSnapshot().catalog.find(item => item.panel.appId === appId);
+  if (panel) await host.selectPanel(panel.panel);
 }
 export function assistantOpenUrl(app: CoreApp, result: AssistantHandoffResult): string {
   return resolveAssistantDestination(result.open, [
@@ -45,14 +59,15 @@ export function assistantOpenUrl(app: CoreApp, result: AssistantHandoffResult): 
   ]);
 }
 type SendHandoff = (path: string, body: unknown) => Promise<Response>;
+export type PresentedHandoff = { id: string; result: AssistantHandoffResult; target: import("@hosty-sdk/app/ui").PanelTarget | null; url: string };
 export async function createHandoff(gateway: AssistantGateway, send: SendHandoff,
-  prompt: string, appIds: string[], requestId: string): Promise<{ id: string; result: AssistantHandoffResult }> {
-  const incompatible = assistantContractError(gateway);
+  prompt: string, appIds: string[], requestId: string): Promise<PresentedHandoff> {
+  const incompatible = gatewayProblem(gateway);
   if (incompatible) throw new Error(incompatible);
-  const input = { providerAppId: gateway.appId, key: gateway.key ?? "default", prompt, appIds, requestId };
+  const input = { providerAppId: gateway.appId, installationId: gateway.installationId, key: gateway.key ?? "default", prompt, appIds, requestId };
   const run = async () => {
     const response = await send("/api/assistant/handoff", input);
-    return response.json() as Promise<{ id: string; result: AssistantHandoffResult }>;
+    return response.json() as Promise<PresentedHandoff>;
   };
   try { return await run(); } catch (error) {
     if (!(error instanceof TypeError) && !(error instanceof DOMException)) throw error;
@@ -66,11 +81,30 @@ export function createErrorSession(gateway: AssistantGateway, send: SendHandoff,
   return createHandoff(gateway, send, prompt, appId ? [appId] : [], requestId);
 }
 
-/** Retain uncertain intents across page reloads; clear only after the destination is accepted. */
-export async function pendingAssistantIntent(userId: string | null, assistantId: string, prompt: string, appIds: string[]) {
+/** Retain uncertain pinned intents; retire obsolete ones before an explicit new attempt. */
+export async function pendingAssistantIntent(userId: string | null, assistantId: string, prompt: string, appIds: string[], installationId: string) {
+  if (!installationId) throw new Error(installationMetadataError);
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([userId, assistantId, prompt, [...appIds].sort()])));
   const key = `hosty:assistant-intent:${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("")}`;
-  const requestId = sessionStorage.getItem(key) ?? createAssistantRequestId();
-  sessionStorage.setItem(key, requestId);
-  return { requestId, complete: () => sessionStorage.removeItem(key) };
+  const saved = sessionStorage.getItem(key);
+  let previous: { requestId: string; installationId: string } | null = null;
+  if (saved) {
+    let parsed: unknown;
+    try { parsed = JSON.parse(saved); } catch { /* Legacy plain request IDs have no installation identity. */ }
+    if (!parsed || typeof parsed !== "object" || !("requestId" in parsed) || typeof parsed.requestId !== "string"
+      || !/^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i.test(parsed.requestId)
+      || !("installationId" in parsed) || typeof parsed.installationId !== "string" || !parsed.installationId) {
+      sessionStorage.removeItem(key);
+      throw new Error("This pending discussion is obsolete and cannot be resumed safely. Retry the action to start a new discussion.");
+    }
+    previous = { requestId: parsed.requestId, installationId: parsed.installationId };
+  }
+  if (previous && previous.installationId !== installationId) {
+    sessionStorage.removeItem(key);
+    throw new Error("The assistant was reinstalled. The pending discussion cannot be moved to its replacement. Retry the action to start a new discussion.");
+  }
+  const requestId = previous?.requestId ?? createAssistantRequestId();
+  const value = JSON.stringify({ requestId, installationId });
+  sessionStorage.setItem(key, value);
+  return { requestId, complete: () => { if (sessionStorage.getItem(key) === value) sessionStorage.removeItem(key); } };
 }

@@ -17,6 +17,26 @@ namespace Haas.Hosty.Core.Tests.Http;
 // read-only credential could probe which ids exist.
 public sealed class McpLifecycleHttpTests
 {
+    [Theory]
+    [InlineData("get_app_dev_mode")]
+    [InlineData("plan_app_dev_mode")]
+    [InlineData("apply_app_dev_mode")]
+    public async Task AppDevToolsRegisterAndRequireLifecycleBeforeAppLookup(string tool)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var admin = await SeedSessionAsync(host, "host.admin");
+        using var client = host.CreateClient();
+        var readOnly = await CreateCredentialAsync(client, admin, "inspect", ["mcp:read"]);
+        var lifecycle = await CreateCredentialAsync(client, admin, "dev", ["mcp:read", "mcp:lifecycle"]);
+        object args = tool == "get_app_dev_mode" ? new { appId = "example.absent" } :
+            new { appId = "example.absent", requestId = Guid.NewGuid().ToString("D"), action = "enter", targetRuntime = "dev" };
+        var denied = await CallToolAsync(client, readOnly, tool, args);
+        Assert.Equal("dev_authority_required", denied.GetProperty("code").GetString());
+        var allowed = await CallToolAsync(client, lifecycle, tool, args);
+        Assert.NotEqual("dev_authority_required", allowed.GetProperty("code").GetString());
+        Assert.Contains("example.absent", allowed.GetProperty("message").GetString());
+    }
+
     [Fact]
     public async Task DevelopmentRoutesRequireAdminAndBrowserMutationsRequireCsrf()
     {
@@ -173,6 +193,16 @@ public sealed class McpLifecycleHttpTests
             var updated = (await apps.GetAppAsync(plan.AppId))!;
             Assert.Equal("1.0.1", updated.Version);
             Assert.Null(updated.LastError);
+            var entries = (await host.Services.GetRequiredService<AuditStore>().ReadRecentAsync())
+                .Where(entry => entry.Action == "app.lifecycle.update" && entry.ResourceId == plan.AppId).Reverse().ToArray();
+            Assert.Equal(["accepted", "succeeded"], entries.Select(entry => entry.Outcome));
+            Assert.All(entries, entry =>
+            {
+                Assert.NotNull(entry.ActorUserId);
+                Assert.Equal("mcp", entry.Details["via"]);
+                Assert.Equal("apply_app_update", entry.Details["tool"]);
+            });
+            Assert.Single(entries.Select(entry => entry.Details["operationId"]).Distinct());
             Assert.Empty(updated.GrantedCorePermissions!);
         }
     }

@@ -52,8 +52,10 @@ internal static class AppManagementAuthorization
             return Denied("app_service_token_invalid", "An app service token is required.", 401);
         try
         {
-            var actor = await services.GetRequiredService<AppIdentityService>()
-                .RevalidateAsync(request.Headers[IdentityHeader].ToString(), appId, ct);
+            var identity = services.GetRequiredService<AppIdentityService>();
+            var authority = await identity.RevalidateAuthorityAsync(
+                AppIdentityService.HashToken(request.Headers[IdentityHeader].ToString()), appId, ct, allowBackground: true);
+            var actor = authority.Actor;
             var app = await services.GetRequiredService<AppRegistryStore>().GetAppAsync(appId, ct);
             if (app is null) return Denied("app_access_denied", "The calling app is no longer installed.");
             var connectionSelection = request.Method == "GET" && route is "/api/source-connections" or "/api/source-connections/" or "/api/apps/{appId}/source-access";
@@ -61,8 +63,11 @@ internal static class AppManagementAuthorization
                 !(p == CoreAppPermissions.Sources && connectionSelection && HasPermission(app, CoreAppPermissions.SourceConnections))).ToArray();
             if (missing.Length > 0)
                 return Denied("app_permission_required", $"The calling app requires: {string.Join(", ", missing.Select(p => p == CoreAppPermissions.Sources && connectionSelection ? "sources.connections or apps.sources.full" : p))}.");
-            if (permissions.Length > 0)
-                await services.GetRequiredService<AppIdentityService>().RequireActivityAsync(request.Headers[IdentityHeader].ToString(), appId, ct);
+
+            if (authority.Background is { } background)
+                await identity.RequireBackgroundOperationAsync(background, scope => BackgroundGrantService.AllowsRoute(scope, request), ct);
+            else if (permissions.Length > 0)
+                await identity.RequireActivityAsync(request.Headers[IdentityHeader].ToString(), appId, ct);
             var state = await services.GetRequiredService<UserDirectoryStore>().ReadAsync(ct);
             var user = state.Users.FirstOrDefault(u => u.Id == actor.UserId && !u.Disabled);
             if (user is null) return Denied("user_disabled", "The acting user is unavailable.");
@@ -102,13 +107,25 @@ internal static class AppManagementAuthorization
         {
             foreach (var route in routes) result.Add(route, [permission]);
         }
+        result["GET /api/apps/{appId}/dev-mode"] = [CoreAppPermissions.AppLifecycle];
+        result["POST /api/apps/{appId}/dev-mode/{kind}"] = [CoreAppPermissions.AppLifecycle];
+        Add(CoreAppPermissions.CoreEnvironmentsInspect, "GET /api/core-environments", "GET /api/core-environments/{id}", "GET /api/core-environments/{id}/apps");
+        Add(CoreAppPermissions.CoreEnvironmentsOperate, "POST /api/core-environments/{id}/operations/{kind}", "POST /api/core-environments/{id}/setup", "POST /api/core-environments/{id}/consent/revoke", "POST /api/core-environments/consents/{id}/revoke");
+        result["POST /api/core-environments/from-workspace"] = [CoreAppPermissions.CoreEnvironmentsOperate, CoreAppPermissions.WorkspacesRead];
+        Add(CoreAppPermissions.SandboxesInspect, "GET /api/sandbox-instances", "GET /api/sandbox-instances/{id}",
+            "GET /api/sandbox-instances/{id}/browser-runs/{jobId}", "GET /api/sandbox-instances/{id}/preview", "GET /api/sandbox-instances/{id}/diagnostics");
+        Add(CoreAppPermissions.SandboxesOperate, "POST /api/sandbox-instances/{id}/operations/{kind}",
+            "POST /api/sandbox-instances/{id}/users", "POST /api/sandbox-instances/{id}/seeds", "POST /api/sandbox-instances/{id}/browser-runs",
+            "POST /api/sandbox-instances/{id}/users/delete", "POST /api/sandbox-instances/{id}/viewers", "POST /api/sandbox-instances/{id}/evidence/clear", "POST /api/sandbox-instances/{id}/browser-runs/cancel");
         Add(CoreAppPermissions.ReadApps,
-            "GET /api/apps", "GET /api/apps/{appId}/health", "GET /api/apps/{appId}/update-status",
+            "GET /api/apps/{appId}/preview-checks",
+            "GET /api/apps", "GET /api/apps/permissions", "GET /api/apps/{appId}/health", "GET /api/apps/{appId}/update-status",
             "GET /api/apps/{appId}/assets/{**assetPath}", "GET /api/apps/{id}/permissions");
         Add(CoreAppPermissions.AppLogs, "GET /api/apps/{appId}/logs");
         Add(CoreAppPermissions.Notifications, "GET /api/notifications", "POST /api/notifications/read");
         Add(CoreAppPermissions.AppLifecycle,
             "POST /api/apps/{appId}/start", "POST /api/apps/{appId}/stop", "POST /api/apps/{appId}/restart",
+            "POST /api/apps/{appId}/preview-checks/run",
             "POST /api/apps/{appId}/autostart", "POST /api/apps/{appId}/switch-runtime/plan",
             "POST /api/apps/{appId}/switch-runtime", "GET /api/apps/{appId}/source",
             "POST /api/apps/{appId}/source/override", "DELETE /api/apps/{appId}/source/override",

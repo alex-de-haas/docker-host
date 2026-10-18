@@ -33,6 +33,30 @@ internal static class DevelopmentWorkspaceEndpoints
         routes.MapGet(internalRoot, async (string appId, string sessionId, HttpRequest request,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
             await Handle(async () => await workspaces.ListAsync(await auth.RequireAsync(request, appId, sessionId, ct), true, ct)));
+        routes.MapGet(internalRoot + "/workflow", async (string appId, string sessionId, HttpRequest request,
+            WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
+            await Handle(async () => await workspaces.WorkflowAsync(await auth.RequireAsync(request, appId, sessionId, ct), ct)));
+        routes.MapPost(internalRoot + "/workflow/{kind}", async (string appId, string sessionId, string kind,
+            WorkspaceWorkflowCommand input, HttpRequest request, WorkspaceAuthorization auth,
+            DevelopmentWorkspaceService workspaces, PublicationService publications, WorkspaceCleanupService cleanup, CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                var owner = await auth.RequireAsync(request, appId, sessionId, ct);
+                if (kind == "delete")
+                {
+                    var tree = (await workspaces.ListAsync(owner, true, ct)).Workspaces.FirstOrDefault()
+                        ?? throw DevelopmentWorkspaceService.Error("not_found", "Workspace not found.");
+                    return await cleanup.DeleteAsync(tree.WorkspaceId, owner.UserId, appId, input, ct);
+                }
+                var heads = kind is "complete" or "delete" ? await publications.MergedWorkspaceHeadsAsync(owner, ct) : new Dictionary<string, string>();
+                return await workspaces.ChangeWorkflowAsync(owner, owner.UserId, kind == "close-confirm" ? "close" : kind, input, heads, ct, prepareOnly: kind == "close");
+            }));
+        routes.MapGet(internalRoot + "/worker-bindings", async (string appId, string sessionId, HttpRequest request,
+            WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
+            await Handle(async () => await workspaces.WorkerBindingsAsync(await auth.RequireAsync(request, appId, sessionId, ct), ct)));
+        routes.MapPost(internalRoot + "/worker-bindings/lease", async (string appId, string sessionId, HttpRequest request,
+            DevelopmentWorkerLeaseRequest input, WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
+            await Handle(async () => await workspaces.WorkerLeaseAsync(await auth.RequireAsync(request, appId, sessionId, ct), input, ct)));
         routes.MapPost(internalRoot, async (string appId, string sessionId, HttpRequest request, WorkspacePrepare input,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, AuditStore audit, IClock clock, CancellationToken ct) =>
             await Handle(async () =>
@@ -45,6 +69,28 @@ internal static class DevelopmentWorkspaceEndpoints
         routes.MapGet(internalRoot + "/{id}", async (string appId, string sessionId, string id, HttpRequest request,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
             await Handle(async () => await workspaces.ObserveAsync(id, await auth.RequireAsync(request, appId, sessionId, ct), ct)));
+        routes.MapGet(internalRoot + "/{id}/viewer", async (string appId, string sessionId, string id, HttpRequest request,
+            WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, WorkspaceInspectionService inspection, CancellationToken ct) =>
+            await Handle(async () => await inspection.DestinationAsync(await workspaces.Read(id,
+                await auth.RequireAsync(request, appId, sessionId, ct), ct), ct)));
+        routes.MapGet(internalRoot + "/{id}/remote", async (string appId, string sessionId, string id, string? sourceAppId, HttpRequest request,
+            WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                var owner = await auth.RequireAsync(request, appId, sessionId, ct);
+                if (string.IsNullOrWhiteSpace(sourceAppId) || sourceAppId.Length > 63)
+                    throw DevelopmentWorkspaceService.Error("request_invalid", "Supply the local source app id.");
+                return await workspaces.RemoteStatusAsync(id, owner, sourceAppId, ct);
+            }));
+        routes.MapPost(internalRoot + "/{id}/remote/{kind}", async (string appId, string sessionId, string id, string kind, LocalRemoteCommand input, HttpRequest request,
+            WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, AuditStore audit, IClock clock, CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                var owner = await auth.RequireAsync(request, appId, sessionId, ct);
+                var result = await workspaces.RemoteCommandAsync(id, owner, kind, input, ct);
+                await Audit(audit, clock, owner.UserId, await workspaces.Read(id, owner, ct), input.RequestId, "remote-" + kind, ct);
+                return result;
+            }));
         routes.MapPost(internalRoot + "/{id}/diff", async (string appId, string sessionId, string id, HttpRequest request, WorkspaceDiffRequest input,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
             await Handle(async () => await workspaces.DiffAsync(id, await auth.RequireAsync(request, appId, sessionId, ct), input, ct)));
@@ -84,7 +130,9 @@ internal static class DevelopmentWorkspaceEndpoints
     private static async Task<IResult> Handle<T>(Func<Task<T>> action)
     {
         try { return CoreJson.Json(await action()); }
-        catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code is "token_invalid" or "reauth_required" ? 401 : 403); }
+        catch (UserConnectionException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Status); }
+        catch (HttpRequestException) { return CoreJson.Json(new ErrorResponse("remote_unavailable", "Remote is unavailable. Retry with the same requestId."), 503); }
+        catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), AuthEndpoints.MapIdentityErrorStatus(ex.Code)); }
         catch (AppLifecycleException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code == "workspace_not_found" ? 404 : ex.Code == "workspace_forbidden" ? 403 : 409); }
     }
 }

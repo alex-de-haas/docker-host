@@ -8,7 +8,7 @@ import { CoreRequestError } from "../src/app/shell/core-api";
 import type { CoreApp } from "../src/app/shell/types";
 
 const fixture = vi.hoisted(() => ({
-  read: vi.fn(), settle: vi.fn(), showConfirmation: vi.fn(), confirm: vi.fn(),
+  read: vi.fn(), settle: vi.fn(), switchSettle: vi.fn(), showConfirmation: vi.fn(), confirm: vi.fn(),
   toast: { info: vi.fn(), warning: vi.fn(), error: vi.fn(), success: vi.fn() },
   router: { replace: vi.fn(), push: vi.fn() },
   params: new URLSearchParams(),
@@ -22,6 +22,7 @@ vi.mock("../src/app/shell/assistant/use-assistant-selection", () => ({
 }));
 vi.mock("../src/app/shell/update-notifications", () => ({ useAppUpdateNotifications: () => {} }));
 vi.mock("../src/app/shell/self-update", () => ({ waitForShellUpdateToSettle: fixture.settle }));
+vi.mock("../src/app/shell/self-runtime-switch", () => ({ waitForShellRuntimeSwitch: fixture.switchSettle }));
 vi.mock("../src/app/shell/core-confirmation", () => ({ showCoreConfirmation: fixture.showConfirmation }));
 vi.mock("../src/components/reui/operation-toast", async () => {
   const { createContext } = await import("react");
@@ -32,7 +33,8 @@ vi.mock("../src/app/shell/resources/resource-usage", () => ({ ResourceUsageProvi
 vi.mock("../src/components/ui/sonner", () => ({ Toaster: () => null }));
 vi.mock("../src/app/shell/sidebar/shell-sidebar", () => ({ ShellSidebar: () => null }));
 vi.mock("../src/app/shell/chrome/shell-top-strip", () => ({ ShellTopStrip: () => null }));
-vi.mock("../src/app/shell/chrome/shell-workspace-split", () => ({ ShellWorkspaceSplit: ({ children }: { children: ReactNode }) => children }));
+vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUiHost: () => null }));
+vi.mock("../src/app/shell/chrome/shell-panel-workspace", () => ({ ShellPanelWorkspace: ({ children }: { children: ReactNode }) => children }));
 
 let root: Root;
 let container: HTMLDivElement;
@@ -67,6 +69,7 @@ beforeEach(() => {
   apps = [target];
   fixture.read.mockReset(); fixture.settle.mockReset(); fixture.showConfirmation.mockReset();
   fixture.confirm.mockReset();
+  fixture.switchSettle.mockReset().mockResolvedValue({ kind: "unresolved" });
   for (const toast of Object.values(fixture.toast)) toast.mockReset();
   fixture.read.mockImplementation(async (url: string, init?: RequestInit) => {
     const path = new URL(url).pathname;
@@ -77,6 +80,8 @@ beforeEach(() => {
     if (path === "/api/global-mounts") return Response.json({ mounts: [] });
     if (path.endsWith("/update/plan")) return Response.json(init?.method === "POST" ? plan("fresh-digest") : { plan: plan() });
     if (path.endsWith("/update")) return Response.json({ status: "updating" });
+    if (path.endsWith("/switch-runtime/plan")) return Response.json({ currentRuntime: "dev", targetRuntime: "docker", planDigest: "switch-digest" });
+    if (path.endsWith("/switch-runtime")) return Response.json({ status: "runtime-switched" });
     throw new Error(`Unexpected request: ${url}`);
   });
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
@@ -93,6 +98,17 @@ function overrideRequests(override: (path: string, init?: RequestInit) => Respon
   const fallback = fixture.read.getMockImplementation()!;
   fixture.read.mockImplementation(async (url: string, init?: RequestInit) => override(new URL(url).pathname, init) ?? fallback(url, init));
 }
+
+it.each(["stopped", "starting", "ready"])("reports whether Shell accepts a workspace launch for a %s service", async state => {
+  const app: CoreApp = { ...target, runtimeState: state === "stopped" ? "stopped" : "running",
+    health: { status: state === "starting" ? "starting" : "healthy", services: [], observedAt: "2026-10-11T00:00:00Z" } };
+  apps = [app]; await mount(); fixture.router.push.mockClear();
+  let result: boolean | undefined;
+  await act(async () => { result = await actions.launchAppPage(app, { label: "Page", path: "/page", redirectUri: "https://routine.test/page" }); });
+  expect(result).toBe(state === "ready");
+  if (state === "ready") expect(fixture.router.push).toHaveBeenCalledWith(expect.stringContaining("app=routine.app"));
+  else { expect(fixture.router.push).not.toHaveBeenCalled(); expect(shell.state.error).toContain(state === "starting" ? "is starting" : "must be running"); }
+});
 
 it.each([400, 409].flatMap(status => ["update_plan_expired", "update_plan_stale", "update_plan_digest_mismatch"].map(code => [status, code] as const)))(
   "refreshes the actual row transport's HTTP %i %s refusal once and queues the new digest", async (status, code) => {
@@ -277,4 +293,106 @@ it("guards duplicate Shell confirmations and releases the guard on cancellation"
   expect(fixture.confirm).toHaveBeenCalledTimes(2);
   expect(callsTo("/api/apps/hosty.shell/restart")).toHaveLength(0);
   expect(shell.pendingAppActions).toEqual({});
+});
+
+it.each([
+  new TypeError("Failed to fetch"),
+  new CoreRequestError("Proxy stopped", "core_unavailable", 503, null),
+  new CoreRequestError("Proxy timed out", "core_request_timeout", 504, null),
+  null,
+])("waits for Shell's selected runtime after an apply response or transport loss (%s)", async error => {
+  const self = { ...target, id: "hosty.shell", selectedRuntime: "dev" };
+  apps = [self];
+  const waiting = deferred<{ kind: "unresolved" }>();
+  fixture.switchSettle.mockReturnValue(waiting.promise);
+  overrideRequests(path => path === "/api/apps/hosty.shell/switch-runtime" && error ? Promise.reject(error) : undefined);
+  await mount();
+  let switching!: Promise<void>;
+  await act(async () => { switching = actions.switchAppRuntime(self, "docker"); });
+  await act(async () => { await actions.switchAppRuntime(self, "docker"); await actions.runAppAction(self, "start"); });
+  expect(callsTo("/api/apps/hosty.shell/switch-runtime")).toHaveLength(1);
+  expect(callsTo("/api/apps/hosty.shell/start")).toHaveLength(0);
+  expect(fixture.switchSettle).toHaveBeenCalledExactlyOnceWith({ coreOrigin: "https://core.test", shellAppId: "hosty.shell", targetRuntime: "docker" });
+  expect(fixture.toast.error).not.toHaveBeenCalled();
+  expect(fixture.toast.success).not.toHaveBeenCalled();
+  expect(shell.busyAction).toBe("hosty.shell:switch-runtime:docker");
+  await act(async () => { waiting.resolve({ kind: "unresolved" }); await switching; });
+  expect(fixture.toast.warning).toHaveBeenCalledWith("Shell runtime switch is not confirmed yet", expect.anything());
+  expect(shell.busyAction).toBeNull();
+});
+
+it.each(["plan", "apply"])("reports a definite Shell switch %s refusal without reconnecting or retrying", async stage => {
+  const self = { ...target, id: "hosty.shell", selectedRuntime: "dev" };
+  apps = [self];
+  overrideRequests(path => path === `/api/apps/hosty.shell/switch-runtime${stage === "plan" ? "/plan" : ""}`
+    ? Response.json({ code: "runtime_switch_plan_digest_mismatch", message: "Review changed" }, { status: 409 }) : undefined);
+  await mount();
+  await act(async () => actions.switchAppRuntime(self, "docker"));
+  expect(fixture.switchSettle).not.toHaveBeenCalled();
+  expect(callsTo("/api/apps/hosty.shell/switch-runtime")).toHaveLength(stage === "plan" ? 0 : 1);
+  expect(fixture.toast.error).toHaveBeenCalledWith("Runtime switch failed", expect.objectContaining({ description: "Review changed" }));
+});
+
+it("keeps ordinary runtime-switch errors visible and successful switches refreshed", async () => {
+  overrideRequests(path => path === "/api/apps/routine.app/switch-runtime" ? Promise.reject(new TypeError("Connection lost")) : undefined);
+  await mount();
+  await act(async () => actions.switchAppRuntime(target, "docker"));
+  expect(fixture.switchSettle).not.toHaveBeenCalled();
+  expect(fixture.toast.error).toHaveBeenCalledWith("Runtime switch failed", expect.objectContaining({ description: "Connection lost" }));
+  overrideRequests(path => path === "/api/apps/routine.app/switch-runtime" ? Response.json({ status: "runtime-switched" }) : undefined);
+  await act(async () => actions.switchAppRuntime(target, "docker"));
+  expect(fixture.toast.success).toHaveBeenCalledWith("Runtime switched", expect.objectContaining({ description: "Routine app: dev to docker" }));
+});
+
+it("keeps a confirmed runtime switch distinct from an unreachable Shell page", async () => {
+  const self = { ...target, id: "hosty.shell", selectedRuntime: "dev" };
+  apps = [self];
+  fixture.switchSettle.mockResolvedValue({ kind: "settled" });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 503 })));
+  await mount();
+  const oldAppsRead = deferred<Response>();
+  overrideRequests(path => path === "/api/apps" ? oldAppsRead.promise : undefined);
+  let oldRefresh!: Promise<void>;
+  await act(async () => { oldRefresh = actions.refresh(); });
+  await act(async () => {
+    const switching = actions.switchAppRuntime(self, "docker");
+    await vi.advanceTimersByTimeAsync(90_000);
+    await switching;
+  });
+  expect(fixture.toast.warning).toHaveBeenCalledExactlyOnceWith("Runtime switched; Shell page is not answering yet", {
+    description: "Core confirmed the selected runtime is running. Reload this page once the Shell browser address is reachable again.",
+  });
+  expect(fixture.toast.error).not.toHaveBeenCalled();
+  expect(shell.state.apps.find(app => app.id === self.id)?.selectedRuntime).toBe("docker");
+  await act(async () => { oldAppsRead.resolve(Response.json({ apps: [self] })); await oldRefresh; });
+  expect(shell.state.apps.find(app => app.id === self.id)?.selectedRuntime).toBe("docker");
+  // A caller can still hold the old row object after the completed action releases its guard.
+  await act(async () => actions.switchAppRuntime(self, "docker"));
+  expect(callsTo("/api/apps/hosty.shell/switch-runtime/plan")).toHaveLength(1);
+  expect(callsTo("/api/apps/hosty.shell/switch-runtime")).toHaveLength(1);
+  // A later authoritative read can still reflect a different operator's subsequent switch.
+  overrideRequests(path => path === "/api/apps" ? Response.json({ apps: [self] }) : undefined);
+  await act(async () => actions.refresh());
+  expect(shell.state.apps.find(app => app.id === self.id)?.selectedRuntime).toBe("dev");
+});
+
+
+it.each(["active", "restarting"])("keeps manual dev recovery available for a single-profile %s app", async phase => {
+  apps = [{ ...target, selectedRuntime: "dev", runtimeProfiles: [{ key: "dev", type: "docker", default: true, development: true }],
+    devMode: { operationId: "trial", phase, previousRuntime: "dev" } }];
+  fixture.confirm.mockResolvedValue(true);
+  overrideRequests(path => path.endsWith("/dev-mode/plan")
+    ? Response.json({ planDigest: "return-review", changes: ["Return to prior source"], outsideBackup: [] })
+    : path.endsWith("/dev-mode/apply") ? Response.json({ phase: "returned" }) : undefined);
+  await mount(true);
+  const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Switch runtime for Routine app"]');
+  expect(trigger).not.toBeNull();
+  await act(async () => trigger!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  const menu = document.querySelector('[role="menu"]');
+  expect(menu?.textContent).toContain("Return to previous runtime (dev)");
+  expect(menu?.textContent.includes("Retry interrupted dev operation")).toBe(phase !== "active");
+  const returning = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(x => x.textContent?.startsWith("Return to previous runtime"));
+  await act(async () => returning!.click());
+  expect(callsTo("/api/apps/routine.app/dev-mode/apply")).toHaveLength(1);
+  expect(JSON.parse(callsTo("/api/apps/routine.app/dev-mode/apply")[0][1].body)).toMatchObject({ action: "return", planDigest: "return-review" });
 });

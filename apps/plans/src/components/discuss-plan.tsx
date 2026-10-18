@@ -1,13 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
 import { createAssistantRequestId } from "@hosty-sdk/app/assistant";
+import { createPresentationRequestId, type PresentationResult } from "@hosty-sdk/app/ui";
+import { useHostyUi } from "@hosty-sdk/app/ui/react";
 import { LoaderCircleIcon, MessageCircleIcon } from "lucide-react";
-import { discussionVersion, type DiscussionInput, type DiscussionOptions } from "@/lib/discussion";
+import { discussionVersion, type DiscussionInput, type DiscussionOptions, type DiscussionResult } from "@/lib/discussion";
 import type { PlanDetail } from "@/lib/types";
 import { Button } from "./ui/button";
+import { PermissionReviewLink } from "./permission-review-link";
 
 type Failure = { message: string; reviewUrl?: string; code?: string };
 async function responseBody<T>(response: Response): Promise<T> {
@@ -25,19 +28,31 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
   const [selection, setSelection] = useState("");
   const [error, setError] = useState<Failure | null>(null);
   const [pending, setPending] = useState(false);
-  const [openUrl, setOpenUrl] = useState<string | null>(null);
+  const ui = useHostyUi();
+  const [completed, setCompleted] = useState<{ result: DiscussionResult; presentationId: string; userId: string; path: string; source: string; contextKey: string } | null>(null);
+  const [presentation, setPresentation] = useState<PresentationResult | null>(null);
   const [epoch, setEpoch] = useState(0);
   const running = useRef(false);
-  const requests = useRef(new Map<string, string>());
+  const requests = useRef(new Map<string, { requestId: string; installationId: string }>());
+  const results = useRef(new Map<string, NonNullable<typeof completed>>());
+  const acceptedPresentations = useRef(new Set<string>());
   const version = detail && discussionVersion(detail, workspaceId);
+  const sourceKey = JSON.stringify([detail?.repository.id, detail?.path, workspaceId, version?.document.content]);
   const selected = options?.providers.find(item => `${item.appId}:${item.key}` === selection)
     ?? (options?.providers.length === 1 ? options.providers[0] : undefined);
+  const contextKey = JSON.stringify([options?.userId, sourceKey, selected?.appId, selected?.key, selected?.installationId, selected?.problem]);
+  const context = useRef<object | null>(null);
+  useLayoutEffect(() => {
+    const generation = {};
+    context.current = generation;
+    return () => { if (context.current === generation) context.current = null; };
+  }, [contextKey]);
 
   useEffect(() => {
     const controller = new AbortController();
     let loading = false;
     const load = () => {
-      if (loading || running.current) return;
+      if (loading) return;
       loading = true;
       void appFetch("/api/assistant", { cache: "no-store", signal: controller.signal })
       .then(responseBody<DiscussionOptions>).then(value => { if (!controller.signal.aborted) { setOptions(value); setError(null); } })
@@ -48,37 +63,69 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
     return () => { controller.abort(); window.removeEventListener("focus", load); };
   }, [epoch]);
 
+  useEffect(() => ui.subscribe(event => {
+    if (event.type === "presentation" && event.value.requestId === completed?.presentationId) {
+      if (event.value.status === "opened") acceptedPresentations.current.add(event.value.requestId);
+      setPresentation(event.value);
+    }
+  }), [ui, completed?.presentationId]);
+
+  async function present(value: NonNullable<typeof completed>, generation = context.current) {
+    if (!generation || context.current !== generation || value.contextKey !== contextKey) return;
+    if (acceptedPresentations.current.has(value.presentationId)) {
+      const previous = value;
+      value = { ...value, presentationId: createPresentationRequestId() };
+      for (const [key, cached] of results.current) if (cached === previous) results.current.set(key, value);
+    }
+    setCompleted(value);
+    setPresentation(null);
+    if (!value.result.target) return;
+    const result = await ui.openSurface(value.result.target, { placement: "side", requestId: value.presentationId });
+    if (result.status === "opened") acceptedPresentations.current.add(value.presentationId);
+    if (context.current === generation) setPresentation(result);
+  }
+
   async function discuss(startNew = false) {
-    if (running.current || !detail || !version || !selected || selected.problem || !options) return;
-    running.current = true; setPending(true); setError(null); setOpenUrl(null);
-    // Reserve the tab in the click gesture. If blocked, the finalized discussion remains a link.
-    let tab: Window | null = null;
+    if (running.current || !detail || !version || !selected?.installationId || selected.problem || !options) return;
+    const generation = context.current;
+    running.current = true; setPending(true); setError(null);
     try {
-      tab = window.open("about:blank", "_blank");
-      if (tab) { tab.document.title = "Opening Assistant"; tab.document.body.textContent = "Attaching the document to Assistant…"; }
       // Named HTTP localhost origins do not expose Web Crypto in every supported browser.
       const contentHash = Array.from(sha256(new TextEncoder().encode(version.document.content)), value => value.toString(16).padStart(2, "0")).join("");
       const input = { repositoryId: detail.repository.id, path: detail.path, workspaceId: version.workspaceId,
         contentHash, providerAppId: selected.appId, key: selected.key };
       const storageKey = `hosty.plans.discussion:${JSON.stringify([options.userId, input])}`;
-      let requestId = startNew ? undefined : requests.current.get(storageKey);
-      try { if (!startNew) requestId ??= sessionStorage.getItem(storageKey) ?? undefined; } catch { /* Memory retry identity remains available. */ }
-      requestId ??= createAssistantRequestId();
-      requests.current.set(storageKey, requestId);
-      try { sessionStorage.setItem(storageKey, requestId); } catch { /* Preserve in memory for this page. */ }
-      const body: DiscussionInput = { ...input, requestId };
-      const result = await appFetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
-        .then(responseBody<{ url: string }>);
-      setOpenUrl(result.url);
-      if (tab && !tab.closed) {
-        // Sandboxed frames may navigate their own popup only while the opener relationship exists.
-        // Detach in this same task, before the destination document can run.
-        tab.location.replace(result.url);
-        tab.opener = null;
+      // A reinstall must revalidate the pinned pending intent before offering a new discussion.
+      const resultKey = JSON.stringify([storageKey, selected.installationId]);
+      const existing = !startNew && results.current.get(resultKey);
+      if (existing) { await present(existing, generation); return; }
+      let intent = startNew ? undefined : requests.current.get(storageKey);
+      if (!intent && !startNew) {
+        let saved: string | null = null;
+        try { saved = sessionStorage.getItem(storageKey); } catch { /* Storage may be disabled. */ }
+        if (saved !== null) {
+          let stored: unknown;
+          try { stored = JSON.parse(saved); } catch { /* Bare UUIDs from older Plans have no installation identity. */ }
+          if (!stored || typeof stored !== "object" || !("requestId" in stored) || typeof stored.requestId !== "string"
+            || !/^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i.test(stored.requestId)
+            || !("installationId" in stored) || typeof stored.installationId !== "string" || !stored.installationId) {
+            throw { code: "pending_intent_obsolete", message: "The saved discussion cannot be resumed safely. It may already exist; choose Start a new discussion to create another." };
+          }
+          intent = { requestId: stored.requestId, installationId: stored.installationId };
+        }
       }
+      intent ??= { requestId: createAssistantRequestId(), installationId: selected.installationId };
+      requests.current.set(storageKey, intent);
+      try { sessionStorage.setItem(storageKey, JSON.stringify(intent)); } catch { /* Preserve in memory for this page. */ }
+      const body: DiscussionInput = { ...input, ...intent };
+      const result = await appFetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+        .then(responseBody<DiscussionResult>);
+      const value = { result, presentationId: createPresentationRequestId(), userId: options.userId, path: detail.path, source: sourceKey, contextKey };
+      results.current.set(resultKey, value);
+      await present(value, generation);
     } catch (cause) {
-      tab?.close(); setError(failure(cause));
-    } finally { running.current = false; setPending(false); }
+      if (context.current === generation) setError(failure(cause));
+    } finally { running.current = false; if (context.current) setPending(false); }
   }
 
   const unavailable = !version ? "This document version is unavailable or deleted."
@@ -102,12 +149,17 @@ export function DiscussPlan({ detail, workspaceId, back, refresh }: { detail: Pl
       </div>
     </div>
     {error && <div role="alert" className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-sm text-destructive"><p>{error.message}</p>
-      {error.reviewUrl && <a href={error.reviewUrl} target="_blank" rel="noopener noreferrer" className="underline">Review Plans permissions</a>}
+      {error.reviewUrl && <PermissionReviewLink href={error.reviewUrl} />}
       {!options && <Button variant="link" size="sm" onClick={() => setEpoch(value => value + 1)}>Retry</Button>}
-      {["handoff_closed", "request_expired", "conversation_deleted"].includes(error.code ?? "") &&
+      {["handoff_closed", "request_expired", "conversation_deleted", "provider_changed", "pending_intent_obsolete"].includes(error.code ?? "") &&
         <Button variant="link" size="sm" disabled={pending} onClick={() => void discuss(true)}>Start a new discussion</Button>}
     </div>}
     {!error && detail && unavailable && <p role="status" className="text-right text-xs text-muted-foreground">{unavailable}</p>}
-    {openUrl && <a href={openUrl} target="_blank" rel="noopener noreferrer" className="self-end text-xs underline">Open discussion</a>}
+    {completed && completed.contextKey === contextKey && completed.userId === options?.userId && completed.path === detail?.path && completed.source === sourceKey && <div className="flex flex-wrap items-center justify-end gap-3 text-xs">
+      <span role="status">{presentation?.status === "opened" ? presentation.readiness === "ready" ? "Discussion opened beside the document." : presentation.readiness === "unreported" ? "Discussion created. The assistant has not confirmed that it loaded." : presentation.readiness === "auth-required" ? "Discussion created. Check access in the assistant panel." : "Discussion created. Connecting to the assistant…"
+        : "Discussion created. You can retry opening it here or open it separately."}</span>
+      {completed.result.target && <Button variant="link" size="sm" disabled={pending} onClick={() => void present(completed)}>Retry opening</Button>}
+      <a href={completed.result.url} target="_blank" rel="noopener noreferrer" className="underline">Open separately</a>
+    </div>}
   </div>;
 }

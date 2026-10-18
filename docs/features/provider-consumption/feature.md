@@ -1,7 +1,7 @@
 ---
 created: 2026-09-29
-updated: 2026-10-08
-summary: Apps discover and call confirmed speech-to-text and assistant providers with short-lived Core credentials.
+updated: 2026-10-15
+summary: Apps discover and call confirmed speech, translation and assistant providers with short-lived Core credentials.
 components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/whisper, apps/harness]
 ---
 
@@ -9,11 +9,17 @@ components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/whisper,
 
 ## Permissions And Review
 
-Core 0.115.1 accepts `providers.speech-to-text` and `providers.assistant`. Each grants discovery and
+Core 0.132.0 accepts `providers.speech-to-text`, `providers.translation` and `providers.assistant`. Each grants discovery and
 use of every confirmed provider in its category, including later installations. There is no separate
-use permission or per-provider ACL. Supply roles are `speech-to-text` and `assistant` in `provides`;
+use permission or per-provider ACL. Supply roles are `speech-to-text`, `translation` and `assistant` in `provides`;
 roles require installation/update confirmation. Ordinary runtime apps can supply and consume these
 interfaces. Agent connections remain inside Harness; `providers.agent` is not accepted.
+
+Translation uses the same app-authorized credential flow as speech. Harness exposes two static
+interface keys (`codex` and `claude`) backed by explicitly selected connections. Text and Markdown
+travel directly to that provider; Core stores neither source text nor translations. See
+[Translation providers](../translation-provider/feature.md) for limits, SDK calls, Markdown integrity
+checks, native execution controls and measured latency.
 
 `corePermissions` is required authority. `optionalCorePermissions` is optional authority. Lists must
 contain known, unique, disjoint names. Core confirmation offers optional choices unchecked on install,
@@ -44,6 +50,9 @@ Server-side SDK clients use the calling app's `HOSTY_APP_ID`, `HOSTY_CORE_ORIGIN
 | `POST /provider/introspect` | Provider validates `{ token, kind, key }` on every request |
 
 Descriptors contain app ID, name, category, interface key/version, capabilities, URL and availability.
+Discovery and credential issuance resolve provider API URLs from the endpoint's direct transport
+address. Generated browser hostnames and configured public origins are excluded from backend calls,
+so local speech recognition does not depend on browser-only name resolution or public ingress.
 Core 0.125.0 also includes `uiSurfaces` for assistants: declared panel, navigation and entrypoint
 endpoint identities, paths and resolved browser URLs. Consumers validate handoff destinations
 against these surfaces without an additional `apps.read` grant or an assumption that API and UI
@@ -109,8 +118,11 @@ Whisper.net and its CPU native runtime are pinned to 1.9.1. The factory explicit
 The native runtime's Windows baseline is Windows 11 / Windows Server 2022 or newer, the Visual C++ 2022
 redistributable and an x64 CPU with AVX, AVX2, FMA and F16C. An AMD processor with those capabilities can
 use this CPU path without a discrete GPU. Linux and macOS use the corresponding packaged native runtime.
-The target Windows/AMD machine has not been exercised locally; hardware acceptance is tracked in the
-[plan](plan.md). No Vulkan acceleration or Windows performance claim is made.
+On 2026-10-10 the owner confirmed that the speech provider and text dictation work in their
+deployment. This is owner-reported functional acceptance, not an agent-run hardware test. The report
+does not specify the OS/CPU, selected model, performance measurements or individual failure cases;
+the remaining acceptance evidence is tracked in the [plan](plan.md). No Vulkan acceleration or
+Windows performance claim is made.
 
 `WHISPER_MODEL` selects multilingual `tiny`, `base` or `small` (default). Fixed upstream revision
 `5359861c739e955e79d9a303bcbc70fb988958b1`, sizes and SHA-256 hashes are in `SpeechEngine.cs`. Models are
@@ -153,15 +165,18 @@ an unavailable provider and a message being sent. Discovery failures do not impl
 
 ## Assistant Activity Authority
 
-Assistant-provider issuance requires the consumer's current browser-established
-[activity window](../app-activity-window/feature.md) and live parent Core session. Provider token
-validation rechecks that activity; a delegated credential cannot replace it. Harness also uses its own app activity and live Core sign-in for MCP and workspace/publication tool
-calls; conversations require no additional consent.
+Assistant-provider issuance requires the consumer's current interactive authority and live principal,
+or an explicitly scoped [background grant](../continuous-app-access/feature.md). Provider token
+validation rechecks that source online. Harness uses its own continuous sign-in for interactive MCP
+and workspace/publication calls; conversations require no additional consent.
 
 ## Testing Expectations
 
 - Core: optional defaults and updates, review-only mutation, stale consent, stored declarations,
   role confirmation, audience/category/installation binding, live revocation and user-access checks.
+  Provider discovery and issued credentials use direct transport URLs for IPv4, IPv6 and LAN endpoints,
+  including apps with a configured public origin; missing transport remains unavailable. Assistant
+  API addresses use transport while declared UI surfaces retain their browser addresses.
   Grant changes in either direction must reject stale update enqueue without changing operation state;
   missing speech and assistant interface contracts must report category-specific validation errors.
 - SDKs: credential separation, denied access, compatibility, cancellation and assistant handoff ownership.
@@ -177,5 +192,7 @@ calls; conversations require no additional consent.
   Docker consumer and the authenticated Harness backend. Reviewed revocation returns 403 on the next
   Harness transcription. Browser verification confirms optional consent and iframe microphone delegation. Tiny
   recognition contains errors; this is interoperability evidence rather than an accuracy benchmark.
+- Owner acceptance on 2026-10-10 confirms working speech recognition and text dictation. It does not
+  establish the detailed hardware measurements or per-case acceptance results retained in the plan.
 
 - With immediate handoffs enabled, provider-originated finalization remains a draft, while operator finalization dispatches immediately.

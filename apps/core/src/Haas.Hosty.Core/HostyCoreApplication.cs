@@ -61,7 +61,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AppIdentityTokenService>();
         // Core MCP: the protocol server plus the tool type it reflects over. The tools resolve Core's
         // own services per call, so the MCP layer holds no state of its own.
-        builder.Services.AddMcpServer().WithHttpTransport().WithTools<HostyCoreTools>().WithTools<ExternalWorkspaceMcpTools>();
+        builder.Services.AddMcpServer().WithHttpTransport().WithTools<HostyCoreTools>().WithTools<ExternalWorkspaceMcpTools>().WithTools<AppDevModeMcpTools>();
         builder.Services.AddSingleton<ExternalWorkspaceMcpAuthorization>();
         // The MCP mutation tools read the caller's grants out of HttpContext.Items, where the
         // endpoint filter put them; the accessor is how a static tool method reaches the request.
@@ -89,6 +89,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<OAuthAuthorizationStore>();
         builder.Services.AddSingleton<OAuthRegistrationLimiter>();
         builder.Services.AddSingleton<AppSessionGrantStore>();
+        builder.Services.AddSingleton<BackgroundGrantService>();
         builder.Services.AddSingleton<AppIdentityService>();
         builder.Services.AddSingleton<AssistantSessionAuthority>();
         builder.Services.AddSingleton<LocalPasswordAuthService>();
@@ -111,8 +112,12 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<CoreEventHub>();
         builder.Services.AddSingleton<NotificationService>();
         builder.Services.AddSingleton<AppSourceService>();
+        builder.Services.AddSingleton<ISourceGitAccess>(sp => sp.GetRequiredService<PrivateSourceService>());
         builder.Services.AddSingleton<DevelopmentWorkspaceService>();
         builder.Services.AddSingleton<SourceRepositoryFetchCoordinator>();
+        builder.Services.AddSingleton<WorkspaceInspectionService>();
+        builder.Services.AddSingleton<WorkspaceCleanupService>();
+        builder.Services.AddSingleton<WorkspaceInspectionAuthorization>();
         builder.Services.AddSingleton<SourceDocumentService>();
         builder.Services.AddSingleton<SourceDocumentAuthorization>();
         builder.Services.AddSingleton<WorkspaceAuthorization>();
@@ -152,6 +157,24 @@ internal static class HostyCoreApplication
         // Shared docker CLI runner so the runtime adapter and the telemetry scrape loop go through one
         // instance; the adapter's optional ctor param picks this up via DI in production.
         builder.Services.AddSingleton<IDockerCommandRunner, ProcessDockerCommandRunner>();
+        builder.Services.AddHttpClient();
+        builder.Services.AddSingleton<CoreEnvironmentStore>();
+        builder.Services.AddSingleton<ICoreEnvironmentRuntime, CoreEnvironmentRuntime>();
+        builder.Services.AddSingleton<CoreEnvironmentService>();
+        builder.Services.AddSingleton<CoreEnvironmentConsentService>();
+        builder.Services.AddSingleton<CoreEnvironmentAuthorization>();
+        builder.Services.AddSingleton<CoreEnvironmentAccess>();
+        builder.Services.AddSingleton<SandboxStore>();
+        builder.Services.AddSingleton<ISandboxInputs, SandboxInputs>();
+        builder.Services.AddSingleton<SandboxServiceCredentials>();
+        builder.Services.AddSingleton<SandboxDockerRuntime>();
+        builder.Services.AddSingleton<ISandboxRuntime>(sp => sp.GetRequiredService<SandboxDockerRuntime>());
+        builder.Services.AddSingleton<SandboxBrowser>();
+        builder.Services.AddSingleton<SandboxService>();
+        builder.Services.AddSingleton<SandboxOperations>();
+        builder.Services.AddSingleton<SandboxAuthorization>();
+        builder.Services.AddSingleton<SandboxRealm>();
+        builder.Services.AddHostedService<SandboxSupervisor>();
         // Fast path for the reviewed-update plan's registry digest lookups: a direct registry HTTP
         // probe, roughly 7x quicker than the `docker buildx imagetools inspect` it fronts. Redirects
         // are not followed — a manifest probe must not be bounced to an unvetted host — and anything
@@ -197,6 +220,7 @@ internal static class HostyCoreApplication
         builder.Services.AddHostedService<AppUpdateSweepScheduler>();
         builder.Services.AddHostedService<AppPermissionObserver>();
         builder.Services.AddSingleton<ProviderAccessService>();
+        builder.Services.AddSingleton<UiPanelService>();
         builder.Services.AddSingleton<InstallationApprovalStore>();
         builder.Services.AddSingleton<HostPathApprovalService>();
         builder.Services.AddSingleton<InstallationApprovalService>();
@@ -209,6 +233,7 @@ internal static class HostyCoreApplication
                 ForwardedHeaders.XForwardedProto;
         });
         builder.Services.AddHostedService<ControlDiscoveryWriter>();
+        builder.Services.AddHostedService<CoreEnvironmentSupervisor>();
     }
 
     public static void MapEndpoints(WebApplication app)
@@ -217,9 +242,14 @@ internal static class HostyCoreApplication
         app.Use(LocalBrowserNavigation.InvokeAsync);
         app.UseRouting();
         app.UseCors();
+        app.Use(LifecycleAuditFilter.RecordEarlyRefusalAsync);
         app.Use(AppManagementAuthorization.InvokeAsync);
         InstallationApprovalEndpoints.Map(app);
         ProviderEndpoints.Map(app);
+        CoreEnvironmentEndpoints.Map(app);
+        SandboxEndpoints.Map(app);
+        SandboxAuthEndpoints.Map(app);
+        UiPanelEndpoints.Map(app);
 
         app.MapGet("/healthz", () => CoreJson.Json(new HealthResponse("ok")));
         app.MapGet("/api/core/status", async (
@@ -363,6 +393,8 @@ internal static class HostyCoreApplication
         DomainEndpoints.Map(app);
         AgentMcpEndpoints.Map(app);
         AuthEndpoints.Map(app);
+        AppContinuityEndpoints.Map(app);
+        BackgroundGrantEndpoints.Map(app);
         AccessTokenEndpoints.Map(app);
         AuthBootstrapEndpoints.Map(app);
         UserManagementEndpoints.Map(app);
@@ -379,7 +411,11 @@ internal static class HostyCoreApplication
         CloudflarePublicationEndpoints.Map(app);
         SourceEndpoints.Map(app);
         DevelopmentWorkspaceEndpoints.Map(app);
+        AppCreationEndpoints.Map(app);
+        AppDevModeEndpoints.Map(app);
+        SessionRetentionEndpoints.Map(app);
         SourceDocumentEndpoints.Map(app);
+        WorkspaceInspectionEndpoints.Map(app);
         PublicationEndpoints.Map(app);
         ControlIdentityEndpoints.Map(app);
         AppDirectoryEndpoints.Map(app);

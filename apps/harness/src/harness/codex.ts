@@ -180,12 +180,16 @@ class CodexRun implements HarnessRun {
     // the environment. Nothing is written to the operator's ~/.codex — these servers belong to one
     // session of one gateway, not to the machine.
     const mcp = toCodexMcpConfig(options.mcpServers);
-    const target = spawnTarget(["app-server", ...(auth.managedHome ? ["-c", 'cli_auth_credentials_store="file"'] : []), ...mcp.args]);
-    this.child = spawn(target.command, target.args, {
-      stdio: ["pipe", "pipe", "pipe"],
+    const providerArgs = ["app-server", ...(auth.managedHome ? ["-c", 'cli_auth_credentials_store="file"'] : []), ...mcp.args];
+    const target = spawnTarget(providerArgs);
+    const spawnOptions = {
+      stdio: ["pipe", "pipe", "pipe"] as const,
       cwd: options.cwd,
       env: { ...(auth.isolated ? cleanAgentEnvironment() : process.env), ...env, ...mcp.env },
-    });
+    };
+    this.child = options.processTransport
+      ? options.processTransport.spawn("codex", providerArgs, spawnOptions)
+      : spawn(target.command, target.args, { ...spawnOptions, stdio: ["pipe", "pipe", "pipe"] });
     this.child.stdin.on("error", () => {});
     this.child.on("error", () => {
       this.failed = true;
@@ -354,7 +358,12 @@ class CodexRun implements HarnessRun {
         threadId: this.threadId,
         input: [{ type: "text", text }],
         approvalPolicy: this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
-        sandboxPolicy: { type: this.options.autonomy === "autonomous" ? "dangerFullAccess" : "readOnly" },
+        // The managed transport already isolates the process in Docker. Starting another Linux
+        // namespace sandbox there fails under Docker's restricted capabilities. Keep the chat's
+        // approval policy, and tell Codex which boundary actually owns filesystem/network access.
+        sandboxPolicy: this.options.processTransport
+          ? { type: "externalSandbox", networkAccess: "enabled" }
+          : { type: this.options.autonomy === "autonomous" ? "dangerFullAccess" : "readOnly" },
       }) as { turn?: { id?: string } };
       if (this.turnActive && !this.activityTurnId) this.activityTurnId = started.turn?.id ?? null;
     } catch (error) {

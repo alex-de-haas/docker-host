@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-10-11
 summary: Let users hide app-provided panel entries in Shell and restore them later.
 components: [apps/shell]
 ---
@@ -21,6 +21,38 @@ collapsing the selected body, add per-user visibility control over individual pa
 Keep a discoverable list of hidden entries with a restore action. Hiding must not revoke app grants,
 stop a backend, delete sessions or change which assistant handles Shell requests.
 
+## Shared Panel-System Coordination
+
+Owner direction, 2026-10-10: the [SDK panel system](../sdk-panel-system/feature.md) owns the shared
+rail/host and the first Plans → assistant scenario in Shell and standalone. This plan continues to
+own hide/restore preferences and hidden-target behavior; it does not own a second panel renderer.
+Implement visibility through that host's catalog/presentation hooks if it ships first. Coordinate
+D1 with its `{ appId, installationId, panelId }` reference rather than creating another label/index
+key. The SDK contract provides optional explicit `ui.panels[].id` and deterministic legacy IDs, with
+no persisted alias map. Adding an explicit ID to an ID-less panel creates a new identity. Consume
+that contract here; do not duplicate its Core implementation or infer preference transfer. Explicit
+IDs survive label/path changes, while reinstallation resets the installation scope. Current Shell
+does not persist its selected index, so there is no old selection-cookie migration. Hide/restore
+storage and the hidden-target policy still belong here.
+
+This plan's original Shell preference scope remains unchanged. Whether standalone hosts share or
+have separate visibility preferences needs an explicit decision before widening that scope; the
+SDK host alone does not make local Shell preferences global. Hiding a tool must never cause an
+explicit finalized handoff to be recreated at another provider. D3 owns the reveal/restore policy.
+The SDK's standalone opened-tool rail and Add tool chooser use window-local state, with no persisted
+hide/pin setting. That scope does not require this plan's cross-host preference decision first.
+
+[SDK UI composition](../sdk-ui-composition/feature.md), implemented 2026-10-11, owns explicit launch/host
+navigation and tool policy, including standalone defaults. Its enabled/launcher fields are not
+persisted hide/restore preferences. This plan remains their sole owner and must not infer global
+preferences from one shell's layout, one app window or a URL hint.
+
+Composition distinguishes an installed panel declaration (`PanelRef`) from each retained view of
+it (`presentationId`). Hide/restore preferences remain keyed by `PanelRef`, not by a conversation
+or window-local presentation ID. Hiding a launcher or disabling requests from one source view is
+not a persisted decision to hide that panel; it must not change these preferences or close shared
+presentations. This plan still owns the explicit-open/reveal decision for a persisted hidden entry.
+
 ## Deliverables
 
 - [ ] D1. Define and implement persisted per-user, per-host visibility preferences with stable panel
@@ -37,7 +69,6 @@ stop a backend, delete sessions or change which assistant handles Shell requests
 - Where do hide/restore controls live, and where are the preferences stored?
 - Does an explicit open temporarily reveal a hidden panel or ask to restore it? How should attention
   from hidden panels appear without undoing the user's preference?
-- Which stable identity survives a changed panel label/path, and when does reinstall reset a preference?
 
 ## Verification
 

@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-07-03
-updated: 2026-09-25
+updated: 2026-10-10
 summary: Remaining observability work, adding telemetry ingest and query auth, live tails and fleet-wide views.
 components: [apps/telemetry-backend, apps/telemetry-ui]
 ---
@@ -97,16 +97,14 @@ kernel.
 
 ## Deliverables
 
-- [ ] D1. **Ingest + query auth** — **shipped 2026-08-17 by [telemetry-mcp](../telemetry-mcp/feature.md)** for the query
-      side; ingest confinement moved on to [cross-app-dependencies](../cross-app-dependencies/plan.md), which cannot ship its tools over an unauthenticated data path and so absorbed
-      this rather than duplicating it. The credential shape is settled there — per-app tokens, the
-      form the platform rule in [ai-agent-bridge/feature.md](../ai-agent-bridge/feature.md#token-mechanics)
-      favours for anything streaming or high-volume — and so is its sequencing against the
-      internal-only network that plan is building. Original wording: Core mints a shared credential for the telemetry app and injects it
-      the same way it injects the OTLP endpoint; the backend requires it on the query port, and OTLP
-      ingest requires it per app so `hosty.app.id` can no longer be spoofed. Remove the
-      "known-open" `SECURITY` note in `apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/Program.cs`
-      and the corresponding paragraph in `feature.md` when this lands.
+- [ ] D1. **Authenticated ingest attribution.** Query authentication already ships. Add per-producer,
+      audience-bound ingest credentials, validation and revocation so an app cannot submit another
+      app's `hosty.app.id`; reject unauthenticated ingestion. This absorbs Core Extension Model D2's
+      unbuilt authentication requirement. Design for the current topology: Core metrics/logs are
+      pulled by Telemetry, while apps push OTLP. Do not require a fictitious Core push sink or change
+      `provides` to structured objects. Choose the concrete credential and collector integration here;
+      [cross-app-dependencies D6](../cross-app-dependencies/plan.md#deliverables) owns network confinement
+      only. Remove the known-open ingest warnings only after attribution checks pass.
 - [ ] D2. **Backend stream endpoint.** An SSE (or equivalent) endpoint over new log records and spans,
       filterable by the same `apps` / `severity` / `q` parameters as the query reads.
 - [ ] D3. **UI live tail.** Structured logs and Traces consume the stream through the UI's server routes;
