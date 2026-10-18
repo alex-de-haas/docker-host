@@ -275,7 +275,10 @@ Source replacement changes only the selected runtime folder. It does not overwri
 repository or move an existing session to another repository. Clearing an override on a local Git app
 restores its own canonical source rather than leaving a missing source selection. For a Git app,
 reconciling the same repository from its original install manifest preserves an explicitly cleared
-override instead of restoring the old folder. Existing workspace
+override instead of restoring the old folder. A source runtime then starts or restarts from its
+managed Git checkout, materializing it when needed even if the original installation used a local
+manifest. A folder-only app without a Git repository still requires an explicit source folder.
+Existing workspace
 and chat retention guards still require verified completion and resource cleanup before deletion;
 canonical source belongs to the app and survives that deletion.
 

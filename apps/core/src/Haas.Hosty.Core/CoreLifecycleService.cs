@@ -4863,7 +4863,10 @@ internal sealed partial class CoreLifecycleService(
             return app;
         }
 
-        if (string.IsNullOrWhiteSpace(app.ManifestUrl))
+        // A folder-installed Git app can explicitly clear its override and run from its managed
+        // checkout. Only a folder-only app lacks a repository to materialize in that situation.
+        if (string.IsNullOrWhiteSpace(app.ManifestUrl) &&
+            string.IsNullOrWhiteSpace(selection.Manifest.Source?.Repository))
         {
             throw new AppLifecycleException(
                 "local_command_source_root_required",
