@@ -19,7 +19,7 @@ export type DevelopmentWorkspace = { id: string; state: string; updatedAt?: stri
 export function orderWorkspaces(workspaces: readonly DevelopmentWorkspace[]): DevelopmentWorkspace[] {
   return [...workspaces].sort((left, right) => activityTime(right) - activityTime(left) || left.id.localeCompare(right.id));
 }
-export type Diff = { path: string; combined: string; truncated: boolean; binary: boolean; image?: unknown };
+export type Diff = { path: string; combined: string; truncated: boolean; binary: boolean; image?: unknown; contentKind?: "patch" | "text" };
 export async function developmentRequest<T>(path = "", body?: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   const response = await appFetch(`/api/development-workspaces${path}`, { method: body ? "POST" : "GET", signal,
     cache: "no-store", ...(body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}) });

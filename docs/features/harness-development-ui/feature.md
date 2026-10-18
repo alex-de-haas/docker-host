@@ -58,7 +58,9 @@ committed changes. Bounded diffs open in a keyboard-dismissable dialog with repo
 all-workspace/uncommitted scope selection. Harness uses the same `@pierre/diffs` renderer as Shell:
 syntax and inline change highlighting, line numbers, Unified/Split layout and optional line wrapping.
 The viewer follows Hosty's light/dark theme. Untracked local files are rendered as literal additions;
-staged and committed additions are parsed as patches. Binary and truncated previews retain explicit
+staged and committed additions are parsed as patches. Core identifies the content format in each
+diff response, so staging changes after an inventory read cannot reinterpret literal source as a
+patch. Older Core responses without that field retain a readable text fallback. Binary and truncated previews retain explicit
 messages; metadata-only or malformed patches keep a readable text fallback. Missing statistics are unavailable rather than zero;
 binary files contribute to file counts without invented line counts. Closing the dialog restores
 focus to the Changes control. File and scope selection persist per repository while the workspace

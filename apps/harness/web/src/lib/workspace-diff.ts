@@ -3,10 +3,12 @@ import type { Diff } from "./development-api";
 
 type Preview = { kind: "diff"; file: FileDiffMetadata } | { kind: "text"; message: string; content?: string };
 
-// The local scope returns literal contents only for status ??; newFile also includes staged additions.
-export function prepareWorkspaceDiff(diff: Diff, untracked: boolean): Preview {
+// The response owns its format: inventory status can be older than the requested diff.
+export function prepareWorkspaceDiff(diff: Diff): Preview {
   if (diff.truncated) return { kind: "text", message: "Diff exceeds the preview limit. Inspect it in your Git client." };
   if (diff.binary || diff.image) return { kind: "text", message: "Binary file changed. Inspect it in your editor." };
+  if (!diff.contentKind) return { kind: "text", message: "Diff format is unavailable. The original preview is shown below.", content: diff.combined };
+  const untracked = diff.contentKind === "text";
   if (!diff.combined) return { kind: "text", message: untracked ? "Empty new file." : "No text changes." };
   try {
     if (untracked) return { kind: "diff", file: parseDiffFromFile(null, { name: diff.path, contents: diff.combined }) };

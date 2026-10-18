@@ -178,6 +178,6 @@ function WorkspaceDiff({ workspaceId, tree, choice, onChoice }: { workspaceId: s
       <Button size="sm" variant={wrap ? "secondary" : "ghost"} aria-pressed={wrap} onClick={() => setWrap(!wrap)}>Wrap lines</Button>
     </div>
     <div className="flex min-h-0 flex-1 flex-col gap-3 sm:flex-row"><nav aria-label="Changed files" className="max-h-32 shrink-0 overflow-auto sm:max-h-none sm:w-56">{files.map(f => <button key={f.path} type="button" aria-current={selected === f.path ? "true" : undefined} onClick={() => onChoice({ ...choice, path: f.path })} className={`block w-full break-all rounded px-2 py-1.5 text-left text-xs hover:bg-muted ${selected === f.path ? "bg-muted" : ""}`}>{f.path}</button>)}</nav>
-      <div className="min-h-0 min-w-0 flex-1 overflow-auto rounded border bg-background">{error ? <p role="alert" className="p-3 text-sm">{error}</p> : !selected ? <p className="p-3 text-sm">No changes in this scope.</p> : !diff ? <p role="status" className="p-3 text-sm">Loading diff…</p> : <WorkspaceDiffView diff={diff} untracked={view === "local" && files.find(f => f.path === selected)?.status === "??"} layout={layout} wrap={wrap} />}</div>
+      <div className="min-h-0 min-w-0 flex-1 overflow-auto rounded border bg-background">{error ? <p role="alert" className="p-3 text-sm">{error}</p> : !selected ? <p className="p-3 text-sm">No changes in this scope.</p> : !diff ? <p role="status" className="p-3 text-sm">Loading diff…</p> : <WorkspaceDiffView diff={diff} layout={layout} wrap={wrap} />}</div>
     </div></>;
 }

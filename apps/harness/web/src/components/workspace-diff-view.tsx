@@ -14,8 +14,8 @@ function subscribeTheme(notify: () => void) {
   return () => observer.disconnect();
 }
 
-export default function WorkspaceDiffView({ diff, untracked, layout, wrap }: {
-  diff: Diff; untracked: boolean; layout: "unified" | "split"; wrap: boolean;
+export default function WorkspaceDiffView({ diff, layout, wrap }: {
+  diff: Diff; layout: "unified" | "split"; wrap: boolean;
 }) {
   const theme = useSyncExternalStore(subscribeTheme, readTheme, serverTheme);
   const [highlighter, setHighlighter] = useState<"loading" | "ready" | "failed">("loading");
@@ -27,7 +27,7 @@ export default function WorkspaceDiffView({ diff, untracked, layout, wrap }: {
     );
     return () => { active = false; };
   }, []);
-  const preview = useMemo(() => prepareWorkspaceDiff(diff, untracked), [diff, untracked]);
+  const preview = useMemo(() => prepareWorkspaceDiff(diff), [diff]);
   const options = useMemo<FileDiffOptions<undefined, undefined>>(() => ({
     diffStyle: layout, overflow: wrap ? "wrap" : "scroll", diffIndicators: "bars", lineDiffType: "word-alt",
     hunkSeparators: "line-info-basic", disableFileHeader: true,

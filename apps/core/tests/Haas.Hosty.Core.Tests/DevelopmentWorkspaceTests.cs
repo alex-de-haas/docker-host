@@ -367,6 +367,31 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task Workspace_DiffFormatFollowsCurrentGitStateInsteadOfEarlierInventory()
+    {
+        var (f, _) = await SourceFixtureAsync();
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var owner = WorkspaceTestOwner(f);
+        var w = await service.PrepareAsync(owner, WorkspaceRequest(), default);
+        const string contents = "diff --git a/example b/example\n--- a/example\n+++ b/example\n@@ -1 +1 @@\n-old\n+new\n";
+        await File.WriteAllTextAsync(Path.Combine(w.Path, "new.patch"), contents);
+        var inventory = await service.ObserveAsync(w.Id, owner, default);
+        Assert.Equal("??", Assert.Single(inventory.Observation!.Local!.Files).Status);
+        await RunGitAsync(w.Path, ["add", "new.patch"]);
+        var staged = await service.DiffAsync(w.Id, owner, new("new.patch", "local"), default);
+        Assert.Equal("patch", staged.ContentKind);
+        Assert.Contains("+diff --git", staged.Combined);
+        inventory = await service.ObserveAsync(w.Id, owner, default);
+        Assert.Contains("A", Assert.Single(inventory.Observation!.Local!.Files).Status);
+        await RunGitAsync(w.Path, ["reset", "HEAD", "--", "new.patch"]);
+        var untracked = await service.DiffAsync(w.Id, owner, new("new.patch", "local"), default);
+        Assert.Equal("text", untracked.ContentKind);
+        Assert.Equal(contents, untracked.Combined);
+        Assert.Equal("patch", (await service.DiffAsync(w.Id, owner, new("new.patch"), default)).ContentKind);
+        Assert.Equal(contents, await File.ReadAllTextAsync(Path.Combine(w.Path, "new.patch")));
+    }
+
+    [Fact]
     public async Task Workspace_FullDiffHandlesCommittedDeletionThenUntrackedRecreationAndNewFiles()
     {
         var (f, _) = await SourceFixtureAsync();
