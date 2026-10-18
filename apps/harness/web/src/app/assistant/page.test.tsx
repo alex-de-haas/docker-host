@@ -11,7 +11,7 @@ vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => ui }));
 
 vi.mock("@/lib/assistant-api", async original => ({
   ...await original<typeof api>(),
-  getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(),
+  getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), deleteSession: vi.fn(),
   listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(),
 }));
 vi.mock("@/lib/development-api", async original => ({ ...await original<typeof import("@/lib/development-api")>(), useDevelopmentInventory: () => ({ workspaces: [], error: "", refresh: () => {} }) }));
@@ -424,4 +424,56 @@ it("refreshes unavailable worker health after a recovered stop without losing th
   expect(container.textContent).not.toContain("Worker recovery required");
   expect(input().value).toBe("Retained draft");
   expect(button("Send")?.disabled).toBe(false);
+});
+
+const openDelete = async () => {
+  await act(async () => button("Delete Conversation")!.click());
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent === "Delete session")!.click());
+};
+const renderDeletion = async () => {
+  window.history.replaceState({}, "", "/development?session=session-one");
+  ui.getNavigation.mockReturnValue({ entries: [] });
+  await act(async () => root.render(<AssistantConversation fullPage />));
+  await type("My retained draft");
+};
+it("detaches on a local deletion event even if the HTTP response is lost", async () => {
+  let reject!: (reason: Error) => void;
+  vi.mocked(api.deleteSession).mockImplementation(() => new Promise((_, no) => { reject = no; }));
+  await renderDeletion(); await openDelete();
+  await act(async () => emit({ type: "session_deleted", seq: 2, ts: "" }));
+  expect(localStorage.getItem("hosty.assistant.session")).toBeNull();
+  expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBeNull();
+  expect(window.location.search).toBe("");
+  expect(button("Delete Conversation")).toBeNull();
+  await act(async () => reject(new Error("Lost HTTP response")));
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(container.textContent).not.toContain("Lost HTTP response");
+  expect(container.textContent).not.toContain("deleted in another window");
+  expect(api.createSession).not.toHaveBeenCalled();
+});
+it("preserves an active conversation and draft when deletion is not confirmed", async () => {
+  vi.mocked(api.deleteSession).mockRejectedValue(new Error("Workspace is unfinished"));
+  await renderDeletion(); await openDelete();
+  expect(input().value).toBe("My retained draft");
+  expect(localStorage.getItem("hosty.assistant.session")).toBe(record.id);
+  expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBe("My retained draft");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Workspace is unfinished");
+  expect(window.location.search).toBe("?session=session-one");
+});
+it("ignores a late terminal event after HTTP deletion has already detached the session", async () => {
+  vi.mocked(api.deleteSession).mockResolvedValue(undefined);
+  await renderDeletion(); const previousEmit = emit; await openDelete();
+  await act(async () => previousEmit({ type: "session_deleted", seq: 2, ts: "" }));
+  expect(localStorage.getItem("hosty.assistant.session")).toBeNull();
+  expect(window.location.search).toBe("");
+  expect(container.textContent).not.toContain("deleted in another window");
+  expect(api.createSession).not.toHaveBeenCalled();
+});
+it("reports deletion from another window while detaching the active session", async () => {
+  await renderDeletion();
+  await act(async () => emit({ type: "session_deleted", seq: 2, ts: "" }));
+  expect(localStorage.getItem("hosty.assistant.session")).toBeNull();
+  expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBeNull();
+  expect(container.textContent).toContain("deleted in another window");
+  expect(api.deleteSession).not.toHaveBeenCalled();
 });

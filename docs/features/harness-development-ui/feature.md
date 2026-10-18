@@ -30,7 +30,9 @@ field leaves activity unknown, sorted deterministically after dated records.
 Each row offers Delete session with confirmation. It reuses the existing session deletion API,
 including unfinished-workspace protection, and keeps failures visible for retry without navigating
 away from the current conversation. Deleting the selected session clears its draft and route selection;
-deleting another session preserves the selected conversation. History and new-session header icons
+deleting another session preserves the selected conversation. A terminal deletion event detaches
+the session immediately, including when a locally initiated DELETE loses its HTTP response.
+Unconfirmed failures retain the conversation and draft for retry. History and new-session header icons
 belong only to the compact assistant; the full page uses its left navigation, including on narrow screens.
 A conversation without a Core workspace has no right panel. Narrow screens expose session and
 details controls while retaining the conversation draft.

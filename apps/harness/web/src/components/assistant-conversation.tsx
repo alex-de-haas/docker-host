@@ -159,10 +159,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const activeSessionId = useRef<string | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   // Reach the current deletion handler from the stream without stale state.
-  const deletedElsewhereRef = useRef<(sessionId: string) => void>(() => {});
-  // Sessions this tab deleted itself. The deletion fans out to every subscriber including this one,
-  // and its own click must not come back as "this session was deleted" from somewhere else.
-  const selfDeleted = useRef(new Set<string>());
+  const deletedSessionRef = useRef<(sessionId: string, local: boolean) => void>(() => {});
+  // A terminal stream event can confirm a local deletion before its HTTP response arrives.
+  const pendingDeletes = useRef(new Map<string, { confirmed: boolean }>());
 
   const mentionInputRef = useRef<AppMentionInputHandle>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -246,14 +245,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           return;
         }
         if (event.type === "session_deleted") {
-          if (selfDeleted.current.delete(record.id)) {
-            // This tab's own delete, already handled where the button was pressed.
-            return;
-          }
-          // Deleted from somewhere else — another tab, another client. Handled through the ref:
-          // detaching clears the conversation and opens history, and depending on that here would
-          // tie this callback to state it must not go stale on.
-          deletedElsewhereRef.current(record.id);
+          const pending = pendingDeletes.current.get(record.id);
+          if (pending) pending.confirmed = true;
+          // Always detach immediately, even when this tab initiated the request. The HTTP response
+          // may never arrive; a confirmed terminal event is already sufficient evidence of success.
+          deletedSessionRef.current(record.id, !!pending);
           return;
         }
         setEvents((current) => [...current, event]);
@@ -646,26 +642,30 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const remove = useCallback(async (sessionId: string) => {
     setError(null);
     // The deletion event can arrive before its HTTP response.
-    selfDeleted.current.add(sessionId);
+    const pending = { confirmed: false };
+    pendingDeletes.current.set(sessionId, pending);
     try {
       await deleteSession(sessionId);
       clearDraft(sessionId);
       setSessions(current => current.filter(entry => entry.id !== sessionId));
       detachDeleted(sessionId);
     } catch (cause) {
-      selfDeleted.current.delete(sessionId);
-      setError(cause instanceof Error ? cause.message : String(cause));
-      throw cause;
+      if (!pending.confirmed) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+        throw cause;
+      }
+    } finally {
+      pendingDeletes.current.delete(sessionId);
     }
   }, [detachDeleted]);
 
   useEffect(() => {
-    deletedElsewhereRef.current = (sessionId: string) => {
+    deletedSessionRef.current = (sessionId: string, local: boolean) => {
       setSessions(current => current.filter(entry => entry.id !== sessionId));
       clearDraft(sessionId);
       if (activeSessionId.current === sessionId) {
         detachDeleted(sessionId);
-        setError("This session was deleted in another window. Choose a session or start a new one.");
+        if (!local) setError("This session was deleted in another window. Choose a session or start a new one.");
       }
     };
   }, [detachDeleted]);
