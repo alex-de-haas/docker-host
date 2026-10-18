@@ -400,6 +400,7 @@ public sealed partial class CoreLifecycleServiceTests
     public async Task DevMode_UnavailableJournalPreservesDashboardAndBlocksMutation(string damage)
     {
         var (f, owner, _, tree, _, _) = await LocalHandoffFixture();
+        await f.Apps.UpdateAppAsync("test.created", a => a with { Autostart = false });
         var active = await ApplyReviewedDev(f.Service, DevRequest("enter", tree.Id), DevActor(owner));
         var file = AppDevStore.Record(f.Paths, "test.created", active.OperationId!);
         if (damage == "missing") File.Delete(file); else await File.WriteAllTextAsync(file, "{invalid");
@@ -407,6 +408,34 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal("unavailable", summary.DevMode?.Phase);
         Assert.Equal("dev_state_unavailable", (await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.StopAsync("test.created"))).Code);
         Assert.True(Directory.Exists(tree.Path));
+        await f.Service.InstallAsync(new AppInstallRequest(await f.WriteManifestAsync("1.0.0"), Autostart: false, StartOnInstall: true));
+        var before = await f.Apps.GetAppAsync("test.created");
+        var stops = f.Adapter.StopCount;
+        var results = await f.RecreateService().StopAutostartDisabledAppsAsync();
+        Assert.Equal("dev_state_unavailable", Assert.Single(results, r => r.AppId == "test.created").ErrorCode);
+        Assert.True(Assert.Single(results, r => r.AppId == "com.example.notes").Succeeded);
+        Assert.Equal("stopped", (await f.Apps.GetAppAsync("com.example.notes"))!.RuntimeState);
+        Assert.Equal(before, await f.Apps.GetAppAsync("test.created"));
+        Assert.Equal(stops + 1, f.Adapter.StopCount);
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("invalid")]
+    public async Task DevMode_UnavailableJournalBlocksRestoreWithoutReplacingData(string damage)
+    {
+        var (f, owner, _, tree, _, _) = await LocalHandoffFixture();
+        var data = Path.Combine(f.Paths.AppsRoot, "test.created", "data", "notes.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(data)!); await File.WriteAllTextAsync(data, "before backup");
+        var active = await ApplyReviewedDev(f.Service, DevRequest("enter", tree.Id), DevActor(owner));
+        await f.Service.StopAsync("test.created");
+        await File.WriteAllTextAsync(data, "keep changed data");
+        var file = AppDevStore.Record(f.Paths, "test.created", active.OperationId!);
+        if (damage == "missing") File.Delete(file); else await File.WriteAllTextAsync(file, "{invalid");
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.RestoreBackupAsync("test.created", active.BackupId!, new(true)));
+        Assert.Equal("dev_state_unavailable", error.Code);
+        Assert.Equal("keep changed data", await File.ReadAllTextAsync(data));
+        Assert.Single(await f.Backups.ListBackupsAsync("test.created"));
     }
 
     [Fact]

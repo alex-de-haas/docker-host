@@ -17,6 +17,7 @@ export function AppDevMode({ sessionId, appId, worktreeId, observation, disabled
   const storageKey = `hosty.dev-mode.${sessionId}.${appId}`;
   const [status, setStatus] = useState<Status | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [logs, setLogs] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [review, setReview] = useState<{ request: Request; plan: Plan } | null>(null);
@@ -33,7 +34,7 @@ export function AppDevMode({ sessionId, appId, worktreeId, observation, disabled
   }, [sessionId, appId, observation]);
   async function prepare(action: Request["action"], targetRuntime?: string) {
     if (executing.current || disabled) return;
-    executing.current = true; setBusy(true); setError("");
+    executing.current = true; setBusy(true); setError(""); setNotice("");
     try {
       const request: Request = { requestId: crypto.randomUUID(), action, targetRuntime,
         worktreeId: action === "enter" ? worktreeId : undefined, acceptDataChanges: action === "return" };
@@ -44,15 +45,18 @@ export function AppDevMode({ sessionId, appId, worktreeId, observation, disabled
   }
   async function apply(request: Request) {
     if (executing.current || disabled) return;
-    executing.current = true; setBusy(true); setError("");
+    executing.current = true; setBusy(true); setError(""); setNotice("");
     try {
       // A lost response is retried with the same identity, including after browser reload.
       localStorage.setItem(storageKey, JSON.stringify(request)); setPending(request);
       const next = await workspaceAction<Status>(sessionId, "app-dev-apply", { ...request, devAction: request.action, appId });
       setStatus(next);
-      if (!next.receipts.some(r => r.requestId === request.requestId && r.state === "succeeded"))
+      const receipt = next.receipts.find(r => r.requestId === request.requestId);
+      if (receipt?.state !== "succeeded" && receipt?.state !== "superseded")
         throw new Error("Operation remains pending. Inspect state and retry the original request.");
-      localStorage.removeItem(storageKey); setPending(null); setReview(null); refresh();
+      localStorage.removeItem(storageKey); setPending(null); setReview(null);
+      if (receipt.state === "superseded") setNotice("Another operation superseded this request. Review the current state before starting a new operation.");
+      refresh();
     } catch (e) {
       if (e instanceof AssistantApiError && ["dev_plan_changed", "dev_request_invalid", "dev_action_invalid"].includes(e.code ?? "")) {
         localStorage.removeItem(storageKey); setPending(null); setReview(null);
@@ -80,6 +84,7 @@ export function AppDevMode({ sessionId, appId, worktreeId, observation, disabled
       <Button size="sm" variant="outline" disabled={busy} onClick={() => void workspaceAction<{ text?: string }>(sessionId, "app-dev-logs", { appId }).then(r => { setLogs(r.text ?? "No logs."); setError(""); }).catch(e => setError(e.message))}>Logs</Button>
       {pending && <Button size="sm" variant="outline" disabled={busy || disabled} onClick={() => void apply(pending)}>Retry {pending.action}</Button>}
     </div>
+    {notice && <p role="status" className="text-muted-foreground">{notice}</p>}
     {(error || status?.error || status?.app.lastError) && <p role="alert" className="text-destructive">{error || status?.error || status?.app.lastError}</p>}
     {logs !== null && <div className="space-y-2"><Button size="sm" variant="ghost" onClick={() => setLogs(null)}>Hide logs</Button><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs">{logs}</pre></div>}
     <Dialog open={!!review} onOpenChange={open => { if (!open && !busy) setReview(null); }}><DialogContent className="max-h-[85vh] overflow-y-auto">

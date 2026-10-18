@@ -35,3 +35,18 @@ it("clears a definitively stale review so a fresh plan can be prepared", async (
   expect(localStorage.getItem(key)).toBeNull(); expect(container.textContent).toContain("Prepare again");
   expect([...container.querySelectorAll("button")].find(b => b.textContent === "Dev on ordinary data · dev")!.disabled).toBe(false);
 });
+
+it("clears a request superseded by another client's Return and permits a new entry", async () => {
+  await enterReview();
+  vi.mocked(workspaceAction).mockRejectedValueOnce(new Error("response lost")); await click("Apply");
+  const request = JSON.parse(localStorage.getItem(key)!);
+  await act(async () => root.unmount()); root = createRoot(container); await render();
+  vi.mocked(workspaceAction).mockResolvedValueOnce({ ...status, phase: "returned", receipts: [{ requestId: request.requestId, state: "superseded" }] });
+  await click("Retry enter");
+  expect(localStorage.getItem(key)).toBeNull();
+  expect(container.textContent).toContain("Another operation superseded this request");
+  await act(async () => root.render(<AppDevMode sessionId="session" appId="example.app" worktreeId="tree" observation="refreshed" disabled={false} refresh={() => {}} />));
+  expect(container.querySelector('[role="status"]')?.textContent).toContain("Another operation superseded this request");
+  expect(container.textContent).not.toContain("Retry enter");
+  expect([...container.querySelectorAll("button")].find(b => b.textContent === "Dev on ordinary data · dev")!.disabled).toBe(false);
+});

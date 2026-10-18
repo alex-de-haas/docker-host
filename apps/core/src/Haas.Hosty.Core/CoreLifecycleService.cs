@@ -2954,6 +2954,9 @@ internal sealed partial class CoreLifecycleService(
     private async Task<AppBackupResponse> RestoreBackupCoreAsync(string appId, string backupId, AppRestoreBackupRequest request, CancellationToken cancellationToken)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
+        // Valid stopped trials may restore data, but a missing/corrupt referenced journal still
+        // blocks mutation: its binding cannot be recovered or verified.
+        _ = await AppDevStore.ReadAsync(paths, app, cancellationToken);
         // IsIdle, not !IsUp: restoring over the data directory of an app that is still shutting down
         // (or coming up) races the runtime for those files.
         if (!AppRuntimeStates.IsIdle(app.RuntimeState))
@@ -3662,7 +3665,18 @@ internal sealed partial class CoreLifecycleService(
             // An explicitly entered dev trial retains its binding and live container across a
             // keep-apps Core restart. Autostart remains the ordinary-installation preference; it
             // must not turn a deliberate trial into an implicit Stop. A stopped trial stays stopped.
-            if (await AppDevStore.ReadAsync(paths, app, cancellationToken) is { Active: true }) continue;
+            try
+            {
+                if (await AppDevStore.ReadAsync(paths, app, cancellationToken) is { Active: true }) continue;
+            }
+            catch (AppLifecycleException ex) when (ex.Code == "dev_state_unavailable")
+            {
+                // One damaged journal must not abort boot processing for unrelated apps. Keep
+                // this app's runtime and record untouched, and report its recoverable failure.
+                logger.LogWarning(ex, "Skipped startup stop for {AppId}: development journal is unavailable", app.Id);
+                results.Add(new(app.Id, "autostart-disabled-stop", Succeeded: false, ErrorCode: ex.Code, Message: ex.Message));
+                continue;
+            }
             results.Add(await RunBackgroundLifecycleActionAsync(
                 app.Id,
                 "autostart-disabled-stop",

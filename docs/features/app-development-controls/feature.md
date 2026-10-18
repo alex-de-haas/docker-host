@@ -70,7 +70,8 @@ policy. Tool policy never creates missing Core permissions.
 Each caller supplies a stable UUID `requestId`. Apply retains a journal before changing the app:
 actor, installation, source/worktree/observed HEAD, manifest digest, prior source/runtime/artifact
 selection, initial running state, configuration fingerprint, backup and action receipts. The app
-points to this journal. Exact replay observes or resumes the original request. Changed arguments
+points to this journal. Exact replay observes or resumes the original request. Harness clears a request superseded by
+another client’s Return and explains the outcome before enabling a new operation. Changed arguments
 or authority are refused; a request retired by a later trial cannot accidentally restart old work.
 Terminal phase and successful receipt are persisted in one atomic journal write, so failure of the
 following registry update or loss of the response cannot repeat a completed transition. Exact replay
@@ -91,7 +92,8 @@ the journal snapshot never becomes an update source. It restarts
 only an app that was running before entry. It retains current data, source edits, worktrees, caches
 and backups. It performs no Git reset, commit, acceptance, push or publication. Configuration or
 binding drift refuses a stale return instead of overwriting a later operator decision. Missing or
-corrupt journals block mutations while the Dashboard still identifies the unavailable operation.
+corrupt journals block mutations, including data restore, while the Dashboard identifies the
+unavailable operation. Startup reports the failure per app and continues processing unrelated apps.
 
 The worktree is a persistent ordinary-runtime consumer. Active authorized writers can continue
 editing; transitions block new writers and destructive Git/cleanup operations. Manual transitions
