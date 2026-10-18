@@ -28,6 +28,10 @@ public sealed class AuditStoreTests
     [InlineData("app.mcp.approval", "assistantTarget")]
     [InlineData("core.environment.approval", "environmentConsentSaved")]
     [InlineData("app.lifecycle.stop", "operationId")]
+    [InlineData("app.development.enter", "review")]
+    [InlineData("app.development.return", "requestId")]
+    [InlineData("app.development.restart", "head")]
+    [InlineData("app.development.progress", "manifest")]
     [InlineData("core.lifecycle.restart", "operation")]
     [InlineData("app.ai_action_approved", "toolName")]
     public async Task AppendAsync_AllProducerSchemasKeepMetadataButOmitUnreviewedCredentialFields(string action, string metadataKey)

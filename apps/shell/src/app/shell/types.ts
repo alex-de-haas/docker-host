@@ -268,6 +268,7 @@ export type CoreApp = {
   system: boolean;
   source: string;
   selectedRuntime?: string | null;
+  devMode?: { operationId: string; phase: string; previousRuntime?: string | null } | null;
   autostart?: boolean | null;
   operationStatus: string;
   runtimeState: string;

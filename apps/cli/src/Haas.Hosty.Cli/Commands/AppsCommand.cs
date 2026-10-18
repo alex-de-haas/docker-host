@@ -1,5 +1,6 @@
 namespace Haas.Hosty.Cli.Commands;
 
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Haas.Hosty.Cli.Configuration;
 using Spectre.Console;
@@ -11,6 +12,8 @@ internal sealed partial class AppsCommand(CommandContext context)
         PropertyNameCaseInsensitive = true,
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
     [JsonSerializable(typeof(AppDevelopmentGuideResponse))]
+    [JsonSerializable(typeof(AppDevRequest))]
+    [JsonSerializable(typeof(JsonElement))]
     [JsonSerializable(typeof(AppsResponse))]
     [JsonSerializable(typeof(AppHealthSummary))]
     [JsonSerializable(typeof(AppServiceHealthSummary))]
@@ -66,6 +69,9 @@ internal sealed partial class AppsCommand(CommandContext context)
             "update-plan" => await UpdatePlanAsync(args[1..]),
             "update" => await UpdateAsync(args[1..]),
             "switch-runtime-plan" => await SwitchRuntimePlanAsync(args[1..]),
+            "dev-status" => await DevModeAsync(args[1..], "status"),
+            "dev-plan" => await DevModeAsync(args[1..], "plan"),
+            "dev-apply" => await DevModeAsync(args[1..], "apply"),
             "switch-runtime" => await SwitchRuntimeAsync(args[1..]),
             "remove" => await RemoveAsync(args[1..]),
             "backup" => await BackupAsync(args[1..]),
@@ -209,6 +215,35 @@ internal sealed partial class AppsCommand(CommandContext context)
             ManifestPath: options.ManifestPath,
             SelectedRuntime: options.SelectedRuntime));
         RenderLifecycle(response);
+        return 0;
+    }
+
+    internal sealed record AppDevRequest(string RequestId, string Action, string? TargetRuntime = null,
+        string? WorktreeId = null, string? PlanDigest = null, bool AcceptDataChanges = false);
+
+    private async Task<int> DevModeAsync(string[] args, string kind)
+    {
+        if (args.Length == 0) throw new CommandUsageException("Supply an app id.", Usage);
+        string? requestId = null, action = null, runtime = null, tree = null, digest = null;
+        var acceptData = false;
+        for (var i = 1; i < args.Length; i++)
+            switch (args[i])
+            {
+                case "--request-id": requestId = RequireOptionValue(args, ref i, "--request-id"); break;
+                case "--action": action = RequireOptionValue(args, ref i, "--action"); break;
+                case "--runtime": runtime = RequireOptionValue(args, ref i, "--runtime"); break;
+                case "--worktree": tree = RequireOptionValue(args, ref i, "--worktree"); break;
+                case "--plan-digest": digest = RequireOptionValue(args, ref i, "--plan-digest"); break;
+                case "--accept-data-changes": acceptData = true; break;
+                default: throw new CommandUsageException($"Unknown dev-mode argument '{args[i]}'.", Usage);
+            }
+        if (kind != "status" && (!Guid.TryParseExact(requestId, "D", out _) || action is not ("enter" or "return" or "restart") || kind == "apply" && string.IsNullOrEmpty(digest)))
+            throw new CommandUsageException("Supply --action and a stable UUID --request-id; apply also needs the reviewed --plan-digest. Preserve all arguments after uncertainty.", Usage);
+        using var core = await OpenCoreAsync();
+        var route = $"apps/{Uri.EscapeDataString(args[0])}/dev-mode";
+        var result = kind == "status" ? await core.GetAsync<JsonElement>(route) :
+            await core.PostAsync<JsonElement>(route + "/" + kind, new AppDevRequest(requestId!, action!, runtime, tree, digest, acceptData));
+        context.Console.Profile.Out.Writer.WriteLine(result.GetRawText());
         return 0;
     }
 
@@ -1741,6 +1776,9 @@ internal sealed partial class AppsCommand(CommandContext context)
           restart <app-id>
           update-plan <app-id> [--manifest <http(s)-manifest-url|manifest-path|app-directory>] [--runtime <key>]
           update <app-id> --plan-digest <digest> [--manifest <http(s)-manifest-url|manifest-path|app-directory>] [--runtime <key>]
+          dev-status <app-id>
+          dev-plan <app-id> --action <enter|restart|return> --request-id <uuid> [--runtime <key>] [--worktree <id>] [--accept-data-changes]
+          dev-apply <app-id> --action <enter|restart|return> --request-id <uuid> --plan-digest <digest> [--runtime <key>] [--worktree <id>] [--accept-data-changes]
           switch-runtime-plan <app-id> --runtime <key>
           switch-runtime <app-id> --runtime <key> --plan-digest <digest>
           remove <app-id> [--delete-data] [--delete-backups] [--delete-source] [--keep-state] [--ignore-runtime-errors]

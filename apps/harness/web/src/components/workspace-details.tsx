@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/compone
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { developmentRequest, repositoryName, changeTotals, type DevelopmentWorkspace, type Worktree, type Diff, type Workflow } from "@/lib/development-api";
 import { LocalRepositoryActions } from "./local-repository-actions";
+import { AppDevMode } from "./app-dev-mode";
 import { LocalAppHandoff } from "./local-app-handoff";
 import { WorkspacePreviews } from "./workspace-previews";
 
@@ -112,6 +113,8 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
             <LocalRepositoryActions sessionId={sessionId} appId={app.appId} tree={tree}
               disabled={!!running || busy || tree.state !== "active"} refresh={refresh} />
           </div>)}
+          {sessionId && tree.apps.map(app => <AppDevMode key={`${sessionId}:${app.appId}:${tree.id}`} sessionId={sessionId} appId={app.appId} worktreeId={tree.id}
+            observation={tree.observation?.at} disabled={!!running || busy || tree.state !== "active"} refresh={refresh} />)}
           {(tree.detailError || tree.observation?.error) && <p role="status" className="text-xs text-destructive">{tree.detailError || tree.observation?.error}</p>}
         </section>;
       })}

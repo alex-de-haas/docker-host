@@ -79,7 +79,7 @@ internal static class CoreAppPermissions
         ReadPanels => "Discover accessible application panels and open them beside this app",
         AppLogs => "Read application logs",
         Notifications => "Read application notifications",
-        AppLifecycle => "Start, stop and restart applications; change autostart and select reviewed runtimes. Source folder changes require Core confirmation",
+        AppLifecycle => "Start, stop and restart applications; change autostart and select reviewed runtimes and managed dev mode. Other source folder changes require Core confirmation",
         ConfigureApps => "Read and change application settings, including sensitive values, mounts and backups",
         ReadCore => "Read Core state",
         UpdateCore => "Update Core",

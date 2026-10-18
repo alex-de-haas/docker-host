@@ -470,7 +470,8 @@ internal sealed record AppRecord(
     IReadOnlyList<string>? ActiveMountPaths = null,
     IReadOnlyList<string>? ActiveSourcePaths = null,
     AppLaunchProgress? LaunchProgress = null,
-    string? AppliedSourceManifestDigest = null)
+    string? AppliedSourceManifestDigest = null,
+    string? DevModeId = null)
 {
     [System.Text.Json.Serialization.JsonIgnore]
     public string BrowserOriginScope { get; init; } = "";
@@ -1106,7 +1107,8 @@ internal sealed record AppSummary(
     string? InstallationId = null,
     UiFramePolicy? FramePolicy = null,
     AppLaunchProgress? LaunchProgress = null,
-    AppDevelopmentStatus? Development = null)
+    AppDevelopmentStatus? Development = null,
+    AppDevSummary? DevMode = null)
 {
     public static AppSummary From(
         AppRecord app,

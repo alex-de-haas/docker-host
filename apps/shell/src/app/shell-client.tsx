@@ -876,6 +876,49 @@ export function ShellClient({
       setBusyAction(actionKey);
       setState((current) => ({ ...current, error: null }));
       try {
+        const devProfile = currentApp.runtimeProfiles?.find(p => p.key === targetRuntime);
+        if (!currentApp.system && (targetRuntime === "__dev_return" || targetRuntime === "__dev_retry" || devProfile?.type === "docker" && devProfile.development)) {
+          const action = targetRuntime === "__dev_return" ? "return" : "enter";
+          const key = `hosty.dev-mode.${app.id}`;
+          let saved: { requestId: string; action: string; targetRuntime?: string; planDigest?: string; acceptDataChanges: boolean } | null = null;
+          try { saved = JSON.parse(localStorage.getItem(key) ?? "null"); } catch { /* Start a reviewed request. */ }
+          if (targetRuntime === "__dev_retry" && !saved?.planDigest)
+            throw new Error("The original request is not saved in this browser. Retry from its initiating client or Return to the previous runtime.");
+          const request = targetRuntime === "__dev_retry" ? saved! : saved?.action === action && (action === "return" || saved.targetRuntime === targetRuntime) ? saved :
+            { requestId: crypto.randomUUID(), action, targetRuntime: action === "enter" ? targetRuntime : undefined, acceptDataChanges: action === "return" };
+          if (!request.planDigest) {
+            let response: Response;
+            try { response = await sendCsrfJson(appEndpoint(app, "/dev-mode/plan"), request); }
+            catch (error) {
+              if (action !== "enter" || !(error instanceof CoreRequestError) ||
+                  !["dev_source_required", "dev_source_unavailable", "dev_manual_source_unsupported", "dev_profile_unsupported"].includes(error.code ?? "")) throw error;
+              if (!await confirm({ title: "Use the existing manual runtime switch?",
+                description: `${error.message} This source is outside managed dev mode. The existing manual switch has no durable Return operation; use Switch runtime to switch back.`,
+                action: "Switch manually" })) return;
+              const legacy = await sendCsrfJson(appEndpoint(app, "/switch-runtime/plan"), { targetRuntime });
+              const plan = await legacy.json() as CoreRuntimeSwitchPlan;
+              await sendCsrfJson(appEndpoint(app, "/switch-runtime"), { targetRuntime: plan.targetRuntime, planDigest: plan.planDigest });
+              await refresh(); invalidateUpdateStatus(app.id);
+              toast.success("Runtime switched", { description: "Existing manual workflow; managed dev mode was not entered." });
+              return;
+            }
+            const plan = await response.json() as { planDigest: string; changes: string[]; outsideBackup: string[] };
+            if (!await confirm({ title: action === "return" ? "Return and keep current data?" : "Enter dev mode on ordinary data?",
+              description: [...plan.changes, ...plan.outsideBackup, ...(action === "return" ? ["Confirm that current data is compatible with the previous runtime. No backup is restored."] : [])].join("\n"),
+              action: action === "return" ? "Return to previous runtime" : "Enter dev mode" })) return;
+            request.planDigest = plan.planDigest;
+          }
+          localStorage.setItem(key, JSON.stringify(request));
+          try { await sendCsrfJson(appEndpoint(app, "/dev-mode/apply"), request); }
+          catch (error) {
+            if (error instanceof CoreRequestError && ["dev_plan_changed", "dev_request_invalid", "dev_action_invalid"].includes(error.code ?? "")) localStorage.removeItem(key);
+            throw error;
+          }
+          localStorage.removeItem(key);
+          await refresh(); invalidateUpdateStatus(app.id);
+          toast.success(action === "return" ? "Previous runtime restored" : "Development mode active", { description: "Current application data and source edits are retained." });
+          return;
+        }
         // Plan routes are session-authenticated POSTs and now require the CSRF header like their apply
         // twins (C-M9); sendCsrfJson attaches it and throws on !ok.
         const planResponse = await sendCsrfJson(appEndpoint(app, "/switch-runtime/plan"), { targetRuntime });
@@ -933,7 +976,7 @@ export function ShellClient({
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [appEndpoint, coreOrigin, invalidateUpdateStatus, refresh, refreshApps, sendCsrfJson, shellAppId, state.apps],
+    [confirm, appEndpoint, coreOrigin, invalidateUpdateStatus, refresh, refreshApps, sendCsrfJson, shellAppId, state.apps],
   );
 
   const loadAppBackups = useCallback(

@@ -1674,7 +1674,7 @@ function RuntimeSwitcher({
 }) {
   const runtimeProfiles = app.runtimeProfiles ?? [];
   const currentRuntime = app.selectedRuntime || "none";
-  const switchable = canSwitch && runtimeProfiles.length > 1;
+  const switchable = canSwitch && (runtimeProfiles.length > 1 || !!app.devMode);
   const development = runtimeProfiles.find((profile) => profile.key === app.selectedRuntime)?.development === true;
   const switching = busyAction?.startsWith(`${app.id}:switch-runtime:`) ?? false;
 
@@ -1685,14 +1685,14 @@ function RuntimeSwitcher({
         <TooltipProvider delayDuration={150}>
           <Tooltip>
             <TooltipTrigger asChild>
-              <span tabIndex={0} className="inline-flex shrink-0 cursor-help text-emerald-600 dark:text-emerald-400" role="img" aria-label={app.live ? "Live source runtime" : "Development runtime"}>
+              <span tabIndex={0} className="inline-flex shrink-0 cursor-help text-emerald-600 dark:text-emerald-400" role="img" aria-label={app.devMode ? "Dev mode on ordinary data" : app.live ? "Live source runtime" : "Development runtime"}>
                 <Radio aria-hidden="true" className="size-3.5" />
               </span>
             </TooltipTrigger>
             <TooltipContent className="max-w-sm">
               <div className="flex flex-col gap-2">
-                <p className="font-medium">{app.live ? "Live source runtime" : "Development runtime"}</p>
-                {app.live
+                <p className="font-medium">{app.devMode ? "Dev mode on ordinary data" : app.live ? "Live source runtime" : "Development runtime"}</p>
+                {app.devMode ? <p>Live code uses this app’s ordinary data and users. The installed manifest contract stays fixed. Return restores execution selection and keeps current data and source edits.</p> : app.live
                   ? <p>Core runs this app from your source folder and adopts manifest edits on restart — there is no reviewed update. Switch to a compiled runtime for locked, reviewed updates.</p>
                   : <p>A development profile is selected, but live source is not active. Reviewed updates may still be available.</p>}
                 <p>Reload behavior depends on the runtime commands.</p>
@@ -1722,6 +1722,12 @@ function RuntimeSwitcher({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-56">
           <DropdownMenuLabel>Runtime</DropdownMenuLabel>
+          {app.devMode && app.devMode.phase !== "active" && <DropdownMenuItem disabled={switching} onClick={() => onSwitchRuntime(app, "__dev_retry")}>
+            Retry interrupted dev operation
+          </DropdownMenuItem>}
+          {app.devMode && <DropdownMenuItem disabled={switching} onClick={() => onSwitchRuntime(app, "__dev_return")}>
+            Return to previous runtime ({app.devMode.previousRuntime})
+          </DropdownMenuItem>}
           <DropdownMenuSeparator />
           {runtimeProfiles.map((profile) => {
             const selected = profile.key === app.selectedRuntime;
@@ -1729,7 +1735,7 @@ function RuntimeSwitcher({
             return (
               <DropdownMenuItem
                 key={profile.key}
-                disabled={switching}
+                disabled={switching || !!app.devMode}
                 onClick={() => onSwitchRuntime(app, profile.key)}
               >
                 {targetBusy ? (

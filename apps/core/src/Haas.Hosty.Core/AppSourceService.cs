@@ -352,6 +352,8 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
                 using var activity = await safety.LockAsync(appId, ct);
                 {
                     var app = await RequireAppAsync(appId, ct);
+                    if (await AppDevStore.ReadAsync(paths, app, ct) is { Active: true })
+                        throw new AppLifecycleException("dev_mode_active", "Return from development mode before changing the source binding.");
                     await safety.RequireIdleAsync(appId, ct);
                     return await action(app);
                 }
