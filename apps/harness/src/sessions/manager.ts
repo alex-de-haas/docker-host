@@ -349,8 +349,9 @@ export class SessionManager {
           await this.worker.registerTrees(verified!.worktreePaths, this.workerBindings);
         }
         session.record.appCreations!.find(o => o.input.requestId === input.requestId)!.state = "observed";
+        session.record.updatedAt = new Date().toISOString();
         await this.store.saveRecord(session.record);
-        await this.append(id, { type: "app_context_changed", appIds, appContextRevision: session.record.appContextRevision, actor: session.record.createdBy });
+        await this.append(id, { type: "app_context_changed", ts: session.record.updatedAt, appIds, appContextRevision: session.record.appContextRevision, actor: session.record.createdBy });
         return created;
       }
       const result = await this.development.call(id, token, action, input);

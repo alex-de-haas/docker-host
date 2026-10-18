@@ -251,7 +251,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           if (event.status === "cancelled") setEvents(current => [...current, event]);
           const value = String(event.status ?? "idle");
           setStatus(value);
-          setSessions(current => current.map(item => item.id === record.id ? { ...item, status: value, updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(item) ? event.ts : item.updatedAt } : item));
+          const applyStatus = (item: AssistantSession) => item.id === record.id ? { ...item, status: value,
+            lastEventSeq: Math.max(item.lastEventSeq ?? 0, event.seq),
+            updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(item) ? event.ts : item.updatedAt } : item;
+          setSessions(current => current.map(applyStatus));
+          setSession(current => current ? applyStatus(current) : current);
           if (!["running", "awaiting_approval", "awaiting_question"].includes(String(event.status))) {
             setActivity(null);
             setStreamed("");

@@ -563,8 +563,11 @@ it("refreshes non-selected running sessions through waiting and completion witho
     vi.mocked(api.listSessions).mockResolvedValue([record, other]);
     await renderDeletion();
     expect(navigationTitles()).toEqual(["Conversation", "Background work"]);
-    vi.mocked(api.listSessions).mockResolvedValue([record, { ...other, status: "awaiting_approval", updatedAt: "2026-10-18T12:00:00Z" }]);
+    let refresh!: (rows: api.AssistantSession[]) => void;
+    vi.mocked(api.listSessions).mockImplementationOnce(() => new Promise(resolve => { refresh = resolve; }));
     await act(async () => { vi.advanceTimersByTime(5000); });
+    await act(async () => emit({ type: "session_status", seq: 2, ts: "2026-10-18T11:30:00Z", status: "running" }));
+    await act(async () => refresh([record, { ...other, status: "awaiting_approval", updatedAt: "2026-10-18T12:00:00Z" }]));
     expect(navigationTitles()).toEqual(["Background work", "Conversation"]);
     expect(container.querySelector('[aria-label="Waiting for you"]')).not.toBeNull();
     vi.mocked(api.listSessions).mockResolvedValue([record, { ...other, status: "idle", updatedAt: "2026-10-18T13:00:00Z" }]);
@@ -573,6 +576,12 @@ it("refreshes non-selected running sessions through waiting and completion witho
     const calls = vi.mocked(api.listSessions).mock.calls.length;
     await act(async () => { vi.advanceTimersByTime(15000); });
     expect(api.listSessions).toHaveBeenCalledTimes(calls);
+    vi.mocked(api.listSessions).mockResolvedValue([record, { ...other, status: "running", updatedAt: "2026-10-18T14:00:00Z" }]);
+    await act(async () => { vi.advanceTimersByTime(15000); });
+    expect(api.listSessions).toHaveBeenCalledTimes(calls + 1);
+    expect(container.querySelector('[aria-label="Agent running"]')).not.toBeNull();
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(api.listSessions).toHaveBeenCalledTimes(calls + 2);
     expect(input().value).toBe("My retained draft");
     expect(window.location.search).toBe("?session=session-one");
   } finally { visible.mockRestore(); vi.useRealTimers(); }
@@ -633,4 +642,24 @@ it("does not let a late rename response overwrite settings at the same timestamp
   expect(button("Autonomy: Autonomous")).not.toBeNull();
   await act(async () => emit({ type: "session_autonomy_changed", seq: 2, ts: "2026-10-18T12:00:00Z", autonomy: "normal" }));
   expect(button("Autonomy: Autonomous")).not.toBeNull();
+});
+
+it("retains a status event sequence against a late same-time rename after switching away", async () => {
+  record = { ...record, lastEventSeq: 1, updatedAt: "2026-10-18T10:00:00Z" };
+  const other = { ...record, id: "other", title: "Other conversation" };
+  vi.mocked(api.listSessions).mockResolvedValue([record, other]);
+  vi.mocked(api.getSession).mockImplementation(async id => id === other.id ? other : record);
+  await render();
+  await act(async () => button("Session history")!.click());
+  await act(async () => button("Rename Conversation")!.click());
+  let renameReply!: (value: api.AssistantSession) => void;
+  vi.mocked(api.renameSession).mockImplementation(() => new Promise(resolve => { renameReply = resolve; }));
+  await act(async () => container.querySelector<HTMLInputElement>('input[placeholder="Name this session…"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  await act(async () => emit({ type: "session_status", seq: 3, ts: "2026-10-18T12:00:00Z", status: "awaiting_question" }));
+  await act(async () => renameReply({ ...record, lastEventSeq: 2, updatedAt: "2026-10-18T12:00:00Z", status: "idle" }));
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent?.startsWith("Other conversation"))!.click());
+  vi.mocked(api.listSessions).mockRejectedValue(new Error("Offline"));
+  await act(async () => button("Session history")!.click());
+  const row = [...container.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent?.startsWith("Conversation"));
+  expect(row?.textContent).toContain("waiting for you");
 });

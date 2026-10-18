@@ -30,12 +30,15 @@ source metadata changes; ignored build output does not affect order. Legacy work
 their last saved observation as a baseline until new activity is recorded. A Core predating this
 field leaves activity unknown, sorted deterministically after dated records.
 The selected chat uses its existing event stream. While another chat is running or waiting, the
-visible full-page navigation reconciles session inventory every five seconds. Hidden pages pause
+visible full-page navigation reconciles session inventory every five seconds, or every thirty
+seconds when other sessions are idle so activity started in another window is discovered. Hidden pages pause
 requests; focus and visibility recovery refresh even an idle list. Requests do not overlap within
-a subscription, and snapshots overtaken by local edits, events or deletions are discarded. Failed
+a subscription. Responses preserve rows changed locally while updating unaffected background rows;
+removed local rows are not restored, and new discoveries wait for a read without concurrent edits. Failed
 refreshes retain the list and drafts for retry. Older full-record replies cannot replace newer
 session settings. The existing persisted event sequence also rejects older full records and settings
-events whose millisecond timestamps tie. Provider/autonomy events apply their settings immediately, even if reconciliation
+events whose millisecond timestamps tie. Status events advance this sequence too; Create app
+persists its context-change time before emitting the corresponding event. Provider/autonomy events apply their settings immediately, even if reconciliation
 fails; a fetch superseded by a later settings event cannot replace that event.
 Each row offers Delete session with confirmation. It reuses the existing session deletion API,
 including unfinished-workspace protection, and keeps failures visible for retry without navigating
