@@ -1,6 +1,6 @@
 ---
 created: 2026-08-25
-updated: 2026-10-07
+updated: 2026-10-18
 summary: Core acts as an OAuth 2.1 authorization server so MCP clients obtain and rotate scoped tokens themselves.
 components: [apps/core]
 ---
@@ -16,15 +16,12 @@ same introspection. OAuth replaces issuance only, nothing downstream of it.
 
 ## The Flow
 
-1. A client finds the authorization server through RFC 9728 resource metadata, by one of two routes,
-   and which one it takes depends on what it presented. A call carrying a **rejected** bearer
-   credential is answered `401` with `WWW-Authenticate` naming the resource-metadata URL; Core MCP
-   sets that header on the response's way out
-   ([McpEndpoints.cs](../../../apps/core/src/Haas.Hosty.Core/McpEndpoints.cs)), so no `401` can forget
-   it, and apps and the facade serve theirs through the SDK helpers. A call carrying **no credential
-   at all** never gets that far: the CSRF gate the browser case needs refuses it first with
-   `403 csrf_invalid` and no challenge. A client starting cold therefore reads the well-known
-   resource-metadata path directly, which is the route the live run below took.
+1. A client finds the authorization server through RFC 9728 resource metadata. A call with no
+   credential, or with a rejected bearer credential, receives `401` with `WWW-Authenticate`
+   naming the resource-metadata URL. Core MCP sets that header on the response's way out
+   ([McpEndpoints.cs](../../../apps/core/src/Haas.Hosty.Core/McpEndpoints.cs)); clients can also read
+   the well-known metadata directly. Cookie-authenticated requests still require CSRF and receive
+   `403 csrf_invalid` when that proof is absent or wrong. No unauthenticated request reaches a tool.
 2. The client reads `/.well-known/oauth-authorization-server` (RFC 8414) and registers itself via
    Dynamic Client Registration (RFC 7591).
 3. `GET /api/auth/oauth/authorize` validates everything — client, redirect_uri, PKCE (S256 only),
@@ -64,6 +61,25 @@ The **grant** (the refresh chain) is the durable thing, in
 [OAuthStore.cs](../../../apps/core/src/Haas.Hosty.Core/OAuthStore.cs) with the refresh token stored
 as a SHA-256 hash, the way invitation tokens already are. Its lifetime rides the access-token idle
 budget the operator already tunes, refreshed on every rotation.
+
+## Client Recovery Diagnostics
+
+The access token expires after one hour; the refresh grant defaults to 90 days, extended on each
+successful rotation. It does not depend on the browser login session staying alive. Changing the
+browser session lifetime does not repair a client that cannot use its refresh credential.
+
+On 2026-10-09, local Codex diagnostics reported that stored OAuth refresh credentials lacked an
+"authorization server issuer". Core advertised the correct issuer and both grants remained live
+with no recorded rotations. The standalone CLI was 0.147.0 while the desktop bundled CLI was
+0.162.0-alpha.17.2. A fresh login using the desktop bundled CLI restored real MCP calls without a
+Core restart. This establishes recovery of the connection, not a completed hourly-refresh soak test.
+
+When this error occurs, use the same client build as the active application for OAuth login. Check
+its actual executable and version instead of assuming the shell command and desktop share a build.
+Retain normal scope consent and verify both immediate calls and subsequent renewal/reconnect.
+A new login creates a new grant and does not inherit workspaces owned by earlier grants; avoid
+repeated login as a substitute for working refresh. Do not edit credential stores or extend token
+lifetimes to hide a missing issuer. See the [Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp).
 
 ## Resource Indicators Are The Audience Rule
 
@@ -170,6 +186,9 @@ call **inside the same live session** — the property introspection-per-call bu
 validated locally until its TTL runs out.
 
 ## Testing Expectations
+
+- Anonymous MCP initialization receives `401` and resource metadata discovery; browser session
+  cookies still require a matching CSRF pair, and role/scope refusals remain `403`.
 
 - The whole flow over the real pipeline: register → authorize → consent → redeem → the token
   working on the surface it names and refused as a Core session — then rotation and the one-row
