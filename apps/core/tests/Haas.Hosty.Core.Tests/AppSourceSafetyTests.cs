@@ -1,9 +1,149 @@
 using Haas.Hosty.Core;
+using System.Text.Json.Nodes;
 
 namespace Haas.Hosty.Core.Tests;
 
 public sealed partial class CoreLifecycleServiceTests
 {
+    [Fact]
+    public async Task SourceSafety_ClearedOverrideStaysClearedWhenOriginalManifestIsReconciled()
+    {
+        var (f, repository) = await SourceFixtureAsync();
+        var installed = (await f.Apps.GetAppAsync(SourceTestApp))!;
+        Assert.Equal(MountPathPolicy.ResolveRealPath(repository), installed.SourceState!.LocalOverridePath);
+        var selection = await f.Manifests.LoadAsync(installed.InstallManifestPath!);
+        await f.Sources.ClearLocalOverrideAsync(SourceTestApp);
+
+        var restarted = f.RecreateService();
+        var current = (await f.Apps.GetAppAsync(SourceTestApp))!;
+        await restarted.ReconcileLiveContractAsync(current, new(selection, LiveReconciled: true, ManifestError: null), default);
+        Assert.Null((await f.Apps.GetAppAsync(SourceTestApp))!.SourceState!.LocalOverridePath);
+        // A deliberately selected override is still preserved by the same reconciliation path.
+        await f.Sources.SetLocalOverrideAsync(SourceTestApp, new(repository));
+        current = (await f.Apps.GetAppAsync(SourceTestApp))!;
+        await restarted.ReconcileLiveContractAsync(current, new(selection, LiveReconciled: true, ManifestError: null), default);
+        Assert.Equal(MountPathPolicy.ResolveRealPath(repository), (await f.Apps.GetAppAsync(SourceTestApp))!.SourceState!.LocalOverridePath);
+        Assert.Equal("source", await File.ReadAllTextAsync(Path.Combine(repository, "README.md")));
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    public async Task SourceSafety_ClearedFolderOverrideStartsAndRestartsFromManagedSource(bool materialized, bool restart, bool relative)
+    {
+        var f = await LifecycleFixture.CreateAsync();
+        var repository = await CreateLocalCommandGitRepositoryAsync(f.Root);
+        var manifestPath = Path.Combine(repository, "apps", "remote-app", "manifest.json");
+        var manifest = JsonNode.Parse(CreateRemoteLocalCommandManifestJson(relative ? "." : repository))!;
+        manifest["runtimeProfiles"]![0]!["development"] = true;
+        await File.WriteAllTextAsync(manifestPath, manifest.ToJsonString());
+        await RunGitAsync(repository, ["add", "apps/remote-app/manifest.json"]);
+        await RunGitAsync(repository, ["-c", "user.name=Hosty Test", "-c", "user.email=hosty@example.test", "commit", "-m", "Add manifest"]);
+        await f.Service.InstallAsync(new AppInstallRequest(manifestPath, SelectedRuntime: "dev"));
+        const string appId = "com.example.remote-local";
+        Assert.Null((await f.Apps.GetAppAsync(appId))!.ManifestUrl);
+        if (materialized) await f.Sources.ResolveManagedAsync(appId, new(Branch: "main"), localRepositoryRoot: relative ? repository : null);
+        await f.Sources.ClearLocalOverrideAsync(appId);
+        var service = f.RecreateService();
+        try
+        {
+            var started = restart ? await service.RestartAsync(appId) : await service.StartAsync(appId);
+            Assert.Equal("running", started.App?.RuntimeState);
+            var app = (await f.Apps.GetAppAsync(appId))!;
+            Assert.Null(app.SourceState!.LocalOverridePath);
+            Assert.True(Directory.Exists(Path.Combine(app.SourceState.ManagedCheckoutPath!, ".git")));
+            var cwd = await File.ReadAllTextAsync(Path.Combine(f.Paths.AppsRoot, appId, "data", "cwd.txt"));
+            Assert.Equal(MountPathPolicy.ResolveRealPath(Path.Combine(app.SourceState.ManagedCheckoutPath!, "apps", "remote-app")), cwd.Trim());
+            Assert.Equal("", await RunGitAsync(repository, ["status", "--porcelain"]));
+            Assert.Equal(manifest.ToJsonString(), await File.ReadAllTextAsync(manifestPath));
+            if (relative)
+            {
+                // A warm managed checkout remains usable after the operator retires the old folder.
+                Directory.Move(repository, repository + "-retired");
+                Assert.Equal("running", (await service.RestartAsync(appId)).App?.RuntimeState);
+                Assert.Null((await f.Apps.GetAppAsync(appId))!.SourceState!.LocalOverridePath);
+                Assert.Equal(".", (await f.Apps.GetAppAsync(appId))!.SourceState!.Repository);
+            }
+        }
+        finally { await service.StopAsync(appId); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SourceSafety_LegacySandboxConsumersAllowIdleOverrideRemovalAndConsumerRegistration(bool omitted)
+    {
+        var (f, repository) = await SourceFixtureAsync();
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var owner = WorkspaceTestOwner(f);
+        var tree = await service.PrepareAsync(owner, WorkspaceRequest(), default);
+        var record = Path.Combine(f.Paths.CoreRoot, "development", "workspaces", tree.Id + ".json");
+        var document = JsonNode.Parse(await File.ReadAllTextAsync(record))!.AsObject();
+        if (omitted) document.Remove("sandboxConsumers");
+        else document["sandboxConsumers"] = null;
+        await File.WriteAllTextAsync(record, document.ToJsonString());
+        var legacyRecord = await File.ReadAllTextAsync(record);
+        await File.WriteAllTextAsync(Path.Combine(tree.Path, "keep.txt"), "uncommitted work");
+
+        service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        Assert.Empty((await service.Read(tree.Id, owner, default)).SandboxConsumers);
+        // Observation must not rewrite a record or erase another process's activity.
+        Assert.Equal(legacyRecord, await File.ReadAllTextAsync(record));
+        await f.Service.CreateRemovalPlanAsync(SourceTestApp, new(), default);
+        await f.Sources.ClearLocalOverrideAsync(SourceTestApp);
+        await f.Sources.ClearLocalOverrideAsync(SourceTestApp);
+        Assert.Null((await f.Apps.GetAppAsync(SourceTestApp))!.SourceState!.LocalOverridePath);
+        Assert.Equal("source", await File.ReadAllTextAsync(Path.Combine(repository, "README.md")));
+        Assert.Equal("uncommitted work", await File.ReadAllTextAsync(Path.Combine(tree.Path, "keep.txt")));
+
+        var consumer = Guid.NewGuid().ToString("N");
+        await service.SetSandboxConsumerAsync(tree.Id, consumer, true, default);
+        service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        Assert.Equal([consumer], (await service.Read(tree.Id, owner, default)).SandboxConsumers);
+        Assert.Equal("source_in_use", (await Assert.ThrowsAsync<AppLifecycleException>(
+            () => f.Sources.ClearLocalOverrideAsync(SourceTestApp))).Code);
+        await service.SetSandboxConsumerAsync(tree.Id, consumer, false, default);
+        Assert.Empty((await service.Read(tree.Id, owner, default)).SandboxConsumers);
+    }
+
+    [Theory]
+    [InlineData("lease", "source_in_use")]
+    [InlineData("pending", "source_in_use")]
+    [InlineData("releasing", "source_in_use")]
+    [InlineData("apps", "source_activity_unknown")]
+    [InlineData("operations", "source_activity_unknown")]
+    [InlineData("leases", "source_activity_unknown")]
+    public async Task SourceSafety_LegacyConsumersDoNotHideActiveOrUnknownActivity(string activity, string expected)
+    {
+        var (f, _, service, tree, created, _) = await LocalHandoffFixture();
+        if (activity == "lease") tree = await service.CommandAsync(tree.Id, null, "lease",
+            new(Guid.NewGuid().ToString(), LeaseId: Guid.NewGuid().ToString()), default);
+        if (activity == "pending") tree = tree with { Operations = [.. tree.Operations,
+            new(Guid.NewGuid().ToString(), "commit", "fingerprint", "unknown")] };
+        if (activity == "releasing") tree = tree with { State = "releasing" };
+        var record = Path.Combine(f.Paths.CoreRoot, "development", "workspaces", tree.Id + ".json");
+        await JsonStorage.WriteAsync(record, tree);
+        var document = JsonNode.Parse(await File.ReadAllTextAsync(record))!.AsObject();
+        document["sandboxConsumers"] = null;
+        if (activity is "apps" or "operations" or "leases") document[activity] = null;
+        await File.WriteAllTextAsync(record, document.ToJsonString());
+
+        Assert.Equal(expected, (await Assert.ThrowsAsync<AppLifecycleException>(
+            () => f.Sources.ClearLocalOverrideAsync("test.created"))).Code);
+        Assert.Equal(expected, (await Assert.ThrowsAsync<AppLifecycleException>(
+            () => f.Sources.SetLocalOverrideAsync("test.created", new(tree.Path)))).Code);
+        Assert.Equal(expected, (await Assert.ThrowsAsync<AppLifecycleException>(
+            () => f.Service.RemoveAsync("test.created", new(DeleteSource: true)))).Code);
+        Assert.True(File.Exists(Path.Combine(created.Operation.SourcePath, "manifest.json")));
+        Assert.True(File.Exists(Path.Combine(tree.Path, "feature.txt")));
+    }
+
     [Theory]
     [InlineData("lease")]
     [InlineData("sandbox")]

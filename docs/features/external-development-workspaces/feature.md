@@ -115,6 +115,11 @@ codex mcp login hosty-local --scopes mcp:read,mcp:workspaces
 codex mcp get hosty-local --json
 ```
 
+For desktop clients, perform login using the CLI bundled with that application or its own
+connection UI. A separately installed CLI can be older and write OAuth metadata that the desktop
+cannot refresh. Check both versions; an issuer-missing error calls for compatible reauthentication,
+not longer Hosty session lifetimes. See [MCP recovery diagnostics](../mcp-oauth/feature.md#client-recovery-diagnostics).
+
 Codex stores MCP settings in its local `config.toml`; local desktop, CLI and IDE clients on the
 same Codex host share configuration. Reconnect the client after changing its server configuration.
 The [official Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)

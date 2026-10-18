@@ -65,6 +65,12 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
     {
         Id(id);
         var w = await JsonStorage.ReadAsync<DevelopmentWorkspace>(RecordPath(id), ct) ?? throw Error("not_found", "Workspace not found.");
+        if (w.Owner is null || w.Apps is null || w.Leases is null || w.Operations is null
+            || w.Apps.Any(a => a is null) || w.Operations.Any(o => o is null))
+            throw Error("ownership_invalid", "Workspace activity metadata is incomplete.");
+        // Records predating persistent sandbox consumers can contain an omitted or null field.
+        // Normalize only that optional addition; unknown lease/operation activity must still fail.
+        w = w with { SandboxConsumers = w.SandboxConsumers ?? [] };
         if (owner is not null && !w.Owner.SameIdentity(owner))
             throw Error("forbidden", "This workspace belongs to another assistant installation, external grant, user or task.");
         if (w.Path != WorkPath(id) || w.RepositoryId != Hash(w.Repository) || w.Branch != "hosty/session/" + id)

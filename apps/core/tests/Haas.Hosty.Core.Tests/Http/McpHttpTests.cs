@@ -247,9 +247,12 @@ public sealed class McpHttpTests
         var member = await SeedSessionAsync(harness, "host.member", "user_2");
         using var client = harness.CreateClient();
 
-        // Browser-shaped anonymous POST: the CSRF gate answers first, as on every requireCsrf route.
+        // A cold MCP client needs an OAuth challenge before it has any credential.
         using var anonymous = await PostAsync(client, credential: null, Envelope(1, "initialize", InitializeParams));
-        Assert.Equal(HttpStatusCode.Forbidden, anonymous.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+        Assert.Contains("resource_metadata=", anonymous.Headers.WwwAuthenticate.ToString());
+        Assert.Contains("/.well-known/oauth-protected-resource/api/mcp", anonymous.Headers.WwwAuthenticate.ToString());
+        Assert.Contains("session_missing", await anonymous.Content.ReadAsStringAsync());
 
         // A bearer is CSRF-exempt, so this reaches the session check and gets the clean 401.
         using var badBearer = await PostAsync(client, "not-a-session", Envelope(1, "initialize", InitializeParams));
@@ -259,6 +262,27 @@ public sealed class McpHttpTests
         // so a non-admin never learns which apps exist.
         using var nonAdmin = await PostAsync(client, member, Envelope(1, "initialize", InitializeParams));
         Assert.Equal(HttpStatusCode.Forbidden, nonAdmin.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(null, HttpStatusCode.Forbidden)]
+    [InlineData("wrong-csrf", HttpStatusCode.Forbidden)]
+    [InlineData("test-csrf", HttpStatusCode.OK)]
+    public async Task BrowserSessionStillRequiresMatchingCsrf(string? csrfHeader, HttpStatusCode expected)
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        client.DefaultRequestHeaders.Add("Cookie", $"hosty_session={admin}; hosty_csrf=test-csrf");
+        if (csrfHeader is not null)
+            client.DefaultRequestHeaders.Add(CoreSessionAuthorization.CsrfHeaderName, csrfHeader);
+
+        using var response = await PostAsync(client, credential: null, Envelope(1, "initialize", InitializeParams));
+
+        Assert.Equal(expected, response.StatusCode);
+        Assert.Empty(response.Headers.WwwAuthenticate);
+        if (expected == HttpStatusCode.Forbidden)
+            Assert.Contains("csrf_invalid", await response.Content.ReadAsStringAsync());
     }
 
     [Fact]
