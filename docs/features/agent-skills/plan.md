@@ -22,6 +22,9 @@ dated research and isolated native-client checks below contribute evidence to D2
 not establish an end-to-end Hosty skill delivery flow or authorize implementation.
 On 2026-10-18 the owner requested the same directory experiment in Docker with a real bind mount;
 the results below extend the native-client evidence without changing the Draft's scope.
+These are historical checks of Codex `0.160.0` and Claude Agent SDK `0.3.288`. At this
+reconciliation, Harness pins Codex `0.162.1` and Claude Agent SDK `0.3.296`; verification of
+those current pins remains outstanding in D4. The historical results do not cover that upgrade.
 
 The goal is to let users shape how their agents work through reusable skills, while Hosty supplies
 the tools those workflows need. This should serve Hosty Harness, other installed assistants and
@@ -379,10 +382,10 @@ The following are research conclusions and candidates for discussion, not approv
   task execution need separate evidence. A script still needs its interpreter, dependencies and
   authorized app/sandbox endpoint in the agent's actual environment.
 
-Static Hosty findings refine the baseline:
+Static Hosty findings at the historical inspection baseline:
 
-- [Harness dependencies](../../../apps/harness/package.json) pin Claude Agent SDK `0.3.288` and
-  Codex `0.160.0` at inspection. The installed Claude SDK types already declare the session
+- Harness dependencies at that inspection pinned Claude Agent SDK `0.3.288` and
+  Codex `0.160.0`; the [current manifest](../../../apps/harness/package.json) has since changed. The installed Claude SDK types already declare the session
   `skills` filter. The [Claude adapter](../../../apps/harness/src/harness/claude.ts) sets
   `settingSources: ["user", "project"]` but supplies no Hosty-selected skill list. Native skill
   discovery can therefore coexist with the absence of a Hosty-managed library. The pinned-client
@@ -399,8 +402,8 @@ Static Hosty findings refine the baseline:
 ### Remaining Evidence
 
 D2 remains open for a Hosty import/update and migration proposal, including identity, full-package
-review and revision retention. The following checks establish part of D4 for two pinned clients.
-D4 still includes other consumers, nested-resource access, script prerequisites, update/resume
+review and revision retention. The following checks contribute historical evidence to D4.
+D4 still includes verification against the current Harness pins, other consumers, nested-resource access, script prerequisites, update/resume
 behavior and a verified remote-delivery route. Passing native selection checks does not complete
 that broader investigation.
 
@@ -416,8 +419,8 @@ The package declarations, installed package metadata and native `--version` outp
 | `@anthropic-ai/claude-agent-sdk` `0.3.288` | Claude Code `2.1.288` | SDK `query()` |
 
 Inspection baseline: commit `f146d0ddd810eeaaa1d9cc922bf6c000a6d1d3e2` plus the existing working
-copy. This verifies the default pinned packages on macOS arm64, not the executable of a running
-deployment. [Codex binary resolution](../../../apps/harness/src/harness/codex-binary.ts) also allows
+copy. This verified that baseline's pinned packages on macOS arm64, not the current pins or
+the executable of a running deployment. [Codex binary resolution](../../../apps/harness/src/harness/codex-binary.ts) also allows
 an explicit command override and a PATH fallback; those require their own version check.
 
 Tests used temporary HOME/CODEX_HOME/CLAUDE_CONFIG_DIR directories, synthetic `alpha` and `beta`
@@ -604,9 +607,10 @@ Can the same native discovery paths consume a read-only Docker bind mount, and c
 conversations see host-side selection changes without restarting the container?
 
 The experiment reused the locally available `ghcr.io/alex-de-haas/hosty-agent-worker:0.54.0`
-image, launching it by immutable image ID. Its installed packages and native executables match
-the versions pinned in [Harness's package manifest](../../../apps/harness/package.json):
-Codex **0.160.0**, Claude Agent SDK **0.3.288** and Claude Code **2.1.288**. The worker image tag
+image, launching it by immutable image ID. Its historical installed packages and native
+executables were Codex **0.160.0**, Claude Agent SDK **0.3.288** and Claude Code **2.1.288**.
+These differ from [Harness's current package pins](../../../apps/harness/package.json); this
+experiment does not verify the current clients. The worker image tag
 is not the Harness package version. The environment was Docker Desktop 4.95.0, Docker Engine
 29.8.2, Linux arm64 and Node 22.23.3. No image build or dependency update was needed.
 
@@ -679,7 +683,7 @@ code, manifest, version or runtime configuration was changed, and the plan remai
 - [ ] D1. Compare concrete user workflows and internal/external consumers, including one development flow without a plan and one non-development use, and identify the smallest useful scope.
 - [ ] D2. Investigate full skill-package formats and distribution conventions, including nested resources, app/Core/user sources, Git import, revisions, updates and compatibility with existing app skills.
 - [ ] D3. Define configuration ownership and the per-assistant selection identity, shared defaults, exclusions, duplicate-source guidance and an understandable view of Hosty-supplied skills alongside native sources.
-- [ ] D4. Validate native directory provisioning for managed Harness homes and container mounts, fresh-session selection changes, another assistant and an external client; record capabilities, optional live reload and fallback/bootstrap needs.
+- [ ] D4. Repeat version-sensitive discovery and selection checks against the current Harness pins, then validate native directory provisioning for managed Harness homes and container mounts, fresh-session selection changes, another assistant and an external client; record capabilities, optional live reload and fallback/bootstrap needs.
 - [ ] D5. Map the workspace, optional plan, sandbox, fixture and browser journey to existing feature owners; identify missing integration contracts without duplicating their implementation deliverables.
 - [ ] D6. Consolidate findings and unresolved choices into a reviewable proposal with acceptance scenarios, migration and permission boundaries; obtain explicit owner approval before any implementation scope becomes Ready.
 
@@ -769,7 +773,8 @@ Define how the runtime launcher connects the export to newly created or rotated 
 preserving writable per-connection configuration and the shared read-only skills root. Remaining
 verification includes actual Harness lifecycle integration, the intended supported architectures,
 and agent-driven reads/activation of a full package. The experiments already establish discovery
-on the tested pinned clients; repeating that comparison is not the next design blocker.
+on the historical tested clients. Repeat version-sensitive checks against the current Harness
+pins before claiming compatibility for the deployed runtime; this remains part of D4.
 
 External clients need a selection identity and explicit provisioning appropriate to their own
 environment. Decide the initial supported external scenario and whether local installation/export
