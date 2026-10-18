@@ -13,7 +13,10 @@ components: [apps/core, apps/cli, apps/harness, apps/shell]
 Unified ordinary-app development is implemented and verified under the owner's 2026-10-18
 approval. Its current contract is in [feature.md](feature.md); the bounded acceptance results,
 coverage limits and fixture cleanup are in the
-[QA report](../../reviews/2026-10-18-unified-app-dev-mode-qa.md).
+[QA report](../../reviews/2026-10-18-unified-app-dev-mode-qa.md). The subsequent
+[published-build acceptance](../../reviews/2026-10-18-unified-app-dev-mode-release-qa.md)
+passes the real Codex/browser journey on released artifacts, including restart/replay and cleanup.
+It does not change D1's scope or approval boundary.
 
 The remaining work is D1: assess whether removing source overrides can preserve private/local
 source, external-agent and system self-development workflows. This is deliberately outside the

@@ -133,6 +133,10 @@ Journal/audit payloads contain execution references rather than copies of creden
 
 ## Testing Expectations
 
+The [published-build acceptance](../../reviews/2026-10-18-unified-app-dev-mode-release-qa.md)
+records Core/CLI 0.141.0, Harness/worker 0.58.0 and Shell 0.105.0 with real Codex, browser
+live edits, Core/Harness restart, exact replay, preserved ordinary data and full fixture cleanup.
+
 - Real Core-managed ordinary app, normal password login, real Harness agent, live source edit,
   browser write/read, prompted denial/approval, unprompted Return and preserved source/data.
 - Manual Shell and direct external MCP without a chat; current authority and stale-review refusal;
