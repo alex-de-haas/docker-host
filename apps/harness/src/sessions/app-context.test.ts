@@ -145,7 +145,7 @@ describe("session app context", () => {
   });
 });
 
-it("resynchronizes a missed live-only idle transition even when the replay cursor is current", async () => {
+it("resynchronizes current state and distinguishes historical transitions during replay", async () => {
   const record = await manager.createSession({ createdBy: "admin" });
   await manager.postMessage(record.id, "inspect");
   expect((await manager.getSession(record.id))?.status).toBe("running");
@@ -162,4 +162,12 @@ it("resynchronizes a missed live-only idle transition even when the replay curso
   const reconnect = await manager.subscribe(record.id, active.lastEventSeq, () => {});
   expect(reconnect.replay.at(-1)).toMatchObject({ type: "session_status", status: "running" });
   reconnect.unsubscribe();
+  const history = await manager.subscribe(record.id, 0, () => {});
+  const statuses = history.replay.filter(event => event.type === "session_status");
+  expect(statuses.length).toBeGreaterThan(2);
+  expect(statuses.slice(0, -1).every(event => event.historical === true)).toBe(true);
+  expect(statuses.at(-1)).toMatchObject({ status: "running", seq: active.lastEventSeq });
+  expect(statuses.at(-1)).not.toHaveProperty("historical");
+  expect((await store.readEvents(record.id)).some(event => event.historical)).toBe(false);
+  history.unsubscribe();
 });

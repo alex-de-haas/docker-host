@@ -1727,7 +1727,10 @@ export class SessionManager {
       seq: session.record.lastEventSeq, ts: session.record.updatedAt,
       type: "session_status", status: session.record.status,
     };
-    return { replay: [...replay, ...tail, this.activityEvent(session), status], unsubscribe: () => session.listeners.delete(wrapped) };
+    // Historical statuses still close old approval cards, but only the final snapshot describes
+    // current controls and signals replay readiness. Keep the flag out of the durable journal.
+    const history = [...replay, ...tail].map(event => event.type === "session_status" ? { ...event, historical: true } : event);
+    return { replay: [...history, this.activityEvent(session), status], unsubscribe: () => session.listeners.delete(wrapped) };
   }
 
   async shutdown(): Promise<void> {

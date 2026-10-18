@@ -663,3 +663,23 @@ it("retains a status event sequence against a late same-time rename after switch
   const row = [...container.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent?.startsWith("Conversation"));
   expect(row?.textContent).toContain("waiting for you");
 });
+
+it("keeps current busy controls while historical status chunks replay", async () => {
+  record.status = "awaiting_approval";
+  record.lastEventSeq = 10;
+  await render();
+  await type("keep this draft");
+  await act(async () => connection("reconnecting"));
+  for (const value of ["idle", "running", "cancelled"]) {
+    await act(async () => emit({ type: "session_status", seq: 2, ts: "", status: value, historical: true }));
+    expect(button("Stop")).not.toBeNull();
+    await submit();
+    expect(api.postMessage).not.toHaveBeenCalled();
+    expect(input().value).toBe("keep this draft");
+  }
+  await act(async () => {
+    emit({ type: "session_status", seq: 10, ts: "", status: "awaiting_approval" });
+    connection("connected");
+  });
+  expect(button("Stop")).not.toBeNull();
+});

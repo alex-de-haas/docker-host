@@ -249,6 +249,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         if (event.type === "session_status") {
           // Cancellation closes earlier approval cards, including when replaying a stopped turn.
           if (event.status === "cancelled") setEvents(current => [...current, event]);
+          if (event.historical === true) return;
           const value = String(event.status ?? "idle");
           setStatus(value);
           const applyStatus = (item: AssistantSession) => item.id === record.id ? { ...item, status: value,

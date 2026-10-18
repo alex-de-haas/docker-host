@@ -38,7 +38,8 @@ removed local rows are not restored, and new discoveries wait for a read without
 refreshes retain the list and drafts for retry. Older full-record replies cannot replace newer
 session settings. The existing persisted event sequence also rejects older full records and settings
 events whose millisecond timestamps tie. Status transitions persist their own event sequence, including automatic MCP recovery without
-an approval decision; Create app
+an approval decision. Historical statuses in replay retain cancellation-card semantics but cannot
+change current controls or signal stream readiness before the authoritative snapshot. Create app
 persists its context-change time before emitting the corresponding event. Provider/autonomy events apply their settings immediately, even if reconciliation
 fails; a fetch superseded by a later settings event cannot replace that event.
 Each row offers Delete session with confirmation. It reuses the existing session deletion API,
