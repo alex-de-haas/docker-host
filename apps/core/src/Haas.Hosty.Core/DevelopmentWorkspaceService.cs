@@ -352,6 +352,8 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 if (old.State != "pending") return w;
                 return await Recover(w, old, ct);
             }
+            if (kind is "merge" or "merge-upstream" or "abort-merge" or "cleanup") await RequireDevConsumerIdleAsync(w, ct);
+            if (kind == "lease") await RequireDevConsumerIdleAsync(w, ct, writer: true);
             if (kind is not ("release-lease" or "refresh")) await RequireOpenWorkflow(w.Owner, ct);
             if (w.State != "active") throw Error("not_active", "The workspace is not active.");
             if (w.Operations.Any(o => o.State == "pending")) throw Error("operation_pending", "Recover the previous operation with its original request ID first.");
@@ -532,6 +534,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
     }
     private async Task CheckConsumers(DevelopmentWorkspace w, CancellationToken ct)
     {
+        await RequireDevConsumerIdleAsync(w, ct);
         await CheckSharedWorkersAsync(ct);
         if (w.Leases.Length > 0 || w.SandboxConsumers.Length > 0) throw Error("in_use", "An activity lease or a persistent sandbox consumer still references this worktree.");
         foreach (var process in processes?.Snapshot() ?? [])

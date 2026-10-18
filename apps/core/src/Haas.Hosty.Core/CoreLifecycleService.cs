@@ -109,12 +109,16 @@ internal sealed partial class CoreLifecycleService(
     // NOT reentrant: verbs that internally start an app (ApplyUpdate,
     // ApplyRuntimeSwitch, CreateManualBackup) call StartCoreAsync — the unlocked body — never StartAsync.
 
-    internal async Task<T> WithAppLockAsync<T>(string appId, Func<Task<T>> operation, CancellationToken cancellationToken)
+    internal async Task<T> WithAppLockAsync<T>(string appId, Func<Task<T>> operation, CancellationToken cancellationToken, bool allowDevelopment = false, bool developmentOperation = false)
     {
         var mutex = apps.OperationLock(appId);
         await mutex.WaitAsync(cancellationToken);
         try
         {
+            if (!developmentOperation && await apps.GetAppAsync(appId, cancellationToken) is { } installed &&
+                await AppDevStore.ReadAsync(paths, installed, cancellationToken) is { Active: true } development &&
+                (!allowDevelopment || development.Phase != "active"))
+                throw new AppLifecycleException("dev_mode_active", "Return from development mode before changing this app. An interrupted transition must be recovered using its original requestId.");
             return await operation();
         }
         finally
@@ -952,7 +956,7 @@ internal sealed partial class CoreLifecycleService(
         => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
     public Task<AppLifecycleResponse> StartAsync(string appId, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => StartCoreAsync(appId, afterOwnStop: false, cancellationToken), cancellationToken);
+        => WithAppLockAsync(appId, () => StartCoreAsync(appId, afterOwnStop: false, cancellationToken), cancellationToken, allowDevelopment: true);
 
     // `afterOwnStop` marks the start half of a stop->start pair this same operation performed (update
     // apply, runtime switch, dev-mode toggle, operator backup) — as opposed to a cold start, where the app
@@ -1113,7 +1117,7 @@ internal sealed partial class CoreLifecycleService(
     }
 
     public Task<AppLifecycleResponse> StopAsync(string appId, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => StopCoreAsync(appId, cancellationToken), cancellationToken);
+        => WithAppLockAsync(appId, () => StopCoreAsync(appId, cancellationToken), cancellationToken, allowDevelopment: true);
 
     private async Task<AppLifecycleResponse> StopCoreAsync(string appId, CancellationToken cancellationToken)
     {
@@ -1419,7 +1423,7 @@ internal sealed partial class CoreLifecycleService(
     }
 
     public Task<AppLifecycleResponse> RestartAsync(string appId, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => RestartCoreAsync(appId, cancellationToken), cancellationToken);
+        => WithAppLockAsync(appId, () => RestartCoreAsync(appId, cancellationToken), cancellationToken, allowDevelopment: true);
 
     private async Task<AppLifecycleResponse> RestartCoreAsync(string appId, CancellationToken cancellationToken)
     {
@@ -2939,7 +2943,7 @@ internal sealed partial class CoreLifecycleService(
     }
 
     public Task<AppBackupResponse> RestoreBackupAsync(string appId, string backupId, AppRestoreBackupRequest request, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => RestoreBackupCoreAsync(appId, backupId, request, cancellationToken), cancellationToken);
+        => WithAppLockAsync(appId, () => RestoreBackupCoreAsync(appId, backupId, request, cancellationToken), cancellationToken, developmentOperation: true);
 
     private async Task<AppBackupResponse> RestoreBackupCoreAsync(string appId, string backupId, AppRestoreBackupRequest request, CancellationToken cancellationToken)
     {
@@ -3649,6 +3653,10 @@ internal sealed partial class CoreLifecycleService(
             !(app.Autostart ?? true) && localProcesses?.HasApp(app.Id) != true).OrderByDescending(app => app.Id, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            // An explicitly entered dev trial retains its binding and live container across a
+            // keep-apps Core restart. Autostart remains the ordinary-installation preference; it
+            // must not turn a deliberate trial into an implicit Stop. A stopped trial stays stopped.
+            if (await AppDevStore.ReadAsync(paths, app, cancellationToken) is { Active: true }) continue;
             results.Add(await RunBackgroundLifecycleActionAsync(
                 app.Id,
                 "autostart-disabled-stop",
@@ -3858,7 +3866,8 @@ internal sealed partial class CoreLifecycleService(
             PrivateSources: selection.PrivateSources ?? existing?.PrivateSources,
             RequiredCorePermissions: existing?.RequiredCorePermissions,
             OptionalCorePermissions: existing?.OptionalCorePermissions,
-            PermissionRevision: existing?.PermissionRevision);
+            PermissionRevision: existing?.PermissionRevision,
+            DevModeId: existing?.DevModeId);
 
         return ApplyManifestProjections(record, manifest);
     }
@@ -3955,6 +3964,17 @@ internal sealed partial class CoreLifecycleService(
         var liveSourcePath = ResolveLiveSourcePath(app, profiles);
         var summary = AppSummary.From(app, profiles, liveSourcePath is not null, liveSourcePath);
         var development = await ReadDevelopmentStatusAsync(app, liveSourcePath, cancellationToken);
+        AppDevSummary? devMode = null;
+        try
+        {
+            var operation = await AppDevStore.ReadAsync(paths, app, cancellationToken);
+            if (operation is { Active: true }) devMode = new(operation.Id, operation.Phase, operation.PreviousRuntime);
+        }
+        catch (Exception ex) when (ex is AppLifecycleException or System.Text.Json.JsonException or IOException or UnauthorizedAccessException)
+        {
+            // An unreadable journal must block this app's mutations, not hide the whole dashboard.
+            if (app.DevModeId is { } id) devMode = new(id, "unavailable", null);
+        }
         var configuration = await ReadConfigurationSnapshotAsync(app, cancellationToken, installed);
         // Last-known update verdict (plan-first updates): null until a check has run for this app.
         // Suppressed for a live-source runtime — it has no reviewed-update path, so a verdict from
@@ -3967,6 +3987,7 @@ internal sealed partial class CoreLifecycleService(
                 (coreOrigins is not null && !string.Equals(app.AppliedBrowserOrigin, coreOrigins.Effective, StringComparison.Ordinal))),
             LaunchProgress = app.LaunchProgress,
             Development = development,
+            DevMode = devMode,
             PermissionState = CachedPermissions(app),
             UpdateProgress = app.UpdateProgress,
             UpdateCheck = (await ReadUpdateSnapshotAsync(app, cancellationToken, summary.Live))?.Verdict,
@@ -5019,6 +5040,17 @@ internal sealed partial class CoreLifecycleService(
         // The reviewed internal copy is always valid (validated + saved at install/update); it is the
         // last-good snapshot a live source app falls back to when its folder manifest is mid-edit.
         var lastGood = await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken, allowUnsupportedPermissions: true);
+        if (await AppDevStore.ReadAsync(paths, app, cancellationToken) is { Active: true } development)
+        {
+            if (app.SelectedRuntime == development.TargetRuntime && app.SourceState?.LocalOverridePath == development.SourcePath && !development.Phase.StartsWith("return-", StringComparison.Ordinal))
+            {
+                var live = await manifests.LoadAsync(CombineManifestSubpath(development.SourcePath, app.SourceState?.ManifestSubpath),
+                    app.SelectedRuntime, cancellationToken, forceRead: true);
+                if (live.ManifestDigest != development.ManifestDigest)
+                    throw new AppLifecycleException("dev_contract_changed", "The development manifest changed. Return and review the new contract; ordinary source edits remain live.");
+            }
+            return new AppSelectionLoad(lastGood, LiveReconciled: false, ManifestError: null);
+        }
 
         // Legacy records may predate persisted RuntimeProfiles; fall back to the profiles of the
         // just-loaded internal copy (same source as ResolveRuntimeProfilesAsync, but reusing lastGood so

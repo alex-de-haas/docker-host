@@ -37,7 +37,7 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
         string appId,
         string reason,
         string? note = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, string? operationId = null)
     {
         var dataPath = GetAppDataPath(appId);
         if (!Directory.Exists(dataPath))
@@ -52,9 +52,26 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
         // A short random suffix keeps the id unique even when two backups are requested in the
         // same millisecond (more likely now that apps can trigger backups programmatically),
         // so the CreateNew-based archive creation below never collides.
-        var backupId = $"{clock.UtcNow:yyyyMMddHHmmssfff}_{reason}_{Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToLowerInvariant()}";
+        if (operationId is not null && (reason != "pre-development-mode" || !Guid.TryParseExact(operationId, "D", out _)))
+            throw new AppLifecycleException("backup_request_invalid", "Stable backup IDs are reserved for development operations.");
+        var backupId = operationId is null ? $"{clock.UtcNow:yyyyMMddHHmmssfff}_{reason}_{Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToLowerInvariant()}" : operationId + "_" + reason;
         var archivePath = Path.Combine(backupRoot, $"{backupId}.zip");
         var metadataPath = Path.Combine(backupRoot, $"{backupId}.json");
+
+        if (operationId is not null)
+        {
+            var saved = await JsonStorage.ReadAsync<AppBackupRecord>(metadataPath, cancellationToken);
+            if (saved is not null)
+            {
+                if (saved.AppId != appId || saved.BackupId != backupId || saved.ArchivePath != archivePath ||
+                    !File.Exists(archivePath) || await ComputeSha256Async(archivePath, cancellationToken) != saved.ArchiveSha256)
+                    throw new AppLifecycleException("backup_changed", "The development backup is missing or changed. Restore it before recovery.");
+                return saved;
+            }
+            // The caller holds the app lifecycle lock and has verified Stop. An incomplete archive
+            // has never authorized a runtime start and can be rebuilt under the same operation ID.
+            File.Delete(archivePath);
+        }
 
         // Synchronous writer, so the stream is opened synchronously too.
         using (var archiveStream = SecureFileSystem.CreatePrivateFile(archivePath, FileMode.CreateNew, FileShare.None, FileOptions.None))

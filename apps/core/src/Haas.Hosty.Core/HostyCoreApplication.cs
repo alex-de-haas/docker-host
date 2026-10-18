@@ -61,7 +61,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AppIdentityTokenService>();
         // Core MCP: the protocol server plus the tool type it reflects over. The tools resolve Core's
         // own services per call, so the MCP layer holds no state of its own.
-        builder.Services.AddMcpServer().WithHttpTransport().WithTools<HostyCoreTools>().WithTools<ExternalWorkspaceMcpTools>();
+        builder.Services.AddMcpServer().WithHttpTransport().WithTools<HostyCoreTools>().WithTools<ExternalWorkspaceMcpTools>().WithTools<AppDevModeMcpTools>();
         builder.Services.AddSingleton<ExternalWorkspaceMcpAuthorization>();
         // The MCP mutation tools read the caller's grants out of HttpContext.Items, where the
         // endpoint filter put them; the accessor is how a static tool method reaches the request.
@@ -412,6 +412,7 @@ internal static class HostyCoreApplication
         SourceEndpoints.Map(app);
         DevelopmentWorkspaceEndpoints.Map(app);
         AppCreationEndpoints.Map(app);
+        AppDevModeEndpoints.Map(app);
         SessionRetentionEndpoints.Map(app);
         SourceDocumentEndpoints.Map(app);
         WorkspaceInspectionEndpoints.Map(app);

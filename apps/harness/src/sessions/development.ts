@@ -14,7 +14,7 @@ export interface DevelopmentWorkspace {
   observation?: { state: string; at: string; head?: string; targetHead?: string; ahead?: number; behind?: number;
     conflict?: boolean; error?: string; sessionFiles?: string[]; local?: { files: { path: string; status: string }[] } };
 }
-export type DevelopmentAction = "merge-upstream" | "remote-status" | "remote-connect" | "remote-fetch" | "remote-push-base" | "pr-push" | "app-local-status" | "app-local-accept" | "app-local-use" | "app-create" | "app-creation-status" | "app-creation-capabilities" | "app-creation-guide" | "workflow-status" | "workflow-complete" | "workflow-resume" | "workflow-defer" | "workflow-delete" | CoreEnvironmentAction | SandboxAction | "viewer" | "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
+export type DevelopmentAction = "app-dev-logs" | "app-dev-status" | "app-dev-plan" | "app-dev-apply" | "merge-upstream" | "remote-status" | "remote-connect" | "remote-fetch" | "remote-push-base" | "pr-push" | "app-local-status" | "app-local-accept" | "app-local-use" | "app-create" | "app-creation-status" | "app-creation-capabilities" | "app-creation-guide" | "workflow-status" | "workflow-complete" | "workflow-resume" | "workflow-defer" | "workflow-delete" | CoreEnvironmentAction | SandboxAction | "viewer" | "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
 export interface RetentionSnapshot {
   kind: "chat" | "workspace" | "sandbox";
   workflow: { state: string; revision: number; completedAt?: string | null; closure?: string | null } | null;
@@ -79,6 +79,13 @@ export class DevelopmentClient {
   }
   async call(sessionId: string, credential: string, action: DevelopmentAction, input: Record<string, unknown>): Promise<unknown> {
     if (!this.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
+    if (action.startsWith("app-dev-")) {
+      if (typeof input.appId !== "string" || !/^[a-z0-9][a-z0-9._-]{0,62}$/.test(input.appId))
+        throw new AppContextError(400, "dev_app_required", "Supply the installed app id.");
+      const root = `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/dev-mode/${encodeURIComponent(input.appId)}`;
+      return this.inspection(credential, root + (action === "app-dev-status" ? "" : "/" + action.slice(8)),
+        ["app-dev-status", "app-dev-logs"].includes(action) ? undefined : { ...input, action: input.devAction }, true);
+    }
     if (action.startsWith("remote-")) {
       if (typeof input.workspaceId !== "string" || !/^[a-f0-9]{64}$/.test(input.workspaceId) || typeof input.appId !== "string")
         throw new AppContextError(400, "remote_request_invalid", "Supply a local app and its worktree.");
@@ -124,6 +131,7 @@ export class DevelopmentClient {
 }
 
 const toolProperties = {
+
   ...Object.fromEntries(["expectedRemoteHead", "repository", "name", "description", "workspaceId", "appId", "requestId", "targetBranch", "expectedTargetHead", "expectedHead", "message", "authorName", "authorEmail", "path", "view", "connectionId", "title", "body", "mergeMethod", "outcome", "threadId"].map(k => [k, { type: "string" }])),
   topic: { type: "string", maxLength: 32, description: "Guide topic ID from overview. Omit to read overview and the topic index." },
   workspaceId: { type: "string", description: "For source, Git, publication and app-local tools use the registered worktree id, not its aggregate workspaceId. Child environment tools declare their own aggregate workspaceId field." },
@@ -141,8 +149,20 @@ const toolProperties = {
   paths: { type: "array", items: { type: "string" } },
   pullRequests: { type: "array", items: { type: "string" } },
 };
-const actions = ["merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status","app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-defer", ...coreEnvironmentActions, ...sandboxActions, "list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"] as const;
+const devToolProperties = {
+  devAction: { type: "string", enum: ["enter", "restart", "return"] },
+  targetRuntime: { type: "string", description: "Installed Docker development profile key." },
+  worktreeId: { type: "string", description: "Registered worktree id for live ordinary-data dev mode, not the aggregate workspace id." },
+  planDigest: { type: "string" },
+  acceptDataChanges: { type: "boolean", description: "For Return: explicitly accept current-data compatibility with the prior runtime. No data is restored." },
+  appId: { type: "string" },
+  requestId: { type: "string" },
+};
+const actions = ["app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status","app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-defer", ...coreEnvironmentActions, ...sandboxActions, "list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"] as const;
 const descriptions: Partial<Record<(typeof actions)[number], string>> = {
+  "app-dev-status": "Inspect the installed app's ordinary-data development operation, current runtime/health/build/restart state and recovery receipts. Supply appId. This is the same Core and users, not a child sandbox.",
+  "app-dev-plan": "Prepare ordinary-data dev enter/restart/return. Supply appId, devAction, stable UUID requestId; enter also needs targetRuntime and this session's worktreeId. Read changes, backup coverage and data compatibility before applying. Uncommitted source stays live; no commit or child Core is created. Return retains data and edits. acceptDataChanges explicitly accepts data compatibility with the prior runtime.",
+  "app-dev-apply": "Apply the exact app-dev-plan request with its planDigest under this tool's configured Ask/Run unprompted/Disabled policy. Supply the same appId, requestId, devAction and arguments. Entry switches the existing app to live worktree code on ordinary data/users after a backup. Restart keeps that binding. Return restores previous execution, never data. Preserve the original request after uncertainty; do not bypass refusal with CLI.",
   "merge-upstream": "Explicitly integrate a fetched remote into a clean local-app worktree. Supply requestId, expectedHead, expectedRemoteHead, authorName, authorEmail and message. Unrelated histories need explicit user consent and allowUnrelatedHistories:true. Conflicts stay in the worktree; abort-merge cancels integration. Does not update local main or push.",
   "remote-status": "Read the separately attached remote and last upstream observation for appId/workspaceId. A local-only app has no remote or remote error. This does not fetch.",
   "remote-connect": "Attach an existing HTTPS repository using connectionId and explicit targetBranch. Supply appId, workspaceId, UUID requestId and repository. Preserves local source/worktree identity; no push or pull. Requires explicit user authorization to connect.",
@@ -186,8 +206,8 @@ const descriptions: Partial<Record<(typeof actions)[number], string>> = {
 export const DEVELOPMENT_PROVIDER = "hosty:development";
 export const DEVELOPMENT_IDENTITY = "hosty-development-v1";
 export const developmentTools = () => [...coreEnvironmentTools(), ...sandboxTools(), ...actions.filter(action => !action.startsWith("sandbox-") && !action.startsWith("environment-")).map(action => ({ name: action.replaceAll("-", "_"), description: descriptions[action]!,
-  inputSchema: { type: "object", properties: toolProperties, additionalProperties: false },
-  annotations: { readOnlyHint: ["remote-status", "app-local-status","app-creation-guide", "app-creation-status", "app-creation-capabilities", "workflow-status", "list", "status", "diff", "pr-list", "pr-status", "pr-connections"].includes(action), destructiveHint: ["cleanup", "pr-merge"].includes(action), openWorldHint: false } }))];
+  inputSchema: { type: "object", properties: action.startsWith("app-dev-") ? devToolProperties : toolProperties, additionalProperties: false },
+  annotations: { readOnlyHint: ["app-dev-status", "app-dev-plan", "remote-status", "app-local-status","app-creation-guide", "app-creation-status", "app-creation-capabilities", "workflow-status", "list", "status", "diff", "pr-list", "pr-status", "pr-connections"].includes(action), destructiveHint: ["app-dev-apply", "cleanup", "pr-merge"].includes(action), openWorldHint: false } }))];
 
 /** Session-key authenticated local MCP surface; Core credentials never enter the agent config. */
 export class DevelopmentMcp {

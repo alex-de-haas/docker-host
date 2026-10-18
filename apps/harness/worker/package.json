@@ -1,6 +1,6 @@
 {
   "name": "hosty-agent-worker",
-  "version": "0.57.0",
+  "version": "0.58.0",
   "private": true,
   "dependencies": {
     "@openai/codex": "0.162.1",

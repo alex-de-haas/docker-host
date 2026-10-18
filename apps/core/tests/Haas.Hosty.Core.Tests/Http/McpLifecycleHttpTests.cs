@@ -17,6 +17,26 @@ namespace Haas.Hosty.Core.Tests.Http;
 // read-only credential could probe which ids exist.
 public sealed class McpLifecycleHttpTests
 {
+    [Theory]
+    [InlineData("get_app_dev_mode")]
+    [InlineData("plan_app_dev_mode")]
+    [InlineData("apply_app_dev_mode")]
+    public async Task AppDevToolsRegisterAndRequireLifecycleBeforeAppLookup(string tool)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var admin = await SeedSessionAsync(host, "host.admin");
+        using var client = host.CreateClient();
+        var readOnly = await CreateCredentialAsync(client, admin, "inspect", ["mcp:read"]);
+        var lifecycle = await CreateCredentialAsync(client, admin, "dev", ["mcp:read", "mcp:lifecycle"]);
+        object args = tool == "get_app_dev_mode" ? new { appId = "example.absent" } :
+            new { appId = "example.absent", requestId = Guid.NewGuid().ToString("D"), action = "enter", targetRuntime = "dev" };
+        var denied = await CallToolAsync(client, readOnly, tool, args);
+        Assert.Equal("dev_authority_required", denied.GetProperty("code").GetString());
+        var allowed = await CallToolAsync(client, lifecycle, tool, args);
+        Assert.NotEqual("dev_authority_required", allowed.GetProperty("code").GetString());
+        Assert.Contains("example.absent", allowed.GetProperty("message").GetString());
+    }
+
     [Fact]
     public async Task DevelopmentRoutesRequireAdminAndBrowserMutationsRequireCsrf()
     {

@@ -23,6 +23,23 @@ describe("Core workspaces transport", () => {
     expect(String(fetcher.mock.calls[2]![0])).toContain("?topic=..%2Fsecret%26x%3Dy");
   });
 
+  it("routes ordinary dev review and replay through the same session authority", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ phase: "active" })));
+    vi.stubGlobal("fetch", fetcher);
+    const client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
+    const input = { appId: "example.app", requestId: "stable-id", devAction: "enter", targetRuntime: "dev", planDigest: "review" };
+    await client.call("session", "user", "app-dev-status", { appId: input.appId });
+    expect(fetcher.mock.calls[0]![1]?.method).toBe("GET");
+    for (const action of ["app-dev-plan", "app-dev-apply", "app-dev-apply"] as const)
+      await client.call("session", "user", action, input);
+    expect(String(fetcher.mock.calls[2]![0])).toBe("http://core.test/api/internal/apps/hosty.harness/sessions/session/dev-mode/example.app/apply");
+    expect(fetcher.mock.calls[2]![1]?.body).toBe(fetcher.mock.calls[3]![1]?.body);
+    expect(JSON.parse(String(fetcher.mock.calls[2]![1]?.body)).action).toBe("enter");
+    expect(fetcher.mock.calls[2]![1]?.headers).toMatchObject({ authorization: "Bearer service", "X-Hosty-User-Token": "user" });
+    fetcher.mockImplementation(async () => new Response(JSON.stringify({ code: "app_permission_required", message: "Lifecycle required" }), { status: 403 }));
+    await expect(client.call("session", "user", "app-dev-apply", input)).rejects.toMatchObject({ code: "app_permission_required" });
+  });
+
   it("binds every request to the assistant and session without putting Core credentials in agent config", async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ workspaces: [] }), { status: 200 }));
     vi.stubGlobal("fetch", fetcher);
