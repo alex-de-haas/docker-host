@@ -204,7 +204,9 @@ internal static class McpEndpoints
                         RequireRoutineUpdates: CoreSessionAuthorization.ReadSessionCredential(http.Request).Source == SessionCredentialSource.Cookie);
                     return Task.FromResult<IResult>(Results.Empty);
                 },
-                requireCsrf: true,
+                // Only ambient browser credentials need CSRF. A cold MCP client must reach the
+                // missing-credential 401 so the OAuth challenge can start authorization.
+                requireCsrf: CoreSessionAuthorization.ReadSessionCredential(http.Request).Source == SessionCredentialSource.Cookie,
                 cancellationToken: http.RequestAborted);
 
             // The grants double as the authorized flag: the action sets them only on success, so
