@@ -76,7 +76,7 @@ focused tests also cover theme updates, failed highlighter loading, malformed an
 and staged additions/deletions. The test worktree passes Core cleanup after removing its synthetic
 changes; the test Core, Harness process and credentials are removed.
 
-PR rows show the title followed by repository name, successful/total observed checks and the
+PR rows show the PR number before the title, followed by repository name, successful/total observed checks and the
 provider's discussion-comment count. Missing counts remain unknown. State, draft, stale evidence,
 review decision, unresolved threads and individual failed/pending checks remain distinct. No
 historical green PR implies that a new head passed CI. Merged PRs use a violet merge icon; open PRs

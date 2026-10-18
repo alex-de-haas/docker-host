@@ -128,8 +128,9 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
       {trees.some(t => t.pullRequests.length) && <section className="space-y-3 border-t pt-4"><h3 className="text-sm text-muted-foreground">Pull requests</h3>
         {trees.flatMap(tree => tree.pullRequests.map(pr => {
           const o = pr.observation, stale = !o || !Number.isFinite(Date.parse(o.at)) || now - Date.parse(o.at) > 90000;
+          const number = pr.url.match(/\/pull\/(\d+)(?:[/?#]|$)/)?.[1];
           const checks = o?.checks, passed = checks?.filter(c => ["SUCCESS", "NEUTRAL", "SKIPPED"].includes(c.state)).length;
-          return <div key={`${tree.id}:${pr.url}`} className="space-y-1 text-sm"><a href={safeLink(pr.url)} target="_blank" rel="noreferrer" className="flex items-start gap-2 hover:underline"><PullRequestStatus pr={pr} stale={stale} /><span className="line-clamp-2">{o?.title || `Pull request #${pr.url.split("/").pop()}`}</span></a>
+          return <div key={`${tree.id}:${pr.url}`} className="space-y-1 text-sm"><a href={safeLink(pr.url)} target="_blank" rel="noreferrer" className="flex items-start gap-2 hover:underline"><PullRequestStatus pr={pr} stale={stale} /><span className="line-clamp-2">{number && <span className="text-muted-foreground">#{number} · </span>}{o?.title || "Pull request"}</span></a>
             <p className="pl-6 text-xs text-muted-foreground">{repositoryName(pr.url.split("/pull/")[0])} · CI {checks ? `${passed}/${checks.length}` : "unknown"} · {o?.commentCount === undefined ? "Comments unknown" : `${o.commentCount} discussion comments`}</p>
             <p className="pl-6 text-xs text-muted-foreground">{o?.state ?? "State unknown"}{o?.draft ? " · Draft" : ""}{stale ? " · Stale / unobserved" : ""}{o?.reviewDecision ? ` · ${o.reviewDecision}` : ""}{o?.unresolvedThreads ? ` · ${o.unresolvedThreads} unresolved threads` : ""}</p>
             {checks?.filter(c => !["SUCCESS", "NEUTRAL", "SKIPPED"].includes(c.state)).map((c,i) => <p key={i} className="pl-6 text-xs">{c.name}: {c.state}</p>)}
