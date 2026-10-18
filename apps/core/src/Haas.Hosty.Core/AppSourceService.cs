@@ -22,7 +22,8 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
     public async Task<AppSourceResponse> ResolveManagedAsync(
         string appId,
         AppSourceResolveRequest request,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? localRepositoryRoot = null)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
         var source = app.SourceState;
@@ -33,11 +34,16 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
             throw new AppLifecycleException("source_not_configured", $"Runtime app '{appId}' does not declare a source repository.");
         }
 
-        ValidateManagedRepository(source.Repository);
-        if (app.PrivateSources?.Git is { } grant && (privateSources ?? throw PrivateSourceService.Denied()).NormalizeRepository(source.Repository) != grant.Repository)
+        // Only trusted local lifecycle resolution supplies this root; it is not an HTTP/MCP input.
+        if (localRepositoryRoot is not null &&
+            (!string.IsNullOrWhiteSpace(app.ManifestUrl) || !Path.IsPathFullyQualified(localRepositoryRoot)))
+            throw new AppLifecycleException("source_repository_invalid", "A local clone root must be absolute and belong to a local manifest installation.");
+        var repository = localRepositoryRoot ?? source.Repository;
+        ValidateManagedRepository(repository);
+        if (app.PrivateSources?.Git is { } grant && (privateSources ?? throw PrivateSourceService.Denied()).NormalizeRepository(repository) != grant.Repository)
             throw PrivateSourceService.Denied("The Git source changed. Select and review its connection again.");
         var checkoutPath = ResolveManagedCheckoutPath(app);
-        await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken, app.PrivateSources?.Git);
+        await EnsureCheckoutAsync(repository, checkoutPath, cancellationToken, app.PrivateSources?.Git);
         if (request.Fetch)
         {
             _ = await FetchAsync(checkoutPath, app.PrivateSources?.Git, cancellationToken);
