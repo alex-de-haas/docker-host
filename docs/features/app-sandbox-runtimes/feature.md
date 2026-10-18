@@ -1,6 +1,6 @@
 ---
 created: 2026-10-14
-updated: 2026-10-15
+updated: 2026-10-17
 summary: Independent app sandboxes and parent-managed child Core environments with separate data, shared Docker, lifecycle recovery and Harness, Shell and Workspaces controls.
 components: [apps/core, apps/harness, apps/shell, apps/workspaces, apps/demo-app, packages/app-sdk]
 ---
@@ -261,7 +261,9 @@ memory plus equal swap ceiling, CPU and PID limits from creation. Verified adopt
 limits. Existing offline app sandboxes and their browser/probe overhead also use the child's budget.
 Legacy containers without verified ceilings require recreation rather than silent adoption.
 
-Resource observations report container working memory, native Core RSS and owned disk usage separately.
+Resource observations report container working memory, native Core RSS and owned disk usage separately. Successful Finish clears the last live usage sample;
+finished views also hide samples retained by older records. Failed cleanup keeps its diagnostic
+observation until retry succeeds. Resource sampling rechecks terminal state under the lifecycle gate.
 Owned disk includes regular files without following symlinks, labelled container writable layers and
 named volumes; descendant roots have their own reservation. Every 15 seconds the parent observes usage,
 stops an environment that exceeds its soft disk quota, and retains its data and reservation. Docker

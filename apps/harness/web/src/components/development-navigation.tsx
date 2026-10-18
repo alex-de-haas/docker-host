@@ -5,6 +5,7 @@ import type { AssistantSession } from "@/lib/assistant-api";
 import type { DevelopmentWorkspace } from "@/lib/development-api";
 import { orderSessions, isWaiting } from "@/lib/attention";
 import { Button } from "@/components/ui/button";
+import { ContinueBuilding } from "@/components/continue-building";
 
 export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, onNew }: {
   sessions: AssistantSession[]; activeId?: string; workspaces: DevelopmentWorkspace[];
@@ -32,6 +33,7 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
   </section>;
   return <nav aria-label="Sessions by application" className="flex h-full min-h-0 flex-col">
     <div className="space-y-2 border-b p-3"><Button className="w-full justify-start" variant="outline" onClick={onNew}><MessageSquarePlus />New session</Button>
+      <ContinueBuilding sessions={sessions} onPick={onPick} />
       <select aria-label="Filter sessions by application" value={filter} onChange={e => setFilter(e.target.value)} className="w-full rounded-md border bg-background px-2 py-1.5 text-sm">
         <option value="">All applications</option>{groups.map(([id,name]) => <option key={id} value={id}>{name}</option>)}<option value="unassigned">Unassigned chats</option>
       </select></div>

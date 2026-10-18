@@ -1,6 +1,6 @@
 ---
 created: 2026-05-13
-updated: 2026-10-06
+updated: 2026-10-17
 summary: The hosty CLI installs itself and Core, discovers the Core control API and manages runtime apps.
 components: [apps/cli]
 ---
@@ -189,7 +189,18 @@ Core. `--keep-apps` adopts verified local services through independent runners a
 containers. See [Core development mode](../core-dev-target/feature.md) for failures, retention and
 agent recovery.
 
+## App Development Guide
+
+`hosty --data-root <root> apps guide [--topic <id>] [--format text|json]` reads the running Core's
+packaged app development guide through its authenticated local control channel. With no topic it
+returns overview and the topic index. Text output preserves Markdown and code blocks; JSON includes
+Core version, content revision, manifest schema and topic metadata. Unknown topics and unavailable
+Core fail explicitly; the CLI does not substitute another version's guide or start Core implicitly.
+See [local app creation](../app-prototype-workspaces/feature.md#docker-preview-and-agent-guidance).
+
 ## Testing Expectations
+
+- Development-guide default/topic reads, text/JSON fidelity, control authorization and invalid CLI options.
 
 - Root resolution order (flag → `HOSTY_DATA_ROOT` → `HOSTY_HOME` → default) and the global
   `--data-root` extraction, including the `--data-root=<path>` form.

@@ -57,6 +57,7 @@ it.each([
   { workflowCompletion: { requestId: "lease", expectedRevision: 0, state: "queued" } }, { mcpPendingApprovals: [{ id: "a", tool: "t" }] },
   { handoffDraft: { text: "unsent", attachments: [] } }, { handoffDispatch: { id: "h", state: "unknown" } },
   { coreEnvironmentOperations: [{ action: "create", input: {}, state: "pending" }] },
+  { appCreations: [{ input: { requestId: "creation" }, state: "pending" }] },
 ] as Partial<SessionRecord>[])("protects unresolved activity %j", async patch => {
   await old(patch); expect(await manager.sweepRetention(now)).toEqual([]); expect(core.retention).not.toHaveBeenCalled();
 });
@@ -120,4 +121,13 @@ it("protects interrupted closure even when a previous iteration was marked compl
   expect((await manager.sessionRetention(record.id, now)).state).toBe("protected");
   expect(await store.readRecord(record.id)).not.toBeNull();
   expect(vi.mocked(core.retention).mock.calls.every(call => !call[2])).toBe(true);
+});
+
+it("retains an allocated app when Core has not reconciled its workspace and expires a rejected creation", async () => {
+  const record = await old({ appCreations: [{ input: { requestId: "creation" }, state: "observed" }] });
+  expect(await manager.sweepRetention(now)).toEqual([]);
+  expect((await manager.sessionRetention(record.id, now)).state).toBe("blocked");
+  record.appCreations![0]!.state = "rejected";
+  await store.saveRecord(record);
+  expect(await manager.sweepRetention(now)).toEqual([record.id]);
 });

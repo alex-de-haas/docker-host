@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-13
-updated: 2026-10-15
+updated: 2026-10-18
 summary: Local demo priorities through November 5 for host-contained agents, workspace Docker sandboxes, app creation, Git review, optional feedback and gradual redesign.
 components: [apps/core, apps/harness, apps/shell, apps/workspaces]
 ---
@@ -77,7 +77,7 @@ This checkpoint does not approve implementation of this Draft umbrella.
 | Docker Development | [Mixed Development Runtimes](../mixed-development-runtimes/feature.md): Docker source mount, image/build recipe, watch command and cache volumes | Workspace/source and child ownership now ship; complete relevant [remaining platform acceptance](../mixed-development-runtimes/plan.md) |
 | Workspaces | [Session workspaces](../assistant-session-workspaces/feature.md) and [Workspaces viewer](../workspaces-app/feature.md) | Child runtime status and preview controls ship; complete the remaining integrated acceptance without making the viewer a second orchestrator |
 | Git and review | [PR lifecycle](../assistant-pr-lifecycle/feature.md): commits, push, draft/ready PRs, CI/review observation and completion | The shared-worker test PR journey is verified in Sandbox D9; merge/release and broader development-session acceptance retain their separate scope |
-| App creation | [Prototype Workspaces](../app-prototype-workspaces/plan.md), [Development Controls](../app-development-controls/plan.md), [App Authoring](../app-authoring/plan.md) | Durable creation, recovery and create/view/change flow; refresh older baseline tables against shipped workspace/publication APIs |
+| App creation | [Local app creation](../app-prototype-workspaces/feature.md), [Development Controls](../app-development-controls/plan.md), [App Authoring](../app-authoring/plan.md) | Local creation/continuation, recovery, Accept/Use locally and existing-remote PR flow verified on 2026-10-18; broader integration/adaptation and release/catalog delivery retain their own plans |
 | Agent boundary | [Shared Docker Agent Runtime](../assistant-shared-docker-runtime/feature.md) and [Containment](../assistant-runtime-containment/plan.md) | Shared worker implementation and both-provider local acceptance complete; stricter session isolation retains its separate Draft plan |
 | Sandbox | [App Sandbox](../app-sandbox-runtimes/plan.md) | D27/D28 record verified local and cold-engine stages; native Linux/Windows, Linux amd64 worker and additional recipe acceptance remain under D9 |
 | Feedback | [App Feedback Inbox](../app-feedback-inbox/plan.md) and shipped [Overlay](../hosty-overlay/feature.md) | Durable draft annotations, intake, administrator triage and optional assistant grouping/delegation |
@@ -132,7 +132,7 @@ need explicit instance access; neither an unguessable URL nor a synthetic login 
 | P0 | One working agent container protects the host; comparative measurements explain whether session containers are worth adding | [Shared Docker Agent Runtime](../assistant-shared-docker-runtime/feature.md); local acceptance complete, eventual comparisons remain in Containment D9 |
 | P0 | Workspace Docker instances run separately with empty/seeded data, real Core login and local preview | [Sandbox](../app-sandbox-runtimes/plan.md), D1-D6/D10 |
 | P0 | Agent edits, tests through Playwright, operator inspects, then commit/push/PR/CI/review work through the existing publication path | [Sandbox D8-D9](../app-sandbox-runtimes/plan.md), [Development Sessions D1-D2](../assistant-development-sessions/plan.md), [PR lifecycle](../assistant-pr-lifecycle/feature.md) |
-| P0 | Create a new app from Shell and continue building it through the same workspace/sandbox flow | [Prototype Workspaces](../app-prototype-workspaces/plan.md), [App Authoring](../app-authoring/plan.md) |
+| P0 | Create a new app from Shell and continue building it through the same workspace/sandbox flow | [Prototype Workspaces](../app-prototype-workspaces/feature.md), [App Authoring](../app-authoring/plan.md) |
 | P1 | Apply finished tokens, typography, logos and prepared layouts without losing actions or state | [Design System](../design-system/plan.md) |
 | Optional | Collect durable feedback, review batches and delegate selected work | [Feedback Inbox](../app-feedback-inbox/plan.md) |
 | Optional | Open a sandbox running on a production host through an explicit remote-preview route | [Sandbox D11](../app-sandbox-runtimes/plan.md) |

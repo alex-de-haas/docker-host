@@ -9,6 +9,17 @@ let root: Root, container: HTMLDivElement;
 beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); vi.clearAllMocks(); vi.useRealTimers(); });
 function reply(app: object) { return { environments: [{ id: "child", label: "Retained preview", state: "running", previewUrl: "http://core.test" }], instances: [], applications: { child: { state: "ready", apps: [{ id: "demo", displayName: "Demo App", runtimeState: "running", previewUrl: "http://core.test/open", ...app }] } } }; }
+it("replaces old service observations with the reviewed topology and reports degraded siblings", async () => {
+  vi.useFakeTimers(); vi.mocked(developmentRequest).mockResolvedValue(reply({ services: [{ service: "placeholder", status: "running", health: "healthy" }] }));
+  await act(async () => root.render(<WorkspacePreviews workspaceId="work" />));
+  expect(container.textContent).toContain("placeholder · running · healthy");
+  vi.mocked(developmentRequest).mockResolvedValue(reply({ services: [{ service: "frontend", status: "running", health: "healthy" }, { service: "backend", status: "exited" }] }));
+  await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+  expect(container.textContent).not.toContain("placeholder"); expect(container.textContent).toContain("frontend · running · healthy"); expect(container.textContent).toContain("backend · exited");
+  vi.mocked(developmentRequest).mockResolvedValue(reply({}));
+  await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+  expect(container.textContent).toContain("Service status unobserved"); expect(container.textContent).not.toContain("frontend · running");
+});
 it("shows building, failure and restart requirements without claiming hot reload compiled the source", async () => {
   vi.useFakeTimers(); vi.mocked(developmentRequest).mockResolvedValue(reply({ restartRequired: true, development: { reloadMode: "application-managed", manifestState: "changed", restartRequired: true }, launchProgress: { stage: "building", buildState: "building", service: "web", changedAt: "2026-10-16T12:00:00Z" } }));
   await act(async () => root.render(<WorkspacePreviews workspaceId="work" />));

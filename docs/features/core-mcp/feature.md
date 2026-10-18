@@ -1,6 +1,6 @@
 ---
 created: 2026-08-09
-updated: 2026-10-10
+updated: 2026-10-17
 summary: Core MCP exposes app state, logs and bounded audit search, with explicit grants for lifecycle actions and reviewed updates.
 components: [apps/core]
 ---
@@ -69,6 +69,7 @@ so a follow-up call needs no disambiguation.
 | Tool | Returns |
 | --- | --- |
 | `list_apps` | Every installed app's id, display name, version, runtime state, operation status, system flag, and last error |
+| `get_app_development_guide` | One bounded topic with Core version, guide revision, manifest schema and topic index; see [app development guidance](../app-prototype-workspaces/feature.md#docker-preview-and-agent-guidance) |
 | `get_app` | One app's detail: description, selected runtime profile, resolved endpoint URLs, declared platform interfaces, last error |
 | `get_host_status` | Core version and app counts — total, running, not running, and how many report an error |
 | `tail_app_logs` | The tail of one app's console output, with the line budget that was used |

@@ -260,8 +260,12 @@ export class SessionManager {
       if (!this.development?.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
       const token = credential ?? session.workspaceCredential ?? session.credential;
       if (!token) throw new AppContextError(401, "workspace_credentials_required", "Refresh the session's Hosty credentials before using workspaces.");
-      if (!["workflow-status", "workflow-complete", "workflow-resume", "workflow-defer", "workflow-delete", "list", "prepare", "status", "diff", "viewer", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"].includes(action))
+      if (!["merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status", "app-local-accept", "app-local-use", "app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-defer", "workflow-delete", "list", "prepare", "status", "diff", "viewer", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"].includes(action))
         throw new AppContextError(400, "workspace_action_invalid", "Unknown workspace action.");
+      if (["app-local-accept", "app-local-use"].includes(action)) {
+        if (!userId) throw new AppContextError(403, "local_operator_required", "Accept locally and Use locally are explicit operator actions in the workspace panel.");
+        if (["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
+      }
       if (action === "workflow-complete" && !userId && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
         if (typeof input.requestId !== "string" || !/^[0-9a-f-]{36}$/i.test(input.requestId) || !Number.isSafeInteger(input.expectedRevision))
           throw new AppContextError(400, "workflow_request_invalid", "Supply a UUID requestId and expectedRevision.");
@@ -296,12 +300,63 @@ export class SessionManager {
         session.record.publicationReferences = [...(session.record.publicationReferences ?? []).filter(r => !references.some(reference => reference.url === r.url)), ...references];
         await this.store.saveRecord(session.record);
       }
+      if (action === "app-create") {
+        const appIds = parseAppIds([...(session.record.appIds ?? []), String(input.appId)]);
+        if (typeof input.requestId !== "string" || !/^[0-9a-f-]{36}$/i.test(input.requestId))
+          throw new AppContextError(400, "creation_request_invalid", "Use a UUID requestId.");
+        const safeInput = Object.fromEntries(["requestId", "appId", "name", "description", "bootstrapCommit", "authorName", "authorEmail", "iconPng"]
+          .filter(key => input[key] !== undefined).map(key => [key, input[key]]));
+        const operations = session.record.appCreations ?? [];
+        const prior = operations.find(o => o.input.requestId === input.requestId);
+        if (prior && stableSandboxInput(prior.input) !== stableSandboxInput(safeInput))
+          throw new AppContextError(409, "creation_request_conflict", "Retry with the original creation arguments.");
+        const canConfirmRefusal = !prior || prior.state === "rejected";
+        if (!prior || prior.state === "rejected") {
+          session.record.appCreations = [...operations.filter(o => o !== prior), { input: safeInput, state: "pending" }];
+          await this.store.saveRecord(session.record);
+        }
+        let created: { operation: { stage: string }; workspace?: DevelopmentWorkspace };
+        try { created = await this.development.call(id, token, action, safeInput) as typeof created; }
+        catch (error) {
+          // A refusal proves no allocation only on a fresh attempt (or a previously refused
+          // one). After an uncertain response, revoked permission cannot disprove an earlier
+          // allocation; retain its request and chat until Core reconciles it.
+          if (canConfirmRefusal && error instanceof AppContextError && ["creation_request_invalid", "creation_app_invalid",
+            "creation_metadata_invalid", "creation_icon_invalid", "creation_commit_consent_required", "creation_author_required",
+            "creation_source_exists", "app_permission_required"].includes(error.code)) {
+            session.record.appCreations!.find(o => o.input.requestId === input.requestId)!.state = "rejected";
+            await this.store.saveRecord(session.record);
+          }
+          throw error;
+        }
+        if (!created.workspace || created.operation.stage !== "installed")
+          throw new AppContextError(409, "creation_incomplete", "Creation has not returned a registered worktree. Retry the original request.");
+        if (JSON.stringify(session.record.appIds) !== JSON.stringify(appIds)) {
+          session.record.appIds = appIds;
+          session.record.appContextRevision = (session.record.appContextRevision ?? 0) + 1;
+        }
+        session.record.developmentLease ??= randomUUID();
+        session.record.title ??= String(input.name);
+        session.record.developmentWorkspaces = [...(session.record.developmentWorkspaces ?? []).filter(w => w.id !== created.workspace!.id), created.workspace];
+        await this.store.saveRecord(session.record);
+        if (["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
+          await this.development.call(id, token, "lease", { workspaceId: created.workspace.id, requestId: randomUUID(), leaseId: session.record.developmentLease });
+        }
+        if (this.worker?.current?.sessionId === id && this.workerBindings) {
+          const verified = await this.development.workerBindings(id, token);
+          await this.worker.registerTrees(verified!.worktreePaths, this.workerBindings);
+        }
+        session.record.appCreations!.find(o => o.input.requestId === input.requestId)!.state = "observed";
+        await this.store.saveRecord(session.record);
+        await this.append(id, { type: "app_context_changed", appIds, appContextRevision: session.record.appContextRevision, actor: session.record.createdBy });
+        return created;
+      }
       const result = await this.development.call(id, token, action, input);
       if (action === "prepare" && this.worker?.current?.sessionId === id && this.workerBindings) {
         const verified = await this.development.workerBindings(id, token);
         await this.worker.registerTrees(verified!.worktreePaths, this.workerBindings);
       }
-      if (action !== "diff" && action !== "viewer" && !action.startsWith("pr-") && !action.startsWith("workflow-")) {
+      if (!action.startsWith("remote-") && !action.startsWith("app-") && action !== "diff" && action !== "viewer" && !action.startsWith("pr-") && !action.startsWith("workflow-")) {
         const workspaces = action === "list" ? (result as { workspaces: DevelopmentWorkspace[] }).workspaces : [result as DevelopmentWorkspace];
         const known = new Map((session.record.developmentWorkspaces ?? []).map(w => [w.id, w]));
         for (const w of workspaces) known.set(w.id, w);
@@ -463,6 +518,39 @@ export class SessionManager {
     return issued ? { token: issued.token, expiresAtMs: new Date(issued.expiresAt).getTime() } : null;
   }
 
+  async newBuildingSession(userId: string, credential: string, input: { appId: string; requestId: string; expectedLocalHead: string }): Promise<SessionRecord> {
+    if (!/^[a-z0-9][a-z0-9._-]{0,62}$/.test(input.appId ?? "") ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.requestId ?? "") ||
+        !/^[0-9a-f]{40,64}$/.test(input.expectedLocalHead ?? ""))
+      throw new AppContextError(400, "building_request_invalid", "Supply the local app, reviewed main commit and a UUID requestId.");
+    return this.serialize("building:" + userId + ":" + input.requestId, async () => {
+      // Persist allocation before Core preparation; reuse both IDs after a lost response.
+      const session = await this.createSession({ createdBy: userId, appIds: [input.appId],
+        clientRequestId: input.requestId, title: "Build " + input.appId,
+        context: { localBuildingApp: input.appId, acceptedHead: input.expectedLocalHead } });
+      if (!session.developmentWorkspaces?.some(w => w.apps?.some(a => a.appId === input.appId))) {
+        try { await this.workspaceAction(session.id, "prepare", { ...input, targetBranch: "main" }, credential, userId); }
+        catch (error) {
+          if (error instanceof AppContextError && ["workspace_local_head_changed", "workspace_local_source_unavailable",
+            "workspace_local_source_required", "workspace_local_target_invalid"].includes(error.code)) {
+            await this.serialize(session.id, async () => {
+              const live = await this.requireLive(session.id);
+              if (live.record.status !== "idle" || live.record.developmentWorkspaces?.length) return;
+              // A definitive pre-allocation refusal is not resource history. Reconcile first;
+              // uncertainty or an earlier allocated tree keeps the retention protection.
+              try {
+                const listed = await this.development!.call(session.id, credential, "list", {}) as { workspaces: DevelopmentWorkspace[] };
+                if (!listed.workspaces.length) { delete live.record.developmentLease; await this.store.saveRecord(live.record); }
+              } catch { /* Keep the marker until Core can reconcile it. */ }
+            });
+          }
+          throw error;
+        }
+      }
+      return (await this.getSession(session.id))!;
+    });
+  }
+
   async createSession(input: {
     title?: string;
     context?: Record<string, string>;
@@ -526,6 +614,49 @@ export class SessionManager {
       this.audit.report("ai_session_created", { sessionId: record.id, actor: input.createdBy });
       return record;
     });
+  }
+
+  async dispatchAppCreation(id: string, requestId: unknown, prompt: unknown, userId: string, credential?: string, workspaceCredential?: string): Promise<SessionRecord> {
+    if (typeof requestId !== "string" || typeof prompt !== "string" || !prompt.trim() || prompt.length > 20000)
+      throw new AppContextError(400, "creation_prompt_invalid", "Supply the creation requestId and a prompt up to 20000 characters.");
+    await this.recoverHandoff(id);
+    const dispatch = await this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (session.record.createdBy !== userId) throw new AppContextError(403, "workspace_forbidden", "This session belongs to another user.");
+      const operation = session.record.appCreations?.find(o => o.input.requestId === requestId);
+      if (!operation || operation.state !== "observed") throw new AppContextError(409, "creation_incomplete", "Prepare the app and workspace before sending the generation request.");
+      if (operation.prompt !== undefined && operation.prompt !== prompt)
+        throw new AppContextError(409, "creation_prompt_conflict", "This request already has a generation prompt. Continue through the normal chat for later changes.");
+      if (operation.prompt !== undefined && session.record.handoffDispatch?.id !== requestId) return false;
+      if (operation.prompt === undefined) {
+        if (session.record.handoffPending || ["queued", "unknown", "running"].includes(session.record.handoffDispatch?.state ?? ""))
+          throw new AppContextError(409, "dispatch_pending", "Resolve the previous submission before generating another app.");
+        if (["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
+        operation.prompt = prompt;
+        session.record.handoffDispatch = { id: requestId, state: "queued" };
+        await this.store.saveRecord(session.record);
+      }
+      return session.record.handoffDispatch?.state === "queued";
+    });
+    if (dispatch) {
+      const record = (await this.getSession(id))!;
+      const operation = record.appCreations!.find(o => o.input.requestId === requestId)!;
+      const text = [
+        "Continue the newly created local Hosty app " + String(operation.input.appId) + ".",
+        "Use its registered Core worktree. The parent installation must remain stopped.",
+        "First read the Hosty development guide, then prepare a Docker preview in an authorized child Core using the existing environment tools. Reuse this child Core for iteration and keep it available for operator review.",
+        "Use normal child Core setup/login and separate test data. Respect confirmation decisions; do not bypass a refusal. Never publish, push, commit generated changes, or start the parent app without separate authorization.",
+        "After the authenticated bootstrap preview is working, implement the following request, test it and report the preview link and any remaining blockers:",
+        prompt,
+      ].join("\n\n");
+      try {
+        await this.postMessage(id, text, credential, [], { expectedRevision: record.appContextRevision, dispatchId: requestId, workspaceCredential });
+      } catch (error) {
+        await this.recordHandoffFailure(id, error instanceof Error ? error.message : String(error));
+        throw error;
+      }
+    }
+    return (await this.getSession(id))!;
   }
 
   async recordHandoffFailure(id: string, message: string): Promise<void> {
@@ -1809,6 +1940,13 @@ export class SessionManager {
       return;
     }
 
+    // Child setup is reviewed normally, but its password is not a transcript artifact.
+    // The MCP policy retains the original in-memory call until dispatch.
+    if (["approval_request", "tool_use"].includes(payload.type)
+      && (payload.toolName === "hosty:development: environment_setup" || payload.toolName === "mcp__hosty-workspaces__environment_setup")
+      && payload.input && typeof payload.input === "object" && !Array.isArray(payload.input)) {
+      payload = { ...payload, input: { ...payload.input, password: "[redacted]" } };
+    }
     session.record.lastEventSeq += 1;
     const event: StoredEvent = {
       seq: session.record.lastEventSeq,

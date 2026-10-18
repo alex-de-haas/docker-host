@@ -26,7 +26,16 @@ public sealed partial class CoreLifecycleServiceTests
         public int Readied;
         public PublicationReference? Reference;
         public Task<string> DestinationAsync(UserProviderConnection c, string r, bool fork, CancellationToken ct) => Task.FromResult(r);
-        public Task PushAsync(UserProviderConnection c, DevelopmentWorkspace w, string destination, string branch, string head, CancellationToken ct) { Head = head; return Task.CompletedTask; }
+        public string? PushFailure;
+        public int Pushed;
+        public Task PushAsync(UserProviderConnection c, DevelopmentWorkspace w, string destination, string branch, string head, CancellationToken ct)
+        {
+            Pushed++;
+            if (PushFailure == "rejected") throw new PublicationException("push_rejected", "Remote rejected this push.");
+            Head = head;
+            if (PushFailure == "lost") throw new HttpRequestException("Push response lost.");
+            return Task.CompletedTask;
+        }
         public Task<PublicationReference?> FindAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct) => Task.FromResult(r.History.Any(h => h.Number == Reference?.Number) ? null : Reference);
         public Task<PublicationReference> PublishAsync(UserProviderConnection c, PublicationRecord r, PublicationCommand input, CancellationToken ct)
         {
@@ -271,4 +280,33 @@ public sealed partial class CoreLifecycleServiceTests
         foreach (var bad in new[] { good with { Head = "old" }, good with { Draft = true }, good with { MergeState = "UNKNOWN" }, good with { UnresolvedThreads = 1 }, good with { ReviewDecision = "CHANGES_REQUESTED" }, good with { Checks = [new("test", "PENDING")] }, good with { Checks = null } })
             Assert.Throws<PublicationException>(() => PublicationService.RequireMerge(bad, "head"));
     }
+    [Theory]
+    [InlineData("rejected", "failed")]
+    [InlineData("lost", "pending")]
+    public async Task Publication_FailedPushPreservesLocalHistoryAndReplaysBeforeCreatingPr(string failure, string state)
+    {
+        var f = await PublicationFixture();
+        await File.WriteAllTextAsync(Path.Combine(f.W.Path, "local.txt"), "local history survives");
+        var committed = await f.Workspaces.CommandAsync(f.W.Id, f.W.Owner, "commit",
+            new(Guid.NewGuid().ToString(), f.W.Observation!.Head, "feat: local change", ["local.txt"], "Test", "test@example.test"), default);
+        var head = committed.Observation!.Head;
+        f.Provider.PushFailure = failure;
+        var input = new PublicationCommand(Guid.NewGuid().ToString(), head, Title: "Local feature");
+        await Assert.ThrowsAnyAsync<Exception>(() => f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", input, default));
+        var saved = Assert.Single((await f.Service.ListAsync(f.W.Owner, default)).Publications);
+        Assert.Equal(state, saved.Operations.Last().State);
+        Assert.Equal(0, f.Provider.Created);
+        Assert.Equal(head, (await f.Workspaces.ObserveAsync(f.W.Id, f.W.Owner, default)).Observation!.Head);
+        Assert.Equal("local history survives", await File.ReadAllTextAsync(Path.Combine(f.W.Path, "local.txt")));
+        f.Provider.PushFailure = null;
+        var recovered = await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", input, default);
+        Assert.Equal("succeeded", recovered.Operations.Last().State);
+        Assert.Equal(head, recovered.PublishedHead);
+        Assert.Equal(1, f.Provider.Created);
+        var pushes = f.Provider.Pushed;
+        await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", input, default);
+        Assert.Equal(pushes, f.Provider.Pushed);
+        Assert.Equal(1, f.Provider.Created);
+    }
+
 }

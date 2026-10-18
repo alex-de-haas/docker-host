@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-17
+updated: 2026-10-18
 summary: Harness combines app-grouped conversations, multi-repository workspace details, sandbox previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -59,6 +59,9 @@ application status is reported. Merely completing a workspace does not finish a 
 
 Each child app also shows Core-owned launch progress (preparation, environment build/reuse,
 service start, readiness, failure/interruption), its observation time and the affected service.
+Individual service rows show the child's observed runtime and health states, so a healthy frontend
+does not hide a stopped backend. A new topology replaces the previous service rows; missing
+observations display `Service status unobserved`.
 A fixed read-only inventory request remains available during a long child app build; it retains
 caller, consent, ownership and process checks without waiting behind the mutation gate. Failed
 inventory refreshes clear old results. Older children without observations display unknown values.
@@ -67,6 +70,14 @@ Restarting with an accepted manifest clears that requirement. Protected Docker c
 still require the existing reviewed update flow; the panel displays that manifest error.
 Application dev-server compilation/hot reload is explicitly application-managed: a running process
 or a successful environment build does not attest to the current source compiling successfully.
+
+Each child application has independent Check preview, Restart app and Show service logs actions.
+Optional checks show the exact per-service command, working directory and timeout before execution,
+separate readiness from test results, and display stale/unknown/failed states and real exit output.
+No recipe leaves tests not checked and does not disable restart. Logs are an explicit bounded
+snapshot, not a live stream. Build/start failures retain repair guidance for the same worktree and
+sandbox. The [creation feature](../app-prototype-workspaces/feature.md#optional-preview-checks-and-repair)
+owns the runtime recipe, serialization and recovery contract.
 
 
 External workspaces have a separate tab using Core's existing typed external ownership and the same
@@ -327,6 +338,16 @@ Workspace actions also offer non-destructive Close while the agent is active. Co
 Harness coordinates its owned Docker stop and the panel retains Retry for interrupted closure.
 Closed source and conversation remain available; Resume is explicit. See
 [workspace lifecycle controls](../workspace-lifecycle-controls/feature.md).
+
+## Local App Authoring Controls
+
+The conversation's Create app form reviews app metadata/icon, Git author and the single bootstrap
+commit, preserves its browser draft and recovers the original allocation/dispatch after uncertainty.
+Continue building opens retained work or a new session from an installed local Git app. Repository
+panels expose reviewed commits, Accept locally, Use locally and optional existing-remote operations
+without requiring publication to save or use the app. The
+[creation feature](../app-prototype-workspaces/feature.md) owns source retention, replay, authorization
+and verification; these controls reuse the same sessions, worktrees and child Core panels.
 
 ## Testing Expectations
 

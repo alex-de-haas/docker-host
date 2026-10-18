@@ -1872,6 +1872,7 @@ internal sealed class DockerRuntimeAdapter(
         if (dockerCoreListener is not null) await dockerCoreListener.EnsureReadyAsync(cancellationToken);
         var endpoints = new List<AppEndpointContract>();
         var services = OrderServices(context.Manifest.Services);
+        await RemoveObsoleteServicesAsync(context, cancellationToken);
         using var admission = await CoreEnvironmentResources.AdmitAsync(config, runner, context.App.Id, services.Count, cancellationToken,
             replacementServices: services.Select(s => s.Key).ToHashSet(StringComparer.Ordinal),
             totalServices: context.AllServices.Count(s => s.Runtime.Type == "docker"));
@@ -2506,6 +2507,26 @@ internal sealed class DockerRuntimeAdapter(
         }
     }
 
+    internal async Task RemoveObsoleteServicesAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken)
+    {
+        // A reviewed topology change may rename/remove services. Stop retains their containers;
+        // reconcile the complete selected Docker graph before admission, retaining data and caches.
+        // Inspect immutable IDs and exact labels rather than normalized name prefixes.
+        var desired = context.AllServices.Where(s => s.Runtime.Type == "docker")
+            .Select(s => s.Key).ToHashSet(StringComparer.Ordinal);
+        var inventory = await RunDockerAsync(["ps", "-a", "--no-trunc", "--filter", "label=hosty.app.id=" + context.App.Id,
+            "--format", "{{.ID}}\t{{.Label \"hosty.app.id\"}}\t{{.Label \"hosty.instance\"}}\t{{.Label \"hosty.app.service\"}}"],
+            ignoreFailures: false, cancellationToken);
+        foreach (var line in inventory.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var fields = line.TrimEnd('\r').Split('\t');
+            if (fields.Length != 4 || fields[0].Length != 64 || !fields[0].All(Uri.IsHexDigit)
+                || fields[1] != context.App.Id || fields[2] != config.InstanceId
+                || string.IsNullOrWhiteSpace(fields[3]) || desired.Contains(fields[3])) continue;
+            await RemoveContainerIfOwnedAsync(context.App.Id, fields[0], cancellationToken, requireSuccess: true);
+        }
+    }
+
     // BuildContainerName normalizes every non-alphanumeric char to '-', so `my.app` and `my-app` (and
     // app `x-y`/service `z` vs app `x`/service `y-z`) collide on the same container name. A blind
     // `docker rm -f <name>` could therefore destroy a *different* app's — or a user's — container that
@@ -2515,13 +2536,15 @@ internal sealed class DockerRuntimeAdapter(
     // place (the later `docker run --name` surfaces a clear name-conflict error) and an absent
     // container is a no-op (C-M2). The instance check is what makes removal unable to cross roots
     // even if a name ever collides.
-    private async Task RemoveContainerIfOwnedAsync(string appId, string containerName, CancellationToken cancellationToken)
+    private async Task RemoveContainerIfOwnedAsync(string appId, string containerName, CancellationToken cancellationToken, bool requireSuccess = false)
     {
         var inspect = await RunRawAsync(
             ["inspect", "--format", "{{ index .Config.Labels \"hosty.app.id\" }}\t{{ index .Config.Labels \"hosty.instance\" }}", containerName],
             cancellationToken);
         if (inspect.ExitCode != 0)
         {
+            if (requireSuccess && !inspect.StandardError.Contains("No such", StringComparison.OrdinalIgnoreCase))
+                throw new AppLifecycleException("docker_state_unknown", "Cannot verify the obsolete service container owner.");
             return;
         }
 
@@ -2544,7 +2567,7 @@ internal sealed class DockerRuntimeAdapter(
             return;
         }
 
-        _ = await RunDockerAsync(["rm", "-f", containerName], ignoreFailures: true, cancellationToken);
+        _ = await RunDockerAsync(["rm", "-f", containerName], ignoreFailures: !requireSuccess, cancellationToken);
     }
 
     private async Task<bool> IsContainerRunningAsync(string containerName, CancellationToken cancellationToken)

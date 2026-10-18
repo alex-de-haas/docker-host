@@ -1,6 +1,6 @@
 ---
 created: 2026-09-16
-updated: 2026-10-10
+updated: 2026-10-18
 summary: Administrators attach up to 16 installed apps to an assistant session as shared context for Claude and Codex.
 components: [apps/harness, apps/shell]
 ---
@@ -157,7 +157,7 @@ feedback; [execution authorization](../assistant-execution-authorization/plan.md
 credentials, and [containment](../assistant-runtime-containment/plan.md) owns safe native execution
 reconfiguration and termination evidence. Current context changes do not prove that a running
 native command has lost OS access.
-[Prototype workspaces](../app-prototype-workspaces/plan.md) consume these
+[Prototype workspaces](../app-prototype-workspaces/feature.md) consume these
 associations rather than implementing another session binding mechanism.
 
 ## Testing Expectations

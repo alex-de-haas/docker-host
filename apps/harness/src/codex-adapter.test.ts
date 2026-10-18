@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import os from "node:os";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -43,6 +44,7 @@ describe("codex harness adapter", () => {
     delete process.env.HOSTY_HARNESS_CODEX_COMMAND;
     delete process.env.HOSTY_FAKE_CODEX_REJECT_RESUME;
     delete process.env.HOSTY_TEST_AUTONOMY;
+    delete process.env.HOSTY_TEST_EXTERNAL_SANDBOX;
   });
 
   function start(resumeHarnessSessionId?: string): HarnessRun {
@@ -77,6 +79,21 @@ describe("codex harness adapter", () => {
       run.send("hello");
       await waitFor(() => events.find(e => e.type === "result"), "turn under selected policy");
       expect(events.some(e => e.type === "error" || e.type === "approval_request")).toBe(false);
+      await run.stop(); run = null;
+    }
+  });
+
+  it.each(["normal", "autonomous"] as const)("uses the external Docker boundary without changing %s approvals", async autonomy => {
+    process.env.HOSTY_TEST_AUTONOMY = autonomy;
+    process.env.HOSTY_TEST_EXTERNAL_SANDBOX = "1";
+    for (const resumeHarnessSessionId of [undefined, "existing-native-thread"]) {
+      events = [];
+      run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "docker", cwd: process.cwd(), autonomy,
+        resumeHarnessSessionId, onEvent: e => events.push(e),
+        processTransport: { spawn: (_provider, args, options) => spawn(fakeServer, args, { ...options, stdio: ["pipe", "pipe", "pipe"] }) } });
+      run.send("hello");
+      await waitFor(() => events.find(e => e.type === "result"), "external sandbox turn");
+      expect(events.some(e => e.type === "error")).toBe(false);
       await run.stop(); run = null;
     }
   });
@@ -295,6 +312,7 @@ describe("codex binary resolution", () => {
     delete process.env.HOSTY_HARNESS_CODEX_COMMAND;
     delete process.env.HOSTY_FAKE_CODEX_REJECT_RESUME;
     delete process.env.HOSTY_TEST_AUTONOMY;
+    delete process.env.HOSTY_TEST_EXTERNAL_SANDBOX;
   });
 
   it("prefers the operator override over the pinned dependency", async () => {
@@ -325,6 +343,7 @@ describe("codex auth modes", () => {
     delete process.env.HOSTY_HARNESS_CODEX_COMMAND;
     delete process.env.HOSTY_FAKE_CODEX_REJECT_RESUME;
     delete process.env.HOSTY_TEST_AUTONOMY;
+    delete process.env.HOSTY_TEST_EXTERNAL_SANDBOX;
     rmSync(dir, { recursive: true, force: true });
   });
 

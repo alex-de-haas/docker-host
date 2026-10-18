@@ -292,6 +292,7 @@ internal sealed record AppRemovalPlan(string AppId, string DisplayName, string V
     AppRemoveRequest Options, AppRemovalImpact Impact)
 {
     internal string Identity { get; init; } = "";
+    public AppSourceReview? SourceReview { get; init; }
 }
 
 internal sealed record AppPermissionPlan(string AppId, string DisplayName, DateTimeOffset InstalledAt,

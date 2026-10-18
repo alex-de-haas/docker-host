@@ -26,6 +26,8 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
     {
         var app = await RequireAppAsync(appId, cancellationToken);
         var source = app.SourceState;
+        if (source?.Type == "local-git")
+            throw new AppLifecycleException("source_locally_owned", "Locally authored source is not a managed clone. Use its registered workspace and local acceptance.");
         if (source?.Repository is null)
         {
             throw new AppLifecycleException("source_not_configured", $"Runtime app '{appId}' does not declare a source repository.");
@@ -66,6 +68,8 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
     {
         var app = await RequireAppAsync(appId, cancellationToken);
         var source = app.SourceState;
+        if (source?.Type == "local-git")
+            throw new AppLifecycleException("source_locally_owned", "Locally authored source is not a managed clone. Use its registered workspace and local acceptance.");
         if (source?.Repository is null)
         {
             throw new AppLifecycleException("source_not_configured", $"Runtime app '{appId}' does not declare a source repository.");
@@ -342,7 +346,16 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
         try
         {
             await apps.HostPathMutationLock.WaitAsync(ct);
-            try { return await action(await RequireAppAsync(appId, ct)); }
+            try
+            {
+                var safety = new AppSourceSafety(paths, apps);
+                using var activity = await safety.LockAsync(appId, ct);
+                {
+                    var app = await RequireAppAsync(appId, ct);
+                    await safety.RequireIdleAsync(appId, ct);
+                    return await action(app);
+                }
+            }
             finally { apps.HostPathMutationLock.Release(); }
         }
         finally { mutex.Release(); }
@@ -380,7 +393,7 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
             // the app's manifest keeps the same in-repo offset.
             ManifestSubpath: existing?.ManifestSubpath,
             OverrideCommit: string.IsNullOrWhiteSpace(commit) ? null : commit.Trim(),
-            InspectionPaths: existing?.InspectionPaths);
+            InspectionPaths: existing?.InspectionPaths, Remote: existing?.Remote);
         await apps.UpdateAppAsync(appId, current => current with { SourceState = state, ActiveSourcePaths = app.ActiveSourcePaths }, cancellationToken);
         return new AppSourceResponse(appId, state);
     }
@@ -399,9 +412,10 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
         app = HostPathAuthority.CaptureRuntimePaths(app, await new GlobalMountStore(paths).ReadAsync(cancellationToken));
         var state = app.SourceState! with
         {
-            LocalOverridePath = null,
-            // The recorded commit belonged to the folder, not to the app.
-            OverrideCommit = null,
+            // Clearing an alternate folder restores durable local source without resetting it.
+            LocalOverridePath = app.SourceState.Type == "local-git" ? paths.ResolveManagedCheckoutPath(appId) : null,
+            OverrideCommit = app.SourceState.Type == "local-git"
+                ? await TryResolveHeadAsync(paths.ResolveManagedCheckoutPath(appId), cancellationToken) : null,
             UpdatedAt = clock.UtcNow,
         };
         await apps.UpdateAppAsync(appId, current => current with { SourceState = state, ActiveSourcePaths = app.ActiveSourcePaths }, cancellationToken);

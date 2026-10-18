@@ -9,7 +9,18 @@ internal sealed record PrivateSourceAccess(SourceReadGrant? Manifest = null, Sou
 internal sealed record PrivateSourceChoice(string? ManifestConnectionId = null, string? GitConnectionId = null,
     bool ClearManifestConnection = false, bool ClearGitConnection = false);
 
-internal sealed class PrivateSourceService(UserConnectionService connections, HttpClient http)
+internal interface ISourceGitAccess
+{
+    string NormalizeRepository(string value);
+    Task<T> WithConnectionAsync<T>(SourceReadGrant grant, Func<UserProviderConnection, Task<T>> action, CancellationToken ct);
+    Task<SourceReadGrant> BindAsync(string owner, string id, string url, bool manifest, CancellationToken ct);
+    Task ValidateAsync(PrivateSourceAccess? access, CancellationToken ct);
+    Task<string> GitAsync(SourceReadGrant grant, string repository, string? directory, IReadOnlyList<string> args, CancellationToken ct);
+    Task<string> GitWithConnectionAsync(SourceReadGrant grant, string repository, string? directory, IReadOnlyList<string> args, UserProviderConnection connection, CancellationToken ct);
+
+}
+
+internal sealed class PrivateSourceService(UserConnectionService connections, HttpClient http) : ISourceGitAccess
 {
     internal static AppLifecycleException Denied(string message = "Private source access is unavailable. Reconnect in Shell Settings → Source connections, then review the app's source connections.")
         => new("source_access_required", message);
@@ -79,21 +90,30 @@ internal sealed class PrivateSourceService(UserConnectionService connections, Ht
 
     // A grant authorizes one HTTPS repository. Fetch by explicit URL, never by checkout remotes.
     // Config is process-local; neither the command line nor .git/config contains the credential.
+    public Task<T> WithConnectionAsync<T>(SourceReadGrant grant, Func<UserProviderConnection, Task<T>> action, CancellationToken ct)
+        => UseGrantAsync(grant, action, ct);
+
     public Task<string> GitAsync(SourceReadGrant grant, string repository, string? directory, IReadOnlyList<string> args, CancellationToken ct)
+        => UseGrantAsync(grant, connection => GitWithConnectionAsync(grant, repository, directory, args, connection, ct), ct);
+
+    // Publication already owns the user connection lock. Borrow that validated connection instead
+    // of recursively taking the same lock during upstream validation and authenticated fetch.
+    public async Task<string> GitWithConnectionAsync(SourceReadGrant grant, string repository, string? directory,
+        IReadOnlyList<string> args, UserProviderConnection connection, CancellationToken ct)
     {
-        if (NormalizeRepository(repository) != grant.Repository) throw Denied("The Git repository changed. Review its connection again.");
-        return UseGrantAsync(grant, async connection =>
-        {
-            if (directory is not null) await ValidateGitConfigAsync(directory, grant.Repository, ct);
-            var start = AppSourceService.CreateGitStartInfo(directory, args);
-            ConfigureGit(start, grant.Repository, connections.Providers.Resolve(connection.Provider).GitAuthorization(connection).ToString());
-            ProcessRunResult result;
-            try { result = await ProcessRunner.RunAsync(start, TimeSpan.FromMinutes(10), ct, 256 * 1024); }
-            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-            { throw Denied("Git is unavailable for private source reads."); }
-            if (result.TimedOut || result.ExitCode != 0) throw Denied("Private Git read failed. Check the connection, repository access and network, then retry.");
-            return result.StandardOutput.Trim();
-        }, ct);
+        if (NormalizeRepository(repository) != grant.Repository || connection.Id != grant.ConnectionId ||
+            connection.UserId != grant.OwnerId || connection.Provider != grant.Provider)
+            throw Denied("The Git repository or selected connection changed. Review its connection again.");
+        ValidateProvider(connection, grant.Repository);
+        if (directory is not null) await ValidateGitConfigAsync(directory, grant.Repository, ct);
+        var start = AppSourceService.CreateGitStartInfo(directory, args);
+        ConfigureGit(start, grant.Repository, connections.Providers.Resolve(connection.Provider).GitAuthorization(connection).ToString());
+        ProcessRunResult result;
+        try { result = await ProcessRunner.RunAsync(start, TimeSpan.FromMinutes(10), ct, 256 * 1024); }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        { throw Denied("Git is unavailable for authenticated source operations."); }
+        if (result.TimedOut || result.ExitCode != 0) throw Denied("Authenticated Git operation failed. Check the connection, repository access and network, then retry.");
+        return result.StandardOutput.Trim();
     }
 
     internal static async Task ValidateGitConfigAsync(string directory, string repository, CancellationToken ct)
@@ -164,7 +184,7 @@ internal sealed class PrivateSourceService(UserConnectionService connections, Ht
         _ = provider.NormalizeRepository(repository);
     }
 
-    internal string NormalizeRepository(string value) => connections.Providers.ForUrl(value).NormalizeRepository(value);
+    public string NormalizeRepository(string value) => connections.Providers.ForUrl(value).NormalizeRepository(value);
     private SourceRepositoryFile ParseManifest(string value) => connections.Providers.ForUrl(value).ParseManifest(value);
 }
 

@@ -276,6 +276,16 @@ public sealed partial class CoreLifecycleServiceTests
                 await new MixedRuntimeAdapter([docker, local]).RemoveAsync(new(app, selection, Path.Combine(fixture.Paths.AppsRoot, appId),
                     Path.Combine(fixture.Paths.AppsRoot, appId, "data"), new Dictionary<string, string>(), [], SourceRoot: source));
             }
+            // Ordinary app removal retains caches. This disposable fixture has no later owner.
+            var cleanup = new ProcessDockerCommandRunner();
+            var volumes = await cleanup.RunAsync(["volume", "ls", "--filter", "label=hosty.instance=" + config.InstanceId,
+                "--filter", "label=hosty.app.id=" + appId, "--format", "{{.Name}}"], null, default);
+            Assert.True(volumes.ExitCode == 0, volumes.StandardError);
+            foreach (var volume in volumes.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var removed = await cleanup.RunAsync(["volume", "rm", volume], null, default);
+                Assert.True(removed.ExitCode == 0, removed.StandardError);
+            }
             Directory.Delete(root, recursive: true);
         }
     }

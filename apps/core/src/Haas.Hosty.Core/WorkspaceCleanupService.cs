@@ -43,6 +43,22 @@ internal sealed class WorkspaceCleanupService(CoreDataPaths paths, WorkspaceInsp
         WorkspaceWorkflowCommand input, CancellationToken ct)
         => workspaces.WithResourceContextAsync(new(userId), new(WorkspaceId: workspaceId),
             () => DeleteResourcesAsync(workspaceId, userId, appId, input, ct), ct, cleanup: true);
+
+    public async Task<CoreEnvironmentApiResponse> PreviewActionAsync(string workspaceId, string userId, string caller,
+        string environmentId, string targetApp, string action, PreviewCheckRun? input, CancellationToken ct)
+    {
+        var owner = await inspection.WorkflowOwnerAsync(workspaceId, userId, ct);
+        var readOnly = action is "checks" or "logs";
+        await RequirePermission(caller, readOnly ? CoreAppPermissions.CoreEnvironmentsRead : CoreAppPermissions.CoreEnvironmentsManage, ct);
+        var child = await environments.ReadAsync(environmentId, ct);
+        if (child is null || !Belongs(child.Owner, child.Request.Context, owner, workspaceId))
+            throw new SandboxException("environment_not_found", "This sandbox does not belong to the selected workspace.", 404);
+        if (action is not ("checks" or "run" or "restart" or "logs")) throw new SandboxException("preview_action_invalid", "Unknown preview action.", 400);
+        var path = "/api/apps/" + Uri.EscapeDataString(targetApp) + (action == "logs" ? "/logs?tail=80" : action == "restart" ? "/restart" : "/preview-checks" + (action == "run" ? "/run" : ""));
+        System.Text.Json.JsonElement? body = action == "run" ? System.Text.Json.JsonSerializer.SerializeToElement(input ?? throw new SandboxException("preview_action_invalid", "Choose a reviewed recipe.", 400), CoreJsonSerializerContext.Default.PreviewCheckRun) : null;
+        return await access.SendAsync(new(userId), environmentId, new(readOnly ? "GET" : "POST", path, body), ct,
+            readOnly ? null : owner);
+    }
     private async Task<WorkspaceWorkflow> DeleteResourcesAsync(string workspaceId, string userId, string appId,
         WorkspaceWorkflowCommand input, CancellationToken ct)
     {

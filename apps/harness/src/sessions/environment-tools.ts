@@ -14,8 +14,9 @@ const descriptions: Record<CoreEnvironmentAction, string> = {
 export const coreEnvironmentTools = () => coreEnvironmentActions.map(action => ({ name: action.replaceAll("-", "_"), description: descriptions[action],
   inputSchema: { type: "object", properties: {
     ...Object.fromEntries(["environmentId", "requestId", "label", "projectPath", "email", "displayName", "password", "path", "workspaceId"].map(k => [k, { type: "string" }])),
+    workspaceId: { type: "string", description: "Aggregate workspace ID: use workspaceId from the registered worktree returned by prepare/app_create, not that worktree's id." },
     limits: { type: "object", properties: Object.fromEntries(["memoryBytes", "cpus", "pids", "diskBytes", "applicationMemoryBytes", "applicationCpus", "applicationPids"].map(k => [k, { type: "number" }])), additionalProperties: false },
-    worktreeIds: { type: "array", items: { type: "string" }, maxItems: 16 },
+    worktreeIds: { type: "array", description: "Registered worktree ids within the selected aggregate workspace; use each returned worktree's id.", items: { type: "string" }, maxItems: 16 },
     mode: { type: "string", enum: ["current", "release", "source"] }, expectedRevision: { type: "integer", minimum: 1 },
     method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE"] }, body: { type: "object", additionalProperties: true },
   }, additionalProperties: false },

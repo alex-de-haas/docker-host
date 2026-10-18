@@ -16,7 +16,7 @@ internal static class McpEndpoints
         && AppManagementAuthorization.HasPermission(caller, permission);
     private static string? ToolPermission(string name) => name switch
     {
-        "list_apps" or "get_app" => CoreAppPermissions.ReadApps,
+        "list_apps" or "get_app" or "get_app_development_guide" => CoreAppPermissions.ReadApps,
         "get_host_status" or "get_core_operation" or "get_core_development" => CoreAppPermissions.ReadCore,
         "tail_app_logs" => CoreAppPermissions.AppLogs,
         "search_audit" => CoreAppPermissions.CoreLogs,
@@ -230,6 +230,14 @@ internal static class McpEndpoints
 [McpServerToolType]
 internal sealed class HostyCoreTools
 {
+    [McpServerTool(Name = "get_app_development_guide", ReadOnly = true)]
+    [Description("Read one bounded topic from the running Core's packaged app development guide. Default overview lists topic IDs. Includes Core version, content revision and manifest schema. Covers worktrees, Docker, SDK differences, HTTP identity, preview and recovery. Reading grants no mutation authority.")]
+    public static string GetAppDevelopmentGuide([Description("Topic ID from overview; omit for overview.")] string? topic = null)
+    {
+        try { return CoreJson.Text(AppDevelopmentGuideReader.Read(topic)); }
+        catch (AppLifecycleException ex) { return CoreJson.Text(new ErrorResponse(ex.Code, ex.Message)); }
+    }
+
     // A fleet can be large and a model's context cannot. The list tool projects only what an agent
     // needs to pick a target; everything else is one get_app away.
     [McpServerTool(Name = "list_apps", ReadOnly = true)]

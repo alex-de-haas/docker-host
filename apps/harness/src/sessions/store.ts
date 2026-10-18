@@ -38,6 +38,7 @@ export interface SessionRecord {
   developmentLease?: string;
   workflowCompletion?: { requestId: string; expectedRevision: number; state: "queued" | "blocked"; error?: string };
   coreEnvironments?: import("@hosty-sdk/app/sandbox/server").CoreEnvironment[];
+  appCreations?: { input: Record<string, unknown>; state: "pending" | "observed" | "rejected"; prompt?: string }[];
   coreEnvironmentOperations?: { action: string; input: Record<string, unknown>; state: "pending" | "observed" }[];
   sandboxPlans?: import("@hosty-sdk/app/sandbox/server").SandboxPlan[];
   sandboxInstances?: import("@hosty-sdk/app/sandbox/server").SandboxInstance[];

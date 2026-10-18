@@ -358,7 +358,12 @@ class CodexRun implements HarnessRun {
         threadId: this.threadId,
         input: [{ type: "text", text }],
         approvalPolicy: this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
-        sandboxPolicy: { type: this.options.autonomy === "autonomous" ? "dangerFullAccess" : "readOnly" },
+        // The managed transport already isolates the process in Docker. Starting another Linux
+        // namespace sandbox there fails under Docker's restricted capabilities. Keep the chat's
+        // approval policy, and tell Codex which boundary actually owns filesystem/network access.
+        sandboxPolicy: this.options.processTransport
+          ? { type: "externalSandbox", networkAccess: "enabled" }
+          : { type: this.options.autonomy === "autonomous" ? "dangerFullAccess" : "readOnly" },
       }) as { turn?: { id?: string } };
       if (this.turnActive && !this.activityTurnId) this.activityTurnId = started.turn?.id ?? null;
     } catch (error) {

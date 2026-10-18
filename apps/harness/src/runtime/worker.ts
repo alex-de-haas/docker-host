@@ -216,7 +216,10 @@ export class SharedDockerWorker {
   async diskUsage(): Promise<number> {
     if (!this.state || this.state.phase !== "running") throw new Error("No worker is running.");
     const paths = ["/worker/home", "/worker/cache", ...(this.state.diskPaths ?? [])];
-    const raw = await this.docker.run(["exec", this.state.name, "du", "-sk", "--", ...paths], 60_000);
+    const args = ["exec", this.state.name, "du", "-sk", "--", ...paths];
+    // Providers can replace cache files while du walks them. Retry one incomplete observation;
+    // persistent failures still stop the workload, and partial output never becomes a quota sample.
+    const raw = await this.docker.run(args, 60_000).catch(() => this.docker.run(args, 60_000));
     const lines = raw.split("\n");
     if (lines.length !== paths.length) throw new Error("Worker disk accounting is incomplete.");
     const values = lines.map(line => Number(line.split(/\s+/)[0]) * 1024);

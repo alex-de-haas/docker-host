@@ -6,10 +6,10 @@ namespace Haas.Hosty.Core;
 
 // The parent owns transport to a selected child, never credentials to the main Core. Setup invokes
 // the ordinary password bootstrap and login contracts; the resulting child cookie stays private.
-internal sealed class CoreEnvironmentAccess(CoreEnvironmentStore store, CoreEnvironmentService service)
+internal sealed class CoreEnvironmentAccess(CoreEnvironmentStore store, CoreEnvironmentService service, DevelopmentWorkspaceService? workspaces = null)
 {
-    private static HttpClient Client() => new(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
-        { Timeout = TimeSpan.FromMinutes(3) };
+    private static HttpClient Client(bool previewCheck = false) => new(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
+        { Timeout = TimeSpan.FromMinutes(previewCheck ? 6 : 3) };
     private static Uri Origin(CoreEnvironmentRecord record) => new($"http://localhost:{record.Port}");
     private string SessionPath(string id) => Path.Combine(store.Root(id), "core", "parent-session.json");
     public async Task<CoreEnvironmentApiResponse> SetupAsync(SandboxActor actor, string id, CoreEnvironmentSetup input, CancellationToken ct)
@@ -54,10 +54,10 @@ internal sealed class CoreEnvironmentAccess(CoreEnvironmentStore store, CoreEnvi
         }
         finally { gate.Release(); }
     }
-    public Task<CoreEnvironmentApiResponse> SendAsync(SandboxActor actor, string id, CoreEnvironmentApiRequest input, CancellationToken ct)
-        => SendCoreAsync(actor, id, input, serialize: true, ct);
+    public Task<CoreEnvironmentApiResponse> SendAsync(SandboxActor actor, string id, CoreEnvironmentApiRequest input, CancellationToken ct, WorkspaceOwner? idleOwner = null)
+        => SendCoreAsync(actor, id, input, serialize: true, ct, idleOwner);
 
-    private async Task<CoreEnvironmentApiResponse> SendCoreAsync(SandboxActor actor, string id, CoreEnvironmentApiRequest input, bool serialize, CancellationToken ct)
+    private async Task<CoreEnvironmentApiResponse> SendCoreAsync(SandboxActor actor, string id, CoreEnvironmentApiRequest input, bool serialize, CancellationToken ct, WorkspaceOwner? idleOwner = null)
     {
         using var stopping = CancellationTokenSource.CreateLinkedTokenSource(ct, service.Stopping);
         ct = stopping.Token;
@@ -76,13 +76,22 @@ internal sealed class CoreEnvironmentAccess(CoreEnvironmentStore store, CoreEnvi
                 throw new SandboxException("environment_api_invalid", "Only bounded JSON requests to the selected child Core are supported.", 400);
             var session = await JsonStorage.ReadAsync<CoreEnvironmentSession>(SessionPath(id), ct)
                 ?? throw new SandboxException("environment_setup_required", "Complete normal child Core setup/password login first.", 409);
-            using var client = Client();
+            using var client = Client(uri.AbsolutePath.EndsWith("/preview-checks/run", StringComparison.Ordinal));
             using var request = new HttpRequestMessage(new HttpMethod(input.Method), uri);
             request.Headers.Add("Cookie", session.Cookie); request.Headers.Add("X-Hosty-CSRF", session.Csrf);
             request.Headers.Add("Origin", origin.ToString().TrimEnd('/'));
             if (input.Body is { } body) request.Content = new StringContent(body.GetRawText(), Encoding.UTF8, "application/json");
-            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-            return await ResultAsync(response, ct);
+            async Task<CoreEnvironmentApiResponse> Send()
+            {
+                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+                return await ResultAsync(response, ct);
+            }
+            // Keep environment -> source-owner lock order, also used by Finish when it releases
+            // source consumers. The ordinary agent API gets the same check/writer serialization.
+            if (idleOwner is null && input.Method == "POST" && uri.AbsolutePath.EndsWith("/preview-checks/run", StringComparison.Ordinal) && workspaces is not null)
+                idleOwner = (await workspaces.ListAsync(null, true, ct)).Workspaces.FirstOrDefault(w =>
+                    w.Owner.UserId == record.Owner.UserId && (w.WorkspaceId == record.Request.Context?.WorkspaceId || record.Request.WorktreeIds?.Contains(w.Id) == true))?.Owner;
+            return idleOwner is not null && workspaces is not null ? await workspaces.WithIdleSourceAsync(idleOwner, Send, ct) : await Send();
         }
         finally { if (serialize) gate.Release(); }
     }
@@ -126,7 +135,8 @@ internal sealed class CoreEnvironmentAccess(CoreEnvironmentStore store, CoreEnvi
         bool? restart = app.TryGetProperty("restartRequired", out var pending) && pending.ValueKind is JsonValueKind.True or JsonValueKind.False ? pending.GetBoolean() : null;
         return new(appId, Text(app, "displayName") ?? appId, Text(app, "version"), Text(app, "runtimeState") ?? "unknown", health, preview,
             restart, Read(app, "launchProgress", CoreJsonSerializerContext.Default.AppLaunchProgress),
-            Read(app, "development", CoreJsonSerializerContext.Default.AppDevelopmentStatus), Text(app, "manifestError"), Text(app, "lastError"));
+            Read(app, "development", CoreJsonSerializerContext.Default.AppDevelopmentStatus), Text(app, "manifestError"), Text(app, "lastError"),
+            Read(app, "health", CoreJsonSerializerContext.Default.AppHealthSummary)?.Services);
     }
     private static void RequireRunning(CoreEnvironmentRecord record)
     {

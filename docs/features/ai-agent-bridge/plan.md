@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-06-09
-updated: 2026-10-17
+updated: 2026-10-18
 summary: Durable agent jobs and the ownership map for deferred user sessions, agent providers and workspace-based development.
 components: [apps/core, apps/harness]
 ---
@@ -199,7 +199,7 @@ documentation change. The source/workspace and Sandbox features now own its mech
 - D11 owns general non-interactive scheduling/retry and consumes those APIs plus the independently tracked Core background delegation contract.
   Reuse registered workspaces and collision/lease checks; do not invent another checkout registry.
 
-[App authoring](../app-authoring/plan.md), [prototype workspaces](../app-prototype-workspaces/plan.md)
+[App authoring](../app-authoring/plan.md), [prototype workspaces](../app-prototype-workspaces/feature.md)
 and [development controls](../app-development-controls/plan.md) retain their existing scopes.
 
 ## Open Questions

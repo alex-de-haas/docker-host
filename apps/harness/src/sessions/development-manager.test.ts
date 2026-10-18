@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readFile, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { SessionStore } from "./store.js";
@@ -7,6 +7,7 @@ import { SessionManager } from "./manager.js";
 import { DevelopmentClient } from "./development.js";
 import { ProviderDirectory } from "../settings/providers.js";
 import { AuditReporter } from "../audit.js";
+import { AppContextError } from "./app-context.js";
 import type { HarnessAdapter, HarnessStartOptions } from "../harness/adapter.js";
 let dir: string, manager: SessionManager, store: SessionStore, client: DevelopmentClient;
 let starts: HarnessStartOptions[], sent: string[];
@@ -26,6 +27,119 @@ beforeEach(async () => {
 afterEach(async () => { await manager.shutdown(); vi.restoreAllMocks(); await rm(dir, { recursive: true, force: true }); });
 const finish = async (id: string) => { starts.at(-1)!.onEvent({ type: "result", status: "success" }); await vi.waitFor(async () => expect((await manager.getSession(id))?.status).toBe("idle")); };
 describe("development session coordination", () => {
+  it("keeps a refused unallocated building session deletable after Core confirms no worktree exists", async () => {
+    vi.mocked(client.call).mockImplementation(async (_id, _token, action) => {
+      if (action === "prepare") throw new AppContextError(409, "workspace_local_head_changed", "Refresh main");
+      return { workspaces: [] };
+    });
+    vi.mocked(client.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true });
+    await expect(manager.newBuildingSession("admin", "token", {
+      appId: "notes", requestId: "12345678-1234-4234-8234-123456789abc", expectedLocalHead: "b".repeat(40),
+    })).rejects.toThrow("Refresh main");
+    const record = (await store.listRecords())[0]!;
+    expect(record.developmentLease).toBeUndefined();
+    expect(await manager.deleteSession(record.id, "admin", "token")).toBe(true);
+  });
+  it("recovers new building preparation across restart without duplicating the session or starting an agent", async () => {
+    const input = { appId: "notes", requestId: "12345678-1234-4234-8234-123456789abc", expectedLocalHead: "b".repeat(40) };
+    vi.mocked(client.call).mockRejectedValueOnce(new Error("response lost"));
+    await expect(manager.newBuildingSession("admin", "token", input)).rejects.toThrow("response lost");
+    const original = (await store.listRecords())[0]!;
+    await expect(manager.deleteSession(original.id, "admin", "token")).rejects.toThrow("Complete and delete");
+    await manager.shutdown(); manager = build();
+    const resumed = await manager.newBuildingSession("admin", "token", input);
+    expect(resumed.id).toBe(original.id);
+    expect(resumed.developmentWorkspaces).toEqual([tree]);
+    expect(await store.listRecords()).toHaveLength(1);
+    const calls = vi.mocked(client.call).mock.calls.length;
+    expect((await manager.newBuildingSession("admin", "token", input)).id).toBe(original.id);
+    expect(client.call).toHaveBeenCalledTimes(calls);
+    expect(starts).toHaveLength(0);
+    await expect(manager.newBuildingSession("admin", "token", { ...input, expectedLocalHead: "c".repeat(40) })).rejects.toThrow("different session details");
+  });
+  it("does not store app handoff responses as worktrees", async () => {
+    const session = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+    await manager.workspaceAction(session.id, "prepare", { appId: "notes" }, "token", "admin");
+    vi.mocked(client.call).mockResolvedValue({ appId: "notes", accepted: true });
+    for (const action of ["app-local-status", "app-local-accept", "app-local-use"] as const)
+      await manager.workspaceAction(session.id, action, { appId: "notes", workspaceId: tree.id }, "token", "admin");
+    expect((await manager.getSession(session.id))?.developmentWorkspaces).toEqual([tree]);
+  });
+  it("recovers local creation without allocating again and dispatches the generation request once", async () => {
+    const record = await manager.createSession({ createdBy: "admin" });
+    const input = { requestId: "12345678-1234-4234-8234-123456789abc", appId: "notes", name: "Notes", bootstrapCommit: true, iconPng: "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGPQmXgBiBggFAAo6gY1Dm5YbwAAAABJRU5ErkJggg==" };
+    vi.mocked(client.call).mockRejectedValueOnce(new Error("response lost"));
+    await expect(manager.workspaceAction(record.id, "app-create", input, "token", "admin")).rejects.toThrow("response lost");
+    expect((await store.readRecord(record.id))!.appCreations?.[0]?.state).toBe("pending");
+    expect((await store.readRecord(record.id))!.appCreations?.[0]?.input.iconPng).toBe(input.iconPng);
+    await manager.shutdown(); manager = build();
+    vi.mocked(client.call).mockImplementation(async (_id, _token, action) => action === "app-create"
+      ? { operation: { stage: "installed" }, workspace: tree } : action === "list" ? { workspaces: [tree] } : tree);
+    await manager.workspaceAction(record.id, "app-create", input, "token", "admin");
+    await manager.workspaceAction(record.id, "app-create", input, "token", "admin");
+    expect((await manager.getSession(record.id))?.appContextRevision).toBe(1);
+    await manager.dispatchAppCreation(record.id, input.requestId, "Build a notes app", "admin", "token", "token");
+    await manager.dispatchAppCreation(record.id, input.requestId, "Build a notes app", "admin", "token", "token");
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain("parent installation must remain stopped");
+    expect(sent[0]).toContain("Build a notes app");
+    await expect(manager.dispatchAppCreation(record.id, input.requestId, "Different request", "admin", "token", "token")).rejects.toThrow("already has a generation prompt");
+    await finish(record.id);
+    await manager.shutdown(); manager = build();
+    await manager.dispatchAppCreation(record.id, input.requestId, "Build a notes app", "admin", "token", "token");
+    expect(sent).toHaveLength(1);
+  });
+  it("retains uncertain creation after permission loss and protects a retried refused request", async () => {
+    const record = await manager.createSession({ createdBy: "admin" });
+    const input = { requestId: "12345678-1234-4234-8234-123456789abe", appId: "notes", name: "Notes", bootstrapCommit: true };
+    vi.mocked(client.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true });
+    vi.mocked(client.call).mockRejectedValueOnce(new Error("response lost"));
+    await expect(manager.workspaceAction(record.id, "app-create", input, "token", "admin")).rejects.toThrow("response lost");
+    await manager.shutdown(); manager = build();
+    vi.mocked(client.call).mockRejectedValueOnce(new AppContextError(403, "app_permission_required", "Permission revoked"));
+    await expect(manager.workspaceAction(record.id, "app-create", input, "token", "admin")).rejects.toThrow("Permission revoked");
+    expect((await store.readRecord(record.id))!.appCreations![0]!.state).toBe("pending");
+    await expect(manager.deleteSession(record.id, "admin", "token")).rejects.toThrow();
+
+    const refused = await manager.createSession({ createdBy: "admin" });
+    vi.mocked(client.call).mockRejectedValueOnce(new AppContextError(403, "app_permission_required", "Permission missing"));
+    await expect(manager.workspaceAction(refused.id, "app-create", input, "token", "admin")).rejects.toThrow("Permission missing");
+    expect((await store.readRecord(refused.id))!.appCreations![0]!.state).toBe("rejected");
+    vi.mocked(client.call).mockRejectedValueOnce(new Error("response lost"));
+    await expect(manager.workspaceAction(refused.id, "app-create", input, "token", "admin")).rejects.toThrow("response lost");
+    expect((await store.readRecord(refused.id))!.appCreations![0]!.state).toBe("pending");
+    await expect(manager.deleteSession(refused.id, "admin", "token")).rejects.toThrow();
+  });
+
+  it("does not replay a creation prompt after an interrupted dispatch", async () => {
+    const record = await manager.createSession({ createdBy: "admin" });
+    const input = { requestId: "12345678-1234-4234-8234-123456789abd", appId: "notes", name: "Notes", bootstrapCommit: true };
+    vi.mocked(client.call).mockImplementation(async (_id, _token, action) => action === "app-create"
+      ? { operation: { stage: "installed" }, workspace: tree } : action === "list" ? { workspaces: [tree] } : tree);
+    await manager.workspaceAction(record.id, "app-create", input, "token", "admin");
+    await manager.dispatchAppCreation(record.id, input.requestId, "Build", "admin", "token", "token");
+    await manager.shutdown();
+    const saved = (await store.readRecord(record.id))!;
+    saved.handoffDispatch!.state = "unknown"; await store.saveRecord(saved);
+    manager = build();
+    await manager.dispatchAppCreation(record.id, input.requestId, "Build", "admin", "token", "token");
+    expect(sent).toHaveLength(1);
+    expect((await manager.getSession(record.id))?.handoffDispatch?.state).toBe("unknown");
+  });
+
+  it("redacts child setup passwords in persisted tool history", async () => {
+    const record = await manager.createSession({ createdBy: "admin" });
+    await manager.postMessage(record.id, "Start QA", "credential");
+    starts.at(-1)!.onEvent({ type: "tool_use", toolName: "mcp__hosty-workspaces__environment_setup",
+      input: { environmentId: "child", email: "qa@example.test", password: "private-child-password" } });
+    await vi.waitFor(async () => {
+      const log = await readFile(path.join(dir, "sessions", record.id, "events.ndjson"), "utf8");
+      expect(log).toContain("[redacted]");
+      expect(log).not.toContain("private-child-password");
+    });
+    await finish(record.id);
+  });
+
   it("keeps consent review separate from the creation journal with the same request ID", async () => {
     const record = await manager.createSession({ createdBy: "admin" });
     const input = { requestId: "a".repeat(32), label: "QA" };
@@ -296,4 +410,67 @@ it("still checks Core closure for a legacy client after local workspace associat
   await expect(manager.postMessage(record.id, "continue", "hosty_delegated.1.legacy")).rejects.toMatchObject({ code: "workspace_closed" });
   expect(starts).toHaveLength(0);
   expect(client.call).not.toHaveBeenCalled();
+});
+
+it("keeps acceptance and ordinary start operator-only and blocks active source work", async () => {
+  const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+  for (const action of ["app-local-accept", "app-local-use"] as const) {
+    await expect(manager.workspaceAction(record.id, action, {}, "token")).rejects.toThrow("explicit operator");
+    await expect(manager.workspaceAction(record.id, action, {}, "token", "other")).rejects.toThrow("another user");
+  }
+  await manager.workspaceAction(record.id, "app-local-accept", { workspaceId: tree.id }, "token", "admin");
+  await manager.postMessage(record.id, "keep working", "token");
+  await expect(manager.workspaceAction(record.id, "app-local-use", {}, "token", "admin")).rejects.toThrow();
+  await finish(record.id);
+});
+
+
+it("retains both repositories across context removal, cancellation and restart without moving attachments", async () => {
+  const second = { ...tree, id: "b".repeat(64), path: "/owned/second", apps: [{ appId: "media" }] };
+  vi.mocked(directory.readApps).mockResolvedValue([
+    { id: "notes", displayName: "Notes", runtimeState: "stopped" },
+    { id: "media", displayName: "Media", runtimeState: "stopped" },
+  ]);
+  vi.mocked(client.call).mockImplementation(async (_id, _token, action, input) =>
+    action === "list" ? { workspaces: [tree, second] } : input.appId === "media" ? second : tree);
+  const record = await manager.createSession({ createdBy: "admin", appIds: ["notes", "media"] });
+  await manager.workspaceAction(record.id, "prepare", { appId: "notes" }, "token", "admin");
+  await manager.workspaceAction(record.id, "prepare", { appId: "media" }, "token", "admin");
+  const attachment = store.attachmentPath(record.id, "context.txt")!;
+  await mkdir(path.dirname(attachment), { recursive: true });
+  await writeFile(attachment, "Reference material, not source");
+  await manager.addAttachment(record.id, { name: "context.txt", size: 30, path: attachment });
+  await manager.postMessage(record.id, "edit both", "token", ["context.txt"]);
+  for (const w of [tree, second]) {
+    expect(client.call).toHaveBeenCalledWith(record.id, "token", "lease", expect.objectContaining({ workspaceId: w.id }));
+    expect(sent.at(-1)).toContain(w.path);
+  }
+  expect(starts.at(-1)!.cwd).not.toBe(tree.path);
+  expect(starts.at(-1)!.cwd).not.toBe(second.path);
+  expect(sent.at(-1)).toContain(attachment);
+  await manager.setAppContext(record.id, ["notes"], 0, "admin");
+  await manager.cancelSession(record.id);
+  expect(vi.mocked(client.call).mock.calls.some(call => call[2] === "release-lease")).toBe(false);
+  await manager.shutdown(); manager = build();
+  await manager.postMessage(record.id, "resume both", "fresh-token", [], { expectedRevision: 1 });
+  expect((await manager.getSession(record.id))!.developmentWorkspaces?.map(w => w.id)).toEqual([tree.id, second.id]);
+  expect(sent.at(-1)).toContain(second.path);
+  await finish(record.id);
+  for (const w of [tree, second])
+    expect(client.call).toHaveBeenCalledWith(record.id, "fresh-token", "release-lease", expect.objectContaining({ workspaceId: w.id }));
+  await expect(manager.deleteSession(record.id, "admin", "fresh-token")).rejects.toMatchObject({ code: "workspace_retained" });
+  expect(await readFile(attachment, "utf8")).toBe("Reference material, not source");
+});
+
+it("does not start a multi-repository turn when the second source lease cannot be acquired", async () => {
+  const second = { ...tree, id: "b".repeat(64), path: "/owned/second" };
+  vi.mocked(client.call).mockImplementation(async (_id, _token, action, input) => {
+    if (action === "lease" && input.workspaceId === second.id) throw new Error("second source authority unavailable");
+    return action === "list" ? { workspaces: [tree, second] } : tree;
+  });
+  const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+  await manager.workspaceAction(record.id, "prepare", { appId: "notes" }, "token", "admin");
+  await expect(manager.postMessage(record.id, "edit both", "token")).rejects.toThrow("second source authority unavailable");
+  expect(starts).toHaveLength(0);
+  expect((await store.readRecord(record.id))!.developmentWorkspaces).toHaveLength(2);
 });

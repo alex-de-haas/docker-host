@@ -554,11 +554,20 @@ async function route(
     return;
   }
 
-  const inspection = url.pathname.match(/^\/api\/development-workspaces(\/[a-f0-9]{64}(?:\/previews|\/worktrees\/[a-f0-9]{64}(?:\/diff)?|\/workflow(?:\/(?:complete|resume|defer|delete|close))?)?)?$/);
+  if (url.pathname === "/api/building-sessions" && method === "POST") {
+    const credential = actor.via === "app-session" ? readAppCredential(request) : null;
+    if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to continue building.");
+    const body = await readJson(request);
+    sendJson(response, 200, await manager.newBuildingSession(actor.userId, credential, {
+      appId: body.appId as string, requestId: body.requestId as string, expectedLocalHead: body.expectedLocalHead as string }));
+    return;
+  }
+
+  const inspection = url.pathname.match(/^\/api\/development-workspaces(\/local-apps|\/[a-f0-9]{64}(?:\/previews(?:\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))?|\/worktrees\/[a-f0-9]{64}(?:\/diff)?|\/workflow(?:\/(?:complete|resume|defer|delete|close))?)?)?$/);
   if (inspection && (method === "GET" || method === "POST")) {
     const credential = actor.via === "app-session" ? readAppCredential(request) : null;
     if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to inspect workspaces.");
-    if (method === "POST" && !/\/workflow\/(complete|resume|defer|delete|close)$/.test(inspection[1] ?? ""))
+    if (method === "POST" && !/\/(?:workflow\/(?:complete|resume|defer|delete|close)|previews\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))$/.test(inspection[1] ?? ""))
       throw new AppContextError(400, "workspace_action_invalid", "Choose a workspace lifecycle action.");
     sendJson(response, 200, await manager.inspectWorkspaces(credential, (inspection[1] ?? "") + url.search,
       method === "POST" ? await readJson(request) : undefined, actor.userId)); return;
@@ -572,7 +581,7 @@ async function route(
 
   const sessionId = sessionMatch[1]!;
   if (sessionMatch[2] === "/workspaces" && method === "POST") {
-    const body = await readJson(request);
+    const body = await readJson(request, 256 * 1024);
     const action = body.action;
     if (typeof action !== "string") throw new AppContextError(400, "workspace_action_invalid", "Workspace action is required.");
     sendJson(response, 200, await manager.workspaceAction(sessionId, action as import("./sessions/development.js").DevelopmentAction,
@@ -580,6 +589,12 @@ async function route(
   }
 
   const rest = sessionMatch[2] ?? "";
+  if (rest === "/app-creations/dispatch" && method === "POST") {
+    const body = await readJson(request, 128 * 1024);
+    sendJson(response, 200, await manager.dispatchAppCreation(sessionId, body.requestId, body.prompt, actor.userId,
+      await delegationCredential(request, false), actor.via === "app-session" ? readAppCredential(request) ?? undefined : undefined));
+    return;
+  }
   if (rest === "/autonomy" && method === "PUT") {
     const body = await readJson(request);
     sendJson(response, 200, await manager.setAutonomy(sessionId, body.autonomy, actor.userId)); return;
@@ -970,13 +985,13 @@ function readBearer(request: IncomingMessage): string | undefined {
   return header?.toLowerCase().startsWith("bearer ") ? header.slice("bearer ".length).trim() : undefined;
 }
 
-async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
+async function readJson(request: IncomingMessage, maxBytes = MAX_BODY_BYTES): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
     size += (chunk as Buffer).length;
-    if (size > MAX_BODY_BYTES) {
-      throw new PayloadTooLargeError(`Request body exceeds ${MAX_BODY_BYTES} bytes.`);
+    if (size > maxBytes) {
+      throw new PayloadTooLargeError(`Request body exceeds ${maxBytes} bytes.`);
     }
     chunks.push(chunk as Buffer);
   }

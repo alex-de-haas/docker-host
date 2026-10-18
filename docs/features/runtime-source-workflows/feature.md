@@ -1,6 +1,6 @@
 ---
 created: 2026-06-03
-updated: 2026-10-16
+updated: 2026-10-17
 summary: Source checkouts, local overrides and runtime switching for installed apps, with Git inspection.
 components: [apps/core, apps/shell]
 ---
@@ -231,12 +231,20 @@ Direct Core operators and CLI users can select permitted folders and worktrees w
 state, resolved folder, effective manifest digest and development commands; changed state requires
 another review. Core explicitly explains that future edits in the folder can execute on the host.
 
-All override writers, including CLI and bootstrap, reject app storage/managed-source directories,
-legacy source storage and external/shared mount directories, resolving symlink ancestors and the
+All override writers, including CLI and bootstrap, reject app storage/managed-source directories
+except the owning local Git app's validated canonical source, and reject legacy source storage and external/shared mount directories, resolving symlink ancestors and the
 effective manifest location. Protected paths cannot be approved. Core stores the resolved source
 path. Source selection/clear share the lifecycle operation lock, and source/mount mutations share
 a cross-app path lock. A background Git resolution preserves the current override rather than
 restoring its earlier snapshot.
+
+Source selection/clear and removal also share repository admission with registered workspace writers
+and sandbox consumers. Active leases/consumers, pending or unknown operations and unreadable records
+block mutation. Reviews display source/worktree loss facts; selection keeps existing files and does
+not retarget old workspaces. Local Git override clearing restores canonical source. Removal defaults
+to keeping source; explicit deletion requires fresh verifiable facts and successful runtime removal.
+See [local source protection](../app-prototype-workspaces/feature.md#source-protection-during-removal-and-selection)
+for retained-source reinstallation and the bounded destructive review.
 
 `apps.sources.full` permits modifying code that Hosty can execute on the host in development mode.
 This API policy does not sandbox native agents with direct filesystem access. Clearing an override,

@@ -34,9 +34,17 @@ internal static class WorkspaceInspectionEndpoints
         routes.MapGet("", async (string appId, HttpRequest request, WorkspaceInspectionAuthorization auth,
             WorkspaceInspectionService service, CancellationToken ct) =>
             await Handle(async () => await service.ListAsync(await auth.RequireAsync(request, appId, ct), ct)));
+        routes.MapGet("/local-apps", async (string appId, HttpRequest request, WorkspaceInspectionAuthorization auth,
+            CoreLifecycleService lifecycle, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
+            await Handle(async () => await lifecycle.ReadLocalBuildingAppsAsync(await auth.RequireAsync(request, appId, ct), workspaces, ct)));
         routes.MapGet("/{workspaceId}/previews", async (string appId, string workspaceId, HttpRequest request,
             WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
             await Handle(async () => await cleanup.PreviewsAsync(workspaceId, await auth.RequireAsync(request, appId, ct), appId, ct)));
+        routes.MapPost("/{workspaceId}/previews/{environmentId}/{targetApp}/{action}", async (string appId, string workspaceId,
+            string environmentId, string targetApp, string action, HttpRequest request, PreviewCheckRun input,
+            WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
+            await Handle(async () => await cleanup.PreviewActionAsync(workspaceId, await auth.RequireAsync(request, appId, ct), appId,
+                environmentId, targetApp, action, input, ct)));
         routes.MapGet("/{workspaceId}/workflow", async (string appId, string workspaceId, HttpRequest request,
             WorkspaceInspectionAuthorization auth, WorkspaceInspectionService service, CancellationToken ct) =>
             await Handle(async () => await service.WorkflowAsync(workspaceId, await auth.RequireAsync(request, appId, ct), null, null, ct)));

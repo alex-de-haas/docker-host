@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 # Hosty Platform Vision
@@ -619,12 +619,15 @@ Decisions 1–5: 2026-08-19.
     features: only verified completed/merged work becomes eligible. [Harness retention](features/harness-session-retention/feature.md)
     owns those settings, eligibility and recovery. Two days/one week are examples, not selected
     defaults. A local Git repository before optional remote publication is a candidate revision to
-    [prototype workspaces](features/app-prototype-workspaces/plan.md), still to be reconciled with the
+    [prototype workspaces](features/app-prototype-workspaces/feature.md), still to be reconciled with the
     earlier no-Git design. On 2026-10-16 the owner approved the revised Harness information structure
     and requested it be recorded: the UI plan is Ready, with detailed styling deferred to the
     [Design System redesign](features/design-system/plan.md). Lifecycle, retention and prototype
     plans retain their separate statuses. No implementation starts or current-resource deletion is
-    authorized by this recording request.
+    authorized by this recording request. Subsequent owner approval on 2026-10-17 selected local Git
+    without publication, one consented bootstrap commit and child-Core Docker preview; the
+    [local creation feature](features/app-prototype-workspaces/feature.md) records that implementation
+    and resolves the earlier no-Git candidate for this creation flow.
 
 ## Expectations And Later Directions
 

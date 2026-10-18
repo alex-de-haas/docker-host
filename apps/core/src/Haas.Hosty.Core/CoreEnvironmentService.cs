@@ -17,7 +17,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
     internal CoreEnvironmentView View(CoreEnvironmentRecord record) => new(record.Id, record.Request.Label,
         record.Request.Mode, record.Request.ProjectPath, record.Request.Context, record.State, record.Revision, record.Port,
         record.State == "finished" ? null : store.Root(record.Id), $"http://core.i-{record.Id}.hosty.localhost:{record.Port}",
-        record.Process, record.Error, record.Operations ?? [], CoreEnvironmentResources.Limits(record), record.Usage);
+        record.Process, record.Error, record.Operations ?? [], CoreEnvironmentResources.Limits(record), record.State == "finished" ? null : record.Usage);
     private async Task<CoreEnvironmentView> ViewAsync(CoreEnvironmentRecord record, CancellationToken ct, Dictionary<string, Task<string>>? digests = null)
         => View(record) with { Access = consent is null ? null : await consent.AccessAsync(record, ct, digests) };
     internal Task RequireConsentAsync(SandboxActor actor, CoreEnvironmentRecord record, bool launch, CancellationToken ct)
@@ -334,7 +334,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                     if (consent is not null) await consent.FinishAsync(record, deadline.Token);
                     foreach (var treeId in record.Request.WorktreeIds ?? [])
                         await workspaces!.SetSandboxConsumerAsync(treeId, record.Id, false, deadline.Token);
-                    record = record with { State = "finished", Process = null, Executable = null };
+                    record = record with { State = "finished", Process = null, Executable = null, Usage = null };
                 }
                 operations = operations.Select(o => o.Id == requestId ? o with { State = "succeeded" } : o).ToList();
                 record = record with { Revision = record.Revision + 1, Operations = operations, Error = null };
@@ -421,6 +421,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             try
             {
                 var record = (await store.ReadAsync(snapshot.Id, ct))!;
+                if (record.State is "finished" or "finishing" or "cleanup-failed" || record.RootDeletionStarted) continue;
                 try
                 {
                     var usage = await runtime.InspectResourcesAsync(record, store.Root(record.Id), ct);

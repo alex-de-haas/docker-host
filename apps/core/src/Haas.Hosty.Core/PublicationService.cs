@@ -137,12 +137,16 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
     public Task<PublicationRecord> CommandAsync(string id, WorkspaceOwner owner, string kind, PublicationCommand input, CancellationToken ct)
         => Locked(async () =>
     {
-        if (!Guid.TryParse(input.RequestId, out _) || kind is not ("resolve-review" or "commit" or "configure" or "publish" or "link" or "ready" or "merge" or "complete" or "corrective"))
+        if (!Guid.TryParse(input.RequestId, out _) || kind is not ("resolve-review" or "commit" or "configure" or "push" or "publish" or "link" or "ready" or "merge" or "complete" or "corrective"))
             throw new PublicationException("request_invalid", "Supply a UUID requestId and a supported publication operation.");
         await RequireOwner(owner, ct);
         var w = await workspaces.ObserveAsync(id, owner, ct);
+        var remote = await workspaces.PublicationRemoteAsync(w, ct);
         var r = await Read(id, ct);
         if (r is not null && r.Owner != owner) throw new PublicationException("forbidden", "Publication belongs to another session.");
+        if (remote is not null && r is not null && (Publication(r.Provider).NormalizeRepository(remote.Repository) != r.Repository ||
+            remote.TargetBranch != r.TargetBranch || remote.Grant.ConnectionId != r.ConnectionId))
+            throw new PublicationException("remote_changed", "The publication no longer matches the reviewed local source remote.");
         var fingerprint = DevelopmentWorkspaceService.Hash(CoreJson.Text(input));
         var previous = r?.Operations.FirstOrDefault(o => o.Id == input.RequestId);
         if (previous is not null && (previous.Kind != kind || previous.Fingerprint != fingerprint)) throw new PublicationException("request_conflict", "The request ID belongs to different arguments.");
@@ -155,11 +159,13 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         if (r is null)
         {
             if (kind != "configure" || string.IsNullOrWhiteSpace(input.ConnectionId)) throw new PublicationException("connection_required", "Configure a concrete user source connection before publication.");
-            var sourceProvider = connections.Providers.ForUrl(w.Repository);
-            var repository = Publication(sourceProvider.Descriptor.Id).NormalizeRepository(w.Repository);
+            var sourceProvider = connections.Providers.ForUrl(remote?.Repository ?? w.Repository);
+            var repository = Publication(sourceProvider.Descriptor.Id).NormalizeRepository(remote?.Repository ?? w.Repository);
             r = new PublicationRecord { Provider = sourceProvider.Descriptor.Id, WorkspaceId = id, Owner = owner, Repository = repository, HeadRepository = repository,
-                ConnectionId = input.ConnectionId, Branch = w.Branch, TargetBranch = w.TargetBranch };
+                ConnectionId = input.ConnectionId, Branch = w.Branch, TargetBranch = remote?.TargetBranch ?? w.TargetBranch };
         }
+        if (remote is not null && remote.Grant.ConnectionId != r.ConnectionId)
+            throw new PublicationException("connection_conflict", "Use the source connection reviewed when attaching this remote.");
         if (input.ConnectionId is not null && input.ConnectionId != r.ConnectionId) throw new PublicationException("connection_conflict", "This publication is bound to another connection.");
         var record = r;
         var workflow = await workspaces.WorkflowAsync(owner, ct);
@@ -219,6 +225,17 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
                     if (committed.Operations.LastOrDefault(o => o.Id == input.RequestId)?.State != "succeeded")
                         throw new PublicationException("commit_uncertain", "Inspect the workspace commit operation before retrying.");
                 }
+                else if (kind == "push")
+                {
+                    RequireHead(w, input);
+                    await workspaces.WithPublicationAsync(id, owner, input.ExpectedHead!, async current =>
+                    {
+                        await workspaces.RequireRemotePublicationAsync(current, record.Repository, record.TargetBranch, record.ConnectionId, provider.NormalizeRepository, ct, c);
+                        await provider.PushAsync(c, current, record.HeadRepository, record.Branch, input.ExpectedHead!, ct);
+                        return true;
+                    }, ct);
+                    record = record with { PublishedHead = input.ExpectedHead }; await Save(record);
+                }
                 else if (kind == "publish")
                 {
                     RequireHead(w, input);
@@ -232,6 +249,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
                     // Workspace serialization fences managed commit/cleanup while credentials are in use.
                     await workspaces.WithPublicationAsync(id, owner, input.ExpectedHead!, async current =>
                     {
+                        await workspaces.RequireRemotePublicationAsync(current, record.Repository, record.TargetBranch, record.ConnectionId, provider.NormalizeRepository, ct, c);
                         await provider.PushAsync(c, current, record.HeadRepository, record.Branch, input.ExpectedHead!, ct);
                         return true;
                     }, ct);

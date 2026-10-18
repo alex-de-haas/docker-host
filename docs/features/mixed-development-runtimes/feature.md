@@ -1,6 +1,6 @@
 ---
 created: 2026-09-17
-updated: 2026-10-14
+updated: 2026-10-17
 summary: Development profiles can combine Docker and local-command services and run editable source inside Docker.
 components: [apps/core]
 ---
@@ -73,6 +73,12 @@ runtime switches. It validates the complete dependency graph before launching se
 in reverse order. It aggregates health and logs. Failure cleanup removes services created by that
 start while preserving adopted containers; cleanup failures are reported. Local processes retain
 the existing process-tree supervision and container services retain Docker ownership checks.
+
+Before starting Docker services, Core removes obsolete service containers against the complete
+selected Docker graph. It uses immutable container IDs and exact app/instance labels, retaining
+current sibling services, foreign containers, persistent data and cache volumes. Docker inventory
+or removal failures fail the start. Reviewed topology replacement can therefore retire a bootstrap
+container without leaving it in the child Core's resource accounting.
 
 Peer URLs depend on the consumer: Docker-to-Docker uses the app network's service DNS; host
 consumers use assigned loopback ports. A container-to-host edge requires an explicit host-exposed
