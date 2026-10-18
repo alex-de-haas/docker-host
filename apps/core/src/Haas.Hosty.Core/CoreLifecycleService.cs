@@ -967,7 +967,7 @@ internal sealed partial class CoreLifecycleService(
     // `afterOwnStop` marks the start half of a stop->start pair this same operation performed (update
     // apply, runtime switch, dev-mode toggle, operator backup) — as opposed to a cold start, where the app
     // was already down when we were called. It only governs the port preflight below.
-    private async Task<AppLifecycleResponse> StartCoreAsync(string appId, bool afterOwnStop, CancellationToken cancellationToken)
+    private async Task<AppLifecycleResponse> StartCoreAsync(string appId, bool afterOwnStop, CancellationToken cancellationToken, bool preserveOperationStatus = false)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
         // Legacy source behavior remains valid for ordinary starts. Requiring a profile migration
@@ -1085,7 +1085,7 @@ internal sealed partial class CoreLifecycleService(
                 Health = readiness,
                 LaunchProgress = new("ready", clock.UtcNow, BuildState: current.LaunchProgress?.BuildState),
                 AppliedSourceManifestDigest = configurationApplied ? selection.ManifestDigest : current.AppliedSourceManifestDigest,
-                OperationStatus = current.OperationStatus == "updating" ? "updating" : "started",
+                OperationStatus = preserveOperationStatus || current.OperationStatus == "updating" ? current.OperationStatus : "started",
                 LastOperation = current.OperationStatus == "updating" ? "update" : "start",
                 LastError = null,
                 Endpoints = MergeEndpointUrls(current.Endpoints, result.Endpoints, selection),
@@ -1431,7 +1431,7 @@ internal sealed partial class CoreLifecycleService(
     public Task<AppLifecycleResponse> RestartAsync(string appId, CancellationToken cancellationToken = default)
         => WithAppLockAsync(appId, () => RestartCoreAsync(appId, cancellationToken), cancellationToken, allowDevelopment: true, startsDevelopmentRuntime: true);
 
-    private async Task<AppLifecycleResponse> RestartCoreAsync(string appId, CancellationToken cancellationToken)
+    private async Task<AppLifecycleResponse> RestartCoreAsync(string appId, CancellationToken cancellationToken, bool preserveOperationStatus = false)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
         IAppRuntimeAdapter? adapter = null;
@@ -1524,7 +1524,7 @@ internal sealed partial class CoreLifecycleService(
                 Health = readiness,
                 LaunchProgress = new("ready", clock.UtcNow, BuildState: current.LaunchProgress?.BuildState),
                 AppliedSourceManifestDigest = configurationApplied ? selection.ManifestDigest : current.AppliedSourceManifestDigest,
-                OperationStatus = "restarted",
+                OperationStatus = preserveOperationStatus ? current.OperationStatus : "restarted",
                 LastOperation = "restart",
                 LastError = null,
                 Endpoints = MergeEndpointUrls(current.Endpoints, start.Endpoints, selection),

@@ -32,12 +32,7 @@ internal sealed partial class CoreLifecycleService
         foreach (var mount in AppConfigurationFingerprint.ResolveMounts(app, await globalMounts.ReadAsync(ct)))
             outside.Add($"{mount.Key}: {mount.HostPath} ({(mount.ReadOnly ? "read-only" : "writable")})");
         var installed = await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct);
-        if (input.Action != "return")
-        {
-            if (!actor.TrustedLocalOperator && app.PrivateSources?.Git is { } grant && grant.OwnerId != actor.UserId)
-                throw DevError("source_forbidden", "Only the source connection owner can enter or change this development binding.");
-            await ValidatePrivateSelectionAsync(installed with { PrivateSources = app.PrivateSources }, ct);
-        }
+        if (input.Action != "return") await ValidateDevSourceAuthorityAsync(app, installed, actor, ct);
         var target = input.TargetRuntime;
         bool changed = false;
         if (input.Action == "enter")
@@ -132,12 +127,14 @@ internal sealed partial class CoreLifecycleService
                     // operation after a failed projection without repeating any runtime effects.
                     if (receipt.State == "succeeded" && op.Phase is "active" or "returned" &&
                         app.OperationStatus is "development-starting" or "development-restarting" or
-                            "development-return-bound" or "development-return-starting" or "started" or "restarted")
+                            "development-return-bound" or "development-return-starting")
                         await apps.UpdateAppAsync(appId, a => a with { OperationStatus = "development-" + op.Phase }, ct);
                     outcome = receipt.State;
                     return await GetDevModeAsync(appId, ct);
                 }
                 await ValidateDevBindingAsync(app, op, ct);
+                if (input.Action != "return")
+                    await ValidateDevSourceAuthorityAsync(app, await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct), actor, ct);
             }
             else
             {
@@ -175,7 +172,7 @@ internal sealed partial class CoreLifecycleService
                 {
                     await ValidateLiveDevManifestAsync(active, ct);
                     active = await DevPhaseAsync(active, "restarting", ct);
-                    await RestartCoreAsync(appId, ct);
+                    await RestartCoreAsync(appId, ct, preserveOperationStatus: true);
                     active = await DevPhaseAsync(active, "active", ct, completedRequestId: input.RequestId);
                 }
             }
@@ -279,7 +276,7 @@ internal sealed partial class CoreLifecycleService
             op = await DevPhaseAsync(op, "starting", ct);
             // Replay performs a verified stop before start, including a partly started multi-service app.
             await StopDevRuntimeAsync(await RequireAppAsync(op.AppId, ct), ct);
-            await StartCoreAsync(op.AppId, afterOwnStop: true, ct);
+            await StartCoreAsync(op.AppId, afterOwnStop: true, ct, preserveOperationStatus: true);
             op = await DevPhaseAsync(op, "active", ct, completedRequestId: requestId);
         }
         return op;
@@ -314,7 +311,7 @@ internal sealed partial class CoreLifecycleService
             {
                 op = await DevPhaseAsync(op, "return-starting", ct);
                 await StopDevRuntimeAsync(await RequireAppAsync(op.AppId, ct), ct);
-                await StartCoreAsync(op.AppId, afterOwnStop: true, ct);
+                await StartCoreAsync(op.AppId, afterOwnStop: true, ct, preserveOperationStatus: true);
             }
             op = await DevPhaseAsync(op, "returned", ct, completedRequestId: requestId);
         }
@@ -330,6 +327,15 @@ internal sealed partial class CoreLifecycleService
         await apps.UpdateAppAsync(app.Id, a => a with { RuntimeState = "stopped", ActiveSourcePaths = null,
             ActiveMountPaths = null, Health = null }, ct);
         await ReconcileIngressAsync(ct);
+    }
+
+    private async Task ValidateDevSourceAuthorityAsync(AppRecord app, RuntimeAppManifestSelection installed, AppDevActor actor, CancellationToken ct)
+    {
+        if (!actor.TrustedLocalOperator && new[] { app.PrivateSources?.Git, app.PrivateSources?.Manifest }
+            .OfType<SourceReadGrant>().Any(grant => grant.OwnerId != actor.UserId))
+            throw DevError("source_forbidden", "Only the source connection owner can enter or change this development binding.");
+        // The installed copy is local; its grant still refers to the persisted remote manifest URL.
+        await ValidatePrivateSelectionAsync(installed with { PrivateSources = app.PrivateSources, ManifestUrl = app.ManifestUrl }, ct);
     }
 
     private async Task ValidateDevBindingAsync(AppRecord app, AppDevOperation op, CancellationToken ct)

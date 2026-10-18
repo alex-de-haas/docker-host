@@ -52,7 +52,8 @@ The user and installation come from authenticated authority, not caller-supplied
 Read-only/delegated credentials cannot gain mutation authority by choosing an unprompted policy.
 The authenticated local control endpoint can use an already reviewed private-source connection;
 its owner/connection validity is still rechecked. Browser and MCP actors retain owner checks.
-Private source checks still apply to entry and restart. Generic Start/Restart refuse active private
+Private source checks apply to entry, restart and pending-request recovery, using the persisted
+manifest URL for private manifest grants. Generic Start/Restart refuse active private
 trials because those calls carry no source-owner identity; the reviewed dev restart performs the
 current grant checks. Ordinary Stop, logs and health use the installed recipe even when the live
 manifest is damaged or changed; Stop remains available after source access is revoked. Return does not grant new source access;
@@ -73,7 +74,8 @@ points to this journal. Exact replay observes or resumes the original request. C
 or authority are refused; a request retired by a later trial cannot accidentally restart old work.
 Terminal phase and successful receipt are persisted in one atomic journal write, so failure of the
 following registry update or loss of the response cannot repeat a completed transition. Exact replay
-repairs a missed terminal registry status without repeating runtime effects.
+repairs a missed terminal registry status without repeating runtime effects or overwriting later
+ordinary lifecycle statuses. Internal dev starts retain their transition status until completion.
 HTTP disconnect does not cancel an admitted transition. Core shutdown can interrupt it; retry uses
 the same arguments and UUID. Interrupted restart and Return retain their actual phase and error.
 

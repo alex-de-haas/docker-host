@@ -62,20 +62,34 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(expected, (await f.Apps.GetAppAsync("test.created"))!.InstallManifestPath);
     }
 
-    [Fact]
-    public async Task DevMode_TrustedLocalOperatorUsesReviewedPrivateGrantAndStillHonorsRevocation()
+    private static async Task<(LifecycleFixture Fixture, CoreLifecycleService Service, UserDirectoryStore Users, PrivateSourceService Private)> PrivateDevFixture(bool privateManifest = false)
     {
         var (f, _, _, _, _, _) = await LocalHandoffFixture();
         var app = (await f.Apps.GetAppAsync("test.created"))!;
         var source = app.SourceState!.LocalOverridePath!;
         var repository = new Uri(source).AbsoluteUri;
         var (users, privateSources, grant) = await PrivateDocumentAccessAsync(f, repository);
-        var manifest = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(app.ManifestPath!))!;
-        manifest["source"] = new System.Text.Json.Nodes.JsonObject { ["repository"] = repository, ["branch"] = "main" };
-        await File.WriteAllTextAsync(app.ManifestPath!, manifest.ToJsonString());
-        await File.WriteAllTextAsync(Path.Combine(source, "manifest.json"), manifest.ToJsonString());
-        await f.Apps.UpdateAppAsync(app.Id, a => a with { PrivateSources = new(Git: grant) });
-        var service = f.RecreateService(privateSources: privateSources);
+        if (privateManifest)
+        {
+            const string url = "https://fixture.example/private/main/manifest.json";
+            await f.Apps.UpdateAppAsync(app.Id, a => a with { ManifestUrl = url, PrivateSources = new(Manifest: grant with { ManifestUrl = url }) });
+        }
+        else
+        {
+            var manifest = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(app.ManifestPath!))!;
+            manifest["source"] = new System.Text.Json.Nodes.JsonObject { ["repository"] = repository, ["branch"] = "main" };
+            await File.WriteAllTextAsync(app.ManifestPath!, manifest.ToJsonString());
+            await File.WriteAllTextAsync(Path.Combine(source, "manifest.json"), manifest.ToJsonString());
+            await f.Apps.UpdateAppAsync(app.Id, a => a with { PrivateSources = new(Git: grant) });
+        }
+        return (f, f.RecreateService(privateSources: privateSources), users, privateSources);
+    }
+
+    [Fact]
+    public async Task DevMode_TrustedLocalOperatorUsesReviewedPrivateGrantAndStillHonorsRevocation()
+    {
+        var (f, service, users, _) = await PrivateDevFixture();
+        var app = (await f.Apps.GetAppAsync("test.created"))!;
         var request = DevRequest("enter");
         Assert.Equal("dev_source_forbidden", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
             service.PlanDevModeAsync(app.Id, request, new("bob", "manual")))).Code);
@@ -97,6 +111,42 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal("source_access_required", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
             service.PlanDevModeAsync(app.Id, DevRequest("restart"), local))).Code);
         Assert.Equal("returned", (await ApplyReviewedDev(service, DevRequest("return", accept: true), local)).Phase);
+    }
+
+    [Theory]
+    [InlineData("enter")]
+    [InlineData("restart")]
+    public async Task DevMode_PendingReplayRechecksPrivateConnectionBeforeRuntimeEffects(string action)
+    {
+        var (f, service, users, privateSources) = await PrivateDevFixture();
+        var actor = new AppDevActor("local-operator", "cli", TrustedLocalOperator: true);
+        if (action == "restart") await ApplyReviewedDev(service, DevRequest("enter"), actor);
+        var request = DevRequest(action);
+        request = request with { PlanDigest = (await service.PlanDevModeAsync("test.created", request, actor)).PlanDigest };
+        f.Adapter.StartContextProbe = (_, _) => throw new AppLifecycleException("fixture_failed", "Interrupted private start");
+        await Assert.ThrowsAsync<AppLifecycleException>(() => service.ApplyDevModeAsync("test.created", request, actor));
+        f.Adapter.StartContextProbe = null;
+        await users.UpdateAsync(s => s with { ProviderConnections = [] });
+        var starts = f.Adapter.StartCount; var stops = f.Adapter.StopCount;
+        var resumed = f.RecreateService(privateSources: privateSources);
+        Assert.Equal("source_access_required", (await Assert.ThrowsAsync<AppLifecycleException>(() => resumed.ApplyDevModeAsync("test.created", request, actor))).Code);
+        Assert.Equal(starts, f.Adapter.StartCount); Assert.Equal(stops, f.Adapter.StopCount);
+        Assert.Equal("returned", (await ApplyReviewedDev(resumed, DevRequest("return", accept: true), actor)).Phase);
+    }
+
+    [Fact]
+    public async Task DevMode_PrivateManifestUsesPersistedUrlAndCurrentOwnerConnection()
+    {
+        var (_, service, users, _) = await PrivateDevFixture(privateManifest: true);
+        var actor = new AppDevActor("admin", "manual");
+        Assert.Equal("dev_source_forbidden", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            service.PlanDevModeAsync("test.created", DevRequest("enter"), new("bob", "manual")))).Code);
+        Assert.Equal("active", (await ApplyReviewedDev(service, DevRequest("enter"), actor)).Phase);
+        Assert.Equal("active", (await ApplyReviewedDev(service, DevRequest("restart"), actor)).Phase);
+        await users.UpdateAsync(s => s with { ProviderConnections = [] });
+        Assert.Equal("source_access_required", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            service.PlanDevModeAsync("test.created", DevRequest("restart"), actor))).Code);
+        Assert.Equal("returned", (await ApplyReviewedDev(service, DevRequest("return", accept: true), actor)).Phase);
     }
 
     [Fact]
@@ -312,6 +362,23 @@ public sealed partial class CoreLifecycleServiceTests
         var starts = f.Adapter.StartCount; var stops = f.Adapter.StopCount;
         Assert.Equal("returned", (await f.RecreateService().ApplyDevModeAsync("test.created", request, actor)).Phase);
         Assert.Equal("configured", (await f.Apps.GetAppAsync("test.created"))!.OperationStatus);
+        Assert.Equal(starts, f.Adapter.StartCount); Assert.Equal(stops, f.Adapter.StopCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DevMode_ReturnReplayPreservesLaterOrdinaryLifecycleStatus(bool restart)
+    {
+        var (f, owner, _, tree, _, _) = await LocalHandoffFixture(); var actor = DevActor(owner);
+        await ApplyReviewedDev(f.Service, DevRequest("enter", tree.Id), actor);
+        var request = DevRequest("return", accept: true);
+        request = request with { PlanDigest = (await f.Service.PlanDevModeAsync("test.created", request, actor)).PlanDigest };
+        await f.Service.ApplyDevModeAsync("test.created", request, actor);
+        if (restart) await f.Service.RestartAsync("test.created"); else await f.Service.StartAsync("test.created");
+        var starts = f.Adapter.StartCount; var stops = f.Adapter.StopCount;
+        Assert.Equal("returned", (await f.RecreateService().ApplyDevModeAsync("test.created", request, actor)).Phase);
+        Assert.Equal(restart ? "restarted" : "started", (await f.Apps.GetAppAsync("test.created"))!.OperationStatus);
         Assert.Equal(starts, f.Adapter.StartCount); Assert.Equal(stops, f.Adapter.StopCount);
     }
 
