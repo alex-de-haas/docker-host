@@ -261,19 +261,32 @@ describe("sessions with provider connections", () => {
     expect((await registry.summary()).available).toBe(true);
   });
 
-  it("persists provider-change activity across manager restarts", async () => {
+  it.each(["provider", "autonomy", "app-context"])("persists %s activity with the exact emitted timestamp across manager restarts", async kind => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       vi.setSystemTime(new Date("2026-10-18T10:00:00Z"));
       const c = await connection("codex");
       const blank = await manager.createSession({ createdBy: "operator" });
       vi.setSystemTime(new Date("2026-10-18T12:00:00Z"));
-      const updated = await manager.setConnection(blank.id, c.id, false);
-      expect(updated.updatedAt).toBe("2026-10-18T12:00:00.000Z");
-      const restarted = newManager();
-      expect((await restarted.getSession(blank.id))!.updatedAt).toBe(updated.updatedAt);
-      expect((await restarted.listSessions()).find(record => record.id === blank.id)!.updatedAt).toBe(updated.updatedAt);
-      expect((await store.readEvents(blank.id)).find(event => event.type === "session_provider_changed")!.ts).toBe(updated.updatedAt);
+      const toISOString = Date.prototype.toISOString;
+      const tickingClock = vi.spyOn(Date.prototype, "toISOString").mockImplementation(function (this: Date) {
+        const value = toISOString.call(this);
+        vi.setSystemTime(Date.now() + 1);
+        return value;
+      });
+      try {
+        const updated = kind === "provider" ? await manager.setConnection(blank.id, c.id, false)
+          : kind === "autonomy" ? await manager.setAutonomy(blank.id, "autonomous", "operator")
+          : await manager.setAppContext(blank.id, [], 0, "operator");
+        expect(Date.parse(updated.updatedAt)).toBeGreaterThan(Date.parse("2026-10-18T10:00:00Z"));
+        const restarted = newManager();
+        expect((await restarted.getSession(blank.id))!.updatedAt).toBe(updated.updatedAt);
+        expect((await restarted.listSessions()).find(record => record.id === blank.id)!.updatedAt).toBe(updated.updatedAt);
+        const eventType = kind === "provider" ? "session_provider_changed" : kind === "autonomy" ? "session_autonomy_changed" : "app_context_changed";
+        expect((await store.readEvents(blank.id)).find(event => event.type === eventType)!.ts).toBe(updated.updatedAt);
+      } finally {
+        tickingClock.mockRestore();
+      }
     } finally {
       vi.useRealTimers();
     }

@@ -733,7 +733,7 @@ export class SessionManager {
       if (!binding) throw new ConnectionError(400, "provider_required", "Choose a provider connection.");
       if (locked && session.record.harnessSessionId) await this.connections.adoptLegacySession(binding, session.record.harnessSessionId);
       Object.assign(session.record, binding, { providerLocked: locked, updatedAt: new Date().toISOString() });
-      await this.append(id, { type: "session_provider_changed", ...binding, providerLocked: locked });
+      await this.append(id, { type: "session_provider_changed", ts: session.record.updatedAt, ...binding, providerLocked: locked });
       return session.record;
     });
   }
@@ -749,7 +749,7 @@ export class SessionManager {
       session.record.appIds = ids;
       session.record.appContextRevision = (session.record.appContextRevision ?? 0) + 1;
       session.record.updatedAt = new Date().toISOString();
-      await this.append(id, { type: "app_context_changed", appIds: ids, appContextRevision: session.record.appContextRevision, actor });
+      await this.append(id, { type: "app_context_changed", ts: session.record.updatedAt, appIds: ids, appContextRevision: session.record.appContextRevision, actor });
       return session.record;
     });
   }
@@ -931,7 +931,7 @@ export class SessionManager {
       session.record.autonomy = value;
       session.record.updatedAt = new Date().toISOString();
       await this.store.saveRecord(session.record);
-      await this.append(id, { type: "session_autonomy_changed", autonomy: value });
+      await this.append(id, { type: "session_autonomy_changed", ts: session.record.updatedAt, autonomy: value });
       this.audit.report("ai_session_autonomy_changed", { sessionId: id, autonomy: value });
       return session.record;
     });
