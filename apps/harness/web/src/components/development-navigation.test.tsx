@@ -69,3 +69,18 @@ it("shows remaining chats when deletion removes the last session in the filtered
   await render([quick]);
   expect(filter.value).toBe(""); expect(container.textContent).toContain("Quick chat");
 });
+
+it("returns to all applications when the final unassigned chat is deleted", async () => {
+  const quick = { ...disposable, id: "quick", title: "Quick chat", appIds: [] };
+  const another = { ...quick, id: "another", title: "Another quick chat" };
+  const render = (sessions: AssistantSession[]) => act(async () => root.render(<DevelopmentNavigation sessions={sessions} workspaces={[]} onPick={vi.fn()} onNew={() => {}} onDelete={vi.fn()} />));
+  await render([disposable, quick, another]);
+  const filter = container.querySelector("select")!;
+  await act(async () => { filter.value = "unassigned"; filter.dispatchEvent(new Event("change", { bubbles: true })); });
+  expect(container.textContent).not.toContain("Disposable chat");
+  await render([disposable, quick]);
+  expect(filter.value).toBe("unassigned"); expect(container.textContent).toContain("Quick chat");
+  expect(container.textContent).not.toContain("Disposable chat");
+  await render([disposable]);
+  expect(filter.value).toBe(""); expect(container.textContent).toContain("Disposable chat");
+});

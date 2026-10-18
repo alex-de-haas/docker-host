@@ -32,7 +32,8 @@ including unfinished-workspace protection, and keeps failures visible for retry 
 away from the current conversation. Deleting the selected session clears its draft and route selection;
 deleting another session preserves the selected conversation. A terminal deletion event detaches
 the session immediately, including when a locally initiated DELETE loses its HTTP response.
-Unconfirmed failures retain the conversation and draft for retry. History and new-session header icons
+Unconfirmed failures retain the conversation and draft for retry. If deletion empties the selected
+app group or the unassigned group, the navigation falls back to All applications. History and new-session header icons
 belong only to the compact assistant; the full page uses its left navigation, including on narrow screens.
 A conversation without a Core workspace has no right panel. Narrow screens expose session and
 details controls while retaining the conversation draft.
@@ -76,9 +77,14 @@ focused tests also cover theme updates, failed highlighter loading, malformed an
 and staged additions/deletions. The test worktree passes Core cleanup after removing its synthetic
 changes; the test Core, Harness process and credentials are removed.
 
-PR rows show the PR number before the title, followed by repository name, successful/total observed checks and the
+PR rows show the PR number before the title, followed by repository name, completed/total observed checks and the
 provider's discussion-comment count. Missing counts remain unknown. State, draft, stale evidence,
-review decision, unresolved threads and individual failed/pending checks remain distinct. No
+review decision and unresolved threads remain distinct. Clicking the compact CI count opens a
+bounded popover listing every observed check and its result, including passed, skipped, failed and
+pending checks. Completed counts include terminal failures and cancellations; an empty check list
+is 0/0, not a successful CI run. Unknown results do not count as completed. Check details update
+with refreshed PR observations while the popover is open, and stale/unavailable evidence remains
+explicit. Individual check rows stay out of the collapsed workspace panel. No
 historical green PR implies that a new head passed CI. Merged PRs use a violet merge icon; open PRs
 use a pull-request icon with a green CI dot for successful checks, amber for pending checks and red
 for failed, cancelled or blocked checks. A failure takes precedence over pending checks. Missing,
@@ -392,7 +398,7 @@ and verification; these controls reuse the same sessions, worktrees and child Co
 
 - Session-row deletion requires confirmation without selecting the row, preserves errors for retry,
   prevents duplicate pending requests and retains Core's workspace/resource guards. Verify selected
-  session detachment, other drafts, filter fallback after removing a group, and compact-only history
+  session detachment, other drafts, filter fallback after removing an app group or the last unassigned chat, and compact-only history
   controls across reloads.
 
 - Preserve editable workflow defaults, custom/empty text, instruction delivery, independent retention

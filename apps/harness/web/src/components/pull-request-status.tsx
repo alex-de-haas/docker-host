@@ -1,9 +1,7 @@
 import { CircleHelp, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft } from "lucide-react";
 import type { PullRequest } from "@/lib/development-api";
 
-const passed = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
-const failed = new Set(["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STALE", "STARTUP_FAILURE"]);
-const pending = new Set(["PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"]);
+import { checkResult } from "@/lib/pull-request-checks";
 
 export function PullRequestStatus({ pr, stale }: { pr: PullRequest; stale: boolean }) {
   const observation = pr.observation;
@@ -21,15 +19,15 @@ export function PullRequestStatus({ pr, stale }: { pr: PullRequest; stale: boole
         Icon = GitPullRequestDraft; label = "Draft pull request";
       } else {
         Icon = GitPullRequest; color = "text-foreground";
-        const states = observation.checks?.map(check => check.state.toUpperCase());
+        const states = observation.checks?.map(check => checkResult(check.state).kind);
         let ci = "CI unknown";
         dot = "bg-muted-foreground";
         if (stale) ci = "CI status outdated";
         else if (!observation.error && states) {
           if (states.length === 0) ci = "No CI checks reported";
-          else if (states.some(state => failed.has(state))) { ci = "CI failed"; dot = "bg-red-500"; }
-          else if (states.some(state => pending.has(state))) { ci = "CI in progress"; dot = "bg-amber-500"; }
-          else if (states.every(state => passed.has(state))) { ci = "CI passed"; dot = "bg-emerald-500"; }
+          else if (states.includes("failed")) { ci = "CI failed"; dot = "bg-red-500"; }
+          else if (states.includes("pending")) { ci = "CI in progress"; dot = "bg-amber-500"; }
+          else if (states.every(state => state === "passed")) { ci = "CI passed"; dot = "bg-emerald-500"; }
         }
         label = `Open pull request · ${ci}`;
       }

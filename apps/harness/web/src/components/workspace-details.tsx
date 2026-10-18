@@ -11,6 +11,7 @@ import { AppDevMode } from "./app-dev-mode";
 import { LocalAppHandoff } from "./local-app-handoff";
 import { WorkspacePreviews } from "./workspace-previews";
 import { PullRequestStatus } from "./pull-request-status";
+import { PullRequestChecks } from "./pull-request-checks";
 
 const WorkspaceDiffView = dynamic(() => import("./workspace-diff-view"), {
   ssr: false, loading: () => <p role="status" className="p-3 text-sm text-muted-foreground">Loading diff viewer…</p>,
@@ -129,11 +130,10 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
         {trees.flatMap(tree => tree.pullRequests.map(pr => {
           const o = pr.observation, stale = !o || !Number.isFinite(Date.parse(o.at)) || now - Date.parse(o.at) > 90000;
           const number = pr.url.match(/\/pull\/(\d+)(?:[/?#]|$)/)?.[1];
-          const checks = o?.checks, passed = checks?.filter(c => ["SUCCESS", "NEUTRAL", "SKIPPED"].includes(c.state)).length;
+          const repository = repositoryName(pr.url.split("/pull/")[0]);
           return <div key={`${tree.id}:${pr.url}`} className="space-y-1 text-sm"><a href={safeLink(pr.url)} target="_blank" rel="noreferrer" className="flex items-start gap-2 hover:underline"><PullRequestStatus pr={pr} stale={stale} /><span className="line-clamp-2">{number && <span className="text-muted-foreground">#{number} · </span>}{o?.title || "Pull request"}</span></a>
-            <p className="pl-6 text-xs text-muted-foreground">{repositoryName(pr.url.split("/pull/")[0])} · CI {checks ? `${passed}/${checks.length}` : "unknown"} · {o?.commentCount === undefined ? "Comments unknown" : `${o.commentCount} discussion comments`}</p>
+            <p className="pl-6 text-xs text-muted-foreground">{repository} · <PullRequestChecks pr={pr} stale={stale} label={`${repository}${number ? ` #${number}` : ""}`} /> · {o?.commentCount === undefined ? "Comments unknown" : `${o.commentCount} discussion comments`}</p>
             <p className="pl-6 text-xs text-muted-foreground">{o?.state ?? "State unknown"}{o?.draft ? " · Draft" : ""}{stale ? " · Stale / unobserved" : ""}{o?.reviewDecision ? ` · ${o.reviewDecision}` : ""}{o?.unresolvedThreads ? ` · ${o.unresolvedThreads} unresolved threads` : ""}</p>
-            {checks?.filter(c => !["SUCCESS", "NEUTRAL", "SKIPPED"].includes(c.state)).map((c,i) => <p key={i} className="pl-6 text-xs">{c.name}: {c.state}</p>)}
             {(pr.unavailable || o?.error) && <p className="pl-6 text-xs text-destructive">{pr.unavailable || o?.error}</p>}
           </div>;
         }))}

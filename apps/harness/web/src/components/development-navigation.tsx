@@ -23,7 +23,8 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
   const appNames = new Map(workspaces.flatMap(w => w.worktrees.flatMap(t => t.apps.map(app => [app.appId, app.name] as const))));
   for (const session of sessions) for (const id of session.appIds ?? [])
     names.set(id, session.contextApps?.find(app => app.id === id)?.displayName ?? appNames.get(id) ?? names.get(id) ?? id);
-  const selectedFilter = filter === "unassigned" || names.has(filter) ? filter : "";
+  const unassigned = sessions.filter(session => !session.appIds?.length);
+  const selectedFilter = (filter === "unassigned" ? unassigned.length > 0 : names.has(filter)) ? filter : "";
   const groups = [...names].sort((a,b) => a[1].localeCompare(b[1]));
   const renderGroup = (id: string, name: string, rows: AssistantSession[]) => <section key={id || "unassigned"} className="py-2">
     <h2 className="flex items-center gap-2 px-3 pb-1 text-xs font-medium text-muted-foreground"><Folder className="size-3.5" />{name}</h2>
@@ -52,7 +53,7 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
       </select></div>
     <div className="min-h-0 flex-1 overflow-y-auto py-2">
       {groups.filter(([id]) => !selectedFilter || selectedFilter === id).map(([id,name]) => renderGroup(id,name,sessions.filter(s => s.appIds?.includes(id))))}
-      {(!selectedFilter || selectedFilter === "unassigned") && renderGroup("", "Unassigned chats", sessions.filter(s => !s.appIds?.length))}
+      {(!selectedFilter || selectedFilter === "unassigned") && renderGroup("", "Unassigned chats", unassigned)}
       {!sessions.length && <p className="p-3 text-sm text-muted-foreground">Start a session to ask a question or work on an application.</p>}
     </div>
     <Dialog open={deleting !== null} onOpenChange={open => { if (!open && !deletionPending.current) setDeleting(null); }}>
