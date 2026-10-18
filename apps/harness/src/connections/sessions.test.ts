@@ -261,6 +261,24 @@ describe("sessions with provider connections", () => {
     expect((await registry.summary()).available).toBe(true);
   });
 
+  it("persists provider-change activity across manager restarts", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-18T10:00:00Z"));
+      const c = await connection("codex");
+      const blank = await manager.createSession({ createdBy: "operator" });
+      vi.setSystemTime(new Date("2026-10-18T12:00:00Z"));
+      const updated = await manager.setConnection(blank.id, c.id, false);
+      expect(updated.updatedAt).toBe("2026-10-18T12:00:00.000Z");
+      const restarted = newManager();
+      expect((await restarted.getSession(blank.id))!.updatedAt).toBe(updated.updatedAt);
+      expect((await restarted.listSessions()).find(record => record.id === blank.id)!.updatedAt).toBe(updated.updatedAt);
+      expect((await store.readEvents(blank.id)).find(event => event.type === "session_provider_changed")!.ts).toBe(updated.updatedAt);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("allows empty-chat selection, requires explicit binding for old chats, and preserves removed connection history", async () => {
     const c = await connection("codex");
     await registry.setDefault(null);

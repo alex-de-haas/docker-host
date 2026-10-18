@@ -732,7 +732,7 @@ export class SessionManager {
       const binding = await this.connections.binding(connectionId);
       if (!binding) throw new ConnectionError(400, "provider_required", "Choose a provider connection.");
       if (locked && session.record.harnessSessionId) await this.connections.adoptLegacySession(binding, session.record.harnessSessionId);
-      Object.assign(session.record, binding, { providerLocked: locked });
+      Object.assign(session.record, binding, { providerLocked: locked, updatedAt: new Date().toISOString() });
       await this.append(id, { type: "session_provider_changed", ...binding, providerLocked: locked });
       return session.record;
     });
