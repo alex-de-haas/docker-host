@@ -426,8 +426,8 @@ it("refreshes unavailable worker health after a recovered stop without losing th
   expect(button("Send")?.disabled).toBe(false);
 });
 
-const openDelete = async () => {
-  await act(async () => button("Delete Conversation")!.click());
+const openDelete = async (title = "Conversation") => {
+  await act(async () => button(`Delete ${title}`)!.click());
   await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent === "Delete session")!.click());
 };
 const renderDeletion = async () => {
@@ -476,4 +476,37 @@ it("reports deletion from another window while detaching the active session", as
   expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBeNull();
   expect(container.textContent).toContain("deleted in another window");
   expect(api.deleteSession).not.toHaveBeenCalled();
+});
+
+it.each(["deleted", "retained", "unavailable"])("reconciles a lost non-active deletion response with %s inventory", async outcome => {
+  const other = { ...record, id: "other-session", title: "Other conversation" };
+  vi.mocked(api.listSessions).mockResolvedValue([record, other]);
+  vi.mocked(api.deleteSession).mockRejectedValue(new Error("Lost deletion response"));
+  localStorage.setItem("hosty.assistant.draft.other-session", "Other retained draft");
+  await renderDeletion();
+  expect(api.streamEvents).toHaveBeenCalledTimes(1);
+  expect(api.streamEvents).toHaveBeenCalledWith(record.id, expect.any(Function), expect.any(AbortSignal), expect.any(Function));
+  if (outcome === "deleted") vi.mocked(api.listSessions).mockResolvedValue([record]);
+  if (outcome === "unavailable") vi.mocked(api.listSessions).mockRejectedValue(new Error("Inventory unavailable"));
+  await openDelete("Other conversation");
+  expect(api.listSessions).toHaveBeenCalledTimes(2);
+  expect(input().value).toBe("My retained draft");
+  expect(localStorage.getItem("hosty.assistant.session")).toBe(record.id);
+  expect(window.location.search).toBe("?session=session-one");
+  if (outcome === "deleted") {
+    expect(button("Delete Other conversation")).toBeNull();
+    expect(localStorage.getItem("hosty.assistant.draft.other-session")).toBeNull();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.textContent).not.toContain("Lost deletion response");
+  } else {
+    expect(button("Delete Other conversation")).not.toBeNull();
+    expect(localStorage.getItem("hosty.assistant.draft.other-session")).toBe("Other retained draft");
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Lost deletion response");
+    vi.mocked(api.deleteSession).mockRejectedValue(new Error("Request failed (404)."));
+    vi.mocked(api.listSessions).mockResolvedValue([record]);
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent === "Delete session")!.click());
+    expect(button("Delete Other conversation")).toBeNull();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(input().value).toBe("My retained draft");
+  }
 });

@@ -646,17 +646,22 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     pendingDeletes.current.set(sessionId, pending);
     try {
       await deleteSession(sessionId);
-      clearDraft(sessionId);
-      setSessions(current => current.filter(entry => entry.id !== sessionId));
-      detachDeleted(sessionId);
     } catch (cause) {
       if (!pending.confirmed) {
-        setError(cause instanceof Error ? cause.message : String(cause));
-        throw cause;
+        // Other navigation rows have no active stream. Reconcile a lost response against the
+        // authenticated inventory, preserving local state if deletion cannot be established.
+        const observed = await listSessions().catch(() => null);
+        if (!pending.confirmed && (!observed || observed.some(entry => entry.id === sessionId))) {
+          setError(cause instanceof Error ? cause.message : String(cause));
+          throw cause;
+        }
       }
     } finally {
       pendingDeletes.current.delete(sessionId);
     }
+    clearDraft(sessionId);
+    setSessions(current => current.filter(entry => entry.id !== sessionId));
+    detachDeleted(sessionId);
   }, [detachDeleted]);
 
   useEffect(() => {
