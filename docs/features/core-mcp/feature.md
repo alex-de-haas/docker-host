@@ -1,6 +1,6 @@
 ---
 created: 2026-08-09
-updated: 2026-10-17
+updated: 2026-10-18
 summary: Core MCP exposes app state, logs and bounded audit search, with explicit grants for lifecycle actions and reviewed updates.
 components: [apps/core]
 ---
@@ -31,10 +31,12 @@ never performs or proxies work that belongs to a runtime app's own domain API.
 ## Authorization
 
 - Admin-gated by an endpoint filter that runs before the protocol handler sees the request, so a
-  non-admin never learns which apps exist. An anonymous browser-shaped POST is refused by the CSRF
-  gate (403); an invalid bearer gets 401; a valid non-admin session gets 403.
-- `requireCsrf: true` as on every session-authenticated `/api` mutation. Bearer credentials are
-  CSRF-exempt platform-wide, so an external MCP client presenting an access token is unaffected.
+  non-admin never learns which apps exist. An anonymous POST gets 401 with a `WWW-Authenticate`
+  protected-resource metadata challenge, allowing an external client to discover OAuth. An invalid
+  bearer gets 401; a valid non-admin session gets 403.
+- Cookie-authenticated requests require a matching CSRF token, as on every session-authenticated
+  `/api` mutation; a missing or invalid token gets 403. CSRF validation is enabled only when the
+  selected credential is a session cookie. Bearer credentials remain CSRF-exempt platform-wide.
 - The direct credential shapes that pass the filter are: an administrator session, a
   [scoped access token](../scoped-access-tokens/feature.md) with audience `hosty:core` and
   `mcp:read`, and a delegated token addressed to `hosty:core` (the facade's on-behalf-of path, still
@@ -302,7 +304,8 @@ selects release. See [Core development mode](../core-dev-target/feature.md).
   actual fleet (10 apps, 10 running), `get_app` resolved a real interface URL, `tail_app_logs`
   clamped a 100000-line request to 500 and returned real output, and an unknown app id came back as
   an explanation rather than a transport error. The fail-closed direction was checked on the same
-  binary: anonymous 403, forged bearer 401.
+  binary: anonymous 403, forged bearer 401. Those are historical results for 0.79.0; current
+  anonymous requests return the 401 discovery challenge described above.
 - **Verified with a stock client on 2026-08-15** (Claude Code, registered as an HTTP MCP server with
   an admin access token in an `Authorization` header): `claude mcp list` reported the server
   connected, and a session that asked which apps are installed answered from the real fleet — ten apps
