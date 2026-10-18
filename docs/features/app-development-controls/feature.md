@@ -52,7 +52,10 @@ The user and installation come from authenticated authority, not caller-supplied
 Read-only/delegated credentials cannot gain mutation authority by choosing an unprompted policy.
 The authenticated local control endpoint can use an already reviewed private-source connection;
 its owner/connection validity is still rechecked. Browser and MCP actors retain owner checks.
-Private source checks still apply to entry and restart. Return does not grant new source access;
+Private source checks still apply to entry and restart. Generic Start/Restart refuse active private
+trials because those calls carry no source-owner identity; the reviewed dev restart performs the
+current grant checks. Ordinary Stop, logs and health use the installed recipe even when the live
+manifest is damaged or changed; Stop remains available after source access is revoked. Return does not grant new source access;
 restarting a prior private runtime can still fail if its required authority has been revoked.
 
 Harness uses the existing **Ask / Run unprompted / Disabled** policy. Ask in Normal mode presents

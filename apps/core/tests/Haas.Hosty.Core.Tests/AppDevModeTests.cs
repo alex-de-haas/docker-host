@@ -81,8 +81,19 @@ public sealed partial class CoreLifecycleServiceTests
             service.PlanDevModeAsync(app.Id, request, new("bob", "manual")))).Code);
         var local = new AppDevActor("local-operator", "cli", TrustedLocalOperator: true);
         Assert.Equal("active", (await ApplyReviewedDev(service, request, local)).Phase);
+        var starts = f.Adapter.StartCount;
+        var stops = f.Adapter.StopCount;
+        Assert.Equal("dev_source_authority_required", (await Assert.ThrowsAsync<AppLifecycleException>(() => service.StartAsync(app.Id))).Code);
+        Assert.Equal("dev_source_authority_required", (await Assert.ThrowsAsync<AppLifecycleException>(() => service.RestartAsync(app.Id))).Code);
+        Assert.Equal(starts, f.Adapter.StartCount); Assert.Equal(stops, f.Adapter.StopCount);
         Assert.Equal("active", (await ApplyReviewedDev(service, DevRequest("restart"), local)).Phase);
         await users.UpdateAsync(s => s with { ProviderConnections = [] });
+        Assert.Equal("stopped", (await service.StopAsync(app.Id)).App!.RuntimeState);
+        starts = f.Adapter.StartCount;
+        Assert.Equal("dev_source_authority_required", (await Assert.ThrowsAsync<AppLifecycleException>(() => service.StartAsync(app.Id))).Code);
+        Assert.Equal("dev_source_authority_required", (await Assert.ThrowsAsync<AppLifecycleException>(() => service.RestartAsync(app.Id))).Code);
+        Assert.Equal(starts, f.Adapter.StartCount);
+        Assert.Equal("stopped", (await f.Apps.GetAppAsync(app.Id))!.RuntimeState);
         Assert.Equal("source_access_required", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
             service.PlanDevModeAsync(app.Id, DevRequest("restart"), local))).Code);
         Assert.Equal("returned", (await ApplyReviewedDev(service, DevRequest("return", accept: true), local)).Phase);
@@ -146,6 +157,37 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal("returned", result.Phase); Assert.Equal("broken manifest", await File.ReadAllTextAsync(manifest));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DevMode_OrdinaryStopIgnoresDamagedOrChangedLiveManifest(bool malformed)
+    {
+        var (f, owner, _, tree, _, _) = await LocalHandoffFixture(); var actor = DevActor(owner);
+        await ApplyReviewedDev(f.Service, DevRequest("enter", tree.Id), actor);
+        // Public dev sources retain the ordinary lifecycle controls.
+        Assert.Equal("stopped", (await f.Service.StopAsync("test.created")).App!.RuntimeState);
+        Assert.Equal("running", (await f.Service.StartAsync("test.created")).App!.RuntimeState);
+        Assert.Equal("running", (await f.Service.RestartAsync("test.created")).App!.RuntimeState);
+        var path = Path.Combine(tree.Path, "manifest.json");
+        var edited = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(path))!;
+        edited["name"] = "Changed live contract";
+        var content = malformed ? "broken manifest" : edited.ToJsonString();
+        await File.WriteAllTextAsync(path, content);
+        Assert.NotEmpty((await f.Service.GetLogsAsync("test.created", 20)).Text);
+        Assert.Equal("test.created", (await f.Service.GetHealthAsync("test.created")).AppId);
+        var stops = f.Adapter.StopCount;
+        Assert.Equal("stopped", (await f.Service.StopAsync("test.created")).App!.RuntimeState);
+        Assert.Equal(stops + 1, f.Adapter.StopCount);
+        Assert.Equal(content, await File.ReadAllTextAsync(path));
+        if (malformed)
+            Assert.Equal("manifest_json_invalid", (await Assert.ThrowsAsync<AppManifestException>(() => f.Service.StartAsync("test.created"))).Code);
+        else
+            Assert.Equal("dev_contract_changed", (await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.StartAsync("test.created"))).Code);
+        Assert.Equal("stopped", (await f.Apps.GetAppAsync("test.created"))!.RuntimeState);
+        Assert.Equal("returned", (await ApplyReviewedDev(f.Service, DevRequest("return", accept: true), actor)).Phase);
+        Assert.Equal(content, await File.ReadAllTextAsync(path));
+    }
+
     [Fact]
     public async Task DevMode_ReturnRequiresExplicitDataCompatibilityAndNeverRestoresAutomatically()
     {
@@ -154,7 +196,7 @@ public sealed partial class CoreLifecycleServiceTests
         var data = Path.Combine(f.Paths.AppsRoot, "test.created", "data", "changed.json"); await File.WriteAllTextAsync(data, "new schema");
         var error = await Assert.ThrowsAsync<AppLifecycleException>(() => ApplyReviewedDev(f.Service, DevRequest("return"), actor));
         Assert.Equal("dev_data_compatibility_required", error.Code);
-        Assert.Equal("stopped", (await f.Service.GetDevModeAsync("test.created")).App.RuntimeState);
+        Assert.Equal("stopped", (await f.Service.GetDevModeAsync("test.created")).App!.RuntimeState);
         Assert.Equal("new schema", await File.ReadAllTextAsync(data));
         Assert.Equal("returned", (await ApplyReviewedDev(f.Service, DevRequest("return", accept: true), actor)).Phase);
     }
@@ -213,7 +255,7 @@ public sealed partial class CoreLifecycleServiceTests
         var actor = DevActor(owner);
         await ApplyReviewedDev(f.Service, DevRequest("enter", tree.Id), actor);
         Assert.Empty(await f.RecreateService().StopAutostartDisabledAppsAsync());
-        Assert.Equal("running", (await f.Service.GetDevModeAsync("test.created")).App.RuntimeState);
+        Assert.Equal("running", (await f.Service.GetDevModeAsync("test.created")).App!.RuntimeState);
         Assert.False((await f.Apps.GetAppAsync("test.created"))!.Autostart);
         Assert.Equal([sandbox], (await workspaces.Read(tree.Id, owner, default)).SandboxConsumers);
         await workspaces.SetSandboxConsumerAsync(tree.Id, sandbox, false, default);

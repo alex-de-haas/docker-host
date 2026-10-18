@@ -109,16 +109,22 @@ internal sealed partial class CoreLifecycleService(
     // NOT reentrant: verbs that internally start an app (ApplyUpdate,
     // ApplyRuntimeSwitch, CreateManualBackup) call StartCoreAsync — the unlocked body — never StartAsync.
 
-    internal async Task<T> WithAppLockAsync<T>(string appId, Func<Task<T>> operation, CancellationToken cancellationToken, bool allowDevelopment = false, bool developmentOperation = false)
+    internal async Task<T> WithAppLockAsync<T>(string appId, Func<Task<T>> operation, CancellationToken cancellationToken, bool allowDevelopment = false, bool developmentOperation = false, bool startsDevelopmentRuntime = false)
     {
         var mutex = apps.OperationLock(appId);
         await mutex.WaitAsync(cancellationToken);
         try
         {
             if (!developmentOperation && await apps.GetAppAsync(appId, cancellationToken) is { } installed &&
-                await AppDevStore.ReadAsync(paths, installed, cancellationToken) is { Active: true } development &&
-                (!allowDevelopment || development.Phase != "active"))
-                throw new AppLifecycleException("dev_mode_active", "Return from development mode before changing this app. An interrupted transition must be recovered using its original requestId.");
+                await AppDevStore.ReadAsync(paths, installed, cancellationToken) is { Active: true } development)
+            {
+                if (!allowDevelopment || development.Phase != "active")
+                    throw new AppLifecycleException("dev_mode_active", "Return from development mode before changing this app. An interrupted transition must be recovered using its original requestId.");
+                // Generic lifecycle callers have no source-owner identity. Private development code
+                // must use the reviewed dev operation, which rechecks ownership and current grants.
+                if (startsDevelopmentRuntime && installed.PrivateSources is { Git: not null } or { Manifest: not null })
+                    throw new AppLifecycleException("dev_source_authority_required", "Restart private development code using the development operation so its source authority can be checked. Stop and Return remain available.");
+            }
             return await operation();
         }
         finally
@@ -956,7 +962,7 @@ internal sealed partial class CoreLifecycleService(
         => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
     public Task<AppLifecycleResponse> StartAsync(string appId, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => StartCoreAsync(appId, afterOwnStop: false, cancellationToken), cancellationToken, allowDevelopment: true);
+        => WithAppLockAsync(appId, () => StartCoreAsync(appId, afterOwnStop: false, cancellationToken), cancellationToken, allowDevelopment: true, startsDevelopmentRuntime: true);
 
     // `afterOwnStop` marks the start half of a stop->start pair this same operation performed (update
     // apply, runtime switch, dev-mode toggle, operator backup) — as opposed to a cold start, where the app
@@ -989,7 +995,7 @@ internal sealed partial class CoreLifecycleService(
                 LaunchProgress = new("preparing", clock.UtcNow),
             }, cancellationToken)).App;
 
-            var load = await LoadSelectionWithStatusAsync(app, cancellationToken);
+            var load = await LoadSelectionWithStatusAsync(app, cancellationToken, validateDevelopmentContract: true);
             var selection = load.Selection;
             // Adopt a live source folder edit before the gates below so they see the live contract
             // (e.g. a newly-required setting blocks start, R8; a new required mount slot is enforced).
@@ -1423,7 +1429,7 @@ internal sealed partial class CoreLifecycleService(
     }
 
     public Task<AppLifecycleResponse> RestartAsync(string appId, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => RestartCoreAsync(appId, cancellationToken), cancellationToken, allowDevelopment: true);
+        => WithAppLockAsync(appId, () => RestartCoreAsync(appId, cancellationToken), cancellationToken, allowDevelopment: true, startsDevelopmentRuntime: true);
 
     private async Task<AppLifecycleResponse> RestartCoreAsync(string appId, CancellationToken cancellationToken)
     {
@@ -1434,7 +1440,7 @@ internal sealed partial class CoreLifecycleService(
         var stopAttempted = false;
         try
         {
-            var load = await LoadSelectionWithStatusAsync(app, cancellationToken);
+            var load = await LoadSelectionWithStatusAsync(app, cancellationToken, validateDevelopmentContract: true);
             var selection = load.Selection;
             await ValidatePinnedSourceCheckoutAsync(app, selection, cancellationToken);
             // Stop must target the contract the running process was started with — the last-good
@@ -5030,7 +5036,7 @@ internal sealed partial class CoreLifecycleService(
     private async Task<RuntimeAppManifestSelection> LoadSelectionForAppAsync(AppRecord app, CancellationToken cancellationToken)
         => (await LoadSelectionWithStatusAsync(app, cancellationToken)).Selection;
 
-    internal async Task<AppSelectionLoad> LoadSelectionWithStatusAsync(AppRecord app, CancellationToken cancellationToken)
+    internal async Task<AppSelectionLoad> LoadSelectionWithStatusAsync(AppRecord app, CancellationToken cancellationToken, bool validateDevelopmentContract = false)
     {
         if (string.IsNullOrWhiteSpace(app.ManifestPath))
         {
@@ -5042,7 +5048,10 @@ internal sealed partial class CoreLifecycleService(
         var lastGood = await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken, allowUnsupportedPermissions: true);
         if (await AppDevStore.ReadAsync(paths, app, cancellationToken) is { Active: true } development)
         {
-            if (app.SelectedRuntime == development.TargetRuntime && app.SourceState?.LocalOverridePath == development.SourcePath && !development.Phase.StartsWith("return-", StringComparison.Ordinal))
+            // Launching code requires the reviewed live contract. Stop, logs and health use the
+            // installed recipe even when a source edit is invalid or changes that contract.
+            if (validateDevelopmentContract && app.SelectedRuntime == development.TargetRuntime &&
+                app.SourceState?.LocalOverridePath == development.SourcePath && !development.Phase.StartsWith("return-", StringComparison.Ordinal))
             {
                 var live = await manifests.LoadAsync(CombineManifestSubpath(development.SourcePath, app.SourceState?.ManifestSubpath),
                     app.SelectedRuntime, cancellationToken, forceRead: true);
