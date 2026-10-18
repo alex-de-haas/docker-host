@@ -12,7 +12,7 @@ vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => ui }));
 vi.mock("@/lib/assistant-api", async original => ({
   ...await original<typeof api>(),
   getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), deleteSession: vi.fn(),
-  listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(), setSessionAutonomy: vi.fn(), listAgentConnections: vi.fn(),
+  listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(), setSessionAutonomy: vi.fn(), listAgentConnections: vi.fn(), renameSession: vi.fn(),
 }));
 vi.mock("@/lib/development-api", async original => ({ ...await original<typeof import("@/lib/development-api")>(), useDevelopmentInventory: () => ({ workspaces: [], error: "", refresh: () => {} }) }));
 vi.mock("@/components/speech-input", () => ({ SpeechInput: () => null }));
@@ -615,5 +615,22 @@ it("ignores a settings fetch overtaken by a later event even when both share a t
   vi.mocked(api.getSession).mockResolvedValue({ ...record, updatedAt: "2026-10-18T12:00:00Z", autonomy: "autonomous" });
   await act(async () => emit({ type: "session_autonomy_changed", seq: 3, ts: "2026-10-18T12:00:00Z", autonomy: "autonomous" }));
   await act(async () => oldReply({ ...record, updatedAt: "2026-10-18T12:00:00Z", autonomy: "normal" }));
+  expect(button("Autonomy: Autonomous")).not.toBeNull();
+});
+
+it("does not let a late rename response overwrite settings at the same timestamp", async () => {
+  record = { ...record, lastEventSeq: 1, updatedAt: "2026-10-18T10:00:00Z" };
+  await render();
+  await act(async () => button("Session history")!.click());
+  await act(async () => button("Rename Conversation")!.click());
+  let renameReply!: (value: api.AssistantSession) => void;
+  vi.mocked(api.renameSession).mockImplementation(() => new Promise(resolve => { renameReply = resolve; }));
+  await act(async () => container.querySelector<HTMLInputElement>('input[placeholder="Name this session…"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  vi.mocked(api.getSession).mockRejectedValue(new Error("Refresh unavailable"));
+  await act(async () => emit({ type: "session_autonomy_changed", seq: 3, ts: "2026-10-18T12:00:00Z", autonomy: "autonomous" }));
+  await act(async () => renameReply({ ...record, title: "Renamed", lastEventSeq: 2, updatedAt: "2026-10-18T12:00:00Z", autonomy: "normal" }));
+  await act(async () => button("Back to conversation")!.click());
+  expect(button("Autonomy: Autonomous")).not.toBeNull();
+  await act(async () => emit({ type: "session_autonomy_changed", seq: 2, ts: "2026-10-18T12:00:00Z", autonomy: "normal" }));
   expect(button("Autonomy: Autonomous")).not.toBeNull();
 });

@@ -36,6 +36,7 @@ export type AssistantSession = {
   status: string;
   createdAt: string;
   updatedAt?: string;
+  lastEventSeq?: number;
   createdBy?: string;
   appIds?: string[];
   appContextRevision?: number;

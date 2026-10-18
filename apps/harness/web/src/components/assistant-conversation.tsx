@@ -121,7 +121,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const openContextAfterMenu = useRef(false);
   const onSessionChange = useCallback((record: AssistantSession) => {
     const merge = (current: AssistantSession) => current.id !== record.id ? current : {
-      ...((record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0) && activityTime(record) >= activityTime(current) ? record : current),
+      ...((record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0) && activityTime(record) >= activityTime(current)
+        && (record.lastEventSeq === undefined || current.lastEventSeq === undefined || record.lastEventSeq >= current.lastEventSeq) ? record : current),
+      lastEventSeq: Math.max(record.lastEventSeq ?? 0, current.lastEventSeq ?? 0) || undefined,
       updatedAt: activityTime(record) >= activityTime(current) ? record.updatedAt : current.updatedAt,
     };
     setSession(current => current ? merge(current) : current);
@@ -220,8 +222,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
             : typeof event.connectionId === "string" && typeof event.connectionRevision === "number"
               && (event.harnessKind === "codex" || event.harnessKind === "claude") && typeof event.providerLocked === "boolean"
               ? { connectionId: event.connectionId, connectionRevision: event.connectionRevision, harnessKind: event.harnessKind, providerLocked: event.providerLocked } : {};
-          const applySettings = (current: AssistantSession) => current.id === record.id && activityTime({ updatedAt: event.ts }) >= activityTime(current)
-            ? { ...current, ...settings, updatedAt: event.ts } : current;
+          const applySettings = (current: AssistantSession) => current.id === record.id && event.seq >= (current.lastEventSeq ?? 0) && activityTime({ updatedAt: event.ts }) >= activityTime(current)
+            ? { ...current, ...settings, updatedAt: event.ts, lastEventSeq: event.seq } : current;
           setSessions(current => current.map(applySettings));
           setSession(current => current ? applySettings(current) : current);
           const revision = ++settingsRefresh;
@@ -233,9 +235,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         if (event.type === "app_context_changed") {
           const revision = Number(event.appContextRevision);
           setSessions(current => current.map(item => item.id === record.id && revision > (item.appContextRevision ?? 0)
-            ? { ...item, appIds: event.appIds as string[], appContextRevision: revision, updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(item) ? event.ts : item.updatedAt } : item));
+            ? { ...item, appIds: event.appIds as string[], appContextRevision: revision, lastEventSeq: event.seq, updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(item) ? event.ts : item.updatedAt } : item));
           setSession(current => current?.id === record.id && revision > (current.appContextRevision ?? 0)
-            ? { ...current, appIds: event.appIds as string[], appContextRevision: revision, updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(current) ? event.ts : current.updatedAt } : current);
+            ? { ...current, appIds: event.appIds as string[], appContextRevision: revision, lastEventSeq: event.seq, updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(current) ? event.ts : current.updatedAt } : current);
         }
         if (event.type === "assistant_delta") {
           setStreamed((current) => current + String(event.text ?? ""));
