@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-09
-updated: 2026-10-17
+updated: 2026-10-18
 summary: Deferred execution-scoped credentials for assistant and external-agent source operations, independently of the workspace viewer.
 components: [apps/core, apps/harness]
 ---
@@ -21,6 +21,21 @@ D8 here under D1-D3. Operation owners still decide app/action and Git destinatio
 permission UI cannot mint stronger credentials. Native filesystem/network isolation belongs to
 Containment, not to this credential contract.
 
+## Operator Profiles (Owner Clarification, 2026-10-16)
+
+[Vision decision 47](../../vision.md) distinguishes a trusted host owner, who may use a privileged
+external local agent, from restricted or remote operators using the built-in assistant. These are
+target access profiles, not existing role names. D1 must define the actual allowed app/worktree and
+operation sets, credential issuance and revocation before exposing narrower administrator access;
+the current broad administrator role is not sufficient enforcement. D2-D3 implement and verify that
+contract without giving the worker the trusted coordinator's authority. Execution containment owns
+the filesystem/network boundary, and ordinary-user MCP-only sessions retain their separate plan.
+
+An external agent's independent OS or provider permissions do not expand its Core grants. Core can
+observe externally produced Git/PR facts without treating observation as authorization or claiming
+that it executed those actions. Shared API convenience and factual reconciliation do not require
+equal native privileges for internal and external clients.
+
 ## Deliverables
 
 - [ ] D1. Specify trusted assistant/external execution registration and credentials bound to user, installation or principal, session, workspace, worktrees and permitted operations.
@@ -28,6 +43,8 @@ Containment, not to this credential contract.
 - [ ] D3. Verify cross-session substitution, grant revision, revocation, context changes and compatibility across assistants and external clients.
 
 ## Open Questions
+
+- Which concrete privileges distinguish a trusted host owner from a restricted development operator, without assuming that a role label supplies enforcement?
 
 - How does an external client register a trusted execution without inheriting operator authority?
 - Which session service attests context for alternative assistants?

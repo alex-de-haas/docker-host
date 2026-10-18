@@ -629,6 +629,75 @@ Decisions 1–5: 2026-08-19.
     [local creation feature](features/app-prototype-workspaces/feature.md) records that implementation
     and resolves the earlier no-Git candidate for this creation flow.
 
+46. **Platform-managed development before retiring legacy source controls (2026-10-16).**
+    The preferred internal and external agent journey is: request source through Hosty, receive
+    a registered workspace/worktree, edit there, ask Hosty for sandbox instances, inspect/test
+    through browser previews, finish instances, publish PRs and follow CI/review through Core.
+    A workspace groups repository worktrees; apps in one repository share a compatible tree,
+    while another dependency repository adds a tree to the same authorized work context.
+    Preparing source or a sandbox does not replace an installed application's runtime or source.
+    External agents use the direct Hosty connector/MCP for managed operations and edit the path
+    Core returns; a path is local only when the agent has access to Core's host filesystem.
+
+    Source-based runtimes remain. Host-native `localCommand` execution is a separate concern:
+    the owner is considering stronger restrictions or removal, and the current installed-app
+    local dev workflow and arbitrary source overrides may become unnecessary. No option is
+    selected for removal yet. First exercise the workspace/sandbox workflow, verify parity and
+    obtain explicit owner acceptance; preserve existing capabilities until an approved migration.
+    Keeping source in Hosty does not eliminate an execution environment: sandbox containers run
+    the application with their own data, resources and browser identity. MCP coordination alone
+    does not sandbox a native external editor or revoke its operating-system access.
+
+    This revises decisions 2/8/10's development direction without changing Sandbox's independent
+    API boundary in decision 40 or granting publication/lifecycle rights through workspace access.
+    [Source recovery](features/runtime-source-workflows/plan.md) is On Hold rather than becoming a
+    permanent redesign of the old controls. [Development Controls D1](features/app-development-controls/plan.md#deliverables)
+    owns parity and conditional retirement; [external development](features/external-development-workspaces/plan.md)
+    owns missing direct-client adapters/authority; [Development Sessions D1-D2](features/assistant-development-sessions/plan.md#deliverables)
+    owns integrated acceptance. Sandbox and PR services retain their own implementation ownership.
+    This direction authorizes documentation alignment, not new implementation, experiments or
+    removal of `localCommand`, overrides or development profiles.
+
+47. **Built-in agents are the normal constrained path; external agents are a trusted exception (2026-10-16).**
+    The owner expects most edits through the built-in assistant, including remote operators and
+    administrators with narrower development rights. Privileged local external agents are an
+    infrequent owner/host-operator tool. "Super administrator" and "restricted administrator"
+    describe intended access profiles here, not new implemented role names or an approved RBAC schema.
+    Remote restricted development uses the built-in assistant with verified execution, source,
+    credential, network and operation boundaries. Existing broad administrator checks and the
+    initial shared trusted-admin runner do not establish that narrower access model.
+
+    External clients normally prepare source, request sandboxes and manage workspace lifetime
+    through Hosty because the documented API is convenient. Instructions coordinate their use;
+    Core does not promise exclusive control over their native filesystem/Git/provider actions.
+    Local edits and commits must reconcile from Git regardless of origin. PR/CI/review facts come
+    from the authorized provider and require a verified repository/branch/head association; they
+    cannot be inferred from Git alone. Observe external facts without inventing Core mutation audit
+    entries or inferring that an observed merge authorizes further actions or source deletion.
+
+    Make sandbox preparation, readiness, preview, logs, retries and Finish easy to discover and
+    use, with practical examples and actionable failures. External native publication must not
+    corrupt workspace tracking or make a Core-only publish path a correctness prerequisite.
+    [Sandbox D6/D9](features/app-sandbox-runtimes/plan.md#deliverables) owns client usability;
+    [external development](features/external-development-workspaces/plan.md) owns its adapters and
+    external-action reconciliation acceptance. [Execution Authorization](features/assistant-execution-authorization/plan.md)
+    and [Containment](features/assistant-runtime-containment/plan.md) own restricted-operator
+    authority and execution prerequisites. Ordinary-user MCP-only sessions retain their separate
+    [On Hold plan](features/user-agent-sessions/plan.md). Source/native-runtime retirement remains
+    conditional under decision 46; this clarification approves no new implementation or access grants.
+
+48. **Managed source and sandbox become the default local workflow (2026-10-18).**
+    Preserve unpublished plans before retiring old checkouts. Use Core-registered workspaces for
+    Hosty source changes and child Core sandboxes for runtime/browser verification with separate
+    test data. Apply this guidance to shared agent instructions and Hosty repositories. Clear
+    obsolete Source overrides only after checking their consumers and durable source alternative.
+    The operator deletes legacy repositories manually after preservation and dependency checks;
+    neither a clean Git status nor a merged PR proves that an entire checkout is disposable.
+    This operational migration does not remove supported runtime types or override APIs. Unified
+    live-data dev mode remains an explicit authorized trial in the existing Core, with Return;
+    it is not replaced by attaching production data to a child Core. Repositories not registered
+    as Hosty source keep their documented workflow until an explicit integration or fallback exists.
+
 ## Expectations And Later Directions
 
 - **Apps ship with source.** The default is open source; a company's internal apps are closed by

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-07
-updated: 2026-10-14
+updated: 2026-10-18
 summary: Local external agents use authorized Core-owned worktrees, separate plan progress, and read-only pull request tracking in Workspaces.
 components: [apps/core, apps/plans, apps/workspaces]
 ---
@@ -182,6 +182,26 @@ The initial preparation creates a Core-owned worktree; it does not adopt an exis
 or move dirty files. An operator-authorized migration can transfer a reviewed patch into a newly
 prepared directory. Inspect the exact patch and destination before applying it, preserve the
 original checkout, and carry forward only the approved changes.
+
+## Default Source And Test Workflow
+
+Repository guidance uses Core-registered worktrees for Hosty source edits. The original checkout
+and shared managed source remain outside the task's editing scope. Runtime/browser verification
+uses the existing [sandbox and child Core lifecycle](../app-sandbox-runtimes/feature.md), with
+separate test data, identity and dependency instances. Unit builds/tests run in the worktree;
+documentation-only changes use document validation without starting a sandbox.
+
+Sandbox disposal and source completion are independent. Useful reports are exported before Finish;
+dirty, unmerged or consumed worktrees remain protected. The existing
+[live-data dev mode](../app-development-controls/feature.md) is a separately authorized operation
+in the installed app's Core, with recoverable Return. It does not mount ordinary data into a child
+Core or imply source/data rollback.
+
+The direct external workspace scope does not itself authorize sandbox or publication operations.
+Clients use their supported, separately authorized Harness/Core adapters; absent adapter support
+is reported explicitly. The [remaining Draft](plan.md) owns broader direct-client integration.
+Repositories without a registered source binding retain their authorized repository workflow;
+the guidance does not create bindings or permission grants implicitly.
 
 ## Workspace Tools And Recovery
 

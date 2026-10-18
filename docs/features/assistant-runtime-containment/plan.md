@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-10-17
+updated: 2026-10-18
 summary: Remaining per-session execution isolation, scoped access and verified shutdown; the shared Docker worker is implemented and verified separately.
 components: [apps/harness, apps/core]
 ---
@@ -35,6 +35,24 @@ This revises the sequencing in [vision decisions 26 and 32](../../vision.md), re
 below remains tracked by D1-D10; shared-host delivery now belongs to the linked shared-runtime
 plan, with eventual mode comparisons under D9. Common host-control restrictions also apply to the shared runner. Neither the shared runner nor
 its performance results satisfy ordinary-user acceptance under decision 28.
+
+## Restricted Operator Direction (2026-10-16)
+
+[Vision decision 47](../../vision.md) makes the built-in assistant the ordinary development route,
+including remote operators and administrators with limited app/source rights. The first shared
+trusted-administrator container remains a bounded milestone; its accepted cross-workspace visibility
+does not establish isolation for operators with different grants. Before supporting those users,
+verify the appropriate source, credential, network, command and cross-user boundaries under D1-D10
+and consume the authority contract from [Execution Authorization](../assistant-execution-authorization/plan.md).
+Role names and a container launch alone are not evidence of those boundaries. Privileged external
+local agents retain a cooperative workflow and are not the enforcement target of this backend.
+This clarification neither authorizes new experiments nor changes the prior bounded approvals.
+
+The native-runtime parity assessment belongs to
+[Development Controls D1](../app-development-controls/plan.md#deliverables). Source-based execution
+remains supported; restricting host-native execution is a separate future decision. Shared-worker
+delivery is already implemented and is not reopened by this recovered clarification. Workspace
+allocation does not contain a privileged external client's native process.
 
 ## Approved Bounded Experiment (2026-10-13)
 
