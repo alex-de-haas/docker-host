@@ -29,14 +29,14 @@ import { DevelopmentNavigation } from "@/components/development-navigation";
 import { CreateApp } from "@/components/create-app";
 import { SessionRetention } from "@/components/session-retention";
 import { WorkspaceDetails } from "@/components/workspace-details";
-import { useDevelopmentInventory } from "@/lib/development-api";
+import { orderWorkspaces, useDevelopmentInventory } from "@/lib/development-api";
 import { SessionList } from "@/components/session-list";
 import { hasMessageContent, indexAttachments, takeChosenFiles, takePastedImages } from "@/lib/attachments";
 import { approvalDecisions, cancelledQuestions, ToolActivity, TranscriptEvent } from "@/components/transcript";
 import { retryHandoff } from "@/lib/assistant-api";
 import { composeAskDraft } from "@/lib/ask-draft";
 import { clearDraft, pruneDrafts, readDraft, writeDraft, readDraftAttachments, writeDraftAttachments } from "@/lib/draft-store";
-import { orderSessions, publishAttention, waitingCount } from "@/lib/attention";
+import { activityTime, orderSessions, publishAttention, waitingCount } from "@/lib/attention";
 import {
   AssistantApiError,
   createSession,
@@ -137,7 +137,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const [uploaded, setUploaded] = useState<StoredAttachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [historyOpen, setShowSessions] = useState(false);
-  const showSessions = historyOpen;
+  const showSessions = !fullPage && historyOpen;
   const setHistoryOpen = useCallback((open: boolean) => {
     setShowSessions(open);
     try {
@@ -153,8 +153,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const [mobileDetails, setMobileDetails] = useState(false);
   const [mobileSessions, setMobileSessions] = useState(false);
   const workspace = inventory.workspaces.find(w => w.owner.kind === "assistant" && w.owner.appId === "hosty.harness" && w.owner.reference === session?.id && w.workflow.state !== "deleted");
-  const external = inventory.workspaces.filter(w => w.owner.kind === "external" && w.workflow.state !== "deleted");
+  const external = orderWorkspaces(inventory.workspaces.filter(w => w.owner.kind === "external" && w.workflow.state !== "deleted"));
   const selectedExternal = external.find(w => w.id === externalId) ?? external[0];
+  if (selectedExternal && externalId !== selectedExternal.id) setExternalId(selectedExternal.id);
   const activeSessionId = useRef<string | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   // Reach the current deletion handler from the stream without stale state.
@@ -232,7 +233,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           if (event.status === "cancelled") setEvents(current => [...current, event]);
           const value = String(event.status ?? "idle");
           setStatus(value);
-          setSessions(current => current.map(item => item.id === record.id ? { ...item, status: value } : item));
+          setSessions(current => current.map(item => item.id === record.id ? { ...item, status: value, updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(item) ? event.ts : item.updatedAt } : item));
           if (!["running", "awaiting_approval", "awaiting_question"].includes(String(event.status))) {
             setActivity(null);
             setStreamed("");
@@ -268,16 +269,17 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   }, []);
 
   // A full-page selection is also a navigation: Shell must restore that exact session on reload.
-  const navigateSelection = useCallback(async (sessionId: string) => {
+  const navigateSelection = useCallback(async (sessionId: string | null) => {
     if (!fullPage) return;
-    const search = `?session=${encodeURIComponent(sessionId)}`;
+    const search = sessionId ? `?session=${encodeURIComponent(sessionId)}` : "";
     const entry = ui.getNavigation().entries.find(item => item.route?.split("?")[0] === "/development");
     if (entry) {
       const result = await ui.navigate(entry.key, { requestId: crypto.randomUUID(), placement: "main", search });
       if (result.status === "accepted") return;
     }
     const route = new URL(window.location.href);
-    route.searchParams.set("session", sessionId);
+    if (sessionId) route.searchParams.set("session", sessionId);
+    else route.searchParams.delete("session");
     window.history.replaceState(window.history.state, "", route);
   }, [fullPage, ui]);
   const selectedRoute = useRef<string | null>(null);
@@ -627,13 +629,19 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setFailedUpload(null);
     setContextUnavailable(false);
     setWithoutAppDetails(false);
-    setHistoryOpen(true);
+    requestedSessionRef.current = null;
+    selectedRoute.current = null;
+    setRequestedSessionId(null);
+    setSurfaceSessionId(null);
+    setMobileDetails(false);
+    setHistoryOpen(!fullPage);
+    void navigateSelection(null).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
     try {
       window.localStorage.removeItem(SESSION_STORAGE_KEY);
     } catch {
       // An obsolete stored id is harmless: reattachment resolves it through the API.
     }
-  }, [setHistoryOpen]);
+  }, [setHistoryOpen, fullPage, navigateSelection]);
 
   const remove = useCallback(async (sessionId: string) => {
     setError(null);
@@ -728,7 +736,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       </div>}
       <div className={`${fullPage && tab !== "sessions" ? "hidden" : "flex"} min-h-0 flex-1`}>
       {fullPage && <div className={`${mobileSessions ? "block" : "hidden"} w-full shrink-0 border-r md:block md:w-52`}><DevelopmentNavigation sessions={listedSessions} activeId={session?.id} workspaces={inventory.workspaces}
-        onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} /></div>}
+        onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} onDelete={remove} /></div>}
       <main className={`${fullPage && mobileDetails && workspace ? "hidden min-[900px]:flex" : fullPage && mobileSessions ? "hidden md:flex" : "flex"} min-h-0 min-w-0 flex-1 flex-col`}>
 
       <header className="flex flex-wrap shrink-0 items-center gap-2 border-b px-3 py-2">
@@ -746,8 +754,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
               <AppContextPicker key={session.id} ref={contextPickerRef} opener={addButtonRef} compact side="bottom" session={session} busy={sending || mentionSaving || providerSaving} onBusyChange={setContextSaving} running={running}
                 onChange={onContextChange} />
             )}
-            <div className="ml-auto flex items-center gap-1">
-              {!fullPage && <Button variant="ghost" size="sm" disabled={!session || sending} onClick={async () => {
+            {!fullPage && <div className="ml-auto flex items-center gap-1">
+              <Button variant="ghost" size="sm" disabled={!session || sending} onClick={async () => {
                 if (!session || sendingRef.current) return;
                 sendingRef.current = true; setSending(true); setError(null);
                 try {
@@ -766,13 +774,13 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                   window.open(`/development?session=${encodeURIComponent(session.id)}`, "_blank", "noopener");
                 } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
                 finally { sendingRef.current = false; setSending(false); }
-              }}>Open in Harness</Button>}
+              }}>Open in Harness</Button>
               <Button variant="ghost" size="icon-sm" title="Manage sessions" aria-label="Session history" disabled={!ready} onClick={() => {
                 setHistoryOpen(true);
                 void listSessions().then(setSessions).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
               }}><History /></Button>
               <Button variant="ghost" size="icon-sm" title="New session" aria-label="New session" disabled={!ready} onClick={() => void startNew()}><MessageSquarePlus /></Button>
-            </div>
+            </div>}
           </>
         )}
       </header>

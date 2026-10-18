@@ -31,7 +31,10 @@ it("shows each repository and honestly missing CI; opens a repository-specific d
   expect(changes).toHaveLength(2);
   await act(async () => changes[1].click());
   expect(developmentRequest).toHaveBeenCalledWith(expect.stringContaining("/workspace/worktrees/two/diff?"), undefined, expect.any(AbortSignal));
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("+new text");
+  await vi.waitFor(async () => {
+    await act(async () => {});
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("+new text");
+  });
 });
 it("recovers deletion from Core after browser storage loss and keeps the original revision and UUID", async () => {
   const w = workspace(); const id = "94fcd992-875a-46dd-a729-a4ae6b0f0b69";

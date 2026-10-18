@@ -5,6 +5,7 @@ internal sealed record WorkspaceInventory(InspectedWorkspace[] Workspaces, DateT
 internal sealed record InspectedWorkspace(string Id, string State, InspectionOwner Owner, InspectedWorktree[] Worktrees)
 {
     public WorkspaceWorkflow Workflow { get; init; } = new();
+    public DateTimeOffset? UpdatedAt { get; init; }
 }
 internal sealed record InspectionOwner(string Kind, string Label, string Reference, string? AppId, string? SessionUrl, string? SessionUnavailable);
 internal sealed record WorkspaceDestination(string? Url, string? Unavailable);

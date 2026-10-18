@@ -10,9 +10,7 @@ describe("attention", () => {
     expect(isWaiting("running")).toBe(false);
   });
 
-  it("puts blocked sessions first, then the newest", () => {
-    // "Running in the background" means "waiting for you" as often as "working". A chronological list
-    // makes the operator scroll looking for the one row that needs them.
+  it("orders by last change, without pinning older waiting sessions", () => {
     const ordered = orderSessions([
       session("new-running", "running", "2026-08-20T10:00:00Z"),
       session("old-blocked", "awaiting_approval", "2026-08-19T10:00:00Z"),
@@ -22,8 +20,8 @@ describe("attention", () => {
 
     expect(ordered.map((record) => record.id)).toEqual([
       "new-blocked",
-      "old-blocked",
       "new-running",
+      "old-blocked",
       "old-running",
     ]);
   });
@@ -39,4 +37,14 @@ describe("attention", () => {
     expect(waitingCount([session("a", "running", "x"), session("b", "awaiting_approval", "x")])).toBe(1);
     expect(waitingCount([])).toBe(0);
   });
+});
+
+it("uses saved activity over creation time with safe legacy and invalid-date fallbacks", () => {
+  const records = [
+    { ...session("active-old-chat", "idle", "2026-01-01"), updatedAt: "2026-10-18" },
+    session("new-chat", "idle", "2026-10-17"),
+    { ...session("invalid-update", "idle", "2026-10-16"), updatedAt: "bad" },
+    session("z-unknown", "awaiting_approval", "bad"), session("a-unknown", "idle", "bad"),
+  ];
+  expect(orderSessions(records.reverse()).map(s => s.id)).toEqual(["active-old-chat", "new-chat", "invalid-update", "a-unknown", "z-unknown"]);
 });

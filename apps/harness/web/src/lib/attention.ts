@@ -9,20 +9,17 @@ export function isWaiting(status: string): boolean {
   return WAITING.has(status);
 }
 
-export type Listed = { id: string; status: string; createdAt: string };
+export type Listed = { id: string; status: string; createdAt: string; updatedAt?: string };
 
-/**
- * Blocked sessions first, then newest.
- *
- * "Running in the background" means "waiting for you" at least as often as it means "working", and a
- * list that does not separate those is close to useless — the operator scrolls a chronological list
- * looking for the one row that needs them.
- */
+export function activityTime(value: { updatedAt?: string | null; createdAt?: string | null }): number {
+  const updated = Date.parse(value.updatedAt ?? "");
+  const created = Date.parse(value.createdAt ?? "");
+  return Number.isFinite(updated) ? updated : Number.isFinite(created) ? created : 0;
+}
+
+/** Most recently changed first; waiting state remains a badge, not a sorting priority. */
 export function orderSessions<T extends Listed>(sessions: readonly T[]): T[] {
-  return [...sessions].sort((left, right) => {
-    const blocked = Number(isWaiting(right.status)) - Number(isWaiting(left.status));
-    return blocked !== 0 ? blocked : Date.parse(right.createdAt) - Date.parse(left.createdAt);
-  });
+  return [...sessions].sort((left, right) => activityTime(right) - activityTime(left) || left.id.localeCompare(right.id));
 }
 
 export function waitingCount(sessions: readonly Listed[]): number {

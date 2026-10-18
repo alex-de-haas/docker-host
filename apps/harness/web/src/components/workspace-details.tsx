@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { GitPullRequest, FileDiff, MoreHorizontal, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -9,6 +10,10 @@ import { LocalRepositoryActions } from "./local-repository-actions";
 import { AppDevMode } from "./app-dev-mode";
 import { LocalAppHandoff } from "./local-app-handoff";
 import { WorkspacePreviews } from "./workspace-previews";
+
+const WorkspaceDiffView = dynamic(() => import("./workspace-diff-view"), {
+  ssr: false, loading: () => <p role="status" className="p-3 text-sm text-muted-foreground">Loading diff viewer…</p>,
+});
 
 type PendingAction = { kind: string; requestId: string; expectedRevision: number };
 function readPendingAction(workspaceId: string): PendingAction | null {
@@ -150,6 +155,8 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
 function WorkspaceDiff({ workspaceId, tree, choice, onChoice }: { workspaceId: string; tree: Worktree;
   choice: { view: string; path: string }; onChoice: (choice: { view: string; path: string }) => void }) {
   const { view, path } = choice;
+  const [layout, setLayout] = useState<"unified" | "split">("unified");
+  const [wrap, setWrap] = useState(true);
   const [result, setResult] = useState<{ key: string; diff?: Diff; error?: string } | null>(null);
   const files = view === "session" ? tree.sessionChanges ?? [] : tree.observation?.local?.files ?? [];
   const selected = files.some(f => f.path === path) ? path : files[0]?.path;
@@ -163,8 +170,14 @@ function WorkspaceDiff({ workspaceId, tree, choice, onChoice }: { workspaceId: s
       .then(diff => { if (!abort.signal.aborted) setResult({ key, diff }); }).catch(e => { if (!abort.signal.aborted) setResult({ key, error: e.message }); });
     return () => abort.abort();
   }, [workspaceId, tree.id, view, selected, key]);
-  return <><select aria-label="Diff scope" className="w-fit rounded border bg-background p-2 text-sm" value={view} onChange={e => onChoice({ ...choice, view: e.target.value })}><option value="session">All workspace changes</option><option value="local">Uncommitted changes</option></select>
+  return <><div className="flex flex-wrap items-center gap-2"><select aria-label="Diff scope" className="w-fit rounded border bg-background p-2 text-sm" value={view} onChange={e => onChoice({ ...choice, view: e.target.value })}><option value="session">All workspace changes</option><option value="local">Uncommitted changes</option></select>
+      <div role="group" aria-label="Diff layout" className="flex gap-1">
+        <Button size="sm" variant={layout === "unified" ? "secondary" : "ghost"} aria-pressed={layout === "unified"} onClick={() => setLayout("unified")}>Unified</Button>
+        <Button size="sm" variant={layout === "split" ? "secondary" : "ghost"} aria-pressed={layout === "split"} onClick={() => setLayout("split")}>Split</Button>
+      </div>
+      <Button size="sm" variant={wrap ? "secondary" : "ghost"} aria-pressed={wrap} onClick={() => setWrap(!wrap)}>Wrap lines</Button>
+    </div>
     <div className="flex min-h-0 flex-1 flex-col gap-3 sm:flex-row"><nav aria-label="Changed files" className="max-h-32 shrink-0 overflow-auto sm:max-h-none sm:w-56">{files.map(f => <button key={f.path} type="button" aria-current={selected === f.path ? "true" : undefined} onClick={() => onChoice({ ...choice, path: f.path })} className={`block w-full break-all rounded px-2 py-1.5 text-left text-xs hover:bg-muted ${selected === f.path ? "bg-muted" : ""}`}>{f.path}</button>)}</nav>
-      <div className="min-h-0 min-w-0 flex-1 overflow-auto rounded bg-muted p-3 text-xs">{error ? <p role="alert">{error}</p> : !selected ? "No changes in this scope." : !diff ? "Loading diff…" : diff.truncated ? "Diff exceeds the preview limit. Inspect it in your Git client." : diff.binary || diff.image ? "Binary file changed. Inspect it in your editor." : <pre>{diff.combined || "No text changes."}</pre>}</div>
+      <div className="min-h-0 min-w-0 flex-1 overflow-auto rounded border bg-background">{error ? <p role="alert" className="p-3 text-sm">{error}</p> : !selected ? <p className="p-3 text-sm">No changes in this scope.</p> : !diff ? <p role="status" className="p-3 text-sm">Loading diff…</p> : <WorkspaceDiffView diff={diff} untracked={view === "local" && files.find(f => f.path === selected)?.status === "??"} layout={layout} wrap={wrap} />}</div>
     </div></>;
 }

@@ -18,6 +18,20 @@ The full page places app-grouped sessions on the left, conversation in the cente
 context on the right. A multi-app session appears in each associated group with the same session
 identity. Unassigned chats follow the app groups. Rows distinguish actual session activity from
 workspace and PR badges; an app filter changes navigation without changing conversation identity.
+Sessions within each app group and external workspaces are ordered by most recent activity, with
+stable ID ordering for equal or unavailable dates. Waiting sessions keep their indicators without
+being pinned above newer work. Sessions fall back to their creation date on older records; Core
+aggregates workspace activity across its repositories and workflow. Status polling, reconnects and
+opening details do not count as new activity. Reordering keeps the selected conversation/workspace.
+Core records managed operations, lease/consumer changes, workflow changes and observed Git-visible
+source metadata changes; ignored build output does not affect order. Legacy workspace records use
+their last saved observation as a baseline until new activity is recorded. A Core predating this
+field leaves activity unknown, sorted deterministically after dated records.
+Each row offers Delete session with confirmation. It reuses the existing session deletion API,
+including unfinished-workspace protection, and keeps failures visible for retry without navigating
+away from the current conversation. Deleting the selected session clears its draft and route selection;
+deleting another session preserves the selected conversation. History and new-session header icons
+belong only to the compact assistant; the full page uses its left navigation, including on narrow screens.
 A conversation without a Core workspace has no right panel. Narrow screens expose session and
 details controls while retaining the conversation draft.
 
@@ -41,11 +55,22 @@ all providers, and a replacement idle client receives a fresh JSON-RPC request n
 
 Each repository displays its branch, app bindings, observation time and original-base change counts, including
 committed changes. Bounded diffs open in a keyboard-dismissable dialog with repository/file and
-all-workspace/uncommitted scope selection. Missing statistics are unavailable rather than zero;
+all-workspace/uncommitted scope selection. Harness uses the same `@pierre/diffs` renderer as Shell:
+syntax and inline change highlighting, line numbers, Unified/Split layout and optional line wrapping.
+The viewer follows Hosty's light/dark theme. Untracked local files are rendered as literal additions;
+staged and committed additions are parsed as patches. Binary and truncated previews retain explicit
+messages; metadata-only or malformed patches keep a readable text fallback. Missing statistics are unavailable rather than zero;
 binary files contribute to file counts without invented line counts. Closing the dialog restores
 focus to the Changes control. File and scope selection persist per repository while the workspace
 panel remains mounted, including closing/reopening a diff and resizing the view. Detail and inventory
 reads retain Core's source authorization.
+
+The diff viewer is verified against real Git changes in a disposable Core-managed Harness with a
+normal password login: Unified and Split, syntax/inline highlighting, wrapped long lines, local
+untracked patch-like contents, binary messaging and file/scope persistence after reopening. Its
+focused tests also cover theme updates, failed highlighter loading, malformed and truncated patches,
+and staged additions/deletions. The test worktree passes Core cleanup after removing its synthetic
+changes; the test Core, Harness process and credentials are removed.
 
 PR rows show the title followed by repository name, successful/total observed checks and the
 provider's discussion-comment count. Missing counts remain unknown. State, draft, stale evidence,
@@ -351,6 +376,15 @@ and verification; these controls reuse the same sessions, worktrees and child Co
 
 ## Testing Expectations
 
+- Verify activity ordering, legacy/missing/invalid dates, multiple repositories, repeated observations,
+  replays, file edits and workflow changes. Keep attention indicators independent of ordering and
+  preserve selection during refresh.
+
+- Session-row deletion requires confirmation without selecting the row, preserves errors for retry,
+  prevents duplicate pending requests and retains Core's workspace/resource guards. Verify selected
+  session detachment, other drafts, filter fallback after removing a group, and compact-only history
+  controls across reloads.
+
 - Preserve editable workflow defaults, custom/empty text, instruction delivery, independent retention
   policies and unsaved settings drafts. Keep retention eligibility/retry consistent with Core's
   verified workflow; follow the retention feature's boundary, migration and recovery checks.
@@ -364,6 +398,8 @@ and verification; these controls reuse the same sessions, worktrees and child Co
 - Verify grouping, same-session draft/attachment continuity, conditional details and narrow-screen
   navigation. Panel promotion targets Shell's main area, current-surface navigation stays local,
   selection survives reload, and unavailable/legacy hosts never silently replace the panel.
+- Verify both diff layouts, wrapping/scrolling, Hosty theme changes, literal untracked additions and
+  metadata/malformed/binary/truncated fallbacks without changing file/scope selection.
 - Preserve acknowledged/replay-safe SDK navigation and per-repository diff selection/focus on reopen.
 - Keep each repository's change scope and each PR's CI/review observation independent; test missing,
   binary, bounded, failed and stale evidence.

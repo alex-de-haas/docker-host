@@ -36,7 +36,18 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
     {
         if (!Guid.TryParse(id, out _)) throw Error("request_invalid", "A UUID requestId is required. Reuse it after an uncertain response.");
     }
-    private Task Save(DevelopmentWorkspace value) => JsonStorage.WriteAsync(RecordPath(value.Id), value, restrictToOwner: true);
+    private async Task<DevelopmentWorkspace> Save(DevelopmentWorkspace value, bool baselineSource = false)
+    {
+        var previous = await JsonStorage.ReadAsync<DevelopmentWorkspace>(RecordPath(value.Id));
+        var changed = previous is null || ActivityState(baselineSource ? previous with { SourceStamp = value.SourceStamp } : previous) != ActivityState(value);
+        value = value with { UpdatedAt = changed ? clock.UtcNow : previous!.UpdatedAt ?? previous.Observation?.At };
+        await JsonStorage.WriteAsync(RecordPath(value.Id), value, restrictToOwner: true);
+        return value;
+    }
+
+    // Observation timestamps/errors and remote probes describe reads, not operator activity.
+    private static string ActivityState(DevelopmentWorkspace value)
+        => CoreJson.Text(value with { UpdatedAt = null, Observation = null, RemoteObservation = null });
     private async Task<T> Locked<T>(string key, Func<Task<T>> action, CancellationToken ct)
     {
         var gate = gates.GetOrAdd(key, _ => new(1, 1));
@@ -261,16 +272,35 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             var changed = await Git(w.Path, ["diff", "--name-only", "-z", "--no-renames", w.OriginalBase, "--"], ct);
             var files = changed.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries).Concat(local.Files.Where(f => f.Status == "??").Select(f => f.Path)).Distinct().Order(StringComparer.Ordinal).ToArray();
             var merge = await Git(w.Path, ["rev-parse", "--verify", "MERGE_HEAD"], ct, true);
-            w = w with { Observation = new(clock.UtcNow, "ok", local.Head, target, int.Parse(counts[0]), int.Parse(counts[1]), merge.ExitCode == 0, local, files) };
+            var sourceStamp = SourceActivityStamp(w.Path, local, merge.ExitCode == 0);
+            // First observation of a legacy record establishes a baseline without making it new.
+            if (w.SourceStamp is null && w.Observation is { } previousObservation && previousObservation.Head == local.Head
+                && previousObservation.Conflict == (merge.ExitCode == 0) && previousObservation.Local?.Files.SequenceEqual(local.Files) == true)
+                w = await Save(w with { SourceStamp = sourceStamp }, baselineSource: true);
+            w = w with { SourceStamp = sourceStamp, Observation = new(clock.UtcNow, "ok", local.Head, target, int.Parse(counts[0]), int.Parse(counts[1]), merge.ExitCode == 0, local, files) };
         }
         catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException)
         {
             w = w with { Observation = new(clock.UtcNow, "unavailable", Error: ex.Message) };
         }
-        await Save(w);
+        w = await Save(w);
         await InvalidateCompletion(w, ct);
         return w;
     }
+    private static string SourceActivityStamp(string root, AppSourceStatus local, bool conflict)
+    {
+        var stamp = new StringBuilder().Append(local.Head).Append('|').Append(conflict);
+        foreach (var file in local.Files.OrderBy(f => f.Path, StringComparer.Ordinal))
+        {
+            stamp.Append('|').Append(file.Path).Append('|').Append(file.Status);
+            var path = System.IO.Path.GetFullPath(System.IO.Path.Combine(root, file.Path));
+            if (!IsUnder(root, path)) continue;
+            var info = new FileInfo(path);
+            if (info.Exists) stamp.Append('|').Append(info.Length).Append('|').Append(info.LastWriteTimeUtc.Ticks);
+        }
+        return Hash(stamp.ToString());
+    }
+
     public async Task<AppSourceDiff> DiffAsync(string id, WorkspaceOwner? owner, WorkspaceDiffRequest input, CancellationToken ct)
     {
         var workspace = await Read(id, owner, ct);
