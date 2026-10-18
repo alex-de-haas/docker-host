@@ -22,7 +22,7 @@ internal static class AppDevModeEndpoints
         app.MapPost("/control/v1/apps/{appId}/dev-mode/{kind}", async (string appId, string kind, AppDevRequest input,
             HttpRequest request, ControlSecret secret, CoreLifecycleService lifecycle, CancellationToken ct) =>
             await HostyCoreApplication.RequireControlSecret(request, secret,
-                () => Dispatch(lifecycle, appId, kind, input, new("local-operator", "cli"), ct)));
+                () => Dispatch(lifecycle, appId, kind, input, new("local-operator", "cli", TrustedLocalOperator: true), ct)));
         const string root = "/api/internal/apps/{appId}/sessions/{sessionId}/dev-mode/{targetAppId}";
         app.MapGet(root, async (string appId, string sessionId, string targetAppId, HttpRequest request,
             WorkspaceAuthorization auth, AppRegistryStore apps, CoreLifecycleService lifecycle, CancellationToken ct) =>

@@ -1674,7 +1674,7 @@ function RuntimeSwitcher({
 }) {
   const runtimeProfiles = app.runtimeProfiles ?? [];
   const currentRuntime = app.selectedRuntime || "none";
-  const switchable = canSwitch && runtimeProfiles.length > 1;
+  const switchable = canSwitch && (runtimeProfiles.length > 1 || !!app.devMode);
   const development = runtimeProfiles.find((profile) => profile.key === app.selectedRuntime)?.development === true;
   const switching = busyAction?.startsWith(`${app.id}:switch-runtime:`) ?? false;
 

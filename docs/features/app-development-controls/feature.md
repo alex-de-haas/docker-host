@@ -50,6 +50,8 @@ MCP arguments use `action`; Harness tools `app_dev_status`, `app_dev_plan`, `app
 `devAction` to distinguish the requested lifecycle action from the Harness transport action.
 The user and installation come from authenticated authority, not caller-supplied approval flags.
 Read-only/delegated credentials cannot gain mutation authority by choosing an unprompted policy.
+The authenticated local control endpoint can use an already reviewed private-source connection;
+its owner/connection validity is still rechecked. Browser and MCP actors retain owner checks.
 Private source checks still apply to entry and restart. Return does not grant new source access;
 restarting a prior private runtime can still fail if its required authority has been revoked.
 
@@ -75,7 +77,9 @@ An active binding survives Core/Harness restart. A Core restart with `--keep-app
 active trial merely because the ordinary installation has autostart disabled. Autostart itself is
 unchanged. Full shutdown and an explicitly stopped trial still require their normal lifecycle.
 
-**Return to previous runtime** restores the recorded source/profile/artifact selection. It restarts
+**Return to previous runtime** restores the recorded source/profile/artifact selection.
+The original install-manifest path is preserved, including an absent path for URL/internal installs;
+the journal snapshot never becomes an update source. It restarts
 only an app that was running before entry. It retains current data, source edits, worktrees, caches
 and backups. It performs no Git reset, commit, acceptance, push or publication. Configuration or
 binding drift refuses a stale return instead of overwriting a later operator decision. Missing or
@@ -103,7 +107,7 @@ lose newer data and does not reset source or erase the development journal.
 ## Operator Surfaces And Audit
 
 Shell's runtime selector enters supported managed dev mode and offers Return and interrupted-request
-retry. Harness adds the same actions beside the session's attached applications, with ordinary-data
+retry even when the app has only one runtime profile. Harness adds the same actions beside the session's attached applications, with ordinary-data
 wording, source, prior runtime, backup, phase, health and restart-required state. Open app uses the
 normal app endpoint. Logs are bounded and require the existing `apps.logs` permission; missing
 permission is displayed rather than granted implicitly. Both surfaces retain uncertain request

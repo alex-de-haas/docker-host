@@ -34,7 +34,7 @@ internal sealed partial class CoreLifecycleService
         var installed = await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct);
         if (input.Action != "return")
         {
-            if (app.PrivateSources?.Git is { } grant && grant.OwnerId != actor.UserId)
+            if (!actor.TrustedLocalOperator && app.PrivateSources?.Git is { } grant && grant.OwnerId != actor.UserId)
                 throw DevError("source_forbidden", "Only the source connection owner can enter or change this development binding.");
             await ValidatePrivateSelectionAsync(installed with { PrivateSources = app.PrivateSources }, ct);
         }
@@ -247,7 +247,7 @@ internal sealed partial class CoreLifecycleService
             finally { apps.HostPathMutationLock.Release(); }
             app = await RequireAppAsync(op.AppId, ct);
             var next = BuildAppRecord(selection, app.ManifestPath!, app.ManifestUrl, app.System, app) with
-            { SourceState = app.SourceState, DevModeId = op.Id, RuntimeState = "stopped", OperationStatus = "development", LastError = null };
+            { InstallManifestPath = app.InstallManifestPath, SourceState = app.SourceState, DevModeId = op.Id, RuntimeState = "stopped", OperationStatus = "development", LastError = null };
             await PersistRuntimePortsAsync(next, selection, ct);
             op = await DevPhaseAsync(op, "bound", ct);
         }
@@ -280,7 +280,7 @@ internal sealed partial class CoreLifecycleService
             // Save the reviewed contract and restore only execution selection. User data/settings survive.
             await manifests.SaveManifestCopyAsync(previous, GetAppRoot(op.AppId), ct);
             var restored = BuildAppRecord(previous, app.ManifestPath!, app.ManifestUrl, app.System, app) with
-            { SourceState = op.PreviousSource, ArtifactLocks = op.PreviousArtifacts, DevModeId = op.Id,
+            { InstallManifestPath = app.InstallManifestPath, SourceState = op.PreviousSource, ArtifactLocks = op.PreviousArtifacts, DevModeId = op.Id,
                 RuntimeState = "stopped", OperationStatus = "development-returning", ManifestError = null, LiveChanges = null };
             await PersistRuntimePortsAsync(restored, previous, ct);
             op = await DevPhaseAsync(op, "return-bound", ct);

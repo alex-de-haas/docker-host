@@ -375,3 +375,24 @@ it("keeps a confirmed runtime switch distinct from an unreachable Shell page", a
   await act(async () => actions.refresh());
   expect(shell.state.apps.find(app => app.id === self.id)?.selectedRuntime).toBe("dev");
 });
+
+
+it.each(["active", "restarting"])("keeps manual dev recovery available for a single-profile %s app", async phase => {
+  apps = [{ ...target, selectedRuntime: "dev", runtimeProfiles: [{ key: "dev", type: "docker", default: true, development: true }],
+    devMode: { operationId: "trial", phase, previousRuntime: "dev" } }];
+  fixture.confirm.mockResolvedValue(true);
+  overrideRequests(path => path.endsWith("/dev-mode/plan")
+    ? Response.json({ planDigest: "return-review", changes: ["Return to prior source"], outsideBackup: [] })
+    : path.endsWith("/dev-mode/apply") ? Response.json({ phase: "returned" }) : undefined);
+  await mount(true);
+  const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Switch runtime for Routine app"]');
+  expect(trigger).not.toBeNull();
+  await act(async () => trigger!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  const menu = document.querySelector('[role="menu"]');
+  expect(menu?.textContent).toContain("Return to previous runtime (dev)");
+  expect(menu?.textContent.includes("Retry interrupted dev operation")).toBe(phase !== "active");
+  const returning = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(x => x.textContent?.startsWith("Return to previous runtime"));
+  await act(async () => returning!.click());
+  expect(callsTo("/api/apps/routine.app/dev-mode/apply")).toHaveLength(1);
+  expect(JSON.parse(callsTo("/api/apps/routine.app/dev-mode/apply")[0][1].body)).toMatchObject({ action: "return", planDigest: "return-review" });
+});

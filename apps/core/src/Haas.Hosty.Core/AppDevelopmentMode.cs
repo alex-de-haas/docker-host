@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 namespace Haas.Hosty.Core;
 
 // This journal stores execution references, not settings, passwords or copies of app data.
-internal sealed record AppDevActor(string UserId, string Via, WorkspaceOwner? WorkspaceOwner = null);
+internal sealed record AppDevActor(string UserId, string Via, WorkspaceOwner? WorkspaceOwner = null, bool TrustedLocalOperator = false);
 internal sealed record AppDevRequest(string RequestId, string Action, string? TargetRuntime = null,
     string? WorktreeId = null, string? PlanDigest = null, bool AcceptDataChanges = false);
 internal sealed record AppDevPlan(string AppId, string Action, string PlanDigest, string? OperationId,

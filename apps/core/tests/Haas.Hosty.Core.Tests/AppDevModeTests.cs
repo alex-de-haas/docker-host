@@ -46,6 +46,48 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(before.SelectedRuntime, after.SelectedRuntime);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DevMode_PreservesOriginalManifestSourceAcrossEntryAndReturn(bool capturedSource)
+    {
+        var (f, owner, _, tree, _, _) = await LocalHandoffFixture();
+        var original = (await f.Apps.GetAppAsync("test.created"))!.InstallManifestPath;
+        if (!capturedSource) await f.Apps.UpdateAppAsync("test.created", a => a with { InstallManifestPath = null });
+        var expected = capturedSource ? original : null;
+        var actor = DevActor(owner);
+        await ApplyReviewedDev(f.Service, DevRequest("enter", tree.Id), actor);
+        Assert.Equal(expected, (await f.Apps.GetAppAsync("test.created"))!.InstallManifestPath);
+        await ApplyReviewedDev(f.Service, DevRequest("return", accept: true), actor);
+        Assert.Equal(expected, (await f.Apps.GetAppAsync("test.created"))!.InstallManifestPath);
+    }
+
+    [Fact]
+    public async Task DevMode_TrustedLocalOperatorUsesReviewedPrivateGrantAndStillHonorsRevocation()
+    {
+        var (f, _, _, _, _, _) = await LocalHandoffFixture();
+        var app = (await f.Apps.GetAppAsync("test.created"))!;
+        var source = app.SourceState!.LocalOverridePath!;
+        var repository = new Uri(source).AbsoluteUri;
+        var (users, privateSources, grant) = await PrivateDocumentAccessAsync(f, repository);
+        var manifest = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(app.ManifestPath!))!;
+        manifest["source"] = new System.Text.Json.Nodes.JsonObject { ["repository"] = repository, ["branch"] = "main" };
+        await File.WriteAllTextAsync(app.ManifestPath!, manifest.ToJsonString());
+        await File.WriteAllTextAsync(Path.Combine(source, "manifest.json"), manifest.ToJsonString());
+        await f.Apps.UpdateAppAsync(app.Id, a => a with { PrivateSources = new(Git: grant) });
+        var service = f.RecreateService(privateSources: privateSources);
+        var request = DevRequest("enter");
+        Assert.Equal("dev_source_forbidden", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            service.PlanDevModeAsync(app.Id, request, new("bob", "manual")))).Code);
+        var local = new AppDevActor("local-operator", "cli", TrustedLocalOperator: true);
+        Assert.Equal("active", (await ApplyReviewedDev(service, request, local)).Phase);
+        Assert.Equal("active", (await ApplyReviewedDev(service, DevRequest("restart"), local)).Phase);
+        await users.UpdateAsync(s => s with { ProviderConnections = [] });
+        Assert.Equal("source_access_required", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            service.PlanDevModeAsync(app.Id, DevRequest("restart"), local))).Code);
+        Assert.Equal("returned", (await ApplyReviewedDev(service, DevRequest("return", accept: true), local)).Phase);
+    }
+
     [Fact]
     public async Task DevMode_RejectsWrongOwnerStaleReviewAndConflictingSourceChanges()
     {
