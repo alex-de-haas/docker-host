@@ -68,6 +68,9 @@ it("shows remaining chats when deletion removes the last session in the filtered
   expect(container.textContent).not.toContain("Quick chat");
   await render([quick]);
   expect(filter.value).toBe(""); expect(container.textContent).toContain("Quick chat");
+  await render([disposable, quick]);
+  expect(filter.value).toBe(""); expect(container.textContent).toContain("Quick chat");
+  expect(container.textContent).toContain("Disposable chat");
 });
 
 it("returns to all applications when the final unassigned chat is deleted", async () => {
@@ -83,4 +86,7 @@ it("returns to all applications when the final unassigned chat is deleted", asyn
   expect(container.textContent).not.toContain("Disposable chat");
   await render([disposable]);
   expect(filter.value).toBe(""); expect(container.textContent).toContain("Disposable chat");
+  await render([disposable, quick]);
+  expect(filter.value).toBe(""); expect(container.textContent).toContain("Disposable chat");
+  expect(container.textContent).toContain("Quick chat");
 });

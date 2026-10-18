@@ -33,7 +33,8 @@ away from the current conversation. Deleting the selected session clears its dra
 deleting another session preserves the selected conversation. A terminal deletion event detaches
 the session immediately, including when a locally initiated DELETE loses its HTTP response.
 Unconfirmed failures retain the conversation and draft for retry. If deletion empties the selected
-app group or the unassigned group, the navigation falls back to All applications. History and new-session header icons
+app group or the unassigned group, the navigation clears that filter and falls back to All applications.
+A new session in that group does not restore the old filter. History and new-session header icons
 belong only to the compact assistant; the full page uses its left navigation, including on narrow screens.
 A conversation without a Core workspace has no right panel. Narrow screens expose session and
 details controls while retaining the conversation draft.

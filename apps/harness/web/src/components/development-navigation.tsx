@@ -25,6 +25,7 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
     names.set(id, session.contextApps?.find(app => app.id === id)?.displayName ?? appNames.get(id) ?? names.get(id) ?? id);
   const unassigned = sessions.filter(session => !session.appIds?.length);
   const selectedFilter = (filter === "unassigned" ? unassigned.length > 0 : names.has(filter)) ? filter : "";
+  if (filter !== selectedFilter) setFilter(selectedFilter);
   const groups = [...names].sort((a,b) => a[1].localeCompare(b[1]));
   const renderGroup = (id: string, name: string, rows: AssistantSession[]) => <section key={id || "unassigned"} className="py-2">
     <h2 className="flex items-center gap-2 px-3 pb-1 text-xs font-medium text-muted-foreground"><Folder className="size-3.5" />{name}</h2>
