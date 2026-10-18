@@ -71,6 +71,8 @@ actor, installation, source/worktree/observed HEAD, manifest digest, prior sourc
 selection, initial running state, configuration fingerprint, backup and action receipts. The app
 points to this journal. Exact replay observes or resumes the original request. Changed arguments
 or authority are refused; a request retired by a later trial cannot accidentally restart old work.
+Terminal phase and successful receipt are persisted in one atomic journal write, so failure of the
+following registry update or loss of the response cannot repeat a completed transition.
 HTTP disconnect does not cancel an admitted transition. Core shutdown can interrupt it; retry uses
 the same arguments and UUID. Interrupted restart and Return retain their actual phase and error.
 

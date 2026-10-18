@@ -110,7 +110,7 @@ internal sealed partial class CoreLifecycleService
             op = await AppDevStore.ReadAsync(paths, app, ct);
             var fingerprint = DevelopmentWorkspaceService.Hash(CoreJson.Text(input) + "\n" + CoreJson.Text(actor));
             // Recover the narrow crash window between durable journal creation and the app pointer.
-            if (op is not { Active: true } && File.Exists(AppDevStore.Record(paths, appId, input.RequestId)))
+            if (op is not { Active: true } && op?.Id != input.RequestId && File.Exists(AppDevStore.Record(paths, appId, input.RequestId)))
             {
                 var orphan = await AppDevStore.ReadAsync(paths, appId, input.RequestId, ct);
                 if (orphan is not { Phase: "prepared" } || orphan.Installation != app.InstalledAt ||
@@ -159,21 +159,20 @@ internal sealed partial class CoreLifecycleService
             var active = op!;
             async Task Run()
             {
-                if (input.Action == "enter") active = await EnterDevAsync(active, ct);
-                else if (input.Action == "return") active = await ReturnDevAsync(active, input.AcceptDataChanges, ct);
+                if (input.Action == "enter") active = await EnterDevAsync(active, input.RequestId, ct);
+                else if (input.Action == "return") active = await ReturnDevAsync(active, input.RequestId, input.AcceptDataChanges, ct);
                 else
                 {
                     await ValidateLiveDevManifestAsync(active, ct);
                     active = await DevPhaseAsync(active, "restarting", ct);
                     await RestartCoreAsync(appId, ct);
-                    active = await DevPhaseAsync(active, "active", ct);
+                    active = await DevPhaseAsync(active, "active", ct, completedRequestId: input.RequestId);
                 }
             }
             if (active.WorktreeId is { } treeId)
                 await DevWorkspaces.WithDevAdmissionAsync(treeId, app, actor.WorkspaceOwner, async () => { await Run(); return true; }, ct, returning: input.Action == "return");
             else await Run();
-            op = active with { Receipts = active.Receipts!.Select(r => r.RequestId == input.RequestId ? r with { State = "succeeded" } : r).ToArray(), Error = null };
-            await AppDevStore.SaveAsync(paths, op, ct);
+            op = active;
             outcome = "succeeded";
             return await GetDevModeAsync(appId, ct);
         }
@@ -182,7 +181,8 @@ internal sealed partial class CoreLifecycleService
             if (outcome == "failed" && op is not null)
             {
                 var saved = await AppDevStore.ReadAsync(paths, appId, op.Id, CancellationToken.None);
-                if (saved is not null) await AppDevStore.SaveAsync(paths, saved with { Error = "Operation did not complete. Inspect app status/logs, retry the original request or explicitly return." }, CancellationToken.None);
+                if (saved?.Receipts?.Any(r => r.RequestId == input.RequestId && r.State == "pending") == true)
+                    await AppDevStore.SaveAsync(paths, saved with { Error = "Operation did not complete. Inspect app status/logs, retry the original request or explicitly return." }, CancellationToken.None);
             }
             throw;
         }
@@ -200,9 +200,14 @@ internal sealed partial class CoreLifecycleService
         }
     }
 
-    private async Task<AppDevOperation> DevPhaseAsync(AppDevOperation op, string phase, CancellationToken ct)
+    internal async Task<AppDevOperation> DevPhaseAsync(AppDevOperation op, string phase, CancellationToken ct, string? completedRequestId = null)
     {
-        op = op with { Phase = phase }; await AppDevStore.SaveAsync(paths, op, ct);
+        // Terminal phase and receipt share one atomic journal write. A lost response or a failure
+        // updating the registry afterwards must not replay a completed runtime transition.
+        op = op with { Phase = phase, Error = completedRequestId is null ? op.Error : null,
+            Receipts = completedRequestId is null ? op.Receipts : op.Receipts!.Select(r =>
+                r.RequestId == completedRequestId ? r with { State = "succeeded" } : r).ToArray() };
+        await AppDevStore.SaveAsync(paths, op, ct);
         await apps.UpdateAppAsync(op.AppId, a => a with { OperationStatus = "development-" + phase }, ct);
         try
         {
@@ -216,7 +221,7 @@ internal sealed partial class CoreLifecycleService
         return op;
     }
 
-    private async Task<AppDevOperation> EnterDevAsync(AppDevOperation op, CancellationToken ct)
+    private async Task<AppDevOperation> EnterDevAsync(AppDevOperation op, string requestId, CancellationToken ct)
     {
         await ValidateLiveDevManifestAsync(op, ct);
         var app = await RequireAppAsync(op.AppId, ct);
@@ -257,12 +262,12 @@ internal sealed partial class CoreLifecycleService
             // Replay performs a verified stop before start, including a partly started multi-service app.
             await StopDevRuntimeAsync(await RequireAppAsync(op.AppId, ct), ct);
             await StartCoreAsync(op.AppId, afterOwnStop: true, ct);
-            op = await DevPhaseAsync(op, "active", ct);
+            op = await DevPhaseAsync(op, "active", ct, completedRequestId: requestId);
         }
         return op;
     }
 
-    private async Task<AppDevOperation> ReturnDevAsync(AppDevOperation op, bool acceptDataChanges, CancellationToken ct)
+    private async Task<AppDevOperation> ReturnDevAsync(AppDevOperation op, string requestId, bool acceptDataChanges, CancellationToken ct)
     {
         if (op.Phase == "returned") return op;
         if (op.Phase is not ("return-stopped" or "return-bound" or "return-starting"))
@@ -293,7 +298,7 @@ internal sealed partial class CoreLifecycleService
                 await StopDevRuntimeAsync(await RequireAppAsync(op.AppId, ct), ct);
                 await StartCoreAsync(op.AppId, afterOwnStop: true, ct);
             }
-            op = await DevPhaseAsync(op, "returned", ct);
+            op = await DevPhaseAsync(op, "returned", ct, completedRequestId: requestId);
         }
         return op;
     }

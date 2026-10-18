@@ -218,6 +218,54 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal("dev_request_retired", (await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.ApplyDevModeAsync("test.created", returning, actor))).Code);
     }
 
+    [Theory]
+    [InlineData("enter", "starting", "active")]
+    [InlineData("restart", "restarting", "active")]
+    [InlineData("return", "return-bound", "returned")]
+    public async Task DevMode_TerminalReceiptSurvivesRegistryFailureAndReplay(string action, string priorPhase, string terminalPhase)
+    {
+        var (f, owner, _, tree, _, _) = await LocalHandoffFixture(); var actor = DevActor(owner);
+        if (action != "enter") await ApplyReviewedDev(f.Service, DevRequest("enter", tree.Id), actor);
+        var request = DevRequest(action, action == "enter" ? tree.Id : null, accept: true);
+        request = request with { PlanDigest = (await f.Service.PlanDevModeAsync("test.created", request, actor)).PlanDigest };
+        var result = await f.Service.ApplyDevModeAsync("test.created", request, actor);
+        var op = (await AppDevStore.ReadAsync(f.Paths, "test.created", result.OperationId!, default))!;
+        // Recreate the durable checkpoint immediately before the terminal journal commit, with the
+        // runtime transition already done. Make the next registry write fail after that commit.
+        op = op with { Phase = priorPhase, Receipts = op.Receipts!.Select(r =>
+            r.RequestId == request.RequestId ? r with { State = "pending" } : r).ToArray() };
+        await AppDevStore.SaveAsync(f.Paths, op, default);
+        var statePath = Path.Combine(f.Paths.AppsRoot, "test.created", "state.json");
+        var state = await File.ReadAllBytesAsync(statePath);
+        File.Delete(statePath); Directory.CreateDirectory(statePath);
+        try
+        {
+            var failure = await Record.ExceptionAsync(() => f.Service.DevPhaseAsync(op, terminalPhase, default, completedRequestId: request.RequestId));
+            Assert.True(failure is IOException or UnauthorizedAccessException, failure?.ToString() ?? "Expected registry failure");
+        }
+        finally { Directory.Delete(statePath); await File.WriteAllBytesAsync(statePath, state); }
+        var saved = (await AppDevStore.ReadAsync(f.Paths, "test.created", op.Id, default))!;
+        Assert.Equal(terminalPhase, saved.Phase);
+        Assert.Equal("succeeded", Assert.Single(saved.Receipts!, r => r.RequestId == request.RequestId).State);
+        var starts = f.Adapter.StartCount; var stops = f.Adapter.StopCount;
+        var replay = await f.RecreateService().ApplyDevModeAsync("test.created", request, actor);
+        Assert.Equal(terminalPhase, replay.Phase);
+        Assert.Equal(starts, f.Adapter.StartCount); Assert.Equal(stops, f.Adapter.StopCount);
+    }
+
+    [Fact]
+    public async Task DevMode_CompletedEntryReplayAfterReturnObservesCurrentOperation()
+    {
+        var (f, owner, _, tree, _, _) = await LocalHandoffFixture(); var actor = DevActor(owner);
+        var request = DevRequest("enter", tree.Id);
+        request = request with { PlanDigest = (await f.Service.PlanDevModeAsync("test.created", request, actor)).PlanDigest };
+        await f.Service.ApplyDevModeAsync("test.created", request, actor);
+        await ApplyReviewedDev(f.Service, DevRequest("return", accept: true), actor);
+        var starts = f.Adapter.StartCount; var stops = f.Adapter.StopCount;
+        Assert.Equal("returned", (await f.RecreateService().ApplyDevModeAsync("test.created", request, actor)).Phase);
+        Assert.Equal(starts, f.Adapter.StartCount); Assert.Equal(stops, f.Adapter.StopCount);
+    }
+
     [Fact]
     public async Task DevMode_ManualConfiguredSourceNeedsNoWorkspaceAndPreservesDirtyFiles()
     {
