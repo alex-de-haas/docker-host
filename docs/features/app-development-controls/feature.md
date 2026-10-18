@@ -72,7 +72,8 @@ selection, initial running state, configuration fingerprint, backup and action r
 points to this journal. Exact replay observes or resumes the original request. Changed arguments
 or authority are refused; a request retired by a later trial cannot accidentally restart old work.
 Terminal phase and successful receipt are persisted in one atomic journal write, so failure of the
-following registry update or loss of the response cannot repeat a completed transition.
+following registry update or loss of the response cannot repeat a completed transition. Exact replay
+repairs a missed terminal registry status without repeating runtime effects.
 HTTP disconnect does not cancel an admitted transition. Core shutdown can interrupt it; retry uses
 the same arguments and UUID. Interrupted restart and Return retain their actual phase and error.
 
@@ -101,7 +102,10 @@ coordination for trusted agents, not a per-session filesystem isolation boundary
 The pre-entry backup includes managed application data. It excludes shared/external mounts,
 remote databases, provider state and external side effects. Review identifies external mount paths
 and access modes. Unsafe data links, unavailable backup storage or an unverifiable retained backup
-prevent entry before development code starts. Replaying entry reuses the verified backup ID.
+prevent entry before development code starts. Replaying entry reuses the verified backup ID only
+while managed data still matches the baseline saved before archive creation. Data drift across an
+interrupted backup attempt refuses entry; Return followed by a new entry creates a fresh backup
+without discarding the changed data.
 
 Return never restores data. When managed data changed, Core cannot infer schema downgrade safety:
 it stops and refuses an unaccepted return. `acceptDataChanges` explicitly accepts compatibility of

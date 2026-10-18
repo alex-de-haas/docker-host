@@ -125,8 +125,18 @@ internal sealed partial class CoreLifecycleService
             if (receipt is not null)
             {
                 if (receipt.Fingerprint != fingerprint) throw DevError("request_conflict", "This requestId was already used with different arguments or authority.");
-                if (receipt.State != "pending") { outcome = receipt.State; return await GetDevModeAsync(appId, ct); }
                 if (op!.Installation != app.InstalledAt) throw DevError("installation_changed", "This operation belongs to a different installation.");
+                if (receipt.State != "pending")
+                {
+                    // The journal commits before its registry projection. Reconcile a completed
+                    // operation after a failed projection without repeating any runtime effects.
+                    if (receipt.State == "succeeded" && op.Phase is "active" or "returned" &&
+                        app.OperationStatus is "development-starting" or "development-restarting" or
+                            "development-return-bound" or "development-return-starting" or "started" or "restarted")
+                        await apps.UpdateAppAsync(appId, a => a with { OperationStatus = "development-" + op.Phase }, ct);
+                    outcome = receipt.State;
+                    return await GetDevModeAsync(appId, ct);
+                }
                 await ValidateDevBindingAsync(app, op, ct);
             }
             else
@@ -234,10 +244,18 @@ internal sealed partial class CoreLifecycleService
         if (op.Phase == "stopped")
         {
             Directory.CreateDirectory(GetAppDataPath(op.AppId));
-            _ = await DevDataHashAsync(GetAppDataPath(op.AppId), ct);
+            var dataHash = await DevDataHashAsync(GetAppDataPath(op.AppId), ct);
+            if (op.DataHash is not null && op.DataHash != dataHash)
+                throw DevError("backup_data_changed", "Managed data changed since this backup attempt. Return and enter again to create a new pre-development backup; no development code was started.");
+            // Persist the data identity BEFORE creating the stable archive. A crash after archive
+            // metadata but before backed-up cannot pair an old archive with a newer data baseline.
+            op = op with { DataHash = dataHash };
+            await AppDevStore.SaveAsync(paths, op, ct);
             var backup = await backups.CreateBackupAsync(op.AppId, "pre-development-mode", "development:" + op.Id,
                 ct, operationId: op.Id) ?? throw DevError("backup_required", "A verified managed-data backup is required before entry.");
-            op = op with { BackupId = backup.BackupId, DataHash = await DevDataHashAsync(GetAppDataPath(op.AppId), ct) };
+            if (dataHash != await DevDataHashAsync(GetAppDataPath(op.AppId), ct))
+                throw DevError("backup_data_changed", "Managed data changed while creating its backup. Return and enter again; no development code was started.");
+            op = op with { BackupId = backup.BackupId };
             op = await DevPhaseAsync(op, "backed-up", ct);
         }
         if (op.Phase == "backed-up")

@@ -219,6 +219,51 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DevMode_BackupReplayKeepsTheArchivedDataBaseline(bool changed)
+    {
+        var (f, owner, _, tree, _, _) = await LocalHandoffFixture(); var actor = DevActor(owner);
+        var data = Path.Combine(f.Paths.AppsRoot, "test.created", "data", "notes.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(data)!); await File.WriteAllTextAsync(data, "before backup");
+        var request = DevRequest("enter", tree.Id);
+        request = request with { PlanDigest = (await f.Service.PlanDevModeAsync("test.created", request, actor)).PlanDigest };
+        var active = await f.Service.ApplyDevModeAsync("test.created", request, actor);
+        var op = (await AppDevStore.ReadAsync(f.Paths, "test.created", active.OperationId!, default))!;
+        var backup = Assert.Single(await f.Backups.ListBackupsAsync("test.created"));
+        // The archive and its metadata survived; the backed-up journal checkpoint did not.
+        op = op with { Phase = "stopped", BackupId = null, Receipts = op.Receipts!.Select(r => r with { State = "pending" }).ToArray() };
+        await AppDevStore.SaveAsync(f.Paths, op, default);
+        await f.Apps.UpdateAppAsync("test.created", a => a with { RuntimeState = "stopped", SelectedRuntime = op.PreviousRuntime,
+            SourceState = op.PreviousSource, ArtifactLocks = op.PreviousArtifacts });
+        if (changed) await File.WriteAllTextAsync(data, "changed before retry");
+        var starts = f.Adapter.StartCount;
+        var service = f.RecreateService();
+        if (changed)
+        {
+            Assert.Equal("dev_backup_data_changed", (await Assert.ThrowsAsync<AppLifecycleException>(() => service.ApplyDevModeAsync("test.created", request, actor))).Code);
+            Assert.Equal(starts, f.Adapter.StartCount);
+            Assert.Equal("stopped", (await f.Apps.GetAppAsync("test.created"))!.RuntimeState);
+            Assert.Equal("changed before retry", await File.ReadAllTextAsync(data));
+            var retained = (await AppDevStore.ReadAsync(f.Paths, "test.created", op.Id, default))!;
+            Assert.Equal(op.DataHash, retained.DataHash);
+            Assert.Equal(backup.ArchiveSha256, Assert.Single(await f.Backups.ListBackupsAsync("test.created")).ArchiveSha256);
+            await ApplyReviewedDev(service, DevRequest("return", accept: true), actor);
+            var fresh = await ApplyReviewedDev(service, DevRequest("enter", tree.Id), actor);
+            var replacement = Assert.Single(await f.Backups.ListBackupsAsync("test.created"), b => b.BackupId == fresh.BackupId);
+            using var archive = System.IO.Compression.ZipFile.OpenRead(replacement.ArchivePath);
+            using var reader = new StreamReader(archive.GetEntry("notes.txt")!.Open());
+            Assert.Equal("changed before retry", await reader.ReadToEndAsync());
+        }
+        else
+        {
+            var resumed = await service.ApplyDevModeAsync("test.created", request, actor);
+            Assert.Equal("active", resumed.Phase); Assert.Equal(backup.BackupId, resumed.BackupId);
+            Assert.Single(await f.Backups.ListBackupsAsync("test.created"));
+        }
+    }
+
+    [Theory]
     [InlineData("enter", "starting", "active")]
     [InlineData("restart", "restarting", "active")]
     [InlineData("return", "return-bound", "returned")]
@@ -235,6 +280,7 @@ public sealed partial class CoreLifecycleServiceTests
         op = op with { Phase = priorPhase, Receipts = op.Receipts!.Select(r =>
             r.RequestId == request.RequestId ? r with { State = "pending" } : r).ToArray() };
         await AppDevStore.SaveAsync(f.Paths, op, default);
+        await f.Apps.UpdateAppAsync("test.created", a => a with { OperationStatus = "development-" + priorPhase });
         var statePath = Path.Combine(f.Paths.AppsRoot, "test.created", "state.json");
         var state = await File.ReadAllBytesAsync(statePath);
         File.Delete(statePath); Directory.CreateDirectory(statePath);
@@ -250,6 +296,7 @@ public sealed partial class CoreLifecycleServiceTests
         var starts = f.Adapter.StartCount; var stops = f.Adapter.StopCount;
         var replay = await f.RecreateService().ApplyDevModeAsync("test.created", request, actor);
         Assert.Equal(terminalPhase, replay.Phase);
+        Assert.Equal("development-" + terminalPhase, (await f.Apps.GetAppAsync("test.created"))!.OperationStatus);
         Assert.Equal(starts, f.Adapter.StartCount); Assert.Equal(stops, f.Adapter.StopCount);
     }
 
@@ -261,8 +308,10 @@ public sealed partial class CoreLifecycleServiceTests
         request = request with { PlanDigest = (await f.Service.PlanDevModeAsync("test.created", request, actor)).PlanDigest };
         await f.Service.ApplyDevModeAsync("test.created", request, actor);
         await ApplyReviewedDev(f.Service, DevRequest("return", accept: true), actor);
+        await f.Apps.UpdateAppAsync("test.created", a => a with { OperationStatus = "configured" });
         var starts = f.Adapter.StartCount; var stops = f.Adapter.StopCount;
         Assert.Equal("returned", (await f.RecreateService().ApplyDevModeAsync("test.created", request, actor)).Phase);
+        Assert.Equal("configured", (await f.Apps.GetAppAsync("test.created"))!.OperationStatus);
         Assert.Equal(starts, f.Adapter.StartCount); Assert.Equal(stops, f.Adapter.StopCount);
     }
 
