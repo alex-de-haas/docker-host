@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { developmentRequest, repositoryName, changeTotals, type DevelopmentWorkspace, type Worktree, type Diff, type Workflow } from "@/lib/development-api";
+import { LocalRepositoryActions } from "./local-repository-actions";
+import { LocalAppHandoff } from "./local-app-handoff";
 import { WorkspacePreviews } from "./workspace-previews";
 
 type PendingAction = { kind: string; requestId: string; expectedRevision: number };
@@ -16,12 +18,13 @@ function readPendingAction(workspaceId: string): PendingAction | null {
   } catch { return null; }
 }
 const safeLink = (value: string) => { try { const u = new URL(value); return ["https:", "http:"].includes(u.protocol) && !u.username && !u.password ? u.href : undefined; } catch { return undefined; } };
-export function WorkspaceDetails({ workspace, title, running, refresh, deleteConversation }: {
+export function WorkspaceDetails({ workspace, title, sessionId, running, refresh, deleteConversation }: {
   workspace: DevelopmentWorkspace; title: string; sessionId?: string; running?: boolean;
   refresh: () => void; deleteConversation?: () => Promise<void>;
 }) {
   const [trees, setTrees] = useState<Worktree[]>(() => workspace.worktrees.map(t => ({ ...t, sessionChanges: undefined })));
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [withConversation, setWithConversation] = useState(false);
@@ -43,8 +46,8 @@ export function WorkspaceDetails({ workspace, title, running, refresh, deleteCon
   useEffect(() => {
     const abort = new AbortController();
     void Promise.all(workspace.worktrees.map(t => developmentRequest<Worktree>(`/${workspace.id}/worktrees/${t.id}`, undefined, abort.signal)))
-      .then(values => { if (!abort.signal.aborted) { setTrees(values); } })
-      .catch(e => { if (!abort.signal.aborted) { setTrees([]); setError(e.message); } });
+      .then(values => { if (!abort.signal.aborted) { setTrees(values); setLoadError(""); } })
+      .catch(e => { if (!abort.signal.aborted) { setTrees([]); setLoadError(e.message); } });
     return () => abort.abort();
   }, [workspace]);
   const run = async (kind: string, retry = false) => {
@@ -82,7 +85,7 @@ export function WorkspaceDetails({ workspace, title, running, refresh, deleteCon
       {workspace.owner.kind === "external" && <p className="text-xs text-muted-foreground">External work: {workspace.owner.label}. Conversation and agent activity are not synchronized.</p>}
       {running && <p className="text-xs text-muted-foreground">The agent is running. Close workspace stops its owned execution and preserves unfinished changes.</p>}
       {state.closure && !["deleting", "deleted"].includes(state.state) && <p role="status" className="text-xs text-muted-foreground">{state.closure === "closing" ? "Closing: new development work is blocked while execution stop is verified." : "Closed: source, previews and conversation are retained. Resume to continue development."}</p>}
-      {(error || operation?.error) && <p role="alert" className="text-sm text-destructive">{error || operation?.error}</p>}
+      {(error || loadError || operation?.error) && <p role="alert" className="text-sm text-destructive">{error || loadError || operation?.error}</p>}
       {pending && <div className="space-y-2 text-xs"><p>Pending action: {pending.kind}. Retry uses the original request.</p>
         <Button variant="outline" size="sm" disabled={busy} onClick={() => void run(pending.kind, true)}>Retry action</Button>
         {state.state !== "deleting" && state.closure !== "closing" && <Button variant="ghost" size="sm" disabled={busy} onClick={() => { setPending(null); try { localStorage.removeItem(`hosty.workspace.action.${workspace.id}`); } catch {} }}>Dismiss</Button>}
@@ -103,6 +106,12 @@ export function WorkspaceDetails({ workspace, title, running, refresh, deleteCon
             <FileDiff className="size-4" />Changes {totals ? <><span className="ml-auto text-emerald-700 dark:text-emerald-400">+{totals.additions}</span><span className="text-red-600 dark:text-red-400">−{totals.deletions}</span></> : <span className="ml-auto text-xs text-muted-foreground">Statistics unavailable</span>}
             <span className="text-xs text-muted-foreground">{known ? `(${files.length} ${files.length === 1 ? "file" : "files"})` : ""}</span>
           </button>
+          {sessionId && tree.apps.filter(app => app.localGit).map(app => <div key={app.appId} className="flex flex-col gap-2">
+            <LocalAppHandoff sessionId={sessionId} appId={app.appId} workspaceId={tree.id} observation={tree.observation?.at}
+              disabled={!!running || busy || tree.state !== "active"} refresh={refresh} />
+            <LocalRepositoryActions sessionId={sessionId} appId={app.appId} tree={tree}
+              disabled={!!running || busy || tree.state !== "active"} refresh={refresh} />
+          </div>)}
           {(tree.detailError || tree.observation?.error) && <p role="status" className="text-xs text-destructive">{tree.detailError || tree.observation?.error}</p>}
         </section>;
       })}
@@ -112,7 +121,7 @@ export function WorkspaceDetails({ workspace, title, running, refresh, deleteCon
           const o = pr.observation, stale = !o || now - Date.parse(o.at) > 90000;
           const checks = o?.checks, passed = checks?.filter(c => ["SUCCESS", "NEUTRAL", "SKIPPED"].includes(c.state)).length;
           return <div key={`${tree.id}:${pr.url}`} className="space-y-1 text-sm"><a href={safeLink(pr.url)} target="_blank" rel="noreferrer" className="flex items-start gap-2 hover:underline"><GitPullRequest className="mt-0.5 size-4 shrink-0 text-violet-500" /><span className="line-clamp-2">{o?.title || `Pull request #${pr.url.split("/").pop()}`}</span></a>
-            <p className="pl-6 text-xs text-muted-foreground">{repositoryName(tree.repository)} · CI {checks ? `${passed}/${checks.length}` : "unknown"} · {o?.commentCount === undefined ? "Comments unknown" : `${o.commentCount} discussion comments`}</p>
+            <p className="pl-6 text-xs text-muted-foreground">{repositoryName(pr.url.split("/pull/")[0])} · CI {checks ? `${passed}/${checks.length}` : "unknown"} · {o?.commentCount === undefined ? "Comments unknown" : `${o.commentCount} discussion comments`}</p>
             <p className="pl-6 text-xs text-muted-foreground">{o?.state ?? "State unknown"}{o?.draft ? " · Draft" : ""}{stale ? " · Stale / unobserved" : ""}{o?.reviewDecision ? ` · ${o.reviewDecision}` : ""}{o?.unresolvedThreads ? ` · ${o.unresolvedThreads} unresolved threads` : ""}</p>
             {checks?.filter(c => !["SUCCESS", "NEUTRAL", "SKIPPED"].includes(c.state)).map((c,i) => <p key={i} className="pl-6 text-xs">{c.name}: {c.state}</p>)}
             {(pr.unavailable || o?.error) && <p className="pl-6 text-xs text-destructive">{pr.unavailable || o?.error}</p>}

@@ -5,6 +5,14 @@ internal static class LifecycleEndpoints
     public static void Map(WebApplication app)
     {
         var audited = app.MapGroup("").WithMetadata(new LifecycleAuditMarker()).AddEndpointFilter<LifecycleAuditFilter>();
+        app.MapGet("/api/apps/{appId}/preview-checks", async (string appId, HttpRequest request,
+            UserDirectoryStore users, IClock clock, CoreLifecycleService lifecycle, CancellationToken ct) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,
+                async () => await HandleLifecycleError(() => lifecycle.ReadPreviewChecksAsync(appId, ct)), cancellationToken: ct));
+        audited.MapPost("/api/apps/{appId}/preview-checks/run", async (string appId, PreviewCheckRun input, HttpRequest request,
+            UserDirectoryStore users, IClock clock, CoreLifecycleService lifecycle, CancellationToken ct) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,
+                async () => await HandleLifecycleError(() => lifecycle.RunPreviewCheckAsync(appId, input, ct)), requireCsrf: true, cancellationToken: ct));
         app.MapPost("/api/apps/install/feed/plan", async (
             HttpRequest request,
             UserDirectoryStore users,

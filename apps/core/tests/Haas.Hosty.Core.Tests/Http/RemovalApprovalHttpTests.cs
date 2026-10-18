@@ -129,6 +129,27 @@ public sealed class RemovalApprovalHttpTests
         foreach (var file in DataFiles(host)) Assert.False(File.Exists(file));
     }
 
+    [Fact]
+    public async Task RemovalReview_ShowsNoGitSourceAndRefusesEditsAfterConfirmation()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        using var app = await Setup(host);
+        var id = await Prepare(app, Internal, true);
+        (await app.PostAsJsonAsync($"{Internal}/{id}/submit", new { })).EnsureSuccessStatusCode();
+        using var browser = Browser(host);
+        var html = await browser.GetStringAsync($"/install/confirm/{id}");
+        Assert.Contains("Source and workspace state", html);
+        Assert.Contains("No Git history", html);
+        var source = host.Services.GetRequiredService<CoreDataPaths>().ResolveManagedCheckoutPath(Target);
+        await File.WriteAllTextAsync(Path.Combine(source, "keep.txt"), "changed after review");
+        (await Decide(browser, id, Nonce(html), "approve")).EnsureSuccessStatusCode();
+        Assert.Equal("failed", await Wait(host, id));
+        Assert.Equal("changed after review", await File.ReadAllTextAsync(Path.Combine(source, "keep.txt")));
+        Assert.NotNull(await Apps(host).GetAppAsync(Target));
+        using var repeated = await Decide(browser, id, Nonce(html), "approve");
+        Assert.Equal(HttpStatusCode.Conflict, repeated.StatusCode);
+    }
+
     private static object Options(bool destructive) => new { deleteRuntimeState = true, deleteData = destructive,
         deleteBackups = destructive, deleteSource = destructive, ignoreRuntimeErrors = false };
     private static AppRegistryStore Apps(CoreHttpHarness host) => host.Services.GetRequiredService<AppRegistryStore>();

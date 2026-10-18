@@ -154,7 +154,7 @@ it("closes only its own workspace, recovers stop failures and never cancels agai
 });
 
 
-it("loads a persisted worker generation when Close is the first request after restart", async () => {
+it("recovers a persisted worker close after the second repository lease release fails", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "hosty-close-cold-manager-"));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const store = new SessionStore(root, path.join(root, "cache"));
@@ -185,14 +185,33 @@ it("loads a persisted worker generation when Close is the first request after re
   await writeFile(path.join(root, "worker", "state.json"), JSON.stringify(persisted));
   const workspaceId = "b".repeat(64), tree = { id: "a".repeat(64), workspaceId, state: "active" };
   const release = vi.spyOn(client, "workerBindings").mockImplementation(async () => { expect(present).toBe(false); return null; });
-  const calls = vi.spyOn(client, "call").mockImplementation(async (_id, _credential, action) => action === "list" ? { workspaces: [tree] } : {});
+  const second = { ...tree, id: "f".repeat(64) };
+  let refuseSecondRelease = true;
+  const released = new Set<string>();
+  const calls = vi.spyOn(client, "call").mockImplementation(async (_id, _credential, action, input) => {
+    if (action === "list") return { workspaces: [tree, second] };
+    if (action === "release-lease") {
+      expect(present).toBe(false);
+      if (input.workspaceId === second.id && refuseSecondRelease) throw new Error("second repository unavailable");
+      released.add(String(input.workspaceId));
+    }
+    return {};
+  });
   const input = { requestId: "03b309cb-b6f1-4db2-a0c2-80bb53847e55", expectedRevision: 0 };
   vi.spyOn(client, "inspection").mockImplementation(async (_credential, route) => {
     if (!route) return { workspaces: [{ id: workspaceId, owner: { kind: "assistant", appId: "hosty.harness", reference: session.id } }] };
-    if (route.endsWith("close-confirm")) { expect(present).toBe(false); return { closure: "closed" }; }
+    if (route.endsWith("close-confirm")) {
+      expect(present).toBe(false); expect(released).toEqual(new Set([tree.id, second.id]));
+      return { closure: "closed" };
+    }
     return { closure: "closing", operations: [{ id: input.requestId, state: "pending" }] };
   });
   expect(worker.activeSession).toBeNull();
+  await expect(manager.inspectWorkspaces("fresh", `/${workspaceId}/workflow/close`, input, "admin"))
+    .rejects.toMatchObject({ code: "workspace_stop_unconfirmed" });
+  expect(worker.current?.phase).toBe("stopped");
+  expect(released).toEqual(new Set([tree.id]));
+  refuseSecondRelease = false;
   expect(await manager.inspectWorkspaces("fresh", `/${workspaceId}/workflow/close`, input, "admin")).toMatchObject({ closure: "closed" });
   expect(health).not.toHaveBeenCalled();
   expect(commands).toHaveBeenCalledWith(["stop", "--time", "10", persisted.name]);

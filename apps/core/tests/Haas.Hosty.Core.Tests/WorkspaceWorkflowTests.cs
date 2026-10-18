@@ -4,6 +4,46 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed partial class CoreLifecycleServiceTests
 {
+    [Theory]
+    [InlineData("pending")]
+    [InlineData("unknown")]
+    public async Task PreviewChecks_RefuseUnreconciledGitOperationAfterRestart(string state)
+    {
+        var (f, _) = await SourceFixtureAsync();
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var owner = WorkspaceTestOwner(f);
+        var tree = await service.PrepareAsync(owner, WorkspaceRequest(), default);
+        var record = Path.Combine(f.Paths.CoreRoot, "development", "workspaces", tree.Id + ".json");
+        var saved = await File.ReadAllTextAsync(record);
+        await JsonStorage.WriteAsync(record, tree with { Operations = [new(Guid.NewGuid().ToString(), "commit", "args", state, tree.OriginalBase)] });
+        var restarted = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var invoked = false;
+        Assert.Equal("workspace_busy", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            restarted.WithIdleSourceAsync(owner, () => { invoked = true; return Task.FromResult(true); }, default))).Code);
+        Assert.False(invoked);
+        await File.WriteAllTextAsync(record, saved);
+        Assert.True(await restarted.WithIdleSourceAsync(owner, () => Task.FromResult(true), default));
+    }
+
+    [Fact]
+    public async Task PreviewChecks_SerializeWithNativeWritersAndRefuseActiveLeases()
+    {
+        var (f, _) = await SourceFixtureAsync();
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var owner = WorkspaceTestOwner(f);
+        var tree = await service.PrepareAsync(owner, WorkspaceRequest(), default);
+        var lease = Guid.NewGuid().ToString();
+        await service.CommandAsync(tree.Id, owner, "lease", new(Guid.NewGuid().ToString(), LeaseId: lease), default);
+        Assert.Equal("workspace_busy", (await Assert.ThrowsAsync<AppLifecycleException>(() => service.WithIdleSourceAsync(owner, () => Task.FromResult(true), default))).Code);
+        await service.CommandAsync(tree.Id, owner, "release-lease", new(Guid.NewGuid().ToString(), LeaseId: lease), default);
+        var entered = new TaskCompletionSource(); var release = new TaskCompletionSource();
+        var check = service.WithIdleSourceAsync(owner, async () => { entered.SetResult(); await release.Task; return true; }, default);
+        await entered.Task;
+        var writer = service.CommandAsync(tree.Id, owner, "lease", new(Guid.NewGuid().ToString(), LeaseId: lease), default);
+        Assert.False(writer.IsCompleted);
+        release.SetResult(); Assert.True(await check); await writer;
+        Assert.Contains(lease, (await service.Read(tree.Id, owner, default)).Leases);
+    }
     [Fact]
     public async Task WorkspaceWorkflow_RequiresExplicitCompletionAndSupportsResumeWithoutDeletingPreview()
     {
@@ -50,7 +90,14 @@ public sealed partial class CoreLifecycleServiceTests
         await service.CommandAsync(tree.Id, owner, "lease", new(Guid.NewGuid().ToString(), LeaseId: lease), default);
         Assert.Equal("workspace_in_use", (await Assert.ThrowsAsync<AppLifecycleException>(Complete)).Code);
         Assert.True(Directory.Exists(second.Path));
+        var expected = await File.ReadAllTextAsync(Path.Combine(second.Path, "README.md"));
+        service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
         Assert.Equal("in-progress", (await service.WorkflowAsync(owner, default)).State);
+        await Assert.ThrowsAsync<AppLifecycleException>(() => service.ChangeWorkflowAsync(owner, "admin", "delete",
+            new(Guid.NewGuid().ToString(), 0), new Dictionary<string, string>(), default));
+        Assert.True(Directory.Exists(tree.Path));
+        Assert.Equal(expected, await File.ReadAllTextAsync(Path.Combine(second.Path, "README.md")));
+        Assert.Contains(lease, (await service.Read(tree.Id, owner, default)).Leases);
     }
 
     [Fact]

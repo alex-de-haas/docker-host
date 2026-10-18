@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-16
-updated: 2026-09-29
+updated: 2026-10-18
 summary: Repository provisioning, installable releases and feeds, and catalog promotion for apps built in Hosty.
 components: [apps/core, apps/harness]
 ---
@@ -28,9 +28,10 @@ to save a prototype or to keep editing it.
 Use existing repository-owned manifests/feeds and Core's reviewed install/update model. Publishing
 has separate milestones, each independently observable and retryable:
 
-1. **Saved source:** consume the optional Git initialization/commit/push workflow owned by
-   [prototype workspaces](../app-prototype-workspaces/plan.md). It is already available during
-   iteration; this feature does not implement another source-history or export service.
+1. **Saved source:** consume [local app creation](../app-prototype-workspaces/feature.md):
+   canonical local Git and a consented bootstrap commit, then explicit reviewed commits and
+   optional connection/push to an existing remote during iteration. This feature does not
+   implement another source-history or export service.
 2. **Hosted repository provisioning:** choose provider, account, repository name and visibility;
    create a hosted repository if needed, then use the existing Git workflow to connect/push.
    A configured remote is not proof of a pushed commit.
@@ -95,7 +96,7 @@ approval; do not silently omit catalog work during implementation.
 
 ## Verification
 
-On an authorized test repository/catalog, publish a no-Git prototype, then install its feed on a
+On an authorized test repository/catalog, publish a locally created app, then install its feed on a
 separate test host or CI environment and update to a second version. Do not start a second Core on
 the live host. Verify private visibility is respected, no secret/data paths enter the release,
 failed artifact publication leaves the local app usable, retry does not duplicate the PR, and a

@@ -8,7 +8,7 @@ internal sealed record InspectedWorkspace(string Id, string State, InspectionOwn
 }
 internal sealed record InspectionOwner(string Kind, string Label, string Reference, string? AppId, string? SessionUrl, string? SessionUnavailable);
 internal sealed record WorkspaceDestination(string? Url, string? Unavailable);
-internal sealed record InspectionApp(string AppId, string Name, string? Subpath, bool Installed);
+internal sealed record InspectionApp(string AppId, string Name, string? Subpath, bool Installed, bool LocalGit = false);
 internal sealed record InspectionOperation(string Id, string Kind, string State, string? Error);
 internal sealed record InspectionCommit(string Sha, string Author, string At, string Subject);
 internal sealed record InspectionConsumer(string Kind, string Reference);

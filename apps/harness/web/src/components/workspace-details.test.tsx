@@ -46,6 +46,7 @@ it("recovers deletion from Core after browser storage loss and keeps the origina
 
 it("keeps each PR's repository, head evidence, failed checks and review threads distinct", async () => {
   const w = workspace();
+  w.worktrees[0].repository = "/retained/local/source/.git";
   w.worktrees[0].pullRequests = [{ url: "https://example.test/one/pull/3", observation: {
     title: "Fix layout", at: new Date().toISOString(), state: "open", draft: false, commentCount: 7,
     checks: [{ name: "Build", state: "SUCCESS" }, { name: "Tests", state: "FAILURE" }], reviewDecision: "CHANGES_REQUESTED", unresolvedThreads: 2,
@@ -163,4 +164,18 @@ it.each(["deleting", "deleted"])("does not offer Resume or retained-source guida
   expect(vi.mocked(developmentRequest).mock.calls.some(([path]) => path?.endsWith("/workflow/resume"))).toBe(false);
   expect(localStorage.getItem("hosty.workspace.action.workspace")).toBeNull();
   expect(container.textContent).not.toContain("Resume to continue development");
+});
+
+it("clears a recovered detail-read error without retaining a stale authentication warning", async () => {
+  const w = workspace(); replies(w);
+  vi.mocked(developmentRequest).mockImplementation(async (path = "") => {
+    if (path.endsWith("/previews")) return { environments: [], instances: [], applications: {} } as never;
+    throw new Error("Temporary access failure");
+  });
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Recovery" refresh={() => {}} />));
+  expect(container.textContent).toContain("Temporary access failure");
+  replies(w);
+  await act(async () => root.render(<WorkspaceDetails workspace={{ ...w }} title="Recovery" refresh={() => {}} />));
+  expect(container.textContent).not.toContain("Temporary access failure");
+  expect(container.textContent).toContain("one · CI unknown");
 });

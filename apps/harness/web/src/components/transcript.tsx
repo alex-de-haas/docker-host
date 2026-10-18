@@ -35,10 +35,53 @@ import type { AttachmentIndex } from "@/lib/attachments";
 /** How a card was resolved: the verdict, and the operator's reason when a deny carried one. */
 export type ApprovalDecision = { decision: string; message: string | null };
 
+/** Resolve only requests preceding a recorded cancellation; later turns remain actionable. */
+export function approvalDecisions(events: readonly AssistantEvent[]): Map<string, ApprovalDecision> {
+  const decisions = new Map<string, ApprovalDecision>();
+  const pending = new Set<string>();
+  for (const event of events) {
+    const id = String(event.approvalId);
+    if (event.type === "approval_request") {
+      if (!decisions.has(id)) pending.add(id);
+    } else if (event.type === "approval_decision") {
+      pending.delete(id);
+      decisions.set(id, {
+        decision: String(event.decision),
+        message: typeof event.message === "string" && event.message ? event.message : null,
+      });
+    } else if (event.type === "session_status" && event.status === "cancelled") {
+      for (const approvalId of pending) {
+        decisions.set(approvalId, { decision: "cancelled", message: "The session stopped before this request was decided." });
+      }
+      pending.clear();
+    }
+  }
+  return decisions;
+}
+
+/** Pending questions expire on cancellation, including when the transcript is replayed. */
+export function cancelledQuestions(events: readonly AssistantEvent[]): Set<string> {
+  const cancelled = new Set<string>();
+  const pending = new Set<string>();
+  for (const event of events) {
+    if (event.type === "question_request") {
+      pending.add(String(event.questionId));
+    } else if (event.type === "question_answered") {
+      pending.delete(String(event.questionId));
+      cancelled.delete(String(event.questionId));
+    } else if (event.type === "session_status" && event.status === "cancelled") {
+      for (const id of pending) cancelled.add(id);
+      pending.clear();
+    }
+  }
+  return cancelled;
+}
+
 export function TranscriptEvent({
   event,
   decision,
   answers,
+  questionCancelled = false,
   denyReason,
   onDecide,
   onAnswer,
@@ -48,6 +91,7 @@ export function TranscriptEvent({
   event: AssistantEvent;
   decision: ApprovalDecision | null;
   answers: Record<string, string> | null;
+  questionCancelled?: boolean;
   /** Whether the harness can deliver a deny reason; the card offers the box only when it can. */
   denyReason: boolean;
   onDecide: (approvalId: string, decision: "allow" | "deny", message?: string) => Promise<void>;
@@ -117,6 +161,7 @@ export function TranscriptEvent({
           questionId={String(event.questionId)}
           questions={(event.questions ?? []) as AssistantQuestion[]}
           answers={answers}
+          cancelled={questionCancelled}
           onAnswer={onAnswer}
         />
       );
@@ -255,7 +300,7 @@ function ApprovalCard({
           <ShieldCheck className="size-4 text-muted-foreground" aria-hidden />
           <span className="text-xs text-muted-foreground">{category}</span>
           <Badge variant={decision ? "outline" : "secondary"} className="ml-auto">
-            {decision ? (decision.decision === "allow" ? "Allowed" : "Denied") : submitted ? "Decision sent" : "Needs approval"}
+            {decision ? (decision.decision === "allow" ? "Allowed" : decision.decision === "cancelled" ? "Cancelled" : "Denied") : submitted ? "Decision sent" : "Needs approval"}
           </Badge>
         </div>
         <CardTitle className="text-sm leading-snug wrap-anywhere">{view.heading}</CardTitle>
@@ -367,9 +412,10 @@ function clip(content: string): string {
 }
 
 /** Questions choose an answer; they never authorize an operation. */
-function QuestionCard({ questionId, questions, answers, onAnswer }: {
+function QuestionCard({ questionId, questions, answers, cancelled, onAnswer }: {
   questionId: string;
   questions: AssistantQuestion[];
+  cancelled: boolean;
   answers: Record<string, string> | null;
   onAnswer: (questionId: string, answers: Record<string, string>) => Promise<void>;
 }) {
@@ -392,7 +438,7 @@ function QuestionCard({ questionId, questions, answers, onAnswer }: {
   }, [questions, selected, other]);
   const complete = questions.length > 0 && questions.every(question => collected[question.question]);
   const submit = async () => {
-    if (locked.current || !complete || answers) return;
+    if (locked.current || !complete || answers || cancelled) return;
     locked.current = true;
     setSubmitting(true); setError(null);
     try {
@@ -408,14 +454,14 @@ function QuestionCard({ questionId, questions, answers, onAnswer }: {
     <CardHeader className="px-3">
       <div className="flex flex-wrap items-center gap-2">
         <HelpCircle className="size-4 text-muted-foreground" aria-hidden />
-        <CardTitle className="text-sm">{answers ? "Your answers" : "Your input is needed"}</CardTitle>
-        <Badge variant="outline" className="ml-auto">{answers ? "Answered" : submitted ? "Answer sent" : "Question"}</Badge>
+        <CardTitle className="text-sm">{answers ? "Your answers" : cancelled ? "Question cancelled" : "Your input is needed"}</CardTitle>
+        <Badge variant="outline" className="ml-auto">{answers ? "Answered" : cancelled ? "Cancelled" : submitted ? "Answer sent" : "Question"}</Badge>
       </div>
     </CardHeader>
     <CardContent className="min-w-0 px-3">
-      {answers ? <dl className="flex flex-col gap-3">{questions.map(question => <div key={question.question} className="min-w-0">
+      {answers || cancelled ? <dl className="flex flex-col gap-3">{questions.map(question => <div key={question.question} className="min-w-0">
         <dt className="text-xs text-muted-foreground wrap-anywhere">{question.question}</dt>
-        <dd className="mt-1 text-sm whitespace-pre-wrap wrap-anywhere">{answers[question.question] ?? "—"}</dd>
+        <dd className="mt-1 text-sm whitespace-pre-wrap wrap-anywhere">{answers?.[question.question] ?? (cancelled ? "The session stopped before this question was answered." : "—")}</dd>
       </div>)}</dl> : <FieldGroup className="gap-5">{questions.map((question, questionIndex) => {
         const picks = selected[question.question] ?? [];
         const baseId = `${questionId}-${questionIndex}`;
@@ -452,9 +498,9 @@ function QuestionCard({ questionId, questions, answers, onAnswer }: {
           </Field>
         </FieldSet>;
       })}</FieldGroup>}
-      {error && <div className="mt-3" role="alert"><InlineError message={error} /></div>}
+      {error && !cancelled && <div className="mt-3" role="alert"><InlineError message={error} /></div>}
     </CardContent>
-    {!answers && <CardFooter className="justify-end border-t px-3 pt-3">
+    {!answers && !cancelled && <CardFooter className="justify-end border-t px-3 pt-3">
       {submitted ? <span role="status" className="mr-auto text-xs text-muted-foreground">Waiting for confirmation…</span>
         : <Button type="button" size="sm" disabled={!complete || disabled} onClick={() => void submit()}>
           {submitting && <Loader2 className="animate-spin" data-icon="inline-start" />}Send answer

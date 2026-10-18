@@ -116,12 +116,14 @@ internal static class AppManagementAuthorization
             "POST /api/sandbox-instances/{id}/users", "POST /api/sandbox-instances/{id}/seeds", "POST /api/sandbox-instances/{id}/browser-runs",
             "POST /api/sandbox-instances/{id}/users/delete", "POST /api/sandbox-instances/{id}/viewers", "POST /api/sandbox-instances/{id}/evidence/clear", "POST /api/sandbox-instances/{id}/browser-runs/cancel");
         Add(CoreAppPermissions.ReadApps,
+            "GET /api/apps/{appId}/preview-checks",
             "GET /api/apps", "GET /api/apps/permissions", "GET /api/apps/{appId}/health", "GET /api/apps/{appId}/update-status",
             "GET /api/apps/{appId}/assets/{**assetPath}", "GET /api/apps/{id}/permissions");
         Add(CoreAppPermissions.AppLogs, "GET /api/apps/{appId}/logs");
         Add(CoreAppPermissions.Notifications, "GET /api/notifications", "POST /api/notifications/read");
         Add(CoreAppPermissions.AppLifecycle,
             "POST /api/apps/{appId}/start", "POST /api/apps/{appId}/stop", "POST /api/apps/{appId}/restart",
+            "POST /api/apps/{appId}/preview-checks/run",
             "POST /api/apps/{appId}/autostart", "POST /api/apps/{appId}/switch-runtime/plan",
             "POST /api/apps/{appId}/switch-runtime", "GET /api/apps/{appId}/source",
             "POST /api/apps/{appId}/source/override", "DELETE /api/apps/{appId}/source/override",

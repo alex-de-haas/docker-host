@@ -10,7 +10,7 @@ namespace Haas.Hosty.Core;
 // remains cooperative; every managed operation still validates ownership and actual Git state.
 internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegistryStore apps, IClock clock,
     LocalCommandProcessRegistry? processes = null, ILogger<DevelopmentWorkspaceService>? logger = null,
-    IDockerCommandRunner? docker = null, PrivateSourceService? privateSources = null,
+    IDockerCommandRunner? docker = null, ISourceGitAccess? privateSources = null,
     SourceRepositoryFetchCoordinator? fetches = null)
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> gates = new(StringComparer.Ordinal);
@@ -41,7 +41,14 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
     {
         var gate = gates.GetOrAdd(key, _ => new(1, 1));
         await gate.WaitAsync(ct);
-        try { return await action(); } finally { gate.Release(); }
+        try
+        {
+            if (!key.StartsWith("repository-admission:", StringComparison.Ordinal)) return await action();
+            var sourceGate = apps.SourceActivityGate(key["repository-admission:".Length..]);
+            await sourceGate.WaitAsync(ct);
+            try { return await action(); } finally { sourceGate.Release(); }
+        }
+        finally { gate.Release(); }
     }
     internal async Task<DevelopmentWorkspace> Read(string id, WorkspaceOwner? owner, CancellationToken ct)
     {
@@ -80,7 +87,16 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             return new WorkspaceList(found.ToArray());
         }
 
-    public Task<DevelopmentWorkspace> PrepareAsync(WorkspaceOwner owner, WorkspacePrepare input, CancellationToken ct)
+    public async Task<DevelopmentWorkspace> PrepareAsync(WorkspaceOwner owner, WorkspacePrepare input, CancellationToken ct)
+    {
+        // Match source selection and local acceptance lock order: app, owner, repository.
+        var gate = apps.OperationLock(input.AppId ?? "");
+        await gate.WaitAsync(ct);
+        try { return await PrepareCoreAsync(owner, input, ct); }
+        finally { gate.Release(); }
+    }
+
+    private Task<DevelopmentWorkspace> PrepareCoreAsync(WorkspaceOwner owner, WorkspacePrepare input, CancellationToken ct)
         => Locked(Hash(OwnerIdentity(owner)), async () =>
         {
             RequestId(input.RequestId);
@@ -118,57 +134,73 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 throw PrivateSourceService.Denied("The Git source changed. Select and review its connection again.");
             var repository = await CanonicalRepository(source.Repository, source.LocalOverridePath, ct);
             var repositoryId = Hash(repository);
-            var id = Hash(OwnerIdentity(owner) + "\n" + repositoryId);
-            var existing = await JsonStorage.ReadAsync<DevelopmentWorkspace>(RecordPath(id), ct);
-            if (existing is not null)
+            return await Locked("repository-admission:" + repositoryId, async () =>
             {
-                existing = await Read(id, owner, ct);
-                if (existing.State is "released" or "releasing") throw Error("released", "This session's workspace has been released. Start a new session.");
-                if (input.TargetBranch is not null && input.TargetBranch != existing.TargetBranch)
-                    throw Error("base_conflict", "The existing workspace has a different target branch.");
-                if (existing.Apps.Any(a => a.AppId == app.Id && a.Installation != app.InstalledAt))
-                    throw Error("app_reinstalled", "This source app was reinstalled; start a new development session.");
-                var prior = existing.Operations.FirstOrDefault(o => o.Id == input.RequestId);
-                if (prior is not null && (prior.Kind != "prepare" || prior.Fingerprint != Hash(CoreJson.Text(input))))
-                    throw Error("request_conflict", "This request ID was used with different preparation arguments.");
-                existing = existing with { SourceGrant = existing.SourceGrant ?? grant };
-                existing = await Materialize(existing, ct);
-                if (prior is not null) { await Save(existing); return await Observe(existing, ct); }
-                if (owner.IsExternal) existing = existing with { Owner = owner };
-                existing = Attach(existing, app, input.LeaseId);
-                existing = existing with { Operations = [.. existing.Operations, new(input.RequestId, "prepare", Hash(CoreJson.Text(input)), "succeeded", ResultHead: existing.OriginalBase)] };
-                await Save(existing);
-                return await Observe(existing, ct);
-            }
-            var repo = RepoPath(repositoryId);
-            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(repo)!);
-            await Fetches.EnsureRepositoryAsync(repo, async () => { await Git(Root, await RepositoryInitArgumentsAsync(repository, repo, ct), ct); }, ct);
-            var target = input.TargetBranch;
-            if (string.IsNullOrWhiteSpace(target))
-            {
-                // A reviewed pin/tag is not the development branch. Only a declared branch is used.
-                if (app.ManifestPath is { } manifestPath)
-                    target = (await JsonStorage.ReadAsync<RuntimeAppManifest>(manifestPath, ct))?.Source?.Branch;
+                var id = Hash(OwnerIdentity(owner) + "\n" + repositoryId);
+                var existing = await JsonStorage.ReadAsync<DevelopmentWorkspace>(RecordPath(id), ct);
+                if (existing is not null)
+                {
+                    existing = await Read(id, owner, ct);
+                    if (existing.State is "released" or "releasing") throw Error("released", "This session's workspace has been released. Start a new session.");
+                    if (input.TargetBranch is not null && input.TargetBranch != existing.TargetBranch)
+                        throw Error("base_conflict", "The existing workspace has a different target branch.");
+                    if (existing.Apps.Any(a => a.AppId == app.Id && a.Installation != app.InstalledAt))
+                        throw Error("app_reinstalled", "This source app was reinstalled; start a new development session.");
+                    var prior = existing.Operations.FirstOrDefault(o => o.Id == input.RequestId);
+                    if (prior is not null && (prior.Kind != "prepare" || prior.Fingerprint != Hash(CoreJson.Text(input))))
+                        throw Error("request_conflict", "This request ID was used with different preparation arguments.");
+                    existing = existing with { SourceGrant = existing.SourceGrant ?? grant };
+                    existing = await Materialize(existing, ct);
+                    if (prior is not null) { await Save(existing); return await Observe(existing, ct); }
+                    if (owner.IsExternal) existing = existing with { Owner = owner };
+                    existing = Attach(existing, app, input.LeaseId);
+                    existing = existing with { Operations = [.. existing.Operations, new(input.RequestId, "prepare", Hash(CoreJson.Text(input)), "succeeded", ResultHead: existing.OriginalBase)] };
+                    await Save(existing);
+                    return await Observe(existing, ct);
+                }
+                if (source.Type == "local-git")
+                {
+                    var local = await LocalBuildingSource.ReadAsync(paths, app, ct);
+                    if (local.Unavailable is not null) throw Error("local_source_unavailable", local.Unavailable);
+                    if (input.TargetBranch is not null && input.TargetBranch != "main")
+                        throw Error("local_target_invalid", "Local building sessions start from accepted main.");
+                    if (input.ExpectedLocalHead is not null && input.ExpectedLocalHead != local.AcceptedHead)
+                        throw Error("local_head_changed", "Accepted main changed. Refresh the app before starting another session.");
+                }
+                else if (input.ExpectedLocalHead is not null)
+                    throw Error("local_source_required", "This app no longer has its registered local Git source.");
+                var repo = RepoPath(repositoryId);
+                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(repo)!);
+                await Fetches.EnsureRepositoryAsync(repo, async () => { await Git(Root, await RepositoryInitArgumentsAsync(repository, repo, ct), ct); }, ct);
+                var target = input.TargetBranch;
                 if (string.IsNullOrWhiteSpace(target))
                 {
-                    var remote = grant is null ? (await Git(repo, ["ls-remote", "--symref", repository, "HEAD"], ct)).StandardOutput
-                        : await (privateSources ?? throw PrivateSourceService.Denied()).GitAsync(grant, repository, repo, ["ls-remote", "--symref", repository, "HEAD"], ct);
-                    target = remote.Split('\n').FirstOrDefault(l => l.StartsWith("ref: refs/heads/", StringComparison.Ordinal))?.Split('\t')[0][16..];
-                    if (!string.IsNullOrWhiteSpace(target)) await SetDefaultBranchAsync(repository, target, ct);
+                    // A reviewed pin/tag is not the development branch. Only a declared branch is used.
+                    if (app.ManifestPath is { } manifestPath)
+                        target = (await JsonStorage.ReadAsync<RuntimeAppManifest>(manifestPath, ct))?.Source?.Branch;
+                    if (string.IsNullOrWhiteSpace(target))
+                    {
+                        var remote = grant is null ? (await Git(repo, ["ls-remote", "--symref", repository, "HEAD"], ct)).StandardOutput
+                            : await (privateSources ?? throw PrivateSourceService.Denied()).GitAsync(grant, repository, repo, ["ls-remote", "--symref", repository, "HEAD"], ct);
+                        target = remote.Split('\n').FirstOrDefault(l => l.StartsWith("ref: refs/heads/", StringComparison.Ordinal))?.Split('\t')[0][16..];
+                        if (!string.IsNullOrWhiteSpace(target)) await SetDefaultBranchAsync(repository, target, ct);
+                    }
                 }
-            }
-            if (string.IsNullOrWhiteSpace(target)) throw Error("branch_required", "The repository default branch is unavailable; select a development branch.");
-            await Git(repo, ["check-ref-format", "refs/heads/" + target], ct);
-            var baseHead = await Fetch(repo, repository, target, ct, grant);
-            var w = new DevelopmentWorkspace { Id = id, Owner = owner, Repository = repository, RepositoryId = repositoryId,
-                Path = WorkPath(id), Branch = "hosty/session/" + id, TargetBranch = target, OriginalBase = baseHead,
-                IntegrationBase = baseHead, SessionPath = input.SessionPath, SourceGrant = grant,
-                Operations = [new(input.RequestId, "prepare", Hash(CoreJson.Text(input)), "pending")] };
-            w = Attach(w, app, input.LeaseId);
-            await Save(w); // Allocation identity precedes Git side effects.
-            w = await Materialize(w, ct);
-            await Save(w);
-            return await Observe(w, ct);
+                if (string.IsNullOrWhiteSpace(target)) throw Error("branch_required", "The repository default branch is unavailable; select a development branch.");
+                await Git(repo, ["check-ref-format", "refs/heads/" + target], ct);
+                var baseHead = await Fetch(repo, repository, target, ct, grant);
+                if (input.ExpectedLocalHead is not null && baseHead != input.ExpectedLocalHead)
+                    throw Error("local_head_changed", "Accepted main changed during preparation. Refresh and review it again.");
+                var w = new DevelopmentWorkspace { Id = id, Owner = owner, Repository = repository, RepositoryId = repositoryId,
+                    Path = WorkPath(id), Branch = "hosty/session/" + id, TargetBranch = target, OriginalBase = baseHead,
+                    IntegrationBase = baseHead, SessionPath = input.SessionPath, SourceGrant = grant,
+                    Operations = [new(input.RequestId, "prepare", Hash(CoreJson.Text(input)), "pending")] };
+                w = Attach(w, app, input.LeaseId);
+                await Save(w); // Allocation identity precedes Git side effects.
+                w = await Materialize(w, ct);
+                await Save(w);
+                return await Observe(w, ct);
+            }, ct);
         }, ct);
 
     private static DevelopmentWorkspace Attach(DevelopmentWorkspace w, AppRecord app, string? lease)
@@ -271,7 +303,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
     {
         SandboxValidation.Id(sandboxId);
         var workspace = await Read(id, null, ct);
-        await Locked(Hash(OwnerIdentity(workspace.Owner)), async () =>
+        await Locked(Hash(OwnerIdentity(workspace.Owner)), () => Locked("repository-admission:" + workspace.RepositoryId, async () =>
         {
             var current = await Read(id, null, ct);
             if (acquire)
@@ -281,6 +313,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                     throw Error("workflow_closed", "Workspace cleanup has started.");
                 if (current.State != "active" || current.Operations.Any(o => o.State == "pending"))
                     throw Error("not_active", "Cannot attach a sandbox while the source is being changed or released.");
+                await RequireSourceInstallationAsync(current, ct);
                 await ValidateTree(current, ct);
                 await WorkspaceGrantAsync(current, ct);
             }
@@ -291,13 +324,23 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 : current.SandboxConsumers.Where(value => value != sandboxId).ToArray() };
             await Save(current);
             return current;
-        }, ct);
+        }, ct), ct);
     }
 
     public async Task<DevelopmentWorkspace> CommandAsync(string id, WorkspaceOwner? owner, string kind, WorkspaceCommand input, CancellationToken ct)
     {
+        if (kind == "merge-upstream")
+        {
+            var tree = await Read(id, owner, ct);
+            var remote = await PublicationRemoteAsync(tree, ct) ?? throw Error("remote_required", "Connect an existing repository first.");
+            return await RemoteGit.WithConnectionAsync(remote.Grant, connection => CommandCoreAsync(id, owner, kind, input, ct, connection), ct);
+        }
+        return await CommandCoreAsync(id, owner, kind, input, ct);
+    }
+    private async Task<DevelopmentWorkspace> CommandCoreAsync(string id, WorkspaceOwner? owner, string kind, WorkspaceCommand input, CancellationToken ct, UserProviderConnection? connection = null)
+    {
         var workspace = await Read(id, owner, ct);
-        return await Locked(Hash(OwnerIdentity(workspace.Owner)), async () =>
+        return await Locked(Hash(OwnerIdentity(workspace.Owner)), () => Locked("repository-admission:" + workspace.RepositoryId, async () =>
         {
             RequestId(input.RequestId);
             var w = await Read(id, owner, ct);
@@ -324,6 +367,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 switch (kind)
                 {
                     case "lease":
+                        await RequireSourceInstallationAsync(w, ct);
                         if (!Guid.TryParse(input.LeaseId, out _)) throw Error("lease_invalid", "Lease ID must be a UUID.");
                         w = w with { Leases = w.Leases.Append(input.LeaseId!).Distinct().ToArray() }; break;
                     case "release-lease":
@@ -359,18 +403,19 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                         finally { File.Delete(index); }
                         break;
                     case "merge":
+                    case "merge-upstream":
                         RequireHead(input); ValidateAuthor(input);
                         if (w.Observation.Local!.Files.Count > 0 || w.Observation.Conflict) throw Error("dirty", "Commit or explicitly resolve existing changes before integrating target updates.");
-                        var target = await Fetch(RepoPath(w.RepositoryId), w.Repository, w.TargetBranch, ct, await WorkspaceGrantAsync(w, ct));
+                        var target = kind == "merge-upstream" ? await ReviewedUpstream(w, input, ct, connection!) : await Fetch(RepoPath(w.RepositoryId), w.Repository, w.TargetBranch, ct, await WorkspaceGrantAsync(w, ct));
                         op = op with { ResultHead = target }; w = Put(w, op); await Save(w);
-                        var merged = await Git(w.Path, ["merge", "--no-edit", "--no-ff", "-m", input.Message!, target], ct, true, author: input);
+                        var merged = await Git(w.Path, ["merge", "--no-edit", "--no-ff", .. (kind == "merge-upstream" && input.AllowUnrelatedHistories == true ? new[] { "--allow-unrelated-histories" } : []), "-m", input.Message!, target], ct, true, author: input);
                         if (merged.ExitCode != 0)
                         {
                             var mergeHead = await Git(w.Path, ["rev-parse", "--verify", "MERGE_HEAD"], ct, true);
                             if (mergeHead.ExitCode != 0) throw Error("git_failed", "Target integration failed before establishing a merge.");
                             op = op with { State = "conflict", Error = "Resolve the conflict in the worktree or request abort-merge." };
                         }
-                        else w = w with { IntegrationBase = target };
+                        else if (kind == "merge") w = w with { IntegrationBase = target };
                         break;
                     case "abort-merge":
                         RequireHead(input);
@@ -395,7 +440,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 await Save(w);
                 throw;
             }
-        }, ct);
+        }, ct), ct);
     }
     internal Task<bool> WithPublicationAdmissionAsync(WorkspaceOwner owner, Func<WorkspaceWorkflow, Task> admit, CancellationToken ct)
         => Locked(Hash(OwnerIdentity(owner)), async () =>
@@ -404,15 +449,21 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             await admit(await WorkflowAsync(owner, ct));
             return true;
         }, ct);
-    internal Task<T> WithPublicationAsync<T>(string id, WorkspaceOwner owner, string head, Func<DevelopmentWorkspace, Task<T>> action, CancellationToken ct)
-        => Locked(Hash(OwnerIdentity(owner)), async () =>
+    internal async Task<T> WithPublicationAsync<T>(string id, WorkspaceOwner owner, string head, Func<DevelopmentWorkspace, Task<T>> action, CancellationToken ct)
+    {
+        var tree = await Read(id, owner, ct);
+        return await Locked(Hash(OwnerIdentity(owner)), () => Locked("repository-admission:" + tree.RepositoryId, async () =>
         {
             await RequireOpenWorkflow(owner, ct);
             var w = await Observe(await Read(id, owner, ct), ct);
-            if (w.State != "active" || w.Observation is not { State: "ok", Conflict: false, Local: { Files.Count: 0, Truncated: false } } || w.Observation.Head != head)
-                throw Error("stale_head", "Publication requires the current clean workspace head.");
+            await RequireSourceInstallationAsync(w, ct);
+            await ValidateTree(w, ct);
+            if (w.State != "active" || w.Operations.Any(o => o.State is "pending" or "unknown") ||
+                w.Observation is not { State: "ok", Conflict: false, Local: { Files.Count: 0, Truncated: false } } || w.Observation.Head != head)
+                throw Error("stale_head", "Publication requires the current clean workspace head and no unresolved operations.");
             return await action(w);
-        }, ct);
+        }, ct), ct);
+    }
     internal Task<bool> AddPublicationReferenceAsync(string id, WorkspaceOwner owner, string url, CancellationToken ct)
         => Locked(Hash(OwnerIdentity(owner)), async () =>
         {
@@ -464,8 +515,8 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         var head = (await Git(w.Path, ["rev-parse", "HEAD"], ct)).StandardOutput.Trim();
         if (op.Kind == "commit" && op.ResultHead == head)
             op = op with { State = "succeeded", Error = "Recovered commit; inspect the index before the next commit." };
-        else if (op.Kind == "merge" && op.ResultHead is not null && (await Git(w.Path, ["merge-base", "--is-ancestor", op.ResultHead, head], ct, true)).ExitCode == 0)
-        { w = w with { IntegrationBase = op.ResultHead }; op = op with { State = "succeeded" }; }
+        else if (op.Kind is "merge" or "merge-upstream" && op.ResultHead is not null && (await Git(w.Path, ["merge-base", "--is-ancestor", op.ResultHead, head], ct, true)).ExitCode == 0)
+        { if (op.Kind == "merge") w = w with { IntegrationBase = op.ResultHead }; op = op with { State = "succeeded" }; }
         else op = op with { State = "unknown", Error = "Interrupted operation. Inspect Git state before submitting a new request; no mutation was replayed." };
         w = Put(w, op); await Save(w); return await Observe(w, ct);
     }
@@ -653,6 +704,13 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 throw PrivateSourceService.Denied("This workspace's source belongs to another administrator or repository.");
             await (privateSources ?? throw PrivateSourceService.Denied()).ValidateAsync(new(Git: grant), ct);
         }
+    }
+
+    private async Task RequireSourceInstallationAsync(DevelopmentWorkspace tree, CancellationToken ct)
+    {
+        foreach (var binding in tree.Apps)
+            if ((await apps.GetAppAsync(binding.AppId, ct))?.InstalledAt == binding.Installation) return;
+        throw Error("source_app_missing", "The source installation was removed or replaced. Retained files are unchanged; restore the source binding before starting new work.");
     }
 
     internal async Task<SourceReadGrant?> WorkspaceGrantAsync(DevelopmentWorkspace workspace, CancellationToken ct)

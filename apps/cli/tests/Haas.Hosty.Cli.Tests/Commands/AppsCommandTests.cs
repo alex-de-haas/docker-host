@@ -20,6 +20,55 @@ public sealed class AppsCommandTests : IDisposable
         Environment.SetEnvironmentVariable(RootVariable, rootDirectory);
     }
 
+    [Fact]
+    public async Task GuideDefaultsToOverview()
+    {
+        using var server = new FakeCoreServer("""
+            {"revision":"r","text":"overview","coreVersion":"1","manifestSchema":"app.0.1","topic":"overview","topics":[]}
+            """);
+        WriteCoreDiscovery(server);
+        var (console, _) = CreateConsole();
+        Assert.Equal(0, await CommandLine.RunAsync(["apps", "guide"], console));
+        await server.WaitForRequestAsync();
+        Assert.Equal("/control/v1/apps/development-guide", server.PathAndQuery);
+    }
+
+    [Theory]
+    [InlineData("--format", "html")]
+    [InlineData("--topic")]
+    [InlineData("--all")]
+    public async Task GuideRefusesInvalidOptionsWithoutStartingCore(params string[] arguments)
+    {
+        var (console, _) = CreateConsole();
+        Assert.NotEqual(0, await CommandLine.RunAsync(["apps", "guide", .. arguments], console));
+        Assert.False(File.Exists(Path.Combine(rootDirectory, "core", "run", "control.json")));
+    }
+
+    [Theory]
+    [InlineData("text")]
+    [InlineData("json")]
+    public async Task GuideReadsRunningCoreWithTopicAndPreservesPlainContent(string format)
+    {
+        const string guide = "# Identity\n```http\nPOST /api/auth/apps/token\n```\n[square brackets]";
+        using var server = new FakeCoreServer(JsonSerializer.Serialize(new { revision = "revision", text = guide,
+            coreVersion = "0.140.0", manifestSchema = "app.0.1", topic = "identity", topics = new[] { new { id = "identity", title = "Identity" } } }));
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+        console.Profile.Width = 24;
+        Assert.Equal(0, await CommandLine.RunAsync(["apps", "guide", "--topic", "identity", "--format", format], console));
+        await server.WaitForRequestAsync();
+        Assert.Equal("GET", server.Method);
+        Assert.Equal("/control/v1/apps/development-guide?topic=identity", server.PathAndQuery);
+        Assert.Equal("test-secret", server.Headers["X-Hosty-Test-Control"]);
+        if (format == "json")
+        {
+            using var result = JsonDocument.Parse(output.ToString());
+            Assert.Equal(guide, result.RootElement.GetProperty("text").GetString());
+            Assert.Equal("revision", result.RootElement.GetProperty("revision").GetString());
+        }
+        else Assert.Contains(guide, output.ToString());
+    }
+
     [Theory]
     [InlineData("standalone", "url")]
     [InlineData("shell", "json")]

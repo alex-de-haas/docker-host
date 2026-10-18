@@ -7784,8 +7784,12 @@ public sealed partial class CoreLifecycleServiceTests
             return new AppRuntimeOperationResult(StopRuntimeState);
         }
 
-        public Task<AppRuntimeOperationResult> RemoveAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
-            => Task.FromResult(new AppRuntimeOperationResult("removed"));
+        public Func<Task>? RemoveProbe { get; set; }
+        public async Task<AppRuntimeOperationResult> RemoveAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
+        {
+            if (RemoveProbe is { } probe) await probe();
+            return new AppRuntimeOperationResult("removed");
+        }
 
         public Task<AppRuntimeLogsResult> GetLogsAsync(RuntimeLifecycleContext context, int tail, CancellationToken cancellationToken = default)
         {

@@ -13,6 +13,16 @@ Use this skill to implement Hosty runtime apps in the shape expected by this rep
 2. Treat `docs/features/runtime-app-manifest/feature.md`, `docs/features/domain-model/feature.md`, `docs/features/auth-gateway/feature.md`, `apps/core/src/Haas.Hosty.Core/RuntimeAppManifest.cs`, `apps/core/src/Haas.Hosty.Core/CoreLifecycleService.cs`, and `apps/demo-app` as source of truth when implementation details matter.
 3. Use `apps/demo-app/manifest.json` as the manifest shape and `hosty apps install apps/demo-app --runtime dev` as the local directory install pattern.
 
+## Running Core Guide
+
+When working against a running Core, retrieve `get_app_development_guide` over authorized Core MCP
+or `app_creation_guide` in Harness. Start with overview, then request relevant topics. The operator
+CLI equivalent is `hosty --data-root <root> apps guide --topic <id> --format json`. Check the Core
+version, guide revision and manifest schema before applying examples; SDK capabilities differ by
+stack. These readers grant no mutation authority. Do not bypass disabled/refused MCP with a shell
+bridge; an already authorized typed coordinator may use the same control reader. Repository source
+and the references below remain the evidence for changes to the current implementation.
+
 ## References
 
 - Read `references/app-manifest.md` when authoring or reviewing `manifest.json`, runtime profiles, service implementations, settings, storage, dependencies, endpoints, install/update behavior, or backups.

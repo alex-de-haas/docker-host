@@ -5,6 +5,43 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed class DockerRuntimeAdapterTests
 {
+    [Theory]
+    [InlineData("")]
+    [InlineData("0123456789abcdef0123456789abcdef")]
+    public async Task TopologyReconcile_RemovesOnlyObsoleteServicesOfThisAppAndInstance(string instance)
+    {
+        var context = CreateDockerContext(CreateDockerAppRecord(null, null));
+        var ids = Enumerable.Range(0, 6).Select(i => new string((char)('a' + i), 64)).ToArray();
+        var inventory = string.Join('\n',
+            $"{ids[0]}\t{context.App.Id}\t{instance}\tplaceholder",
+            $"{ids[1]}\t{context.App.Id}\t{instance}\tapp",
+            $"{ids[2]}\tother.app\t{instance}\tplaceholder",
+            $"{ids[3]}\t{context.App.Id}\tother-instance\tplaceholder",
+            $"{ids[4]}\t{context.App.Id}\t{instance}\t",
+            $"{ids[5]}\t{context.App.Id}\t{instance}\tsibling");
+        context = context with { GraphServices = [..context.Manifest.Services, context.Manifest.Services[0] with { Key = "sibling" }] };
+        var runner = new FakeDockerCommandRunner(args => new(0,
+            args[0] == "ps" ? inventory : args[0] == "inspect" ? $"{context.App.Id}\t{instance}" : "", ""));
+        await CreateAdapter(runner, instanceId: instance).RemoveObsoleteServicesAsync(context, default);
+        Assert.Equal(new[] { "rm", "-f", ids[0] }, Assert.Single(runner.Commands, c => c[0] == "rm"));
+        Assert.DoesNotContain(runner.Commands, c => c[0] is "volume" or "network");
+    }
+
+    [Theory]
+    [InlineData("ps")]
+    [InlineData("inspect")]
+    [InlineData("rm")]
+    public async Task TopologyReconcile_DoesNotReportSuccessWhenDockerCannotReconcile(string failingCommand)
+    {
+        var context = CreateDockerContext(CreateDockerAppRecord(null, null));
+        var id = new string('a', 64);
+        var runner = new FakeDockerCommandRunner(args => args[0] == failingCommand
+            ? new(1, "", "Docker unavailable")
+            : new(0, args[0] == "ps" ? $"{id}\t{context.App.Id}\t\tplaceholder" : $"{context.App.Id}\t", ""));
+        await Assert.ThrowsAsync<AppLifecycleException>(() => CreateAdapter(runner).RemoveObsoleteServicesAsync(context, default));
+        Assert.False(runner.Ran("run"));
+    }
+
     [Fact]
     public async Task StartAsync_LocalOnlyImage_PinsContentIdAndRestartsWithoutFollowingTag()
     {

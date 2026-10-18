@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ToolActivity, TranscriptEvent, type ApprovalDecision } from "./transcript";
+import { approvalDecisions, cancelledQuestions, ToolActivity, TranscriptEvent, type ApprovalDecision } from "./transcript";
 import type { AssistantEvent } from "../lib/assistant-api";
 
 describe("chat action cards", () => {
@@ -46,6 +46,64 @@ describe("chat action cards", () => {
     await render({ decision: "deny", message: "Use the safe directory" });
     expect(container.textContent).toContain("Denied");
     expect(container.querySelector("input")).toBeNull();
+  });
+
+  it("replays cancellation without reviving old controls or cancelling a later turn", async () => {
+    const events: AssistantEvent[] = [
+      approval,
+      { seq: 2, ts: "", type: "session_status", status: "cancelled" },
+      { ...approval, seq: 3, approvalId: "later" },
+    ];
+    const decisions = approvalDecisions(events);
+    expect(decisions.get("a")?.decision).toBe("cancelled");
+    expect(decisions.has("later")).toBe(false);
+    await act(async () => root.render(
+      <TranscriptEvent event={approval} decision={decisions.get("a")!} answers={null} denyReason onDecide={vi.fn()} onAnswer={vi.fn()} />,
+    ));
+    expect(container.textContent).toContain("Cancelled");
+    expect(button("Allow")).toBeUndefined();
+    expect(button("Deny")).toBeUndefined();
+    expect(container.querySelector("input")).toBeNull();
+    events.push({ seq: 4, ts: "", type: "approval_decision", approvalId: "a", decision: "deny", message: "Cancelled by operator" });
+    expect(approvalDecisions(events).get("a")).toEqual({ decision: "deny", message: "Cancelled by operator" });
+  });
+
+  it("preserves explicit decisions when the session is subsequently cancelled", () => {
+    expect(approvalDecisions([
+      approval,
+      { seq: 2, ts: "", type: "approval_decision", approvalId: "a", decision: "allow" },
+      { seq: 3, ts: "", type: "session_status", status: "cancelled" },
+    ]).get("a")?.decision).toBe("allow");
+  });
+
+  it("expires pending questions on cancellation while keeping answers and later questions", async () => {
+    const questions = [{ question: "Continue?", header: "Next", multiSelect: false, options: [{ label: "Yes", description: "Continue" }] }];
+    const question: AssistantEvent = { seq: 1, ts: "", type: "question_request", questionId: "pending", questions };
+    const events: AssistantEvent[] = [
+      { ...question, questionId: "answered" },
+      { seq: 2, ts: "", type: "question_answered", questionId: "answered", answers: { "Continue?": "Yes" } },
+      { ...question, seq: 3 },
+      { seq: 4, ts: "", type: "session_status", status: "cancelled" },
+      { ...question, seq: 5, questionId: "later" },
+    ];
+    expect([...cancelledQuestions(events)]).toEqual(["pending"]);
+    const onAnswer = vi.fn();
+    const render = async (cancelled: boolean) => act(async () => root.render(
+      <TranscriptEvent event={question} decision={null} answers={null} questionCancelled={cancelled}
+        denyReason={false} onDecide={vi.fn()} onAnswer={onAnswer} />,
+    ));
+    await render(false);
+    await click(container.querySelector('[role="radio"]'));
+    expect(button("Send answer").disabled).toBe(false);
+    await render(cancelledQuestions(events).has("pending"));
+    expect(container.textContent).toContain("Question cancelled");
+    expect(button("Send answer")).toBeUndefined();
+    expect(container.querySelector('[role="radio"]')).toBeNull();
+    expect(container.querySelector("input")).toBeNull();
+    expect(onAnswer).not.toHaveBeenCalled();
+    // An answer acknowledged after Stop still wins when its event arrives.
+    events.push({ seq: 6, ts: "", type: "question_answered", questionId: "pending", answers: { "Continue?": "Yes" } });
+    expect(cancelledQuestions(events).has("pending")).toBe(false);
   });
 
   it("collects single, multi and free-text answers and preserves them through request failure", async () => {

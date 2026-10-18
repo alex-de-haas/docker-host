@@ -22,6 +22,10 @@ public sealed class WorkspaceInspectionHttpTests
         await users.WriteAsync(new(1, [new("admin", "admin@example.test", "Admin", "host.admin", false, now, now)], [], [], []));
         using var client = host.CreateClient();
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync(root)).StatusCode);
+        var previewRoot = root + "/" + new string('a', 64) + "/previews/" + new string('b', 32) + "/example.app/";
+        foreach (var action in new[] { "checks", "run", "restart", "logs" })
+            Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync(previewRoot + action,
+                new { id = "web/test", digest = "test", requestId = Guid.NewGuid().ToString() })).StatusCode);
         client.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(appId));
         var grant = await BrowserAuthorityFixture.Grant(host, appId, "admin");
         client.DefaultRequestHeaders.Add("X-Hosty-User-Token", grant.AccessToken);
@@ -42,6 +46,9 @@ public sealed class WorkspaceInspectionHttpTests
         client.DefaultRequestHeaders.Remove("Cookie");
         await users.UpdateAsync(s => s with { Users = s.Users.Select(u => u with { Role = "host.member" }).ToArray(), Assignments = [new(appId, "admin", now)] });
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(root)).StatusCode);
+        foreach (var action in new[] { "checks", "run", "restart", "logs" })
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(previewRoot + action,
+                new { id = "web/test", digest = "test", requestId = Guid.NewGuid().ToString() })).StatusCode);
     }
 
     [Theory]

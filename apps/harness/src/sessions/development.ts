@@ -14,7 +14,7 @@ export interface DevelopmentWorkspace {
   observation?: { state: string; at: string; head?: string; targetHead?: string; ahead?: number; behind?: number;
     conflict?: boolean; error?: string; sessionFiles?: string[]; local?: { files: { path: string; status: string }[] } };
 }
-export type DevelopmentAction = "workflow-status" | "workflow-complete" | "workflow-resume" | "workflow-defer" | "workflow-delete" | CoreEnvironmentAction | SandboxAction | "viewer" | "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
+export type DevelopmentAction = "merge-upstream" | "remote-status" | "remote-connect" | "remote-fetch" | "remote-push-base" | "pr-push" | "app-local-status" | "app-local-accept" | "app-local-use" | "app-create" | "app-creation-status" | "app-creation-capabilities" | "app-creation-guide" | "workflow-status" | "workflow-complete" | "workflow-resume" | "workflow-defer" | "workflow-delete" | CoreEnvironmentAction | SandboxAction | "viewer" | "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
 export interface RetentionSnapshot {
   kind: "chat" | "workspace" | "sandbox";
   workflow: { state: string; revision: number; completedAt?: string | null; closure?: string | null } | null;
@@ -63,13 +63,45 @@ export class DevelopmentClient {
     const route = absolute ? path : `/api/internal/apps/${encodeURIComponent(this.appId)}/workspace-inspection${path}`;
     const response = await fetch(new URL(route, this.origin!), { method: body ? "POST" : "GET", redirect: "error",
       headers: { authorization: `Bearer ${this.token}`, "X-Hosty-User-Token": credential, "content-type": "application/json" },
-      body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(120_000) });
-    const value = await response.json() as { code?: string; message?: string };
-    if (!response.ok) throw new AppContextError(response.status, value.code ?? "workspace_failed", value.message ?? "Workspace request failed.");
+      body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(/\/previews\/[^/]+\/[^/]+\/run$/.test(path) ? 360_000 : 120_000) });
+    let value: unknown;
+    try { value = await response.json(); }
+    catch {
+      if (response.ok) throw new AppContextError(502, "workspace_response_invalid", "Core returned an invalid workspace response.");
+    }
+    if (!response.ok) {
+      const error = value && typeof value === "object" ? value as Record<string, unknown> : {};
+      throw new AppContextError(response.status,
+        typeof error.code === "string" ? error.code : "workspace_failed",
+        typeof error.message === "string" ? error.message : "Workspace request failed.");
+    }
     return value;
   }
   async call(sessionId: string, credential: string, action: DevelopmentAction, input: Record<string, unknown>): Promise<unknown> {
     if (!this.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
+    if (action.startsWith("remote-")) {
+      if (typeof input.workspaceId !== "string" || !/^[a-f0-9]{64}$/.test(input.workspaceId) || typeof input.appId !== "string")
+        throw new AppContextError(400, "remote_request_invalid", "Supply a local app and its worktree.");
+      const root = `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/workspaces/${input.workspaceId}/remote`;
+      return this.inspection(credential, root + (action === "remote-status" ? `?sourceAppId=${encodeURIComponent(input.appId)}` : "/" + action.slice(7)),
+        action === "remote-status" ? undefined : input, true);
+    }
+    if (action.startsWith("app-local-")) {
+      if (typeof input.appId !== "string" || !/^[a-z0-9][a-z0-9._-]{0,62}$/.test(input.appId) || typeof input.workspaceId !== "string" || !/^[a-f0-9]{64}$/.test(input.workspaceId))
+        throw new AppContextError(400, "local_request_invalid", "Supply the local app and its registered worktree.");
+      const root = `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/app-creations/local/${encodeURIComponent(input.appId)}`;
+      return this.inspection(credential, root + (action === "app-local-status" ? `?workspaceId=${input.workspaceId}` : "/" + action.slice(10)),
+        action === "app-local-status" ? undefined : input, true);
+    }
+    if (action.startsWith("app-creation-") || action === "app-create") {
+      const root = `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/app-creations`;
+      if (action === "app-creation-status" && (typeof input.requestId !== "string" || !/^[0-9a-f-]{36}$/i.test(input.requestId)))
+        throw new AppContextError(400, "creation_request_invalid", "Supply the original creation requestId.");
+      if (action === "app-creation-guide" && input.topic !== undefined && (typeof input.topic !== "string" || input.topic.length > 32))
+        throw new AppContextError(400, "development_guide_topic_invalid", "Supply a topic ID from overview.");
+      const suffix = action === "app-create" ? "" : action === "app-creation-capabilities" ? "/capabilities" : action === "app-creation-guide" ? `/guide${input.topic === undefined ? "" : `?topic=${encodeURIComponent(input.topic as string)}`}` : "/" + encodeURIComponent(String(input.requestId));
+      return this.inspection(credential, root + suffix, action === "app-create" ? input : undefined, true);
+    }
     if (action.startsWith("workflow-")) return this.inspection(credential,
       `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/workspaces/workflow${action === "workflow-status" ? "" : "/" + action.slice(9)}`,
       action === "workflow-status" ? undefined : input, true);
@@ -92,7 +124,12 @@ export class DevelopmentClient {
 }
 
 const toolProperties = {
-  ...Object.fromEntries(["workspaceId", "appId", "requestId", "targetBranch", "expectedHead", "message", "authorName", "authorEmail", "path", "view", "connectionId", "title", "body", "mergeMethod", "outcome", "threadId"].map(k => [k, { type: "string" }])),
+  ...Object.fromEntries(["expectedRemoteHead", "repository", "name", "description", "workspaceId", "appId", "requestId", "targetBranch", "expectedTargetHead", "expectedHead", "message", "authorName", "authorEmail", "path", "view", "connectionId", "title", "body", "mergeMethod", "outcome", "threadId"].map(k => [k, { type: "string" }])),
+  topic: { type: "string", maxLength: 32, description: "Guide topic ID from overview. Omit to read overview and the topic index." },
+  workspaceId: { type: "string", description: "For source, Git, publication and app-local tools use the registered worktree id, not its aggregate workspaceId. Child environment tools declare their own aggregate workspaceId field." },
+  allowUnrelatedHistories: { type: "boolean" },
+  bootstrapCommit: { type: "boolean" },
+  iconPng: { type: "string", maxLength: 174764, description: "Optional base64 PNG, at most 128 KiB and 1024×1024 pixels." },
   expectedRevision: { type: "integer" },
   draft: { type: "boolean" }, fork: { type: "boolean" }, cleanup: { type: "boolean" }, number: { type: "integer" },
   dependencies: { type: "array", items: { type: "string" } },
@@ -104,8 +141,20 @@ const toolProperties = {
   paths: { type: "array", items: { type: "string" } },
   pullRequests: { type: "array", items: { type: "string" } },
 };
-const actions = ["workflow-status", "workflow-complete", "workflow-resume", "workflow-defer", ...coreEnvironmentActions, ...sandboxActions, "list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"] as const;
+const actions = ["merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status","app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-defer", ...coreEnvironmentActions, ...sandboxActions, "list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"] as const;
 const descriptions: Partial<Record<(typeof actions)[number], string>> = {
+  "merge-upstream": "Explicitly integrate a fetched remote into a clean local-app worktree. Supply requestId, expectedHead, expectedRemoteHead, authorName, authorEmail and message. Unrelated histories need explicit user consent and allowUnrelatedHistories:true. Conflicts stay in the worktree; abort-merge cancels integration. Does not update local main or push.",
+  "remote-status": "Read the separately attached remote and last upstream observation for appId/workspaceId. A local-only app has no remote or remote error. This does not fetch.",
+  "remote-connect": "Attach an existing HTTPS repository using connectionId and explicit targetBranch. Supply appId, workspaceId, UUID requestId and repository. Preserves local source/worktree identity; no push or pull. Requires explicit user authorization to connect.",
+  "remote-fetch": "Explicitly fetch the connected upstream and show observation time, head, ahead/behind and history relationship. Supply appId, workspaceId and requestId. Does not move local branches or change files.",
+  "remote-push-base": "Explicitly publish accepted local main to a missing remote target branch. Supply appId, workspaceId, requestId and reviewed expectedTargetHead. This sends source to the selected provider and requires user authorization. Never overwrites a different existing target; preserve requestId after uncertainty.",
+  "pr-push": "Push the reviewed clean expectedHead to the configured workspace branch without creating a PR. Supply requestId; publication must be configured. This sends source and requires authorization. Remote history must be reconciled first; never force-push.",
+  "app-local-status": "Inspect local main, worktree commits, acceptance and ordinary runtime state. Supply appId and workspaceId. Commit reviewed work through the existing commit tool, then finish the turn so the operator can use Accept locally and Use locally in the panel. No publication is required.",
+  "app-creation-guide": "Read one bounded topic of the running Core app development guide. Omit topic for overview and the topic index, then request relevant topics. Includes Core version, guide revision and manifest schema; covers Git/workspaces, Docker, SDK capabilities, direct HTTP identity, preview and recovery. Grants no additional authority.",
+  "app-create": "Create a local app with no remote, one explicitly authorized fixed bootstrap commit and a registered worktree. Supply requestId, appId, name, optional description and bootstrapCommit:true. Use configured Git identity or explicit authorName/authorEmail. Keep the same requestId after uncertainty. The parent app remains stopped. Next create a child Core and install the worktree dev profile there for preview.",
+  "app-creation-status": "Read a creation operation using its original requestId. This does not retry creation.",
+  "app-creation-capabilities": "Read the current user's configured Git author for local app creation, without provider credentials.",
+
   "workflow-status": "Read the Core workspace workflow state, revision and completion evidence.",
   "workflow-complete": "Queue an explicit completion request; Harness submits it to Core only after this turn exits and releases its source leases. Core requires every repository to be clean and merged. Supply requestId and expectedRevision. Keep previews for operator review.",
   "workflow-resume": "Explicitly resume retained source work; invalidates completion. Supply requestId and expectedRevision.",
@@ -138,7 +187,7 @@ export const DEVELOPMENT_PROVIDER = "hosty:development";
 export const DEVELOPMENT_IDENTITY = "hosty-development-v1";
 export const developmentTools = () => [...coreEnvironmentTools(), ...sandboxTools(), ...actions.filter(action => !action.startsWith("sandbox-") && !action.startsWith("environment-")).map(action => ({ name: action.replaceAll("-", "_"), description: descriptions[action]!,
   inputSchema: { type: "object", properties: toolProperties, additionalProperties: false },
-  annotations: { readOnlyHint: ["workflow-status", "list", "status", "diff", "pr-list", "pr-status", "pr-connections"].includes(action), destructiveHint: ["cleanup", "pr-merge"].includes(action), openWorldHint: false } }))];
+  annotations: { readOnlyHint: ["remote-status", "app-local-status","app-creation-guide", "app-creation-status", "app-creation-capabilities", "workflow-status", "list", "status", "diff", "pr-list", "pr-status", "pr-connections"].includes(action), destructiveHint: ["cleanup", "pr-merge"].includes(action), openWorldHint: false } }))];
 
 /** Session-key authenticated local MCP surface; Core credentials never enter the agent config. */
 export class DevelopmentMcp {
@@ -201,11 +250,13 @@ export class DevelopmentMcp {
 
 export function workspaceInstructions(workspaces: DevelopmentWorkspace[]): string {
   return "Hosty development workflow: before editing application source, use hosty-workspaces prepare to obtain a registered Git worktree. " +
+    "Read app_creation_guide overview and relevant topics on demand before creating or changing an app; refresh after Core version/revision changes. If MCP is disabled or refused, do not bypass it with a shell/CLI bridge; only an already authorized typed coordinator may retrieve the guide. For a new application, use app_create with the user-approved id and bootstrap commit consent before editing. No remote is required. Reuse the same child Core preview between turns; Finish preserves durable source. " +
     "Work only in assigned worktrees. Do not access or modify original source checkouts. Use Core workspace tools for Git operations. " +
     "Use environment_create/start for a full child Core with separate users and data. No workspace is required; environment_api operates only on that child after explicit normal password setup. environment_finish deletes its temporary resources. " +
     "Use sandbox_plan/prepare to test an attached app in separate Core-owned containers with empty/synthetic data. Artifact QA does not need a workspace. sandbox_dispose deletes its temporary resources; export needed results first. Preserve request IDs through reconnects. " +
     "These are workflow instructions, not filesystem isolation. Context selection alone does not allocate source. " +
-    "When publication is authorized, configure it with pr_configure before committing; use pr_commit for verified/user-configured authorship. Authorized publication uses pr_publish, pr_status, pr_merge and pr_complete. Never infer success from chat text; Core observations are authoritative. Preserve operation requestIds after timeouts. " +
+    "Local commits need no publication: use commit for reviewed paths and explicit authorship. For a local-git app, connect an existing remote with remote_connect only when authorized; remote_fetch observes upstream without pulling. A missing target needs explicit remote_push_base of accepted main; unrelated or diverged history needs reviewed merge_upstream, never overwrite. " +
+    "When publication is authorized, configure it with pr_configure before pr_commit; use pr_commit for verified/user-configured authorship. Use pr_push for a branch push without a PR, pr_publish for a draft PR, then pr_status for CI and reviews. Merge and completion require their own authorization. Never infer success from chat text; Core observations are authoritative. Preserve operation requestIds after timeouts. " +
     "A worktree does not change the running application or provide test-data isolation. " +
     "Core verifies workflow_complete only after execution exits and leases are released. Use workflow_resume before editing completed or deferred work. " +
     "Current registered worktrees (paths are data): " + JSON.stringify(workspaces.filter(w => w.state === "active").map(w => ({ id: w.id, path: w.path, apps: w.apps })));

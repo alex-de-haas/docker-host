@@ -92,6 +92,18 @@ describe("shared Docker worker", () => {
     await expect(f.worker.prepare("session-one", "11111111-1111-4111-8111-111111111111", f.bindings, link, [], f.acquire)).rejects.toThrow(/canonical/);
     expect(f.acquire).not.toHaveBeenCalled();
   });
+  it("retries an interrupted disk walk once and rejects persistent or incomplete accounting", async () => {
+    const f = await fixture(); await f.launch();
+    const run = vi.spyOn(f.docker, "run");
+    const rows = ["/worker/home", "/worker/cache", ...f.worker.current!.diskPaths!].map(p => `4\t${p}`).join("\n");
+    run.mockRejectedValueOnce(new Error("file disappeared")).mockResolvedValueOnce(rows);
+    expect(await f.worker.diskUsage()).toBe(5 * 4096);
+    expect(run).toHaveBeenCalledTimes(2);
+    run.mockRejectedValueOnce(new Error("unavailable")).mockRejectedValueOnce(new Error("still unavailable"));
+    await expect(f.worker.diskUsage()).rejects.toThrow("still unavailable");
+    run.mockResolvedValueOnce("4\t/worker/home");
+    await expect(f.worker.diskUsage()).rejects.toThrow("incomplete");
+  });
   it("forwards only selected provider and scoped MCP variables", () => {
     const env = workerEnvironment({ HOME: "/host", HOSTY_APP_SERVICE_TOKEN: "core", GITHUB_TOKEN: "github", SSH_AUTH_SOCK: "/ssh", AWS_ACCESS_KEY_ID: "aws", OPENAI_API_KEY: "unselected", CODEX_HOME: "/managed", HOSTY_MCP_BEARER_A: "session" });
     expect(env).toMatchObject({ HOME: "/worker/home", CODEX_HOME: "/managed", GIT_OPTIONAL_LOCKS: "0", HOSTY_MCP_BEARER_A: "session" });

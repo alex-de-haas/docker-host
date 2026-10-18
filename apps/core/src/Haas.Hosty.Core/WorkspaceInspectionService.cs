@@ -137,7 +137,7 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
             tree.Path, tree.State, tree.Apps.Select(binding =>
             {
                 var app = installed.FirstOrDefault(a => a.Id == binding.AppId && a.InstalledAt == binding.Installation);
-                return new InspectionApp(binding.AppId, app?.DisplayName ?? binding.AppId, binding.Subpath, app is not null);
+                return new InspectionApp(binding.AppId, app?.DisplayName ?? binding.AppId, binding.Subpath, app is not null, app?.SourceState?.Type == "local-git");
             }).ToArray(), tree.Observation,
             tree.Operations.Select(o => new InspectionOperation(o.Id, o.Kind, o.State, o.Error)).ToArray(), tree.Leases,
             tree.PullRequests.Where(SafeUrl).Select(url => new InspectionPullRequest(url, null, null, "No verified provider observation.")).ToArray(), [], []);
@@ -182,7 +182,13 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
         if (connection is null || !connections.Providers.Contains(record.Provider)) return result.Values.ToArray();
         var provider = connections.Providers.Resolve(record.Provider).Publication;
         if (provider is null) return result.Values.ToArray();
-        try { if (provider.NormalizeRepository(tree.Repository) != record.Repository) return result.Values.ToArray(); }
+        try
+        {
+            var remote = await workspaces.PublicationRemoteAsync(tree, ct);
+            if (provider.NormalizeRepository(remote?.Repository ?? tree.Repository) != record.Repository ||
+                (remote is not null && (remote.TargetBranch != record.TargetBranch || remote.Grant.ConnectionId != record.ConnectionId)))
+                return result.Values.ToArray();
+        }
         catch (Exception ex) when (ex is PublicationException or UserConnectionException or AppLifecycleException) { return result.Values.ToArray(); }
         foreach (var previous in record.History.Where(p => SafeUrl(p.Url)))
             result[previous.Url] = new(previous.Url, previous.Head, null, "Historical reference; no current provider observation.");

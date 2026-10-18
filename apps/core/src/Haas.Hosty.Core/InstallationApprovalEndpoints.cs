@@ -725,6 +725,7 @@ internal static class InstallationApprovalEndpoints
         var consumers = string.Join("", impact.Capabilities.SelectMany(c => c.Consumers.Select(d => $"<li>{E(d.DisplayName)} ({E(d.AppId)}) uses {E(c.Slot)} provided by this app.</li>")));
         var publications = string.Join("", impact.PublicOrigins.Select(p => $"<li>{E(p.Hostname)}: tunnel route removed; {(p.OwnershipState == "adopted" ? "existing DNS record kept" : "Hosty-created DNS record removed")}.</li>"));
         return $"<p>App ID: <code>{E(plan.AppId)}</code></p><p>This stops and removes the app's runtime services.</p><h2>Removal options</h2><ul>{cleanup}</ul>"
+            + (plan.SourceReview is { } source ? "<h2>Source and workspace state</h2><ul>" + string.Join("", source.Details.Select(d => $"<li>{E(d)}</li>")) + "</ul>" : "")
             + (options.DeleteData || options.DeleteBackups || options.DeleteSource ? "<p class=warning>Selected data is permanently deleted. This cannot be undone through Hosty.</p>" : "")
             + (callerAppId == plan.AppId ? "<p class=warning>This removes the app requesting confirmation. Its interface becomes unavailable; Core continues the operation.</p>" : "")
             + (dependents.Length + consumers.Length > 0 ? $"<h2>Affected apps</h2><ul>{dependents}{consumers}</ul>" : "")

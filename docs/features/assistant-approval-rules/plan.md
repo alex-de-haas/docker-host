@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-02
-updated: 2026-10-17
+updated: 2026-10-18
 summary: Explicit session and development grants, native command approval rules, revocation controls and permission-decision audit.
 components: [apps/harness]
 ---
@@ -101,7 +101,7 @@ required. Revocation is not a claim that already-running commands stopped or tha
 mutation was rolled back; Containment and Lifecycle Controls own that evidence.
 
 [App context](../assistant-app-context/feature.md) supplies selection;
-[prototype workspaces](../app-prototype-workspaces/plan.md) consumes these same permission controls.
+[prototype workspaces](../app-prototype-workspaces/feature.md) consumes these same permission controls.
 Do not make isolated grants a retroactive prerequisite for the shipped instruction-based workspace
 workflow or existing administrator Autonomous mode. If enforced grants are unavailable, show that
 fact without silently switching execution mode or weakening Core/MCP checks.

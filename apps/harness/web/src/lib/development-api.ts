@@ -9,8 +9,8 @@ export type PullRequest = { url: string; unavailable?: string; publishedHead?: s
   reviewDecision?: string; unresolvedThreads: number; checks?: { name: string; state: string }[]; error?: string;
 } | null };
 export type Worktree = { id: string; workspaceId: string; repository: string; branch: string; state: string;
-  apps: { appId: string; name: string }[]; sessionChanges?: Change[]; pullRequests: PullRequest[];
-  observation?: { at: string; state: string; head?: string; error?: string; sessionFiles?: string[];
+  apps: { appId: string; name: string; localGit?: boolean }[]; sessionChanges?: Change[]; pullRequests: PullRequest[];
+  observation?: { at: string; state: string; conflict?: boolean; head?: string; error?: string; sessionFiles?: string[];
     local?: { files: Change[]; truncated: boolean; lineStats?: { additions: number; deletions: number } } };
   detailError?: string; leases: string[]; };
 export type DevelopmentWorkspace = { id: string; state: string; workflow: Workflow;

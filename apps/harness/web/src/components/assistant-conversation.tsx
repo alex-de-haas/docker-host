@@ -26,12 +26,13 @@ import {
 import { transcriptItems } from "@/lib/transcript-items";
 import { InputGroup, InputGroupAddon } from "@/components/ui/input-group";
 import { DevelopmentNavigation } from "@/components/development-navigation";
+import { CreateApp } from "@/components/create-app";
 import { SessionRetention } from "@/components/session-retention";
 import { WorkspaceDetails } from "@/components/workspace-details";
 import { useDevelopmentInventory } from "@/lib/development-api";
 import { SessionList } from "@/components/session-list";
 import { hasMessageContent, indexAttachments, takeChosenFiles, takePastedImages } from "@/lib/attachments";
-import { ToolActivity, TranscriptEvent, type ApprovalDecision } from "@/components/transcript";
+import { approvalDecisions, cancelledQuestions, ToolActivity, TranscriptEvent } from "@/components/transcript";
 import { retryHandoff } from "@/lib/assistant-api";
 import { composeAskDraft } from "@/lib/ask-draft";
 import { clearDraft, pruneDrafts, readDraft, writeDraft, readDraftAttachments, writeDraftAttachments } from "@/lib/draft-store";
@@ -119,6 +120,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const openContextAfterMenu = useRef(false);
   const onContextChange = useCallback((record: AssistantSession) => {
     setSession(current => current?.id === record.id && (record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0) ? record : current);
+    setSessions(current => current.map(item => item.id === record.id && (record.appContextRevision ?? 0) >= (item.appContextRevision ?? 0) ? record : item));
   }, []);
   const [contextUnavailable, setContextUnavailable] = useState(false);
   const [withoutAppDetails, setWithoutAppDetails] = useState(false);
@@ -213,6 +215,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         if (event.type === "user_message") setSession(current => current?.id === record.id ? { ...current, ...(current.providerLocked !== undefined ? { providerLocked: true } : {}) } : current);
         if (event.type === "app_context_changed") {
           const revision = Number(event.appContextRevision);
+          setSessions(current => current.map(item => item.id === record.id && revision > (item.appContextRevision ?? 0)
+            ? { ...item, appIds: event.appIds as string[], appContextRevision: revision } : item));
           setSession(current => current?.id === record.id && revision > (current.appContextRevision ?? 0)
             ? { ...current, appIds: event.appIds as string[], appContextRevision: revision } : current);
         }
@@ -224,6 +228,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           setStreamed("");
         }
         if (event.type === "session_status") {
+          // Cancellation closes earlier approval cards, including when replaying a stopped turn.
+          if (event.status === "cancelled") setEvents(current => [...current, event]);
           const value = String(event.status ?? "idle");
           setStatus(value);
           setSessions(current => current.map(item => item.id === record.id ? { ...item, status: value } : item));
@@ -687,20 +693,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     [session],
   );
 
-  const decidedApprovals = useMemo(() => {
-    const decisions = new Map<string, ApprovalDecision>();
-    for (const event of events) {
-      if (event.type === "approval_decision") {
-        decisions.set(String(event.approvalId), {
-          decision: String(event.decision),
-          // The operator's reason rides on the decision event, so a replayed transcript shows why a
-          // card was refused and not only that it was.
-          message: typeof event.message === "string" && event.message ? event.message : null,
-        });
-      }
-    }
-    return decisions;
-  }, [events]);
+  const decidedApprovals = useMemo(() => approvalDecisions(events), [events]);
+  const cancelledQuestionIds = useMemo(() => cancelledQuestions(events), [events]);
 
   // Answered questions collapse to their chosen values, the same way a resolved approval collapses to
   // a badge — a replayed transcript must not offer buttons for a pause that is already over.
@@ -782,11 +776,12 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           </>
         )}
       </header>
+      {session && !showSessions && <CreateApp key={`creation-${session.id}`} session={session} busy={running || sending || stopping || providerSaving} onChange={record => { onContextChange(record); void inventory.refresh(); }} />}
       {session && !showSessions && <SessionRetention sessionId={session.id} revision={`${status}:${workspace?.workflow.revision ?? ""}`} />}
 
-      {!showSessions && session && <SessionCredentials key={session.id} sessionId={session.id} />}
+      {!showSessions && session && <SessionCredentials key={`credentials-${session.id}`} sessionId={session.id} />}
       {!fullPage && !showSessions && session && <SessionSandboxes key={`sandbox-${session.id}`} sessionId={session.id} />}
-      {!fullPage && !showSessions && session && <SessionWorkspaces key={session.id} session={session} running={running} />}
+      {!fullPage && !showSessions && session && <SessionWorkspaces key={`workspaces-${session.id}`} session={session} running={running} />}
       {error && <div className="shrink-0 p-3" role="alert"><InlineError message={error} /></div>}
 
       {showSessions ? (
@@ -824,6 +819,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                       appNames={appNames}
                       attachments={attachmentIndex}
                       decision={item.event.type === "approval_request" ? decidedApprovals.get(String(item.event.approvalId)) ?? null : null}
+                      questionCancelled={item.event.type === "question_request" && cancelledQuestionIds.has(String(item.event.questionId))}
                       answers={item.event.type === "question_request" ? answeredQuestions.get(String(item.event.questionId)) ?? null : null}
                       // Absent reads as "cannot": a reason box on a harness whose decline carries nothing
                       // would promise delivery the gateway then refuses.

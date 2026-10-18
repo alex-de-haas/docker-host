@@ -133,7 +133,12 @@ internal static class DockerSourceRuntime
         var tag = DockerRuntimeAdapter.BuildContainerName(owner, context.App.Id, service.Key) + "-dev:" + fingerprint[..16];
         if (context.ReportLaunchProgress is not null) await context.ReportLaunchProgress("building", service.Key);
         var result = await runner.RunAsync(["build", "--tag", tag, "--file", dockerfile, directory], null, cancellationToken);
-        if (result.ExitCode != 0) throw new AppLifecycleException("docker_dev_build_failed", result.StandardError);
+        if (result.ExitCode != 0)
+        {
+            var output = (result.StandardOutput + "\n" + result.StandardError).Trim();
+            if (output.Length > 16384) output = "[Earlier build output omitted]\n" + output[^16384..];
+            throw new AppLifecycleException("docker_dev_build_failed", $"Environment build failed for service '{service.Key}' (exit {result.ExitCode}). Fix the Dockerfile/source and retry in the same sandbox.\n{output}");
+        }
         var image = await runner.RunAsync(["image", "inspect", "--format", "{{.Id}}", tag], null, cancellationToken);
         var id = image.StandardOutput.Trim();
         if (image.ExitCode != 0 || !System.Text.RegularExpressions.Regex.IsMatch(id, "^sha256:[a-f0-9]{64}$"))

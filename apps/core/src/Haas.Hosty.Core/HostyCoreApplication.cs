@@ -112,6 +112,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<CoreEventHub>();
         builder.Services.AddSingleton<NotificationService>();
         builder.Services.AddSingleton<AppSourceService>();
+        builder.Services.AddSingleton<ISourceGitAccess>(sp => sp.GetRequiredService<PrivateSourceService>());
         builder.Services.AddSingleton<DevelopmentWorkspaceService>();
         builder.Services.AddSingleton<SourceRepositoryFetchCoordinator>();
         builder.Services.AddSingleton<WorkspaceInspectionService>();
@@ -410,6 +411,7 @@ internal static class HostyCoreApplication
         CloudflarePublicationEndpoints.Map(app);
         SourceEndpoints.Map(app);
         DevelopmentWorkspaceEndpoints.Map(app);
+        AppCreationEndpoints.Map(app);
         SessionRetentionEndpoints.Map(app);
         SourceDocumentEndpoints.Map(app);
         WorkspaceInspectionEndpoints.Map(app);

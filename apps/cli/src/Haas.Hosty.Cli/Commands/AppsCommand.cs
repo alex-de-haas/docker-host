@@ -10,6 +10,7 @@ internal sealed partial class AppsCommand(CommandContext context)
         PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
+    [JsonSerializable(typeof(AppDevelopmentGuideResponse))]
     [JsonSerializable(typeof(AppsResponse))]
     [JsonSerializable(typeof(AppHealthSummary))]
     [JsonSerializable(typeof(AppServiceHealthSummary))]
@@ -55,6 +56,7 @@ internal sealed partial class AppsCommand(CommandContext context)
 
         return args[0] switch
         {
+            "guide" => await GuideAsync(args[1..]),
             "list" => await ListAsync(args[1..]),
             "install" => await InstallAsync(args[1..]),
             "autostart" => await AutostartAsync(args[1..]),
@@ -80,6 +82,44 @@ internal sealed partial class AppsCommand(CommandContext context)
             "open" => await OpenAsync(args[1..]),
             _ => throw new CommandUsageException($"Unknown apps command '{args[0]}'.", Usage),
         };
+    }
+
+    internal sealed record GuideTopic(string Id, string Title);
+    internal sealed record AppDevelopmentGuideResponse(string Revision, string Text, string CoreVersion,
+        string ManifestSchema, string Topic, IReadOnlyList<GuideTopic> Topics);
+
+    private async Task<int> GuideAsync(string[] args)
+    {
+        string? topic = null;
+        var format = "text";
+        for (var index = 0; index < args.Length; index++)
+        {
+            switch (args[index])
+            {
+                case "--topic": topic = RequireOptionValue(args, ref index, "--topic"); break;
+                case "--format": format = RequireOptionValue(args, ref index, "--format"); break;
+                default: throw new CommandUsageException($"Unknown apps guide argument '{args[index]}'.", Usage);
+            }
+        }
+        if (format is not "text" and not "json")
+            throw new CommandUsageException("apps guide --format must be text or json.", Usage);
+        using var core = await OpenCoreAsync();
+        var result = await core.GetAsync<AppDevelopmentGuideResponse>("apps/development-guide" +
+            (topic is null ? "" : "?topic=" + Uri.EscapeDataString(topic)));
+        if (result is null)
+        {
+            context.Error.WriteLine("Hosty Core returned an empty development guide.");
+            return 1;
+        }
+        var output = context.Console.Profile.Out.Writer;
+        if (format == "json") output.WriteLine(CliJson.Serialize(result));
+        else
+        {
+            output.WriteLine($"Core {result.CoreVersion} | Guide {result.Revision} | Manifest {result.ManifestSchema} | Topic {result.Topic}");
+            output.WriteLine(result.Text);
+            output.WriteLine("Topics: " + string.Join(", ", result.Topics.Select(t => t.Id + " (" + t.Title + ")")));
+        }
+        return 0;
     }
 
     private async Task<int> ListAsync(string[] args)
@@ -1719,6 +1759,7 @@ internal sealed partial class AppsCommand(CommandContext context)
           source-resolve <app-id> [--branch <name>|--tag <tag>|--commit <sha>] [--fetch] [--format table|json]
           source-override <app-id> --path <worktree> [--commit <sha>] [--format table|json]
           source-clear-override <app-id> [--format table|json]
+          guide [--topic <id>] [--format text|json]
           identity <app-id> --user <email-or-id> [--format token|header|env|json]
           open <app-id> [--mode shell|standalone] [--redirect-uri <uri>] [--format url|json]
 

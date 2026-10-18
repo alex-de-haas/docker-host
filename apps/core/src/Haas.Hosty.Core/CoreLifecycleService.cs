@@ -492,7 +492,7 @@ internal sealed partial class CoreLifecycleService(
         return await WithAppLockAsync(selection.Manifest.Id!, () => InstallCoreAsync(request, selection, cancellationToken), cancellationToken);
     }
 
-    private async Task<AppLifecycleResponse> InstallCoreAsync(AppInstallRequest request, RuntimeAppManifestSelection selection, CancellationToken cancellationToken, IReadOnlyList<AppServiceArtifactProbe>? reviewedArtifacts = null)
+    private async Task<AppLifecycleResponse> InstallCoreAsync(AppInstallRequest request, RuntimeAppManifestSelection selection, CancellationToken cancellationToken, IReadOnlyList<AppServiceArtifactProbe>? reviewedArtifacts = null, AppSourceState? authoredSource = null)
     {
         // Planning reports an existing record as "already-installed"; this is the enforcement. Without
         // it, apply rebuilt the record with existing: null — resetting settings, mounts, source state,
@@ -506,6 +506,20 @@ internal sealed partial class CoreLifecycleService(
             throw new AppLifecycleException(
                 "already_installed",
                 $"App '{selection.Manifest.Id}' is already installed (version {alreadyInstalled.Version}). Apply an update to change it, or remove it first.");
+        }
+
+        var retainedSource = (await TryReadRetainedConfigAsync(selection.Manifest.Id!, cancellationToken))?.LocalSource;
+        if (retainedSource is { Type: "local-git" })
+        {
+            var canonical = paths.ResolveManagedCheckoutPath(selection.Manifest.Id!);
+            var selectedPath = selection.ManifestPath;
+            if (retainedSource.Repository != canonical || retainedSource.ManagedCheckoutPath != canonical ||
+                !Path.IsPathFullyQualified(selectedPath) || Path.GetFullPath(selectedPath) != Path.Combine(canonical, "manifest.json") ||
+                CoreDataPaths.ContainsSymbolicLink(paths.AppsRoot, canonical))
+                throw new AppLifecycleException("retained_source_conflict", "This app has retained local source. Reinstall its canonical manifest explicitly, or review deleting that source before replacing it.");
+            // Installing that exact manifest is the explicit adoption. Preserve accepted history;
+            // dirty/newer source remains visible and does not become accepted by reinstalling it.
+            authoredSource ??= retainedSource with { LocalOverridePath = canonical };
         }
 
         var grantedPermissions = CoreAppPermissions.ResolveGrants(selection.Manifest.CorePermissions, selection.Manifest.OptionalCorePermissions, request.OptionalPermissions);
@@ -536,6 +550,7 @@ internal sealed partial class CoreLifecycleService(
             // start pulls repository@sha256 from the review instead of whatever the tag means by
             // then. Null on the unbound bootstrap path and for plan-time-unresolvable services —
             // those TOFU-backfill at first start.
+            SourceState = authoredSource ?? BuildSourceState(selection, null),
             ArtifactLocks = reviewedArtifacts is null ? null : BuildReviewedArtifactLocks(selection, reviewedArtifacts),
             OperationStatus = "installed",
             RuntimeState = "stopped",
@@ -2735,9 +2750,9 @@ internal sealed partial class CoreLifecycleService(
     // and the control plane behave identically here. Consequences are surfaced ahead of the call by
     // GetRemovalImpactAsync, never enforced as a refusal.
     public Task<AppLifecycleResponse> RemoveAsync(string appId, AppRemoveRequest request, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => RemoveCoreAsync(appId, request, cancellationToken), cancellationToken);
+        => WithAppLockAsync(appId, () => RemoveWithSourceProtectionAsync(appId, request, null, cancellationToken), cancellationToken);
 
-    private async Task<AppLifecycleResponse> RemoveCoreAsync(string appId, AppRemoveRequest request, CancellationToken cancellationToken)
+    private async Task<AppLifecycleResponse> RemoveCoreAsync(string appId, AppRemoveRequest request, CancellationToken cancellationToken, AppSourceReview sourceReview)
     {
         await ClearUpdateAvailability(appId);
         var app = await apps.GetAppAsync(appId, cancellationToken);
@@ -2757,26 +2772,55 @@ internal sealed partial class CoreLifecycleService(
             }
         }
 
-        // Keep the operator's configuration alongside retained app data so a reinstall restores it.
-        // Written before state.json is deleted; skipped (and any stale snapshot purged) when data is
-        // being deleted, since the whole app root is then removed. The snapshot keeps the app root
-        // non-empty, so it survives TryDeleteDirectoryIfEmpty even for data-less apps.
-        if (!request.DeleteData && app is not null)
+        if (request.DeleteSource)
         {
-            // Best-effort: a disk/permission failure to snapshot config must not abort the
-            // uninstall the operator asked for. The cost is losing config retention on reinstall.
+            // Stop/remove must really succeed before deleting executable source. IgnoreRuntimeErrors
+            // cannot waive this constraint. Failed deletion retains the app record for a fresh review.
+            var safety = new AppSourceSafety(paths, apps);
+            var current = await safety.ReviewAsync(appId, true, cancellationToken);
+            if (current.Unknown || current.Fingerprint != sourceReview.Fingerprint)
+                throw new AppLifecycleException("removal_source_changed", "Source changed while stopping the runtime. Files are kept; review removal again.");
             try
             {
-                await WriteRetainedConfigAsync(app, cancellationToken);
+                foreach (var source in safety.DeletionPaths(appId))
+                    if (Directory.Exists(source)) Directory.Delete(source, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new AppLifecycleException("source_delete_failed", "Source cleanup is incomplete. The app record is retained; inspect the remaining files and prepare a fresh removal review.");
+            }
+        }
+
+        // Keep the operator's configuration alongside retained app data so a reinstall restores it.
+        // Written before state.json is deleted. Deleting data clears settings/mounts while retaining
+        // the local source binding when source is kept; it is needed for explicit reinstallation.
+        if (app is not null && (!request.DeleteData || !request.DeleteSource && app.SourceState?.Type == "local-git"))
+        {
+            // Configuration retention is best-effort, but losing a kept local source binding must
+            // stop uninstall before the installation record is removed.
+            try
+            {
+                await WriteRetainedConfigAsync(app, request, cancellationToken);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
             {
+                if (!request.DeleteSource && app.SourceState?.Type == "local-git")
+                    throw new AppLifecycleException("source_retention_failed", "Could not retain the local source binding. The app record and source are kept; retry removal after resolving storage errors.");
                 logger.LogWarning(ex, "Failed to retain configuration for app {AppId} during uninstall.", appId);
             }
         }
         else if (request.DeleteData)
         {
-            TryDelete(GetRetainedConfigPath(appId));
+            // Repeating cleanup after uninstall must not drop the provenance of source kept on disk.
+            // Read strictly: an unreadable retention record cannot authorize losing that binding.
+            var retained = !request.DeleteSource
+                ? await JsonStorage.ReadAsync<RetainedAppConfig>(GetRetainedConfigPath(appId), cancellationToken) : null;
+            if (retained?.LocalSource is { Type: "local-git" })
+                await JsonStorage.WriteAsync(GetRetainedConfigPath(appId), retained with
+                {
+                    Settings = new Dictionary<string, AppSettingValue>(), Mounts = [], Autostart = null,
+                }, restrictToOwner: true, cancellationToken);
+            else TryDelete(GetRetainedConfigPath(appId));
         }
 
         // Removal revokes agent offers even when the operator retains runtime state.
@@ -2811,14 +2855,6 @@ internal sealed partial class CoreLifecycleService(
         if (request.DeleteBackups)
         {
             await backups.DeleteAllBackupsAsync(appId, cancellationToken);
-        }
-
-        if (request.DeleteSource)
-        {
-            // Both locations: the current default inside the app root, and the legacy top-level
-            // sources tree that pre-move installs still use (their records were never migrated).
-            TryDeleteDirectory(paths.ResolveManagedCheckoutPath(appId));
-            TryDeleteDirectory(CoreDataPaths.ResolveContainedPath(paths.SourcesRoot, appId));
         }
 
         // The hostnames this app published can never serve it again. Best-effort: a publication that cannot
@@ -4147,6 +4183,7 @@ internal sealed partial class CoreLifecycleService(
 
     private AppSourceState? BuildSourceState(RuntimeAppManifestSelection selection, AppRecord? existing)
     {
+        if (existing?.SourceState?.Type == "local-git") return existing.SourceState;
         var source = selection.Manifest.Source;
         var localOverridePath = ResolveInstallLocalSourcePath(selection, source);
         if (source?.Repository is null)
@@ -5258,10 +5295,12 @@ internal sealed partial class CoreLifecycleService(
     private string GetRetainedConfigPath(string appId)
         => Path.Combine(GetAppRoot(appId), "retained-config.json");
 
-    private async Task WriteRetainedConfigAsync(AppRecord app, CancellationToken cancellationToken)
+    private async Task WriteRetainedConfigAsync(AppRecord app, AppRemoveRequest options, CancellationToken cancellationToken)
         => await JsonStorage.WriteAsync(
             GetRetainedConfigPath(app.Id),
-            new RetainedAppConfig(1, app.Settings, app.Mounts ?? [], app.Autostart),
+            new RetainedAppConfig(1, options.DeleteData ? new Dictionary<string, AppSettingValue>() : app.Settings,
+                options.DeleteData ? [] : app.Mounts ?? [], options.DeleteData ? null : app.Autostart,
+                !options.DeleteSource && app.SourceState?.Type == "local-git" ? app.SourceState : null),
             // Holds secret setting values, so keep it owner-only on Unix like other secret stores.
             restrictToOwner: true,
             cancellationToken);

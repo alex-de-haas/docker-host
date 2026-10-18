@@ -12,6 +12,10 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
     private readonly ConcurrentDictionary<string, SemaphoreSlim> operationLocks = new(StringComparer.Ordinal);
     internal SemaphoreSlim OperationLock(string appId) => operationLocks.GetOrAdd(appId, _ => new SemaphoreSlim(1, 1));
     internal SemaphoreSlim HostPathMutationLock { get; } = new(1, 1);
+    // Last admission gate: app/owner/repository or host-path locks precede this gate.
+    // Source changes read activity without acquiring workspace locks while holding it.
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> sourceActivityGates = new(StringComparer.Ordinal);
+    internal SemaphoreSlim SourceActivityGate(string repositoryId) => sourceActivityGates.GetOrAdd(repositoryId, _ => new(1, 1));
     private readonly ConcurrentDictionary<string, long> dataRemovalGenerations = new(StringComparer.Ordinal);
 
     // Parsed records, keyed by app id (== directory name). The registry is read on every list poll,
@@ -346,13 +350,14 @@ internal sealed record AppStateDocument(int SchemaVersion, AppRecord App);
 
 // Operator-configured state retained across an uninstall that keeps app data, so a later reinstall
 // restores it instead of resetting to manifest defaults. Written to apps/<id>/retained-config.json
-// by RemoveAsync (when data is kept) and consumed by InstallAsync. Holds setting values (including
-// secrets), external mount bindings, and the autostart toggle.
+// by RemoveAsync and consumed by InstallAsync. Kept data carries settings (including secrets),
+// mounts and autostart. Kept local source carries only its provenance when data is deleted.
 internal sealed record RetainedAppConfig(
     int SchemaVersion,
     IReadOnlyDictionary<string, AppSettingValue> Settings,
     IReadOnlyList<AppMountBinding> Mounts,
-    bool? Autostart);
+    bool? Autostart,
+    AppSourceState? LocalSource = null);
 
 internal sealed record AppRecord(
     string Id,
@@ -698,7 +703,8 @@ internal sealed record AppSourceState(
     // start path to distrust it: a reviewed update's commit was discarded on the very next start of any
     // app that had an override. Additive/nullable; older records read back as null.
     string? OverrideCommit = null,
-    IReadOnlyList<string>? InspectionPaths = null);
+    IReadOnlyList<string>? InspectionPaths = null,
+    LocalSourceRemote? Remote = null);
 
 internal sealed record AppUiContract(
     string? Category,

@@ -35,5 +35,5 @@ internal sealed record CoreEnvironmentWorkspaceCreate(string RequestId, string L
 internal sealed record CoreEnvironmentApp(string Id, string DisplayName, string? Version, string RuntimeState,
     string? Health, string? PreviewUrl, bool? RestartRequired = null,
     AppLaunchProgress? LaunchProgress = null, AppDevelopmentStatus? Development = null,
-    string? ManifestError = null, string? LastError = null);
+    string? ManifestError = null, string? LastError = null, IReadOnlyList<AppServiceHealthSummary>? Services = null);
 internal sealed record CoreEnvironmentApplications(string State, IReadOnlyList<CoreEnvironmentApp> Apps, string? Error = null);

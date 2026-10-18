@@ -34,12 +34,22 @@ public sealed class McpHttpTests
         Assert.Equal(
             [
                 "abort_workspace_merge", "acquire_workspace_lease", "apply_app_update", "cleanup_workspace", "commit_workspace",
-                "get_app", "get_core_development", "get_core_operation", "get_host_status", "get_workspace", "get_workspace_diff",
+                "get_app", "get_app_development_guide", "get_core_development", "get_core_operation", "get_host_status", "get_workspace", "get_workspace_diff",
                 "list_apps", "list_workspaces", "merge_workspace_target", "plan_app_update", "prepare_workspace",
                 "record_workspace_pull_requests", "refresh_workspace", "release_workspace_lease", "restart_app", "restart_core",
                 "search_audit", "start_app", "stop_app", "tail_app_logs",
             ],
             names);
+
+        Assert.True(tools.GetProperty("tools").EnumerateArray().Single(t =>
+            t.GetProperty("name").GetString() == "get_app_development_guide").GetProperty("annotations").GetProperty("readOnlyHint").GetBoolean());
+        foreach (var topic in AppDevelopmentGuideReader.Read().Topics)
+        {
+            var guide = await CallToolAsync(client, admin, "get_app_development_guide", new { topic = topic.Id });
+            Assert.Equal(AppDevelopmentGuideReader.Read(topic.Id).Text, guide.GetProperty("text").GetString());
+        }
+        var invalidGuide = await CallToolAsync(client, admin, "get_app_development_guide", new { topic = "../secret" });
+        Assert.Equal(AppDevelopmentGuideReader.InvalidTopicCode, invalidGuide.GetProperty("code").GetString());
 
         var listed = await CallToolAsync(client, admin, "list_apps", new { });
         var summaries = listed.GetProperty("apps").EnumerateArray().ToArray();

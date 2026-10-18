@@ -8,6 +8,23 @@ internal sealed record WorkspaceWorkflow(string State = "in-progress", long Revi
 
 internal sealed partial class DevelopmentWorkspaceService
 {
+    internal Task<T> WithIdleSourceAsync<T>(WorkspaceOwner owner, Func<Task<T>> action, CancellationToken ct)
+        => Locked(Hash(OwnerIdentity(owner)), async () =>
+        {
+            var trees = new List<DevelopmentWorkspace>();
+            if (Directory.Exists(Records)) foreach (var file in Directory.EnumerateFiles(Records, "*.json"))
+            {
+                var tree = await Read(System.IO.Path.GetFileNameWithoutExtension(file), null, ct);
+                if (tree.Owner.SameIdentity(owner)) trees.Add(tree);
+            }
+            if (trees.Any(w => w.Leases.Length > 0 || w.Operations.Any(o => o.State is "pending" or "unknown")))
+                throw Error("busy", "Stop active source work and recover pending or unknown Git operations before checking or restarting this preview.");
+            var workflow = await WorkflowAsync(owner, ct);
+            if (workflow.Closure is not null || workflow.State is "deleting" or "deleted")
+                throw Error("workflow_closed", "Recover workspace closure before running preview actions.");
+            return await action();
+        }, ct);
+
     // Serialize context-only resource allocation with workspace deletion as well as source mounts.
     // Independent QA without a matching workspace keeps the existing sandbox contract.
     internal async Task<T> WithResourceContextAsync<T>(SandboxActor actor, SandboxContext? context,

@@ -34,6 +34,25 @@ public sealed class CoreEnvironmentTests
         Assert.Contains(true, f.Runtime.Removals);
     }
     [Fact]
+    public async Task Finish_ClearsUsageOnlyAfterCleanup_AndHidesLegacyFinishedSamples()
+    {
+        using var f = new Fixture(); var item = await f.Command(await f.Create(), "start");
+        f.Runtime.Usage = new(4096, 1024, 2048, "observed", DateTimeOffset.UtcNow);
+        await f.Service.ObserveResourcesAsync(default);
+        f.Runtime.FailStop = true;
+        item = await f.Command(item, "finish");
+        Assert.Equal("cleanup-failed", item.State); Assert.NotNull(item.Usage);
+        f.Runtime.FailStop = false;
+        item = await f.Command(item, "finish");
+        Assert.Equal("finished", item.State); Assert.Null(item.Usage);
+        var record = (await f.Store.ReadAsync(item.Id, default))!;
+        Assert.Null(record.Usage);
+        // Older records retained the last live sample even after their root was removed.
+        await f.Store.WriteAsync(record with { Usage = f.Runtime.Usage }, default);
+        Assert.Null((await f.Service.ReadAsync(f.Actor, item.Id, default)).Usage);
+        Assert.Null(Assert.Single((await f.Service.ListAsync(f.Actor, default)).Environments).Usage);
+    }
+    [Fact]
     public async Task Lifecycle_ReplayDoesNotRepeatSpawn_RevisionAndArgumentsAreChecked()
     {
         using var f = new Fixture(); var item = await f.Create();
@@ -188,6 +207,21 @@ public sealed class CoreEnvironmentTests
         Assert.Equal("changed", app.Development!.ManifestState); Assert.Equal("Invalid manifest", app.ManifestError);
         using var legacy = System.Text.Json.JsonDocument.Parse("""{"id":"demo","runtimeState":"running"}""");
         Assert.Null(CoreEnvironmentAccess.ProjectApp(legacy.RootElement, "http://core.test").RestartRequired);
+    }
+
+    [Fact]
+    public void ApplicationProjection_ReportsIndividualServiceHealthWithoutInventingMissingObservations()
+    {
+        using var json = System.Text.Json.JsonDocument.Parse("""
+          {"id":"multi","runtimeState":"running","health":{"status":"degraded","observedAt":"2026-10-17T12:00:00Z",
+           "services":[{"service":"frontend","status":"running","health":"healthy"},{"service":"backend","status":"exited","health":null}]}}
+          """);
+        var result = CoreEnvironmentAccess.ProjectApp(json.RootElement, "http://core.test");
+        Assert.Equal("degraded", result.Health);
+        Assert.Collection(result.Services!, s => Assert.Equal(new AppServiceHealthSummary("frontend", "running", "healthy"), s),
+            s => Assert.Equal(new AppServiceHealthSummary("backend", "exited", null), s));
+        using var missing = System.Text.Json.JsonDocument.Parse("""{"id":"multi","health":null}""");
+        Assert.Null(CoreEnvironmentAccess.ProjectApp(missing.RootElement, "http://core.test").Services);
     }
 
     [Fact]

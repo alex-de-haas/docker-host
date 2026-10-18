@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-24
-updated: 2026-10-17
+updated: 2026-10-18
 summary: Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -213,8 +213,11 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
   development source. Chat retention must not silently remove unpublished work or live runtime roots.
 - Earlier authoring plans distinguish live interactive editing from isolated non-interactive PR
   jobs. For Git-backed interactive work, this direction adds session worktrees that can be selected
-  for live testing. Durable no-Git prototypes remain a separate supported path, without invented
-  Git/PR guarantees. Owner clarification, 2026-10-10: Sandbox now owns disposable validation for
+  for live testing. New durable no-Git creation is an earlier requested path, not a shipped
+  worktree capability. The approved 2026-10-17 [local creation feature](../app-prototype-workspaces/feature.md)
+  implements local Git without publication, child-Core Docker preview and local-target integration;
+  new no-Git creation is deferred and a single consented bootstrap commit is approved. Do not invent Git/PR
+  guarantees for existing no-Git folders. Owner clarification, 2026-10-10: Sandbox now owns disposable validation for
   both interactive and automated callers; the separate Agent Bridge D12 is retired. This umbrella's
   D1–D2 retain integration and acceptance, and Bridge D11 retains general durable job orchestration.
 - The current MCP facade is read-only. Neither adding AHP nor installing a client plugin grants
@@ -246,7 +249,7 @@ Existing owners retain their deliverables: [approval rules](../assistant-approva
 [execution authorization](../assistant-execution-authorization/plan.md),
 [workspace lifecycle controls](../workspace-lifecycle-controls/feature.md),
 [development controls](../app-development-controls/plan.md),
-[prototype workspaces](../app-prototype-workspaces/plan.md), [authoring](../app-authoring/plan.md),
+[prototype workspaces](../app-prototype-workspaces/feature.md), [authoring](../app-authoring/plan.md),
 [app publication](../app-publication/plan.md), [AI Agent Bridge](../ai-agent-bridge/plan.md),
 [entry points](../assistant-entry-points/plan.md) and [attachments](../assistant-attachments/feature.md).
 App publication owns installable releases/feeds/catalog work; PR publication is source review.

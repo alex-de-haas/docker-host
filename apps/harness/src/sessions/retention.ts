@@ -14,12 +14,13 @@ export function retentionBusy(record: SessionRecord): boolean {
   return ["running", "awaiting_approval", "awaiting_question"].includes(record.status)
     || record.workflowCompletion?.state === "queued" || !!record.handoffPending || !!record.handoffDraft
     || ["queued", "running", "unknown"].includes(record.handoffDispatch?.state ?? "")
+    || !!record.appCreations?.some(o => o.state === "pending")
     || !!record.mcpPendingApprovals?.length
     || !!record.coreEnvironmentOperations?.some(o => o.state === "pending")
     || !!record.sandboxOperations?.some(o => o.state === "pending");
 }
 export function hasResourceHistory(record: SessionRecord): boolean {
-  return !!(record.developmentLease || record.developmentWorkspaces?.length || record.publicationReferences?.length || record.coreEnvironments?.length
+  return !!(record.appCreations?.some(o => o.state !== "rejected") || record.developmentLease || record.developmentWorkspaces?.length || record.publicationReferences?.length || record.coreEnvironments?.length
     || record.sandboxInstances?.length || record.coreEnvironmentOperations?.length || record.sandboxOperations?.length);
 }
 export function retentionStatus(record: SessionRecord, policy: RetentionSettings, snapshot: RetentionSnapshot, now: Date): RetentionStatus {
