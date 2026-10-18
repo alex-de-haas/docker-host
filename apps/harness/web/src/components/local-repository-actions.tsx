@@ -115,10 +115,10 @@ export function LocalRepositoryActions({ sessionId, appId, tree, disabled, refre
     <div className="flex flex-wrap gap-2">
       <Button size="sm" variant="outline" disabled={locked || !files.length} onClick={() => void open("commit")}>Commit…</Button>
       {!status?.remote && <Button size="sm" variant="outline" disabled={locked || !status} onClick={() => void open("remote-connect")}>Connect repository…</Button>}
+      {tree.observation?.conflict && <Button size="sm" variant="outline" disabled={locked} onClick={() => void open("abort-merge")}>Abort integration…</Button>}
       {status?.remote && <>
         <Button size="sm" variant="outline" disabled={locked} onClick={() => void open("remote-fetch")}>Fetch upstream…</Button>
         {observed?.head && <Button size="sm" variant="outline" disabled={locked || !clean} onClick={() => void open("merge-upstream")}>Integrate upstream…</Button>}
-        {tree.observation?.conflict && <Button size="sm" variant="outline" disabled={locked} onClick={() => void open("abort-merge")}>Abort integration…</Button>}
         {observed?.state === "missing" && <Button size="sm" variant="outline" disabled={locked} onClick={() => void open("remote-push-base")}>Publish accepted base…</Button>}
         {!configured ? <Button size="sm" variant="outline" disabled={locked} onClick={() => void open("pr-configure")}>Configure publication…</Button> : <>
           <Button size="sm" variant="outline" disabled={locked || !clean} onClick={() => void open("pr-push")}>Push branch…</Button>

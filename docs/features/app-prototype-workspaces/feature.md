@@ -241,7 +241,9 @@ publication configuration, branch push and draft PR creation. Commits select pat
 without requiring publication. Push and PR operations reuse Core's publication journal, connection,
 CI and review mechanism. Before a push Core checks source identity, selected connection, clean exact
 HEAD and upstream ancestry. The same request ID and arguments survive response loss and browser or
-Core restart. Changed replay arguments and stale heads are refused. Connection acquisition precedes
+Core restart. Abort integration remains available for an observed worktree conflict even when the
+remote connection is revoked; it uses local Git and retains the ordinary pending-action and active-work
+guards. Changed replay arguments and stale heads are refused. Connection acquisition precedes
 workspace admission, and nested authenticated Git borrows that connection rather than reacquiring
 its lock; concurrent fetch, status and publication remain usable.
 

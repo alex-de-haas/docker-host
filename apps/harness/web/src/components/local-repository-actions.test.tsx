@@ -49,3 +49,36 @@ it("allows a new reviewed request only after inspecting a terminal refusal", asy
 it("blocks mutations while the agent is active", async () => {
   await render(true); expect([...container.querySelectorAll("button")].every(b => b.disabled)).toBe(true);
 });
+
+it("can inspect a conflicted merge and abort locally after remote access is revoked", async () => {
+  const mergeId = "d".repeat(36);
+  const key = `hosty.local-remote.session.${tree.id}.local.app`;
+  localStorage.setItem(key, JSON.stringify({ action: "merge-upstream", input: {
+    requestId: mergeId, workspaceId: tree.id, appId: "local.app",
+  } }));
+  vi.mocked(workspaceAction).mockImplementation(async (_session, action, input) => {
+    if (action === "remote-status") throw new Error("Source connection was revoked");
+    if (action === "pr-list") return { publications: [] };
+    if (action === "status") return { operations: [{ id: mergeId, state: "conflict" }] };
+    if (action === "abort-merge") return { operations: [{ id: input!.requestId, state: "succeeded" }] };
+    throw new Error(`Unexpected action: ${action}`);
+  });
+  const refresh = vi.fn();
+  const conflicted = { ...tree, observation: { ...tree.observation!, conflict: true } };
+  await act(async () => root.render(<LocalRepositoryActions sessionId="session" appId="local.app" tree={conflicted} disabled={false} refresh={refresh} />));
+  expect(container.textContent).toContain("Source connection was revoked");
+  const abort = [...container.querySelectorAll("button")].find(b => b.textContent === "Abort integration…");
+  expect(abort).toBeDefined();
+  expect(abort!.disabled).toBe(true);
+  await click("Check last action");
+  expect(abort!.disabled).toBe(false);
+  await click("Abort integration…"); await click("Cancel");
+  expect(vi.mocked(workspaceAction).mock.calls.some(c => c[1] === "abort-merge")).toBe(false);
+  await click("Abort integration…"); await click("Confirm abort upstream integration");
+  expect(vi.mocked(workspaceAction).mock.calls.at(-1)).toEqual(["session", "abort-merge", {
+    appId: "local.app", workspaceId: tree.id, expectedHead: tree.observation!.head, requestId: expect.any(String),
+  }]);
+  expect(localStorage.getItem(key)).toBeNull();
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(refresh).toHaveBeenCalledTimes(2);
+});
