@@ -12,7 +12,7 @@ vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => ui }));
 vi.mock("@/lib/assistant-api", async original => ({
   ...await original<typeof api>(),
   getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), deleteSession: vi.fn(),
-  listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(), setSessionAutonomy: vi.fn(),
+  listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(), setSessionAutonomy: vi.fn(), listAgentConnections: vi.fn(),
 }));
 vi.mock("@/lib/development-api", async original => ({ ...await original<typeof import("@/lib/development-api")>(), useDevelopmentInventory: () => ({ workspaces: [], error: "", refresh: () => {} }) }));
 vi.mock("@/components/speech-input", () => ({ SpeechInput: () => null }));
@@ -39,6 +39,7 @@ beforeEach(() => {
   vi.mocked(api.getSession).mockImplementation(async () => ({ ...record }));
   vi.mocked(api.createSession).mockResolvedValue(record);
   vi.mocked(api.listAppNames).mockResolvedValue({});
+  vi.mocked(api.listAgentConnections).mockResolvedValue({ connections: [], defaultId: null });
   vi.mocked(api.streamEvents).mockImplementation(async (_id, listener, _signal, onConnection) => {
     emit = listener; connection = onConnection!; connection("connected");
   });
@@ -543,8 +544,13 @@ it.each(["session_autonomy_changed", "session_provider_changed", "app_context_ch
 it.each(["session_autonomy_changed", "session_provider_changed"])("uses %s activity when the record refresh fails", async type => {
   await renderActivityOrder();
   vi.mocked(api.getSession).mockRejectedValue(new Error("Record refresh unavailable"));
-  await act(async () => emit({ type, seq: 3, ts: "2026-10-18T12:00:00Z" }));
+  const settings = type === "session_autonomy_changed" ? { autonomy: "autonomous" }
+    : { connectionId: "new-provider", connectionRevision: 2, harnessKind: "claude", providerLocked: false };
+  await act(async () => emit({ type, seq: 3, ts: "2026-10-18T12:00:00Z", ...settings }));
   expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+  expect(button(type === "session_autonomy_changed" ? "Autonomy: Autonomous" : "Provider: claude")).not.toBeNull();
+  await act(async () => emit({ type, seq: 1, ts: "2026-10-18T10:30:00Z", autonomy: "normal", connectionId: "old-provider", connectionRevision: 1, harnessKind: "codex", providerLocked: false }));
+  expect(button(type === "session_autonomy_changed" ? "Autonomy: Autonomous" : "Provider: claude")).not.toBeNull();
   expect(input().value).toBe("My retained draft");
 });
 
@@ -599,4 +605,15 @@ it("pauses hidden list refreshes and rejects a snapshot overtaken by session del
     await act(async () => window.dispatchEvent(new Event("focus")));
     expect(button("Delete Background work")).not.toBeNull();
   } finally { visible.mockRestore(); vi.useRealTimers(); }
+});
+
+it("ignores a settings fetch overtaken by a later event even when both share a timestamp", async () => {
+  await renderActivityOrder();
+  let oldReply!: (value: api.AssistantSession) => void;
+  vi.mocked(api.getSession).mockImplementationOnce(() => new Promise(resolve => { oldReply = resolve; }));
+  await act(async () => emit({ type: "session_autonomy_changed", seq: 2, ts: "2026-10-18T12:00:00Z", autonomy: "normal" }));
+  vi.mocked(api.getSession).mockResolvedValue({ ...record, updatedAt: "2026-10-18T12:00:00Z", autonomy: "autonomous" });
+  await act(async () => emit({ type: "session_autonomy_changed", seq: 3, ts: "2026-10-18T12:00:00Z", autonomy: "autonomous" }));
+  await act(async () => oldReply({ ...record, updatedAt: "2026-10-18T12:00:00Z", autonomy: "normal" }));
+  expect(button("Autonomy: Autonomous")).not.toBeNull();
 });

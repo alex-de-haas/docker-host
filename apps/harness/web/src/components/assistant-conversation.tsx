@@ -203,6 +203,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     }
 
     const abort = new AbortController();
+    let settingsRefresh = 0;
     streamAbortRef.current = abort;
     void streamEvents(
       record.id,
@@ -214,8 +215,17 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           return;
         }
         if (event.type === "session_provider_changed" || event.type === "session_autonomy_changed") {
-          setSessions(current => current.map(item => item.id === record.id && activityTime({ updatedAt: event.ts }) > activityTime(item) ? { ...item, updatedAt: event.ts } : item));
-          void getSession(record.id).then(value => { if (activeSessionId.current === record.id) onSessionChange(value); }).catch(() => {});
+          const settings: Partial<AssistantSession> = event.type === "session_autonomy_changed"
+            ? (event.autonomy === "normal" || event.autonomy === "autonomous" ? { autonomy: event.autonomy } : {})
+            : typeof event.connectionId === "string" && typeof event.connectionRevision === "number"
+              && (event.harnessKind === "codex" || event.harnessKind === "claude") && typeof event.providerLocked === "boolean"
+              ? { connectionId: event.connectionId, connectionRevision: event.connectionRevision, harnessKind: event.harnessKind, providerLocked: event.providerLocked } : {};
+          const applySettings = (current: AssistantSession) => current.id === record.id && activityTime({ updatedAt: event.ts }) >= activityTime(current)
+            ? { ...current, ...settings, updatedAt: event.ts } : current;
+          setSessions(current => current.map(applySettings));
+          setSession(current => current ? applySettings(current) : current);
+          const revision = ++settingsRefresh;
+          void getSession(record.id).then(value => { if (!abort.signal.aborted && revision === settingsRefresh && activeSessionId.current === record.id) onSessionChange(value); }).catch(() => {});
           void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
           return;
         }

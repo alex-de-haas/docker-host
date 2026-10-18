@@ -34,7 +34,8 @@ visible full-page navigation reconciles session inventory every five seconds. Hi
 requests; focus and visibility recovery refresh even an idle list. Requests do not overlap within
 a subscription, and snapshots overtaken by local edits, events or deletions are discarded. Failed
 refreshes retain the list and drafts for retry. Older full-record replies cannot replace newer
-session settings.
+session settings. Provider/autonomy events apply their settings immediately, even if reconciliation
+fails; a fetch superseded by a later settings event cannot replace that event.
 Each row offers Delete session with confirmation. It reuses the existing session deletion API,
 including unfinished-workspace protection, and keeps failures visible for retry without navigating
 away from the current conversation. Deleting the selected session clears its draft and route selection;
