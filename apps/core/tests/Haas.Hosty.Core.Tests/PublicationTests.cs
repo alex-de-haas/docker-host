@@ -196,13 +196,13 @@ public sealed partial class CoreLifecycleServiceTests
                 await f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), head), default);
             }
         }
-        // A native edit invalidates completion, but it is not operator consent to resume this cycle.
+        // A native edit does not reopen completion or grant consent to resume this cycle.
         await File.WriteAllTextAsync(Path.Combine(f.W.Path, "correction.txt"), "new correction");
         await RunGitAsync(f.W.Path, ["add", "correction.txt"]);
         await RunGitAsync(f.W.Path, ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "test correction"]);
         var edited = await f.Workspaces.ObserveAsync(f.W.Id, f.W.Owner, default);
         var workflow = await f.Workspaces.WorkflowAsync(f.W.Owner, default);
-        Assert.Equal("in-progress", workflow.State);
+        Assert.Equal("completed", workflow.State);
         var error = await Assert.ThrowsAsync<PublicationException>(() => f.Service.CommandAsync(f.W.Id, f.W.Owner, "corrective", new(Guid.NewGuid().ToString(), edited.Observation!.Head), default));
         Assert.Equal("publication_completed", error.Code);
         await f.Workspaces.ChangeWorkflowAsync(f.W.Owner, "admin", "resume", new(Guid.NewGuid().ToString(), workflow.Revision), new Dictionary<string, string>(), default);

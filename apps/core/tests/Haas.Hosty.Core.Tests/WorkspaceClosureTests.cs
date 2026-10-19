@@ -5,8 +5,10 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed partial class CoreLifecycleServiceTests
 {
-    [Fact]
-    public async Task WorkspaceClosure_RestartPreservesDirtySourceAndFencesActivityUntilResume()
+    [Theory]
+    [InlineData("pause")]
+    [InlineData("close")]
+    public async Task WorkspaceClosure_RestartPreservesDirtySourceAndFencesActivityUntilResume(string action)
     {
         var (f, _) = await SourceFixtureAsync();
         var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
@@ -20,7 +22,7 @@ public sealed partial class CoreLifecycleServiceTests
         var hashes = Hashes();
         var close = new WorkspaceWorkflowCommand(Guid.NewGuid().ToString(), 0);
         var heads = new Dictionary<string, string>();
-        var pending = await service.ChangeWorkflowAsync(owner, "admin", "close", close, heads, default, prepareOnly: true);
+        var pending = await service.ChangeWorkflowAsync(owner, "admin", action, close, heads, default, prepareOnly: true);
         Assert.Equal("closing", pending.Closure);
         Assert.Equal("in-progress", pending.State);
         Assert.Null(pending.CompletedAt);
@@ -28,14 +30,14 @@ public sealed partial class CoreLifecycleServiceTests
         await Assert.ThrowsAsync<AppLifecycleException>(() => service.CommandAsync(tree.Id, owner, "lease", new(Guid.NewGuid().ToString(), LeaseId: Guid.NewGuid().ToString()), default));
         await Assert.ThrowsAsync<AppLifecycleException>(() => service.WorkerLeaseAsync(owner, new(Guid.NewGuid().ToString(), true), default));
         await Assert.ThrowsAsync<AppLifecycleException>(() => service.SetSandboxConsumerAsync(tree.Id, Guid.NewGuid().ToString("N"), true, default));
-        await Assert.ThrowsAsync<AppLifecycleException>(() => service.ChangeWorkflowAsync(owner, "admin", "close", close, heads, default));
+        await Assert.ThrowsAsync<AppLifecycleException>(() => service.ChangeWorkflowAsync(owner, "admin", action, close, heads, default));
         service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
         var recovered = await service.WorkflowAsync(owner, default);
         Assert.Equal(close.RequestId, Assert.Single(recovered.Operations!).Id);
         Assert.Contains("lease", recovered.Operations![0].Error, StringComparison.OrdinalIgnoreCase);
         await Assert.ThrowsAsync<AppLifecycleException>(() => service.ChangeWorkflowAsync(owner, "admin", "resume", new(Guid.NewGuid().ToString(), 0), heads, default));
         await service.CommandAsync(tree.Id, owner, "release-lease", new(Guid.NewGuid().ToString(), LeaseId: lease), default);
-        var closed = await service.ChangeWorkflowAsync(owner, "admin", "close", close, heads, default);
+        var closed = await service.ChangeWorkflowAsync(owner, "admin", action, close, heads, default);
         Assert.Equal("closed", closed.Closure);
         Assert.Equal("in-progress", closed.State);
         Assert.Equal(1, closed.Revision);
@@ -43,7 +45,7 @@ public sealed partial class CoreLifecycleServiceTests
         await Assert.ThrowsAsync<AppLifecycleException>(() => service.ChangeWorkflowAsync(owner, "admin", "delete", new(Guid.NewGuid().ToString(), 1), heads, default));
         var resumed = await service.ChangeWorkflowAsync(owner, "admin", "resume", new(Guid.NewGuid().ToString(), 1), heads, default);
         Assert.Null(resumed.Closure);
-        Assert.Equal(CoreJson.Text(resumed), CoreJson.Text(await service.ChangeWorkflowAsync(owner, "admin", "close", close, heads, default)));
+        Assert.Equal(CoreJson.Text(resumed), CoreJson.Text(await service.ChangeWorkflowAsync(owner, "admin", action, close, heads, default)));
         Assert.Equal(tree.Id, (await service.PrepareAsync(owner, WorkspaceRequest(), default)).Id);
     }
 
@@ -186,10 +188,16 @@ public sealed partial class CoreLifecycleServiceTests
         var f = await PublicationFixture();
         await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", new(Guid.NewGuid().ToString(), f.W.OriginalBase, Title: "Contribution"), default);
         var record = await f.Service.ObserveAsync(f.W.Id, f.W.Owner, default);
-        var dependencyId = "a".PadRight(64, '0');
+        // Dependencies must have retained worktree records. An orphan publication is no
+        // longer observed, because it can be a late response from a deleted workspace.
+        var repository = await CreateGitRepositoryAsync(Path.Combine(f.F.Root, "closure-dependency"));
+        var source = (await f.F.Apps.GetAppAsync(SourceTestApp))!;
+        await f.F.Apps.UpsertAppAsync(source with { Id = "example.dependency", SourceState = source.SourceState! with { Repository = repository, LocalOverridePath = repository } });
+        var dependency = await f.Workspaces.PrepareAsync(f.W.Owner, WorkspaceRequest() with { AppId = "example.dependency" }, default);
+        var dependencyId = dependency.Id;
         var root = Path.Combine(f.F.Paths.CoreRoot, "development", "publications");
         await JsonStorage.WriteAsync(Path.Combine(root, dependencyId + ".json"), record with {
-            WorkspaceId = dependencyId, Number = 43, Url = "https://github.com/owner/repo/pull/43", Dependencies = [], Operations = [] });
+            WorkspaceId = dependencyId, Branch = dependency.Branch, Number = 43, Url = "https://github.com/owner/repo/pull/43", Dependencies = [], Operations = [] });
         await JsonStorage.WriteAsync(Path.Combine(root, f.W.Id + ".json"), record with { Dependencies = [dependencyId] });
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

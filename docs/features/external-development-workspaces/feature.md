@@ -1,6 +1,6 @@
 ---
 created: 2026-10-07
-updated: 2026-10-18
+updated: 2026-10-19
 summary: Local external agents use authorized Core-owned worktrees, separate plan progress, and read-only pull request tracking in Workspaces.
 components: [apps/core, apps/plans, apps/workspaces]
 ---
@@ -55,7 +55,8 @@ app navigation and has no workspace source access.
 
 ## Pull Request Observation
 
-Core's existing 30-second publication observer handles ordinary publications first, then refreshes
+Core's existing 30-second publication observer excludes deleting/deleted workspaces, handles ordinary
+publications first, then refreshes
 at most ten external PR references within a ten-second provider deadline. A rotating cursor carries
 remaining references into later cycles, including after a slow request. Previously observed facts
 remain available with their original timestamps until their turn; a timeout replaces only that
@@ -74,7 +75,10 @@ branch reassignment is not supported. Multiple references refresh independently.
 updates status and checks together without modifying local Git, and Workspaces displays a head
 difference when applicable. Provider failures replace successful facts with an unavailable reason.
 
-Observations persist under Core's `development/publications/external` directory and survive restart.
+Observations persist under Core's `development/publications/external` directory and survive restart
+while the workspace is retained. Successful workspace Delete removes these snapshots; late provider
+responses cannot recreate them. Startup recovery removes verified legacy deleted workspace records
+and their caches under the [workspace deletion contract](../workspace-lifecycle-controls/feature.md#cleanup-and-recovery).
 Reads revalidate the current administrator, source access and connection before showing cached facts.
 The projection includes state, draft flag, checks, review decision, unresolved-thread count and
 observation time, but omits credentials and private review comment bodies. Removed references are

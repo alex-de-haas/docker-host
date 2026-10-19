@@ -66,8 +66,12 @@ public sealed partial class CoreLifecycleServiceTests
         var controls = new WorkspaceCleanupService(f.Paths, inspection, workspaces, null!, f.Apps, store, environments, new(store, environments), null!, null!, null!);
         var app = (await f.Apps.GetAppAsync(SourceTestApp))!;
         await f.Apps.UpsertAppAsync(app with { GrantedCorePermissions = boundary == "permission" ? [] : [CoreAppPermissions.CoreEnvironmentsManage] });
-        var child = await environments.CreateAsync(new(boundary == "owner" ? "someone-else" : "admin"),
-            new(Guid.NewGuid().ToString(), "Owned", Context: new(WorkspaceId: boundary == "context" ? new string('f', 64) : tree.WorkspaceId)), default);
+        var childOwner = boundary == "owner" ? owner with { UserId = "someone-else" }
+            : boundary == "context" ? owner with { SessionId = "other-task" } : owner;
+        var childTree = boundary is "owner" or "context"
+            ? await workspaces.PrepareAsync(childOwner, ExternalPrepare() with { SessionId = childOwner.SessionId }, default) : tree;
+        var child = await environments.CreateAsync(new(childOwner.UserId),
+            new(Guid.NewGuid().ToString(), "Owned", Context: new(WorkspaceId: childTree.WorkspaceId)), default);
         var error = await Record.ExceptionAsync(() => controls.EnvironmentCommandAsync(tree.WorkspaceId, "admin", SourceTestApp,
             child.Id, "finish", new(Guid.NewGuid().ToString(), boundary == "revision" ? 999 : child.Revision), default));
         Assert.Equal(expectedCode, error switch { AppIdentityException identity => identity.Code, SandboxException sandbox => sandbox.Code, _ => error?.GetType().Name });

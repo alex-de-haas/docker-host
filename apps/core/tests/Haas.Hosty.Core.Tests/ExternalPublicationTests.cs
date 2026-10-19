@@ -13,6 +13,12 @@ public sealed partial class CoreLifecycleServiceTests
         var workspaces = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
         var w = await workspaces.PrepareAsync(owner, WorkspaceRequest("external-pr") with { SessionPath = null, LeaseId = Guid.NewGuid().ToString() }, default);
         const string repository = "https://github.com/owner/repo.git";
+        // Keep the disposable Git ownership valid when projecting its provider URL. Explicit
+        // lifecycle evidence now observes this real worktree even while background work is off.
+        var repositories = Path.Combine(f.Paths.CoreRoot, "development/repositories");
+        var providerRepo = Path.Combine(repositories, DevelopmentWorkspaceService.Hash(repository) + ".git");
+        Directory.Move(Path.Combine(repositories, w.RepositoryId + ".git"), providerRepo);
+        await RunGitAsync(providerRepo, ["worktree", "repair", w.Path]);
         w = w with { Repository = repository, RepositoryId = DevelopmentWorkspaceService.Hash(repository),
             PullRequests = ["https://github.com/owner/repo/pull/42"] };
         await JsonStorage.WriteAsync(Path.Combine(f.Paths.CoreRoot, "development/workspaces", w.Id + ".json"), w);
@@ -141,6 +147,47 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.NotNull((await f.Service.ReadExternalReferencesAsync(w, "admin", default))[1].Observation);
         using var canceled = new CancellationTokenSource(); canceled.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => f.Service.RefreshExternalReferencesAsync(canceled.Token));
+    }
+
+    [Theory]
+    [InlineData("deleting")]
+    [InlineData("deleted")]
+    public async Task ExternalPublication_ClosedWorkspaceNeverContactsProvider(string state)
+    {
+        var f = await ExternalPublicationFixture();
+        var workflow = Path.Combine(f.F.Paths.CoreRoot, "development", "workflows", DevelopmentWorkspaceService.Hash(DevelopmentWorkspaceService.OwnerIdentity(f.W.Owner)) + ".json");
+        await JsonStorage.WriteAsync(workflow, new WorkspaceWorkflow(state));
+        await f.Service.RefreshExternalReferencesAsync(default);
+        Assert.Equal(0, f.Provider.Observed);
+    }
+
+    [Fact]
+    public async Task ExternalPublication_LateProviderResponseDoesNotRecreateDeletedCache()
+    {
+        var f = await ExternalPublicationFixture();
+        var entered = new TaskCompletionSource(); var release = new TaskCompletionSource();
+        f.Provider.BeforeObserve = async (_, _) => { entered.SetResult(); await release.Task; };
+        var observing = f.Service.RefreshExternalReferencesAsync(default);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        // Reproduce the final deletion boundary while the provider response is outstanding.
+        File.Delete(Path.Combine(f.F.Paths.CoreRoot, "development", "workspaces", f.W.Id + ".json"));
+        release.SetResult(); await observing;
+        Assert.False(File.Exists(Path.Combine(f.F.Paths.CoreRoot, "development", "publications", "external", f.W.Id + ".json")));
+        await f.Service.RefreshExternalReferencesAsync(default);
+        Assert.Equal(1, f.Provider.Observed);
+    }
+
+    [Fact]
+    public async Task ExternalPublication_DeleteDuringBatchSkipsItsRemainingRequests()
+    {
+        var f = await ExternalPublicationFixture();
+        var tree = f.W with { PullRequests = ["https://github.com/owner/repo/pull/41", "https://github.com/owner/repo/pull/42"] };
+        await JsonStorage.WriteAsync(Path.Combine(f.F.Paths.CoreRoot, "development", "workspaces", tree.Id + ".json"), tree);
+        f.Provider.BeforeObserve = (_, _) => JsonStorage.WriteAsync(Path.Combine(f.F.Paths.CoreRoot, "development", "workflows",
+            DevelopmentWorkspaceService.Hash(DevelopmentWorkspaceService.OwnerIdentity(tree.Owner)) + ".json"), new WorkspaceWorkflow("deleted"));
+        await f.Service.RefreshExternalReferencesAsync(default);
+        Assert.Equal(1, f.Provider.Observed);
+        Assert.False(File.Exists(Path.Combine(f.F.Paths.CoreRoot, "development", "publications", "external", tree.Id + ".json")));
     }
 
 }

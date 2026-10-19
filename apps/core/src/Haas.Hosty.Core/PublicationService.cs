@@ -13,7 +13,9 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         if (id.Length != 64 || id.Any(c => !char.IsAsciiHexDigit(c))) throw new PublicationException("not_found", "Publication not found.");
         return Path.Combine(Root, id + ".json");
     }
-    private Task Save(PublicationRecord r) => JsonStorage.WriteAsync(FilePath(r.WorkspaceId), r, restrictToOwner: true);
+    private async Task Save(PublicationRecord r)
+        => await workspaces.WritePublicationAsync(r.WorkspaceId,
+            () => JsonStorage.WriteAsync(FilePath(r.WorkspaceId), r, restrictToOwner: true), default);
     private Task<PublicationRecord?> Read(string id, CancellationToken ct) => JsonStorage.ReadAsync<PublicationRecord>(FilePath(id), ct);
     private async Task<T> Locked<T>(Func<Task<T>> action, CancellationToken ct)
     {
@@ -47,6 +49,18 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         }
         return new PublicationList(list.ToArray());
     }, ct);
+    internal async Task ObserveInBackgroundAsync(string id, CancellationToken ct)
+    {
+        await Locked(async () =>
+        {
+            if (!await workspaces.CanObserveInBackgroundAsync(id, ct)) return false;
+            var record = await Read(id, ct);
+            if (record is not null) await Observe(record, ct);
+            return true;
+        }, ct);
+        // A pause may have been admitted during the provider request.
+        await CleanupAsync(id, ct, background: true);
+    }
     public Task<PublicationRecord> ObserveAsync(string id, WorkspaceOwner? owner, CancellationToken ct) => Locked(async () =>
     {
         var r = await Read(id, ct) ?? throw new PublicationException("not_found", "Publication not found.");
@@ -55,6 +69,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
     }, ct);
     private async Task<PublicationRecord> Observe(PublicationRecord r, CancellationToken ct)
     {
+        if (!await workspaces.CanObservePublicationAsync(r.WorkspaceId, ct)) return r;
         try
         {
             await RequireOwner(r.Owner, ct);
@@ -169,7 +184,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         if (input.ConnectionId is not null && input.ConnectionId != r.ConnectionId) throw new PublicationException("connection_conflict", "This publication is bound to another connection.");
         var record = r;
         var workflow = await workspaces.WorkflowAsync(owner, ct);
-        if (workflow.Closure is not null && previous is null)
+        if ((workflow.Closure is not null || workflow.State == "deferred") && previous is null)
             throw new PublicationException("workspace_closed", "Resume retained workspace source before starting a new publication operation.");
         var lastTransition = workflow.Operations?.LastOrDefault(o => o.State == "succeeded" && o.Kind is "complete" or "resume");
         var resumedCorrection = kind == "corrective" && record.Outcome == "merged" && workflow.State == "in-progress"
@@ -337,18 +352,20 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         if (w.State != "active" || w.Observation is not { State: "ok", Conflict: false, Local: { Files.Count: 0, Truncated: false } } || string.IsNullOrEmpty(input.ExpectedHead) || w.Observation.Head != input.ExpectedHead)
             throw new PublicationException("workspace_changed", "A clean active worktree and its current expectedHead are required.");
     }
-    public async Task CleanupAsync(string id, CancellationToken ct)
+    public async Task CleanupAsync(string id, CancellationToken ct, bool background = false)
     {
         await Locked(async () =>
         {
+            if (background && !await workspaces.CanObserveInBackgroundAsync(id, ct)) return false;
             var r = await Read(id, ct);
-            if (r is null || !r.CleanupRequested || r.Outcome is null) return false;
+            if (r is null || !r.CleanupRequested || r.Outcome is null || !await workspaces.CanObservePublicationAsync(id, ct)) return false;
             await RequireOwner(r.Owner, ct);
             r = await Observe(r, ct);
             if (r.Observation is { State: "unavailable" }) return false;
             if (r.Observation?.Head != r.PublishedHead) return false;
             if (r.Outcome == "merged" && r.Observation is not { State: "merged", Complete: true }) return false;
-            var w = await workspaces.ObserveAsync(id, r.Owner, ct);
+            if (background && !await workspaces.CanObserveInBackgroundAsync(id, ct)) return false;
+            var w = await workspaces.ObserveAsync(id, r.Owner, ct, background);
             if (w.State != "released") await workspaces.ReleasePublishedAsync(id, r.Owner, r.PublishedHead!, ct);
             await Save(r with { CleanupRequested = false }); return true;
         }, ct);
@@ -366,7 +383,7 @@ internal sealed class PublicationObserver(PublicationService service, ILogger<Pu
             {
                 foreach (var r in (await service.ListAsync(null, stoppingToken)).Publications)
                 {
-                    try { await service.ObserveAsync(r.WorkspaceId, null, stoppingToken); await service.CleanupAsync(r.WorkspaceId, stoppingToken); }
+                    try { await service.ObserveInBackgroundAsync(r.WorkspaceId, stoppingToken); }
                     catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning("Cannot observe publication {WorkspaceId}: {ErrorType}", r.WorkspaceId, ex.GetType().Name); }
                 }
                 await service.RefreshExternalReferencesAsync(stoppingToken);

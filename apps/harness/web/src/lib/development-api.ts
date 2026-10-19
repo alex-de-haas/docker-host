@@ -4,6 +4,14 @@ import { activityTime } from "@/lib/attention";
 import { useCallback, useEffect, useState } from "react";
 
 export type Workflow = { state: string; revision: number; completedAt?: string; closure?: string | null; operations?: { id: string; kind: string; state: string; expectedRevision: number; error?: string }[] };
+export const workflowIsActive = (workflow: Workflow) => workflow.state === "in-progress" && !workflow.closure;
+export function workflowLabel(workflow: Workflow): string {
+  if (["deleting", "deleted"].includes(workflow.state)) return workflow.state;
+  if (workflow.closure === "closing") return "pausing";
+  if (workflow.state === "completed") return "completed";
+  if (workflow.closure === "closed" || workflow.state === "deferred") return "paused";
+  return workflow.state.replaceAll("-", " ");
+}
 export type Change = { path: string; status: string; binary?: boolean; lineStats?: { additions: number; deletions: number } | null };
 export type PullRequest = { url: string; unavailable?: string; publishedHead?: string; observation?: {
   at: string; state: string; title?: string; commentCount?: number; head?: string; draft: boolean;
