@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { subscribeWorkspaceEvents } from "@/lib/workspace-events";
 import { Button } from "@/components/ui/button";
 import { workspaceAction, type AssistantSession, type Workspace, type Publication } from "@/lib/assistant-api";
 
@@ -21,23 +22,25 @@ export function SessionWorkspaces({ session, running }: { session: AssistantSess
   }, [session.id]);
   useEffect(() => {
     if (!open) return;
-    let active = true;
-    const load = () => workspaceAction<{ workspaces: Workspace[] }>(session.id, "list").then(result => {
-      if (active) { setWorkspaces(result.workspaces); if (!pending.current) setError(""); }
-    }).catch(cause => { if (active) setError(cause instanceof Error ? cause.message : String(cause)); });
-    void load();
-    const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); }, 20000);
-    return () => { active = false; clearInterval(timer); };
+    let active = true, generation = 0;
+    const load = () => { const current = ++generation; return workspaceAction<{ workspaces: Workspace[] }>(session.id, "list").then(result => {
+      if (active && current === generation) { setWorkspaces(result.workspaces); if (!pending.current) setError(""); }
+    }).catch(cause => { if (active && current === generation) setError(cause instanceof Error ? cause.message : String(cause)); }); };
+    const unsubscribe = subscribeWorkspaceEvents("/api/development-workspaces/events", load, () => {
+      generation++; setWorkspaces([]); setError("Workspace updates disconnected. Reconnecting…");
+    });
+    return () => { active = false; unsubscribe(); };
   }, [open, session.id]);
   useEffect(() => {
     if (!open) return;
-    let active = true;
-    const load = () => workspaceAction<{ publications: Publication[] }>(session.id, "pr-list").then(result => {
-      if (active) { setPublications(result.publications); setPublicationError(""); }
-    }).catch(cause => { if (active) setPublicationError(cause instanceof Error ? cause.message : String(cause)); });
-    void load();
-    const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); }, 20000);
-    return () => { active = false; clearInterval(timer); };
+    let active = true, generation = 0;
+    const load = () => { const current = ++generation; return workspaceAction<{ publications: Publication[] }>(session.id, "pr-list").then(result => {
+      if (active && current === generation) { setPublications(result.publications); setPublicationError(""); }
+    }).catch(cause => { if (active && current === generation) setPublicationError(cause instanceof Error ? cause.message : String(cause)); }); };
+    const unsubscribe = subscribeWorkspaceEvents("/api/development-workspaces/events", load, () => {
+      generation++; setPublications([]); setPublicationError("Workspace updates disconnected. Reconnecting…");
+    });
+    return () => { active = false; unsubscribe(); };
   }, [session.id, open]);
   const run = async (action: string, input: Record<string, unknown>, retry = false) => {
     const request = retry && pending.current ? pending.current : { action, input: { ...input, requestId: crypto.randomUUID() } };

@@ -1,7 +1,8 @@
 "use client";
+import { subscribeWorkspaceEvents } from "@/lib/workspace-events";
 import { WorkspaceEnvironments } from "./workspace-environments";
 import { WorkspaceSandboxes } from "./workspace-sandboxes";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { HostyNavigationBoundary } from "@hosty-sdk/app/react";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
@@ -13,28 +14,33 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { changeCount, repositoryName, fileApps, filterWorkspaces, isStale, safeLink, workspaceLink, type Filter } from "@/lib/model";
 import type { Diff, Inventory, PullRequest, Workspace, Worktree } from "@/lib/types";
 
-function useRead<T>(url: string, epoch: number) {
+function useRead<T>(url: string, epoch: number | string, events = true) {
   const [state, setState] = useState<{ url: string; data?: T; error?: string }>({ url });
+  const lastEpoch = useRef(epoch);
   useEffect(() => {
     const controller = new AbortController();
-    let pending = false;
+    let generation = 0;
+    let fresh = lastEpoch.current !== epoch; lastEpoch.current = epoch;
     async function load() {
-      if (pending) return;
-      pending = true;
+      const current = ++generation;
       try {
-        const response = await appFetch(url, { signal: controller.signal, cache: "no-store" });
+        const target = fresh && /\/worktrees\/[a-f0-9]{64}$/.test(url) ? `${url}?refresh=true` : url;
+        fresh = false;
+        const response = await appFetch(target, { signal: controller.signal, cache: "no-store" });
         const body = await response.json();
         if (!response.ok) throw new Error(body.message ?? `Workspace read returned HTTP ${response.status}.`);
-        if (!controller.signal.aborted) setState({ url, data: body });
+        if (!controller.signal.aborted && current === generation) setState({ url, data: body });
       } catch (error) {
         // A revoked grant clears previously displayed source, including a visible diff.
-        if (!controller.signal.aborted) setState({ url, error: error instanceof Error ? error.message : "Workspace read failed." });
-      } finally { pending = false; }
+        if (!controller.signal.aborted && current === generation) setState({ url, error: error instanceof Error ? error.message : "Workspace read failed." });
+      }
     }
-    void load();
-    const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); }, 20_000);
-    return () => { controller.abort(); clearInterval(timer); };
-  }, [url, epoch]);
+    if (!events) void load();
+    const unsubscribe = events ? subscribeWorkspaceEvents("/api/workspaces/events", load, () => {
+      generation++; setState({ url, error: "Workspace updates disconnected. Reconnecting…" });
+    }) : () => {};
+    return () => { generation++; controller.abort(); unsubscribe(); };
+  }, [url, epoch, events]);
   return state.url === url ? state : { url };
 }
 function time(value?: string | null) { return value ? new Date(value).toLocaleString() : "Not observed"; }
@@ -103,7 +109,7 @@ function TreeDetails({ tree, epoch, now }: { tree: Worktree; epoch: number; now:
       <dt className="text-muted-foreground">HEAD / original base</dt><dd className="break-all font-mono">{short(o?.head)} / {short(t.originalBase)}</dd>
       <dt className="text-muted-foreground">Integration base</dt><dd className="break-all font-mono">{short(t.integrationBase)}</dd>
       <dt className="text-muted-foreground">Path on Core host</dt><dd className="break-all font-mono">{t.path}</dd>
-      <dt className="text-muted-foreground">Observed</dt><dd>{time(o?.at)}{isStale(o?.at, now) ? " · stale or unknown" : ""}</dd>
+      <dt className="text-muted-foreground">Observed</dt><dd>{time(o?.at)}{t.observationHealth === "watching" ? " · watching" : t.observationHealth === "paused" ? " · paused" : t.observationHealth === "pending" ? " · updating" : " · observation recovering"}</dd>
     </dl></div>
     {t.state !== "active" && <Message>Worktree is {t.state}. Any recorded observation is historical; current source changes are unknown.</Message>}
     {o?.error && <Message error>{o.error}</Message>}{t.detailError && <Message error>{t.detailError}</Message>}
@@ -133,7 +139,7 @@ function Changes({ tree, epoch }: { tree: Worktree; epoch: number }) {
   </div>;
 }
 function DiffView({ tree, path, view, epoch }: { tree: Worktree; path: string; view: string; epoch: number }) {
-  const { data, error } = useRead<Diff>(`/api/workspaces/${tree.workspaceId}/worktrees/${tree.id}/diff?${new URLSearchParams({ path, view })}`, epoch);
+  const { data, error } = useRead<Diff>(`/api/workspaces/${tree.workspaceId}/worktrees/${tree.id}/diff?${new URLSearchParams({ path, view })}`, `${epoch}:${tree.observationRevision ?? tree.observation?.at}`, false);
   if (error) return <Message error>{error}</Message>;
   if (!data) return <Message>Reading file diff…</Message>;
   if (data.binary || data.image) return <Message>Binary or image change. Inspect this file in your source editor.</Message>;

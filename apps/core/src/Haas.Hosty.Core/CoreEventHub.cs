@@ -16,6 +16,7 @@ namespace Haas.Hosty.Core;
 internal sealed class CoreEventHub
 {
     // Domain events. Names are the wire contract for the SSE `event:` field.
+    public const string WorkspaceChanged = "workspace.changed";
     public const string AppChanged = "app.changed";
     public const string AppRemoved = "app.removed";
     public const string AppUpdateCheckChanged = "app.update-check.changed";
@@ -28,15 +29,22 @@ internal sealed class CoreEventHub
     private readonly object gate = new();
     private readonly List<CoreEventSubscription> subscriptions = [];
 
-    public CoreEventSubscription Subscribe(string userId, bool isAdmin, string? sessionId = null, bool resources = false)
+    public CoreEventSubscription Subscribe(string userId, bool isAdmin, string? sessionId = null, bool resources = false, bool workspaces = false)
     {
-        var subscription = new CoreEventSubscription(userId, isAdmin, this, sessionId, resources && isAdmin);
+        var subscription = new CoreEventSubscription(userId, isAdmin, this, sessionId, resources && isAdmin, workspaces);
         lock (gate)
         {
             subscriptions.Add(subscription);
         }
 
         return subscription;
+    }
+
+    internal void PublishWorkspaceChange(string id)
+    {
+        CoreEventSubscription[] targets;
+        lock (gate) targets = subscriptions.Where(s => s.Workspaces && s.IsActive).ToArray();
+        foreach (var target in targets) target.TryWrite(new(WorkspaceChanged, id));
     }
 
     public bool HasResourceSubscribers
@@ -87,6 +95,7 @@ internal sealed class CoreEventHub
     // session would leak the existence of apps a user was never assigned.
     public void PublishAppEvent(string name, string? appId = null)
     {
+        PublishWorkspaceChange("*");
         CoreEventSubscription[] targets;
         lock (gate)
         {
@@ -151,24 +160,30 @@ internal sealed record AppEventView(string Name, string? AppId, DateTimeOffset O
 
 internal sealed class CoreEventSubscription : IDisposable
 {
-    private readonly Channel<CoreEventEnvelope> channel = Channel.CreateBounded<CoreEventEnvelope>(
-        new BoundedChannelOptions(64) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
+    private readonly Channel<CoreEventEnvelope> channel;
+    private long dropped;
+    internal long Dropped => Interlocked.Read(ref dropped);
     private readonly CoreEventHub owner;
     private int completed;
 
-    public CoreEventSubscription(string userId, bool isAdmin, CoreEventHub owner, string? sessionId = null, bool resources = false)
+    public CoreEventSubscription(string userId, bool isAdmin, CoreEventHub owner, string? sessionId = null, bool resources = false, bool workspaces = false)
     {
         UserId = userId;
         IsAdmin = isAdmin;
         SessionId = sessionId;
         Resources = resources;
+        Workspaces = workspaces;
         this.owner = owner;
+        channel = Channel.CreateBounded<CoreEventEnvelope>(
+            new BoundedChannelOptions(64) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true },
+            _ => Interlocked.Increment(ref dropped));
     }
 
     public string UserId { get; }
 
     public bool IsAdmin { get; }
     public bool Resources { get; }
+    internal bool Workspaces { get; }
     public bool IsActive => Volatile.Read(ref completed) == 0;
 
     // Which credential opened this stream, so revoking that credential can close it. Null when the

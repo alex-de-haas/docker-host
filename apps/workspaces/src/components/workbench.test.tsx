@@ -7,6 +7,7 @@ import type { Worktree, Workspace } from "@/lib/types";
 const state = vi.hoisted(() => ({ query: "workspace=group", revoked: false }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(state.query) }));
 vi.mock("@hosty-sdk/app/browser-auth", () => ({ appFetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
+vi.mock("@/lib/workspace-events", () => ({ subscribeWorkspaceEvents: (_url: string, sync: () => Promise<void>) => { void sync(); return () => {}; } }));
 let root: Root; let container: HTMLDivElement;
 const tree: Worktree = { id: "tree", workspaceId: "group", repository: "https://github.com/example/project.git", branch: "session/one", targetBranch: "main",
   originalBase: "a".repeat(40), integrationBase: "a".repeat(40), path: "/core/worktree", state: "active", apps: [], operations: [], leases: [],

@@ -129,3 +129,19 @@ it("accepts an empty successful worker lease release but requires bindings for a
     await expect(client.workerBindings("session", "hostyg_test", { leaseId: "id", acquire: true })).rejects.toThrow();
   } finally { globalThis.fetch = original; }
 });
+
+it("streams inspection hints with current app identity and cancels with the browser", async () => {
+  const controller = new AbortController();
+  const response = new Response("event: stream.ready\ndata: {}\n\n", { headers: { "Content-Type": "text/event-stream" } });
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response); vi.stubGlobal("fetch", fetcher);
+  const client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
+  expect(await client.inspectionEvents("user", controller.signal)).toBe(response);
+  expect(String(fetcher.mock.calls[0]![0])).toBe("http://core.test/api/internal/apps/hosty.harness/workspace-inspection/events");
+  expect(fetcher.mock.calls[0]![1]).toMatchObject({ redirect: "error", signal: controller.signal,
+    headers: { authorization: "Bearer service", "X-Hosty-User-Token": "user", accept: "text/event-stream" } });
+  controller.abort(); expect(fetcher.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+  fetcher.mockResolvedValue(new Response("denied", { status: 403 }));
+  await expect(client.inspectionEvents("user", new AbortController().signal)).rejects.toMatchObject({ status: 403 });
+  fetcher.mockResolvedValue(Response.json({ workspaces: [] }));
+  await expect(client.inspectionEvents("user", new AbortController().signal)).rejects.toMatchObject({ status: 502 });
+});

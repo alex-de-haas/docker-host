@@ -3,7 +3,7 @@
   "id": "hosty.workspaces",
   "name": "Hosty Workspaces",
   "description": "Inspect session workspaces, repository changes and pull requests, and manage isolated sandbox environments.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "source": {
     "type": "git",
     "repository": "https://github.com/alex-de-haas/docker-host.git",
@@ -33,7 +33,7 @@
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/hosty-workspaces",
-            "tag": "0.4.0"
+            "tag": "0.5.0"
           },
           "environment": {
             "PORT": "3000",

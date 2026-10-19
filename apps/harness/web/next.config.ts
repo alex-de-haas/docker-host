@@ -6,7 +6,8 @@ import type { NextConfig } from "next";
 // would have been the heaviest possible reading of "one stack".
 const nextConfig: NextConfig = {
   output: "export",
-  distDir: "out-build",
+  // Isolate native preview builds from the export served by a running Harness.
+  distDir: process.env.HOSTY_HARNESS_WEB_OUTPUT || "out-build",
   // Relative asset paths: the page is served from the gateway's own origin under both / and
   // /settings, and an absolute prefix baked at build time is exactly the bug the telemetry UI
   // shipped once (a localhost origin frozen into static layouts).

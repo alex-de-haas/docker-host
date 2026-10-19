@@ -216,6 +216,11 @@ export class SessionManager {
     return unavailable;
   }
 
+  async workspaceEvents(credential: string, signal: AbortSignal): Promise<Response> {
+    if (!this.development) throw new AppContextError(503, "workspaces_unavailable", "Workspace inspection requires Core.");
+    return this.development.inspectionEvents(credential, signal);
+  }
+
   async inspectWorkspaces(credential: string, path = "", body?: Record<string, unknown>, userId?: string): Promise<unknown> {
     if (!this.development) throw new AppContextError(503, "workspaces_unavailable", "Workspace inspection requires Core.");
     const close = path.match(/^\/([a-f0-9]{64})\/workflow\/(?:pause|close)$/);
