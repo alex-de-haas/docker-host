@@ -26,6 +26,12 @@ public sealed class WorkspaceInspectionHttpTests
         foreach (var action in new[] { "checks", "run", "restart", "logs" })
             Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync(previewRoot + action,
                 new { id = "web/test", digest = "test", requestId = Guid.NewGuid().ToString() })).StatusCode);
+        var resourcePath = root + "/" + new string('a', 64) + "/environments/" + new string('b', 32) + "/stop";
+        var resourceBody = new CoreEnvironmentCommand(Guid.NewGuid().ToString(), 0);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync(resourcePath, resourceBody)).StatusCode);
+        var recovery = root + "/" + new string('a', 64) + "/worktrees/" + new string('b', 64) + "/recover-lease";
+        var recoveryBody = new WorkspaceLeaseRecovery(Guid.NewGuid().ToString(), "head", Guid.NewGuid().ToString(), true);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync(recovery, recoveryBody)).StatusCode);
         client.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(appId));
         var grant = await BrowserAuthorityFixture.Grant(host, appId, "admin");
         client.DefaultRequestHeaders.Add("X-Hosty-User-Token", grant.AccessToken);
@@ -35,17 +41,23 @@ public sealed class WorkspaceInspectionHttpTests
             Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(root)).StatusCode);
         }
         await apps.UpsertAppAsync(record with { GrantedCorePermissions = [CoreAppPermissions.WorkspacesRead] });
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(recovery, recoveryBody)).StatusCode);
         using var response = await client.GetAsync(root);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("no-store", response.Headers.CacheControl!.ToString());
         Assert.Empty((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("workspaces").EnumerateArray());
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/internal/apps/hosty.workspaces/sessions/session/workspaces")).StatusCode);
         Assert.Equal(HttpStatusCode.MethodNotAllowed, (await client.PostAsJsonAsync(root, new { })).StatusCode);
+        await apps.UpsertAppAsync(record with { GrantedCorePermissions = [CoreAppPermissions.WorkspacesRead, CoreAppPermissions.Sources] });
         client.DefaultRequestHeaders.Add("Cookie", "hosty_session=browser-session");
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(root)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(recovery, recoveryBody)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(resourcePath, resourceBody)).StatusCode);
         client.DefaultRequestHeaders.Remove("Cookie");
         await users.UpdateAsync(s => s with { Users = s.Users.Select(u => u with { Role = "host.member" }).ToArray(), Assignments = [new(appId, "admin", now)] });
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(root)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(recovery, recoveryBody)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(resourcePath, resourceBody)).StatusCode);
         foreach (var action in new[] { "checks", "run", "restart", "logs" })
             Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(previewRoot + action,
                 new { id = "web/test", digest = "test", requestId = Guid.NewGuid().ToString() })).StatusCode);

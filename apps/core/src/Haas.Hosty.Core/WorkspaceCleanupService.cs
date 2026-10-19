@@ -8,7 +8,7 @@ internal sealed record WorkspaceCleanupJob(string WorkspaceId, string UserId, Wo
 internal sealed record WorkspacePreviews(CoreEnvironmentView[] Environments, SandboxView[] Instances, Dictionary<string, CoreEnvironmentApplications> Applications);
 
 // Coordinates existing resource owners. It does not implement another container supervisor.
-internal sealed class WorkspaceCleanupService(CoreDataPaths paths, WorkspaceInspectionService inspection,
+internal sealed partial class WorkspaceCleanupService(CoreDataPaths paths, WorkspaceInspectionService inspection,
     DevelopmentWorkspaceService workspaces, PublicationService publications, AppRegistryStore apps,
     CoreEnvironmentStore environments, CoreEnvironmentService environmentService, CoreEnvironmentAccess access,
     SandboxStore sandboxes, SandboxService sandboxService, SandboxOperations sandboxOperations)
@@ -27,7 +27,7 @@ internal sealed class WorkspaceCleanupService(CoreDataPaths paths, WorkspaceInsp
     {
         var owner = await inspection.WorkflowOwnerAsync(workspaceId, userId, ct);
         var children = (await environments.ListAsync(ct)).Where(e => Belongs(e.Owner, e.Request.Context, owner, workspaceId) && e.State != "finished").ToArray();
-        var instances = (await sandboxes.ListAsync(ct)).Where(s => Belongs(s.Owner, s.Request.Context, owner, workspaceId)).ToArray();
+        var instances = (await sandboxes.ListAsync(ct)).Where(s => Belongs(s.Owner, s.Request.Context, owner, workspaceId) && s.State != "disposed").ToArray();
         if (children.Length > 0) await RequirePermission(appId, CoreAppPermissions.CoreEnvironmentsRead, ct);
         if (instances.Length > 0) await RequirePermission(appId, CoreAppPermissions.SandboxesRead, ct);
         var applications = new Dictionary<string, CoreEnvironmentApplications>();
@@ -76,7 +76,7 @@ internal sealed class WorkspaceCleanupService(CoreDataPaths paths, WorkspaceInsp
                 throw DevelopmentWorkspaceService.Error("request_conflict", "This cleanup request belongs to another workspace or revision.");
             job ??= new(workspaceId, userId, input, []);
             var children = (await environments.ListAsync(ct)).Where(e => Belongs(e.Owner, e.Request.Context, owner, workspaceId) && e.State != "finished").ToArray();
-            var instances = (await sandboxes.ListAsync(ct)).Where(s => Belongs(s.Owner, s.Request.Context, owner, workspaceId)).ToArray();
+            var instances = (await sandboxes.ListAsync(ct)).Where(s => Belongs(s.Owner, s.Request.Context, owner, workspaceId) && s.State != "disposed").ToArray();
             if (children.Length > 0) await RequirePermission(appId, CoreAppPermissions.CoreEnvironmentsManage, ct);
             if (instances.Length > 0) await RequirePermission(appId, CoreAppPermissions.SandboxesManage, ct);
             var resources = job.Resources.ToList();

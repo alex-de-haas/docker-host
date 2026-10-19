@@ -112,6 +112,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(WorkspaceCleanupJob))]
 [JsonSerializable(typeof(WorkspacePreviews))]
 [JsonSerializable(typeof(WorkspaceWorkflowCommand))]
+[JsonSerializable(typeof(WorkspaceLeaseRecovery))]
 [JsonSerializable(typeof(WorkspaceDiffRequest))]
 [JsonSerializable(typeof(DevelopmentWorkspace))]
 [JsonSerializable(typeof(WorkspaceList))]

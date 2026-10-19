@@ -45,6 +45,16 @@ internal static class WorkspaceInspectionEndpoints
             WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
             await Handle(async () => await cleanup.PreviewActionAsync(workspaceId, await auth.RequireAsync(request, appId, ct), appId,
                 environmentId, targetApp, action, input, ct)));
+        routes.MapPost("/{workspaceId}/environments/{id}/{action}", async (string appId, string workspaceId,
+            string id, string action, CoreEnvironmentCommand input, HttpRequest request,
+            WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
+            await Handle(async () => await cleanup.EnvironmentCommandAsync(workspaceId,
+                await auth.RequireAsync(request, appId, ct), appId, id, action, input, ct)));
+        routes.MapPost("/{workspaceId}/sandboxes/{id}/{action}", async (string appId, string workspaceId,
+            string id, string action, SandboxCommand input, HttpRequest request,
+            WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
+            await Handle(async () => await cleanup.SandboxCommandAsync(workspaceId,
+                await auth.RequireAsync(request, appId, ct), appId, id, action, input, ct)));
         routes.MapGet("/{workspaceId}/workflow", async (string appId, string workspaceId, HttpRequest request,
             WorkspaceInspectionAuthorization auth, WorkspaceInspectionService service, CancellationToken ct) =>
             await Handle(async () => await service.WorkflowAsync(workspaceId, await auth.RequireAsync(request, appId, ct), null, null, ct)));
@@ -60,6 +70,19 @@ internal static class WorkspaceInspectionEndpoints
         routes.MapGet("/{workspaceId}/worktrees/{id}", async (string appId, string workspaceId, string id, HttpRequest request,
             WorkspaceInspectionAuthorization auth, WorkspaceInspectionService service, CancellationToken ct) =>
             await Handle(async () => await service.ReadAsync(workspaceId, id, await auth.RequireAsync(request, appId, ct), ct)));
+        routes.MapPost("/{workspaceId}/worktrees/{id}/recover-lease", async (string appId, string workspaceId, string id,
+            WorkspaceLeaseRecovery input, HttpRequest request, WorkspaceInspectionAuthorization auth,
+            WorkspaceInspectionService service, AuditStore audit, IClock clock, CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                var userId = await auth.RequireAsync(request, appId, ct, manage: true);
+                var result = await service.RecoverLeaseAsync(workspaceId, id, userId, input, ct);
+                await audit.AppendAsync(new AuditRecord("audit_" + Guid.NewGuid().ToString("N"),
+                    "development.workspace.recover-lease", "workspace", id, "succeeded", userId, clock.UtcNow,
+                    new Dictionary<string, string> { ["requestId"] = input.RequestId, ["leaseId"] = input.LeaseId,
+                        ["assistant"] = appId }), ct);
+                return result;
+            }));
         routes.MapGet("/{workspaceId}/worktrees/{id}/diff", async (string appId, string workspaceId, string id, HttpRequest request,
             WorkspaceInspectionAuthorization auth, WorkspaceInspectionService service, CancellationToken ct) =>
             await Handle(async () => await service.DiffAsync(workspaceId, id, await auth.RequireAsync(request, appId, ct),
