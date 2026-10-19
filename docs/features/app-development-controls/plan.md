@@ -35,7 +35,7 @@ removal of product APIs. The shipped unified live-data dev mode and Return remai
 
 ## Related Workspace Activation
 
-The separately approved [workspace activation plan](../workspace-live-activation/plan.md) extends
+The separately approved [workspace activation](../workspace-live-activation/feature.md) extends
 the shipped controls to reviewed groups of bound apps, including Shell/Harness, and optional Core
 selected by configured repository identity. It owns those new source, orchestration and Return
 contracts. Its acceptance can inform D1's parity assessment but does not authorize retiring

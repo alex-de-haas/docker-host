@@ -20,7 +20,7 @@ accepted across all platforms or real AI harnesses based solely on the local mac
 
 ## Related Workspace Activation
 
-The separately approved [workspace activation plan](../workspace-live-activation/plan.md) owns
+The separately approved [workspace activation](../workspace-live-activation/feature.md) owns
 configurable Core repository URL/ref/project, build identity and coordinated app/Core switching
 with Return. It reuses this feature's launch generations and durable restart mechanism. It does
 not complete the cross-platform/provider acceptance below or change the existing launch behavior.

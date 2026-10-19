@@ -7,7 +7,7 @@ components: [apps/core, apps/cli, apps/shell, apps/harness, shared]
 
 # Core Source And Workspace Activation
 
-Core exposes configurable development source, immutable build provenance, reviewed workspace activation and individual/group Return. Harness, Shell, direct MCP and local operator controls use the same persistent group and child operations. Activation uses ordinary data in the selected Core; sandbox preview is separate. Remaining acceptance gates are tracked in the [plan](plan.md).
+Core exposes configurable development source, immutable build provenance, reviewed workspace activation and individual/group Return. Harness, Shell, direct MCP and local operator controls use the same persistent group and child operations. Activation uses ordinary data in the selected Core; sandbox preview is separate.
 
 ## Development Source
 
@@ -250,7 +250,7 @@ returned requests never recreate processes, snapshots or backups.
 
 Core handover keeps its previous listen address and captured launch identity. Snapshot creation and
 replay retain the existing stopped-state and archive verification rules. Source settings saved during
-an active operation do not rewrite its captured previous runtime. Browser/real-agent and platform acceptance results remain explicit in the plan until their gates pass.
+an active operation do not rewrite its captured previous runtime.
 
 ## Review And Client Controls
 
@@ -301,7 +301,12 @@ Core Return requires explicit acceptance of current-data compatibility with the 
 executable. Before Stop it verifies that executable's retained hash and the current candidate identity.
 It never selects an arbitrary release fallback. Lost Stop/Start responses reconcile the lifetime lock
 and exact prior launch target. A healthy returned app or Core is not restarted again on replay.
-Before Core Return stops the candidate, the helper captures the current running/stopped states and target fingerprints of returned applications. If the previous Core's startup policy changes those states, the helper waits for that boundary and reconciles only the same installation/source/artifact targets. A durable boundary receipt makes lost start/stop responses replayable; actual app health must pass before completion. Autostart preferences and ordinary data remain unchanged.
+
+Before Core Return stops the candidate, the helper captures the current running/stopped states and
+target fingerprints of returned applications. If the previous Core's startup policy changes those
+states, the helper waits for that boundary and reconciles only the same installation/source/artifact
+targets. A durable boundary receipt makes lost start/stop responses replayable; actual app health must
+pass before completion. Autostart preferences and ordinary data remain unchanged.
 
 Unrelated current targets are refused. The Core snapshot and app backups remain recovery evidence;
 Return does not automatically restore an archive, roll back users/data or reset Git.
@@ -333,8 +338,8 @@ used by Shell or another app in a shared worktree.
   profiles, optional Core selection and rejection of foreign choices without runtime mutations.
 - Exercise actual HTTP routing, DI, JSON serialization, admin/CSRF/app permission refusal and revision
   conflicts in isolated in-process Core hosts. These are not browser or runtime activation acceptance.
-- Run affected Core/CLI suites, builds, Core Native AOT and documentation/version validation. Keep
-  platform-specific coordinated handover and Harness/browser acceptance with the remaining plan.
+- Run affected Core/CLI suites, builds, Core Native AOT and documentation/version validation. Run
+  platform-specific coordinated handover and Harness/browser acceptance independently of unit tests.
 
 - Verify pre-stop setup/compile failures preserve running processes; verify repair leases and original-request retry.
 - Verify native preparation uses scratch context, mixed dependency order, selected app backups, stopped-Core snapshot hashes, exact replacement identity and retained unrelated processes.
@@ -352,3 +357,13 @@ used by Shell or another app in a shared worktree.
 - Run the native `return` and `auto` scenarios on macOS, Windows and Linux; CI defines that matrix.
 - Exercise managed Git checkout, inspection and removal with paths longer than 260 characters, including Windows with global/system Git configuration disabled.
   Passing on one operating system does not establish another platform's process-control result.
+
+- Exercise normal password login and a real authorized agent through Core/Shell URLs with isolated
+  users/data. Cover native Harness self-activation and self-Return, Core/Shell interruption and chat
+  recovery, Docker live edits, individual then group Return, and unchanged source/data sentinels.
+- Verify a returned manual Docker app stays running after previous-Core autostart reconciliation,
+  initially stopped apps remain stopped, and changed installation/source targets are refused.
+  Lost start/stop responses resume from the durable boot-boundary receipt without another restart.
+- Finish the child through its owner, verify container/network/volume and native process/port removal,
+  then remove disposable fixture credentials, data and outputs. Preserve the product workspace and
+  unrelated ordinary apps; do not copy provider credentials merely to make acceptance pass.
