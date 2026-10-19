@@ -11,7 +11,7 @@ beforeEach(() => { localStorage.clear(); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 const tree: Worktree = { id: "tree", workspaceId: "workspace", repository: "https://example.test/repo.git", branch: "work", state: "active", path: "/retained/source", apps: [], leases: ["lease", "second"], pullRequests: [], observation: { at: "now", state: "ok", head: "head" } };
 const close = { kind: "close", requestId: "original-close", expectedRevision: 3 };
-const render = async (closure = "closing", trees = [tree]) => act(async () => root.render(<WorkspaceLeaseRecovery workspaceId="workspace" trees={trees} closure={closure} closeRequest={close} disabled={false} refresh={() => {}} onClosed={closed} onBusyChange={changed} />));
+const render = async (closure = "closing", trees = [tree], request: typeof close | null = close) => act(async () => root.render(<WorkspaceLeaseRecovery workspaceId="workspace" trees={trees} closure={closure} closeRequest={request} disabled={false} refresh={() => {}} onClosed={closed} onBusyChange={changed} />));
 const button = (text: string) => [...document.querySelectorAll("button")].find(b => b.textContent === text)!;
 const confirm = async () => { await act(async () => button("Confirm work has stopped…").click()); await act(async () => button("Work has stopped — close workspace").click()); };
 it("requires closed admission and one explicit confirmation, then recovers every reviewed lease and the original Close", async () => {
@@ -64,4 +64,39 @@ it("explains the sandbox source protection before asking for external-exit confi
   expect(button("Confirm work has stopped…").disabled).toBe(true);
   expect(container.textContent).toContain("Delete the sandboxes using these sources");
   expect(developmentRequest).not.toHaveBeenCalled();
+});
+
+it.each([false, true])("retires lost Close acknowledgements before a new cycle (remount: %s)", async remount => {
+  await render();
+  vi.mocked(developmentRequest).mockResolvedValueOnce({}).mockResolvedValueOnce({}).mockRejectedValueOnce(new Error("Close response lost"));
+  await confirm();
+  const oldRequests = vi.mocked(developmentRequest).mock.calls.slice(0, 2).map(([, body]) => body?.requestId);
+  if (remount) { await act(async () => root.unmount()); root = createRoot(container); }
+  // The server receipt arrives independently of the lost HTTP response.
+  await render("closed", [{ ...tree, leases: [] }], null);
+  expect(localStorage.getItem("hosty.workspace.close-recovery.workspace")).toBeNull();
+  await render("open", [tree], null);
+  const next = { ...close, requestId: "next-close", expectedRevision: 7 };
+  await render("closing", [tree], next);
+  expect(button("Retry closing")).toBeUndefined();
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  vi.mocked(developmentRequest).mockImplementation(async path => path?.endsWith("/workflow/close") ? { closure: "closed" } as never : {} as never);
+  await confirm();
+  expect(vi.mocked(developmentRequest).mock.calls.slice(3, 5).every(([, body]) => !oldRequests.includes(body?.requestId))).toBe(true);
+  expect(developmentRequest).toHaveBeenLastCalledWith("/workspace/workflow/close", { requestId: "next-close", expectedRevision: 7 });
+});
+it("ignores an older persisted batch when a new Close is already in progress", async () => {
+  await render(); vi.mocked(developmentRequest).mockRejectedValueOnce(new Error("Offline")); await confirm();
+  await act(async () => root.unmount()); root = createRoot(container);
+  await render("closing", [tree], { ...close, requestId: "new-close", expectedRevision: 8 });
+  expect(button("Retry closing")).toBeUndefined();
+  expect(button("Confirm work has stopped…").disabled).toBe(false);
+  expect(localStorage.getItem("hosty.workspace.close-recovery.workspace")).toBeNull();
+});
+it("preserves an uncertain batch while the parent temporarily lacks a Close request", async () => {
+  await render(); vi.mocked(developmentRequest).mockRejectedValueOnce(new Error("Offline")); await confirm();
+  const journal = localStorage.getItem("hosty.workspace.close-recovery.workspace");
+  await render("closing", [tree], null);
+  expect(localStorage.getItem("hosty.workspace.close-recovery.workspace")).toBe(journal);
+  await render(); expect(button("Retry closing")).toBeDefined();
 });

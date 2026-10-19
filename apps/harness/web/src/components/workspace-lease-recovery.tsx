@@ -1,5 +1,5 @@
 "use client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogHeader, DialogFooter } from "@/components/ui/dialog";
@@ -16,14 +16,32 @@ function readBatch(key: string): Batch | null {
       && Array.isArray(v.leases) && v.leases.every(validRecovery) ? v : null;
   } catch { return null; }
 }
+function retired(batch: Batch | null, closure: string | null | undefined, closeId: string | undefined) {
+  return closure === "closed" || !!(batch && closeId && batch.close.requestId !== closeId);
+}
 export function WorkspaceLeaseRecovery({ workspaceId, trees, closure, closeRequest, disabled, refresh, onClosed, onBusyChange }: {
   workspaceId: string; trees: Worktree[]; closure?: string | null; closeRequest: CloseRequest | null;
   disabled: boolean; refresh: () => void; onClosed: (value: Workflow) => void; onBusyChange: (busy: boolean) => void;
 }) {
   const key = `hosty.workspace.close-recovery.${workspaceId}`;
-  const [pending, setPending] = useState<Batch | null>(() => readBatch(key));
-  const [review, setReview] = useState<Batch | null>(null);
-  const [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const [storedPending, setPending] = useState<Batch | null>(() => readBatch(key));
+  const [storedReview, setReview] = useState<Batch | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<{ closeId: string; message: string } | null>(null);
+  const closeId = closeRequest?.kind === "close" ? closeRequest.requestId : undefined;
+  const pending = retired(storedPending, closure, closeId) ? null : storedPending;
+  const review = retired(storedReview, closure, closeId) ? null : storedReview;
+  const error = failure?.closeId === closeId ? failure?.message : "";
+  useEffect(() => {
+    // A completed or superseded Close cannot own the next cycle's recovery journal.
+    // Missing props alone do not prove completion: preserve uncertain same-cycle requests.
+    try {
+      if (retired(readBatch(key), closure, closeId)) {
+        localStorage.removeItem(key);
+        localStorage.removeItem(`hosty.workspace.lease-recovery.${workspaceId}`);
+      }
+    } catch { /* Core receipts remain authoritative. */ }
+  }, [key, workspaceId, closure, closeId, storedPending]);
   const executing = useRef(false);
   const leases = trees.flatMap(tree => tree.leases.map(leaseId => ({ tree, leaseId })));
   const eligible = closeRequest?.kind === "close" && closure === "closing";
@@ -33,7 +51,7 @@ export function WorkspaceLeaseRecovery({ workspaceId, trees, closure, closeReque
   const observed = trees.length > 0 && trees.every(t => t.state === "active" && t.observation?.state === "ok" && t.observation.head && !t.detailError);
   const recover = async (batch: Batch) => {
     if (executing.current || !eligible || batch.close.requestId !== closeRequest?.requestId) return;
-    executing.current = true; setBusy(true); onBusyChange(true); setError(""); setPending(batch);
+    executing.current = true; setBusy(true); onBusyChange(true); setFailure(null); setPending(batch);
     try { localStorage.setItem(key, JSON.stringify(batch)); } catch { /* In-memory replay remains available. */ }
     try {
       // Replay successful releases too: Core atomically stores each release and its receipt.
@@ -46,7 +64,7 @@ export function WorkspaceLeaseRecovery({ workspaceId, trees, closure, closeReque
       try { localStorage.removeItem(key); localStorage.removeItem(`hosty.workspace.lease-recovery.${workspaceId}`); } catch { /* Core retains receipts. */ }
       onClosed(result);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setFailure({ closeId: batch.close.requestId, message: e instanceof Error ? e.message : String(e) });
       if (e instanceof DevelopmentRequestError && ["workspace_stale_head", "workspace_lease_invalid"].includes(e.code ?? "")) {
         setPending(null); setReview(null);
         try { localStorage.removeItem(key); localStorage.removeItem(`hosty.workspace.lease-recovery.${workspaceId}`); } catch { /* Keep memory authoritative. */ }
@@ -66,7 +84,7 @@ export function WorkspaceLeaseRecovery({ workspaceId, trees, closure, closeReque
         if (index < 0) requests.unshift(legacy); else requests[index] = legacy;
       }
     } catch { /* No legacy journal. */ }
-    setError(""); setReview({ close: closeRequest, leases: requests });
+    setFailure(null); setReview({ close: closeRequest, leases: requests });
   }
   if (!eligible || (!leases.length && !pending)) return null;
   return <section aria-label="Close external work" className="flex flex-col gap-3">

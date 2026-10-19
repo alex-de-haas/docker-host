@@ -134,6 +134,10 @@ browser recovery, restart, merged cleanup and unfinished-source protection. The 
 [legacy draft audit](../../reviews/2026-10-18-recovered-workspaces-draft.md) preserves the previously
 uncommitted Workspaces proposal without adopting its historical deliverables as current scope.
 
+A completed Close receipt or a different pending Close retires the browser's previous recovery
+batch. Resume followed by Close requires a new confirmation and new lease-recovery requests;
+transiently missing workflow data retains the original batch for same-cycle retry.
+
 ## Visible Sandbox Controls
 
 The workspace panel shows its named child Core sandboxes and app sandboxes before repository
@@ -146,7 +150,9 @@ and ordinary application data.
 Workspace-scoped POST `/{workspaceId}/environments/{id}/{start|stop|finish}` and
 `/{workspaceId}/sandboxes/{id}/{start|stop|dispose}` routes use the existing inspection identity,
 same-user workspace/source authorization, matching resource context and the reviewed resource
-management permission. They reuse the existing lifecycle engines. Closed workspaces reject fresh
+management permission. Fresh or retryable starts also require the calling app's current
+`apps.sources.full` grant; observing a successful receipt and stopping/removing resources remain
+available without that grant. They reuse the existing lifecycle engines. Closed workspaces reject fresh
 starts while retained-resource Stop/Delete and terminal request replay remain available. New starts
 and cleanup serialize with workspace resource admission.
 

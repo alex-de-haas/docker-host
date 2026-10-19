@@ -16,7 +16,7 @@ public sealed partial class CoreLifecycleServiceTests
         var controls = new WorkspaceCleanupService(f.Paths, inspection, workspaces, null!, f.Apps, store, environments,
             new(store, environments), null!, null!, null!);
         var app = (await f.Apps.GetAppAsync(SourceTestApp))!;
-        await f.Apps.UpsertAppAsync(app with { GrantedCorePermissions = [CoreAppPermissions.CoreEnvironmentsManage] });
+        await f.Apps.UpsertAppAsync(app with { GrantedCorePermissions = [CoreAppPermissions.CoreEnvironmentsManage, CoreAppPermissions.Sources] });
         var child = await environments.CreateAsync(new("admin"), new(Guid.NewGuid().ToString(), "Retained test data",
             Context: new(WorkspaceId: tree.WorkspaceId), WorktreeIds: [tree.Id]), default);
         Assert.True((await inspection.ReadAsync(tree.WorkspaceId, tree.Id, "admin", default)).HasSandboxConsumers);
@@ -72,6 +72,99 @@ public sealed partial class CoreLifecycleServiceTests
             child.Id, "finish", new(Guid.NewGuid().ToString(), boundary == "revision" ? 999 : child.Revision), default));
         Assert.Equal(expectedCode, error switch { AppIdentityException identity => identity.Code, SandboxException sandbox => sandbox.Code, _ => error?.GetType().Name });
         Assert.True(Directory.Exists(child.DataRoot)); Assert.Equal(0, runtime.Stops);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResourceControls_RequireCurrentSourceAuthorityForStartsButAllowReplayAndCleanup(bool appSandbox)
+    {
+        var (f, _) = await SourceFixtureAsync();
+        var workspaces = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var tree = await workspaces.PrepareAsync(ExternalOwner(), ExternalPrepare(), default);
+        var inspection = new WorkspaceInspectionService(workspaces, f.Apps, f.Clock);
+        var store = new CoreEnvironmentStore(f.Paths); var runtime = new ResourceControlRuntime();
+        var environments = new CoreEnvironmentService(store, runtime, f.Clock, workspaces);
+        var sandboxStore = new SandboxStore(f.Paths); var sandboxRuntime = new ResourceControlSandboxRuntime();
+        var sandboxes = new SandboxService(sandboxStore, new ResourceControlInputs(tree.Path), sandboxRuntime, f.Clock);
+        var controls = new WorkspaceCleanupService(f.Paths, inspection, workspaces, null!, f.Apps, store, environments,
+            new(store, environments), sandboxStore, sandboxes, new(sandboxes, new ResourceControlLifetime()));
+        var actor = new SandboxActor("admin");
+        string id; long revision;
+        if (appSandbox)
+        {
+            var plan = await sandboxes.PlanAsync(actor, new(SourceTestApp, "sandbox", new("worktree", tree.Id),
+                Context: new(WorkspaceId: tree.WorkspaceId)), default);
+            var instance = await sandboxes.PrepareAsync(actor, new(Guid.NewGuid().ToString(), plan.Id, plan.Digest), default);
+            id = instance.Id; revision = instance.Revision;
+        }
+        else
+        {
+            var child = await environments.CreateAsync(actor, new(Guid.NewGuid().ToString(), "Source authority",
+                Context: new(WorkspaceId: tree.WorkspaceId), WorktreeIds: [tree.Id]), default);
+            id = child.Id; revision = child.Revision;
+        }
+        var app = (await f.Apps.GetAppAsync(SourceTestApp))!;
+        var management = appSandbox ? CoreAppPermissions.SandboxesManage : CoreAppPermissions.CoreEnvironmentsManage;
+        Task Grant(bool source) => f.Apps.UpsertAppAsync(app with {
+            GrantedCorePermissions = source ? [management, CoreAppPermissions.Sources] : [management] });
+        async Task<(long Revision, string State)> Command(string action, string requestId, long expected)
+        {
+            if (appSandbox)
+            {
+                var result = await controls.SandboxCommandAsync(tree.WorkspaceId, "admin", SourceTestApp, id, action, new(requestId, expected), default);
+                return (result.Revision, result.State);
+            }
+            var child = await controls.EnvironmentCommandAsync(tree.WorkspaceId, "admin", SourceTestApp, id, action, new(requestId, expected), default);
+            return (child.Revision, child.State);
+        }
+        int Starts() => runtime.Starts + sandboxRuntime.Starts;
+        var request = Guid.NewGuid().ToString();
+        await Grant(false);
+        Assert.Equal("app_permission_required", (await Assert.ThrowsAsync<AppIdentityException>(() => Command("start", request, revision))).Code);
+        Assert.Equal(0, Starts());
+        await Grant(true);
+        var started = await Command("start", request, revision);
+        Assert.Equal(appSandbox ? "ready" : "running", started.State); Assert.Equal(1, Starts());
+        await Grant(false);
+        Assert.Equal(started, await Command("start", request, revision)); // Read-only success receipt survives revocation.
+        Assert.Equal("app_permission_required", (await Assert.ThrowsAsync<AppIdentityException>(() => Command("start", Guid.NewGuid().ToString(), started.Revision))).Code);
+        var stopped = await Command("stop", Guid.NewGuid().ToString(), started.Revision);
+        Assert.Equal("stopped", stopped.State);
+        Assert.Equal("app_permission_required", (await Assert.ThrowsAsync<AppIdentityException>(() => Command("start", Guid.NewGuid().ToString(), stopped.Revision))).Code);
+        var removed = await Command(appSandbox ? "dispose" : "finish", Guid.NewGuid().ToString(), stopped.Revision);
+        Assert.Equal(appSandbox ? "disposed" : "finished", removed.State); Assert.Equal(1, Starts());
+        Assert.True(Directory.Exists(tree.Path));
+    }
+
+    private sealed class ResourceControlInputs(string source) : ISandboxInputs
+    {
+        public Task<SandboxResolvedInput> ResolveAsync(SandboxActor actor, SandboxPlanRequest request, CancellationToken ct)
+        {
+            var digest = new string('a', 64);
+            return Task.FromResult(new SandboxResolvedInput(request.AppId, DateTimeOffset.UnixEpoch, digest,
+                new(new RuntimeAppManifest { Id = request.AppId }, "/reviewed/manifest.json", digest,
+                    new() { Key = request.Profile, Type = "docker" }, [], null, "{}", null),
+                source, ["admin"], [], new Dictionary<string, string>(), true));
+        }
+        public Task AcquireAsync(SandboxInstance instance, CancellationToken ct) => Task.CompletedTask;
+        public Task ReleaseAsync(SandboxInstance instance, CancellationToken ct) => Task.CompletedTask;
+    }
+    private sealed class ResourceControlSandboxRuntime : ISandboxRuntime
+    {
+        public int Starts;
+        public Task<SandboxRuntimeStart> StartAsync(SandboxInstance instance, Func<SandboxResource, Task> record, CancellationToken ct)
+        { Starts++; return Task.FromResult(new SandboxRuntimeStart("http://sandbox.test", "http://auth.sandbox.test", [])); }
+        public Task StopAsync(SandboxInstance instance, CancellationToken ct) => Task.CompletedTask;
+        public Task RemoveAsync(SandboxInstance instance, CancellationToken ct) => Task.CompletedTask;
+        public Task<string> ObserveAsync(SandboxInstance instance, CancellationToken ct) => Task.FromResult(instance.State);
+    }
+    private sealed class ResourceControlLifetime : Microsoft.Extensions.Hosting.IHostApplicationLifetime
+    {
+        public CancellationToken ApplicationStarted => default;
+        public CancellationToken ApplicationStopping => default;
+        public CancellationToken ApplicationStopped => default;
+        public void StopApplication() { }
     }
 
     private sealed class ResourceControlRuntime : ICoreEnvironmentRuntime

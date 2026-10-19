@@ -15,6 +15,7 @@ internal sealed partial class WorkspaceCleanupService
         var requestId = CoreEnvironmentService.RequestId(input.RequestId);
         // A terminal replay only observes its receipt. Fresh/retryable starts must pass admission.
         var replay = child.Operations?.Any(o => o.Id == requestId && o.State == "succeeded") == true;
+        if (action == "start" && !replay) await RequirePermission(caller, CoreAppPermissions.Sources, ct);
         return await workspaces.WithResourceContextAsync(new(userId), new(WorkspaceId: workspaceId),
             () => environmentService.CommandAsync(new(userId), id, action, input, ct), ct,
             cleanup: action != "start" || replay);
@@ -31,6 +32,7 @@ internal sealed partial class WorkspaceCleanupService
         if (!Belongs(instance.Owner, instance.Context, owner, workspaceId))
             throw new SandboxException("sandbox_not_found", "This sandbox does not belong to the selected workspace.", 404);
         var replay = instance.Operations.Any(o => o.Id == input.RequestId && o.State == "succeeded");
+        if (action == "start" && !replay) await RequirePermission(caller, CoreAppPermissions.Sources, ct);
         return await workspaces.WithResourceContextAsync(new(userId), new(WorkspaceId: workspaceId),
             () => sandboxOperations.CommandAsync(new(userId), id, action, input, ct), ct,
             cleanup: action != "start" || replay);
