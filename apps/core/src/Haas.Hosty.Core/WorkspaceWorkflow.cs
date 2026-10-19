@@ -20,7 +20,7 @@ internal sealed partial class DevelopmentWorkspaceService
             if (trees.Any(w => w.Leases.Length > 0 || w.Operations.Any(o => o.State is "pending" or "unknown")))
                 throw Error("busy", "Stop active source work and recover pending or unknown Git operations before checking or restarting this preview.");
             var workflow = await WorkflowAsync(owner, ct);
-            if (workflow.Closure is not null || workflow.State is "deleting" or "deleted")
+            if (workflow.Closure is not null || workflow.State is "deferred" or "deleting" or "deleted")
                 throw Error("workflow_closed", "Recover workspace closure before running preview actions.");
             return await action();
         }, ct);
@@ -33,11 +33,18 @@ internal sealed partial class DevelopmentWorkspaceService
         var tree = (await ListAsync(null, true, ct)).Workspaces.FirstOrDefault(w => w.Owner.UserId == actor.UserId &&
             (context?.WorkspaceId == w.WorkspaceId || !w.Owner.IsExternal && context?.SessionId == w.Owner.SessionId
                 && actor.AppId == w.Owner.AppId && actor.Installation == w.Owner.Installation));
-        if (tree is null) return await action();
-        return await Locked("workspace-resources-" + tree.WorkspaceId, async () =>
+        if (tree is null && context?.WorkspaceId is null) return await action();
+        var workspaceId = tree?.WorkspaceId ?? context!.WorkspaceId!;
+        Id(workspaceId);
+        return await Locked("workspace-resources-" + workspaceId, async () =>
         {
-            var workflow = await WorkflowAsync(tree.Owner, ct);
-            if (!cleanup && (workflow.Closure is not null || workflow.State is "deleting" or "deleted"))
+            if (!cleanup)
+            {
+                if (tree is null) throw Error("not_found", "Workspace no longer exists.");
+                await Read(tree.Id, tree.Owner, ct);
+            }
+            var workflow = tree is null ? new WorkspaceWorkflow() : await WorkflowAsync(tree.Owner, ct);
+            if (!cleanup && (workflow.Closure is not null || workflow.State is "deferred" or "deleting" or "deleted"))
                 throw Error("workflow_closed", "This workspace is closing, closed or being deleted. Resume retained source before creating new previews.");
             return await action();
         }, ct);
@@ -54,22 +61,26 @@ internal sealed partial class DevelopmentWorkspaceService
     private async Task RequireOpenWorkflow(WorkspaceOwner owner, CancellationToken ct)
     {
         var workflow = await WorkflowAsync(owner, ct);
-        if (workflow.State != "in-progress" || workflow.Closure is not null)
+        if (await ReadDeletionAsync(WorkspaceIdFor(owner), ct) is not null || workflow.State != "in-progress" || workflow.Closure is not null)
             throw Error("workflow_closed", "Resume the workspace before starting source work.");
     }
-    // Called under the same owner lock as every managed source mutation and observation.
-    private async Task InvalidateCompletion(DevelopmentWorkspace tree, CancellationToken ct)
+    internal static bool IsPauseAction(string kind) => kind is "pause" or "close" or "defer";
+    internal static bool IsBackgroundActive(WorkspaceWorkflow state)
+        => state.State == "in-progress" && state.Closure is null;
+
+    // Metadata only: explicit observation and lifecycle verification do not use this filter.
+    internal async Task<bool> CanObserveInBackgroundAsync(string id, CancellationToken ct)
     {
-        var state = await WorkflowAsync(tree.Owner, ct);
-        if (state.State == "completed" && tree.Observation is { State: "ok" } o &&
-            (o.Local?.Files.Count > 0 || o.Conflict || state.Heads?.GetValueOrDefault(tree.Id) != o.Head))
-            await SaveWorkflow(tree.Owner, state with { State = "in-progress", Revision = state.Revision + 1, CompletedAt = null, ChangedBy = "source-observer" });
+        if (!await CanObservePublicationAsync(id, ct)) return false;
+        var tree = await Read(id, null, ct);
+        return IsBackgroundActive(await WorkflowAsync(tree.Owner, ct));
     }
+
     internal Task<WorkspaceWorkflow> ChangeWorkflowAsync(WorkspaceOwner owner, string actor,
         string kind, WorkspaceWorkflowCommand input, IReadOnlyDictionary<string, string> mergedHeads, CancellationToken ct, bool prepareOnly = false)
         // Resource allocation takes this gate before the source-owner gate when attaching a
         // consumer. Close uses the same order so already-admitted previews finish before fencing.
-        => kind == "close"
+        => IsPauseAction(kind)
             ? Locked("workspace-resources-" + Hash("workspace\n" + OwnerIdentity(owner)),
                 () => ChangeWorkflowUnderOwnerLockAsync(owner, actor, kind, input, mergedHeads, ct, prepareOnly), ct)
             : ChangeWorkflowUnderOwnerLockAsync(owner, actor, kind, input, mergedHeads, ct, prepareOnly);
@@ -79,7 +90,7 @@ internal sealed partial class DevelopmentWorkspaceService
         => await Locked(Hash(OwnerIdentity(owner)), async () =>
         {
             RequestId(input.RequestId);
-            if (kind is not ("complete" or "resume" or "defer" or "delete" or "close")) throw Error("operation_invalid", "Unknown workspace workflow action.");
+            if (kind is not ("complete" or "resume" or "pause" or "defer" or "delete" or "close")) throw Error("operation_invalid", "Unknown workspace workflow action.");
             var state = await WorkflowAsync(owner, ct);
             var prior = state.Operations?.FirstOrDefault(o => o.Id == input.RequestId);
             if (prior is not null)
@@ -100,16 +111,24 @@ internal sealed partial class DevelopmentWorkspaceService
             }
             var trees = all.ToArray();
             if (trees.Length == 0) throw Error("not_found", "There is no workspace to complete.");
-            if (kind == "close") return await CloseWorkflow(owner, actor, input, state, trees, prepareOnly, ct);
+            if (IsPauseAction(kind)) return await CloseWorkflow(owner, actor, kind, input, state, trees, prepareOnly, ct);
             if (trees.Any(w => w.Operations.Any(o => o.State is "pending" or "unknown" && o.Kind != "cleanup")))
                 throw Error("operation_pending", "Resolve outstanding source operations before changing workspace state.");
             if (trees.Any(w => w.Leases.Length > 0)) throw Error("in_use", "An agent still holds an activity lease. Stop it and verify its exit first.");
             if (kind == "resume")
             {
                 if (trees.Any(w => w.State != "active")) throw Error("released", "Released source requires a new workspace.");
+                foreach (var tree in trees)
+                {
+                    // Resume permits unfinished/conflicted work, but never trusts a cached
+                    // observation or silently reopens missing/replaced source.
+                    await ValidateTree(tree, ct);
+                    await Fetch(RepoPath(tree.RepositoryId), tree.Repository, tree.TargetBranch, ct, await WorkspaceGrantAsync(tree, ct));
+                    if ((await Observe(tree, ct)).Observation?.State != "ok")
+                        throw Error("unavailable", "The full workspace status could not be read. Source remains paused.");
+                }
                 state = state with { State = "in-progress", CompletedAt = null, Heads = null, Closure = null };
             }
-            else if (kind == "defer") state = state with { State = "deferred", CompletedAt = null, Heads = null };
             else
             {
                 if (kind == "delete" && state.State is not ("completed" or "deleting"))

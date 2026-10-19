@@ -13,28 +13,30 @@ const tree: Worktree = { id: "tree", workspaceId: "workspace", repository: "http
 const close = { kind: "close", requestId: "original-close", expectedRevision: 3 };
 const render = async (closure = "closing", trees = [tree], request: typeof close | null = close) => act(async () => root.render(<WorkspaceLeaseRecovery workspaceId="workspace" trees={trees} closure={closure} closeRequest={request} disabled={false} refresh={() => {}} onClosed={closed} onBusyChange={changed} />));
 const button = (text: string) => [...document.querySelectorAll("button")].find(b => b.textContent === text)!;
-const confirm = async () => { await act(async () => button("Confirm work has stopped…").click()); await act(async () => button("Work has stopped — close workspace").click()); };
+const confirm = async () => { await act(async () => button("Confirm work has stopped…").click()); await act(async () => button("Work has stopped — pause workspace").click()); };
 it("requires closed admission and one explicit confirmation, then recovers every reviewed lease and the original Close", async () => {
   await render("open"); expect(container.textContent).toBe(""); expect(developmentRequest).not.toHaveBeenCalled();
   await render(); await act(async () => button("Confirm work has stopped…").click());
   expect(developmentRequest).not.toHaveBeenCalled();
-  vi.mocked(developmentRequest).mockImplementation(async path => path?.endsWith("/workflow/close") ? { closure: "closed" } as never : {} as never);
-  await act(async () => button("Work has stopped — close workspace").click());
+  vi.mocked(developmentRequest).mockImplementation(async path => path?.includes("/workflow/") ? { closure: "closed" } as never : {} as never);
+  await act(async () => button("Work has stopped — pause workspace").click());
   expect(developmentRequest).toHaveBeenNthCalledWith(1, "/workspace/worktrees/tree/recover-lease", expect.objectContaining({ leaseId: "lease", expectedHead: "head", consumerExitConfirmed: true }));
   expect(developmentRequest).toHaveBeenNthCalledWith(2, "/workspace/worktrees/tree/recover-lease", expect.objectContaining({ leaseId: "second" }));
   expect(developmentRequest).toHaveBeenNthCalledWith(3, "/workspace/workflow/close", { requestId: "original-close", expectedRevision: 3 });
   expect(closed).toHaveBeenCalledWith({ closure: "closed" });
 });
-it("replays partial recovery across remount and never replaces the original Close or releases newly observed leases", async () => {
+it.each(["pause", "close", "defer"])("replays partial %s recovery without changing the action or releasing newly observed leases", async kind => {
+  const request = { ...close, kind };
   localStorage.setItem("hosty.workspace.action.workspace", JSON.stringify(close));
   vi.mocked(developmentRequest).mockResolvedValueOnce({}).mockRejectedValueOnce(new Error("Response lost"));
-  await render(); await confirm();
+  await render("closing", [tree], request); await confirm();
   const original = vi.mocked(developmentRequest).mock.calls.slice();
   await act(async () => root.unmount()); root = createRoot(container);
-  await render("closing", [{ ...tree, leases: ["second", "unreviewed"] }]);
-  vi.mocked(developmentRequest).mockImplementation(async path => path?.endsWith("/workflow/close") ? { closure: "closed" } as never : {} as never);
-  await act(async () => button("Retry closing").click());
+  await render("closing", [{ ...tree, leases: ["second", "unreviewed"] }], request);
+  vi.mocked(developmentRequest).mockImplementation(async path => path?.includes("/workflow/") ? { closure: "closed" } as never : {} as never);
+  await act(async () => button("Retry pausing").click());
   expect(vi.mocked(developmentRequest).mock.calls.slice(2, 4)).toEqual(original);
+  expect(developmentRequest).toHaveBeenLastCalledWith(`/workspace/workflow/${kind}`, { requestId: close.requestId, expectedRevision: close.expectedRevision });
   expect(vi.mocked(developmentRequest).mock.calls.some(([, body]) => body?.leaseId === "unreviewed")).toBe(false);
   expect(localStorage.getItem("hosty.workspace.action.workspace")).toBe(JSON.stringify(close));
   expect(localStorage.getItem("hosty.workspace.close-recovery.workspace")).toBeNull();
@@ -42,8 +44,8 @@ it("replays partial recovery across remount and never replaces the original Clos
 it("retries lost Close acknowledgement even when all leases are already gone", async () => {
   await render(); vi.mocked(developmentRequest).mockResolvedValueOnce({}).mockResolvedValueOnce({}).mockRejectedValueOnce(new Error("Close response lost")); await confirm();
   await act(async () => root.unmount()); root = createRoot(container); await render("closing", [{ ...tree, leases: [] }]);
-  vi.mocked(developmentRequest).mockImplementation(async path => path?.endsWith("/workflow/close") ? { closure: "closed" } as never : {} as never);
-  await act(async () => button("Retry closing").click()); expect(closed).toHaveBeenCalled();
+  vi.mocked(developmentRequest).mockImplementation(async path => path?.includes("/workflow/") ? { closure: "closed" } as never : {} as never);
+  await act(async () => button("Retry pausing").click()); expect(closed).toHaveBeenCalled();
   expect(vi.mocked(developmentRequest).mock.calls[5]).toEqual(["/workspace/workflow/close", { requestId: "original-close", expectedRevision: 3 }]);
 });
 it("requires a fresh confirmation after stale HEAD and blocks known runtime consumers", async () => {
@@ -78,9 +80,9 @@ it.each([false, true])("retires lost Close acknowledgements before a new cycle (
   await render("open", [tree], null);
   const next = { ...close, requestId: "next-close", expectedRevision: 7 };
   await render("closing", [tree], next);
-  expect(button("Retry closing")).toBeUndefined();
+  expect(button("Retry pausing")).toBeUndefined();
   expect(document.querySelector('[role="dialog"]')).toBeNull();
-  vi.mocked(developmentRequest).mockImplementation(async path => path?.endsWith("/workflow/close") ? { closure: "closed" } as never : {} as never);
+  vi.mocked(developmentRequest).mockImplementation(async path => path?.includes("/workflow/") ? { closure: "closed" } as never : {} as never);
   await confirm();
   expect(vi.mocked(developmentRequest).mock.calls.slice(3, 5).every(([, body]) => !oldRequests.includes(body?.requestId))).toBe(true);
   expect(developmentRequest).toHaveBeenLastCalledWith("/workspace/workflow/close", { requestId: "next-close", expectedRevision: 7 });
@@ -89,7 +91,7 @@ it("ignores an older persisted batch when a new Close is already in progress", a
   await render(); vi.mocked(developmentRequest).mockRejectedValueOnce(new Error("Offline")); await confirm();
   await act(async () => root.unmount()); root = createRoot(container);
   await render("closing", [tree], { ...close, requestId: "new-close", expectedRevision: 8 });
-  expect(button("Retry closing")).toBeUndefined();
+  expect(button("Retry pausing")).toBeUndefined();
   expect(button("Confirm work has stopped…").disabled).toBe(false);
   expect(localStorage.getItem("hosty.workspace.close-recovery.workspace")).toBeNull();
 });
@@ -98,5 +100,5 @@ it("preserves an uncertain batch while the parent temporarily lacks a Close requ
   const journal = localStorage.getItem("hosty.workspace.close-recovery.workspace");
   await render("closing", [tree], null);
   expect(localStorage.getItem("hosty.workspace.close-recovery.workspace")).toBe(journal);
-  await render(); expect(button("Retry closing")).toBeDefined();
+  await render(); expect(button("Retry pausing")).toBeDefined();
 });

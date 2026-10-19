@@ -175,7 +175,7 @@ Plans: 11 In Progress · 1 Blocked · 39 Draft · 7 On Hold.
 - [Isolated User Agent Sessions](features/user-agent-sessions/plan.md) — Deferred non-admin agent conversations with verified execution isolation and MCP calls limited to the acting user's current rights. · On Hold, 0/6, updated 2026-10-10
 - [User Management](features/user-management/feature.md) — Administrators invite, disable, delete and assign app access to Host users from the Shell User Management view.
 - [User Profile And Provider Connections](features/user-profile-connections/feature.md) — Shell manages personal GitHub accounts and Git identity through Core-owned connections and narrow app permissions.
-- [Workspace Lifecycle Controls](features/workspace-lifecycle-controls/feature.md) — Core coordinates recoverable workspace closure, verifies completion and cleans up owned sandboxes and merged worktrees without discarding unfinished changes.
+- [Workspace Lifecycle Controls](features/workspace-lifecycle-controls/feature.md) — Core coordinates recoverable workspace pause, suspends inactive source observation, verifies completion and deletes merged workspaces without discarding unfinished changes.
 - [Workspaces App](features/workspaces-app/feature.md) — Workspace and source inspection, pull-request evidence, and optional child Core sandbox creation, preview and lifecycle controls.
 
 <!-- docs-index:end -->
