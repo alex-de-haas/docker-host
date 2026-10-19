@@ -31,6 +31,10 @@ internal static class WorkspaceInspectionEndpoints
             context.HttpContext.Response.Headers.CacheControl = "no-store";
             return await next(context);
         });
+        routes.MapGet("/events", (string appId, HttpRequest request, HttpResponse response,
+            WorkspaceInspectionAuthorization auth, WorkspaceInspectionService service, CoreEventHub events,
+            IHostApplicationLifetime lifetime, CancellationToken ct) =>
+            WorkspaceInspectionStream.RunAsync(appId, request, response, auth, service, events, lifetime, ct));
         routes.MapGet("", async (string appId, HttpRequest request, WorkspaceInspectionAuthorization auth,
             WorkspaceInspectionService service, CancellationToken ct) =>
             await Handle(async () => await service.ListAsync(await auth.RequireAsync(request, appId, ct), ct)));
@@ -69,7 +73,7 @@ internal static class WorkspaceInspectionEndpoints
             }));
         routes.MapGet("/{workspaceId}/worktrees/{id}", async (string appId, string workspaceId, string id, HttpRequest request,
             WorkspaceInspectionAuthorization auth, WorkspaceInspectionService service, CancellationToken ct) =>
-            await Handle(async () => await service.ReadAsync(workspaceId, id, await auth.RequireAsync(request, appId, ct), ct)));
+            await Handle(async () => await service.ReadAsync(workspaceId, id, await auth.RequireAsync(request, appId, ct), ct, request.Query["refresh"] == "true")));
         routes.MapPost("/{workspaceId}/worktrees/{id}/recover-lease", async (string appId, string workspaceId, string id,
             WorkspaceLeaseRecovery input, HttpRequest request, WorkspaceInspectionAuthorization auth,
             WorkspaceInspectionService service, AuditStore audit, IClock clock, CancellationToken ct) =>

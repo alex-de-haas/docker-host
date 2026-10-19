@@ -7,6 +7,10 @@ components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 
 # Harness Development UI
 
+Workspace inventory and source details use [Core observation events and a shared SSE stream](../workspace-event-observation/feature.md).
+The Source workspaces panel shares that stream. Reconnect and visibility restoration resynchronize;
+idle views issue no periodic Git reads. Explicit refresh and lifecycle actions retain fresh checks.
+
 ## Navigation And Conversation
 
 Harness exposes `/development` as its entrypoint and a Shell navigation entry. `/assistant` remains
@@ -359,7 +363,7 @@ Core-managed Harness stop/start. The text draft, selected session and two worktr
 Stopped Harness is shown as unavailable in Shell. The test then gracefully stops only the fixture
 Core with keep-apps and starts the same built project/data root again. Its process identity changes
 from PID 58531 to 55220; the factual launch remains dev with the expected worktree project. During
-the outage the browser shows Cannot reach Hosty. Retry revalidates access; inventory polling restores
+the outage the browser shows Cannot reach Hosty. Retry revalidates access; inventory stream resynchronization restores
 names, source observations and workspace controls, retaining the conversation/draft/attachment.
 The session inventory remains three idle sessions throughout; presentation changes start no run.
 

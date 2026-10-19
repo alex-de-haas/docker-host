@@ -134,23 +134,3 @@ internal static class DevelopmentWorkspaceEndpoints
         catch (AppLifecycleException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code == "workspace_not_found" ? 404 : ex.Code == "workspace_forbidden" ? 403 : 409); }
     }
 }
-
-internal sealed class DevelopmentWorkspaceObserver(DevelopmentWorkspaceService workspaces, ILogger<DevelopmentWorkspaceObserver> logger) : BackgroundService
-{
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(20));
-        do
-        {
-            try
-            {
-                foreach (var workspace in (await workspaces.ListAsync(null, false, stoppingToken)).Workspaces)
-                {
-                    try { await workspaces.ObserveAvailableAsync(workspace.Id, stoppingToken); }
-                    catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Cannot observe workspace {WorkspaceId}", workspace.Id); }
-                }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Cannot list development workspaces"); }
-        } while (await timer.WaitForNextTickAsync(stoppingToken));
-    }
-}

@@ -56,11 +56,13 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
   }, []);
   const [detailRefresh, setDetailRefresh] = useState(0);
   const detailVersion = workflowIsActive(state) ? workspace : `${workspace.id}:${state.revision}:${state.closure ?? ""}:${state.state}`;
-  const loadDetails = useEffectEvent((signal: AbortSignal) => Promise.all(workspace.worktrees.map(t =>
-    developmentRequest<Worktree>(`/${workspace.id}/worktrees/${t.id}`, undefined, signal))));
+  const refreshed = useRef(0);
+  const loadDetails = useEffectEvent((signal: AbortSignal, fresh: boolean) => Promise.all(workspace.worktrees.map(t =>
+    developmentRequest<Worktree>(`/${workspace.id}/worktrees/${t.id}${fresh ? "?refresh=true" : ""}`, undefined, signal))));
   useEffect(() => {
     const abort = new AbortController();
-    void loadDetails(abort.signal)
+    const fresh = refreshed.current !== detailRefresh; refreshed.current = detailRefresh;
+    void loadDetails(abort.signal, fresh)
       .then(values => { if (!abort.signal.aborted) { setTrees(values); setLoadError(""); } })
       .catch(e => { if (!abort.signal.aborted) { setTrees([]); setLoadError(e.message); } });
     return () => abort.abort();
@@ -124,7 +126,7 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
           <p className="truncate text-xs text-muted-foreground" title={tree.branch}>{tree.branch}</p>
           {tree.apps.length > 0 && <p className="text-xs text-muted-foreground">{tree.apps.map(app => app.name).join(" · ")}</p>}
           <p className="text-xs text-muted-foreground">{tree.observation?.at && Number.isFinite(Date.parse(tree.observation.at))
-            ? <>Observed <time dateTime={tree.observation.at}>{new Date(tree.observation.at).toLocaleString()}</time>{now - Date.parse(tree.observation.at) > 90000 ? " · Stale" : ""}</>
+            ? <>Observed <time dateTime={tree.observation.at}>{new Date(tree.observation.at).toLocaleString()}</time>{tree.observationHealth === "watching" ? " · Watching" : tree.observationHealth === "paused" ? " · Paused" : tree.observationHealth === "pending" ? " · Updating" : " · Observation recovering"}</>
             : "Observation unavailable"}</p>
           <button type="button" disabled={tree.state !== "active"} onClick={event => { diffTrigger.current = event.currentTarget; setDiffTree(tree.id); }} className="flex w-full flex-wrap items-center gap-2 rounded py-1 text-left text-sm hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring">
             <FileDiff className="size-4" />Changes {totals ? <><span className="ml-auto text-emerald-700 dark:text-emerald-400">+{totals.additions}</span><span className="text-red-600 dark:text-red-400">−{totals.deletions}</span></> : <span className="ml-auto text-xs text-muted-foreground">Statistics unavailable</span>}

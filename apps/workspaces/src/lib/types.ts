@@ -7,7 +7,7 @@ export type PullRequest = { url: string; publishedHead: string | null; unavailab
   at: string; state: string; head?: string; draft: boolean; mergeState?: string; reviewDecision?: string; unresolvedThreads: number;
   complete: boolean; error?: string; checks?: { name: string; state: string }[];
 } | null };
-export type Worktree = { id: string; workspaceId: string; repository: string; branch: string; targetBranch: string; originalBase: string;
+export type Worktree = { observationHealth?: string; observationRevision?: string; id: string; workspaceId: string; repository: string; branch: string; targetBranch: string; originalBase: string;
   integrationBase: string; path: string; state: string; apps: AppBinding[]; observation: Observation | null;
   sessionChanges: FileChange[]; operations: Operation[]; leases: string[]; pullRequests: PullRequest[]; consumers: { kind: string; reference: string }[];
   commits: { sha: string; author: string; at: string; subject: string }[]; commitsTruncated: boolean; detailError: string | null };

@@ -113,6 +113,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<NotificationService>();
         builder.Services.AddSingleton<AppSourceService>();
         builder.Services.AddSingleton<ISourceGitAccess>(sp => sp.GetRequiredService<PrivateSourceService>());
+        builder.Services.AddSingleton<WorkspaceObservationState>();
         builder.Services.AddSingleton<DevelopmentWorkspaceService>();
         builder.Services.AddSingleton<SourceRepositoryFetchCoordinator>();
         builder.Services.AddSingleton<WorkspaceInspectionService>();
