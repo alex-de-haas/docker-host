@@ -4,7 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogHeader, DialogFooter } from "@/components/ui/dialog";
 import { DevelopmentRequestError, developmentRequest } from "@/lib/development-api";
 type Request = { action: string; requestId: string; expectedRevision: number };
-type Resource = { id: string; state: string; revision: number; error?: string; operations?: { id: string; state: string; error?: string; message?: string }[] };
+type Operation = { id: string; state: string; error?: string; message?: string };
+type Resource = { id: string; state: string; revision: number; error?: string; operations?: Operation[] };
+// App-sandbox Start/Stop receipts are terminal; only Dispose supports same-ID recovery.
+const terminalFailure = (kind: string, request: Request | null, operation?: Operation) =>
+  kind === "sandboxes" && ["start", "stop"].includes(request?.action ?? "") && operation?.state === "failed";
 function read(key: string): Request | null {
   try { const v = JSON.parse(localStorage.getItem(key) ?? "null"); return v && ["start", "stop", "finish", "dispose"].includes(v.action)
     && typeof v.requestId === "string" && Number.isSafeInteger(v.expectedRevision) ? v : null; } catch { return null; }
@@ -18,7 +22,9 @@ export function WorkspaceResourceActions({ workspaceId, kind, resource, label, c
   const [stored, setStored] = useState<Request | null>(() => read(key));
   const [confirm, setConfirm] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState("");
   const executing = useRef(false);
-  const done = stored && resource.operations?.some(o => sameId(o.id, stored.requestId) && o.state === "succeeded");
+  const observed = stored ? resource.operations?.find(o => sameId(o.id, stored.requestId)) : undefined;
+  const failed = terminalFailure(kind, stored, observed);
+  const done = observed?.state === "succeeded" || failed;
   const pending = done ? null : stored;
   const inFlight = resource.operations?.some(o => ["pending", "running"].includes(o.state));
   useEffect(() => { if (done) { try { localStorage.removeItem(key); } catch { /* Core has the receipt. */ } } }, [done, key]);
@@ -30,7 +36,8 @@ export function WorkspaceResourceActions({ workspaceId, kind, resource, label, c
       const { action, ...body } = request;
       const result = await developmentRequest<Resource>(`/${workspaceId}/${kind}/${resource.id}/${action}`, body);
       const operation = result.operations?.find(o => sameId(o.id, request.requestId));
-      if (operation?.state === "succeeded") {
+      if (operation?.state === "succeeded" || terminalFailure(kind, request, operation)) {
+        if (operation?.state === "failed") setError(operation.message ?? operation.error ?? "The action failed. Inspect the sandbox state before choosing a new action.");
         setStored(null); setConfirm(false);
         try { localStorage.removeItem(key); } catch { /* The receipt remains available in Core. */ }
       } else if (["failed", "unknown"].includes(operation?.state ?? "")) {
@@ -40,7 +47,7 @@ export function WorkspaceResourceActions({ workspaceId, kind, resource, label, c
       setError(e instanceof Error ? e.message : String(e));
       // A revision refusal happens before admission. Never silently retry a destructive action
       // against a new revision: refresh and ask for a new action instead.
-      if (e instanceof DevelopmentRequestError && ["environment_revision_conflict", "sandbox_revision_conflict"].includes(e.code ?? "")) {
+      if (e instanceof DevelopmentRequestError && ["environment_revision_conflict", "sandbox_revision_stale"].includes(e.code ?? "")) {
         setStored(null); setConfirm(false);
         try { localStorage.removeItem(key); } catch { /* In-memory state is current. */ }
       }
@@ -61,7 +68,7 @@ export function WorkspaceResourceActions({ workspaceId, kind, resource, label, c
     {stopped && <p className="text-xs text-muted-foreground">Test data is retained. This sandbox still protects its workspace source until deleted.{!canStart && " Resume the workspace before starting it."}</p>}
     {(busy || inFlight) && <p role="status" className="text-xs">Sandbox operation in progress…</p>}
     {pending && !busy && <p className="text-xs text-muted-foreground">An action is unfinished or its response was lost. Retry continues the same request.</p>}
-    {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+    {(error || failed) && <p role="alert" className="text-xs text-destructive">{error || observed?.message || "The action failed. Inspect the sandbox state before choosing a new action."}</p>}
     <Dialog open={confirm} onOpenChange={open => { if (!busy) setConfirm(open); }}><DialogContent>
       <DialogHeader><DialogTitle>Delete sandbox “{label}”?</DialogTitle><DialogDescription>
         Stop this sandbox and permanently remove its test data and owned runtime resources. Workspace source files, commits and ordinary application data are preserved.

@@ -151,7 +151,10 @@ starts while retained-resource Stop/Delete and terminal request replay remain av
 and cleanup serialize with workspace resource admission.
 
 Harness retains each action's UUID and expected revision through an uncertain response or reload.
-Retry continues the original request. A definite revision conflict clears that unaccepted action
+Retry continues the original request. App-sandbox Start/Stop failures are terminal receipts: after
+Core confirms failure, Harness clears that request and offers fresh actions against the current
+revision. An uncertain response retains the original identity until its outcome is observed;
+Finish/Dispose recovery retains the accepted cleanup request. A definite revision conflict clears that unaccepted action
 and requires a new explicit deletion confirmation. Disposed app-sandbox receipts retain their
 workspace context so replay remains authorized after the instance directory is gone. Finished and
 disposed resources no longer appear as active previews.
