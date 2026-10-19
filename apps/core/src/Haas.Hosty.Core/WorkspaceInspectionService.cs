@@ -65,6 +65,15 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
         return await ReadAsync(workspaceId, id, userId, ct);
     }
 
+    public async Task<InspectedWorktree> RecoverLeaseAsync(string workspaceId, string id, string userId,
+        WorkspaceLeaseRecovery input, CancellationToken ct)
+    {
+        var owner = await WorkflowOwnerAsync(workspaceId, userId, ct);
+        var tree = await RequireAsync(workspaceId, id, userId, ct);
+        await workspaces.RecoverExternalLeaseAsync(tree.Id, owner, userId, input, ct);
+        return await ReadAsync(workspaceId, id, userId, ct);
+    }
+
     private async Task RequireSourceAsync(DevelopmentWorkspace tree, string userId, IReadOnlyList<AppRecord> installed, CancellationToken ct)
     {
         var repository = workspaces.LogicalRepositoryIdentity(tree.Repository);
