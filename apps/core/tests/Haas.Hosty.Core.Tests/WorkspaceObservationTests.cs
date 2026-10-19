@@ -217,6 +217,24 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public void WorkspaceEvents_ResourceSamplesAndUpdateChecksDoNotInvalidateInspection()
+    {
+        var events = new CoreEventHub();
+        using var workspace = events.Subscribe("admin", false, workspaces: true);
+        events.PublishAppEvent("resources.changed");
+        events.PublishAppEvent(CoreEventHub.AppUpdateCheckChanged, "app");
+        events.PublishAppEvent(CoreEventHub.FleetUpdateCheckChanged);
+        Assert.False(workspace.Reader.TryRead(out _));
+        events.PublishAppEvent(CoreEventHub.AppChanged, "app");
+        events.PublishAppEvent(CoreEventHub.AppRemoved, "app");
+        Assert.True(workspace.Reader.TryRead(out var changed));
+        Assert.True(workspace.Reader.TryRead(out var removed));
+        Assert.Equal(CoreEventHub.WorkspaceChanged, changed.Name);
+        Assert.Equal("*", changed.Data);
+        Assert.Equal(CoreEventHub.WorkspaceChanged, removed.Name);
+    }
+
+    [Fact]
     public void WorkspaceEvents_GenerationAndStreamOverflowPreserveRecoveryEvidence()
     {
         var events = new CoreEventHub();

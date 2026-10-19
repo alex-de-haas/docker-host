@@ -57,6 +57,31 @@ describe("shared workspace event stream", () => {
     expect(sync).toHaveBeenCalledTimes(3); expect(mock.fetch).toHaveBeenCalledTimes(3);
   });
 
+  it("loads older Core snapshots without periodic reads and adopts SSE after an upgrade", async () => {
+    const supported = mock.fetch.getMockImplementation()!;
+    mock.fetch.mockResolvedValue(new Response(null, { status: 404 }));
+    const sync = vi.fn(async () => {}), unavailable = vi.fn();
+    cleanup.push(subscribeWorkspaceEvents("/legacy", sync, unavailable));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(sync).toHaveBeenCalledTimes(1); expect(unavailable).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mock.fetch).toHaveBeenCalledTimes(3); expect(sync).toHaveBeenCalledTimes(1);
+    const refreshed = vi.fn(async () => {});
+    cleanup.push(subscribeWorkspaceEvents("/legacy", refreshed, unavailable));
+    await vi.advanceTimersByTimeAsync(0); expect(refreshed).toHaveBeenCalledTimes(1);
+    mock.fetch.mockImplementation(supported);
+    await vi.advanceTimersByTimeAsync(30_000); emit("stream.ready"); await vi.advanceTimersByTimeAsync(200);
+    expect(sync).toHaveBeenCalledTimes(2); expect(refreshed).toHaveBeenCalledTimes(2);
+  });
+
+  it("never treats a forbidden stream as legacy compatibility", async () => {
+    mock.fetch.mockResolvedValue(new Response(null, { status: 403 }));
+    const sync = vi.fn(async () => {}), unavailable = vi.fn();
+    cleanup.push(subscribeWorkspaceEvents("/forbidden", sync, unavailable));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(sync).not.toHaveBeenCalled(); expect(unavailable).toHaveBeenCalledTimes(1);
+  });
+
   it("detects a silent connection and removes source when access is revoked", async () => {
     const unavailable = vi.fn();
     cleanup.push(subscribeWorkspaceEvents("/events", vi.fn(async () => {}), unavailable));

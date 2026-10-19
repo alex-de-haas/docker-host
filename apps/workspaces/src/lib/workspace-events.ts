@@ -21,6 +21,7 @@ function connection(url: string) {
   let watchdog: ReturnType<typeof setTimeout> | undefined;
   let delay = 1000;
   let ready = false;
+  let legacy = false;
   const visible = () => document.visibilityState !== "hidden";
   async function sync(listener: Listener) {
     if (listener.disposed) return;
@@ -43,10 +44,21 @@ function connection(url: string) {
   }
   async function open() {
     if (!listeners.size || !visible() || controller) return;
-    const active = new AbortController(); controller = active; ready = false;
+    const active = new AbortController(); controller = active;
+    let fallback = false;
     touch();
     try {
       const response = await appFetch(url, { signal: active.signal, cache: "no-store", headers: { Accept: "text/event-stream" } });
+      if (response.status === 404 || response.status === 405) {
+        // Independently upgraded clients still read older Core versions. Periodic capability
+        // probes do not reload snapshots; entry, manual refresh and visibility restore do.
+        fallback = true; ready = true; delay = 1000;
+        if (!legacy) changed();
+        legacy = true;
+        await response.body?.cancel();
+        return;
+      }
+      legacy = false; ready = false;
       if (!response.ok || !response.body || !response.headers.get("content-type")?.includes("text/event-stream")) throw new Error("Workspace stream unavailable");
       const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
       try {
@@ -67,19 +79,22 @@ function connection(url: string) {
     } catch { /* Reconnect with the app's current credential; never retain source after lost authority. */ }
     finally {
       if (controller === active) {
-        controller = undefined; ready = false; clearTimeout(watchdog);
+        controller = undefined; clearTimeout(watchdog);
         if (listeners.size && visible()) {
-          clearTimeout(debounce); debounce = undefined;
-          for (const listener of listeners) { listener.queued = false; listener.unavailable(); }
-          retry = setTimeout(() => { retry = undefined; void open(); }, delay);
-          delay = Math.min(delay * 2, 30_000);
+          if (!fallback) {
+            ready = false; legacy = false;
+            clearTimeout(debounce); debounce = undefined;
+            for (const listener of listeners) { listener.queued = false; listener.unavailable(); }
+          }
+          retry = setTimeout(() => { retry = undefined; void open(); }, fallback ? 30_000 : delay);
+          if (!fallback) delay = Math.min(delay * 2, 30_000);
         }
       }
     }
   }
   function stop() {
     clearTimeout(retry); retry = undefined; clearTimeout(watchdog); clearTimeout(debounce); debounce = undefined;
-    const active = controller; controller = undefined; ready = false; active?.abort();
+    const active = controller; controller = undefined; ready = false; legacy = false; active?.abort();
   }
   function visibility() { stop(); if (visible()) void open(); }
   function pageShow() { visibility(); }

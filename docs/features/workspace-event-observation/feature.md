@@ -55,6 +55,9 @@ single-flight reads; another hint during a read retains a follow-up. Disconnect 
 retries with bounded backoff and resynchronizes on `stream.ready`. Visibility restoration and
 page restoration reopen the stream; a silent connection times out after 45 seconds. Unmounting the
 last consumer releases the connection and listeners. PR-only hints do not reread an unchanged diff.
+Clients connected to an older Core without the stream use entry/manual/visibility reads. A 30-second
+capability probe upgrades the connection to SSE when available; it does not reload Git snapshots.
+Resource samples and app-update checks do not invalidate workspace inspection.
 The local freshness label reports watcher health instead of declaring a quiet worktree stale merely
 because its observation timestamp is old. Remote PR freshness remains separately timestamped.
 

@@ -95,7 +95,7 @@ internal sealed class CoreEventHub
     // session would leak the existence of apps a user was never assigned.
     public void PublishAppEvent(string name, string? appId = null)
     {
-        PublishWorkspaceChange("*");
+        if (name is AppChanged or AppRemoved) PublishWorkspaceChange("*");
         CoreEventSubscription[] targets;
         lock (gate)
         {
