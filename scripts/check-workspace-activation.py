@@ -23,7 +23,13 @@ remote = base / 'fixture-source'
 cli = workspace / ('apps/cli/src/Haas.Hosty.Cli/bin/Debug/net10.0/hosty' + suffix)
 core = workspace / ('apps/core/src/Haas.Hosty.Core/bin/Debug/net10.0/hosty-core' + suffix)
 project = 'apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj'
-env = {k: os.environ[k] for k in ['PATH','HOME','TMPDIR','TMP','TEMP','DOTNET_ROOT','LANG','SystemRoot','COMSPEC','USERPROFILE','LOCALAPPDATA','APPDATA'] if k in os.environ}
+# Keep native SDK OS-directory discovery while excluding credentials and provider configuration.
+env = {k: os.environ[k] for k in [
+    'PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'DOTNET_ROOT', 'LANG', 'SystemRoot', 'COMSPEC',
+    'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432',
+    'CommonProgramFiles', 'CommonProgramFiles(x86)', 'CommonProgramW6432', 'ProgramData',
+    'SystemDrive', 'windir', 'HOMEDRIVE', 'HOMEPATH', 'ALLUSERSPROFILE',
+] if k in os.environ}
 env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', GIT_TERMINAL_PROMPT='0')
 process = None
 server = None

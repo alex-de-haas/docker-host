@@ -9,7 +9,7 @@ public sealed partial class CoreLifecycleServiceTests
     {
         var (fixture, repository) = await SourceFixtureAsync(shortPaths: true);
         // Keep Git's linked-worktree metadata short; tracked files still exceed MAX_PATH.
-        var relative = Path.Combine(new string('a', 90), new string('b', 100), "live-source.txt");
+        var relative = Path.Combine(new string('a', 90), new string('b', 90), new string('c', 90), "live-source.txt");
         var source = Path.Combine(repository, relative);
         Directory.CreateDirectory(Path.GetDirectoryName(source)!);
         await File.WriteAllTextAsync(source, "source");

@@ -176,7 +176,7 @@ Plans: 12 In Progress · 1 Blocked · 39 Draft · 7 On Hold.
 - [User Management](features/user-management/feature.md) — Administrators invite, disable, delete and assign app access to Host users from the Shell User Management view.
 - [User Profile And Provider Connections](features/user-profile-connections/feature.md) — Shell manages personal GitHub accounts and Git identity through Core-owned connections and narrow app permissions.
 - [Workspace Lifecycle Controls](features/workspace-lifecycle-controls/feature.md) — Core coordinates recoverable workspace pause, suspends inactive source observation, verifies completion and deletes merged workspaces without discarding unfinished changes.
-- [Core Source And Workspace Activation](features/workspace-live-activation/feature.md) — Review workspace apps and matching Core, activate live source with supervised handover, and Return selected participants while preserving current data. · [plan](features/workspace-live-activation/plan.md): In Progress, 8/12, updated 2026-10-19
+- [Core Source And Workspace Activation](features/workspace-live-activation/feature.md) — Review workspace apps and matching Core, activate live source with supervised handover, and Return selected participants while preserving current data. · [plan](features/workspace-live-activation/plan.md): In Progress, 9/12, updated 2026-10-19
 - [Workspaces App](features/workspaces-app/feature.md) — Workspace and source inspection, pull-request evidence, and optional child Core sandbox creation, preview and lifecycle controls.
 
 <!-- docs-index:end -->
