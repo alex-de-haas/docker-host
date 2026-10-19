@@ -82,6 +82,34 @@ describe("shared workspace event stream", () => {
     expect(sync).not.toHaveBeenCalled(); expect(unavailable).toHaveBeenCalledTimes(1);
   });
 
+  it.each([403, 500, 200].flatMap(status => [false, true].map(cancelFails => ({ status, cancelFails }))))(
+    "closes rejected browser responses and reconnects (status $status, cancellation fails $cancelFails)",
+    async ({ status, cancelFails }) => {
+      const cancel = vi.fn(() => cancelFails ? Promise.reject(new Error("cleanup failed")) : Promise.resolve());
+      const rejected = new Response(new ReadableStream({ cancel }), { status, headers: { "content-type": "text/plain" } });
+      mock.fetch.mockResolvedValueOnce(rejected);
+      const sync = vi.fn(async () => {}), unavailable = vi.fn();
+      cleanup.push(subscribeWorkspaceEvents("/rejected-body", sync, unavailable));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(cancel).toHaveBeenCalledTimes(1); expect(sync).not.toHaveBeenCalled();
+      expect(unavailable).toHaveBeenCalledTimes(1); expect(mock.fetch).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mock.fetch).toHaveBeenCalledTimes(2);
+      emit("stream.ready"); await vi.advanceTimersByTimeAsync(200);
+      expect(sync).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([404, 405])("retains legacy compatibility when response cancellation fails (%i)", async status => {
+    const cancel = vi.fn(async () => { throw new Error("cleanup failed"); });
+    mock.fetch.mockResolvedValueOnce(new Response(new ReadableStream({ cancel }), { status }));
+    const sync = vi.fn(async () => {}), unavailable = vi.fn();
+    cleanup.push(subscribeWorkspaceEvents("/legacy-cleanup", sync, unavailable));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(cancel).toHaveBeenCalledTimes(1); expect(sync).toHaveBeenCalledTimes(1);
+    expect(unavailable).not.toHaveBeenCalled();
+  });
+
   it("retries failed snapshots without requiring a new workspace event", async () => {
     const sync = vi.fn<() => Promise<void | boolean>>().mockResolvedValueOnce(false).mockResolvedValue(undefined);
     const unavailable = vi.fn();

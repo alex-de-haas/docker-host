@@ -66,11 +66,14 @@ function connection(url: string) {
         fallback = true; ready = true; delay = 1000;
         if (!legacy) changed();
         legacy = true;
-        await response.body?.cancel();
+        await response.body?.cancel().catch(() => {});
         return;
       }
       legacy = false; ready = false;
-      if (!response.ok || !response.body || !response.headers.get("content-type")?.includes("text/event-stream")) throw new Error("Workspace stream unavailable");
+      if (!response.ok || !response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
+        await response.body?.cancel().catch(() => {});
+        throw new Error("Workspace stream unavailable");
+      }
       const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
       try {
         while (!active.signal.aborted) {

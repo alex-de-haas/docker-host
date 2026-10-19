@@ -73,7 +73,7 @@ This does not change app identity, source selection or runtime authority.
 
 ## Verified Rollout
 
-The 2026-10-19 rollout runs platform 0.144.0, native Harness 0.60.0 and Docker Workspaces
+The 2026-10-19 live trial verifies platform 0.144.0, native Harness 0.60.0 and Docker Workspaces
 0.5.0. Core restarts preserve the four running apps; the Harness update creates a pre-update
 backup, and its published worker image remains available through the normal install control.
 Workspaces has no app-owned persistent data. Unrelated worktrees remain available throughout.
@@ -89,10 +89,13 @@ the peak over one-second intervals is 85.72% before and 30.62% after. Workspace 
 fall from 41 (39 without HEAD/source changes) to one real source change. This is an observation
 of an active host with concurrent work, not an isolated benchmark or a CPU guarantee.
 
-The final code passes 3,645 Core tests (four opt-in integrations skipped), 842 Harness tests and
-30 Workspaces tests. Native AOT passes on macOS ARM64 and Linux x64. Eleven focused Core
+The final code passes 3,645 Core tests (four opt-in integrations skipped), 850 Harness tests and
+38 Workspaces tests. Native AOT passes on macOS ARM64 and Linux x64. Eleven focused Core
 identity/event/stream tests also pass on both macOS and Linux. The final published clients have
 regression coverage for legacy-Core compatibility, failed snapshot retries and rejected-stream cleanup.
+Harness 0.60.1 and Workspaces 0.5.1 include the subsequent browser response cleanup.
+Both browser clients and server proxies cancel rejected response bodies before retrying; a
+cancellation failure does not suppress stream recovery or older-Core compatibility.
 
 ## Testing Expectations
 
