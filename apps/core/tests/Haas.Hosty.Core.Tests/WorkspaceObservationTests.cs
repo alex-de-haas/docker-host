@@ -12,6 +12,28 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task WorkspaceDirectoryIdentity_IgnoresChildWritesButDetectsReplacement()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "hosty-directory-identity-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var directory = Path.Combine(root, "source");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var identity = WorkspaceDirectoryIdentity.Read(directory);
+            Assert.NotNull(identity);
+            await File.WriteAllTextAsync(Path.Combine(directory, "output.txt"), "generated output");
+            Directory.CreateDirectory(Path.Combine(directory, "output"));
+            Assert.Equal(identity, WorkspaceDirectoryIdentity.Read(directory));
+            Directory.Move(directory, directory + "-old");
+            Assert.Null(WorkspaceDirectoryIdentity.Read(directory));
+            Directory.CreateDirectory(directory);
+            Assert.NotEqual(identity, WorkspaceDirectoryIdentity.Read(directory));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public async Task WorkspaceEvents_ObserveEditsAndIndexChangesWithoutIdleScansOrRewrites()
     {
         var (f, _) = await SourceFixtureAsync();

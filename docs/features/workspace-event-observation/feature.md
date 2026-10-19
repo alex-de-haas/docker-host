@@ -26,6 +26,8 @@ missing/replaced roots expose `recovering`; reattachment triggers fresh reconcil
 health check reads directory metadata and retries failed registrations, without walking healthy Git
 worktrees. Restart starts a new observation generation and discovers changes made while Core was
 stopped. Inaccessible source remains unavailable, never a fabricated clean snapshot.
+Linux health checks compare device/inode identity rather than synthesized creation timestamps,
+so ordinary directory writes do not trigger recovery scans.
 
 ## Inspection And Authority
 
