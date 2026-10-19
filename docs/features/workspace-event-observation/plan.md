@@ -34,4 +34,4 @@ Exercise quiet worktrees, external edits, atomic replace/rename/delete, staging/
 
 ## Version Outcome
 
-Platform 0.143.0 → 0.144.0; Harness 0.59.0 → 0.60.0; Workspaces 0.4.0 → 0.5.0. Final versions are checked against the repository before publication.
+Platform 0.143.0 → 0.144.0; Harness 0.59.1 → 0.60.0; Workspaces 0.4.0 → 0.5.0. Final versions are checked against the repository before publication.
