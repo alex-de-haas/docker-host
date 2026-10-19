@@ -69,7 +69,7 @@ public sealed class WorkspaceActivationReturnTests : IDisposable
         await Assert.ThrowsAsync<IOException>(() => new WorkspaceActivationHandover(root, runtime).RunAsync(id));
         var a = WorkspaceRuntimeFiles.Read(root, id);
         Assert.Equal("return-core-starting", a.Phase); Assert.Equal("pending", a.Returns!.Last().State);
-        Assert.False(a.CoreReturned); Assert.Equal(2, a.Returns.Last().AppsBeforeCoreReturn!.Length);
+        Assert.False(a.CoreReturned); Assert.Equal(2, a.Returns!.Last().AppsBeforeCoreReturn!.Length);
         runtime.FailAppState = false;
         await new WorkspaceActivationHandover(root, runtime).RunAsync(id);
         Assert.Equal("returned", WorkspaceRuntimeFiles.Read(root, id).Phase);

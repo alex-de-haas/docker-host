@@ -9,7 +9,7 @@ internal sealed record WorkspaceRuntimeActivation(string Id, string WorkspaceId,
     string? CoreProject, CoreLaunchIdentity PreviousCore, string[] Apps, string Phase,
     string? PreparedExecutable = null, string? Generation = null, string? Snapshot = null, string? Error = null, IReadOnlyDictionary<string, string>? SourceStamps = null,
     string? ListenUrl = null, CoreLaunchIdentity? ActivatedCore = null, string? PreviousExecutable = null, string[]? ReturnedApps = null, bool CoreReturned = false,
-    WorkspaceReturnReceipt[]? Returns = null, WorkspaceActivationActor? Authority = null, bool CoreReserved = false, string? PreviousExecutableHash = null);
+    WorkspaceReturnReceipt[]? Returns = null, WorkspaceActivationActor? Authority = null, bool CoreReserved = false, string? PreviousExecutableHash = null, string? PreparationFingerprint = null, bool PreparationReleased = false);
 
 internal sealed record WorkspaceActivationActor(string UserId, string Via, string? AppId = null,
     DateTimeOffset? Installation = null, string? Principal = null, string? Review = null, string? AppIdentityHash = null);

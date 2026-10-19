@@ -3,6 +3,7 @@ using Haas.Hosty.Launch;
 namespace Haas.Hosty.Core;
 
 internal sealed record WorkspaceActivationRequest(string RequestId, string UserId, WorkspaceActivationSelection Selection, string? PlanDigest = null, WorkspaceActivationActor? Authority = null);
+internal sealed record WorkspaceActivationPreparationTarget(string Id, string Kind, string? WorktreeId, string? SourcePath, string? TargetRuntime);
 internal sealed partial class WorkspaceActivationService(CoreDataPaths paths, WorkspaceActivationPlanner planner,
     CoreDevelopmentService core, CoreLifecycleService lifecycle, DevelopmentWorkspaceService workspaces, WorkspaceActivationAccess? access = null)
 {
@@ -20,9 +21,20 @@ internal sealed partial class WorkspaceActivationService(CoreDataPaths paths, Wo
             }
             var file = WorkspaceRuntimeFiles.PathFor(paths.DataRoot, input.RequestId);
             var fingerprint = DevelopmentWorkspaceService.Hash(workspaceId + "\n" + CoreJson.Text(input));
+            // A repaired source requires a new review, but retains its original selection and authority.
+            var preparationIdentity = workspaceId + "\n" + CoreJson.Text(input with
+            {
+                PlanDigest = null,
+                Authority = input.Authority is null ? null : input.Authority with { Review = null }
+            });
             var prior = File.Exists(file) ? WorkspaceRuntimeFiles.Read(paths.DataRoot, input.RequestId) : null;
             if (prior is not null && input.Authority is not null) await access!.ValidateAsync(input.Authority, prior.CoreProject is not null && !prior.CoreReturned, ct);
-            if (prior is not null && prior.Fingerprint != fingerprint) throw Error("request_conflict", "Preserve the original request ID and selection.");
+            var refreshReview = prior is not null && prior.Fingerprint != fingerprint;
+            if (refreshReview && !(prior is { Phase: "preparing", PreparationReleased: true, CoreReserved: false, PreparedExecutable: null,
+                    Generation: null, Snapshot: null, ActivatedCore: null, CoreReturned: false } &&
+                (prior.Returns?.Length ?? 0) == 0 && (prior.ReturnedApps?.Length ?? 0) == 0 &&
+                prior.PreparationFingerprint is not null && input.PlanDigest is not null))
+                throw Error("request_conflict", "Preserve the original request ID and selection; only released preparation can accept a new review.");
             if (prior is { Phase: "prepared" })
             {
                 var unchanged = true;
@@ -43,13 +55,23 @@ internal sealed partial class WorkspaceActivationService(CoreDataPaths paths, Wo
                     throw Error("participant_unavailable", row.Name + ": " + row.Unavailable + " Exclude it explicitly to continue.");
             var selected = plan.Participants.Where(p => p.Selected).ToArray();
             if (selected.Length == 0) throw Error("empty", "Select at least one available participant.");
+            var preparationFingerprint = DevelopmentWorkspaceService.Hash(preparationIdentity + "\n" + CoreJson.Text(
+                selected.OrderBy(p => p.Id, StringComparer.Ordinal).Select(p => new WorkspaceActivationPreparationTarget(
+                    p.Id, p.Kind, p.WorktreeId, p.SourcePath, p.TargetRuntime)).ToArray()));
+            if (prior?.PreparationFingerprint is not null && prior.PreparationFingerprint != preparationFingerprint)
+                throw Error("request_conflict", "The original request's resolved participants or authority changed. Return it before choosing another target.");
+            if (refreshReview) prior = prior! with { Fingerprint = fingerprint, Authority = input.Authority };
             var coreRow = selected.SingleOrDefault(p => p.Kind == "core");
+            if (prior is not null && (prior.CoreWorktreeId != coreRow?.WorktreeId || prior.CoreProject != coreRow?.SourcePath ||
+                !prior.Apps.Order(StringComparer.Ordinal).SequenceEqual(selected.Where(p => p.Kind == "app").Select(p => p.Id).Order(StringComparer.Ordinal))))
+                throw Error("request_conflict", "The original request's resolved participants changed. Return it before choosing another target.");
             if (input.Authority is not null) await access!.ValidateAsync(input.Authority, coreRow is not null, ct);
             var rows = selected.Where(p => p.Kind == "app").ToArray();
             var ids = rows.Select(p => p.Id).Order(StringComparer.Ordinal).ToArray();
             var state = await core.GetAsync(ct);
             var activation = prior ?? new WorkspaceRuntimeActivation(input.RequestId, workspaceId, input.UserId, fingerprint,
-                plan.CoreInstance, plan.CoreSourceRevision, coreRow?.WorktreeId, coreRow?.SourcePath, state.Launch, ids, "preparing", Authority: input.Authority);
+                plan.CoreInstance, plan.CoreSourceRevision, coreRow?.WorktreeId, coreRow?.SourcePath, state.Launch, ids, "preparing",
+                Authority: input.Authority, PreparationFingerprint: preparationFingerprint);
             if (state.Instance != activation.CoreInstance || state.Source.Revision != activation.CoreSourceRevision)
                 throw Error("core_changed", "Core or its source selection changed. Inspect the retained activation before proceeding.");
             if (coreRow is not null)
@@ -62,7 +84,7 @@ internal sealed partial class WorkspaceActivationService(CoreDataPaths paths, Wo
             {
                 var order = await lifecycle.OrderActivationAppsAsync(ids, ct);
                 var plans = await lifecycle.PreflightActivationAppsAsync(activation, rows, ct);
-                activation = activation with { Apps = order, Error = null, CoreReserved = activation.CoreProject is not null };
+                activation = activation with { Apps = order, Error = null, CoreReserved = activation.CoreProject is not null, PreparationReleased = false };
                 if (activation.CoreProject is not null) await workspaces.ReserveCoreActivationAsync(activation, ct);
                 else WorkspaceRuntimeFiles.Save(paths.DataRoot, activation);
                 try
@@ -82,7 +104,7 @@ internal sealed partial class WorkspaceActivationService(CoreDataPaths paths, Wo
                 catch
                 {
                     await lifecycle.ReleaseActivationPreparationAsync(activation, CancellationToken.None);
-                    WorkspaceRuntimeFiles.Save(paths.DataRoot, activation with { CoreReserved = false, Error = "Preparation failed; running services were not stopped. Inspect build diagnostics and retry the original request." });
+                    WorkspaceRuntimeFiles.Save(paths.DataRoot, activation with { CoreReserved = false, PreparationReleased = true, Error = "Preparation failed; running services were not stopped. Inspect build diagnostics and retry the original request." });
                     throw;
                 }
             }, ct);
@@ -104,7 +126,7 @@ internal sealed partial class WorkspaceActivationService(CoreDataPaths paths, Wo
                 var current = await core.GetAsync(ct);
                 // Releasing a pre-Stop request from a replaced Core retires its stale review.
                 var phase = current.Instance == activation.CoreInstance && current.Source.Revision == activation.CoreSourceRevision ? "preparing" : "returned";
-                activation = activation with { Phase = phase, CoreReserved = false, SourceStamps = null, PreparedExecutable = null, Generation = null };
+                activation = activation with { Phase = phase, CoreReserved = false, PreparationReleased = true, SourceStamps = null, PreparedExecutable = null, Generation = null };
                 WorkspaceRuntimeFiles.Save(paths.DataRoot, activation);
                 return activation;
             }, ct);

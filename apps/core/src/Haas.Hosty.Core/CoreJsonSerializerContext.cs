@@ -314,6 +314,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(CoreSourcePrepared))]
 [JsonSerializable(typeof(CoreWorkspacePrepare))]
 [JsonSerializable(typeof(WorkspaceActivationRequest))]
+[JsonSerializable(typeof(WorkspaceActivationPreparationTarget[]))]
 [JsonSerializable(typeof(WorkspaceActivationCommand))]
 [JsonSerializable(typeof(Haas.Hosty.Launch.WorkspaceActivationActor))]
 [JsonSerializable(typeof(WorkspaceActivationReview))]

@@ -105,3 +105,130 @@ it("requires compatibility acceptance before app-only Return can dispatch", asyn
     activationId: "app-only", return: { apps: ["notes"], core: false, acceptDataChanges: true },
   });
 });
+
+
+it("retains an accepted apply across remount for exact preparation retry without blocking status or Return", async () => {
+  let a: { id: string; phase: string; apps: string[] } | null = null;
+  const base = request.getMockImplementation()!;
+  request.mockImplementation(async (kind, body, signal) => {
+    if (kind === "list") return a ? [a] : [];
+    if (kind === "apply") { a = { id: body.requestId, phase: "prepared", apps: ["notes"] }; return {}; }
+    if (kind === "status") return { status: { activation: a!, helper: { state: a?.phase === "preparing" ? "failed" : "accepted" } }, children: [] };
+    return base(kind, body, signal);
+  });
+  await render(); await act(async () => button("Review selection").click());
+  await act(async () => button("Apply reviewed selection").click());
+  const original = request.mock.calls.find(([kind]) => kind === "apply")![1];
+  expect(localStorage.getItem("test:v1")).toBeNull();
+  expect(JSON.parse(localStorage.getItem("test:applies:v1")!)[original.requestId].body).toEqual(original);
+  expect(button("Refresh status").disabled).toBe(false);
+  const returnNotes = [...container.querySelectorAll("label")].find(l => l.textContent === "notes")!.querySelector<HTMLInputElement>("input")!;
+  expect(returnNotes.closest("fieldset")!.disabled).toBe(false);
+  a = { ...a!, phase: "preparing" };
+  await act(async () => root.unmount()); root = createRoot(container); await render();
+  expect(button("Resume original activation")).toBeUndefined();
+  expect(button("Review preparation again").disabled).toBe(false);
+  await act(async () => button("Retry original preparation").click());
+  expect(request.mock.calls.filter(([kind]) => kind === "apply").map(([, body]) => body)).toEqual([original, original]);
+});
+
+it("explicitly re-reviews repaired source using the retained ID and exact selection", async () => {
+  let a: { id: string; phase: string; apps: string[] } | null = null, repaired = false;
+  const base = request.getMockImplementation()!;
+  request.mockImplementation(async (kind, body, signal) => {
+    if (kind === "list") return a ? [a] : [];
+    if (kind === "plan") { const value = await base(kind, body, signal); return repaired ? { ...value, planDigest: "repaired-review" } : value; }
+    if (kind === "apply") {
+      if (repaired && body.planDigest !== "repaired-review") throw Object.assign(new Error("Source changed. Review again."), { code: "activation_review_changed" });
+      a = { id: body.requestId, phase: "prepared", apps: ["notes"] }; return {};
+    }
+    if (kind === "status") return { status: { activation: a!, helper: { state: "failed" } }, children: [] };
+    return base(kind, body, signal);
+  });
+  await render(); await act(async () => button("Review selection").click());
+  await act(async () => button("Apply reviewed selection").click());
+  const original = request.mock.calls.find(([kind]) => kind === "apply")![1];
+  a = { ...a!, phase: "preparing" }; repaired = true;
+  await act(async () => root.unmount()); root = createRoot(container); await render();
+  await act(async () => button("Retry original preparation").click());
+  expect(container.textContent).toContain("Source changed. Review again.");
+  expect(button("Retry original request")).toBeUndefined();
+  expect(JSON.parse(localStorage.getItem("test:applies:v1")!)[original.requestId].body).toEqual(original);
+  await act(async () => button("Review preparation again").click());
+  expect(request.mock.calls.filter(([kind]) => kind === "plan").at(-1)![1]).toEqual({ selection: original.selection });
+  expect(request.mock.calls.filter(([kind]) => kind === "apply")).toHaveLength(2);
+  const participantInputs = [...container.querySelectorAll("fieldset")].find(f => f.querySelector("legend")?.textContent === "Participants")!;
+  expect([...participantInputs.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].every(input => input.disabled)).toBe(true);
+  await act(async () => button("Retry reviewed preparation").click());
+  expect(request.mock.calls.filter(([kind]) => kind === "apply").at(-1)![1]).toEqual({ ...original, planDigest: "repaired-review" });
+});
+
+it("retries an uncertain re-preparation with its exact refreshed review after remount", async () => {
+  const original = { requestId: "original-activation", selection: { coreSelected: false, apps: [{ appId: "notes", selected: true, worktreeId: "tree", runtime: "dev" }] }, planDigest: "old-review" };
+  localStorage.setItem("test:applies:v1", JSON.stringify({ [original.requestId]: { kind: "apply", body: original } }));
+  const a = { id: original.requestId, phase: "preparing", apps: ["notes"] };
+  request.mockImplementation(async kind => {
+    if (kind === "list") return [a];
+    if (kind === "plan") return { ...review, planDigest: "new-review" };
+    if (kind === "apply") throw new Error("response lost");
+    return { status: { activation: a, helper: { state: "failed" } }, children: [] };
+  });
+  await render(); await act(async () => button("Review preparation again").click());
+  await act(async () => button("Retry reviewed preparation").click());
+  const refreshed = { ...original, planDigest: "new-review" };
+  expect(JSON.parse(localStorage.getItem("test:v1")!).body).toEqual(refreshed);
+  expect(JSON.parse(localStorage.getItem("test:applies:v1")!)[original.requestId].body).toEqual(original);
+  await act(async () => root.unmount()); root = createRoot(container); await render();
+  expect(button("Review preparation again").disabled).toBe(true);
+  await act(async () => button("Retry original request").click());
+  expect(request.mock.calls.filter(([kind]) => kind === "apply").map(([, body]) => body)).toEqual([refreshed, refreshed]);
+});
+
+it("recovers the original apply body observed after its acceptance response was lost", async () => {
+  let accepted = false;
+  const original = { requestId: "accepted-activation", selection: { coreSelected: false }, planDigest: "review" };
+  localStorage.setItem("test:v1", JSON.stringify({ kind: "apply", body: original }));
+  const a = { id: original.requestId, phase: "preparing", apps: ["notes"] };
+  request.mockImplementation(async kind => {
+    if (kind === "list") return [a];
+    if (kind === "apply") { accepted = true; return {}; }
+    return { status: { activation: a, helper: { state: "failed" } }, children: [] };
+  });
+  await render();
+  expect(JSON.parse(localStorage.getItem("test:applies:v1")!)[original.requestId].body).toEqual(original);
+  await act(async () => button("Retry original request").click());
+  expect(accepted).toBe(true);
+  expect(button("Retry original request")).toBeUndefined();
+  expect(button("Retry original preparation").disabled).toBe(false);
+});
+
+
+it("replays the selected retained activation rather than another accepted request", async () => {
+  const first = { requestId: "first-activation", selection: { coreSelected: false, apps: [{ appId: "notes", selected: true }] }, planDigest: "first-review" };
+  const second = { requestId: "second-activation", selection: { coreSelected: true }, planDigest: "second-review" };
+  localStorage.setItem("test:applies:v1", JSON.stringify(Object.fromEntries([first, second].map(body => [body.requestId, { kind: "apply", body }]))));
+  const activations = [first, second].map(body => ({ id: body.requestId, phase: "preparing", apps: ["notes"] }));
+  request.mockImplementation(async (kind, body) => kind === "list" ? activations : kind === "apply" ? {}
+    : { status: { activation: activations.find(a => a.id === body.activationId) }, children: [] });
+  await render();
+  const retained = [...container.querySelectorAll("label")].find(l => l.textContent?.startsWith("Retained activation"))!.querySelector("select")!;
+  await act(async () => { retained.value = first.requestId; retained.dispatchEvent(new Event("change", { bubbles: true })); });
+  await act(async () => button("Retry original preparation").click());
+  expect(request.mock.calls.filter(([kind]) => kind === "apply").map(([, body]) => body)).toEqual([first]);
+});
+
+
+it.each(["returned", "cancelled"])("clears confirmed apply metadata after %s while preserving an uncertain request", async phase => {
+  const original = { requestId: "finished-activation", selection: { coreSelected: false }, planDigest: "review" };
+  const uncertain = { kind: "return", body: { activationId: original.requestId, return: { requestId: "original-return", apps: ["notes"], core: false, acceptDataChanges: true } } };
+  localStorage.setItem("test:applies:v1", JSON.stringify({ [original.requestId]: { kind: "apply", body: original } }));
+  localStorage.setItem("test:v1", JSON.stringify(uncertain));
+  const a = { id: original.requestId, phase, apps: ["notes"] };
+  request.mockImplementation(async kind => kind === "list" ? [a] : kind === "return" ? {} : { status: { activation: a }, children: [] });
+  await render();
+  expect(localStorage.getItem("test:applies:v1")).toBeNull();
+  expect(JSON.parse(localStorage.getItem("test:v1")!)).toEqual(uncertain);
+  await act(async () => button("Retry original request").click());
+  expect(request.mock.calls.find(([kind]) => kind === "return")![1]).toEqual(uncertain.body);
+  expect(localStorage.getItem("test:v1")).toBeNull();
+});

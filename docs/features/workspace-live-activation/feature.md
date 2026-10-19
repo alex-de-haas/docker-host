@@ -206,6 +206,10 @@ by an unreturned activation. An app startup failure retains its development jour
 repeating apply continues that participant's existing phases without duplicating the backup.
 A preparation failure releases only pre-Stop app reservations, allowing a new source-edit lease and
 re-preparation with the original request. Core compile failure uses the same release path.
+After source repair, an explicit fresh review can update the digest of that same request only while
+preparation is released and no runtime transition has started. Participant selection, workspace,
+user and originating authority remain fixed; a stale digest or changed selection leaves the retained
+receipt unchanged. Older receipts without this recovery identity accept exact replay or Return.
 `POST /control/v1/workspace-activations/{id}/release-preparation` explicitly releases only such
 pre-Stop reservations; it refuses an already-started transition. A review tied to a replaced Core or
 changed Core source is retired on release and requires a fresh review. Nothing resets files or data.
@@ -273,8 +277,10 @@ lists registered bindings for that app and uses the same review. Core Source exp
 ref, relative project and optional source connection alongside the running build and update origin.
 Unsaved source fields retain their opening revision; background status cannot overwrite them.
 
-The client retains uncertain action IDs and exact request bodies locally, without credentials. It
-lists durable groups, observes helper and child phases, and offers boundary pause, original-request
+The client retains uncertain action IDs and exact request bodies locally, without credentials.
+Accepted apply bodies also survive remounts. A released preparation offers exact retry or an explicit
+review of the same selection after source repair, preserving its original activation ID.
+The client lists durable groups, observes helper and child phases, and offers boundary pause, original-request
 resume and selected-participant Return. Visible in-progress panels refresh every three seconds;
 visibility restoration and explicit refresh recover missed progress. Terminal groups stop recurring
 requests. The helper remains the operation owner. If returning to an older Core removes these APIs,
@@ -352,7 +358,7 @@ used by Shell or another app in a shared worktree.
 - Run affected Core/CLI suites, builds, Core Native AOT and documentation/version validation. Run
   platform-specific coordinated handover and Harness/browser acceptance independently of unit tests.
 
-- Verify pre-stop setup/compile failures preserve running processes; verify repair leases and original-request retry.
+- Verify pre-stop setup/compile failures preserve running processes; verify repair leases, original-request retry, and explicit fresh review with the same ID after source repair. Reject selection/authority drift, stale review and review refresh beyond released preparation; retain accepted apply bodies through UI remounts.
 - Verify native preparation uses scratch context, mixed dependency order, selected app backups, stopped-Core snapshot hashes, exact replacement identity and retained unrelated processes.
 
 - Interrupt helpers after app apply, Core Stop and candidate Start; reconcile the original request without repeating completed effects or claiming readiness for a different target.
