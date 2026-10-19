@@ -8,7 +8,7 @@ internal sealed record WorkspaceActivationSelection(bool CoreSelected = true, st
 internal sealed record WorkspaceActivationParticipant(string Id, string Kind, string Name, string? WorktreeId,
     string? Repository, string? SourcePath, string? Branch, string? Commit, int? ChangedFiles,
     string? CurrentRuntime, string? TargetRuntime, string[] AvailableRuntimes,
-    bool DefaultSelected, bool Selected, string Reason, string? Unavailable);
+    bool DefaultSelected, bool Selected, string Reason, string? Unavailable, string[]? WorktreeOptions = null);
 internal sealed record WorkspaceActivationPlan(string WorkspaceId, string CoreInstance, string CoreSourceRevision,
     WorkspaceActivationParticipant[] Participants)
 {
@@ -76,7 +76,7 @@ internal sealed class WorkspaceActivationPlanner(DevelopmentWorkspaceService wor
             result.Add(new(appId, "app", app?.DisplayName ?? appId, selected?.Id, selected?.Repository, path,
                 selected?.Branch, observation.Value?.Head, observation.Value?.Local?.FileCount,
                 app?.SelectedRuntime, runtime, profiles, error is null, (choice?.Selected ?? true) && error is null,
-                "explicit-app-binding", error));
+                "explicit-app-binding", error, candidates.Select(t => t.Id).ToArray()));
         }
 
         DevelopmentWorkspace[] matches = [];
@@ -105,7 +105,7 @@ internal sealed class WorkspaceActivationPlanner(DevelopmentWorkspaceService wor
         result.Add(new("hosty:core", "core", "Core", coreTree?.Id, state.Source.RepositoryUrl, coreProject,
             coreTree?.Branch, coreObservation.Value?.Head, coreObservation.Value?.Local?.FileCount,
             state.Launch.Mode, "dev", ["dev"], coreError is null, input.CoreSelected && coreError is null,
-            "configured-repository-match", coreError));
+            "configured-repository-match", coreError, matches.Select(t => t.Id).ToArray()));
         return new(workspaceId, state.Instance, state.Source.Revision, result.ToArray());
     }
 

@@ -12,7 +12,7 @@ export interface RetentionStatus {
 }
 export function retentionBusy(record: SessionRecord): boolean {
   return ["running", "awaiting_approval", "awaiting_question"].includes(record.status)
-    || record.workflowCompletion?.state === "queued" || !!record.handoffPending || !!record.handoffDraft
+    || record.workspaceActivation?.state === "queued" || record.workflowCompletion?.state === "queued" || !!record.handoffPending || !!record.handoffDraft
     || ["queued", "running", "unknown"].includes(record.handoffDispatch?.state ?? "")
     || !!record.appCreations?.some(o => o.state === "pending")
     || !!record.mcpPendingApprovals?.length

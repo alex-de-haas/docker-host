@@ -3,7 +3,7 @@
   "id": "hosty.shell",
   "name": "Hosty Shell",
   "description": "Hosty browser management shell.",
-  "version": "0.105.0",
+  "version": "0.106.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -50,7 +50,7 @@
         "dev": {
           "type": "localCommand",
           "workingDirectory": "apps/shell",
-          "setup": "npm install",
+          "setup": "npm --prefix ../.. install",
           "command": "npm run dev",
           "environment": {
             "HOSTNAME": "0.0.0.0"
@@ -123,6 +123,9 @@
     "apps.sandboxes.inspect",
     "apps.sandboxes.operate",
     "core.environments.inspect",
-    "core.environments.operate"
+    "core.environments.operate",
+    "core.workspace.activate",
+    "apps.workspaces.read",
+    "apps.sources.full"
   ]
 }

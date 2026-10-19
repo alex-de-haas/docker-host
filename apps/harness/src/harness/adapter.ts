@@ -134,6 +134,8 @@ export interface HarnessRun {
   setMcpServers(servers: Record<string, unknown>): Promise<boolean>;
   interrupt(): Promise<void>;
   stop(): Promise<void>;
+  /** Confirm native execution exit before a queued ordinary-runtime transition releases source. */
+  stopAndWait?(): Promise<void>;
 }
 
 export interface HarnessAdapter {

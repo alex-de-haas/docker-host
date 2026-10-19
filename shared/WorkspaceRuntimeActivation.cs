@@ -8,7 +8,14 @@ internal sealed record WorkspaceRuntimeActivation(string Id, string WorkspaceId,
     string Fingerprint, string CoreInstance, string CoreSourceRevision, string? CoreWorktreeId,
     string? CoreProject, CoreLaunchIdentity PreviousCore, string[] Apps, string Phase,
     string? PreparedExecutable = null, string? Generation = null, string? Snapshot = null, string? Error = null, IReadOnlyDictionary<string, string>? SourceStamps = null,
-    string? ListenUrl = null, CoreLaunchIdentity? ActivatedCore = null, string? PreviousExecutable = null);
+    string? ListenUrl = null, CoreLaunchIdentity? ActivatedCore = null, string? PreviousExecutable = null, string[]? ReturnedApps = null, bool CoreReturned = false,
+    WorkspaceReturnReceipt[]? Returns = null, WorkspaceActivationActor? Authority = null, bool CoreReserved = false, string? PreviousExecutableHash = null);
+
+internal sealed record WorkspaceActivationActor(string UserId, string Via, string? AppId = null,
+    DateTimeOffset? Installation = null, string? Principal = null, string? Review = null, string? AppIdentityHash = null);
+
+internal sealed record WorkspaceReturnRequest(string RequestId, string[] Apps, bool Core, bool AcceptDataChanges);
+internal sealed record WorkspaceReturnReceipt(WorkspaceReturnRequest Request, string State);
 
 internal static class WorkspaceRuntimeFiles
 {

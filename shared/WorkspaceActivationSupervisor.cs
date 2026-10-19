@@ -26,6 +26,10 @@ internal static class WorkspaceActivationSupervisor
     internal static bool Alive(WorkspaceActivationHelper helper) => helper.Pid is { } pid && helper.StartedAt is { } start
         ? CoreBuildRetention.IsAlive(pid, start) : DateTimeOffset.UtcNow - helper.AcceptedAt < TimeSpan.FromSeconds(30);
     internal static bool CancellationRequested(string root, string id) => File.Exists(CancelPath(root, id));
+    internal static void ClearCancellation(string root, string id)
+    {
+        if (File.Exists(CancelPath(root, id))) File.Delete(CancelPath(root, id));
+    }
     internal static void CheckCancellation(string root, string id)
     {
         if (CancellationRequested(root, id)) throw new OperationCanceledException("Activation paused at a retained boundary. Resume the original request or Return; no data or source was restored.");
@@ -97,7 +101,7 @@ internal static class WorkspaceActivationSupervisor
         {
             if (activation.Id == ownId || activation.Phase is "active" or "returned" or "cancelled") continue;
             var helper = Read(root, activation.Id);
-            if (Pending(helper) || activation.Phase is "applying" or "apps-active" or "core-stopping" or "core-stopped" or "core-starting" or "verifying")
+            if (activation.Phase.StartsWith("return-", StringComparison.Ordinal) || Pending(helper) || activation.Phase is "applying" or "apps-active" or "core-stopping" or "core-stopped" or "core-starting" or "verifying")
                 throw new InvalidOperationException($"Workspace activation {activation.Id} needs reconciliation. Resume or Return that operation first.");
         }
     }

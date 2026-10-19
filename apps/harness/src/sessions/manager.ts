@@ -83,12 +83,13 @@ interface LiveSession {
 
 export class SessionManager {
   readonly mcpPolicy: McpToolPolicy;
-  readonly developmentMcp = new DevelopmentMcp(async (id, action, input) => {
+  readonly developmentMcp = new DevelopmentMcp(async (id, action, input, dispatchGuard) => {
     const session = this.live.get(id);
     if (!session || !["running", "awaiting_approval", "awaiting_question"].includes(session.record.status))
       throw new AppContextError(409, "workspace_turn_inactive", "Workspace agent tools require an active turn.");
-    return this.workspaceAction(id, action, input);
+    return this.workspaceAction(id, action, input, undefined, undefined, dispatchGuard);
   });
+  private readonly activationGuards = new Map<string, () => Promise<void>>();
   private readonly live = new Map<string, LiveSession>();
   private readonly operations = new Map<string, Promise<unknown>>();
   private serialize<T>(key: string, action: () => Promise<T>): Promise<T> {
@@ -251,7 +252,7 @@ export class SessionManager {
     return this.development.inspection(credential, path + "-confirm", body);
   }
 
-  async workspaceAction(id: string, action: DevelopmentAction, input: Record<string, unknown>, credential?: string, userId?: string): Promise<unknown> {
+  async workspaceAction(id: string, action: DevelopmentAction, input: Record<string, unknown>, credential?: string, userId?: string, dispatchGuard?: () => Promise<void>): Promise<unknown> {
     if (action.startsWith("environment-")) return this.environmentAction(id, action as CoreEnvironmentAction, input, credential, userId);
     if (action.startsWith("sandbox-")) return this.sandboxWorkspaceAction(id, action as SandboxAction, input, credential, userId);
     return this.serialize(id, async () => {
@@ -260,8 +261,19 @@ export class SessionManager {
       if (!this.development?.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
       const token = credential ?? session.workspaceCredential ?? session.credential;
       if (!token) throw new AppContextError(401, "workspace_credentials_required", "Refresh the session's Hosty credentials before using workspaces.");
-      if (!["app-dev-logs", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status", "app-local-accept", "app-local-use", "app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", "workflow-defer", "workflow-delete", "list", "prepare", "status", "diff", "viewer", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"].includes(action))
+      if (!["activation-plan", "activation-apply", "activation-status", "activation-list", "activation-cancel", "activation-resume", "activation-return", "app-dev-logs", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status", "app-local-accept", "app-local-use", "app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", "workflow-defer", "workflow-delete", "list", "prepare", "status", "diff", "viewer", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"].includes(action))
         throw new AppContextError(400, "workspace_action_invalid", "Unknown workspace action.");
+      if (["activation-apply", "activation-return", "activation-resume"].includes(action) && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
+        if (userId) throw new SessionBusyError();
+        if (!dispatchGuard) throw new AppContextError(403, "activation_review_required", "Activation requires the tool policy's reviewed dispatch.");
+        const queued = session.record.workspaceActivation;
+        if (queued?.state === "queued" && (queued.action !== action || JSON.stringify(queued.input) !== JSON.stringify(input)))
+          throw new AppContextError(409, "activation_pending", "Preserve the already queued selection. Finish this turn before another activation.");
+        session.record.workspaceActivation = { action: action as "activation-apply" | "activation-return" | "activation-resume", input: structuredClone(input), state: "queued" };
+        this.activationGuards.set(id, dispatchGuard);
+        await this.store.saveRecord(session.record);
+        return { state: "queued", requestId: input.requestId ?? input.activationId, message: "Finish this turn. Harness dispatches the reviewed request only after native execution stops and workspace leases release. Observe the original ID after reconnect." };
+      }
       if (action === "app-dev-apply" && userId && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status))
         throw new SessionBusyError();
       if (["app-local-accept", "app-local-use"].includes(action)) {
@@ -1815,6 +1827,10 @@ export class SessionManager {
     const loaded = this.live.get(id);
     if (loaded) return loaded;
 
+    if (record.workspaceActivation?.state === "queued") {
+      record.workspaceActivation = { ...record.workspaceActivation, state: "blocked", error: "Harness restarted before dispatch. Review Core state and retry the original operation explicitly." };
+      await this.store.saveRecord(record);
+    }
     if (record.workflowCompletion?.state === "queued") {
       record.workflowCompletion = { ...record.workflowCompletion, state: "blocked", error: "Harness restarted before completion was confirmed. Refresh Core state and retry explicitly." };
       await this.store.saveRecord(record);
@@ -2060,6 +2076,17 @@ export class SessionManager {
     }
     if (session.record.handoffDispatch?.state === "running" && status === "idle") session.record.handoffDispatch.state = "completed";
     if (session.record.handoffDispatch?.state === "running" && ["failed", "cancelled", "abandoned"].includes(status)) session.record.handoffDispatch.state = "failed";
+    if (status === "idle" && session.record.workspaceActivation?.state === "queued" && session.record.executionMode !== "docker") {
+      try {
+        if (!session.run?.stopAndWait) throw new Error("This native adapter cannot confirm process exit for activation. Stop it explicitly before dispatch.");
+        await session.run.stopAndWait(); session.run = null;
+      } catch (error) {
+        session.record.workspaceActivation = { ...session.record.workspaceActivation, state: "blocked", error: error instanceof Error ? error.message : String(error) };
+        await this.store.saveRecord(session.record);
+        await this.append(id, { type: "notice", message: session.record.workspaceActivation.error! });
+        return; // Retain the running state and activity lease until explicit recovery confirms exit.
+      }
+    }
     if (status === "idle") {
       await this.leaseWorkspaces(session, false).catch(error => console.warn("[workspaces] Lease retained; release through Core after verifying the agent stopped:", error));
     }
@@ -2068,6 +2095,21 @@ export class SessionManager {
     session.record.updatedAt = new Date().toISOString();
     await this.store.saveRecord(session.record);
 
+    if (session.record.workspaceActivation?.state === "queued" && !["running", "awaiting_approval", "awaiting_question"].includes(status)) {
+      const queued = session.record.workspaceActivation;
+      try {
+        const credential = session.workspaceCredential ?? session.credential;
+        const guard = this.activationGuards.get(id);
+        if (status !== "idle" || !credential || !guard || !this.development) throw new Error("Execution did not finish with a retained review. Retry explicitly after inspection.");
+        await guard();
+        await this.development.call(id, credential, queued.action, queued.input);
+        session.record.workspaceActivation = { ...queued, state: "dispatched" };
+        await this.append(id, { type: "notice", message: "Workspace activation dispatched to Core. Observe the original request ID; a detached helper owns progress." });
+      } catch (error) {
+        session.record.workspaceActivation = { ...queued, state: "blocked", error: error instanceof Error ? error.message : String(error) };
+        await this.append(id, { type: "notice", message: `Workspace activation was not confirmed: ${session.record.workspaceActivation.error}` });
+      } finally { this.activationGuards.delete(id); await this.store.saveRecord(session.record); }
+    }
     if (session.record.workflowCompletion?.state === "queued" && !["running", "awaiting_approval", "awaiting_question"].includes(status)) {
       const request = session.record.workflowCompletion;
       try {

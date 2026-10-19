@@ -224,11 +224,11 @@ operation owner.
 - [x] D3. Add Core-only workspace preparation/registration under explicit authority and a read-only participant planner using app installation bindings and optional repository-matched Core, with deterministic ambiguity and unsupported-profile diagnostics.
 - [x] D4. Compose supported ordinary, native/system Shell/Harness and Core participants through existing lifecycle mechanisms; implement preflight/build-before-stop, dependency constraints, consistent managed backups and durable per-participant runtime ownership.
 - [x] D5. Implement persistent group/child operation receipts, supervised Core handover, readiness reconciliation, cancellation boundaries and original-request recovery across Core, Harness, Shell and helper failures.
-- [ ] D6. Implement individual/group Return to captured prior targets and running states, current-data compatibility acknowledgement, Core snapshot/recovery handling and explicit partial outcomes without discarding source/data or unrelated bindings.
+- [x] D6. Implement individual/group Return to captured prior targets and running states, current-data compatibility acknowledgement, Core snapshot/recovery handling and explicit partial outcomes without discarding source/data or unrelated bindings.
 - [ ] D7. Enforce per-participant source/lifecycle/Core authority through HTTP, CLI, Harness and direct MCP; add the explicitly reviewed Harness Core capability and verify Ask, Run unprompted, Disabled, denial, revocation and replay.
 - [ ] D8. Add Harness workspace review/activation/progress/Return and Shell per-app workspace runtime selection plus configurable Core Source controls; show actual source, matching reason, Core checkbox, conflicts, interruption and recovery.
-- [ ] D9. Integrate persistent app/Core consumers with workspace admission, source edits and cleanup; show live runtime users and Return actions without auto-stopping them during workspace Close or sandbox Finish.
-- [ ] D10. Cover repository/fork matching, source migration, multi-repository selection, multiple workspaces, permissions, drift, backup/build/start failure, replay and Return in the affected Core/CLI/Harness/Shell automated suites.
+- [x] D9. Integrate persistent app/Core consumers with workspace admission, source edits and cleanup; show live runtime users and Return actions without auto-stopping them during workspace Close or sandbox Finish.
+- [x] D10. Cover repository/fork matching, source migration, multi-repository selection, multiple workspaces, permissions, drift, backup/build/start failure, replay and Return in the affected Core/CLI/Harness/Shell automated suites.
 - [ ] D11. Run isolated Core-managed browser and real-agent acceptance for ordinary apps, Shell, Harness and Core, including Core deselection, live changes, restart/interruption recovery, preserved ordinary data/source and full test-resource cleanup.
 - [ ] D12. Complete affected builds, Native AOT, host-specific process-control checks, version consistency and user/agent documentation; publish current behavior in feature.md, update owning feature references, remove this plan and regenerate the index once all deliverables pass.
 
@@ -363,7 +363,7 @@ Windows/Linux checks. D6-D9 retain Return, all-client authority/UI and persisten
 
 ## Continuation
 
-D1-D5 are complete on draft PR #623; D6-D12 remain open on this same feature branch. Continue with
+D1-D5 are complete on draft PR #623. The owner requested continuous implementation of D6-D12 on 2026-10-19, followed by verification; this batch is in progress on the same feature branch. Deliverables remain unchecked until their verification passes. Continue with
 D6 individual/group Return, preserving the captured previous Core executable/project/generation,
 per-app journals, current data and source. D5 recovery does not authorize snapshot restoration or
 activation on the operator's ordinary data.
@@ -442,3 +442,22 @@ provider credentials without scoped authorization.
   process-control tests on supported hosts. Report macOS, Windows and Linux results separately;
   Docker Linux app coverage is not native Windows/Linux Core handover coverage. D12 remains open
   for unavailable required host checks rather than claiming static review as acceptance.
+
+
+## Continued Implementation And Verification — 2026-10-19
+
+The owner authorized continuous D6-and-later work in PR #623, with implementation followed by
+verification. D6 now passes the focused Core/CLI Return cases and a real parent-managed child-Core
+HTTP activation/Return/replay run. The prior executable, current test user/session, dirty source and
+single snapshot were verified. Parent Finish removed the child resources; fixture processes and
+ports were verified stopped. Snapshot restore is not performed by Return.
+
+The batch implements D7-D9 and their automated coverage. Harness and Shell production builds pass;
+Harness passes 828 tests, Shell 288 and CLI 271. Initial full-suite failures in strict HTTP/MCP
+inventories were corrected. Final Core, AOT and live browser/agent acceptance remain in progress;
+unverified deliverables above stay unchecked. Browser execution found a shared-checkout dependency
+conflict in Harness's scoped npm setup; its recipe now preserves the monorepo dependency set.
+
+Persistent runtime-consumer verification passes the final 24-test Core group. A factual running Core project remains a consumer even after Return; destructive workspace operations are refused while source-edit leases remain allowed. Core Native AOT passes after this change with no new trim/AOT warnings.
+
+The final full Core run passes 3,706 tests with four existing opt-in Docker/Torrent skips and no failures (19m49s). The later 24-test focused run covers the final typed MCP and factual Core-consumer changes. Browser/real-agent execution exposed a stale-review status race and a provider wrapper that omitted confirmed native shutdown; the UI regression passes four tests and the final connection/adapter/manager group passes 81 tests. Shell and Harness web builds pass after the UI change. D11 remains in progress while the same child environment is repaired and exercised again.

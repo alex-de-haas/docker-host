@@ -262,6 +262,14 @@ after checking that its native consumer stopped. Released metadata remains avail
 The [PR #590 acceptance report](../../reviews/2026-10-14-external-workspace-pr-observation.md)
 records real provider, browser, connection-loss and remote-head verification.
 
+## Workspace Runtime Activation
+
+[Workspace activation](../workspace-live-activation/feature.md) composes explicitly bound applications
+and repository-matched Core with a reviewed selection, supervised handover and individual/group
+Return. Runtime consumers persist independently of workspace Close and sandbox Finish. Core
+participation requires separate Core authority; ordinary source or lifecycle access is insufficient.
+Return preserves current data and live source edits.
+
 ## Testing Expectations
 
 - Exercise external PR observation with multiple references, remote head changes, provider errors,

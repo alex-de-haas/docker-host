@@ -67,6 +67,31 @@ public sealed class ExternalWorkspaceMcpHttpTests
     }
 
     [Fact]
+    public async Task WorkspaceActivation_UsesTypedMcpInputsAndRechecksLifecycleScope()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        await SeedAdminAsync(host);
+        await SeedSourceAsync(host);
+        using var client = host.CreateClient();
+        var token = await IssueAsync(host, WorkspaceScopes);
+        var tree = await ToolAsync(client, token, "prepare_workspace", new
+        {
+            requestId = Guid.NewGuid().ToString(), taskId = "activation", appId = SourceApp,
+            leaseId = Guid.NewGuid().ToString(), targetBranch = "main",
+        });
+        var input = new { workspaceId = tree.GetProperty("workspaceId").GetString(), kind = "plan", input = new { selection = new { coreSelected = false } } };
+        var denied = await ToolAsync(client, token, "workspace_activation", input);
+        Assert.Equal("activation_authority_required", denied.GetProperty("code").GetString());
+        var users = host.Services.GetRequiredService<UserDirectoryStore>();
+        await users.UpdateAsync(state => state with { Sessions = state.Sessions.Select(s => s.Id == token
+            ? s with { Scopes = [.. WorkspaceScopes, AccessTokenScopes.McpLifecycle] } : s).ToArray() });
+        var review = await ToolAsync(client, token, "workspace_activation", input);
+        Assert.False(string.IsNullOrWhiteSpace(review.GetProperty("planDigest").GetString()));
+        Assert.True(review.GetProperty("consequences").GetArrayLength() > 0);
+        Assert.DoesNotContain(token, review.GetRawText());
+    }
+
+    [Fact]
     public async Task ManualWorkspaceCredential_IsStableAcrossDisplayChangesButIsolatedFromOtherCredentials()
     {
         await using var host = await CoreHttpHarness.StartAsync();
@@ -333,7 +358,7 @@ public sealed class ExternalWorkspaceMcpHttpTests
         using var response = await McpAsync(client, "browser-admin", "tools/list", new { });
         var tools = (await McpResultAsync(response)).GetProperty("tools").EnumerateArray()
             .Where(tool => tool.GetProperty("name").GetString()!.Contains("workspace", StringComparison.Ordinal)).ToArray();
-        Assert.Equal(12, tools.Length);
+        Assert.Equal(13, tools.Length);
         foreach (var tool in tools)
         {
             var names = tool.GetProperty("inputSchema").GetProperty("properties").EnumerateObject().Select(property => property.Name).ToArray();

@@ -116,11 +116,12 @@ class ClaudeRun implements HarnessRun {
     if (this.turnActive && !this.stopped) this.options.onEvent({ type: "activity", activity });
   });
   private serverNames: Set<string>;
+  private readonly finished: Promise<void>;
   private readonly disabledServers = new Set<string>();
 
   constructor(private readonly options: HarnessStartOptions, private readonly environment: NodeJS.ProcessEnv) {
     this.serverNames = new Set(Object.keys(options.mcpServers ?? {}));
-    void this.runLoop();
+    this.finished = this.runLoop();
   }
 
   send(text: string): void {
@@ -197,6 +198,14 @@ class ClaudeRun implements HarnessRun {
 
   async interrupt(): Promise<void> {
     await this.query?.interrupt().catch(() => undefined);
+  }
+
+  async stopAndWait(): Promise<void> {
+    await this.stop();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try { await Promise.race([this.finished, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("Claude execution exit was not confirmed. Source lease remains held.")), 10_000);
+    })]); } finally { clearTimeout(timer); }
   }
 
   async stop(): Promise<void> {

@@ -1,16 +1,13 @@
 ---
 created: 2026-10-19
 updated: 2026-10-19
-summary: Configure Core source and provenance, select workspace participants and supervise resumable local activation with managed-data backups.
-components: [apps/core, apps/cli, shared]
+summary: Review workspace apps and matching Core, activate live source with supervised handover, and Return selected participants while preserving current data.
+components: [apps/core, apps/cli, apps/shell, apps/harness, shared]
 ---
 
 # Core Source And Workspace Activation
 
-Core exposes configurable development source, immutable build provenance, a read-only workspace
-participant planner and supervised local runtime activation. The local control API and CLI compose
-prepared application runtimes with optional Core replacement. Group Return, agent authority, UI and
-persistent Core workspace consumers are tracked in the [remaining plan](plan.md).
+Core exposes configurable development source, immutable build provenance, reviewed workspace activation and individual/group Return. Harness, Shell, direct MCP and local operator controls use the same persistent group and child operations. Activation uses ordinary data in the selected Core; sandbox preview is separate. Remaining acceptance gates are tracked in the [plan](plan.md).
 
 ## Development Source
 
@@ -129,10 +126,28 @@ apply receipt. App data, source files, selected runtimes and process state remai
 
 ## Authority
 
-The new HTTP routes require an administrator session and browser CSRF protection. Calls presented by
-an app also require `core.configure`; workspace read/cleanup or ordinary lifecycle permissions alone
-are insufficient. Existing workspace ownership and private-source visibility remain enforced. Delegated MCP/Harness execution authority is separate from these selection APIs. Local activation uses
-the existing host control secret and explicitly names the workspace owner.
+Source configuration and Core-only workspace preparation require administrator authority and browser
+CSRF protection; app-mediated configuration additionally requires `core.configure`. The activation
+surface checks workspace ownership, current administrator status, source access and lifecycle authority
+for its selected participants. App callers require `apps.sources.full` and `apps.lifecycle`; selecting
+Core additionally requires the separately reviewed optional `core.workspace.activate` permission.
+Harness and Shell declare this permission but do not grant it automatically to existing installations.
+
+Direct MCP `workspace_activation` requires a current direct Core grant with `mcp:read`,
+`mcp:workspaces` and `mcp:lifecycle`, plus `mcp:core-restart` when Core participates. It cannot use a
+delegated assistant credential or caller-supplied ownership. App grants, installation identity,
+permissions, browser sessions and direct grants are rechecked at runtime boundaries, including before
+Core Stop. Durable authority stores references/hashes, not bearer credentials. Local control and CLI
+retain their existing explicit local-operator authority. Owning a worktree alone does not grant any
+of these lifecycle capabilities.
+
+Harness exposes typed `activation_plan`, `activation_apply`, `activation_status`, `activation_list`,
+`activation_cancel`, `activation_resume` and `activation_return` workspace tools. Existing Ask, Run
+unprompted and Disabled policy applies. An agent's mutation is queued until its successful turn ends,
+native process exit (or Docker worker termination) is confirmed and source leases are released. The
+original reviewed payload and IDs are retained; policy and Core authority are rechecked at dispatch.
+A restarted Harness cannot reconstruct an in-memory approval: it marks the queue blocked for explicit
+review/retry. The detached helper owns an accepted transition even when Harness replaces itself.
 
 ## Local Runtime Composition
 
@@ -198,7 +213,7 @@ cannot overwrite a later Core-owned phase. Each dispatch retains its own log and
 `POST /control/v1/workspace-activations/{id}/start` admits the same helper through the local control
 secret. `GET /control/v1/workspace-activations/{id}` returns group, helper and current child journals;
 `POST .../{id}/verify-apps` checks the selected installation/runtime/source binding and actual readiness.
-These local endpoints do not grant Harness or MCP new authority. The full client policy remains D7.
+These local endpoints retain their control-secret boundary. Harness and direct MCP use the separately authorized activation surface described above.
 
 The CLI also reads status without a running Core:
 
@@ -233,8 +248,74 @@ returned requests never recreate processes, snapshots or backups.
 
 Core handover keeps its previous listen address and captured launch identity. Snapshot creation and
 replay retain the existing stopped-state and archive verification rules. Source settings saved during
-an active operation do not rewrite its captured previous runtime. Group/Core Return and data-compatibility
-review remain D6; browser/real-agent and Windows/Linux native acceptance remain D11-D12 in the plan.
+an active operation do not rewrite its captured previous runtime. Browser/real-agent and platform acceptance results remain explicit in the plan until their gates pass.
+
+## Review And Client Controls
+
+`POST /api/development/workspaces/{workspaceId}/activation/{kind}` accepts `plan`, `apply`, `list`,
+`status`, `cancel`, `resume` or `return`. `plan` receives `{ "selection": ... }` and returns `plan`,
+`planDigest` and consequences. `apply` requires the same selection, digest and a UUID `requestId`.
+The digest covers participant facts, source contents and installed runtime/configuration identity;
+changes invalidate admission. The earlier `activation-plan` endpoint remains a selection-only API.
+
+Harness's workspace details contain **Use workspace on this Core**. The review keeps explicit app
+choices, runtime/worktree ambiguity controls and a separate Core checkbox. Clearing Core changes the
+executable selection without affecting app choices. Shell's per-app **Workspace…** runtime control
+lists registered bindings for that app and uses the same review. Core Source exposes repository URL,
+ref, relative project and optional source connection alongside the running build and update origin.
+Unsaved source fields retain their opening revision; background status cannot overwrite them.
+
+The client retains uncertain action IDs and exact request bodies locally, without credentials. It
+lists durable groups, observes helper and child phases, and offers boundary pause, original-request
+resume and selected-participant Return. Visible in-progress panels refresh every three seconds;
+visibility restoration and explicit refresh recover missed progress. Terminal groups stop recurring
+requests. The helper remains the operation owner. If returning to an older Core removes these APIs,
+the retained ID and CLI status command remain available for diagnosis.
+
+## Return And Runtime Consumers
+
+A Return request has its own UUID and explicit selection:
+
+```json
+{
+  "activationId": "original-group-UUID",
+  "return": {
+    "requestId": "new-Return-UUID",
+    "apps": ["example.notes"],
+    "core": false,
+    "acceptDataChanges": true
+  }
+}
+```
+
+Returning apps restores each child journal's prior runtime, source and artifact selection, and its
+original running/stopped state. It keeps current data and source edits. Changed managed app data
+requires compatibility acknowledgement; refusal retains the stopped app and recovery records.
+Successful children are recorded individually. Partial failures retain the other achieved results;
+a subsequent explicit request can select the remaining participants. Reusing a Return ID with changed
+arguments is refused; replay of a retired request is an observation, not a new dispatch.
+
+Core Return requires explicit acceptance of current-data compatibility with the captured previous
+executable. Before Stop it verifies that executable's retained hash and the current candidate identity.
+It never selects an arbitrary release fallback. Lost Stop/Start responses reconcile the lifetime lock
+and exact prior launch target. A healthy returned app or Core is not restarted again on replay.
+Unrelated current targets are refused. The Core snapshot and app backups remain recovery evidence;
+Return does not automatically restore an archive, roll back users/data or reset Git.
+
+The local CLI can prepare and dispatch Return even when the browser is unavailable:
+
+```bash
+hosty --data-root <root> core return-workspace <activation-id> <return-request-id> --app example.notes --core --accept-data-changes
+hosty --data-root <root> core workspace-activation <activation-id>
+```
+
+Selected app journals and Core reservations remain durable workspace consumers. Transition phases
+block new source writers and destructive Git/cleanup; active runtime use allows ordinary edit leases
+but still prevents removal or destructive branch operations. Close and sandbox Finish do not stop an
+ordinary runtime consumer. Returning one participant releases only that participant's ownership.
+Harness shows app/Core runtime users and the activation controls needed to inspect or Return them.
+Harness's native setup installs the monorepo dependency set so its setup cannot prune dependencies
+used by Shell or another app in a shared worktree.
 
 ## Testing Expectations
 
@@ -256,3 +337,13 @@ review remain D6; browser/real-agent and Windows/Linux native acceptance remain 
 
 - Interrupt helpers after app apply, Core Stop and candidate Start; reconcile the original request without repeating completed effects or claiming readiness for a different target.
 - Verify cancellation boundaries, stale helper attempts, local-control authorization, dead previous-Core recovery and source/data preservation on isolated native instances.
+
+- Verify individual/group Return, compatibility refusal, partial results, previous-executable mutation,
+  lost-response replay, revoked authority and source/data preservation.
+- Exercise policy changes between queue and dispatch, confirmed native exit before lease release,
+  resumed UI requests, selection invalidation and explicit Core compatibility acknowledgement.
+- Run `python3 scripts/check-workspace-activation.py . return --managed` on a host with Docker after
+  Debug Core/CLI builds. The fixture performs normal setup/password login, reviewed HTTP activation,
+  exact-target Return and replay, and verifies parent-owned Finish and process/port cleanup.
+- Run the native `return` and `auto` scenarios on macOS, Windows and Linux; CI defines that matrix.
+  Passing on one operating system does not establish another platform's process-control result.

@@ -2,9 +2,9 @@ using Haas.Hosty.Launch;
 
 namespace Haas.Hosty.Core;
 
-internal sealed record WorkspaceActivationRequest(string RequestId, string UserId, WorkspaceActivationSelection Selection);
-internal sealed class WorkspaceActivationService(CoreDataPaths paths, WorkspaceActivationPlanner planner,
-    CoreDevelopmentService core, CoreLifecycleService lifecycle, DevelopmentWorkspaceService workspaces)
+internal sealed record WorkspaceActivationRequest(string RequestId, string UserId, WorkspaceActivationSelection Selection, string? PlanDigest = null, WorkspaceActivationActor? Authority = null);
+internal sealed partial class WorkspaceActivationService(CoreDataPaths paths, WorkspaceActivationPlanner planner,
+    CoreDevelopmentService core, CoreLifecycleService lifecycle, DevelopmentWorkspaceService workspaces, WorkspaceActivationAccess? access = null)
 {
     private readonly SemaphoreSlim gate = new(1, 1);
 
@@ -13,9 +13,15 @@ internal sealed class WorkspaceActivationService(CoreDataPaths paths, WorkspaceA
         await gate.WaitAsync(ct);
         try
         {
+            if (input.Authority is not null)
+            {
+                if (input.Authority.UserId != input.UserId || access is null) throw Error("authority_invalid", "Activation authority is unavailable.");
+                await access.ValidateAsync(input.Authority, false, ct);
+            }
             var file = WorkspaceRuntimeFiles.PathFor(paths.DataRoot, input.RequestId);
             var fingerprint = DevelopmentWorkspaceService.Hash(workspaceId + "\n" + CoreJson.Text(input));
             var prior = File.Exists(file) ? WorkspaceRuntimeFiles.Read(paths.DataRoot, input.RequestId) : null;
+            if (prior is not null && input.Authority is not null) await access!.ValidateAsync(input.Authority, prior.CoreProject is not null && !prior.CoreReturned, ct);
             if (prior is not null && prior.Fingerprint != fingerprint) throw Error("request_conflict", "Preserve the original request ID and selection.");
             if (prior is { Phase: "prepared" })
             {
@@ -30,31 +36,35 @@ internal sealed class WorkspaceActivationService(CoreDataPaths paths, WorkspaceA
             }
             if (prior is { Phase: not "preparing" }) return prior;
             var plan = await planner.PlanAsync(workspaceId, input.UserId, input.Selection, ct);
+            if (input.PlanDigest is not null && input.PlanDigest != (await ReviewAsync(workspaceId, input.UserId, input.Selection, ct)).PlanDigest)
+                throw Error("review_changed", "Authoritative inputs changed. Review the current selection again before admission.");
             foreach (var row in plan.Participants.Where(p => p.Kind == "app" && p.Unavailable is not null))
                 if (input.Selection.Apps?.Any(c => c.AppId == row.Id && !c.Selected) != true)
                     throw Error("participant_unavailable", row.Name + ": " + row.Unavailable + " Exclude it explicitly to continue.");
             var selected = plan.Participants.Where(p => p.Selected).ToArray();
             if (selected.Length == 0) throw Error("empty", "Select at least one available participant.");
             var coreRow = selected.SingleOrDefault(p => p.Kind == "core");
+            if (input.Authority is not null) await access!.ValidateAsync(input.Authority, coreRow is not null, ct);
             var rows = selected.Where(p => p.Kind == "app").ToArray();
             var ids = rows.Select(p => p.Id).Order(StringComparer.Ordinal).ToArray();
             var state = await core.GetAsync(ct);
             var activation = prior ?? new WorkspaceRuntimeActivation(input.RequestId, workspaceId, input.UserId, fingerprint,
-                plan.CoreInstance, plan.CoreSourceRevision, coreRow?.WorktreeId, coreRow?.SourcePath, state.Launch, ids, "preparing");
+                plan.CoreInstance, plan.CoreSourceRevision, coreRow?.WorktreeId, coreRow?.SourcePath, state.Launch, ids, "preparing", Authority: input.Authority);
             if (state.Instance != activation.CoreInstance || state.Source.Revision != activation.CoreSourceRevision)
                 throw Error("core_changed", "Core or its source selection changed. Inspect the retained activation before proceeding.");
             if (coreRow is not null)
             {
                 await ValidateCoreTreeAsync(activation, ct);
-                if (WorkspaceRuntimeFiles.List(paths.DataRoot).Any(a => a.Id != activation.Id && a.CoreProject is not null && a.Phase is not ("returned" or "cancelled")))
+                if (WorkspaceRuntimeFiles.List(paths.DataRoot).Any(a => a.Id != activation.Id && a.CoreProject is not null && !a.CoreReturned && a.Phase is not ("returned" or "cancelled")))
                     throw Error("core_owned", "Another activation owns Core. Return it before switching again.");
             }
             return await lifecycle.WithActivationAppLocksAsync(ids, async () =>
             {
                 var order = await lifecycle.OrderActivationAppsAsync(ids, ct);
                 var plans = await lifecycle.PreflightActivationAppsAsync(activation, rows, ct);
-                activation = activation with { Apps = order, Error = null };
-                WorkspaceRuntimeFiles.Save(paths.DataRoot, activation);
+                activation = activation with { Apps = order, Error = null, CoreReserved = activation.CoreProject is not null };
+                if (activation.CoreProject is not null) await workspaces.ReserveCoreActivationAsync(activation, ct);
+                else WorkspaceRuntimeFiles.Save(paths.DataRoot, activation);
                 try
                 {
                     foreach (var app in plans) await lifecycle.PrepareActivationAppAsync(activation, app, ct);
@@ -72,7 +82,7 @@ internal sealed class WorkspaceActivationService(CoreDataPaths paths, WorkspaceA
                 catch
                 {
                     await lifecycle.ReleaseActivationPreparationAsync(activation, CancellationToken.None);
-                    WorkspaceRuntimeFiles.Save(paths.DataRoot, activation with { Error = "Preparation failed; running services were not stopped. Inspect build diagnostics and retry the original request." });
+                    WorkspaceRuntimeFiles.Save(paths.DataRoot, activation with { CoreReserved = false, Error = "Preparation failed; running services were not stopped. Inspect build diagnostics and retry the original request." });
                     throw;
                 }
             }, ct);
@@ -94,7 +104,7 @@ internal sealed class WorkspaceActivationService(CoreDataPaths paths, WorkspaceA
                 var current = await core.GetAsync(ct);
                 // Releasing a pre-Stop request from a replaced Core retires its stale review.
                 var phase = current.Instance == activation.CoreInstance && current.Source.Revision == activation.CoreSourceRevision ? "preparing" : "returned";
-                activation = activation with { Phase = phase, SourceStamps = null, PreparedExecutable = null, Generation = null };
+                activation = activation with { Phase = phase, CoreReserved = false, SourceStamps = null, PreparedExecutable = null, Generation = null };
                 WorkspaceRuntimeFiles.Save(paths.DataRoot, activation);
                 return activation;
             }, ct);
@@ -108,6 +118,7 @@ internal sealed class WorkspaceActivationService(CoreDataPaths paths, WorkspaceA
         try
         {
             var activation = WorkspaceRuntimeFiles.Read(paths.DataRoot, id);
+            await ValidateAuthorityAsync(activation, ct);
             if (activation.Phase == "active") return activation;
             if (activation.Phase is not ("prepared" or "applying" or "apps-active")) throw Error("not_prepared", "Prepare every participant before activation.");
             if (activation.CoreProject is not null && (activation.PreparedExecutable is null || !File.Exists(activation.PreparedExecutable)))
@@ -181,13 +192,33 @@ internal sealed class WorkspaceActivationService(CoreDataPaths paths, WorkspaceA
         try
         {
             var activation = WorkspaceRuntimeFiles.Read(paths.DataRoot, id);
+            await ValidateAuthorityAsync(activation, ct);
             return await lifecycle.WithActivationAppLocksAsync(activation.Apps.Order(StringComparer.Ordinal).ToArray(), async () =>
             {
-                foreach (var app in activation.Apps) await lifecycle.VerifyActivationAppAsync(activation, app, ct);
+                foreach (var app in activation.Apps.Except(activation.ReturnedApps ?? [])) await lifecycle.VerifyActivationAppAsync(activation, app, ct);
                 return activation;
             }, ct);
         }
         finally { gate.Release(); }
+    }
+
+    private Task ValidateAuthorityAsync(WorkspaceRuntimeActivation activation, CancellationToken ct) => activation.Authority is null
+        ? Task.CompletedTask : access is null ? throw Error("authority_invalid", "Activation authority is unavailable.")
+        : access.ValidateAsync(activation.Authority, activation.CoreProject is not null && !activation.CoreReturned, ct);
+
+    internal async Task<WorkspaceActivationReview> ReviewAsync(string workspaceId, string userId, WorkspaceActivationSelection input, CancellationToken ct)
+    {
+        var plan = await planner.PlanAsync(workspaceId, userId, input, ct);
+        var stamps = new List<string>();
+        foreach (var id in plan.Participants.Where(p => p.Selected).Select(p => p.WorktreeId!).Distinct().Order(StringComparer.Ordinal))
+            stamps.Add(id + ":" + (await workspaces.ObserveAsync(id, null, ct)).SourceStamp);
+        foreach (var app in plan.Participants.Where(p => p.Selected && p.Kind == "app").OrderBy(p => p.Id, StringComparer.Ordinal))
+            stamps.Add(app.Id + ":" + await lifecycle.ActivationReviewStampAsync(app.Id, ct));
+        return new(plan, DevelopmentWorkspaceService.Hash(CoreJson.Text(plan) + "\n" + string.Join("\n", stamps)),
+            ["Selected runtimes use this Core's ordinary users and current data.",
+             "Managed app data and stopped Core state are backed up; external mounts and remote services are outside coverage.",
+             "Selecting Shell, Harness or Core interrupts its interface and agents. The detached helper retains progress.",
+             "Return keeps current data and source edits; compatibility with an older executable requires explicit acceptance."]);
     }
 
     private async Task ValidateCoreTreeAsync(WorkspaceRuntimeActivation activation, CancellationToken ct)
@@ -207,3 +238,5 @@ internal sealed class WorkspaceActivationService(CoreDataPaths paths, WorkspaceA
 }
 
 internal sealed record WorkspaceActivationDetail(WorkspaceActivationStatus Status, AppDevStatus[] Children);
+
+internal sealed record WorkspaceActivationReview(WorkspaceActivationPlan Plan, string PlanDigest, string[] Consequences);

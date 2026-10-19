@@ -14,7 +14,7 @@ export interface DevelopmentWorkspace {
   observation?: { state: string; at: string; head?: string; targetHead?: string; ahead?: number; behind?: number;
     conflict?: boolean; error?: string; sessionFiles?: string[]; local?: { files: { path: string; status: string }[] } };
 }
-export type DevelopmentAction = "app-dev-logs" | "app-dev-status" | "app-dev-plan" | "app-dev-apply" | "merge-upstream" | "remote-status" | "remote-connect" | "remote-fetch" | "remote-push-base" | "pr-push" | "app-local-status" | "app-local-accept" | "app-local-use" | "app-create" | "app-creation-status" | "app-creation-capabilities" | "app-creation-guide" | "workflow-status" | "workflow-complete" | "workflow-resume" | "workflow-pause" | "workflow-pause-confirm" | "workflow-defer" | "workflow-delete" | CoreEnvironmentAction | SandboxAction | "viewer" | "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
+export type DevelopmentAction = "activation-plan" | "activation-apply" | "activation-status" | "activation-list" | "activation-cancel" | "activation-resume" | "activation-return" | "app-dev-logs" | "app-dev-status" | "app-dev-plan" | "app-dev-apply" | "merge-upstream" | "remote-status" | "remote-connect" | "remote-fetch" | "remote-push-base" | "pr-push" | "app-local-status" | "app-local-accept" | "app-local-use" | "app-create" | "app-creation-status" | "app-creation-capabilities" | "app-creation-guide" | "workflow-status" | "workflow-complete" | "workflow-resume" | "workflow-pause" | "workflow-pause-confirm" | "workflow-defer" | "workflow-delete" | CoreEnvironmentAction | SandboxAction | "viewer" | "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
 export interface RetentionSnapshot {
   kind: "chat" | "workspace" | "sandbox";
   workflow: { state: string; revision: number; completedAt?: string | null; closure?: string | null } | null;
@@ -80,6 +80,12 @@ export class DevelopmentClient {
   }
   async call(sessionId: string, credential: string, action: DevelopmentAction, input: Record<string, unknown>): Promise<unknown> {
     if (!this.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
+    if (action.startsWith("activation-")) {
+      if (typeof input.workspaceId !== "string" || !/^[a-f0-9]{64}$/.test(input.workspaceId))
+        throw new AppContextError(400, "activation_workspace_required", "Supply the registered workspace group ID.");
+      const root = `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/workspace-activation/${input.workspaceId}/${action.slice(11)}`;
+      return this.inspection(credential, root, input, true);
+    }
     if (action.startsWith("app-dev-")) {
       if (typeof input.appId !== "string" || !/^[a-z0-9][a-z0-9._-]{0,62}$/.test(input.appId))
         throw new AppContextError(400, "dev_app_required", "Supply the installed app id.");
@@ -159,8 +165,15 @@ const devToolProperties = {
   appId: { type: "string" },
   requestId: { type: "string" },
 };
-const actions = ["app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status","app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", ...coreEnvironmentActions, ...sandboxActions, "list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"] as const;
+const actions = ["activation-plan", "activation-apply", "activation-status", "activation-list", "activation-cancel", "activation-resume", "activation-return", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status","app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", ...coreEnvironmentActions, ...sandboxActions, "list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"] as const;
 const descriptions: Partial<Record<(typeof actions)[number], string>> = {
+  "activation-plan": "Review explicit workspace app/Core selection on this host's ordinary data. Supply workspaceId and selection. Inspect every participant, source, interruption and planDigest. Core defaults to its matching repository; deselect it explicitly for apps only.",
+  "activation-apply": "Apply the reviewed selection with planDigest and stable UUID requestId. Requires source/app lifecycle permissions plus separately reviewed core.workspace.activate for Core. For an active agent turn, Harness queues the exact request until the turn exits and releases its leases; finish the turn after queueing. Changed source invalidates the review. This tool follows Ask/Run unprompted/Disabled policy. A detached helper owns recovery; keep the original request after disconnect.",
+  "activation-status": "Read the original activationId, helper and child phases. An accepted request is not ready. No runtime mutation.",
+  "activation-list": "List retained workspace activation receipts and Return results for workspaceId.",
+  "activation-cancel": "Pause activationId at the next retained boundary; do not discard data or source or kill a writer.",
+  "activation-resume": "Resume activationId after reviewing retained failure/cancellation. Reuses the original targets and receipts.",
+  "activation-return": "Return explicit apps and/or Core using activationId and return: {requestId, apps, core, acceptDataChanges}. Review compatibility before accepting current data with old executables. Preserve source, data and unrelated bindings. No snapshot restoration or cleanup.",
   "app-dev-status": "Inspect the installed app's ordinary-data development operation, current runtime/health/build/restart state and recovery receipts. Supply appId. This is the same Core and users, not a child sandbox.",
   "app-dev-plan": "Prepare ordinary-data dev enter/restart/return. Supply appId, devAction, stable UUID requestId; enter also needs targetRuntime and this session's worktreeId. Read changes, backup coverage and data compatibility before applying. Uncommitted source stays live; no commit or child Core is created. Return retains data and edits. acceptDataChanges explicitly accepts data compatibility with the prior runtime.",
   "app-dev-apply": "Apply the exact app-dev-plan request with its planDigest under this tool's configured Ask/Run unprompted/Disabled policy. Supply the same appId, requestId, devAction and arguments. Entry switches the existing app to live worktree code on ordinary data/users after a backup. Restart keeps that binding. Return restores previous execution, never data. Preserve the original request after uncertainty; do not bypass refusal with CLI.",
@@ -204,17 +217,24 @@ const descriptions: Partial<Record<(typeof actions)[number], string>> = {
   references: "Attach HTTPS pull request links for session history; these links do not prove merge. Supply requestId and pullRequests.",
 };
 
+const activationToolProperties = {
+  workspaceId: { type: "string" }, requestId: { type: "string" }, planDigest: { type: "string" }, activationId: { type: "string" },
+  selection: { type: "object", properties: { coreSelected: { type: "boolean" }, coreWorktreeId: { type: ["string", "null"] },
+    apps: { type: "array", items: { type: "object", properties: { appId: { type: "string" }, selected: { type: "boolean" }, worktreeId: { type: ["string", "null"] }, runtime: { type: ["string", "null"] } }, required: ["appId", "selected"], additionalProperties: false } } }, additionalProperties: false },
+  return: { type: "object", properties: { requestId: { type: "string" }, apps: { type: "array", items: { type: "string" } }, core: { type: "boolean" }, acceptDataChanges: { type: "boolean" } }, required: ["requestId", "apps", "core", "acceptDataChanges"], additionalProperties: false },
+};
+
 export const DEVELOPMENT_PROVIDER = "hosty:development";
 export const DEVELOPMENT_IDENTITY = "hosty-development-v1";
 export const developmentTools = () => [...coreEnvironmentTools(), ...sandboxTools(), ...actions.filter(action => !action.startsWith("sandbox-") && !action.startsWith("environment-")).map(action => ({ name: action.replaceAll("-", "_"), description: descriptions[action]!,
-  inputSchema: { type: "object", properties: action.startsWith("app-dev-") ? devToolProperties : toolProperties, additionalProperties: false },
-  annotations: { readOnlyHint: ["app-dev-status", "app-dev-plan", "remote-status", "app-local-status","app-creation-guide", "app-creation-status", "app-creation-capabilities", "workflow-status", "list", "status", "diff", "pr-list", "pr-status", "pr-connections"].includes(action), destructiveHint: ["app-dev-apply", "cleanup", "pr-merge"].includes(action), openWorldHint: false } }))];
+  inputSchema: { type: "object", properties: action.startsWith("activation-") ? activationToolProperties : action.startsWith("app-dev-") ? devToolProperties : toolProperties, additionalProperties: false },
+  annotations: { readOnlyHint: ["activation-plan", "activation-status", "activation-list", "app-dev-status", "app-dev-plan", "remote-status", "app-local-status","app-creation-guide", "app-creation-status", "app-creation-capabilities", "workflow-status", "list", "status", "diff", "pr-list", "pr-status", "pr-connections"].includes(action), destructiveHint: ["activation-apply", "activation-return", "activation-resume", "app-dev-apply", "cleanup", "pr-merge"].includes(action), openWorldHint: false } }))];
 
 /** Session-key authenticated local MCP surface; Core credentials never enter the agent config. */
 export class DevelopmentMcp {
   policy?: McpToolPolicy;
   private readonly keys = new Map<string, string>();
-  constructor(private readonly invoke: (sessionId: string, action: DevelopmentAction, input: Record<string, unknown>) => Promise<unknown>) {}
+  constructor(private readonly invoke: (sessionId: string, action: DevelopmentAction, input: Record<string, unknown>, dispatchGuard?: () => Promise<void>) => Promise<unknown>) {}
   config(sessionId: string, origin: string): Record<string, unknown> {
     const key = this.keys.get(sessionId) ?? randomBytes(32).toString("base64url"); this.keys.set(sessionId, key);
     return { "hosty-workspaces": { type: "http", hostyPolicy: true, url: `${origin}/internal/workspaces/${encodeURIComponent(sessionId)}`,
@@ -260,7 +280,7 @@ export class DevelopmentMcp {
           const dispatchGuard = await this.policy?.authorize(sessionId, DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, JSON.stringify(rpc.id), rpc.params!.name!, input, abort.signal);
           if (abort.signal.aborted || !this.keys.has(sessionId)) throw new Error("Session ended before dispatch.");
           await dispatchGuard?.();
-          result = await this.invoke(sessionId, action, input);
+          result = action.startsWith("activation-") ? await this.invoke(sessionId, action, input, dispatchGuard) : await this.invoke(sessionId, action, input);
         } finally { response.off("close", cancel); }
         answer({ content: [{ type: "text", text: JSON.stringify(result) }] });
       } catch (error) { answer({ isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : "Workspace operation failed." }] }); }

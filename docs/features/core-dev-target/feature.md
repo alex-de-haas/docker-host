@@ -204,6 +204,14 @@ Core suite passes 1976 tests with the same four opt-in skips. The Windows proces
 also covers runner log survival and explicit recovery, including adoption and Stop after the command
 shell exits while its detached descendant remains alive.
 
+## Workspace Runtime Activation
+
+[Workspace activation](../workspace-live-activation/feature.md) composes explicitly bound applications
+and repository-matched Core with a reviewed selection, supervised handover and individual/group
+Return. Runtime consumers persist independently of workspace Close and sandbox Finish. Core
+participation requires separate Core authority; ordinary source or lifecycle access is insufficient.
+Return preserves current data and live source edits.
+
 ## Testing Expectations
 
 - CLI: build failure before stop, explicit release/dev selection, isolated output and generation

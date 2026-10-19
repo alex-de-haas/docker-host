@@ -1,6 +1,6 @@
 ---
 created: 2026-10-18
-updated: 2026-10-18
+updated: 2026-10-19
 summary: One recoverable dev-mode operation for ordinary installed apps, shared by Shell, Harness, CLI and direct MCP, using live source and ordinary data in the same Core.
 components: [apps/core, apps/cli, apps/harness, apps/shell]
 ---
@@ -130,6 +130,14 @@ Core audit records apply attempts, refusals, progress and outcome with actor, in
 worktree, source HEAD/manifest, review digest and request/operation IDs. Harness retains its normal
 MCP approval/automatic-dispatch records. These are distinct from observed runtime readiness.
 Journal/audit payloads contain execution references rather than copies of credentials or app data.
+
+## Workspace Runtime Activation
+
+[Workspace activation](../workspace-live-activation/feature.md) composes explicitly bound applications
+and repository-matched Core with a reviewed selection, supervised handover and individual/group
+Return. Runtime consumers persist independently of workspace Close and sandbox Finish. Core
+participation requires separate Core authority; ordinary source or lifecycle access is insufficient.
+Return preserves current data and live source edits.
 
 ## Testing Expectations
 

@@ -13,6 +13,7 @@ internal sealed partial class CoreDevelopmentService(HostyCoreRuntimeConfig conf
 {
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly CoreLaunchIdentity launch = identity ?? CoreLaunchIdentity.Current();
+    internal CoreLaunchIdentity Launch => launch;
     internal string Instance => $"{launch.ProcessId}:{launch.StartedAt.UtcTicks}";
     private string LegacyManagedPath => Path.Combine(config.DataRoot, "core", "source");
 

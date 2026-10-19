@@ -687,6 +687,10 @@ export class AgentConnections {
             resolveQuestion: (id, answers) => run.resolveQuestion(id, answers),
             interrupt: () => run.interrupt(),
             setMcpServers: (servers) => run.setMcpServers(servers),
+            ...(run.stopAndWait ? { stopAndWait: async () => {
+              await run.stopAndWait!();
+              release();
+            } } : {}),
             stop: async () => {
               await run.stop();
               release();

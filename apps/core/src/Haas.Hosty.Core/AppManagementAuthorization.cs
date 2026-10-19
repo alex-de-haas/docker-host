@@ -107,6 +107,8 @@ internal static class AppManagementAuthorization
         {
             foreach (var route in routes) result.Add(route, [permission]);
         }
+        result["GET /api/development/activation-workspaces"] = [CoreAppPermissions.WorkspacesRead];
+        result["POST /api/development/workspaces/{workspaceId}/activation/{kind}"] = [CoreAppPermissions.WorkspacesRead];
         result["GET /api/apps/{appId}/dev-mode"] = [CoreAppPermissions.AppLifecycle];
         result["POST /api/apps/{appId}/dev-mode/{kind}"] = [CoreAppPermissions.AppLifecycle];
         Add(CoreAppPermissions.CoreEnvironmentsInspect, "GET /api/core-environments", "GET /api/core-environments/{id}", "GET /api/core-environments/{id}/apps");

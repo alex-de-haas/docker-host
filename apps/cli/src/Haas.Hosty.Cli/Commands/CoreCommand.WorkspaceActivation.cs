@@ -27,6 +27,27 @@ internal sealed partial class CoreCommand
         return 0;
     }
 
+    private async Task<int> ReturnWorkspaceAsync(string[] args)
+    {
+        if (args.Length < 2) throw new CommandUsageException("Supply activation UUID, Return UUID, --core and/or --app <id>, and optionally --accept-data-changes.", Usage);
+        var apps = new List<string>(); var includeCore = false; var accept = false;
+        for (var i = 2; i < args.Length; i++)
+            switch (args[i])
+            {
+                case "--core": includeCore = true; break;
+                case "--accept-data-changes": accept = true; break;
+                case "--app" when i + 1 < args.Length: apps.Add(args[++i]); break;
+                default: throw new CommandUsageException("Unknown Return option: " + args[i], Usage);
+            }
+        var root = context.Environment.RootDirectory;
+        WorkspaceRuntimeActivation returning;
+        using (CoreLaunchFiles.Lock(root))
+            returning = WorkspaceActivationReturn.Prepare(root, args[0], new(args[1], apps.ToArray(), includeCore, accept));
+        if (returning.Returns?.LastOrDefault() is not { State: "pending" } current || current.Request.RequestId != args[1])
+            return await WorkspaceActivationStatusAsync([args[0]]);
+        return await ActivateWorkspaceAsync([args[0], "--resume"]);
+    }
+
     private Task<int> WorkspaceActivationStatusAsync(string[] args)
     {
         if (args.Length is < 1 or > 2 || args.Length == 2 && args[1] != "--cancel")
@@ -89,6 +110,8 @@ internal sealed partial class CoreCommand
                 ?? throw new IOException("The intended Core is unavailable.");
             _ = await core.PostAsync<JsonElement>("workspace-activations/" + id + "/" + action);
         }
+        public Task ValidateAuthorityAsync(string id) => PostAsync(id, "validate-authority");
+        public Task ReturnAppsAsync(string id) => PostAsync(id, "return-apps");
         public Task ApplyAppsAsync(string id) => PostAsync(id, "apply-apps");
         public Task VerifyAppsAsync(string id) => PostAsync(id, "verify-apps");
         public Task ReleasePreparationAsync(string id) => PostAsync(id, "release-preparation");
@@ -99,6 +122,7 @@ internal sealed partial class CoreCommand
         }
         public async Task RestorePreviousAsync(WorkspaceRuntimeActivation activation)
         {
+            WorkspaceActivationReturn.VerifyPrevious(activation);
             if (!File.Exists(activation.PreviousExecutable)) throw new IOException("The captured previous Core executable is unavailable.");
             var prior = activation.PreviousCore;
             var target = new CoreStartTarget(activation.PreviousExecutable!, Path.GetDirectoryName(activation.PreviousExecutable!)!, [],

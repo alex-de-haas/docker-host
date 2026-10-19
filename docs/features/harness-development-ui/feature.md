@@ -410,6 +410,14 @@ without requiring publication to save or use the app. The
 [creation feature](../app-prototype-workspaces/feature.md) owns source retention, replay, authorization
 and verification; these controls reuse the same sessions, worktrees and child Core panels.
 
+## Workspace Runtime Activation
+
+[Workspace activation](../workspace-live-activation/feature.md) composes explicitly bound applications
+and repository-matched Core with a reviewed selection, supervised handover and individual/group
+Return. Runtime consumers persist independently of workspace Close and sandbox Finish. Core
+participation requires separate Core authority; ordinary source or lifecycle access is insufficient.
+Return preserves current data and live source edits.
+
 ## Testing Expectations
 
 - Verify activity ordering, legacy/missing/invalid dates, multiple repositories, repeated observations,

@@ -15,6 +15,8 @@ internal interface IWorkspaceActivationRuntime
     Task StartAsync(WorkspaceRuntimeActivation activation);
     Task ReleasePreparationAsync(string id);
     Task RestorePreviousAsync(WorkspaceRuntimeActivation activation);
+    Task ValidateAuthorityAsync(string id) => Task.CompletedTask;
+    Task ReturnAppsAsync(string id) => throw new NotSupportedException("Workspace Return is unavailable.");
 }
 
 internal sealed class WorkspaceActivationHandover(string root, IWorkspaceActivationRuntime runtime)
@@ -22,6 +24,11 @@ internal sealed class WorkspaceActivationHandover(string root, IWorkspaceActivat
     internal async Task RunAsync(string id)
     {
         var a = WorkspaceRuntimeFiles.Read(root, id);
+        if (a.Phase.StartsWith("return-", StringComparison.Ordinal))
+        {
+            await new WorkspaceActivationReturn(root, runtime).RunAsync(id);
+            return;
+        }
         if (a.Phase is "active" or "returned" or "cancelled") return;
         if (a.Phase is "preparing") throw new InvalidOperationException("Prepare the original request before activation.");
         try
@@ -42,7 +49,8 @@ internal sealed class WorkspaceActivationHandover(string root, IWorkspaceActivat
                 if (!SameTarget(a.PreviousCore, current.Launch) ||
                     a.Phase == "prepared" && a.PreviousCore != current.Launch)
                     throw new InvalidOperationException("The current Core is not the reviewed previous target. Nothing was stopped.");
-                a = Save(a with { ListenUrl = current.ListenUrl, PreviousExecutable = a.PreviousExecutable ?? current.Executable, Error = null });
+                a = Save(a with { ListenUrl = current.ListenUrl, PreviousExecutable = a.PreviousExecutable ?? current.Executable,
+                    PreviousExecutableHash = a.PreviousExecutableHash ?? WorkspaceActivationReturn.ExecutableHash(a.PreviousExecutable ?? current.Executable), Error = null });
                 if (a.CoreProject is not null && a.PreparedExecutable is null)
                 {
                     CoreStateSnapshot.Preflight(root);
@@ -65,6 +73,7 @@ internal sealed class WorkspaceActivationHandover(string root, IWorkspaceActivat
                 {
                     if (!SameTarget(a.PreviousCore, current.Launch))
                         throw new InvalidOperationException("A different Core owns this data root. Recovery did not stop it.");
+                    await runtime.ValidateAuthorityAsync(id);
                     await runtime.StopAsync();
                 }
                 // The lifetime lock proves exit even after the stop response or helper was lost.

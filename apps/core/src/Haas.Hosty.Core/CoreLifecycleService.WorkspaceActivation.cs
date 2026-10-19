@@ -12,7 +12,7 @@ internal sealed partial class CoreLifecycleService
         {
             var app = await RequireAppAsync(row.Id, ct);
             var request = new AppDevRequest(WorkspaceRuntimeFiles.ChildId(activation.Id, app.Id), "enter", row.TargetRuntime, row.WorktreeId);
-            var actor = new AppDevActor(activation.UserId, "workspace-local", TrustedLocalOperator: true);
+            var actor = new AppDevActor(activation.UserId, activation.Authority?.Via ?? "workspace-local", TrustedLocalOperator: activation.Authority is null);
             var owned = await AppDevStore.ReadAsync(paths, app, ct);
             var plan = owned is { Phase: "prepared" } && owned.ActivationId == activation.Id
                 ? new AppDevPlan(app.Id, "enter", "", owned.Id, app.SelectedRuntime, owned.TargetRuntime, owned.WorktreeId, owned.SourcePath, owned.SourceHead, [], false, [])
@@ -62,7 +62,7 @@ internal sealed partial class CoreLifecycleService
             SecureFileSystem.EnsurePrivateDirectory(AppDevStore.Root(paths, app.Id));
             var saved = Path.Combine(AppDevStore.Root(paths, app.Id), id + ".manifest.json");
             await File.WriteAllTextAsync(saved, previous.ManifestJson, ct);
-            op = new(id, app.Id, app.InstalledAt, new(activation.UserId, "workspace-local", TrustedLocalOperator: true),
+            op = new(id, app.Id, app.InstalledAt, new(activation.UserId, activation.Authority?.Via ?? "workspace-local", TrustedLocalOperator: activation.Authority is null),
                 plan.TargetRuntime!, plan.SourcePath!, plan.WorktreeId, previous.ManifestDigest, saved, app.SelectedRuntime,
                 app.SourceState, app.ArtifactLocks, AppRuntimeStates.IsUp(app.RuntimeState), await DevConfigurationHashAsync(app, ct),
                 "prepared", Receipts: [new(id, activation.Fingerprint, "enter", "pending")], SourceHead: plan.Head, ActivationId: activation.Id);
@@ -126,6 +126,34 @@ internal sealed partial class CoreLifecycleService
         }
     }
 
+    internal async Task ReturnActivationAppAsync(WorkspaceRuntimeActivation activation, string appId,
+        WorkspaceReturnRequest request, CancellationToken ct)
+    {
+        var app = await RequireAppAsync(appId, ct);
+        var op = await AppDevStore.ReadAsync(paths, appId, WorkspaceRuntimeFiles.ChildId(activation.Id, appId), ct)
+            ?? throw DevError("return_missing", "The captured child journal is unavailable.");
+        if (op.ActivationId != activation.Id || op.Installation != app.InstalledAt)
+            throw DevError("binding_changed", "Return cannot overwrite a different installation.");
+        if (op.Phase == "returned")
+        {
+            if (app.SelectedRuntime != op.PreviousRuntime || app.SourceState != op.PreviousSource ||
+                op.WasRunning && (await GetHealthAsync(appId, ct)).Status != "healthy" || !op.WasRunning && AppRuntimeStates.IsUp(app.RuntimeState))
+                throw DevError("return_not_ready", "The previous runtime no longer confirms its captured running state. Inspect it before completing Return.");
+            return;
+        }
+        await ValidateDevBindingAsync(app, op, ct);
+        await DevWorkspaces.WithDevAdmissionAsync(op.WorktreeId!, app, null, async () =>
+        {
+            await ReturnDevAsync(op, WorkspaceRuntimeFiles.ChildId(request.RequestId, appId), request.AcceptDataChanges, ct);
+            var restored = await RequireAppAsync(appId, ct);
+            if (restored.SelectedRuntime != op.PreviousRuntime || restored.SourceState != op.PreviousSource ||
+                op.WasRunning && (await GetHealthAsync(appId, ct)).Status != "healthy" ||
+                !op.WasRunning && AppRuntimeStates.IsUp(restored.RuntimeState))
+                throw DevError("return_not_ready", "The captured previous runtime has not confirmed its original running state.");
+            return true;
+        }, ct, returning: true);
+    }
+
     internal async Task StopActivationAppAsync(string appId, CancellationToken ct)
     {
         var app = await RequireAppAsync(appId, ct);
@@ -146,6 +174,15 @@ internal sealed partial class CoreLifecycleService
         async Task<T> Next(int index) => index == ids.Length ? await action() :
             await WithAppLockAsync(ids[index], () => Next(index + 1), ct, developmentOperation: true);
         return await Next(0);
+    }
+
+    internal async Task<string> ActivationReviewStampAsync(string appId, CancellationToken ct)
+    {
+        var app = await RequireAppAsync(appId, ct);
+        var manifest = await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct);
+        return DevelopmentWorkspaceService.Hash(string.Join("\n", app.InstalledAt.ToString("O"),
+            app.SelectedRuntime, CoreJson.Text(app.SourceState), CoreJson.Text(app.ArtifactLocks),
+            manifest.ManifestDigest, await DevConfigurationHashAsync(app, ct), app.DevModeId));
     }
 
     internal async Task<string[]> OrderActivationAppsAsync(string[] selected, CancellationToken ct)

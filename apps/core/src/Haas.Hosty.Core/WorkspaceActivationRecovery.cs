@@ -7,7 +7,7 @@ namespace Haas.Hosty.Core;
 internal sealed class WorkspaceActivationRecovery(HostyCoreRuntimeConfig config,
     ILogger<WorkspaceActivationRecovery> logger) : BackgroundService
 {
-    internal WorkspaceActivationHelper Dispatch(string id) => WorkspaceActivationSupervisor.Dispatch(config.DataRoot, id, false, helper =>
+    internal WorkspaceActivationHelper Dispatch(string id, bool resume = false) => WorkspaceActivationSupervisor.Dispatch(config.DataRoot, id, resume, helper =>
     {
         var cli = CoreCliLauncher.ResolveCliPath() ?? throw new InvalidOperationException("The Hosty CLI is unavailable; resume through the local CLI.");
         CoreCliLauncher.SpawnDetached(cli, ["--data-root", config.DataRoot, "core", "activate-workspace", id, "--helper", helper.Attempt],

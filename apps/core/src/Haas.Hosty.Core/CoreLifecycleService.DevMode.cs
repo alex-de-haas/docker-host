@@ -315,6 +315,12 @@ internal sealed partial class CoreLifecycleService
             await PersistRuntimePortsAsync(restored, previous, ct);
             op = await DevPhaseAsync(op, "return-bound", ct);
         }
+        if (op.Phase == "return-starting" && op.ActivationId is not null && op.WasRunning)
+        {
+            var current = await RequireAppAsync(op.AppId, ct);
+            if (current.RuntimeState == "running" && (await GetHealthAsync(op.AppId, ct)).Status == "healthy")
+                return await DevPhaseAsync(op, "returned", ct, completedRequestId: requestId);
+        }
         if (op.Phase is "return-bound" or "return-starting")
         {
             if (op.WasRunning)
