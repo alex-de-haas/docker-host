@@ -1,6 +1,6 @@
 ---
 created: 2026-07-24
-updated: 2026-10-16
+updated: 2026-10-19
 summary: One authorized SSE stream carries ephemeral domain hints, notifications and opt-in resource measurements.
 components: [apps/core, apps/shell]
 ---
@@ -131,6 +131,13 @@ directly and keeping `GET /api/notifications` (30s) as the fallback when the str
 
 Non-admin sessions hold no domain-event subscription: Core does not fan those out to them, so the
 launcher list refreshes on navigation and on demand as before.
+
+## Workspace Inspection
+
+The internal workspace inspection stream uses a separate opt-in subscription on this hub.
+Workspace hints do not enter ordinary app subscriptions. Bounded-channel drops retain a counter
+that forces an authorized snapshot resync. See [Workspace Event Observation](../workspace-event-observation/feature.md)
+for per-worktree filtering, authority revalidation and browser recovery.
 
 ## Testing Expectations
 

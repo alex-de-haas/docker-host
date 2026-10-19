@@ -113,6 +113,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<NotificationService>();
         builder.Services.AddSingleton<AppSourceService>();
         builder.Services.AddSingleton<ISourceGitAccess>(sp => sp.GetRequiredService<PrivateSourceService>());
+        builder.Services.AddSingleton<WorkspaceObservationState>();
         builder.Services.AddSingleton<DevelopmentWorkspaceService>();
         builder.Services.AddSingleton<SourceRepositoryFetchCoordinator>();
         builder.Services.AddSingleton<WorkspaceInspectionService>();
@@ -122,6 +123,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<SourceDocumentAuthorization>();
         builder.Services.AddSingleton<WorkspaceAuthorization>();
         builder.Services.AddSingleton<PublicationService>();
+        builder.Services.AddHostedService<WorkspaceDeletionRecovery>();
         builder.Services.AddHostedService<PublicationObserver>();
         builder.Services.AddHostedService<DevelopmentWorkspaceObserver>();
         // Shared flag the control-plane stop endpoint sets and the runtime-app supervisor reads at
@@ -1243,7 +1245,6 @@ internal sealed class RuntimeAppSupervisorService(
         await RecoverStrandedLifecycleStatesAsync(stoppingToken);
         await RecoverInterruptedUpdatesAsync(stoppingToken);
         await StopAutostartDisabledAppsAsync(stoppingToken);
-        await lifecycle.ObserveAppPermissionsAsync(stoppingToken);
         await StartAutostartAppsAsync(stoppingToken);
         await lifecycle.ReconcileIngressAsync(stoppingToken);
 

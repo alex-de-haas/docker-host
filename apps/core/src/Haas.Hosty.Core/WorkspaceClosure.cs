@@ -4,12 +4,12 @@ internal sealed partial class DevelopmentWorkspaceService
 {
     // Called under the source-owner gate. Admission is durable before any assistant cancellation.
     // Closing never deletes files or establishes clean/merged feature completion.
-    private async Task<WorkspaceWorkflow> CloseWorkflow(WorkspaceOwner owner, string actor,
+    private async Task<WorkspaceWorkflow> CloseWorkflow(WorkspaceOwner owner, string actor, string kind,
         WorkspaceWorkflowCommand input, WorkspaceWorkflow state, DevelopmentWorkspace[] trees,
         bool prepareOnly, CancellationToken ct)
     {
-        if (state.Closure == "closed") throw Error("workflow_closed", "This workspace is already closed. Resume it before new work.");
-        var operation = new WorkspaceWorkflowOperation(input.RequestId, "close", input.ExpectedRevision, "pending");
+        if (state.Closure == "closed") throw Error("workflow_closed", "This workspace is already paused. Resume it before new work.");
+        var operation = new WorkspaceWorkflowOperation(input.RequestId, kind, input.ExpectedRevision, "pending");
         state = state with { Closure = "closing", ChangedBy = actor,
             Operations = [.. (state.Operations ?? []).Where(o => o.Id != input.RequestId), operation] };
         await SaveWorkflow(owner, state);
@@ -23,7 +23,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 if (trees.Any(w => w.Operations.Any(o => o.State is "pending" or "unknown")))
                     throw Error("operation_pending", "Resolve outstanding source operations before confirming closure.");
                 if (trees.Any(w => w.Leases.Length > 0))
-                    throw Error("in_use", "Execution stop is unconfirmed. Activity leases and all source files are preserved. Stop the owning execution, then retry this close request.");
+                    throw Error("in_use", "Execution stop is unconfirmed. Activity leases and all source files are preserved. Stop the owning execution, then retry this pause request.");
                 await CheckSharedWorkersAsync(ct);
                 state = state with { Closure = "closed", Revision = state.Revision + 1,
                     Operations = [.. state.Operations!.Where(o => o.Id != input.RequestId), operation with { State = "succeeded" }] };

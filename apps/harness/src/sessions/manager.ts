@@ -1,4 +1,4 @@
-import { hasResourceHistory, retentionBusy, retentionStatus, type RetentionStatus } from "./retention.js";
+import { hasResourceHistory, reconcileRetentionSnapshot, retentionBusy, retentionStatus, type RetentionStatus } from "./retention.js";
 import type { RetentionSnapshot } from "./development.js";
 import { DEFAULT_WORKFLOW_PROMPT } from "../settings/workflow.js";
 import { WORKER_LIMITS } from "../runtime/image.js";
@@ -216,11 +216,16 @@ export class SessionManager {
     return unavailable;
   }
 
+  async workspaceEvents(credential: string, signal: AbortSignal): Promise<Response> {
+    if (!this.development) throw new AppContextError(503, "workspaces_unavailable", "Workspace inspection requires Core.");
+    return this.development.inspectionEvents(credential, signal);
+  }
+
   async inspectWorkspaces(credential: string, path = "", body?: Record<string, unknown>, userId?: string): Promise<unknown> {
     if (!this.development) throw new AppContextError(503, "workspaces_unavailable", "Workspace inspection requires Core.");
-    const close = path.match(/^\/([a-f0-9]{64})\/workflow\/close$/);
+    const close = path.match(/^\/([a-f0-9]{64})\/workflow\/(?:pause|close)$/);
     if (!close || !body) return this.development.inspection(credential, path, body);
-    if (!userId) throw new AppContextError(401, "workspace_credentials_required", "An authenticated operator is required to close work.");
+    if (!userId) throw new AppContextError(401, "workspace_credentials_required", "An authenticated operator is required to pause work.");
     // Persist Core admission before touching execution. The receipt also survives a lost response
     // or either service restarting; never cancel a later run when replaying a completed receipt.
     const admitted = await this.development.inspection(credential, path, body) as {
@@ -242,7 +247,7 @@ export class SessionManager {
         session.workspaceCredential = credential;
         try { await this.cancelSessionLocked(record.id); }
         catch {
-          throw new AppContextError(503, "workspace_stop_unconfirmed", "Execution stop or lease release could not be confirmed. Source and the close request are retained. Restore Docker/Core access, then retry the original action.");
+          throw new AppContextError(503, "workspace_stop_unconfirmed", "Execution stop or lease release could not be confirmed. Source and the pause request are retained. Restore Docker/Core access, then retry the original action.");
         }
       });
     }
@@ -260,7 +265,7 @@ export class SessionManager {
       if (!this.development?.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
       const token = credential ?? session.workspaceCredential ?? session.credential;
       if (!token) throw new AppContextError(401, "workspace_credentials_required", "Refresh the session's Hosty credentials before using workspaces.");
-      if (!["app-dev-logs", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status", "app-local-accept", "app-local-use", "app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-defer", "workflow-delete", "list", "prepare", "status", "diff", "viewer", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"].includes(action))
+      if (!["app-dev-logs", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status", "app-local-accept", "app-local-use", "app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", "workflow-defer", "workflow-delete", "list", "prepare", "status", "diff", "viewer", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"].includes(action))
         throw new AppContextError(400, "workspace_action_invalid", "Unknown workspace action.");
       if (action === "app-dev-apply" && userId && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status))
         throw new SessionBusyError();
@@ -277,6 +282,14 @@ export class SessionManager {
         session.record.workflowCompletion = { requestId: input.requestId, expectedRevision: input.expectedRevision as number, state: "queued" };
         await this.store.saveRecord(session.record);
         return { state: "queued", message: "Completion will be verified after this turn exits and releases its source leases. This is not a completion result." };
+      }
+      if (action === "workflow-pause") {
+        if (!userId && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
+        const admitted = await this.development.call(id, token, action, input) as { operations?: { id: string; state: string }[] };
+        if (admitted.operations?.some(o => o.id === input.requestId && o.state === "succeeded")) return admitted;
+        session.workspaceCredential = token;
+        await this.cancelSessionLocked(id);
+        return this.development.call(id, token, "workflow-pause-confirm", input);
       }
       if (["cleanup", "workflow-complete", "workflow-defer", "workflow-delete"].includes(action) && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
       if (action === "prepare") {
@@ -761,7 +774,7 @@ export class SessionManager {
   }
 
   private async retentionSnapshot(record: SessionRecord): Promise<RetentionSnapshot> {
-    if (this.development?.available) return this.development.retention(record.id, record.createdBy);
+    if (this.development?.available) return reconcileRetentionSnapshot(record, await this.development.retention(record.id, record.createdBy));
     if (record.retentionVersion === 1 && !hasResourceHistory(record)) return { kind: "chat", workflow: null, resourcesFinished: true };
     throw new Error("Core is unavailable; historical sessions are preserved until their resources can be verified.");
   }
@@ -1091,8 +1104,8 @@ export class SessionManager {
         const workflow = workspaceCredential.startsWith("hosty_delegated.")
           ? (await this.development.retention(id, session.record.createdBy)).workflow
           : await this.development.call(id, workspaceCredential, "workflow-status", {}) as { closure?: string | null; state?: string };
-        if (workflow?.closure || ["deleting", "deleted"].includes(workflow?.state ?? ""))
-          throw new AppContextError(409, "workspace_closed", "This workspace is closing or closed. Resume retained source explicitly before sending another agent turn.");
+        if (workflow?.closure || ["completed", "deferred", "deleting", "deleted"].includes(workflow?.state ?? ""))
+          throw new AppContextError(409, "workspace_closed", "This workspace is paused, completed or being deleted. Resume retained source explicitly before sending another agent turn.");
       } else if (session.record.developmentWorkspaces?.length || session.record.developmentLease) {
         throw new AppContextError(401, "workspace_credentials_required", "Refresh Hosty credentials to verify workspace admission before continuing.");
       }

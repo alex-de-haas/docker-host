@@ -44,12 +44,10 @@ internal static class DevelopmentWorkspaceEndpoints
                 var owner = await auth.RequireAsync(request, appId, sessionId, ct);
                 if (kind == "delete")
                 {
-                    var tree = (await workspaces.ListAsync(owner, true, ct)).Workspaces.FirstOrDefault()
-                        ?? throw DevelopmentWorkspaceService.Error("not_found", "Workspace not found.");
-                    return await cleanup.DeleteAsync(tree.WorkspaceId, owner.UserId, appId, input, ct);
+                    return await cleanup.DeleteAsync(DevelopmentWorkspaceService.WorkspaceIdFor(owner), owner.UserId, appId, input, ct);
                 }
                 var heads = kind is "complete" or "delete" ? await publications.MergedWorkspaceHeadsAsync(owner, ct) : new Dictionary<string, string>();
-                return await workspaces.ChangeWorkflowAsync(owner, owner.UserId, kind == "close-confirm" ? "close" : kind, input, heads, ct, prepareOnly: kind == "close");
+                return await workspaces.ChangeWorkflowAsync(owner, owner.UserId, kind is "pause-confirm" or "close-confirm" or "defer-confirm" ? kind[..^8] : kind, input, heads, ct, prepareOnly: kind is "pause" or "close");
             }));
         routes.MapGet(internalRoot + "/worker-bindings", async (string appId, string sessionId, HttpRequest request,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
@@ -134,25 +132,5 @@ internal static class DevelopmentWorkspaceEndpoints
         catch (HttpRequestException) { return CoreJson.Json(new ErrorResponse("remote_unavailable", "Remote is unavailable. Retry with the same requestId."), 503); }
         catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), AuthEndpoints.MapIdentityErrorStatus(ex.Code)); }
         catch (AppLifecycleException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code == "workspace_not_found" ? 404 : ex.Code == "workspace_forbidden" ? 403 : 409); }
-    }
-}
-
-internal sealed class DevelopmentWorkspaceObserver(DevelopmentWorkspaceService workspaces, ILogger<DevelopmentWorkspaceObserver> logger) : BackgroundService
-{
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(20));
-        do
-        {
-            try
-            {
-                foreach (var workspace in (await workspaces.ListAsync(null, false, stoppingToken)).Workspaces)
-                {
-                    try { await workspaces.ObserveAvailableAsync(workspace.Id, stoppingToken); }
-                    catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Cannot observe workspace {WorkspaceId}", workspace.Id); }
-                }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Cannot list development workspaces"); }
-        } while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 }

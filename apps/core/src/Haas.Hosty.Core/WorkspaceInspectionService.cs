@@ -1,10 +1,14 @@
+using System.Collections.Concurrent;
+
 namespace Haas.Hosty.Core;
 
 internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService workspaces, AppRegistryStore apps,
     IClock clock, PublicationService? publications = null, UserDirectoryStore? users = null,
     UserConnectionService? connections = null, PrivateSourceService? privateSources = null,
-    LocalCommandProcessRegistry? processes = null)
+    LocalCommandProcessRegistry? processes = null, WorkspaceObservationState? observationState = null)
 {
+    private readonly ConcurrentDictionary<string, (string Key, InspectionCommit[] Commits, bool Truncated, AppSourceFile[] Changes, string? Error)> details = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim[] detailGates = Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
     public async Task<WorkspaceInventory> ListAsync(string userId, CancellationToken ct)
     {
         var installed = await apps.ListAppRecordsAsync(ct);
@@ -14,6 +18,7 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
             try { await RequireSourceAsync(tree, userId, installed, ct); allowed.Add(tree); }
             catch (AppLifecycleException) { /* Inaccessible source must not leak through metadata or counts. */ }
         }
+        foreach (var id in details.Keys.Where(id => !allowed.Any(w => w.Id == id))) details.TryRemove(id, out _);
         var result = new List<InspectedWorkspace>();
         foreach (var group in allowed.GroupBy(w => w.WorkspaceId).OrderBy(g => g.Key, StringComparer.Ordinal))
         {
@@ -53,7 +58,16 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
         if (kind is null) return await workspaces.WorkflowAsync(owner, ct);
         var heads = kind is "complete" or "delete" && publications is not null
             ? await publications.MergedWorkspaceHeadsAsync(owner, ct) : new Dictionary<string, string>();
-        return await workspaces.ChangeWorkflowAsync(owner, userId, kind == "close-confirm" ? "close" : kind, input!, heads, ct, prepareOnly: kind == "close");
+        return await workspaces.ChangeWorkflowAsync(owner, userId, kind is "pause-confirm" or "close-confirm" or "defer-confirm" ? kind[..^8] : kind, input!, heads, ct, prepareOnly: kind is "pause" or "close");
+    }
+
+    public async Task<InspectedWorktree> RecoverLeaseAsync(string workspaceId, string id, string userId,
+        WorkspaceLeaseRecovery input, CancellationToken ct)
+    {
+        var owner = await WorkflowOwnerAsync(workspaceId, userId, ct);
+        var tree = await RequireAsync(workspaceId, id, userId, ct);
+        await workspaces.RecoverExternalLeaseAsync(tree.Id, owner, userId, input, ct);
+        return await ReadAsync(workspaceId, id, userId, ct);
     }
 
     private async Task RequireSourceAsync(DevelopmentWorkspace tree, string userId, IReadOnlyList<AppRecord> installed, CancellationToken ct)
@@ -85,14 +99,36 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
         return tree;
     }
 
-    public async Task<InspectedWorktree> ReadAsync(string workspaceId, string id, string userId, CancellationToken ct)
+    public async Task<InspectedWorktree> ReadAsync(string workspaceId, string id, string userId, CancellationToken ct, bool refresh = false)
     {
         var tree = await RequireAsync(workspaceId, id, userId, ct);
         // Observation reads local Git only. It never fetches, integrates, publishes or runs applications.
-        if (tree.State == "active") tree = await workspaces.ObserveAsync(id, null, ct);
+        if (tree.State == "active") tree = await workspaces.ReadObservedAsync(id, ct, refresh);
         var installed = await apps.ListAppRecordsAsync(ct);
         await RequireSourceAsync(tree, userId, installed, ct);
         var result = Project(tree, installed);
+        var gate = detailGates[(uint)StringComparer.Ordinal.GetHashCode(id) % detailGates.Length];
+        await gate.WaitAsync(ct);
+        try
+        {
+            var key = tree.OriginalBase + ":" + tree.SourceStamp + ":" + CoreJson.Text(tree.Observation)
+                + ":" + (observationState?.Generation(id) ?? 0);
+            if (refresh || observationState is null || !details.TryGetValue(id, out var cached) || cached.Key != key)
+            {
+                cached = await ReadDetailsAsync(tree, key, ct);
+                if (observationState is not null) details[id] = cached;
+            }
+            await RequireAsync(workspaceId, id, userId, ct);
+            return result with { Commits = cached.Commits, CommitsTruncated = cached.Truncated,
+                SessionChanges = cached.Changes, DetailError = cached.Error,
+                Consumers = await ConsumersAsync(tree, installed, ct), PullRequests = await PullRequestsAsync(tree, userId, ct) };
+        }
+        finally { gate.Release(); }
+    }
+
+    private async Task<(string Key, InspectionCommit[] Commits, bool Truncated, AppSourceFile[] Changes, string? Error)> ReadDetailsAsync(
+        DevelopmentWorkspace tree, string key, CancellationToken ct)
+    {
         var commits = new List<InspectionCommit>();
         var changes = new List<AppSourceFile>();
         string? detailError = null;
@@ -121,9 +157,8 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
             var statistics = await AppSourceService.AddLineStatisticsAsync(local with { Head = tree.OriginalBase, Files = changes }, ct);
             changes = statistics.Files.ToList();
         }
-        return result with { Commits = commits.Take(100).ToArray(), CommitsTruncated = commits.Count > 100,
-            SessionChanges = changes.OrderBy(c => c.Path, StringComparer.Ordinal).ToArray(),
-            Consumers = Consumers(tree, installed), PullRequests = await PullRequestsAsync(tree, userId, ct), DetailError = detailError };
+        return (key, commits.Take(100).ToArray(), commits.Count > 100,
+            changes.OrderBy(c => c.Path, StringComparer.Ordinal).ToArray(), detailError);
     }
 
     public async Task<AppSourceDiff> DiffAsync(string workspaceId, string id, string userId, WorkspaceDiffRequest input, CancellationToken ct)
@@ -134,7 +169,7 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
         return diff;
     }
 
-    private static InspectedWorktree Project(DevelopmentWorkspace tree, IReadOnlyList<AppRecord> installed)
+    private InspectedWorktree Project(DevelopmentWorkspace tree, IReadOnlyList<AppRecord> installed)
         => new(tree.Id, tree.WorkspaceId, tree.Repository, tree.Branch, tree.TargetBranch, tree.OriginalBase, tree.IntegrationBase,
             tree.Path, tree.State, tree.Apps.Select(binding =>
             {
@@ -142,9 +177,10 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
                 return new InspectionApp(binding.AppId, app?.DisplayName ?? binding.AppId, binding.Subpath, app is not null, app?.SourceState?.Type == "local-git");
             }).ToArray(), tree.Observation,
             tree.Operations.Select(o => new InspectionOperation(o.Id, o.Kind, o.State, o.Error)).ToArray(), tree.Leases,
-            tree.PullRequests.Where(SafeUrl).Select(url => new InspectionPullRequest(url, null, null, "No verified provider observation.")).ToArray(), [], []);
+            tree.PullRequests.Where(SafeUrl).Select(url => new InspectionPullRequest(url, null, null, "No verified provider observation.")).ToArray(), [], [])
+        { HasSandboxConsumers = tree.SandboxConsumers.Length > 0, ObservationRevision = tree.SourceStamp + ":" + (observationState?.Generation(tree.Id) ?? 0), ObservationHealth = observationState?.Health(tree.Id) ?? "unknown" };
 
-    private InspectionConsumer[] Consumers(DevelopmentWorkspace tree, IReadOnlyList<AppRecord> installed)
+    private async Task<InspectionConsumer[]> ConsumersAsync(DevelopmentWorkspace tree, IReadOnlyList<AppRecord> installed, CancellationToken ct)
     {
         var result = installed.Where(a => a.SourceState?.LocalOverridePath is { } path && IsUnder(tree.Path, path))
             .Select(a => new InspectionConsumer("source-selection", a.Id)).ToList();
@@ -157,7 +193,17 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
             }
             catch (InvalidOperationException) { /* A process may exit between observations. */ }
         }
-        return result.ToArray();
+        foreach (var appId in await workspaces.DevConsumerAppsAsync(tree, ct))
+            result.Add(new("dev-runtime", appId));
+        var shell = installed.FirstOrDefault(a => a.Id == "hosty.shell" && a.RuntimeState == "running");
+        var endpoint = shell?.Endpoints.FirstOrDefault(e => e.Protocol is "http" or "https");
+        var origin = shell is not null && endpoint is not null ? LocalBrowserOrigins.App(shell, endpoint) : null;
+        return result.Select(c =>
+        {
+            var appId = c.Reference.Split('/')[0];
+            return c with { Name = installed.FirstOrDefault(a => a.Id == appId)?.DisplayName ?? appId,
+                ManagementUrl = origin is null ? null : new Uri(new Uri(origin), "/settings?tab=" + Uri.EscapeDataString(appId)).AbsoluteUri };
+        }).ToArray();
     }
     private static bool IsUnder(string root, string path)
     {

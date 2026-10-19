@@ -138,7 +138,7 @@ source content and native agents still belong to the trusted local workflow.
 
 ## Observation And Interfaces
 
-A Core background observer refreshes every twenty seconds independently of assistant lifetime.
+Core observes active source and Git metadata through [filesystem and mutation events](../workspace-event-observation/feature.md), independently of assistant lifetime. Quiet healthy worktrees have no periodic Git scan.
 It reports timestamped local file state, HEAD, ahead/behind counts against the last fetched target,
 conflicts and observation errors. Missing or unreadable source is unavailable, never clean.
 Direct edits and commits are visible without an assistant notification. One corrupt record is logged

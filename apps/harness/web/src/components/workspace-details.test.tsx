@@ -20,7 +20,7 @@ function replies(w: DevelopmentWorkspace) {
   vi.mocked(developmentRequest).mockImplementation(async (path = "") => {
     if (path.endsWith("/previews")) return { environments: [], instances: [], applications: {} } as never;
     if (path.includes("/diff?")) return { combined: "+new text", binary: false, truncated: false } as never;
-    return w.worktrees.find(t => path.endsWith(t.id)) as never;
+    return w.worktrees.find(t => path.split("?")[0].endsWith(t.id)) as never;
   });
 }
 it("shows each repository and honestly missing CI; opens a repository-specific diff without a sandbox section", async () => {
@@ -191,4 +191,53 @@ it("clears a recovered detail-read error without retaining a stale authenticatio
   await act(async () => root.render(<WorkspaceDetails workspace={{ ...w }} title="Recovery" refresh={() => {}} />));
   expect(container.textContent).not.toContain("Temporary access failure");
   expect(container.textContent).toContain("one · CI unknown");
+});
+
+
+it("offers one Pause action instead of Close and Defer, including while execution runs", async () => {
+  const w = workspace(); replies(w);
+  await act(async () => root.render(<WorkspaceDetails workspace={w} running title="Active work" refresh={() => {}} />));
+  await act(async () => container.querySelector('[aria-label="Workspace actions"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  const entries = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+  expect(entries.some(item => /Close workspace|Defer workspace/.test(item.textContent ?? ""))).toBe(false);
+  const pause = entries.find(item => item.textContent === "Pause workspace")!;
+  expect(pause.getAttribute("aria-disabled")).not.toBe("true");
+  vi.mocked(developmentRequest).mockResolvedValueOnce({ state: "in-progress", closure: "closed", revision: 1 });
+  await act(async () => pause.click());
+  expect(developmentRequest).toHaveBeenCalledWith("/workspace/workflow/pause", { requestId: expect.any(String), expectedRevision: 0 });
+  expect(container.textContent).toContain("Paused: source");
+});
+
+it.each([
+  { state: "completed", revision: 1 },
+  { state: "deferred", revision: 1 },
+  { state: "in-progress", closure: "closed", revision: 1 },
+  { state: "in-progress", closure: "closing", revision: 1 },
+])("does not repeat inactive Git detail reads on inventory refresh, but allows manual refresh: %j", async workflow => {
+  const w = { ...workspace(), workflow }; replies(w);
+  const refresh = vi.fn();
+  const render = (value: DevelopmentWorkspace) => act(async () => root.render(<WorkspaceDetails workspace={value} title="Inactive" refresh={refresh} />));
+  await render(w);
+  const detailCalls = () => vi.mocked(developmentRequest).mock.calls.filter(([path]) => path?.includes("/worktrees/"));
+  expect(detailCalls()).toHaveLength(2);
+  await render({ ...w, workflow: { ...workflow }, worktrees: w.worktrees.map(t => ({ ...t })) });
+  expect(detailCalls()).toHaveLength(2);
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Refresh workspace"]')!.click());
+  expect(detailCalls()).toHaveLength(4);
+  expect(detailCalls().slice(2).every(([path]) => path?.endsWith("?refresh=true"))).toBe(true);
+  expect(refresh).toHaveBeenCalledOnce();
+  await render({ ...w, workflow: { state: "in-progress", revision: 2 } });
+  expect(detailCalls()).toHaveLength(6);
+  expect(detailCalls().slice(4).every(([path]) => !path?.includes("refresh=true"))).toBe(true);
+});
+
+it("keeps one lease recovery panel across inventory refreshes", async () => {
+  const w = workspace(); w.owner.kind = "external"; w.worktrees[0].leases = ["lease"];
+  replies(w);
+  for (let i = 0; i < 4; i++) {
+    await act(async () => root.render(<WorkspaceDetails workspace={{ ...w }} title="External" refresh={() => {}} />));
+    expect(container.querySelectorAll('details summary')).toHaveLength(1);
+    expect(container.querySelector('details')?.open).toBe(false);
+    expect(container.textContent).not.toContain('External activity leases');
+  }
 });

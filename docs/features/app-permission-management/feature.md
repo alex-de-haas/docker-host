@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-10-10
+updated: 2026-10-19
 summary: Per-app permission reviews and a host-wide Security overview of Core permissions, provider roles and their installed-app holders.
 components: [apps/shell, apps/core]
 ---
@@ -21,12 +21,23 @@ default off. The user can select or revoke optional rights only on that Core pag
 
 ## Observation
 
-Core observes installed apps sequentially every five seconds. It tries each app's lifecycle lock
-without waiting and skips busy apps until a later pass. Running-app checks read the current manifest
-without the parser cache; other observations use its file-stamp cache. Dashboard reads cached structured `permissionState` rather than parsing manifests
-for each list request. A source/installation/permission identity mismatch suppresses old observations.
-`GET /api/apps/{id}/permissions` requires an administrator and explicitly refreshes observation.
-Changed observations publish `app.changed` events.
+Core initializes permission observations at startup, then refreshes affected apps after Core registry
+mutations or installed-manifest saves. Registry notifications with unchanged permission/source/runtime
+inputs do not reread manifests. The permission observer has no periodic manifest sweep. Dashboard
+reads cached structured `permissionState`; a source/installation/permission identity mismatch suppresses
+old observations. Explicit administrator `GET /api/apps/{id}/permissions` reads fresh manifest bytes.
+Changed observations publish `app.changed` events; these browser hints do not trigger observation.
+
+Selected live manifests use shared, non-recursive filesystem subscriptions. The observer watches the
+source directory entries needed for the selected file and the source root's parent, not entire
+repository contents or every ancestor up to the filesystem root. It coalesces events for 150 ms and
+handles writes, atomic replacements, deletion and recreation. An absent configured checkout is watched
+before its first clone while observation retains the installed contract. Once observed in this Core
+run, a disappearing checkout remains stale until it recovers. Replacing directories re-arms their
+watchers even if the replacement already exists. Watcher errors/overflow invalidate affected consumers
+and recreate subscriptions; creation failures and busy lifecycle locks retain per-app work with bounded
+retry backoff. Idle healthy apps have no retry timer. Source/runtime changes rebind subscriptions;
+removal and shutdown dispose them. Fresh reads after file events bypass the parser's file-stamp cache.
 
 Development profiles use the effective local override, materialized source checkout or original
 local install source. Locked profiles use the installed manifest; remote newer releases remain an
@@ -220,11 +231,15 @@ Verification on 2026-10-10:
 - Cover search by app and description, loading/error/retry, stale-response cancellation, focus/live
   app-list refresh (including same-version provisioning changes) and denied direct navigation for ordinary users.
 
+- Assert idle running apps and unrelated registry writes retain the same observation beyond five seconds.
+- Verify installed-copy saves, install/removal, grant changes and source rebinding update affected apps only.
+- Exercise real filesystem events for same-stamp atomic saves, missing/invalid files, directory replacement,
+  initial checkout materialization and recreation; re-arm failed watchers and dispose unused subscriptions.
 - Observe live edits without restart; retain installed-release behavior and recover from invalid sources.
 - Keep running apps alive through missing/invalid manifests, including the first observation;
   expose stale/error state and recover without restart. Launch still rejects unreadable contracts.
 - Hold a real lifecycle operation open and verify an observation pass skips it, checks other apps,
-  and resumes checking the skipped app after its lock is released.
+  and retries the retained invalidation after its lock is released.
 - Cover legacy declarations, additions, removals, required/optional transitions and optional revocation.
 - Reject stale installation, source, runtime, revision and full manifest changes, including unchanged
   file stamps; reject replay, foreign callers and non-administrator browser access.

@@ -12,7 +12,7 @@ internal sealed record WorkspaceDestination(string? Url, string? Unavailable);
 internal sealed record InspectionApp(string AppId, string Name, string? Subpath, bool Installed, bool LocalGit = false);
 internal sealed record InspectionOperation(string Id, string Kind, string State, string? Error);
 internal sealed record InspectionCommit(string Sha, string Author, string At, string Subject);
-internal sealed record InspectionConsumer(string Kind, string Reference);
+internal sealed record InspectionConsumer(string Kind, string Reference, string? Name = null, string? ManagementUrl = null);
 internal sealed record InspectionPullRequest(string Url, string? PublishedHead, PublicationObservation? Observation, string? Unavailable);
 internal sealed record InspectedWorktree(string Id, string WorkspaceId, string Repository, string Branch, string TargetBranch,
     string OriginalBase, string IntegrationBase, string Path, string State, InspectionApp[] Apps,
@@ -21,4 +21,7 @@ internal sealed record InspectedWorktree(string Id, string WorkspaceId, string R
     bool CommitsTruncated = false, string? DetailError = null)
 {
     public AppSourceFile[] SessionChanges { get; init; } = [];
+    public bool HasSandboxConsumers { get; init; }
+    public string ObservationRevision { get; init; } = "";
+    public string ObservationHealth { get; init; } = "unknown";
 }

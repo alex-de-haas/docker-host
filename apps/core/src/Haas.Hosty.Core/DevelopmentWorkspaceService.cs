@@ -11,7 +11,7 @@ namespace Haas.Hosty.Core;
 internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegistryStore apps, IClock clock,
     LocalCommandProcessRegistry? processes = null, ILogger<DevelopmentWorkspaceService>? logger = null,
     IDockerCommandRunner? docker = null, ISourceGitAccess? privateSources = null,
-    SourceRepositoryFetchCoordinator? fetches = null)
+    SourceRepositoryFetchCoordinator? fetches = null, WorkspaceObservationState? observationState = null)
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> gates = new(StringComparer.Ordinal);
     internal SourceRepositoryFetchCoordinator Fetches { get; } = fetches ?? new(clock);
@@ -41,7 +41,15 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         var previous = await JsonStorage.ReadAsync<DevelopmentWorkspace>(RecordPath(value.Id));
         var changed = previous is null || ActivityState(baselineSource ? previous with { SourceStamp = value.SourceStamp } : previous) != ActivityState(value);
         value = value with { UpdatedAt = changed ? clock.UtcNow : previous!.UpdatedAt ?? previous.Observation?.At };
+        if (previous?.Observation is { } old && value.Observation is { } current)
+        {
+            var comparable = current with { At = old.At, Local = current.Local is { } local && old.Local is { } prior
+                ? local with { ObservedAt = prior.ObservedAt } : current.Local };
+            if (CoreJson.Text(comparable) == CoreJson.Text(old)) value = value with { Observation = old };
+        }
+        if (previous is not null && CoreJson.Text(previous) == CoreJson.Text(value)) return previous;
         await JsonStorage.WriteAsync(RecordPath(value.Id), value, restrictToOwner: true);
+        observationState?.CatalogChanged(value.Id);
         return value;
     }
 
@@ -251,23 +259,48 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         if (MountPathPolicy.ResolveRealPath(common) != MountPathPolicy.ResolveRealPath(RepoPath(w.RepositoryId)) || branch != "refs/heads/" + w.Branch)
             throw Error("ownership_invalid", "The worktree no longer uses its registered repository and branch.");
     }
-    public async Task<DevelopmentWorkspace> ObserveAsync(string id, WorkspaceOwner? owner, CancellationToken ct)
+    public async Task<DevelopmentWorkspace> ObserveAsync(string id, WorkspaceOwner? owner, CancellationToken ct, bool background = false)
     {
         var workspace = await Read(id, owner, ct);
-        return await Locked(Hash(OwnerIdentity(workspace.Owner)), async () => await Observe(await Read(id, owner, ct), ct), ct);
+        return await Locked(Hash(OwnerIdentity(workspace.Owner)), async () =>
+        {
+            var current = await Read(id, owner, ct);
+            if (background && !IsBackgroundActive(await WorkflowAsync(current.Owner, ct))) return current;
+            return await Observe(current, ct);
+        }, ct);
+    }
+    internal Task<DevelopmentWorkspace> ReadObservedAsync(string id, CancellationToken ct, bool refresh = false)
+        => ReadObservedCoreAsync(id, ct, refresh);
+    private async Task<DevelopmentWorkspace> ReadObservedCoreAsync(string id, CancellationToken ct, bool refresh)
+    {
+        var tree = await Read(id, null, ct);
+        return await Locked(Hash(OwnerIdentity(tree.Owner)), async () =>
+        {
+            var current = await Read(id, null, ct);
+            if (refresh || (observationState is null || observationState.CanObserve(id))
+                && IsBackgroundActive(await WorkflowAsync(current.Owner, ct)))
+                return await Observe(current, ct);
+            return current;
+        }, ct);
     }
     internal async Task ObserveAvailableAsync(string id, CancellationToken ct)
     {
         var workspace = await Read(id, null, ct);
         var gate = gates.GetOrAdd(Hash(OwnerIdentity(workspace.Owner)), _ => new(1, 1));
         if (!await gate.WaitAsync(0, ct)) return;
-        try { await Observe(await Read(id, null, ct), ct); }
+        try
+        {
+            // Recheck under the owner gate: a pause/completion may have won while queued.
+            if ((observationState is null || observationState.CanObserve(id)) && IsBackgroundActive(await WorkflowAsync(workspace.Owner, ct)))
+                await Observe(await Read(id, null, ct), ct);
+        }
         finally { gate.Release(); }
     }
 
     private async Task<DevelopmentWorkspace> Observe(DevelopmentWorkspace w, CancellationToken ct)
     {
         if (w.State == "released") return w;
+        var generation = observationState?.Generation(w.Id) ?? 0;
         try
         {
             await ValidateTree(w, ct);
@@ -290,7 +323,8 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             w = w with { Observation = new(clock.UtcNow, "unavailable", Error: ex.Message) };
         }
         w = await Save(w);
-        await InvalidateCompletion(w, ct);
+        if (w.Observation?.State == "ok") observationState?.Observed(w.Id, generation);
+        else observationState?.ObservationFailed(w.Id);
         return w;
     }
     private static string SourceActivityStamp(string root, AppSourceStatus local, bool conflict)
@@ -345,7 +379,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             if (acquire)
             {
                 var workflow = await WorkflowAsync(current.Owner, ct);
-                if (workflow.Closure is not null || workflow.State is "deleting" or "deleted")
+                if (workflow.Closure is not null || workflow.State is "deferred" or "deleting" or "deleted")
                     throw Error("workflow_closed", "Workspace cleanup has started.");
                 if (current.State != "active" || current.Operations.Any(o => o.State == "pending"))
                     throw Error("not_active", "Cannot attach a sandbox while the source is being changed or released.");
@@ -521,8 +555,8 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             }
             // A queued publication cleanup is not admission to delete retained source. Only a
             // cleanup journal written before Close may recover through the branch above.
-            if ((await WorkflowAsync(owner, ct)).Closure is not null)
-                throw Error("workflow_closed", "Publication cleanup is suspended while the workspace is closing or closed.");
+            if (!IsBackgroundActive(await WorkflowAsync(owner, ct)))
+                throw Error("workflow_closed", "Publication cleanup is suspended while the workspace is paused or completed.");
             w = await Observe(w, ct);
             if (w.Observation is not { State: "ok", Conflict: false, Local: { Files.Count: 0, Truncated: false } } || w.Observation.Head != publishedHead)
                 throw Error("dirty", "Published workspace changed; cleanup is unavailable.");
@@ -810,6 +844,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
         start.Environment["GIT_CONFIG_GLOBAL"] = OperatingSystem.IsWindows() ? "NUL" : "/dev/null";
         start.Environment["GIT_NO_REPLACE_OBJECTS"] = "1";
+        start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         if (index is not null) start.Environment["GIT_INDEX_FILE"] = index;
         if (author is not null)
         {

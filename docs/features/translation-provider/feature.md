@@ -1,6 +1,6 @@
 ---
 created: 2026-10-15
-updated: 2026-10-16
+updated: 2026-10-19
 summary: Core translation discovery and scoped invocation, SDK clients, and two static Harness variants for translating text and Markdown plans.
 components: [apps/core, apps/harness, apps/plans, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -19,14 +19,22 @@ app authority, without an acting-user assistant session or tool delegation.
 
 Harness 0.54.0 declares static `codex` and `claude` entries at `/api/translation/v1/{key}`. Both
 are discoverable even when no agent connection is selected. The administrator selects an existing
-connection of the matching kind under **Settings → Providers → Translation providers**. A selection
+connection of the matching kind under **Settings → Translation providers**. A selection
 includes its credential revision and, for an existing Codex host login, an account fingerprint.
 Changing the chat default does not change translation. Removed/replaced accounts require explicit
 reselection; no alternate account, backend or provider is tried automatically.
 
+The dedicated settings tab presents one compact row each for Codex and Claude, with an always-visible
+model selector and an enable switch. Preset model changes and enable/disable actions save immediately;
+failed writes retain the last confirmed values. Disabling a variant preserves its model and remembers
+the account while the tab stays open. A sole connection is used only when the administrator enables
+translation. Multiple connections require an explicit account choice. Missing or changed selections
+remain visible and never silently switch to another account. When an account is reported as changed,
+model edits stay disabled until the administrator explicitly reconnects it.
+
 Each variant also has an independent translation model selection: **Agent default**, a static
-suggestion, or **Custom model ID**. Suggested Claude choices include explicit Haiku 5.5 and Sonnet 5.5
-versions as well as native aliases. Suggestions are not an account entitlement catalog. Aliases follow
+suggestion, or **Custom model ID** in a small dialog. Suggested Claude choices include explicit Haiku 5.5
+and Sonnet 5.5 versions as well as native aliases. Suggestions are not an account entitlement catalog. Aliases follow
 the installed native runtime; exact IDs pin the requested version. Model IDs accept 1–128 ASCII letters,
 digits, dots, underscores and hyphens, starting with a letter or digit. Availability is checked by the
 upstream inference request, with no Harness model fallback or retry.
@@ -406,6 +414,21 @@ Temporary model/dependency files remain under `/tmp` for reproduction. This expe
 the existing Ollama model store, Core lifecycle, production settings or release-artifact versions.
 
 ## Testing Expectations
+
+- Settings UI coverage checks the separate translation tab, enable/disable persistence, models while
+  disabled, multiple/missing/changed accounts, failed saves, and custom model validation.
+
+Compact settings verification on 2026-10-19 (Harness 0.59.1):
+
+- `npm run harness:lint`: passed; web lint and type checks passed again after the final focus change.
+- `npm run harness:build-web`: passed.
+- `npm run harness:test -- src/translation src/connections src/settings src/gateway.test.ts src/runtime test/translation-providers.test.tsx web/src/components/gateway-settings.test.tsx`: 162 passed across 13 files.
+- `node scripts/docs-index.mjs --check`, `node scripts/check-versions.mjs` and `git diff --check`: passed.
+- Browser/Shell verification is not performed for this change: the external Core connection exposes
+  workspace operations but no supported sandbox lifecycle tools. No ordinary runtime or account data
+  is changed. The remaining visual check is the compact tab at desktop/mobile widths through a
+  normally authenticated Core-managed test installation. The full monorepo suites are not rerun for
+  this Harness UI change; affected suites are listed above.
 
 Preview-port verification on 2026-10-16:
 
