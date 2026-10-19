@@ -44,12 +44,10 @@ internal static class DevelopmentWorkspaceEndpoints
                 var owner = await auth.RequireAsync(request, appId, sessionId, ct);
                 if (kind == "delete")
                 {
-                    var tree = (await workspaces.ListAsync(owner, true, ct)).Workspaces.FirstOrDefault()
-                        ?? throw DevelopmentWorkspaceService.Error("not_found", "Workspace not found.");
-                    return await cleanup.DeleteAsync(tree.WorkspaceId, owner.UserId, appId, input, ct);
+                    return await cleanup.DeleteAsync(DevelopmentWorkspaceService.WorkspaceIdFor(owner), owner.UserId, appId, input, ct);
                 }
                 var heads = kind is "complete" or "delete" ? await publications.MergedWorkspaceHeadsAsync(owner, ct) : new Dictionary<string, string>();
-                return await workspaces.ChangeWorkflowAsync(owner, owner.UserId, kind == "close-confirm" ? "close" : kind, input, heads, ct, prepareOnly: kind == "close");
+                return await workspaces.ChangeWorkflowAsync(owner, owner.UserId, kind is "pause-confirm" or "close-confirm" or "defer-confirm" ? kind[..^8] : kind, input, heads, ct, prepareOnly: kind is "pause" or "close");
             }));
         routes.MapGet(internalRoot + "/worker-bindings", async (string appId, string sessionId, HttpRequest request,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>

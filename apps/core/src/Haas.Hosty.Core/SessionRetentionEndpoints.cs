@@ -1,7 +1,7 @@
 namespace Haas.Hosty.Core;
 
 internal sealed record SessionRetentionRequest(string UserId, WorkspaceWorkflowCommand? Cleanup = null);
-internal sealed record SessionRetentionSnapshot(string Kind, WorkspaceWorkflow? Workflow, bool ResourcesFinished);
+internal sealed record SessionRetentionSnapshot(string Kind, WorkspaceWorkflow? Workflow, bool ResourcesFinished, bool WorkspaceAbsent = false);
 
 internal static class SessionRetentionEndpoints
 {
@@ -25,14 +25,14 @@ internal static class SessionRetentionEndpoints
                     throw new AppIdentityException("admin_required", "The session owner must still be an enabled administrator.");
                 var owner = new WorkspaceOwner(appId, caller.InstalledAt, input.UserId, sessionId);
                 var trees = (await workspaces.ListAsync(owner, true, ct)).Workspaces;
-                if (trees.Length == 0 && (await workspaces.ListAsync(null, false, ct)).Workspaces.Any(t =>
+                if (trees.Length == 0 && (await workspaces.ListAsync(null, true, ct)).Workspaces.Any(t =>
                     !t.Owner.IsExternal && t.Owner.AppId == appId && t.Owner.UserId == input.UserId &&
                     t.Owner.SessionId == sessionId && t.Owner.Installation != caller.InstalledAt))
                     throw DevelopmentWorkspaceService.Error("retention_unclassified", "A previous assistant installation owns this session's source. Reconcile it before deletion.");
                 var workflow = trees.Length > 0 ? await workspaces.WorkflowAsync(owner, ct) : null;
                 bool Owns(SandboxActor actor, SandboxContext? context) => actor.AppId == owner.AppId &&
                     actor.Installation == owner.Installation && actor.UserId == owner.UserId &&
-                    (context?.SessionId == sessionId || trees.Any(t => t.WorkspaceId == context?.WorkspaceId));
+                    (context?.SessionId == sessionId || context?.WorkspaceId == DevelopmentWorkspaceService.WorkspaceIdFor(owner));
                 var children = (await environments.ListAsync(ct)).Where(e => Owns(e.Owner, e.Request.Context)).ToArray();
                 var instances = (await sandboxes.ListAsync(ct)).Where(s => Owns(s.Owner, s.Request.Context)).ToArray();
                 if (input.Cleanup is not null)
@@ -40,16 +40,16 @@ internal static class SessionRetentionEndpoints
                     if (!AppManagementAuthorization.HasPermission(caller, CoreAppPermissions.WorkspacesCleanup) ||
                         !AppManagementAuthorization.HasPermission(caller, CoreAppPermissions.Sources))
                         throw new AppIdentityException("app_permission_required", "Review apps.workspaces.cleanup and apps.sources.full before background cleanup.");
-                    if (trees.Length == 0) throw DevelopmentWorkspaceService.Error("not_found", "No owned workspace to clean up.");
                     // The existing coordinator rechecks every head, merge, lease and consumer, journals
                     // Finish and release, and rejects unfinished work. No arbitrary workspace ID input.
-                    workflow = await cleanup.DeleteAsync(trees[0].WorkspaceId, owner.UserId, appId, input.Cleanup, ct);
+                    workflow = await cleanup.DeleteAsync(DevelopmentWorkspaceService.WorkspaceIdFor(owner), owner.UserId, appId, input.Cleanup, ct);
                     children = (await environments.ListAsync(ct)).Where(e => Owns(e.Owner, e.Request.Context)).ToArray();
                     instances = (await sandboxes.ListAsync(ct)).Where(s => Owns(s.Owner, s.Request.Context)).ToArray();
                 }
-                return CoreJson.Json(new SessionRetentionSnapshot(trees.Length > 0 ? "workspace" :
+                return CoreJson.Json(new SessionRetentionSnapshot(trees.Length > 0 || workflow?.State == "deleted" ? "workspace" :
                     children.Length + instances.Length > 0 ? "sandbox" : "chat", workflow,
-                    children.All(e => e.State == "finished") && instances.All(s => s.State == "disposed")));
+                    children.All(e => e.State == "finished") && instances.All(s => s.State == "disposed"),
+                    await workspaces.SessionWorkspaceAbsentAsync(owner, ct)));
             }
             catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), AuthEndpoints.MapIdentityErrorStatus(ex.Code)); }
             catch (AppLifecycleException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), 409); }

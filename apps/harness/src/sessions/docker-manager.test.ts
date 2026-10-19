@@ -99,7 +99,7 @@ it("rejects a second Docker turn before recording it, holds admission during app
   expect(providerHealth).toHaveBeenLastCalledWith(expect.any(Object), true);
 });
 
-it("closes only its own workspace, recovers stop failures and never cancels again on a completed replay", async () => {
+it.each(["pause", "close"])("%s stops only its own workspace, recovers failures and preserves completed replay", async action => {
   const root = await mkdtemp(path.join(os.tmpdir(), "hosty-close-manager-"));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const store = new SessionStore(root, path.join(root, "cache"));
@@ -123,11 +123,11 @@ it("closes only its own workspace, recovers stop failures and never cancels agai
   vi.spyOn(worker, "finish").mockImplementation(async () => { expect(state?.phase).toBe("stopped"); state = null; });
   const release = vi.spyOn(client, "workerBindings").mockResolvedValue(null);
   vi.spyOn(client, "call").mockImplementation(async (_id, _token, action) => action === "list" ? { workspaces: [tree] } : { closure: admitted ? "closing" : null });
-  const input = { requestId: "818b936d-cdcc-42f4-a449-9feb559cfc40", expectedRevision: 0 }, route = `/${workspaceId}/workflow/close`;
+  const input = { requestId: "818b936d-cdcc-42f4-a449-9feb559cfc40", expectedRevision: 0 }, route = `/${workspaceId}/workflow/${action}`;
   const inspection = vi.spyOn(client, "inspection").mockImplementation(async (_token, path, body) => {
     if (!path) return { workspaces: [{ id: workspaceId, owner: { kind: ownerKind, appId: "hosty.harness", reference: session.id } }] };
     expect(body).toEqual(input);
-    if (path.endsWith("close-confirm")) {
+    if (path.endsWith(`${action}-confirm`)) {
       expect(state).toBeNull(); succeeded = true;
       return { state: "in-progress", closure: "closed", revision: 1 };
     }

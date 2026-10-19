@@ -7,6 +7,9 @@ namespace Haas.Hosty.Core;
 // always supplies it. When absent, commits simply publish nothing.
 internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events = null, HostyCoreRuntimeConfig? config = null)
 {
+    // Internal observers enqueue work only; notifications are independent of lossy browser SSE.
+    internal event Action<string>? Changed;
+
     private readonly ConcurrentDictionary<string, SemaphoreSlim> appLocks = new(StringComparer.Ordinal);
     // Lifecycle/source operations share these locks. Order: operation -> host paths -> record write.
     private readonly ConcurrentDictionary<string, SemaphoreSlim> operationLocks = new(StringComparer.Ordinal);
@@ -153,6 +156,7 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
             mutex.Release();
         }
 
+        Changed?.Invoke(appId);
         events?.PublishAppEvent(CoreEventHub.AppRemoved, appId);
     }
 
@@ -175,6 +179,7 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
         // one hint without publishers having to remember to. Publishing runs under the per-app mutex
         // and must therefore stay non-blocking (the hub drops instead of waiting). Create and update
         // are not distinguished: v1 consumers re-read the list either way.
+        Changed?.Invoke(app.Id);
         events?.PublishAppEvent(CoreEventHub.AppChanged, app.Id);
         return document;
     }

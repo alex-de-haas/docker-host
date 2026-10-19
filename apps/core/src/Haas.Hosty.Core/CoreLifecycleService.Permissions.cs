@@ -1,6 +1,3 @@
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-
 namespace Haas.Hosty.Core;
 
 internal sealed record AppPermissionObservation(
@@ -24,10 +21,12 @@ internal sealed partial class CoreLifecycleService
         IReadOnlyList<string> Required, IReadOnlyList<string> Optional, IReadOnlyList<string> Roles);
     private sealed record PermissionSnapshot(string Identity, AppPermissionObservation Observation);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, PermissionSnapshot> permissionSnapshots = new(StringComparer.Ordinal);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTimeOffset Installation, string Path)> observedPermissionCheckouts = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim permissionObservationGate = new(1, 1);
 
-    private static string PermissionIdentity(AppRecord app) => string.Join("\n", app.InstalledAt.ToString("O"),
-        app.PermissionRevision, app.SelectedRuntime, app.ManifestPath, app.InstallManifestPath, app.ManifestUrl, app.SourceState?.LocalOverridePath,
+    internal static string PermissionIdentity(AppRecord app) => string.Join("\n", app.InstalledAt.ToString("O"),
+        app.PermissionRevision, app.Version, app.AppliedSourceManifestDigest,
+        string.Join(",", (app.RuntimeProfiles ?? []).Select(p => $"{p.Key}:{p.Type}:{p.Development}")), app.SelectedRuntime, app.ManifestPath, app.InstallManifestPath, app.ManifestUrl, app.SourceState?.LocalOverridePath,
         app.SourceState?.ManagedCheckoutPath, app.SourceState?.ManifestSubpath,
         string.Join(",", app.RequiredCorePermissions ?? []), string.Join(",", app.OptionalCorePermissions ?? []),
         string.Join(",", app.GrantedCorePermissions ?? []), string.Join(",", app.ConfirmedRoles ?? []));
@@ -36,26 +35,57 @@ internal sealed partial class CoreLifecycleService
         app.RequiredCorePermissions ?? app.GrantedCorePermissions ?? [], app.OptionalCorePermissions ?? [],
         app.GrantedCorePermissions ?? [], [], false, [], null, null);
 
-    private AppPermissionObservation CachedPermissions(AppRecord app)
+    internal AppPermissionObservation CachedPermissions(AppRecord app)
         => permissionSnapshots.TryGetValue(app.Id, out var snapshot) && snapshot.Identity == PermissionIdentity(app)
             ? snapshot.Observation : UnknownPermissions(app);
 
-    private async Task<PermissionCandidate> ReadPermissionCandidateAsync(AppRecord app, CancellationToken ct, bool forceRead = false)
+    internal sealed record PermissionManifestSource(string? Path, string? LiveRoot, string? WatchPath);
+
+    internal async Task<PermissionManifestSource> ResolvePermissionManifestAsync(AppRecord app, CancellationToken ct)
     {
         var profiles = await ResolveRuntimeProfilesAsync(app, ct);
         var live = ResolveLiveSourcePath(app, profiles);
+        string? pendingCheckout = null;
         if (profiles.Any(p => p.Key == app.SelectedRuntime && p.Development))
         {
             // Missing configured source is an observation failure, not permission to fall back
             // to an older installed manifest and report that the current contract is healthy.
             if (!string.IsNullOrWhiteSpace(app.SourceState?.LocalOverridePath)) live = app.SourceState.LocalOverridePath;
-            // Before the first clone, the reviewed installed manifest is the launch contract.
-            // Once materialized, a missing manifest in that checkout is a real verification failure.
-            else if (!string.IsNullOrWhiteSpace(app.SourceState?.ManagedCheckoutPath) && Directory.Exists(app.SourceState.ManagedCheckoutPath)) live = app.SourceState.ManagedCheckoutPath;
-            else if (string.IsNullOrWhiteSpace(app.ManifestUrl) && !string.IsNullOrWhiteSpace(app.InstallManifestPath)
+            // Before the first clone, retain the installed contract but watch for materialization.
+            // Once observed, a disappearing checkout is an error, not a return to installed bytes.
+            else if (!string.IsNullOrWhiteSpace(app.SourceState?.ManagedCheckoutPath))
+            {
+                var checkout = app.SourceState.ManagedCheckoutPath;
+                if (Directory.Exists(checkout)) observedPermissionCheckouts[app.Id] = (app.InstalledAt, checkout);
+                if (observedPermissionCheckouts.TryGetValue(app.Id, out var seen) && seen == (app.InstalledAt, checkout)) live = checkout;
+                else pendingCheckout = checkout;
+            }
+            if (live is null && string.IsNullOrWhiteSpace(app.ManifestUrl) && !string.IsNullOrWhiteSpace(app.InstallManifestPath)
                 && !IsInternalAppPath(app.Id, app.InstallManifestPath)) live = app.InstallManifestPath;
         }
+        if (live is not null && Uri.TryCreate(live, UriKind.Absolute, out var uri) && uri.IsFile) live = uri.LocalPath;
+        // Overrides/checkouts are directories even when absent or their names contain a dot.
+        // Original local installs can instead name a manifest file directly.
+        var sourceFile = live is not null && live != app.SourceState?.LocalOverridePath
+            && live != app.SourceState?.ManagedCheckoutPath && !Directory.Exists(live)
+            && (File.Exists(live) || System.IO.Path.HasExtension(live));
         var path = live is null ? app.ManifestPath : CombineManifestSubpath(live, app.SourceState?.ManifestSubpath);
+        if (live is not null && !sourceFile) path = System.IO.Path.Combine(path!, "manifest.json");
+        var liveRoot = live is null ? null : sourceFile ? System.IO.Path.GetDirectoryName(live) : live;
+        var watchPath = liveRoot is not null ? path : pendingCheckout is not null
+            ? System.IO.Path.Combine(CombineManifestSubpath(pendingCheckout, app.SourceState?.ManifestSubpath), "manifest.json") : null;
+        return new(path, liveRoot ?? pendingCheckout, watchPath);
+    }
+
+    internal void ForgetPermissionObservation(string appId)
+    {
+        permissionSnapshots.TryRemove(appId, out _);
+        observedPermissionCheckouts.TryRemove(appId, out _);
+    }
+
+    private async Task<PermissionCandidate> ReadPermissionCandidateAsync(AppRecord app, CancellationToken ct, bool forceRead = false)
+    {
+        var path = (await ResolvePermissionManifestAsync(app, ct)).Path;
         // Older records can manage their already accepted optional choices without a source path.
         // They cannot discover or introduce declarations this way.
         if (string.IsNullOrWhiteSpace(path))
@@ -85,11 +115,11 @@ internal sealed partial class CoreLifecycleService
                 ?? throw new AppLifecycleException("app_not_found", "The app is no longer installed.");
             var identity = PermissionIdentity(app);
             var prior = CachedPermissions(app);
-            if (!refresh && !forceRead && prior.CheckedAt is { } checkedAt && clock.UtcNow - checkedAt < TimeSpan.FromSeconds(5)) return prior;
+            if (!refresh && !forceRead && prior.CheckedAt is not null) return prior;
             AppPermissionObservation observed;
             try
             {
-                var candidate = await ReadPermissionCandidateAsync(app, ct, forceRead);
+                var candidate = await ReadPermissionCandidateAsync(app, ct, forceRead || refresh);
                 var required = app.RequiredCorePermissions ?? app.GrantedCorePermissions ?? [];
                 var optional = app.OptionalCorePermissions ?? [];
                 var granted = app.GrantedCorePermissions ?? [];
@@ -127,7 +157,7 @@ internal sealed partial class CoreLifecycleService
         foreach (var app in records)
         {
             // Observation must neither interrupt an in-flight lifecycle operation nor queue behind
-            // it and delay checks for every other app. Retry busy apps on the next observer pass.
+            // it and delay checks for every other app. The event observer retries busy apps separately.
             var mutex = apps.OperationLock(app.Id);
             if (!await mutex.WaitAsync(0, ct)) continue;
             try
@@ -152,18 +182,4 @@ internal sealed partial class CoreLifecycleService
                 candidate.Source, candidate.Runtime, candidate.Digest, PermissionIdentity(app),
                 app.RequiredCorePermissions ?? app.GrantedCorePermissions ?? [], app.OptionalCorePermissions ?? []);
         }, ct);
-}
-
-internal sealed class AppPermissionObserver(CoreLifecycleService lifecycle, ILogger<AppPermissionObserver> logger) : BackgroundService
-{
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
-        do
-        {
-            try { await lifecycle.ObserveAppPermissionsAsync(stoppingToken); }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-            catch (Exception ex) { logger.LogWarning(ex, "Could not observe app permission declarations"); }
-        } while (await timer.WaitForNextTickAsync(stoppingToken));
-    }
 }

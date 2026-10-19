@@ -87,6 +87,9 @@ internal sealed partial class PublicationService
             {
                 var binding = await ExternalConnection(tree, ct);
                 var provider = binding.Source.Publication!;
+                // Background observation stops while paused. Refresh local evidence explicitly
+                // before selecting a matching PR; the mutation rechecks it under the owner gate.
+                var current = await workspaces.ObserveAsync(tree.Id, owner, ct);
                 foreach (var url in tree.PullRequests.Where(SafeReference))
                 {
                     if (!int.TryParse(new Uri(url).AbsolutePath.Split('/').LastOrDefault(), out var number) ||
@@ -97,7 +100,7 @@ internal sealed partial class PublicationService
                         Branch = tree.Branch, TargetBranch = tree.TargetBranch, Number = number, Url = url };
                     var observation = await connections.UseForSourceAsync(owner.UserId, binding.Connection.Id,
                         c => provider.ObserveAsync(c, record, ct), ct);
-                    if (observation is { State: "merged", Complete: true, Head: { } head } && head == tree.Observation?.Head)
+                    if (observation is { State: "merged", Complete: true, Head: { } head } && head == current.Observation?.Head)
                         result[tree.Id] = head;
                 }
             }
@@ -115,8 +118,10 @@ internal sealed partial class PublicationService
         cycle.CancelAfter(maximumDuration ?? TimeSpan.FromSeconds(10));
         try
         {
-            var jobs = (await workspaces.ListAsync(null, true, cycle.Token)).Workspaces
-                .Where(w => w.Owner.IsExternal).OrderBy(w => w.Id, StringComparer.Ordinal)
+            var eligible = new List<DevelopmentWorkspace>();
+            foreach (var tree in (await workspaces.ListAsync(null, true, cycle.Token)).Workspaces.Where(w => w.Owner.IsExternal))
+                if (await workspaces.CanObserveInBackgroundAsync(tree.Id, cycle.Token)) eligible.Add(tree);
+            var jobs = eligible.OrderBy(w => w.Id, StringComparer.Ordinal)
                 .SelectMany(tree => tree.PullRequests.Where(SafeReference).Distinct(StringComparer.Ordinal)
                     .OrderBy(url => url, StringComparer.Ordinal).Select(url => (Tree: tree, Url: url))).ToArray();
             // One global request budget, with rotation so a slow or large workspace cannot starve
@@ -127,6 +132,9 @@ internal sealed partial class PublicationService
                 externalObservationCursor = (externalObservationCursor + 1) % jobs.Length;
                 try
                 {
+                    // A previous provider request may have overlapped Delete. Recheck each
+                    // queued item so the rest of the batch does not keep polling that workspace.
+                    if (!await workspaces.CanObserveInBackgroundAsync(tree.Id, cycle.Token)) continue;
                     var binding = await ExternalConnection(tree, cycle.Token);
                     var provider = binding.Source.Publication!;
                     InspectionPullRequest result;
@@ -160,8 +168,9 @@ internal sealed partial class PublicationService
                     var results = current.PullRequests.Where(SafeReference).Distinct(StringComparer.Ordinal)
                         .Select(reference => reference == url ? result : retained.FirstOrDefault(p => p.Url == reference)
                             ?? new(reference, null, null, "Waiting for the next provider observation.")).ToArray();
-                    await JsonStorage.WriteAsync(ExternalPath(tree.Id), new ExternalPublicationSnapshot(tree.Id,
-                        tree.Owner, binding.Repository, binding.Connection.Id, results), restrictToOwner: true);
+                    await workspaces.WritePublicationAsync(tree.Id, () => JsonStorage.WriteAsync(ExternalPath(tree.Id),
+                        new ExternalPublicationSnapshot(tree.Id, tree.Owner, binding.Repository, binding.Connection.Id, results),
+                        restrictToOwner: true), ct);
                 }
                 catch (Exception ex) when (ex is PublicationException or UserConnectionException or AppLifecycleException or IOException or JsonException)
                 { /* Unavailable ownership/source/credentials are explained by the read projection. */ }

@@ -1,6 +1,6 @@
 ---
 created: 2026-09-18
-updated: 2026-10-10
+updated: 2026-10-19
 summary: A shared install dialog for Marketplace and Shell, with final authorization on a separate Core-origin confirmation page.
 components: [packages/app-sdk, apps/marketplace, apps/shell, apps/core]
 ---
@@ -98,12 +98,12 @@ switching or retained workloads. Privileged API calls check current grants indep
 state. A source manifest can declare new requirements without acquiring their authority; changing
 runtime preserves the approved set and still requires explicit review to grant those permissions.
 
-The permission observer checks apps every five seconds and reports missing or unsupported
-requirements without stopping services. Unreadable manifests produce stale observations for running
-apps, retaining the last verified declarations and the read error. The observer skips apps whose
-lifecycle lock is busy and retries them on a later pass, so long operations do not delay checks for
-the remaining apps. Optional permissions, including unsupported names in an installed manifest, do
-not block execution. See [App permission management](../app-permission-management/feature.md).
+The permission observer initializes at startup, then responds to relevant Core mutations and selected
+live-manifest file changes. It reports missing or unsupported requirements without stopping services.
+Unreadable manifests produce stale observations for running apps, retaining the last verified
+declarations and read error. Busy lifecycle operations retain per-app invalidations for bounded retries
+without rereading other apps. Explicit review and application verify fresh manifest bytes. Optional
+permissions, including unsupported names in an installed manifest, do not block execution. See [App permission management](../app-permission-management/feature.md).
 Shell shows unsupported requirements separately from missing approval; only supported requirements
 can be approved. Direct Core navigation to `/install/permissions/{appId}` prepares a review without
 running Shell or the target app. It requires an administrator cookie on Core's isolated origin,

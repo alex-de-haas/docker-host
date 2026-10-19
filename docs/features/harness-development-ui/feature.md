@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-18
+updated: 2026-10-19
 summary: Harness combines app-grouped conversations, multi-repository workspace details, sandbox previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -148,10 +148,12 @@ determines management authority.
 
 ## Lifecycle Actions
 
-Complete, Defer, Resume and Delete use the [Core workflow contract](../workspace-lifecycle-controls/feature.md).
+Complete, Pause, Resume and Delete use the [Core workflow contract](../workspace-lifecycle-controls/feature.md).
 Core checks all repositories; chat inactivity, CI success or an agent's message cannot complete work.
-Completion leaves source and previews available. Resume invalidates completion without starting an
-agent. Delete explains its scope and optionally removes the Harness conversation after resource and
+Completion leaves source and previews available. Pause fences new work, coordinates stopping the
+owned execution and retains source. Legacy Close/Defer records and pending actions remain recoverable.
+Resume refreshes source before reopening work without starting an agent. Inactive workspace details
+load on entry, lifecycle change and manual refresh; recurring inventory updates do not rescan Git. Delete explains its scope and optionally removes the Harness conversation after resource and
 source cleanup succeeds. Published PRs are preserved. Pending operations retain their UUID and
 revision, including recovery from Core after browser storage loss.
 

@@ -101,7 +101,7 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task WorkspaceWorkflow_NewEditsInvalidateCompletionAndPreventDeletion()
+    public async Task WorkspaceWorkflow_NewEditsKeepCompletionFencedAndPreventDeletion()
     {
         var (f, _) = await SourceFixtureAsync();
         var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
@@ -111,8 +111,10 @@ public sealed partial class CoreLifecycleServiceTests
         await File.WriteAllTextAsync(Path.Combine(tree.Path, "README.md"), "new work");
         await service.ObserveAsync(tree.Id, owner, default);
         var state = await service.WorkflowAsync(owner, default);
-        Assert.Equal("in-progress", state.State);
-        Assert.Null(state.CompletedAt);
+        Assert.Equal("completed", state.State);
+        Assert.NotNull(state.CompletedAt);
+        await Assert.ThrowsAsync<AppLifecycleException>(() => service.CommandAsync(tree.Id, owner, "lease",
+            new(Guid.NewGuid().ToString(), LeaseId: Guid.NewGuid().ToString()), default));
         await Assert.ThrowsAsync<AppLifecycleException>(() => service.ChangeWorkflowAsync(owner, "admin", "delete", new(Guid.NewGuid().ToString(), state.Revision), new Dictionary<string, string>(), default));
         Assert.True(File.Exists(Path.Combine(tree.Path, "README.md")));
     }

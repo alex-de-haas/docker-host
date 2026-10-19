@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-17
+updated: 2026-10-19
 summary: Harness applies independent chat and completed-workspace retention, preserves unfinished work, and recovers coordinated cleanup with stable operation IDs.
 components: [apps/harness, apps/core]
 ---
@@ -31,7 +31,7 @@ source and current-head integration for every repository under the
 [workspace lifecycle contract](../workspace-lifecycle-controls/feature.md). A closed PR, green CI,
 one merged repository or inactivity cannot complete work. In-progress, deferred and unknown work
 never expires, even when its source is already merged. The deadline starts at the later of verified
-completion and conversation activity. Resume or newly observed source edits invalidate completion.
+completion and conversation activity. Resume clears completion; newly observed edits remain fenced and fail fresh cleanup checks.
 Core checks again immediately before deleting source. Missing evidence or Core failure preserves work.
 
 ## Authorization, Cleanup And Recovery
@@ -39,7 +39,7 @@ Core checks again immediately before deleting source. Missing evidence or Core f
 Core exposes POST `/api/internal/apps/{appId}/sessions/{sessionId}/retention` for an installed,
 confirmed assistant's service identity. The original session owner must still be an enabled
 administrator. Core resolves the workspace and resources from the installation, owner and session;
-the caller cannot submit an arbitrary workspace ID. Active source owned by an earlier installation
+the caller cannot submit an arbitrary workspace ID. Retained source owned by an earlier installation
 blocks classification until reconciled. No browser credential is saved for scheduled execution.
 
 Background source cleanup additionally requires the explicitly reviewed optional
@@ -57,8 +57,15 @@ local removal. Published PRs and other assistants' conversations are not deleted
 Manual conversation removal also reconciles Core ownership; unfinished source, live resources and
 pending operations block it. Complete/Delete workspace remains the explicit path for development
 work. Retention never invokes unfinished-work discard or cancels unknown external processes. Core
-keeps its minimal recovery receipts and shared repository cache after physical worktree removal;
-Harness keeps no separate hidden archive of a successfully deleted conversation.
+removes workspace records and the temporary deletion journal after successful Delete, while shared
+repositories retain their separate ownership. Harness keeps no hidden archive of a deleted conversation.
+
+Core returns an explicit `workspaceAbsent` confirmation after checking stored worktree evidence and
+any unfinished deletion journal. Harness combines this with its local workspace history to reconcile
+a deleted workspace, including a lost Delete response followed by restart. It still requires finished
+resources and applies the completed-workspace policy, including Off. It uses the saved completion
+time when available, otherwise conversation activity. Older Core responses without this confirmation
+keep ambiguous history blocked; an empty displayed list alone never authorizes deletion.
 
 ## Acceptance (2026-10-16)
 
@@ -98,8 +105,8 @@ Verification:
   does not repeat D4's real-agent sandbox/browser acceptance. UI continuity and recovery acceptance is recorded in
   [Harness UI D6](../harness-development-ui/feature.md#d6-responsive-navigation-and-recovery-acceptance-2026-10-16).
 
-An interrupted workspace close is protected from expiry, including an older completed iteration.
-Close alone never establishes completion or starts a completed-workspace retention deadline.
+An interrupted workspace pause is protected from expiry, including an older completed iteration.
+Pause alone never establishes completion or starts a completed-workspace retention deadline.
 
 ## Testing Expectations
 

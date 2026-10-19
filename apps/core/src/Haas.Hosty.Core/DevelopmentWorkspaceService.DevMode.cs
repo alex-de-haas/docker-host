@@ -38,6 +38,15 @@ internal sealed partial class DevelopmentWorkspaceService
         return await action();
     }
 
+    internal async Task<string[]> DevConsumerAppsAsync(DevelopmentWorkspace tree, CancellationToken ct)
+    {
+        var result = new List<string>();
+        foreach (var app in await apps.ListAppRecordsAsync(ct))
+            if (await AppDevStore.ReadAsync(paths, app, ct) is { Active: true } op && op.WorktreeId == tree.Id)
+                result.Add(app.Id);
+        return result.ToArray();
+    }
+
     private async Task RequireDevConsumerIdleAsync(DevelopmentWorkspace tree, CancellationToken ct, bool writer = false)
     {
         foreach (var app in await apps.ListAppRecordsAsync(ct))
