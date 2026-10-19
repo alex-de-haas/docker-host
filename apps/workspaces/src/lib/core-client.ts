@@ -23,7 +23,9 @@ export async function coreEvents(credential: string, signal: AbortSignal): Promi
   const response = await fetch(new URL(`/api/internal/apps/${encodeURIComponent(getAppId(config))}/workspace-inspection/events`, origin), {
     headers: { Authorization: `Bearer ${service}`, "X-Hosty-User-Token": credential, Accept: "text/event-stream" },
     cache: "no-store", redirect: "error", signal });
-  if (!response.ok || !response.body || !response.headers.get("content-type")?.includes("text/event-stream"))
+  if (!response.ok || !response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
+    await response.body?.cancel().catch(() => undefined);
     throw new WorkspacesError("Core could not open workspace updates.", response.ok ? 502 : response.status, "workspace_stream_unavailable");
+  }
   return new Response(response.body, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-store, no-transform", "X-Accel-Buffering": "no" } });
 }

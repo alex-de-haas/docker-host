@@ -29,3 +29,12 @@ it("rejects missing identity and routes outside the inspection surface", async (
   expect((await GET(request("events/arbitrary"), context("events/arbitrary"))).status).toBe(404);
   expect(vi.mocked(fetch).mock.calls.every(([url]) => !String(url).includes("workspace-inspection"))).toBe(true);
 });
+
+it.each([404, 405, 403, 200])("cancels rejected upstream inspection bodies (%s)", async (status) => {
+  const cancel = vi.fn();
+  vi.stubGlobal("fetch", vi.fn(async (url: URL | string) => String(url).endsWith("/events")
+    ? new Response(new ReadableStream({ cancel }), { status, headers: { "Content-Type": "text/plain" } })
+    : Response.json({ active: true, appId: "hosty.workspaces", userId: "admin", hostRole: "host.admin" })));
+  expect((await GET(request("events"), context("events"))).status).toBe(status === 200 ? 502 : status);
+  expect(cancel).toHaveBeenCalledTimes(1);
+});

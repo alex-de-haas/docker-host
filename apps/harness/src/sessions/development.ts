@@ -64,8 +64,10 @@ export class DevelopmentClient {
     const route = `/api/internal/apps/${encodeURIComponent(this.appId)}/workspace-inspection/events`;
     const response = await fetch(new URL(route, this.origin!), { redirect: "error", signal,
       headers: { authorization: `Bearer ${this.token}`, "X-Hosty-User-Token": credential, accept: "text/event-stream" } });
-    if (!response.ok || !response.body || !response.headers.get("content-type")?.includes("text/event-stream"))
+    if (!response.ok || !response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
+      await response.body?.cancel().catch(() => undefined);
       throw new AppContextError(response.ok ? 502 : response.status, "workspace_stream_unavailable", "Core could not open workspace updates.");
+    }
     return response;
   }
   async inspection(credential: string, path = "", body?: Record<string, unknown>, absolute = false): Promise<unknown> {

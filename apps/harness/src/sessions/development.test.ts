@@ -145,3 +145,12 @@ it("streams inspection hints with current app identity and cancels with the brow
   fetcher.mockResolvedValue(Response.json({ workspaces: [] }));
   await expect(client.inspectionEvents("user", new AbortController().signal)).rejects.toMatchObject({ status: 502 });
 });
+
+it.each([404, 405, 403, 200])("cancels rejected inspection response bodies (%s)", async (status) => {
+  const cancel = vi.fn();
+  const body = new ReadableStream({ cancel });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, { status, headers: { "Content-Type": "text/plain" } })));
+  const client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
+  await expect(client.inspectionEvents("user", new AbortController().signal)).rejects.toMatchObject({ status: status === 200 ? 502 : status });
+  expect(cancel).toHaveBeenCalledTimes(1);
+});
