@@ -57,6 +57,38 @@ public sealed class CoreSourceConfigurationTests : IDisposable
             new("https://github.com/owner/repo", ProjectPath: project)), default));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LinkedProjectOrAncestorIsRejectedWhenSavingAndPreparing(bool linkedDirectory)
+    {
+        var checkout = Path.Combine(root, "selected");
+        var project = Path.Combine(checkout, "src", "Core.csproj");
+        var outside = Path.Combine(root, "outside", "Core.csproj");
+        Directory.CreateDirectory(Path.GetDirectoryName(project)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(outside)!);
+        await File.WriteAllTextAsync(project, "<Project />");
+        await File.WriteAllTextAsync(outside, "external project must remain untouched");
+        var source = await Service.SaveAsync(new(checkout, "initial",
+            new("https://git.example.test/core", ProjectPath: "src/Core.csproj")), default);
+        if (linkedDirectory)
+        {
+            Directory.Delete(Path.GetDirectoryName(project)!, true);
+            Directory.CreateSymbolicLink(Path.GetDirectoryName(project)!, Path.GetDirectoryName(outside)!);
+        }
+        else
+        {
+            File.Delete(project);
+            File.CreateSymbolicLink(project, outside);
+        }
+
+        var preparation = await Assert.ThrowsAsync<ArgumentException>(() => Service.PrepareSourceAsync(source, default));
+        Assert.Contains("escapes its repository", preparation.Message);
+        await Assert.ThrowsAsync<ArgumentException>(() => Service.SaveAsync(new(checkout, source.Revision), default));
+        Assert.Equal(source, await Service.SourceSettingsAsync(default));
+        Assert.Equal("external project must remain untouched", await File.ReadAllTextAsync(outside));
+    }
+
     [Fact]
     public async Task RepoAndRefChangesRetainDirtyLegacySourceAndUseDistinctManagedDirectories()
     {

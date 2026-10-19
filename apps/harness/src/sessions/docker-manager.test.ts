@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { createServer } from "node:http";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -6,7 +7,8 @@ import { SessionManager } from "./manager.js";
 import { SessionStore } from "./store.js";
 import { SettingsStore } from "../settings/store.js";
 import { AgentConnections } from "../connections/registry.js";
-import { DevelopmentClient } from "./development.js";
+import { DevelopmentClient, DEVELOPMENT_IDENTITY, DEVELOPMENT_PROVIDER, developmentTools } from "./development.js";
+import { ruleKey } from "../mcp/policy.js";
 import { AuditReporter } from "../audit.js";
 import { SharedDockerWorker, type WorkerState } from "../runtime/worker.js";
 import type { HarnessAdapter, HarnessStartOptions } from "../harness/adapter.js";
@@ -219,4 +221,115 @@ it("recovers a persisted worker close after the second repository lease release 
   expect(release).toHaveBeenCalledWith(session.id, "fresh", { leaseId, acquire: false });
   expect(calls.mock.calls.some(call => call[2] === "release-lease")).toBe(true);
   expect(worker.current).toBeNull();
+});
+
+
+async function deferredDockerActivation(beforeStop: () => Promise<void> = async () => {}) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hosty-docker-activation-"));
+  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  const settings = new SettingsStore(root); await settings.update({ executionMode: "docker" });
+  const secrets = new Map<string, string>();
+  const connections = new AgentConnections(root, path.join(root, "cache"), { get: async key => secrets.get(key) ?? null,
+    set: async (key, value) => { secrets.set(key, value); }, delete: async key => { secrets.delete(key); } });
+  cleanups.push(() => connections.shutdown());
+  await connections.update({ name: "Test", kind: "claude", auth: "api-key", secret: "synthetic" });
+  const starts: HarnessStartOptions[] = [], order: string[] = [];
+  const adapter: HarnessAdapter = { name: "test", capabilities: { questions: true, appMcp: true, liveReconfigure: true, autoAllow: true, denyReason: true },
+    probe: async () => ({ available: true }), start: options => { starts.push(options); return { send() {}, stop: async () => { order.push("run-stopped"); }, interrupt: async () => {},
+      setMcpServers: async () => true, resolveApproval: () => true, resolveQuestion: () => true }; } };
+  vi.spyOn(connections, "adapter").mockResolvedValue(adapter); vi.spyOn(connections, "workerMounts").mockResolvedValue([]);
+  const client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
+  const bindings = { instanceId: "a".repeat(64), installationId: "b".repeat(64), treesRoot: "/trees", repositoriesRoot: "/repos", worktreePaths: [] };
+  vi.spyOn(client, "workerBindings").mockImplementation(async (_id, _credential, input) => {
+    if (input?.acquire === false) order.push("worker-lease-released");
+    return bindings;
+  });
+  const calls = vi.spyOn(client, "call").mockImplementation(async (_id, _credential, action) => {
+    order.push(action);
+    return { workspaces: [{ id: "existing-workspace", state: "active" }] };
+  });
+  const worker = new SharedDockerWorker(root, path.join(root, "cache"));
+  let state: WorkerState | null = null;
+  vi.spyOn(worker, "current", "get").mockImplementation(() => state);
+  vi.spyOn(worker, "prepare").mockImplementation(async (sessionId, leaseId, _bindings, _cwd, _mounts, acquire) => {
+    await acquire(); state = { version: 1, phase: "running", sessionId, leaseId, generation: leaseId, name: "test", instanceId: bindings.instanceId, installationId: bindings.installationId, imageId: "test" };
+    return { spawn: vi.fn() };
+  });
+  const stop = vi.spyOn(worker, "stop").mockImplementation(async () => {
+    order.push("worker-stopping"); await beforeStop();
+    if (state) { state.phase = "stopped"; order.push("worker-stopped"); }
+  });
+  vi.spyOn(worker, "sample").mockResolvedValue({ memoryBytes: 1, peakMemoryBytes: 1, pids: 1 });
+  vi.spyOn(worker, "finish").mockImplementation(async () => { expect(state?.phase).toBe("stopped"); state = null; order.push("worker-finished"); });
+  const store = new SessionStore(root, path.join(root, "cache"));
+  const manager = new SessionManager(store, adapter, new AuditReporter(null, null, "hosty.harness"), root, settings, null, null, null, "http://127.0.0.1:1", null, connections, client, worker);
+  cleanups.push(() => manager.shutdown());
+  const record = await manager.createSession({ createdBy: "admin" });
+  record.developmentLease = "11111111-1111-4111-8111-111111111111"; await store.saveRecord(record);
+  await manager.postMessage(record.id, "work", undefined, [], { workspaceCredential: "hostyg_test" });
+  const server = createServer((request, response) => { void manager.developmentMcp.handle(request, response, new URL(request.url!, "http://localhost").pathname); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  cleanups.push(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+  const config = manager.developmentMcp.config(record.id, `http://127.0.0.1:${(server.address() as { port: number }).port}`)["hosty-workspaces"] as { url: string; headers: Record<string, string> };
+  const rpc = (body: unknown) => fetch(config.url, { method: "POST", headers: config.headers, body: JSON.stringify(body) });
+  const queue = async (action: "activation-apply" | "activation-return" | "activation-resume", mode: "run" | "ask" = "run") => {
+    const tool = action.replaceAll("-", "_");
+    await manager.mcpPolicy.catalog(DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, developmentTools());
+    await manager.mcpPolicy.update({ [ruleKey(DEVELOPMENT_PROVIDER, tool)]: { identity: DEVELOPMENT_IDENTITY, mode } });
+    const input = { requestId: "c0da75ef-bd6c-4b61-99ad-241a613aa2d7", activationId: "retained-activation" };
+    const pending = rpc({ id: 1, method: "tools/call", params: { name: tool, arguments: input } });
+    if (mode === "ask") {
+      await vi.waitFor(async () => expect((await store.readRecord(record.id))?.mcpPendingApprovals).toHaveLength(1));
+      const approval = (await store.readRecord(record.id))!.mcpPendingApprovals![0]!;
+      expect(await manager.resolveApproval(record.id, approval.id, "allow", undefined, "admin")).toBe(true);
+    }
+    const response = await pending;
+    const result = (await response.json()) as { result: { isError?: boolean; content: { text: string }[] } };
+    expect(result.result.isError).toBeUndefined();
+    expect(JSON.parse(result.result.content[0]!.text)).toMatchObject({ state: "queued" });
+    expect(calls.mock.calls.some(call => call[2] === action)).toBe(false);
+    return { input, tool };
+  };
+  return { manager, store, record, starts, order, stop, calls, queue, rpc };
+}
+
+it.each([["activation-apply", "run"], ["activation-return", "run"], ["activation-resume", "run"], ["activation-apply", "ask"]] as const)("dispatches reviewed Docker %s (%s) after worker exit and all lease acknowledgements", async (action, mode) => {
+  const fixture = await deferredDockerActivation();
+  const { input } = await fixture.queue(action, mode);
+  fixture.starts[0]!.onEvent({ type: "result", status: "success" });
+  await vi.waitFor(async () => expect((await fixture.store.readRecord(fixture.record.id))?.workspaceActivation?.state).toBe("dispatched"));
+  expect(fixture.calls).toHaveBeenCalledWith(fixture.record.id, "hostyg_test", action, input);
+  expect(fixture.order.filter(item => item === action)).toHaveLength(1);
+  for (const prerequisite of ["worker-stopped", "run-stopped", "worker-lease-released", "release-lease", "worker-finished"]) {
+    expect(fixture.order).toContain(prerequisite);
+    expect(fixture.order.indexOf(prerequisite)).toBeLessThan(fixture.order.indexOf(action));
+  }
+  expect((await fixture.rpc({ id: 2, method: "ping" })).status).toBe(403);
+});
+
+it.each(["disabled", "revoked"] as const)("blocks reviewed Docker dispatch when policy is %s during worker shutdown", async change => {
+  let stopped!: () => void;
+  const pendingStop = new Promise<void>(resolve => { stopped = resolve; });
+  const fixture = await deferredDockerActivation(() => pendingStop);
+  try {
+    const { tool } = await fixture.queue("activation-apply");
+    fixture.starts[0]!.onEvent({ type: "result", status: "success" });
+    await vi.waitFor(() => expect(fixture.stop).toHaveBeenCalled());
+    // Transport access is gone before waiting for the worker; its retained review is separate.
+    expect((await fixture.rpc({ id: 2, method: "ping" })).status).toBe(403);
+    if (change === "disabled") await fixture.manager.mcpPolicy.update({ [ruleKey(DEVELOPMENT_PROVIDER, tool)]: { identity: DEVELOPMENT_IDENTITY, mode: "disabled" } });
+    else fixture.manager.developmentMcp.unregister(fixture.record.id);
+  } finally { stopped(); }
+  await vi.waitFor(async () => expect((await fixture.store.readRecord(fixture.record.id))?.workspaceActivation).toMatchObject({ state: "blocked", error: expect.stringContaining("canceled") }));
+  expect(fixture.calls.mock.calls.some(call => call[2] === "activation-apply")).toBe(false);
+  expect(fixture.order).toContain("release-lease");
+});
+
+it("cancels a reviewed Docker activation on explicit session teardown", async () => {
+  const fixture = await deferredDockerActivation();
+  await fixture.queue("activation-apply");
+  await fixture.manager.cancelSession(fixture.record.id);
+  expect((await fixture.store.readRecord(fixture.record.id))?.workspaceActivation?.state).toBe("blocked");
+  expect(fixture.calls.mock.calls.some(call => call[2] === "activation-apply")).toBe(false);
+  expect((await fixture.rpc({ id: 2, method: "ping" })).status).toBe(403);
 });

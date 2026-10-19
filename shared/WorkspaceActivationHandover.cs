@@ -56,6 +56,7 @@ internal sealed class WorkspaceActivationHandover(string root, IWorkspaceActivat
                 if (a.CoreProject is not null && a.PreparedExecutable is null)
                 {
                     CoreStateSnapshot.Preflight(root);
+                    await runtime.ValidateAuthorityAsync(id);
                     var prepared = await runtime.BuildAsync(a.CoreProject);
                     a = Save(a with { PreparedExecutable = prepared.Executable, Generation = prepared.Generation });
                 }

@@ -67,6 +67,9 @@ internal static class CoreWorkspaceEndpoints
         app.MapPost("/control/v1/workspace-activations/{id}/validate-authority", (string id, HttpRequest request,
             ControlSecret secret, WorkspaceActivationService activations, CancellationToken ct) =>
             HostyCoreApplication.RequireControlSecret(request, secret, () => Handle(() => activations.ValidateRuntimeAuthorityAsync(id, ct))));
+        app.MapPost("/control/v1/workspace-activations/{id}/restore-app", (string id, Haas.Hosty.Launch.WorkspaceReturnAppMutation input,
+            HttpRequest request, ControlSecret secret, WorkspaceActivationService activations, CancellationToken ct) =>
+            HostyCoreApplication.RequireControlSecret(request, secret, () => Handle(() => activations.RestoreReturnAppAsync(id, input, ct))));
         app.MapPost("/control/v1/workspace-activations/{id}/return-apps", (string id, HttpRequest request,
             ControlSecret secret, WorkspaceActivationService activations, CancellationToken ct) =>
             HostyCoreApplication.RequireControlSecret(request, secret, () => Handle(() => activations.ReturnAppsAsync(id, ct))));

@@ -154,6 +154,22 @@ internal sealed partial class CoreLifecycleService
         }, ct, returning: true);
     }
 
+    // Called only with this app's operation lock held, including the ordinary development/source
+    // guards. A client observation cannot authorize a lifecycle change to a replacement binding.
+    internal async Task<AppLifecycleResponse> RestoreReturnAppStateCoreAsync(WorkspaceReturnAppState captured, CancellationToken ct)
+    {
+        var app = await RequireAppAsync(captured.AppId, ct);
+        var summary = await BuildAppSummaryAsync(app, ct);
+        var target = System.Text.Json.JsonSerializer.SerializeToElement(summary, CoreJsonSerializerContext.Default.AppSummary);
+        if (WorkspaceReturnAppTarget.Fingerprint(target) != captured.Target)
+            throw DevError("return_target_changed", "The returned app changed installation or runtime target. No unrelated binding was changed.");
+        if (captured.WasRunning ? app.RuntimeState == "running" : app.RuntimeState == "stopped")
+            return new(summary, null, "unchanged");
+        if (app.RuntimeState is not ("running" or "stopped"))
+            throw DevError("return_state_unstable", "The returned app is not in a stable running/stopped state. Resume the retained Return request.");
+        return captured.WasRunning ? await StartCoreAsync(app.Id, afterOwnStop: false, ct) : await StopCoreAsync(app.Id, ct);
+    }
+
     internal async Task StopActivationAppAsync(string appId, CancellationToken ct)
     {
         var app = await RequireAppAsync(appId, ct);

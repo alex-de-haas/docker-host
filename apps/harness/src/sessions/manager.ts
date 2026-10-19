@@ -1064,7 +1064,7 @@ export class SessionManager {
     await this.cancelSession(id);
   }
 
-  private async finishDocker(session: LiveSession): Promise<void> {
+  private async finishDocker(session: LiveSession, retainActivationReview = false): Promise<void> {
     const worker = this.worker, id = session.record.id;
     if (!worker) return;
     // Close/Stop can be the first request after restart, before any health observation.
@@ -1073,7 +1073,11 @@ export class SessionManager {
     session.runEpoch = undefined;
     this.clearRefresh(session);
     this.workerBridge?.unregister(id);
-    this.proxy?.unregister(id); this.developmentMcp.unregister(id);
+    this.proxy?.unregister(id);
+    // The worker loses transport access immediately. A reviewed activation still needs the
+    // same policy generation after every writer stops and Core acknowledges its lease release.
+    if (retainActivationReview) this.developmentMcp.disconnect(id);
+    else this.developmentMcp.unregister(id);
     if (worker.current?.phase === "running") {
       const sample = await worker.sample().catch(() => null);
       if (sample) { session.record.workerUsage = { ...session.record.workerUsage, ...sample,
@@ -2073,7 +2077,7 @@ export class SessionManager {
     }
 
     if (session.record.executionMode === "docker" && !["running", "awaiting_approval", "awaiting_question"].includes(status)) {
-      try { await this.finishDocker(session); }
+      try { await this.finishDocker(session, status === "idle" && session.record.workspaceActivation?.state === "queued"); }
       catch (error) {
         await this.append(id, { type: "notice", message: "Docker worker termination or Core lease release is unconfirmed. Worktree leases remain held; use Stop/recovery before continuing." });
         throw error;
@@ -2113,7 +2117,11 @@ export class SessionManager {
       } catch (error) {
         session.record.workspaceActivation = { ...queued, state: "blocked", error: error instanceof Error ? error.message : String(error) };
         await this.append(id, { type: "notice", message: `Workspace activation was not confirmed: ${session.record.workspaceActivation.error}` });
-      } finally { this.activationGuards.delete(id); await this.store.saveRecord(session.record); }
+      } finally {
+        this.activationGuards.delete(id);
+        if (session.record.executionMode === "docker") this.developmentMcp.unregister(id);
+        await this.store.saveRecord(session.record);
+      }
     }
     if (session.record.workflowCompletion?.state === "queued" && !["running", "awaiting_approval", "awaiting_question"].includes(status)) {
       const request = session.record.workflowCompletion;

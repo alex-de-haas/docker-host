@@ -74,6 +74,16 @@ public sealed class WorkspaceActivationHandoverTests : IDisposable
     }
 
     [Fact]
+    public async Task ChangedBuildAuthority_RefusesBeforeBuildingOrStoppingParticipants()
+    {
+        var runtime = Prepare(); runtime.FailAfter = "authority";
+        await Assert.ThrowsAsync<IOException>(() => new WorkspaceActivationHandover(root, runtime).RunAsync(id));
+        Assert.Equal(0, runtime.Builds); Assert.Equal(0, runtime.Stops); Assert.Equal(0, runtime.AppMutations);
+        Assert.Equal(previous, runtime.Current!.Launch);
+        Assert.Equal("preparing", WorkspaceRuntimeFiles.Read(root, id).Phase);
+    }
+
+    [Fact]
     public async Task CancellationDuringBuild_RetiresPreStopRequestWithoutDiscardingSource()
     {
         var runtime = Prepare(); runtime.CancelDuringBuild = true;
@@ -150,6 +160,8 @@ public sealed class WorkspaceActivationHandoverTests : IDisposable
         internal bool CancelDuringBuild;
         internal int Builds, Stops, Starts, AppMutations, PreviousRestarts;
         public Task<WorkspaceCoreObservation?> ObserveAsync() => Task.FromResult(Current);
+        public Task ValidateAuthorityAsync(string requestId)
+        { Assert.Equal(id, requestId); Fail("authority"); return Task.CompletedTask; }
         public Task<WorkspaceCoreOutput> BuildAsync(string project)
         {
             Builds++;

@@ -319,6 +319,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(WorkspaceActivationReview))]
 [JsonSerializable(typeof(Haas.Hosty.Launch.WorkspaceRuntimeActivation[]))]
 [JsonSerializable(typeof(Haas.Hosty.Launch.WorkspaceReturnRequest))]
+[JsonSerializable(typeof(Haas.Hosty.Launch.WorkspaceReturnAppMutation))]
 [JsonSerializable(typeof(WorkspaceActivationDetail))]
 [JsonSerializable(typeof(Haas.Hosty.Launch.WorkspaceActivationHelper))]
 [JsonSerializable(typeof(Haas.Hosty.Launch.WorkspaceActivationStatus))]

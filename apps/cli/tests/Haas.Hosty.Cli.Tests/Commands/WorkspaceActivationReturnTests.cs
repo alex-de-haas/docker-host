@@ -76,12 +76,38 @@ public sealed class WorkspaceActivationReturnTests : IDisposable
         Assert.Equal(1, runtime.Stops); Assert.Equal(1, runtime.Restores);
     }
 
-    [Fact]
-    public void CoreReturnWithoutCompatibilityAcceptance_LeavesReceiptAndProcessesUntouched()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ReturnWithoutCompatibilityAcceptance_LeavesReceiptAndProcessesUntouched(bool core)
     {
         var runtime = Prepare(); var before = File.ReadAllText(WorkspaceRuntimeFiles.PathFor(root, id));
-        Assert.Throws<InvalidOperationException>(() => WorkspaceActivationReturn.Prepare(root, id, Request([], true, false)));
-        Assert.Equal(before, File.ReadAllText(WorkspaceRuntimeFiles.PathFor(root, id))); Assert.Equal(0, runtime.Stops);
+        Assert.Throws<InvalidOperationException>(() => WorkspaceActivationReturn.Prepare(root, id, Request(core ? [] : ["one"], core, false)));
+        Assert.Equal(before, File.ReadAllText(WorkspaceRuntimeFiles.PathFor(root, id)));
+        Assert.Equal(0, runtime.Stops); Assert.Equal(0, runtime.AppReturns);
+    }
+
+    [Fact]
+    public async Task RetainedUnacknowledgedAppReturnDoesNotStopParticipantsOnResume()
+    {
+        var runtime = Prepare(); var a = WorkspaceRuntimeFiles.Read(root, id);
+        WorkspaceRuntimeFiles.Save(root, a with { Phase = "return-apps", Returns = [new(Request(["one"], accept: false), "pending")] });
+        await Assert.ThrowsAsync<InvalidOperationException>(() => new WorkspaceActivationHandover(root, runtime).RunAsync(id));
+        Assert.Equal(0, runtime.AppReturns); Assert.Equal(0, runtime.Stops);
+        Assert.Equal("pending", WorkspaceRuntimeFiles.Read(root, id).Returns![0].State);
+    }
+
+    [Fact]
+    public async Task AlreadyRestoredCoreAtStopBoundary_EntersGuardedAppRecoveryPhaseWithoutRestarting()
+    {
+        var runtime = Prepare(); WorkspaceActivationReturn.Prepare(root, id, Request([], true));
+        var a = WorkspaceRuntimeFiles.Read(root, id);
+        WorkspaceRuntimeFiles.Save(root, a with { Phase = "return-core-stopping", ReturnedApps = ["one"],
+            Returns = [a.Returns![0] with { AppsBeforeCoreReturn = [new("one", "captured", true, false)] }] });
+        runtime.Current = new(previous with { ProcessId = 900, StartedAt = DateTimeOffset.UtcNow }, "http://localhost:3333");
+        await new WorkspaceActivationHandover(root, runtime).RunAsync(id);
+        Assert.True(WorkspaceRuntimeFiles.Read(root, id).CoreReturned);
+        Assert.Equal(1, runtime.AppStateRestores); Assert.Equal(0, runtime.Stops); Assert.Equal(0, runtime.Restores);
     }
 
     [Fact]
@@ -143,7 +169,7 @@ public sealed class WorkspaceActivationReturnTests : IDisposable
         public Task<WorkspaceReturnAppState[]> CaptureReturnAppsAsync(WorkspaceRuntimeActivation a)
             => Task.FromResult((a.ReturnedApps ?? []).Select(app => new WorkspaceReturnAppState(app, "captured", true, false)).ToArray());
         public Task RestoreReturnAppsAsync(WorkspaceRuntimeActivation a, WorkspaceReturnAppState[] apps)
-        { AppStateRestores++; Assert.True(WorkspaceActivationHandover.SameTarget(a.PreviousCore, Current!.Launch)); if (FailAppState) throw new IOException("app readiness failed"); return Task.CompletedTask; }
+        { AppStateRestores++; Assert.Equal("return-core-starting", WorkspaceRuntimeFiles.Read(root, a.Id).Phase); Assert.True(WorkspaceActivationHandover.SameTarget(a.PreviousCore, Current!.Launch)); if (FailAppState) throw new IOException("app readiness failed"); return Task.CompletedTask; }
         public Task ReturnAppsAsync(string value)
         {
             Assert.Equal(id, value);

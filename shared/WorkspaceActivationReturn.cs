@@ -26,8 +26,7 @@ internal sealed class WorkspaceActivationReturn(string root, IWorkspaceActivatio
             input.Apps.Any(app => !a.Apps.Contains(app) || (a.ReturnedApps ?? []).Contains(app)) ||
             input.Core && (a.CoreProject is null || a.CoreReturned) || input.Apps.Length == 0 && !input.Core)
             throw new InvalidOperationException("Select unreturned participants from this activation.");
-        if (input.Core && !input.AcceptDataChanges)
-            throw new InvalidOperationException("Explicitly accept compatibility of current Core data with the captured previous executable. Return never restores the snapshot.");
+        RequireCompatibility(input);
         if (input.Core && a.PreviousExecutable is null && a.Phase is not ("preparing" or "prepared"))
             throw new IOException("The previous executable was not captured. Retain the stopped-state diagnostics and recover that target explicitly.");
         a = a with { Phase = "return-apps", Error = null, Authority = actor,
@@ -42,6 +41,7 @@ internal sealed class WorkspaceActivationReturn(string root, IWorkspaceActivatio
         var a = WorkspaceRuntimeFiles.Read(root, id);
         var receipt = a.Returns?.LastOrDefault() ?? throw new InvalidOperationException("Return selection is unavailable.");
         if (receipt.State != "pending") return;
+        RequireCompatibility(receipt.Request);
         WorkspaceActivationSupervisor.CheckCancellation(root, id);
         if (a.Phase == "return-apps")
         {
@@ -108,8 +108,15 @@ internal sealed class WorkspaceActivationReturn(string root, IWorkspaceActivatio
 
     private async Task CompleteCoreAsync(WorkspaceRuntimeActivation a)
     {
+        if (a.Phase != "return-core-starting") a = Save(a with { Phase = "return-core-starting" });
         await runtime.RestoreReturnAppsAsync(a, a.Returns!.Last().AppsBeforeCoreReturn ?? []);
         Complete(WorkspaceRuntimeFiles.Read(root, a.Id) with { CoreReturned = true });
+    }
+
+    internal static void RequireCompatibility(WorkspaceReturnRequest input)
+    {
+        if (!input.AcceptDataChanges)
+            throw new InvalidOperationException("Explicitly accept compatibility of current data with the selected previous runtimes before Return. No data is restored.");
     }
 
     internal static string? ExecutableHash(string? path) => path is not null && File.Exists(path)

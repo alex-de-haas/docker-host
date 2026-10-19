@@ -14,6 +14,7 @@ internal sealed record WorkspaceRuntimeActivation(string Id, string WorkspaceId,
 internal sealed record WorkspaceActivationActor(string UserId, string Via, string? AppId = null,
     DateTimeOffset? Installation = null, string? Principal = null, string? Review = null, string? AppIdentityHash = null);
 
+internal sealed record WorkspaceReturnAppMutation(string RequestId, string AppId);
 internal sealed record WorkspaceReturnRequest(string RequestId, string[] Apps, bool Core, bool AcceptDataChanges);
 internal sealed record WorkspaceReturnAppState(string AppId, string Target, bool WasRunning, bool BootRunning, bool BootObserved = false);
 internal sealed record WorkspaceReturnReceipt(WorkspaceReturnRequest Request, string State, WorkspaceReturnAppState[]? AppsBeforeCoreReturn = null);
@@ -42,4 +43,5 @@ internal static class WorkspaceRuntimeFiles
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(WorkspaceRuntimeActivation))]
+[JsonSerializable(typeof(WorkspaceReturnAppMutation))]
 internal partial class WorkspaceRuntimeJson : JsonSerializerContext;

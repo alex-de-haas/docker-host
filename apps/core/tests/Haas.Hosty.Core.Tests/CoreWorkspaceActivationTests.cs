@@ -85,6 +85,92 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.True(fork.Participants.Single(p => p.Kind == "app").Selected);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Activation_LinkedCoreProjectOrAncestorIsUnavailable(bool linkedDirectory)
+    {
+        var (f, remote) = await SourceFixtureAsync();
+        await AddCoreProject(remote);
+        var git = new RemoteGitFixture(remote);
+        var core = CoreSourceService(f, git);
+        var source = await core.SaveAsync(new(null, "initial", new(RemoteGitFixture.Url, "main", ConnectionId: "connection")), default, "admin");
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock, privateSources: git, coreDevelopment: core);
+        var owner = ExternalOwner("linked-core");
+        var tree = await service.PrepareCoreSourceAsync(owner,
+            new(Guid.NewGuid().ToString(), owner.SessionId, Guid.NewGuid().ToString(), source.Revision), default);
+        var project = CoreDevelopmentService.Project(tree.Path, source.ProjectPath);
+        var outside = Path.Combine(f.Root, "outside-core", Path.GetFileName(project));
+        Directory.CreateDirectory(Path.GetDirectoryName(outside)!);
+        await File.WriteAllTextAsync(outside, "external project must remain untouched");
+        if (linkedDirectory)
+        {
+            Directory.Delete(Path.GetDirectoryName(project)!, true);
+            Directory.CreateSymbolicLink(Path.GetDirectoryName(project)!, Path.GetDirectoryName(outside)!);
+        }
+        else
+        {
+            File.Delete(project);
+            File.CreateSymbolicLink(project, outside);
+        }
+        var planner = new WorkspaceActivationPlanner(service, new(service, f.Apps, f.Clock, privateSources: git), f.Apps, core);
+
+        var plan = await planner.PlanAsync(tree.WorkspaceId, "admin", new(), default);
+
+        var participant = Assert.Single(plan.Participants);
+        Assert.Equal("core", participant.Kind);
+        Assert.False(participant.Selected);
+        Assert.Contains("escapes its repository", participant.Unavailable);
+        Assert.Equal("external project must remain untouched", await File.ReadAllTextAsync(outside));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Activation_PreBuildAuthorityRejectsProjectLinksInsertedAfterPreparation(bool linkedDirectory)
+    {
+        var (f, remote) = await SourceFixtureAsync();
+        await AddCoreProject(remote);
+        var git = new RemoteGitFixture(remote);
+        var core = CoreSourceService(f, git);
+        var source = await core.SaveAsync(new(null, "initial", new(RemoteGitFixture.Url, "main", ConnectionId: "connection")), default, "admin");
+        var workspaces = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock, privateSources: git, coreDevelopment: core);
+        var owner = ExternalOwner("pre-build-core");
+        var leaseId = Guid.NewGuid().ToString();
+        var tree = await workspaces.PrepareCoreSourceAsync(owner,
+            new(Guid.NewGuid().ToString(), owner.SessionId, leaseId, source.Revision), default);
+        await workspaces.CommandAsync(tree.Id, owner, "release-lease", new(Guid.NewGuid().ToString(), LeaseId: leaseId), default);
+        var planner = new WorkspaceActivationPlanner(workspaces, new(workspaces, f.Apps, f.Clock, privateSources: git), f.Apps, core);
+        var service = new WorkspaceActivationService(f.Paths, planner, core, f.Service, workspaces);
+        var prepared = await service.PrepareAsync(tree.WorkspaceId,
+            new(Guid.NewGuid().ToString(), owner.UserId, new()), default);
+        Assert.Equal("prepared", prepared.Phase);
+        var project = prepared.CoreProject!;
+        var outside = Path.Combine(f.Root, "outside-core", Path.GetFileName(project));
+        Directory.CreateDirectory(Path.GetDirectoryName(outside)!);
+        await File.WriteAllTextAsync(outside, "external project must remain untouched");
+        if (linkedDirectory)
+        {
+            Directory.Delete(Path.GetDirectoryName(project)!, true);
+            Directory.CreateSymbolicLink(Path.GetDirectoryName(project)!, Path.GetDirectoryName(outside)!);
+        }
+        else
+        {
+            File.Delete(project);
+            File.CreateSymbolicLink(project, outside);
+        }
+        var stops = f.Adapter.StopCount;
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => service.ValidateRuntimeAuthorityAsync(prepared.Id, default));
+
+        Assert.Contains("escapes its repository", error.Message);
+        Assert.Equal(stops, f.Adapter.StopCount);
+        var retained = WorkspaceRuntimeFiles.Read(f.Paths.DataRoot, prepared.Id);
+        Assert.Equal("prepared", retained.Phase);
+        Assert.Null(retained.PreparedExecutable);
+        Assert.Equal("external project must remain untouched", await File.ReadAllTextAsync(outside));
+    }
+
     [Fact]
     public async Task Activation_MultipleRepositoriesAndUnsupportedOrReinstalledBindingsStayExplicit()
     {

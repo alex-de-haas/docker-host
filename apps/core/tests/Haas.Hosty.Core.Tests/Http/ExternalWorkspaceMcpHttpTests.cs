@@ -359,6 +359,9 @@ public sealed class ExternalWorkspaceMcpHttpTests
         var tools = (await McpResultAsync(response)).GetProperty("tools").EnumerateArray()
             .Where(tool => tool.GetProperty("name").GetString()!.Contains("workspace", StringComparison.Ordinal)).ToArray();
         Assert.Equal(13, tools.Length);
+        var activationInputs = tools.Single(tool => tool.GetProperty("name").GetString() == "workspace_activation")
+            .GetProperty("inputSchema").GetProperty("properties").EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal);
+        Assert.Equal(new[] { "input", "kind", "workspaceId" }, activationInputs);
         foreach (var tool in tools)
         {
             var names = tool.GetProperty("inputSchema").GetProperty("properties").EnumerateObject().Select(property => property.Name).ToArray();

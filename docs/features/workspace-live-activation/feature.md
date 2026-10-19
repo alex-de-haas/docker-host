@@ -45,7 +45,10 @@ provider normalization makes supported GitHub spelling and `.git` variants equiv
 public HTTP/HTTPS Git hosts retain their canonical URL; this does not imply private-provider support.
 A fork has a different repository identity from its upstream. Ref syntax is checked locally; Git checks
 remote availability during preparation. Project paths must be contained relative `.csproj` paths,
-including symlink containment. Saving configuration performs no clone, reset or restart.
+including symlink containment resolved against the actual repository path. The helper rechecks Core
+source authority, workspace writers and project containment immediately before an unprepared build,
+so a path substituted after admission is refused before compilation. Saving configuration performs
+no clone, reset or restart.
 
 `POST /api/core/source/prepare` with `{ "sourceRevision": "..." }` prepares the selected source and
 returns its project path and revision. It shares Core's launch lock and refuses stale revisions or
@@ -146,6 +149,9 @@ Harness exposes typed `activation_plan`, `activation_apply`, `activation_status`
 unprompted and Disabled policy applies. An agent's mutation is queued until its successful turn ends,
 native process exit (or Docker worker termination) is confirmed and source leases are released. The
 original reviewed payload and IDs are retained; policy and Core authority are rechecked at dispatch.
+A completed Docker turn revokes worker transport access while preserving that reviewed policy guard
+through worker shutdown and lease release. Cancellation, permission changes and revocation still
+invalidate the queued request.
 A restarted Harness cannot reconstruct an in-memory approval: it marks the queue blocked for explicit
 review/retry. The detached helper owns an accepted transition even when Harness replaces itself.
 
@@ -292,7 +298,8 @@ A Return request has its own UUID and explicit selection:
 
 Returning apps restores each child journal's prior runtime, source and artifact selection, and its
 original running/stopped state. It keeps current data and source edits. Changed managed app data
-requires compatibility acknowledgement; refusal retains the stopped app and recovery records.
+requires compatibility acknowledgement. Group admission requires that acknowledgement for every
+selected Return before any app stops; refusal leaves the active runtime and receipt unchanged.
 Successful children are recorded individually. Partial failures retain the other achieved results;
 a subsequent explicit request can select the remaining participants. Reusing a Return ID with changed
 arguments is refused; replay of a retired request is an observation, not a new dispatch.
@@ -306,7 +313,11 @@ Before Core Return stops the candidate, the helper captures the current running/
 target fingerprints of returned applications. If the previous Core's startup policy changes those
 states, the helper waits for that boundary and reconciles only the same installation/source/artifact
 targets. A durable boundary receipt makes lost start/stop responses replayable; actual app health must
-pass before completion. Autostart preferences and ordinary data remain unchanged.
+pass before completion. Core checks the retained Return request and captured target under the same
+app operation lock as the lifecycle action, so a replacement installation cannot be started or stopped
+by an earlier observation. An older Core without guarded recovery leaves Return pending if an app
+needs reconciliation; it reports the recovery requirement and never falls back to an unconditional
+lifecycle request. Autostart preferences and ordinary data remain unchanged.
 
 Unrelated current targets are refused. The Core snapshot and app backups remain recovery evidence;
 Return does not automatically restore an archive, roll back users/data or reset Git.
@@ -367,3 +378,20 @@ used by Shell or another app in a shared worktree.
 - Finish the child through its owner, verify container/network/volume and native process/port removal,
   then remove disposable fixture credentials, data and outputs. Preserve the product workspace and
   unrelated ordinary apps; do not copy provider credentials merely to make acceptance pass.
+
+- Change an app installation or source between helper observation and post-Core Return recovery.
+  The guarded action must refuse before lifecycle effects; a superseded/completed Return cannot be
+  reapplied. Older Core without that endpoint retains pending diagnostics without a generic fallback.
+
+- Require current-data compatibility acceptance before dispatching app-only or Core Return, including
+  API/CLI admission. Refusal must not stop a participant or create a pending Return receipt.
+
+- Exercise Docker deferred apply, Return and resume with real policy generations, including Ask
+  approval and policy disable/revocation while shutdown waits. Worker shutdown alone must not cancel
+  an approved request; actual cancellation and revocation must still prevent dispatch.
+- Replace a Core project file or ancestor with an escaping link after source Save or activation
+  preparation. Preparation, participant planning and pre-build revalidation must refuse it without
+  touching external files, compiling the substituted project or stopping participants.
+
+- Generate the typed activation MCP schema without constructing invocation services. Expose only
+  workspaceId, kind and typed input; service dependencies never become model-selected arguments.

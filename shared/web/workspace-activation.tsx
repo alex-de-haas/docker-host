@@ -125,7 +125,7 @@ export function WorkspaceActivationPanel({ request, storageKey, onlyApp }: {
         {active.apps.filter(a => !(active.returnedApps ?? []).includes(a)).map(a => <label key={a} className="flex gap-2"><input type="checkbox" checked={returnApps.includes(a)} onChange={e => setReturnApps(old => e.target.checked ? [...old, a] : old.filter(id => id !== a))} />{a}</label>)}
         {active.coreProject && !active.coreReturned && <label className="flex gap-2"><input type="checkbox" checked={returnCore} onChange={e => setReturnCore(e.target.checked)} />Core — captured previous executable</label>}
         <label className="flex gap-2"><input type="checkbox" checked={accept} onChange={e => setAccept(e.target.checked)} />I accept compatibility of current data with the selected previous runtimes. No data is restored.</label>
-        <button className={button} disabled={(!selectedReturnCore && selectedReturnApps.length === 0) || selectedReturnCore && !accept} onClick={() => void run({ kind: "return", body: { activationId: active.id, return: { requestId: crypto.randomUUID(), apps: selectedReturnApps, core: selectedReturnCore, acceptDataChanges: accept } } })}>Return selected participants</button>
+        <button className={button} disabled={(!selectedReturnCore && selectedReturnApps.length === 0) || !accept} onClick={() => void run({ kind: "return", body: { activationId: active.id, return: { requestId: crypto.randomUUID(), apps: selectedReturnApps, core: selectedReturnCore, acceptDataChanges: accept } } })}>Return selected participants</button>
       </fieldset>}
     </div>}
   </section>;

@@ -251,7 +251,9 @@ export class DevelopmentMcp {
     return { "hosty-workspaces": { type: "http", hostyPolicy: true, url: `${origin}/internal/workspaces/${encodeURIComponent(sessionId)}`,
       headers: { authorization: `Bearer ${key}` } } };
   }
-  unregister(sessionId: string): void { this.keys.delete(sessionId); this.policy?.cancel(sessionId); }
+  /** Revoke the client transport while retaining a reviewed request until its safe dispatch boundary. */
+  disconnect(sessionId: string): void { this.keys.delete(sessionId); }
+  unregister(sessionId: string): void { this.disconnect(sessionId); this.policy?.cancel(sessionId); }
   async handle(request: IncomingMessage, response: ServerResponse, pathname: string): Promise<boolean> {
     if (!pathname.startsWith("/internal/workspaces/")) return false;
     const send = (status: number, value?: unknown) => { response.writeHead(status, { ...(value === undefined ? {} : { "content-type": "application/json" }), "cache-control": "no-store" }); response.end(value === undefined ? undefined : JSON.stringify(value)); };

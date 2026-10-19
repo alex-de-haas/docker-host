@@ -62,4 +62,32 @@ public sealed class WorkspaceReturnAppRecoveryTests
             () => Task.FromResult(Apps(true, false)), (_, _) => throw new InvalidOperationException("Too early"),
             _ => throw new InvalidOperationException("No boot boundary"), () => { }, timeout: TimeSpan.Zero));
     }
+    [Fact]
+    public async Task GuardedRecoveryUsesRetainedRequestAndAppSelection()
+    {
+        var activation = Guid.NewGuid().ToString(); var request = Guid.NewGuid().ToString();
+        await WorkspaceReturnAppRecovery.RestoreTargetAsync((path, body) =>
+        {
+            Assert.Equal("workspace-activations/" + activation + "/restore-app", path);
+            Assert.Equal(request, body.GetProperty("requestId").GetString());
+            Assert.Equal("notes", body.GetProperty("appId").GetString());
+            Assert.Equal(2, body.EnumerateObject().Count());
+            return Task.CompletedTask;
+        }, activation, request, "notes");
+    }
+
+    [Fact]
+    public async Task OlderCoreWithoutGuardedRecoveryLeavesReturnPendingWithoutGenericFallback()
+    {
+        var attempts = new List<string>();
+        var error = await Assert.ThrowsAsync<IOException>(() => WorkspaceReturnAppRecovery.RestoreTargetAsync((path, _) =>
+        {
+            attempts.Add(path);
+            throw new CoreControlException("POST", path, System.Net.HttpStatusCode.NotFound, "");
+        }, "activation", "return", "notes"));
+        Assert.Single(attempts);
+        Assert.DoesNotContain(attempts, p => p.StartsWith("apps/", StringComparison.Ordinal));
+        Assert.Contains("Return remains pending", error.Message);
+    }
+
 }

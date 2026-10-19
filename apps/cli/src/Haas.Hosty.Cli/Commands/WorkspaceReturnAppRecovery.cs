@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Haas.Hosty.Launch;
 
@@ -27,7 +25,7 @@ internal static class WorkspaceReturnAppRecovery
             var configured = !app.TryGetProperty("configurationReadiness", out var readiness) ||
                 !readiness.TryGetProperty("required", out var required) || !required.GetBoolean();
             var autostart = !app.TryGetProperty("autostart", out var auto) || auto.ValueKind == JsonValueKind.Null || auto.GetBoolean();
-            return new WorkspaceReturnAppState(id, Target(app), running, retained || autostart && configured);
+            return new WorkspaceReturnAppState(id, WorkspaceReturnAppTarget.Fingerprint(app), running, retained || autostart && configured);
         }).ToArray();
 
     internal static async Task RestoreAsync(WorkspaceReturnAppState[] states, Func<Task<JsonElement>> read,
@@ -41,7 +39,7 @@ internal static class WorkspaceReturnAppRecovery
             {
                 checkCancellation();
                 var app = Find(await read(), state.AppId);
-                if (Target(app) != state.Target)
+                if (WorkspaceReturnAppTarget.Fingerprint(app) != state.Target)
                     throw new IOException($"Returned app {state.AppId} changed installation or runtime target. No unrelated binding was changed.");
                 var up = Running(app); var stopped = Text(app, "runtimeState") == "stopped";
                 if (changed || state.WasRunning == state.BootRunning)
@@ -65,19 +63,21 @@ internal static class WorkspaceReturnAppRecovery
         }
     }
 
+    internal static async Task RestoreTargetAsync(Func<string, JsonElement, Task> post, string activationId, string requestId, string appId)
+    {
+        var body = JsonSerializer.SerializeToElement(new WorkspaceReturnAppMutation(requestId, appId),
+            WorkspaceRuntimeJson.Default.WorkspaceReturnAppMutation);
+        try { await post("workspace-activations/" + activationId + "/restore-app", body); }
+        catch (CoreControlException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            throw new IOException("The previous Core does not support guarded app recovery. Return remains pending. " +
+                "Restore the captured app running state through its reviewed controls, then resume the original Return request.", ex);
+        }
+    }
+
     private static JsonElement Find(JsonElement response, string id)
         => response.GetProperty("apps").EnumerateArray().SingleOrDefault(a => Text(a, "id") == id) is { ValueKind: JsonValueKind.Object } app
             ? app : throw new IOException($"Returned app {id} is no longer installed.");
     private static bool Running(JsonElement app) => Text(app, "runtimeState") == "running";
     private static string? Text(JsonElement value, string key) => value.TryGetProperty(key, out var field) && field.ValueKind == JsonValueKind.String ? field.GetString() : null;
-    private static string Target(JsonElement app)
-    {
-        var fields = new[] { "id", "installationId", "selectedRuntime", "sourceOverridePath", "sourceLivePath", "version" };
-        var value = string.Join("\n", fields.Select(key => key + ":" + Text(app, key)));
-        if (app.TryGetProperty("devMode", out var dev) && dev.ValueKind == JsonValueKind.Object) value += "\ndev:" + Text(dev, "operationId");
-        if (app.TryGetProperty("artifactLocks", out var artifacts) && artifacts.ValueKind == JsonValueKind.Object)
-            foreach (var entry in artifacts.EnumerateObject().OrderBy(p => p.Name, StringComparer.Ordinal))
-                foreach (var key in new[] { "kind", "imageDigest", "bundleHash", "commit", "resolvedFromRef" }) value += "\n" + entry.Name + ":" + key + ":" + Text(entry.Value, key);
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
-    }
 }

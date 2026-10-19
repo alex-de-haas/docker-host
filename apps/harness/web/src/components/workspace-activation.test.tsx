@@ -81,9 +81,27 @@ it("excludes returned participants from the next Return without remounting", asy
   await render();
   const checkbox = (text: string) => [...container.querySelectorAll("label")].find(l => l.textContent === text)!.querySelector<HTMLInputElement>("input")!;
   await act(async () => checkbox("notes").click());
+  await act(async () => checkbox("I accept compatibility of current data with the selected previous runtimes. No data is restored.").click());
   await act(async () => button("Return selected participants").click());
   expect(button("Return selected participants").disabled).toBe(true);
   await act(async () => checkbox("shell").click());
   await act(async () => button("Return selected participants").click());
   expect(request.mock.calls.filter(([kind]) => kind === "return").map(([, body]) => body.return.apps)).toEqual([["notes"], ["shell"]]);
+});
+
+it("requires compatibility acceptance before app-only Return can dispatch", async () => {
+  const a = { id: "app-only", phase: "active", apps: ["notes"] };
+  request.mockImplementation(async kind => kind === "list" ? [a] : { status: { activation: a }, children: [] });
+  await render();
+  const labels = [...container.querySelectorAll("label")];
+  await act(async () => labels.find(l => l.textContent === "notes")!.querySelector<HTMLInputElement>("input")!.click());
+  expect(button("Return selected participants").disabled).toBe(true);
+  await act(async () => button("Return selected participants").click());
+  expect(request.mock.calls.some(([kind]) => kind === "return")).toBe(false);
+  await act(async () => labels.find(l => l.textContent?.includes("I accept compatibility"))!.querySelector<HTMLInputElement>("input")!.click());
+  expect(button("Return selected participants").disabled).toBe(false);
+  await act(async () => button("Return selected participants").click());
+  expect(request.mock.calls.find(([kind]) => kind === "return")![1]).toMatchObject({
+    activationId: "app-only", return: { apps: ["notes"], core: false, acceptDataChanges: true },
+  });
 });

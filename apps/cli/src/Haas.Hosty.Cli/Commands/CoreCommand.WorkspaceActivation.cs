@@ -123,7 +123,9 @@ internal sealed partial class CoreCommand
                 ?? throw new IOException("The returned Core is unavailable.");
             await WorkspaceReturnAppRecovery.RestoreAsync(apps,
                 () => core.GetAsync<JsonElement>("apps"),
-                async (app, running) => { _ = await core.PostAsync<JsonElement>("apps/" + Uri.EscapeDataString(app) + (running ? "/start" : "/stop")); },
+                (app, running) => WorkspaceReturnAppRecovery.RestoreTargetAsync(
+                    async (path, body) => { _ = await core.PostAsync<JsonElement>(path, body); },
+                    activation.Id, activation.Returns!.Last().Request.RequestId, app),
                 app =>
                 {
                     var current = WorkspaceRuntimeFiles.Read(context.Environment.RootDirectory, activation.Id);

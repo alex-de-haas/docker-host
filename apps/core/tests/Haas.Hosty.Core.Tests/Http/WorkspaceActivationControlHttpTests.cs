@@ -12,12 +12,15 @@ public sealed class WorkspaceActivationControlHttpTests
     [InlineData("/start")]
     [InlineData("/cancel")]
     [InlineData("/verify-apps")]
+    [InlineData("/restore-app")]
     public async Task ActivationControl_RequiresLocalControlAuthority(string suffix)
     {
         await using var host = await CoreHttpHarness.StartAsync();
         using var client = host.CreateClient();
         var route = "/control/v1/workspace-activations/" + Guid.NewGuid() + suffix;
-        var response = suffix == "" ? await client.GetAsync(route) : await client.PostAsJsonAsync(route, new { });
+        var response = suffix == "" ? await client.GetAsync(route)
+            : suffix == "/restore-app" ? await client.PostAsJsonAsync(route, new WorkspaceReturnAppMutation(Guid.NewGuid().ToString(), "notes"))
+            : await client.PostAsJsonAsync(route, new { });
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
