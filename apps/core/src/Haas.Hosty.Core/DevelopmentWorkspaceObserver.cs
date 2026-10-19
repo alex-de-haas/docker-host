@@ -36,7 +36,8 @@ internal sealed class DevelopmentWorkspaceObserver(DevelopmentWorkspaceService w
                         foreach (var (common, repository) in repositories)
                             if (!Directory.Exists(common) || Directory.GetCreationTimeUtc(common) != repository.Created) failed[common] = 0;
                         foreach (var source in sources.Values)
-                            if (!Directory.Exists(source.Tree.Path) || Directory.GetCreationTimeUtc(source.Tree.Path) != source.Created) Failed(source.Tree.Id);
+                            if (!Directory.Exists(source.Tree.Path) || Directory.GetCreationTimeUtc(source.Tree.Path) != source.Created
+                                || !Directory.Exists(source.GitDirectory) || Directory.GetCreationTimeUtc(source.GitDirectory) != source.GitCreated) Failed(source.Tree.Id);
                     }
                     if (catalog != state.CatalogRevision || failed.Count > 0 || rootFailed) await ReconcileAsync(stoppingToken);
                     Dictionary<string, HashSet<string>> batch;
@@ -49,6 +50,7 @@ internal sealed class DevelopmentWorkspaceObserver(DevelopmentWorkspaceService w
                             var common = id[11..];
                             foreach (var source in sources.Values.Where(s => workspaces.RepositoryPath(s.Tree.Repository) == common))
                                 if (pending.Any(path => path == "*" || !path.StartsWith("worktrees/", StringComparison.Ordinal)
+                                    || Path.GetFullPath(Path.Combine(common, path)) == source.GitDirectory
                                     || Path.GetFullPath(Path.Combine(common, path)).StartsWith(source.GitDirectory + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
                                 { ignoredDirectories.TryRemove(source.Tree.Id, out _); state.Invalidate(source.Tree.Id); }
                         }
@@ -149,7 +151,7 @@ internal sealed class DevelopmentWorkspaceObserver(DevelopmentWorkspaceService w
                     repositories[common] = new(Directory.GetCreationTimeUtc(common), Watch(common, true, path => RepositoryChanged(common, path),
                         () => { failed[common] = 0; state.RequestReconcile(); }));
                 var watcher = Watch(tree.Path, true, path => SourceChanged(tree.Id, tree.Path, path), () => Failed(tree.Id));
-                sources[tree.Id] = new(tree, git, Directory.GetCreationTimeUtc(tree.Path), watcher);
+                sources[tree.Id] = new(tree, git, Directory.GetCreationTimeUtc(tree.Path), Directory.GetCreationTimeUtc(git), watcher);
                 failed.TryRemove(tree.Id, out _);
                 state.SetHealth(tree.Id, "watching");
                 state.Invalidate(tree.Id);
@@ -172,6 +174,7 @@ internal sealed class DevelopmentWorkspaceObserver(DevelopmentWorkspaceService w
     private void SourceChanged(string id, string root, string path)
     {
         var relative = Path.GetRelativePath(root, path).Replace(Path.DirectorySeparatorChar, '/');
+        if (relative == ".git") { Failed(id); return; }
         if (relative == ".gitignore" || relative.EndsWith("/.gitignore", StringComparison.Ordinal)) ignoredDirectories.TryRemove(id, out _);
         if (ignoredDirectories.TryGetValue(id, out var ignored) && ignored.Any(directory => relative == directory || relative.StartsWith(directory + "/", StringComparison.Ordinal))) return;
         Queue(id, relative);
@@ -245,5 +248,5 @@ internal sealed class DevelopmentWorkspaceObserver(DevelopmentWorkspaceService w
         catch { watcher.Dispose(); throw; }
     }
     private sealed record RepositoryWatch(DateTime Created, FileSystemWatcher Watcher);
-    private sealed record SourceWatch(DevelopmentWorkspace Tree, string GitDirectory, DateTime Created, FileSystemWatcher Watcher);
+    private sealed record SourceWatch(DevelopmentWorkspace Tree, string GitDirectory, DateTime Created, DateTime GitCreated, FileSystemWatcher Watcher);
 }

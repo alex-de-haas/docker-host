@@ -175,6 +175,34 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task WorkspaceEvents_LinkedGitMetadataLossAndReturnRecoverWithoutSourceChanges()
+    {
+        var (f, _) = await SourceFixtureAsync();
+        var state = new WorkspaceObservationState(new CoreEventHub());
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock, observationState: state);
+        var tree = await service.PrepareAsync(WorkspaceTestOwner(f), WorkspaceRequest(), default);
+        using var observer = new DevelopmentWorkspaceObserver(service, state, f.Paths,
+            NullLogger<DevelopmentWorkspaceObserver>.Instance, TimeSpan.FromMilliseconds(100));
+        await observer.StartAsync(default);
+        try
+        {
+            await WaitForObservation(() => Task.FromResult(state.Health(tree.Id) == "watching" && !state.NeedsObservation(tree.Id)));
+            var marker = Path.Combine(tree.Path, ".git");
+            var original = await File.ReadAllTextAsync(marker);
+            var metadata = Path.GetFullPath(original[8..].Trim(), tree.Path);
+            Directory.Move(metadata, metadata + "-moved");
+            await WaitForObservation(() => Task.FromResult(state.Health(tree.Id) == "recovering"));
+            Directory.Move(metadata + "-moved", metadata);
+            await WaitForObservation(() => Task.FromResult(state.Health(tree.Id) == "watching" && !state.NeedsObservation(tree.Id)));
+            var scans = state.ScanCount(tree.Id);
+            await File.WriteAllTextAsync(marker + ".tmp", original);
+            File.Move(marker + ".tmp", marker, true);
+            await WaitForObservation(() => Task.FromResult(state.ScanCount(tree.Id) > scans && state.Health(tree.Id) == "watching"));
+        }
+        finally { await observer.StopAsync(default); }
+    }
+
+    [Fact]
     public async Task WorkspaceEvents_IgnoredDirectoryWithTrackedFileCannotSuppressChanges()
     {
         var (f, _) = await SourceFixtureAsync();
