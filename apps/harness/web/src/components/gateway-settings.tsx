@@ -13,6 +13,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { AgentRuntime } from "@/components/agent-runtime";
 import { AgentProviders } from "@/components/agent-providers";
+import { TranslationProviders } from "@/components/translation-providers";
 import { McpAccess } from "@/components/mcp-access";
 import {
   loadSettings,
@@ -24,7 +25,7 @@ import {
 export function GatewaySettings({
   section = "providers",
 }: {
-  section?: "providers" | "sources" | "prompt" | "access";
+  section?: "providers" | "translation" | "sources" | "prompt" | "access";
 }) {
   const [data, setData] = useState<SettingsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -113,6 +114,7 @@ export function GatewaySettings({
             {(
               [
                 ["providers", "Agent providers"],
+                ["translation", "Translation providers"],
                 ["prompt", "Instructions and retention"],
                 ["access", "MCP access"],
               ] as const
@@ -130,6 +132,9 @@ export function GatewaySettings({
         >
           <AgentRuntime mode={data.settings.executionMode ?? "native"} onMode={mode => save({ executionMode: mode })} />
           {data.agentConnections && <AgentProviders />}
+        </TabsContent>
+        <TabsContent value="translation">
+          {data.agentConnections && <TranslationProviders />}
         </TabsContent>
         <TabsContent value="sources"><p>Manage your GitHub connections and Git identity in Hosty Shell → Settings → Source connections.</p></TabsContent>
         <TabsContent
