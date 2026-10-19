@@ -111,6 +111,38 @@ internal sealed partial class CoreCommand
             _ = await core.PostAsync<JsonElement>("workspace-activations/" + id + "/" + action);
         }
         public Task ValidateAuthorityAsync(string id) => PostAsync(id, "validate-authority");
+        public async Task<WorkspaceReturnAppState[]> CaptureReturnAppsAsync(WorkspaceRuntimeActivation activation)
+        {
+            using var core = await CoreControlClient.TryCreateAsync(context) ?? throw new IOException("Core is unavailable.");
+            var apps = await core.GetAsync<JsonElement>("apps");
+            return WorkspaceReturnAppRecovery.Capture(apps, activation.ReturnedApps ?? []);
+        }
+        public async Task RestoreReturnAppsAsync(WorkspaceRuntimeActivation activation, WorkspaceReturnAppState[] apps)
+        {
+            using var core = await CoreControlClient.TryCreateAsync(context, operationTimeout: TimeSpan.FromMinutes(10))
+                ?? throw new IOException("The returned Core is unavailable.");
+            await WorkspaceReturnAppRecovery.RestoreAsync(apps,
+                () => core.GetAsync<JsonElement>("apps"),
+                async (app, running) => { _ = await core.PostAsync<JsonElement>("apps/" + Uri.EscapeDataString(app) + (running ? "/start" : "/stop")); },
+                app =>
+                {
+                    var current = WorkspaceRuntimeFiles.Read(context.Environment.RootDirectory, activation.Id);
+                    var receipts = current.Returns!;
+                    var last = receipts[^1];
+                    if (last.Request.RequestId != activation.Returns!.Last().Request.RequestId || last.State != "pending")
+                        throw new IOException("The Return request changed. No retired request was reapplied.");
+                    WorkspaceRuntimeFiles.Save(context.Environment.RootDirectory, current with { Returns = receipts.Select((r, i) =>
+                        i == receipts.Length - 1 ? r with { AppsBeforeCoreReturn = r.AppsBeforeCoreReturn!.Select(a =>
+                            a.AppId == app ? a with { BootObserved = true } : a).ToArray() } : r).ToArray() });
+                },
+                () => WorkspaceActivationSupervisor.CheckCancellation(context.Environment.RootDirectory, activation.Id));
+            foreach (var app in apps.Where(a => a.WasRunning))
+            {
+                var health = await core.GetAsync<JsonElement>("apps/" + Uri.EscapeDataString(app.AppId) + "/health");
+                if (health.GetProperty("status").GetString() != "healthy")
+                    throw new IOException($"Returned app {app.AppId} has not confirmed readiness. Resume the retained Return request.");
+            }
+        }
         public Task ReturnAppsAsync(string id) => PostAsync(id, "return-apps");
         public Task ApplyAppsAsync(string id) => PostAsync(id, "apply-apps");
         public Task VerifyAppsAsync(string id) => PostAsync(id, "verify-apps");

@@ -16,6 +16,8 @@ internal interface IWorkspaceActivationRuntime
     Task ReleasePreparationAsync(string id);
     Task RestorePreviousAsync(WorkspaceRuntimeActivation activation);
     Task ValidateAuthorityAsync(string id) => Task.CompletedTask;
+    Task<WorkspaceReturnAppState[]> CaptureReturnAppsAsync(WorkspaceRuntimeActivation activation) => Task.FromResult(Array.Empty<WorkspaceReturnAppState>());
+    Task RestoreReturnAppsAsync(WorkspaceRuntimeActivation activation, WorkspaceReturnAppState[] apps) => Task.CompletedTask;
     Task ReturnAppsAsync(string id) => throw new NotSupportedException("Workspace Return is unavailable.");
 }
 

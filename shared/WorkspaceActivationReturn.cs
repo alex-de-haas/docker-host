@@ -63,12 +63,15 @@ internal sealed class WorkspaceActivationReturn(string root, IWorkspaceActivatio
             if (!receipt.Request.Core) { Complete(a); return; }
             var observed = await runtime.ObserveAsync();
             if (observed is not null && WorkspaceActivationHandover.SameTarget(a.PreviousCore, observed.Launch))
-            { Complete(a with { CoreReturned = true }); return; }
+            { await CompleteCoreAsync(a); return; }
             if (observed is not null && !WorkspaceActivationHandover.IsCandidate(a, observed.Launch))
                 throw new InvalidOperationException("A different Core owns the data root. Return did not stop it.");
             VerifyPrevious(a);
             if (!File.Exists(a.PreviousExecutable)) throw new IOException("The captured previous executable is unavailable. Current Core remains running.");
-            a = Save(a with { Phase = "return-core-stopping" });
+            var appStates = await runtime.CaptureReturnAppsAsync(a);
+            var receipts = a.Returns!;
+            a = Save(a with { Phase = "return-core-stopping", Returns = receipts.Select((r, i) =>
+                i == receipts.Length - 1 ? r with { AppsBeforeCoreReturn = appStates } : r).ToArray() });
         }
         if (a.Phase == "return-core-stopping")
         {
@@ -77,7 +80,7 @@ internal sealed class WorkspaceActivationReturn(string root, IWorkspaceActivatio
             if (current is not null)
             {
                 if (WorkspaceActivationHandover.SameTarget(a.PreviousCore, current.Launch))
-                { Complete(a with { CoreReturned = true }); return; }
+                { await CompleteCoreAsync(a); return; }
                 if (!WorkspaceActivationHandover.IsCandidate(a, current.Launch))
                     throw new InvalidOperationException("Core changed during Return. No unrelated process was stopped.");
                 await runtime.ValidateAuthorityAsync(id);
@@ -99,8 +102,14 @@ internal sealed class WorkspaceActivationReturn(string root, IWorkspaceActivatio
             }
             if (current is null || !WorkspaceActivationHandover.SameTarget(a.PreviousCore, current.Launch))
                 throw new IOException("The captured previous Core has not confirmed readiness. Current data and recovery records are retained.");
-            Complete(a with { CoreReturned = true });
+            await CompleteCoreAsync(a);
         }
+    }
+
+    private async Task CompleteCoreAsync(WorkspaceRuntimeActivation a)
+    {
+        await runtime.RestoreReturnAppsAsync(a, a.Returns!.Last().AppsBeforeCoreReturn ?? []);
+        Complete(WorkspaceRuntimeFiles.Read(root, a.Id) with { CoreReturned = true });
     }
 
     internal static string? ExecutableHash(string? path) => path is not null && File.Exists(path)

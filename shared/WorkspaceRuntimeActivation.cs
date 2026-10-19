@@ -15,7 +15,8 @@ internal sealed record WorkspaceActivationActor(string UserId, string Via, strin
     DateTimeOffset? Installation = null, string? Principal = null, string? Review = null, string? AppIdentityHash = null);
 
 internal sealed record WorkspaceReturnRequest(string RequestId, string[] Apps, bool Core, bool AcceptDataChanges);
-internal sealed record WorkspaceReturnReceipt(WorkspaceReturnRequest Request, string State);
+internal sealed record WorkspaceReturnAppState(string AppId, string Target, bool WasRunning, bool BootRunning, bool BootObserved = false);
+internal sealed record WorkspaceReturnReceipt(WorkspaceReturnRequest Request, string State, WorkspaceReturnAppState[]? AppsBeforeCoreReturn = null);
 
 internal static class WorkspaceRuntimeFiles
 {

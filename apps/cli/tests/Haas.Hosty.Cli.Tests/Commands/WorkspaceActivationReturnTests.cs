@@ -34,6 +34,8 @@ public sealed class WorkspaceActivationReturnTests : IDisposable
         await new WorkspaceActivationHandover(root, runtime).RunAsync(id);
         a = WorkspaceRuntimeFiles.Read(root, id);
         Assert.Equal("returned", a.Phase); Assert.True(a.CoreReturned); Assert.Equal(1, runtime.Restores);
+        Assert.Equal(1, runtime.AppStateRestores);
+        Assert.Equal(new[] { "one", "two" }, a.Returns!.Last().AppsBeforeCoreReturn!.Select(app => app.AppId));
         Assert.True(WorkspaceActivationHandover.SameTarget(previous, runtime.Current!.Launch));
         Assert.Equal("new state", File.ReadAllText(Path.Combine(root, "current-data")));
         Assert.Equal("uncommitted changes", File.ReadAllText(Path.Combine(root, "source")));
@@ -55,6 +57,22 @@ public sealed class WorkspaceActivationReturnTests : IDisposable
         WorkspaceActivationReturn.Prepare(root, id, request);
         await new WorkspaceActivationHandover(root, runtime).RunAsync(id);
         Assert.True(WorkspaceRuntimeFiles.Read(root, id).CoreReturned);
+        Assert.Equal(1, runtime.Stops); Assert.Equal(1, runtime.Restores);
+    }
+
+    [Fact]
+    public async Task AppStateRecoveryFailureKeepsReturnPendingAndResumesWithoutAnotherCoreRestart()
+    {
+        var runtime = Prepare(); runtime.FailAppState = true;
+        var request = Request(["one", "two"], true);
+        WorkspaceActivationReturn.Prepare(root, id, request);
+        await Assert.ThrowsAsync<IOException>(() => new WorkspaceActivationHandover(root, runtime).RunAsync(id));
+        var a = WorkspaceRuntimeFiles.Read(root, id);
+        Assert.Equal("return-core-starting", a.Phase); Assert.Equal("pending", a.Returns!.Last().State);
+        Assert.False(a.CoreReturned); Assert.Equal(2, a.Returns.Last().AppsBeforeCoreReturn!.Length);
+        runtime.FailAppState = false;
+        await new WorkspaceActivationHandover(root, runtime).RunAsync(id);
+        Assert.Equal("returned", WorkspaceRuntimeFiles.Read(root, id).Phase);
         Assert.Equal(1, runtime.Stops); Assert.Equal(1, runtime.Restores);
     }
 
@@ -109,7 +127,7 @@ public sealed class WorkspaceActivationReturnTests : IDisposable
     private sealed class FakeRuntime(string root, string id, WorkspaceCoreObservation current) : IWorkspaceActivationRuntime
     {
         internal WorkspaceCoreObservation? Current = current;
-        internal string? FailAfter; internal bool FailApp; internal int Stops, Restores, AppReturns;
+        internal string? FailAfter; internal bool FailApp, FailAppState; internal int Stops, Restores, AppReturns, AppStateRestores;
         public Task<WorkspaceCoreObservation?> ObserveAsync() => Task.FromResult(Current);
         public Task<WorkspaceCoreOutput> BuildAsync(string project) => throw new Exception("Return must never rebuild.");
         public Task ApplyAppsAsync(string id) => throw new Exception("Return must never activate apps.");
@@ -122,6 +140,10 @@ public sealed class WorkspaceActivationReturnTests : IDisposable
             Restores++; Current = new(a.PreviousCore with { ProcessId = 900, StartedAt = DateTimeOffset.UtcNow }, "http://localhost:3333");
             if (FailAfter == "restore") throw new IOException("response lost"); return Task.CompletedTask;
         }
+        public Task<WorkspaceReturnAppState[]> CaptureReturnAppsAsync(WorkspaceRuntimeActivation a)
+            => Task.FromResult((a.ReturnedApps ?? []).Select(app => new WorkspaceReturnAppState(app, "captured", true, false)).ToArray());
+        public Task RestoreReturnAppsAsync(WorkspaceRuntimeActivation a, WorkspaceReturnAppState[] apps)
+        { AppStateRestores++; Assert.True(WorkspaceActivationHandover.SameTarget(a.PreviousCore, Current!.Launch)); if (FailAppState) throw new IOException("app readiness failed"); return Task.CompletedTask; }
         public Task ReturnAppsAsync(string value)
         {
             Assert.Equal(id, value);

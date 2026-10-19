@@ -6,7 +6,7 @@ return (default), stop-failure, auto, cancel. --managed runs inside a parent-own
 Core and requires the local Docker engine for the supported child environment lifecycle.
 No provider credentials are copied. Failure retains diagnostics; success removes test data.
 """
-import os, sys, json, time, uuid, signal, socket, shutil, pathlib, subprocess, threading, tempfile, csv, io
+import os, sys, json, time, uuid, signal, socket, shutil, pathlib, subprocess, threading, tempfile, csv, io, stat
 import urllib.request, urllib.error, urllib.parse, http.cookiejar, http.server
 
 workspace = pathlib.Path(sys.argv[1]).resolve()
@@ -278,7 +278,14 @@ finally:
         check.settimeout(1)
         assert check.connect_ex(('127.0.0.1',port))!=0
     if success:
-        shutil.rmtree(base)
+        def remove_readonly(function, path, error):
+            # Git creates read-only object files on Windows. Only clear that attribute in this
+            # owned fixture after process/port checks; other deletion failures remain visible.
+            if not windows or not isinstance(error[1], PermissionError) or pathlib.Path(path).is_symlink() or not pathlib.Path(path).resolve().is_relative_to(base.resolve()):
+                raise error[1]
+            os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+            function(path)
+        shutil.rmtree(base, onerror=remove_readonly)
         say('CLEANUP: test Core, helper and Git server stopped; port released; fixture root, credentials, builds and snapshots removed')
     else: say('Retained failed fixture diagnostics at '+str(base))
     if cleanup_error: raise RuntimeError('Managed fixture cleanup failed') from cleanup_error

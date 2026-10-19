@@ -301,6 +301,8 @@ Core Return requires explicit acceptance of current-data compatibility with the 
 executable. Before Stop it verifies that executable's retained hash and the current candidate identity.
 It never selects an arbitrary release fallback. Lost Stop/Start responses reconcile the lifetime lock
 and exact prior launch target. A healthy returned app or Core is not restarted again on replay.
+Before Core Return stops the candidate, the helper captures the current running/stopped states and target fingerprints of returned applications. If the previous Core's startup policy changes those states, the helper waits for that boundary and reconciles only the same installation/source/artifact targets. A durable boundary receipt makes lost start/stop responses replayable; actual app health must pass before completion. Autostart preferences and ordinary data remain unchanged.
+
 Unrelated current targets are refused. The Core snapshot and app backups remain recovery evidence;
 Return does not automatically restore an archive, roll back users/data or reset Git.
 
