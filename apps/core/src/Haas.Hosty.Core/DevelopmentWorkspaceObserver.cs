@@ -6,6 +6,8 @@ internal sealed class DevelopmentWorkspaceObserver(DevelopmentWorkspaceService w
     CoreDataPaths paths, ILogger<DevelopmentWorkspaceObserver> logger, TimeSpan? healthInterval = null,
     Func<string, string[], CancellationToken, Action<string[]>?, Task<bool>>? relevance = null) : BackgroundService
 {
+    // NUL cannot occur in a filesystem name, so literal paths never collide with batch metadata.
+    private const string SubtreePrefix = "\0subtree:";
     private readonly Func<string, string[], CancellationToken, Action<string[]>?, Task<bool>> checkRelevance = relevance ?? RelevantAsync;
     private readonly Dictionary<string, SourceWatch> sources = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RepositoryWatch> repositories = new(StringComparer.Ordinal);
@@ -209,16 +211,16 @@ internal sealed class DevelopmentWorkspaceObserver(DevelopmentWorkspaceService w
         {
             if (!changes.TryGetValue(id, out var pending)) changes[id] = pending = new(StringComparer.Ordinal);
             if (pending.Contains("*")) return;
-            var subtree = pending.FirstOrDefault(p => p.StartsWith("subtree:", StringComparison.Ordinal));
+            var subtree = pending.FirstOrDefault(p => p.StartsWith(SubtreePrefix, StringComparison.Ordinal));
             if (pending.Count >= 128 || subtree is not null)
             {
-                var candidates = pending.Select(p => p.StartsWith("subtree:", StringComparison.Ordinal) ? p[8..] + "/" : p).Append(path).ToArray();
+                var candidates = pending.Select(p => p.StartsWith(SubtreePrefix, StringComparison.Ordinal) ? p[SubtreePrefix.Length..] + "/" : p).Append(path).ToArray();
                 var prefix = candidates[0];
                 foreach (var candidate in candidates.Skip(1))
                     while (prefix.Length > 0 && !candidate.StartsWith(prefix, StringComparison.Ordinal)) prefix = prefix[..^1];
                 var wholeDirectory = prefix.Length > 0 && candidates.All(p => p == prefix || p.StartsWith(prefix + "/", StringComparison.Ordinal));
                 var slash = prefix.LastIndexOf('/');
-                pending.Clear(); pending.Add(wholeDirectory ? "subtree:" + prefix : slash < 0 ? "*" : "subtree:" + prefix[..slash]);
+                pending.Clear(); pending.Add(wholeDirectory ? SubtreePrefix + prefix : slash < 0 ? "*" : SubtreePrefix + prefix[..slash]);
             }
             else pending.Add(path);
         }
@@ -228,7 +230,7 @@ internal sealed class DevelopmentWorkspaceObserver(DevelopmentWorkspaceService w
     {
         if (paths.Length == 0) return false;
         if (paths.Any(p => p is "*" or ".git" or ".gitignore" || p.EndsWith("/.gitignore", StringComparison.Ordinal))) return true;
-        paths = paths.Select(p => p.StartsWith("subtree:", StringComparison.Ordinal) ? p[8..] : p).ToArray();
+        paths = paths.Select(p => p.StartsWith(SubtreePrefix, StringComparison.Ordinal) ? p[SubtreePrefix.Length..] : p).ToArray();
         var candidates = paths.ToHashSet(StringComparer.Ordinal);
         foreach (var path in paths)
         {

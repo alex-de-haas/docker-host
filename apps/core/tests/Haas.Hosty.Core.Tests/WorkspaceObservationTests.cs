@@ -294,8 +294,33 @@ public sealed partial class CoreLifecycleServiceTests
         await File.WriteAllTextAsync(Path.Combine(tree.Path, ".gitignore"), "output/\n");
         await File.WriteAllTextAsync(Path.Combine(tree.Path, "output", "tracked.txt"), "source");
         await RunGitAsync(tree.Path, ["add", "--force", "output/tracked.txt"]);
-        Assert.True(await DevelopmentWorkspaceObserver.RelevantAsync(tree.Path, ["subtree:output"], default));
+        Assert.True(await DevelopmentWorkspaceObserver.RelevantAsync(tree.Path, ["\0subtree:output"], default));
         Assert.True(await DevelopmentWorkspaceObserver.RelevantAsync(tree.Path, ["output/tracked.txt"], default));
+    }
+
+    [Fact]
+    public async Task WorkspaceEvents_SubtreePrefixIsALiteralSourceFilename()
+    {
+        if (OperatingSystem.IsWindows()) return; // Colon is not a valid Windows filename character.
+        var (f, _) = await SourceFixtureAsync();
+        var state = new WorkspaceObservationState(new CoreEventHub());
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock, observationState: state);
+        var tree = await service.PrepareAsync(WorkspaceTestOwner(f), WorkspaceRequest(), default);
+        await File.WriteAllTextAsync(Path.Combine(tree.Path, ".gitignore"), "foo\n");
+        await File.WriteAllTextAsync(Path.Combine(tree.Path, "subtree:foo"), "tracked");
+        await RunGitAsync(tree.Path, ["add", "--", "subtree:foo"]);
+        Assert.True(await DevelopmentWorkspaceObserver.RelevantAsync(tree.Path, ["subtree:foo"], default));
+        using var observer = new DevelopmentWorkspaceObserver(service, state, f.Paths,
+            NullLogger<DevelopmentWorkspaceObserver>.Instance, TimeSpan.FromMilliseconds(100));
+        await observer.StartAsync(default);
+        try
+        {
+            await WaitForObservation(() => Task.FromResult(state.Health(tree.Id) == "watching" && !state.NeedsObservation(tree.Id)));
+            var before = (await service.Read(tree.Id, null, default)).SourceStamp;
+            await File.AppendAllTextAsync(Path.Combine(tree.Path, "subtree:foo"), " edited without another file event");
+            await WaitForObservation(async () => (await service.Read(tree.Id, null, default)).SourceStamp != before);
+        }
+        finally { await observer.StopAsync(default); }
     }
 
     [Fact]

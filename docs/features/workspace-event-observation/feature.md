@@ -95,8 +95,8 @@ and Linux x64 Native AOT; four opt-in integrations are excluded from its default
 The published clients have regression coverage for legacy-Core compatibility, failed snapshot
 retries and rejected-stream cleanup.
 Harness 0.60.1 and Workspaces 0.5.1 include the subsequent browser response cleanup.
-Core 0.144.1 retains failed scans for a delayed retry and treats failed ignore filtering as a
-source invalidation. Healthy idle sources remain unscanned; fresh actions bypass the retry delay.
+Core 0.144.2 retains failed scans for a delayed retry and treats failed ignore filtering as a
+source invalidation. Collapsed batches use a marker that cannot collide with literal filenames.\nHealthy idle sources remain unscanned; fresh actions bypass the retry delay.
 Both browser clients and server proxies cancel rejected response bodies before retrying; a
 cancellation failure does not suppress stream recovery or older-Core compatibility.
 
