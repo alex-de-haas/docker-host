@@ -56,6 +56,15 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
         return await workspaces.ChangeWorkflowAsync(owner, userId, kind == "close-confirm" ? "close" : kind, input!, heads, ct, prepareOnly: kind == "close");
     }
 
+    public async Task<InspectedWorktree> RecoverLeaseAsync(string workspaceId, string id, string userId,
+        WorkspaceLeaseRecovery input, CancellationToken ct)
+    {
+        var owner = await WorkflowOwnerAsync(workspaceId, userId, ct);
+        var tree = await RequireAsync(workspaceId, id, userId, ct);
+        await workspaces.RecoverExternalLeaseAsync(tree.Id, owner, userId, input, ct);
+        return await ReadAsync(workspaceId, id, userId, ct);
+    }
+
     private async Task RequireSourceAsync(DevelopmentWorkspace tree, string userId, IReadOnlyList<AppRecord> installed, CancellationToken ct)
     {
         var repository = workspaces.LogicalRepositoryIdentity(tree.Repository);
@@ -123,7 +132,7 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
         }
         return result with { Commits = commits.Take(100).ToArray(), CommitsTruncated = commits.Count > 100,
             SessionChanges = changes.OrderBy(c => c.Path, StringComparer.Ordinal).ToArray(),
-            Consumers = Consumers(tree, installed), PullRequests = await PullRequestsAsync(tree, userId, ct), DetailError = detailError };
+            Consumers = await ConsumersAsync(tree, installed, ct), PullRequests = await PullRequestsAsync(tree, userId, ct), DetailError = detailError };
     }
 
     public async Task<AppSourceDiff> DiffAsync(string workspaceId, string id, string userId, WorkspaceDiffRequest input, CancellationToken ct)
@@ -142,9 +151,10 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
                 return new InspectionApp(binding.AppId, app?.DisplayName ?? binding.AppId, binding.Subpath, app is not null, app?.SourceState?.Type == "local-git");
             }).ToArray(), tree.Observation,
             tree.Operations.Select(o => new InspectionOperation(o.Id, o.Kind, o.State, o.Error)).ToArray(), tree.Leases,
-            tree.PullRequests.Where(SafeUrl).Select(url => new InspectionPullRequest(url, null, null, "No verified provider observation.")).ToArray(), [], []);
+            tree.PullRequests.Where(SafeUrl).Select(url => new InspectionPullRequest(url, null, null, "No verified provider observation.")).ToArray(), [], [])
+        { HasSandboxConsumers = tree.SandboxConsumers.Length > 0 };
 
-    private InspectionConsumer[] Consumers(DevelopmentWorkspace tree, IReadOnlyList<AppRecord> installed)
+    private async Task<InspectionConsumer[]> ConsumersAsync(DevelopmentWorkspace tree, IReadOnlyList<AppRecord> installed, CancellationToken ct)
     {
         var result = installed.Where(a => a.SourceState?.LocalOverridePath is { } path && IsUnder(tree.Path, path))
             .Select(a => new InspectionConsumer("source-selection", a.Id)).ToList();
@@ -157,7 +167,17 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
             }
             catch (InvalidOperationException) { /* A process may exit between observations. */ }
         }
-        return result.ToArray();
+        foreach (var appId in await workspaces.DevConsumerAppsAsync(tree, ct))
+            result.Add(new("dev-runtime", appId));
+        var shell = installed.FirstOrDefault(a => a.Id == "hosty.shell" && a.RuntimeState == "running");
+        var endpoint = shell?.Endpoints.FirstOrDefault(e => e.Protocol is "http" or "https");
+        var origin = shell is not null && endpoint is not null ? LocalBrowserOrigins.App(shell, endpoint) : null;
+        return result.Select(c =>
+        {
+            var appId = c.Reference.Split('/')[0];
+            return c with { Name = installed.FirstOrDefault(a => a.Id == appId)?.DisplayName ?? appId,
+                ManagementUrl = origin is null ? null : new Uri(new Uri(origin), "/settings?tab=" + Uri.EscapeDataString(appId)).AbsoluteUri };
+        }).ToArray();
     }
     private static bool IsUnder(string root, string path)
     {

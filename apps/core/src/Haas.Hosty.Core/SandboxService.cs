@@ -165,7 +165,7 @@ internal sealed class SandboxService(SandboxStore store, ISandboxInputs inputs, 
         var receipt = await JsonStorage.ReadAsync<SandboxReceipt>(store.ReceiptPath(id), ct)
             ?? throw new SandboxException("sandbox_not_found", "Sandbox not found.", 404);
         RequireOwner(actor, receipt.Owner);
-        return new(id, receipt.AppId, receipt.Owner, new("disposed"), null, 0, "", "", "disposed", null, null, new(), receipt.Operations, []);
+        return new(id, receipt.AppId, receipt.Owner, new("disposed"), receipt.Context, 0, "", "", "disposed", null, null, new(), receipt.Operations, []);
     }
 
     public async Task<SandboxDiagnostics> DiagnosticsAsync(SandboxActor actor, string id, CancellationToken ct)
@@ -399,7 +399,7 @@ internal sealed class SandboxService(SandboxStore store, ISandboxInputs inputs, 
             if (instance.State == "disposed")
             {
                 await JsonStorage.WriteAsync(store.ReceiptPath(id), new SandboxReceipt(id, instance.Owner, clock.UtcNow,
-                    instance.Operations.Select(o => o with { Message = null }).ToArray(), instance.Input.AppId), true, default);
+                    instance.Operations.Select(o => o with { Message = null }).ToArray(), instance.Input.AppId, instance.Request.Context), true, default);
                 store.RemoveMetadata(id);
             }
             else await store.WriteAsync(instance, default);

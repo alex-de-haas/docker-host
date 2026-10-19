@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-17
+updated: 2026-10-19
 summary: Core coordinates recoverable workspace closure, verifies completion and cleans up owned sandboxes and merged worktrees without discarding unfinished changes.
 components: [apps/core, apps/harness]
 ---
@@ -97,6 +97,69 @@ verified-completion Delete flow. Dirty/unmerged work cannot be deleted by that a
 retention. Interrupted closure is protected from retention even if an earlier iteration was marked
 completed. Destructive discard is not provided by this workflow.
 
+## Abandoned External Leases
+
+Activity leases are durable source protections, not heartbeats or proof of a live agent. They do not
+expire by age. An external client that exits without releasing its lease leaves a blocker; a later
+OAuth principal does not inherit authority to release that owner's lease.
+
+Harness keeps lease identifiers and worktree paths in collapsed **Activity diagnostics**. The
+operator first requests Close, fencing new managed work. If external activity blocks it, **Confirm
+work has stopped** asks once whether the external agent and its commands have exited. Harness
+recovers the reviewed leases and automatically retries the original Close. Known ordinary app
+consumers appear separately with their names and application management links when Shell is
+available. The confirmation stays disabled while known application or sandbox source consumers
+remain. A stopped sandbox still holds its binding; Delete releases it through Finish/Dispose.
+Core independently rechecks known consumers; confirmation does not terminate processes.
+
+The POST `/{workspaceId}/worktrees/{id}/recover-lease` inspection route requires the existing full
+source grant and active administrator app identity, same-user ownership, source access to every
+repository, an external owner and closing/closed admission. It rejects stale/unavailable HEAD,
+pending or unknown source operations, active known consumers and unverified native service ownership.
+It never uses lease age or revoked OAuth as evidence of process exit. Arbitrary native execution is
+not exhaustively discoverable, so operator verification remains necessary.
+
+The request carries its UUID, expected HEAD, exact lease UUID and exit confirmation. One atomic
+worktree record write removes only that lease and saves its successful operation receipt. Matching
+replay survives restart; conflicting arguments fail. Other leases, source files and the original Close
+request/revision remain intact. Harness persists the reviewed batch and the original Close across
+partial success, reload or an uncertain response. Retry replays successful release receipts too;
+it never adds a newly observed lease to the confirmed batch. An earlier single-lease recovery
+journal retains its request identity during migration. A definite stale-head or missing-lease
+refusal requires fresh review. Recovery closes the workspace without completing or deleting it.
+Dirty work can be closed and explicitly resumed, but still cannot be completed or deleted.
+
+The [2026-10-18 acceptance](../../reviews/2026-10-18-workspace-lease-recovery.md) records isolated
+browser recovery, restart, merged cleanup and unfinished-source protection. The separate
+[legacy draft audit](../../reviews/2026-10-18-recovered-workspaces-draft.md) preserves the previously
+uncommitted Workspaces proposal without adopting its historical deliverables as current scope.
+
+## Visible Sandbox Controls
+
+The workspace panel shows its named child Core sandboxes and app sandboxes before repository
+changes, with runtime state, applications, service/build status and available preview links.
+**Start sandbox** and **Stop sandbox** preserve test data. A stopped sandbox still retains its source
+binding. **Delete sandbox** explicitly confirms removal of test data and owned runtime resources;
+it delegates to child Core Finish or app sandbox Dispose and preserves workspace files, commits
+and ordinary application data.
+
+Workspace-scoped POST `/{workspaceId}/environments/{id}/{start|stop|finish}` and
+`/{workspaceId}/sandboxes/{id}/{start|stop|dispose}` routes use the existing inspection identity,
+same-user workspace/source authorization, matching resource context and the reviewed resource
+management permission. They reuse the existing lifecycle engines. Closed workspaces reject fresh
+starts while retained-resource Stop/Delete and terminal request replay remain available. New starts
+and cleanup serialize with workspace resource admission.
+
+Harness retains each action's UUID and expected revision through an uncertain response or reload.
+Retry continues the original request. A definite revision conflict clears that unaccepted action
+and requires a new explicit deletion confirmation. Disposed app-sandbox receipts retain their
+workspace context so replay remains authorized after the instance directory is gone. Finished and
+disposed resources no longer appear as active previews.
+
+The [2026-10-19 acceptance](../../reviews/2026-10-19-workspace-resource-controls.md) records browser
+Start/Stop/Delete, retained data, closure across parent restart, revoked-agent-credential recovery,
+dirty-source protection, clean-worktree deletion and complete disposable-stand removal.
+
 ## D2-D3 Acceptance
 
 The 2026-10-17 acceptance closes D2-D3 of the completed lifecycle plan. Its
@@ -157,4 +220,12 @@ closing starts. Resource, source-owner and shared-worker gates retain that acqui
 - Preserve source on leases, unknown consumers, partial merges, failed authorization and interrupted
   cleanup; retry with the original UUID/revision and reject conflicting requests.
 - Check resource ownership, allocation/delete serialization and source cleanup after child Finish.
+- Verify external recovery ownership/grants, explicit exit confirmation, closed admission, exact HEAD,
+  consumer and unresolved-operation guards; preserve other leases and source, replay atomically across
+  restart, and keep the original Close journal independent from recovery.
+- Cover single-confirmation multi-lease closure, cancellation, partial release and original-Close
+  replay without widening the confirmed batch or losing a legacy journal.
+- Verify sandbox Stop/Start data retention, explicit Delete confirmation, resource owner/context and
+  permission checks, closed-start refusal, failed Finish recovery and disposed-context replay.
+- Check named ordinary app consumers and collapsed lease diagnostics through Harness.
 - Do not equate an API state change with termination of native processes or removal of recovery records.

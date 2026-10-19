@@ -192,3 +192,14 @@ it("clears a recovered detail-read error without retaining a stale authenticatio
   expect(container.textContent).not.toContain("Temporary access failure");
   expect(container.textContent).toContain("one · CI unknown");
 });
+
+it("keeps one lease recovery panel across inventory refreshes", async () => {
+  const w = workspace(); w.owner.kind = "external"; w.worktrees[0].leases = ["lease"];
+  replies(w);
+  for (let i = 0; i < 4; i++) {
+    await act(async () => root.render(<WorkspaceDetails workspace={{ ...w }} title="External" refresh={() => {}} />));
+    expect(container.querySelectorAll('details summary')).toHaveLength(1);
+    expect(container.querySelector('details')?.open).toBe(false);
+    expect(container.textContent).not.toContain('External activity leases');
+  }
+});

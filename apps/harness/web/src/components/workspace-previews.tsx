@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import type { CoreEnvironment, SandboxInstance } from "@hosty-sdk/app/sandbox/server";
 import { developmentRequest } from "@/lib/development-api";
+import { WorkspaceResourceActions } from "./workspace-resource-actions";
 import { PreviewChecks } from "./preview-checks";
 type Previews = { environments: CoreEnvironment[]; instances: SandboxInstance[]; applications: Record<string, { state: string; error?: string;
   apps: PreviewApp[] }> };
@@ -11,7 +12,9 @@ type PreviewApp = { id: string; displayName: string; runtimeState: string; previ
   launchProgress?: { stage: string; changedAt: string; service?: string; buildState?: string | null } | null;
   development?: { reloadMode: string; manifestState: string; restartRequired?: boolean | null } | null };
 function safeLink(value?: string) { try { const u = new URL(value ?? ""); return ["http:","https:"].includes(u.protocol) && !u.username && !u.password ? u.href : undefined; } catch { return undefined; } }
-export function WorkspacePreviews({ workspaceId }: { workspaceId: string }) {
+export function WorkspacePreviews({ workspaceId, canStart = true, disabled = false, refresh }: {
+  workspaceId: string; canStart?: boolean; disabled?: boolean; refresh?: () => void;
+}) {
   const [value, setValue] = useState<Previews | null>(null), [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
   useEffect(() => {
@@ -26,6 +29,7 @@ export function WorkspacePreviews({ workspaceId }: { workspaceId: string }) {
     void load(); const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); },10000);
     return () => { abort.abort(); clearInterval(timer); };
   }, [workspaceId, revision]);
+  const changed = () => { setRevision(n => n + 1); refresh?.(); };
   if (!error && (!value || (!value.environments.length && !value.instances.length))) return null;
   return <section className="space-y-3 border-t pt-4" aria-label="Sandbox previews"><h3 className="text-sm text-muted-foreground">Sandboxes</h3>
     {error && <p role="status" className="text-xs text-destructive">{error}</p>}
@@ -33,13 +37,15 @@ export function WorkspacePreviews({ workspaceId }: { workspaceId: string }) {
       <p className="font-medium">{item.label}</p><p className="text-xs text-muted-foreground">{item.state} · Separate Core and test data</p>
       {item.state === "running" && safeLink(item.previewUrl) && <a className="block text-xs underline" target="_blank" rel="noreferrer" href={new URL("/login", safeLink(item.previewUrl)).href}>Open sandbox Core</a>}
       {value.applications[item.id]?.apps.map(app => <div key={app.id} className="space-y-2"><ApplicationPreview app={app} />
-        {item.state === "running" && <PreviewChecks workspaceId={workspaceId} environmentId={item.id} appId={app.id} refresh={() => setRevision(n => n + 1)} />}
+        {item.state === "running" && canStart && !disabled && <PreviewChecks workspaceId={workspaceId} environmentId={item.id} appId={app.id} refresh={() => setRevision(n => n + 1)} />}
       </div>)}
+      <WorkspaceResourceActions key={item.id} workspaceId={workspaceId} kind="environments" resource={item} label={item.label} canStart={canStart} disabled={disabled} refresh={changed} />
       {(item.error || value.applications[item.id]?.error) && <p className="text-xs text-destructive">{item.error || value.applications[item.id]?.error}</p>}
     </div>)}
-    {value?.instances.map(item => <div key={item.id} className="space-y-1 text-sm"><p className="font-medium">{item.appId}</p>
+    {value?.instances.filter(item => item.state !== "disposed").map(item => <div key={item.id} className="space-y-1 text-sm"><p className="font-medium">{item.appId}</p>
       <p className="text-xs text-muted-foreground">{item.state} · {item.users.length} test users</p>
       {item.state === "ready" && safeLink(item.previewUrl ?? undefined) && <a target="_blank" rel="noreferrer" className="text-xs underline" href={`${safeLink(item.previewUrl ?? undefined)}?hosty_sandbox_persona=core`}>Open preview</a>}
+      <WorkspaceResourceActions key={item.id} workspaceId={workspaceId} kind="sandboxes" resource={item} label={item.appId} canStart={canStart} disabled={disabled} refresh={changed} />
     </div>)}
   </section>;
 }
