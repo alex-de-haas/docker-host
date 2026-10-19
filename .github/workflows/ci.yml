@@ -460,10 +460,27 @@ jobs:
         run: |
           dotnet build apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj
           dotnet build apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj
+      - name: Verify shared receipt replacement on Windows
+        if: runner.os == 'Windows'
+        run: >-
+          dotnet test apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj
+          --filter FullyQualifiedName~SharedReceiptSharingTests
       - name: Verify activation and Return through real processes
+        env:
+          HOSTY_ACTIVATION_DIAGNOSTICS: ${{ runner.temp }}/hosty-workspace-activation-diagnostics
         run: python scripts/check-workspace-activation.py . return
       - name: Verify detached helper recovery
+        env:
+          HOSTY_ACTIVATION_DIAGNOSTICS: ${{ runner.temp }}/hosty-workspace-activation-diagnostics
         run: python scripts/check-workspace-activation.py . auto
+      - name: Upload sanitized activation failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: workspace-activation-${{ matrix.os }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hosty-workspace-activation-diagnostics/**/*.log
+          if-no-files-found: warn
+          retention-days: 7
 
   cli:
     name: CLI

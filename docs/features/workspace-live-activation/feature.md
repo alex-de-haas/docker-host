@@ -226,6 +226,9 @@ helper holds the existing Core launch lock through build, app application, stopp
 replacement and readiness verification. Ordinary Core start/restart and source changes refuse a
 pending group. Helper receipts live separately from group and app receipts; a lost HTTP response
 cannot overwrite a later Core-owned phase. Each dispatch retains its own log and process/start identity.
+Shared receipt readers allow atomic replacement on Windows while retaining their original snapshot.
+Writers retry only Windows sharing/lock conflicts for up to two seconds; access denial and other I/O
+failures retain their original error.
 
 `POST /control/v1/workspace-activations/{id}/start` admits the same helper through the local control
 secret. `GET /control/v1/workspace-activations/{id}` returns group, helper and current child journals;
@@ -358,7 +361,7 @@ used by Shell or another app in a shared worktree.
 - Verify private-source owner checks, changed/revoked connections and preservation after refusal.
 - Build and execute real temporary CLI generations from a fork and registered worktree; inspect
   immutable metadata after edits and fresh metadata after rebuild. Reject credential-bearing metadata.
-- Prepare/replay Core-only workspaces without an installed app and retain unfinished files.
+- Prepare/replay Core-only workspaces without an installed app and retain unfinished files. Verify branch defaults, explicit development branches for tag-pinned or ambiguous refs, and refusal before worktree allocation.
 - Exercise explicit app bindings, multiple repositories/worktrees, missing/reinstalled apps, ambiguous
   profiles, optional Core selection and rejection of foreign choices without runtime mutations.
 - Exercise actual HTTP routing, DI, JSON serialization, admin/CSRF/app permission refusal and revision
@@ -379,7 +382,12 @@ used by Shell or another app in a shared worktree.
 - Run `python3 scripts/check-workspace-activation.py . return --managed` on a host with Docker after
   Debug Core/CLI builds. The fixture performs normal setup/password login, reviewed HTTP activation,
   exact-target Return and replay, and verifies parent-owned Finish and process/port cleanup.
-- Run the native `return` and `auto` scenarios on macOS, Windows and Linux; CI defines that matrix. Receipt polling retries transient Windows access denial within its existing deadline and preserves the final I/O cause if access does not recover.
+- Run the native `return` and `auto` scenarios on macOS, Windows and Linux; CI defines that matrix.
+  Windows receipt observers allow delete sharing, retry transient access denial within the existing
+  deadline and preserve the final I/O cause. Verify atomic replacement with a concurrent reader,
+  temporary and persistent legacy-reader conflicts, and immediate access-denial refusal.
+  Failed CI fixtures export bounded, sanitized owned log tails and selected recovery state; they do
+  not upload raw journals, authentication files, snapshots or app data.
 - Exercise managed Git checkout, inspection and removal with paths longer than 260 characters, including Windows with global/system Git configuration disabled.
   Passing on one operating system does not establish another platform's process-control result.
 

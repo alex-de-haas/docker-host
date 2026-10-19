@@ -208,7 +208,24 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 var repo = RepoPath(repositoryId);
                 Directory.CreateDirectory(System.IO.Path.GetDirectoryName(repo)!);
                 await Fetches.EnsureRepositoryAsync(repo, async () => { await Git(Root, await RepositoryInitArgumentsAsync(repository, repo, ct), ct); }, ct);
-                var target = input.TargetBranch ?? core?.Ref;
+                var target = input.TargetBranch;
+                if (string.IsNullOrWhiteSpace(target) && core?.Ref is { } reference)
+                {
+                    // A source ref can pin a tag, including one later shadowed by a branch. Only
+                    // an unambiguous branch can supply an implicit development target.
+                    var args = new[] { "ls-remote", "--refs", "--", repository, "refs/heads/" + reference, "refs/tags/" + reference };
+                    string remote;
+                    if (grant is null)
+                    {
+                        await PrivateSourceService.ValidateGitConfigAsync(repo, repository, ct);
+                        remote = (await Git(repo, ["-c", "http.extraHeader=", "-c", "http.followRedirects=false", .. args], ct)).StandardOutput;
+                    }
+                    else remote = await (privateSources ?? throw PrivateSourceService.Denied()).GitAsync(grant, repository, repo, args, ct);
+                    var refs = remote.Split('\n').Select(line => line.Split('\t').Last().Trim()).ToHashSet(StringComparer.Ordinal);
+                    if (!refs.Contains("refs/heads/" + reference) || refs.Contains("refs/tags/" + reference))
+                        throw Error("branch_required", "The configured Core ref is not an unambiguous branch. Select an explicit development target branch.");
+                    target = reference;
+                }
                 if (string.IsNullOrWhiteSpace(target))
                 {
                     // A reviewed pin/tag is not the development branch. Only a declared branch is used.

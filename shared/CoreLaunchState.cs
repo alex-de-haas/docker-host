@@ -40,7 +40,13 @@ internal static class CoreLaunchFiles
     }
     public static string SourcePath(string root) => Path.Combine(root, "core", "source-settings.json");
     public static T? Read<T>(string path, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type)
-        => File.Exists(path) ? JsonSerializer.Deserialize(File.ReadAllText(path), type) : default;
+    {
+        if (!File.Exists(path)) return default;
+        // A receipt is replaced atomically. Readers retain their old snapshot without preventing
+        // another process from publishing its next version on Windows.
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        return JsonSerializer.Deserialize(stream, type);
+    }
     public static void Write<T>(string path, T value, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -49,10 +55,27 @@ internal static class CoreLaunchFiles
         {
             File.WriteAllText(temp, JsonSerializer.Serialize(value, type));
             if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(temp, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            File.Move(temp, path, true);
+            ReplaceWithSharingRetry(temp, path);
         }
         finally { if (File.Exists(temp)) File.Delete(temp); }
     }
+    private static void ReplaceWithSharingRetry(string temp, string path)
+    {
+        var started = Stopwatch.StartNew();
+        while (true)
+        {
+            try { File.Move(temp, path, true); return; }
+            catch (IOException error) when (OperatingSystem.IsWindows() && (error.HResult & 0xffff) is 32 or 33)
+            {
+                // Legacy/external readers can omit delete sharing. Retry only that transient
+                // replacement conflict; ACL, path and other I/O failures retain their original error.
+                var remaining = TimeSpan.FromSeconds(2) - started.Elapsed;
+                if (remaining <= TimeSpan.Zero) throw;
+                Thread.Sleep(remaining < TimeSpan.FromMilliseconds(20) ? remaining : TimeSpan.FromMilliseconds(20));
+            }
+        }
+    }
+
     public static void AssertNoPendingOperations(string root, string? ownId = null, string? ownWorkspaceId = null)
     {
         WorkspaceActivationSupervisor.AssertNoPending(root, ownWorkspaceId);
