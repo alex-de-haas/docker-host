@@ -54,10 +54,13 @@ app bindings and PRs.
   lease IDs and recorded Core operation outcomes. Pending/unknown operations direct recovery to
   the original request ID in the owning session. Leases do not prove that an agent is running.
 
-The app reads on entry, explicit refresh and every 20 seconds while visible. Failed reads clear
-previous source content; changed selection aborts outstanding requests. Core and BFF responses
-are not cached. Source inspection exposes no fetch, merge, commit, publish or source-cleanup action.
-Sandbox lifecycle controls below operate on separate child Core environments.
+The app reads on entry, explicit refresh and [authorized workspace SSE hints](../workspace-event-observation/feature.md).
+Visible consumers share a stream; reconnect and visibility restoration resynchronize. Lost streams
+or failed reads clear previous source content; changed selection aborts outstanding requests.
+Quiet worktrees retain fresh watcher health without a timestamp-only stale label. Core caches
+source-derived detail with current authority checks; HTTP responses remain `no-store`. Explicit
+refresh requests fresh Git inspection. Source inspection exposes no fetch, merge, commit, publish
+or source-cleanup action. Sandbox lifecycle controls below operate on separate child Core environments.
 
 ## Sandbox Environments
 

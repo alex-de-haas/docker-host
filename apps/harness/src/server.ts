@@ -563,6 +563,21 @@ async function route(
     return;
   }
 
+  if (url.pathname === "/api/development-workspaces/events" && method === "GET") {
+    const credential = actor.via === "app-session" ? readAppCredential(request) : null;
+    if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to inspect workspaces.");
+    const abort = new AbortController();
+    const closed = () => abort.abort(); response.once("close", closed);
+    const timeout = setTimeout(closed, APP_SESSION_STREAM_SECONDS * 1000);
+    try {
+      const upstream = await manager.workspaceEvents(credential, abort.signal);
+      response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store, no-transform", "x-accel-buffering": "no" });
+      await pipeline(upstream.body!, response, { signal: abort.signal });
+    } catch (error) { if (!response.headersSent && !abort.signal.aborted) throw error; response.destroy(); }
+    finally { clearTimeout(timeout); response.off("close", closed); abort.abort(); }
+    return;
+  }
+
   const inspection = url.pathname.match(/^\/api\/development-workspaces(\/local-apps|\/[a-f0-9]{64}(?:\/(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|\/previews(?:\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))?|\/worktrees\/[a-f0-9]{64}(?:\/(?:diff|recover-lease))?|\/workflow(?:\/(?:complete|resume|pause|defer|delete|close))?)?)?$/);
   if (inspection && (method === "GET" || method === "POST")) {
     const credential = actor.via === "app-session" ? readAppCredential(request) : null;

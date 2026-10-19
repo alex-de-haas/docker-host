@@ -20,7 +20,7 @@ function replies(w: DevelopmentWorkspace) {
   vi.mocked(developmentRequest).mockImplementation(async (path = "") => {
     if (path.endsWith("/previews")) return { environments: [], instances: [], applications: {} } as never;
     if (path.includes("/diff?")) return { combined: "+new text", binary: false, truncated: false } as never;
-    return w.worktrees.find(t => path.endsWith(t.id)) as never;
+    return w.worktrees.find(t => path.split("?")[0].endsWith(t.id)) as never;
   });
 }
 it("shows each repository and honestly missing CI; opens a repository-specific diff without a sandbox section", async () => {
@@ -224,9 +224,11 @@ it.each([
   expect(detailCalls()).toHaveLength(2);
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Refresh workspace"]')!.click());
   expect(detailCalls()).toHaveLength(4);
+  expect(detailCalls().slice(2).every(([path]) => path?.endsWith("?refresh=true"))).toBe(true);
   expect(refresh).toHaveBeenCalledOnce();
   await render({ ...w, workflow: { state: "in-progress", revision: 2 } });
   expect(detailCalls()).toHaveLength(6);
+  expect(detailCalls().slice(4).every(([path]) => !path?.includes("refresh=true"))).toBe(true);
 });
 
 it("keeps one lease recovery panel across inventory refreshes", async () => {

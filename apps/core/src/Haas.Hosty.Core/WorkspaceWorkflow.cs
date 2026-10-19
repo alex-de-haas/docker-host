@@ -57,6 +57,7 @@ internal sealed partial class DevelopmentWorkspaceService
         var previous = await WorkflowAsync(owner, default);
         var changed = CoreJson.Text(previous with { UpdatedAt = null }) != CoreJson.Text(value with { UpdatedAt = null });
         await JsonStorage.WriteAsync(WorkflowPath(owner), value with { UpdatedAt = changed ? clock.UtcNow : previous.UpdatedAt }, restrictToOwner: true);
+        if (changed) observationState?.CatalogChanged();
     }
     private async Task RequireOpenWorkflow(WorkspaceOwner owner, CancellationToken ct)
     {

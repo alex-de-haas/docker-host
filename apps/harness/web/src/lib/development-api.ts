@@ -1,5 +1,6 @@
 "use client";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
+import { subscribeWorkspaceEvents } from "./workspace-events";
 import { activityTime } from "@/lib/attention";
 import { useCallback, useEffect, useState } from "react";
 
@@ -17,7 +18,7 @@ export type PullRequest = { url: string; unavailable?: string; publishedHead?: s
   at: string; state: string; title?: string; commentCount?: number; head?: string; draft: boolean;
   reviewDecision?: string; unresolvedThreads: number; checks?: { name: string; state: string }[]; error?: string;
 } | null };
-export type Worktree = { id: string; workspaceId: string; repository: string; branch: string; state: string;
+export type Worktree = { observationHealth?: string; observationRevision?: string; id: string; workspaceId: string; repository: string; branch: string; state: string;
   apps: { appId: string; name: string; localGit?: boolean }[]; sessionChanges?: Change[]; pullRequests: PullRequest[];
   observation?: { at: string; state: string; conflict?: boolean; head?: string; error?: string; sessionFiles?: string[];
     local?: { files: Change[]; truncated: boolean; lineStats?: { additions: number; deletions: number } } };
@@ -45,17 +46,19 @@ export function useDevelopmentInventory(enabled: boolean) {
   const refresh = useCallback(() => setRevision(n => n + 1), []);
   useEffect(() => {
     if (!enabled) return;
-    const abort = new AbortController(); let loading = false;
+    const abort = new AbortController(); let generation = 0;
     const load = async () => {
-      if (loading) return; loading = true;
+      const current = ++generation;
       try {
         const value = await developmentRequest<{ workspaces: DevelopmentWorkspace[] }>("", undefined, abort.signal);
-        if (!abort.signal.aborted) { setWorkspaces(value.workspaces); setError(""); }
-      } catch (e) { if (!abort.signal.aborted) { setWorkspaces([]); setError(e instanceof Error ? e.message : String(e)); } }
-      finally { loading = false; }
+        if (!abort.signal.aborted && generation === current) { setWorkspaces(value.workspaces); setError(""); }
+      } catch (e) { if (!abort.signal.aborted && generation === current) { setWorkspaces([]); setError(e instanceof Error ? e.message : String(e)); } return false; }
+
     };
-    void load(); const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); }, 10000);
-    return () => { abort.abort(); clearInterval(timer); };
+    const unsubscribe = subscribeWorkspaceEvents("/api/development-workspaces/events", load, () => {
+      generation++; setWorkspaces([]); setError("Workspace updates disconnected. Reconnecting…");
+    });
+    return () => { generation++; abort.abort(); unsubscribe(); };
   }, [enabled, revision]);
   return { workspaces, error, refresh };
 }
