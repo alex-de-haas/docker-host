@@ -71,5 +71,27 @@ public sealed class CoreBuildTests : IDisposable
         foreach (var path in new[] { runner, previous, active, failed, unknown, futureFormat }) Assert.True(Directory.Exists(path));
     }
 
+    [Theory]
+    [InlineData("active", true)]
+    [InlineData("cancelled", false)]
+    [InlineData("returned", false)]
+    public void RetentionPinsCapturedPreviousOutputOnlyWhileActivationOwnsIt(string phase, bool retained)
+    {
+        string Add(int age)
+        {
+            var id = Guid.NewGuid().ToString("N");
+            var path = Path.Combine(root, "core", "builds", id);
+            CoreLaunchFiles.Write(Path.Combine(path, CoreBuildRetention.Marker),
+                new CoreBuildGeneration(id, "ready", DateTimeOffset.UtcNow.AddMinutes(-age), int.MaxValue, DateTimeOffset.MinValue),
+                CoreLaunchJson.Default.CoreBuildGeneration);
+            return path;
+        }
+        var captured = Add(10); _ = Add(2); _ = Add(1);
+        WorkspaceRuntimeFiles.Save(root, new(Guid.NewGuid().ToString(), "workspace", "user", "selection", "instance", "revision", "tree", "Core.csproj",
+            new("dev", "Old.csproj", captured, int.MaxValue, DateTimeOffset.MinValue), [], phase));
+        CoreBuildRetention.Cleanup(root);
+        Assert.Equal(retained, Directory.Exists(captured));
+    }
+
     public void Dispose() { if (Directory.Exists(root)) Directory.Delete(root, true); }
 }

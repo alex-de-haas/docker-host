@@ -15,7 +15,7 @@ URL, and provide a reviewed action to use a workspace on the current Core. Selec
 their explicit workspace bindings. Select Core by repository identity, with a checkbox the operator
 can clear. This is a separate feature. The owner requested implementation of D1-D3 on 2026-10-19;
 the owner subsequently requested D4 local lifecycle composition and isolated failure verification.
-Supervision, Return, authority and UI remain the later deliverables.
+On 2026-10-19 the owner requested synchronizing PR #623 with main, continuing D5 and, where possible, the remaining deliverables in this same PR. D5 implementation and verification are complete, including candidate failure during final readiness; later deliverables retain their verification gates.
 
 The result uses the current host's users, application installations and ordinary data. It creates
 no child Core and transfers no sandbox data. Testing the workspace in a
@@ -223,7 +223,7 @@ operation owner.
 - [x] D2. Record and expose Core release/generation provenance, including forks and unknown legacy builds; distinguish development selection from update origin and verify that source changes never retarget release downloads.
 - [x] D3. Add Core-only workspace preparation/registration under explicit authority and a read-only participant planner using app installation bindings and optional repository-matched Core, with deterministic ambiguity and unsupported-profile diagnostics.
 - [x] D4. Compose supported ordinary, native/system Shell/Harness and Core participants through existing lifecycle mechanisms; implement preflight/build-before-stop, dependency constraints, consistent managed backups and durable per-participant runtime ownership.
-- [ ] D5. Implement persistent group/child operation receipts, supervised Core handover, readiness reconciliation, cancellation boundaries and original-request recovery across Core, Harness, Shell and helper failures.
+- [x] D5. Implement persistent group/child operation receipts, supervised Core handover, readiness reconciliation, cancellation boundaries and original-request recovery across Core, Harness, Shell and helper failures.
 - [ ] D6. Implement individual/group Return to captured prior targets and running states, current-data compatibility acknowledgement, Core snapshot/recovery handling and explicit partial outcomes without discarding source/data or unrelated bindings.
 - [ ] D7. Enforce per-participant source/lifecycle/Core authority through HTTP, CLI, Harness and direct MCP; add the explicitly reviewed Harness Core capability and verify Ask, Run unprompted, Disabled, denial, revocation and replay.
 - [ ] D8. Add Harness workspace review/activation/progress/Return and Shell per-app workspace runtime selection plus configurable Core Source controls; show actual source, matching reason, Core checkbox, conflicts, interruption and recovery.
@@ -312,24 +312,67 @@ integration and actual Shell/Harness handover remain D11/D12. D5 owns detached s
 after Core Stop; D6 owns group/Core Return. D7-D9 still own client grants/UI and persistent Core consumer
 integration. The synchronous local primitive does not close those deliverables.
 
-## Checkpoint And Session Handoff — 2026-10-19
+## D5 Verification — 2026-10-19
 
-At the owner's request, D1-D4 are preserved in a draft PR so implementation can continue in a fresh
-session on the same feature branch. This is a checkpoint, not approval to merge an incomplete feature.
-D5-D12 remain open. Resume with D5 supervised handover and original-request recovery, building on
-`WorkspaceActivationService`, `CoreCommand.WorkspaceActivation` and the persisted activation record.
-In particular, the synchronous CLI must currently remain alive across Core replacement; do not treat
-its stored phases as detached crash recovery or group Return.
+PR #623 incorporates main through `764a92847a8267d171864e2d2a4c667fe5a8ece7` with regular merge
+`2d5bea47`, preserving the original feature history. The merge resolves platform and channel metadata
+from main's 0.143.0 to 0.144.0 and regenerates the documentation index. Shell and Harness remain unchanged
+by this feature's implementation; their later UI/authority deliverables remain unchecked.
 
-The registered task context is `core-workspace-activation-plan-20261019`; its worktree ID is
-`0419fa6872f8313c4248521651b07e8bc89be50cb63f50f7e34358e25212e580`. Resume that managed workspace and acquire
-an activity lease before editing. The D4 test instance and temporary credentials have been removed.
-The operator's Core and applications are outside this checkpoint's lifecycle authority.
+D5 introduces detached helper admission, attempt/process identities, independent group/helper/child
+receipts, cancellation boundaries, local status/recovery, automatic redrive of abandoned attempts,
+exact-target Core handover and actual child readiness checks. It preserves the existing build, app
+lifecycle, backup, source and snapshot mechanisms. Helper failures cannot overwrite a later Core
+receipt. Completed requests and verified child starts do not repeat runtime effects.
 
-The checkpoint is based on `0135cce554c1ee321aafb553c315938040ab22d2` and retains its tested platform
-version 0.142.0. Main has since advanced to 0.143.0. D12 includes synchronizing main, resolving version
-and channel metadata to a new release version, and rerunning affected checks before this PR is ready.
-Preserve existing commits when synchronizing; do not release this checkpoint's older version.
+Verification commands and outcomes:
+
+| Command / scenario | Outcome |
+| --- | --- |
+| `dotnet test apps/core/tests/Haas.Hosty.Core.Tests --no-build --nologo` | 3,694 passed, 4 opt-in Docker/Torrent integration skips, 0 failed (18m26s). |
+| Core tests filtered to activation, source/workspace HTTP and CLI launcher regressions | 56 passed before the final narrow child-receipt recovery change. |
+| Final Core `ActivationExecution` and `WorkspaceActivationControlHttpTests` filters | 19 passed, including the final lost-child-start receipt regression. |
+| `dotnet test apps/cli/tests/Haas.Hosty.Cli.Tests --nologo` | 263 passed after final recovery, terminal-receipt and cancellation-retention changes. |
+| `dotnet build apps/core/src/Haas.Hosty.Core --nologo` and CLI build | Passed. |
+| Core and CLI `dotnet publish -c Release -r osx-arm64` with separate temporary artifacts | Native AOT passed after the final production edits; no trim/AOT warnings. Four existing Core C#/platform analyzer warnings remain. |
+| Documentation index, version consistency and whitespace validation | Passed. |
+
+The broad Core run preceded the final narrow child-start and helper-recovery refinements. The final
+19-test Core group, 263-test CLI suite and Native AOT builds cover the final changes.
+
+Three disposable macOS arm64 native Core fixtures used their own source repository, registered
+Core-only worktree, normal administrator setup/password login, data root and ports. In each fixture
+the initiating CLI exited before the detached helper finished. Acceptance verifies:
+
+- Killing the helper at `core-stopping` and resuming the original group ID reaches the exact candidate
+  project/generation and a new factual Core PID, with one verified snapshot.
+- Killing the helper during preparation is automatically recovered by the still-running Core using
+  the original group ID and a new attempt; no manual retry is needed.
+- Cancelling during compilation retires the request before Stop, releases preparation, preserves
+  the original Core PID and creates no snapshot.
+- Dirty source, the normal user and authenticated session survive; completed replay does not create
+  another process or snapshot.
+- All test Core/helper processes and Git servers exit, ports are released, and fixture roots,
+  credentials, source, outputs and snapshots are removed. An initial fixture run retained a zombie
+  child because its Python owner did not reap it; the fixture was corrected, repeated successfully,
+  and its earlier diagnostics/root were removed after process-exit checks.
+
+Verification uses disposable roots and issues no lifecycle actions against the operator's Core or apps. These are native local-control acceptance checks,
+not Shell/Harness browser or real-agent acceptance. D11 retains those scenarios and D12 retains native
+Windows/Linux checks. D6-D9 retain Return, all-client authority/UI and persistent Core consumers.
+
+## Continuation
+
+D1-D5 are complete on draft PR #623; D6-D12 remain open on this same feature branch. Continue with
+D6 individual/group Return, preserving the captured previous Core executable/project/generation,
+per-app journals, current data and source. D5 recovery does not authorize snapshot restoration or
+activation on the operator's ordinary data.
+
+The registered task context remains `core-workspace-activation-plan-20261019`, with worktree ID
+`0419fa6872f8313c4248521651b07e8bc89be50cb63f50f7e34358e25212e580`. Acquire an activity lease before
+editing. The disposable D4/D5 test instances and credentials have been removed. Keep the PR draft
+until all deliverables and their required verification pass; unavailable Windows/Linux acceptance
+must remain explicit in D12.
 
 ## Delivery Sequence And Scope Boundaries
 

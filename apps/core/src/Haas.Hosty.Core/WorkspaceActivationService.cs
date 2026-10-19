@@ -46,7 +46,7 @@ internal sealed class WorkspaceActivationService(CoreDataPaths paths, WorkspaceA
             if (coreRow is not null)
             {
                 await ValidateCoreTreeAsync(activation, ct);
-                if (WorkspaceRuntimeFiles.List(paths.DataRoot).Any(a => a.Id != activation.Id && a.CoreProject is not null && a.Phase != "returned"))
+                if (WorkspaceRuntimeFiles.List(paths.DataRoot).Any(a => a.Id != activation.Id && a.CoreProject is not null && a.Phase is not ("returned" or "cancelled")))
                     throw Error("core_owned", "Another activation owns Core. Return it before switching again.");
             }
             return await lifecycle.WithActivationAppLocksAsync(ids, async () =>
@@ -113,7 +113,9 @@ internal sealed class WorkspaceActivationService(CoreDataPaths paths, WorkspaceA
             if (activation.CoreProject is not null && (activation.PreparedExecutable is null || !File.Exists(activation.PreparedExecutable)))
                 throw Error("core_not_built", "Build Core before stopping any selected application.");
             var state = await core.GetAsync(ct);
-            if (state.Instance != activation.CoreInstance || state.Source.Revision != activation.CoreSourceRevision)
+            if (state.Source.Revision != activation.CoreSourceRevision ||
+                (activation.Phase == "prepared" ? state.Instance != activation.CoreInstance :
+                    !WorkspaceActivationHandover.SameTarget(activation.PreviousCore, state.Launch)))
                 throw Error("core_changed", "Core or its source selection changed after preparation.");
             if (activation.CoreProject is not null) await ValidateCoreTreeAsync(activation, ct);
             if (activation.Phase == "prepared")
@@ -135,9 +137,22 @@ internal sealed class WorkspaceActivationService(CoreDataPaths paths, WorkspaceA
                 WorkspaceRuntimeFiles.Save(paths.DataRoot, activation);
                 try
                 {
-                    foreach (var app in activation.Apps.Reverse()) await lifecycle.StopActivationAppAsync(app, ct);
-                    foreach (var app in activation.Apps) await lifecycle.ApplyActivationAppAsync(app, backupOnly: true, ct);
-                    foreach (var app in activation.Apps) await lifecycle.ApplyActivationAppAsync(app, backupOnly: false, ct);
+                    foreach (var app in activation.Apps.Reverse())
+                    {
+                        WorkspaceActivationSupervisor.CheckCancellation(paths.DataRoot, id);
+                        await lifecycle.StopActivationAppAsync(app, ct);
+                    }
+                    foreach (var app in activation.Apps)
+                    {
+                        WorkspaceActivationSupervisor.CheckCancellation(paths.DataRoot, id);
+                        await lifecycle.ApplyActivationAppAsync(app, backupOnly: true, ct);
+                    }
+                    foreach (var app in activation.Apps)
+                    {
+                        WorkspaceActivationSupervisor.CheckCancellation(paths.DataRoot, id);
+                        await lifecycle.ApplyActivationAppAsync(app, backupOnly: false, ct);
+                        await lifecycle.VerifyActivationAppAsync(activation, app, ct);
+                    }
                     activation = activation with { Phase = activation.CoreProject is null ? "active" : "apps-active" };
                     WorkspaceRuntimeFiles.Save(paths.DataRoot, activation);
                     return activation;
@@ -147,6 +162,29 @@ internal sealed class WorkspaceActivationService(CoreDataPaths paths, WorkspaceA
                     WorkspaceRuntimeFiles.Save(paths.DataRoot, activation with { Error = "Activation stopped at a failed boundary. Inspect participant journals; source and current data are retained." });
                     throw;
                 }
+            }, ct);
+        }
+        finally { gate.Release(); }
+    }
+
+    internal async Task<WorkspaceActivationDetail> StatusAsync(string id, CancellationToken ct)
+    {
+        var status = WorkspaceActivationSupervisor.Status(paths.DataRoot, id);
+        var children = new List<AppDevStatus>();
+        foreach (var app in status.Activation.Apps) children.Add(await lifecycle.GetDevModeAsync(app, ct));
+        return new(status, children.ToArray());
+    }
+
+    internal async Task<WorkspaceRuntimeActivation> VerifyAppsAsync(string id, CancellationToken ct)
+    {
+        await gate.WaitAsync(ct);
+        try
+        {
+            var activation = WorkspaceRuntimeFiles.Read(paths.DataRoot, id);
+            return await lifecycle.WithActivationAppLocksAsync(activation.Apps.Order(StringComparer.Ordinal).ToArray(), async () =>
+            {
+                foreach (var app in activation.Apps) await lifecycle.VerifyActivationAppAsync(activation, app, ct);
+                return activation;
             }, ct);
         }
         finally { gate.Release(); }
@@ -167,3 +205,5 @@ internal sealed class WorkspaceActivationService(CoreDataPaths paths, WorkspaceA
 
     private static AppLifecycleException Error(string code, string message) => new("activation_" + code, message);
 }
+
+internal sealed record WorkspaceActivationDetail(WorkspaceActivationStatus Status, AppDevStatus[] Children);

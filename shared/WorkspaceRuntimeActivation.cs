@@ -2,12 +2,13 @@ using System.Text.Json.Serialization;
 
 namespace Haas.Hosty.Launch;
 
-// Local lifecycle composition receipt. Browser/agent admission and supervised reconciliation are
-// separate from this local operator primitive. References only; no credentials or application data.
+// Durable runtime selection. Helper coordination is stored separately so Core and the helper
+// cannot overwrite each other's receipts. References only; no credentials or application data.
 internal sealed record WorkspaceRuntimeActivation(string Id, string WorkspaceId, string UserId,
     string Fingerprint, string CoreInstance, string CoreSourceRevision, string? CoreWorktreeId,
     string? CoreProject, CoreLaunchIdentity PreviousCore, string[] Apps, string Phase,
-    string? PreparedExecutable = null, string? Generation = null, string? Snapshot = null, string? Error = null, IReadOnlyDictionary<string, string>? SourceStamps = null);
+    string? PreparedExecutable = null, string? Generation = null, string? Snapshot = null, string? Error = null, IReadOnlyDictionary<string, string>? SourceStamps = null,
+    string? ListenUrl = null, CoreLaunchIdentity? ActivatedCore = null, string? PreviousExecutable = null);
 
 internal static class WorkspaceRuntimeFiles
 {

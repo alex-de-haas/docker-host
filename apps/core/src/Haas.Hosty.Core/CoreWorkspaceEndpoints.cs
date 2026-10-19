@@ -15,6 +15,19 @@ internal static class CoreWorkspaceEndpoints
         app.MapPost("/control/v1/workspace-activations/{id}/release-preparation", (string id, HttpRequest request,
             ControlSecret secret, WorkspaceActivationService activations, CancellationToken ct) =>
             HostyCoreApplication.RequireControlSecret(request, secret, () => Handle(() => activations.ReleasePreparationAsync(id, ct))));
+        app.MapGet("/control/v1/workspace-activations/{id}", (string id, HttpRequest request,
+            ControlSecret secret, WorkspaceActivationService activations, CancellationToken ct) =>
+            HostyCoreApplication.RequireControlSecret(request, secret, () => Handle(() => activations.StatusAsync(id, ct))));
+        app.MapPost("/control/v1/workspace-activations/{id}/verify-apps", (string id, HttpRequest request,
+            ControlSecret secret, WorkspaceActivationService activations, CancellationToken ct) =>
+            HostyCoreApplication.RequireControlSecret(request, secret, () => Handle(() => activations.VerifyAppsAsync(id, ct))));
+        app.MapPost("/control/v1/workspace-activations/{id}/start", (string id, HttpRequest request,
+            ControlSecret secret, WorkspaceActivationRecovery recovery) =>
+            HostyCoreApplication.RequireControlSecret(request, secret, () => Handle(() => Task.FromResult(recovery.Dispatch(id)))));
+        app.MapPost("/control/v1/workspace-activations/{id}/cancel", (string id, HttpRequest request,
+            ControlSecret secret, CoreDataPaths paths) =>
+            HostyCoreApplication.RequireControlSecret(request, secret, () => Handle(() => Task.FromResult(
+                Haas.Hosty.Launch.WorkspaceActivationSupervisor.Cancel(paths.DataRoot, id)))));
         app.MapPost("/api/core/source/prepare", (HttpRequest request, CoreSourcePrepare input,
             UserDirectoryStore users, IClock clock, CoreDevelopmentService core, HostyCoreRuntimeConfig config,
             CancellationToken ct) => CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,
@@ -53,6 +66,7 @@ internal static class CoreWorkspaceEndpoints
     private static async Task<IResult> Handle<T>(Func<Task<T>> action)
     {
         try { return CoreJson.Json(await action()); }
+        catch (OperationCanceledException ex) { return CoreJson.Json(new ErrorResponse("activation_paused", ex.Message), statusCode: 409); }
         catch (ArgumentException ex) { return CoreJson.Json(new ErrorResponse("invalid_request", ex.Message), statusCode: 400); }
         catch (AppLifecycleException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: 409); }
         catch (Exception ex) when (ex is IOException or InvalidOperationException)

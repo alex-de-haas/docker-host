@@ -153,6 +153,8 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<CoreDevelopmentService>();
         builder.Services.AddSingleton<WorkspaceActivationPlanner>();
         builder.Services.AddSingleton<WorkspaceActivationService>();
+        builder.Services.AddSingleton<WorkspaceActivationRecovery>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<WorkspaceActivationRecovery>());
         // Resolve the executable for independent localCommand runners once. DLL-hosted Core copies
         // its managed output closure instead; both paths keep logs and tree ownership outside Core.
         builder.Services.AddSingleton(new LocalCommandShimOptions(LocalCommandShim.ResolveShimPath()));

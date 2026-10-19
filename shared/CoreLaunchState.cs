@@ -53,8 +53,9 @@ internal static class CoreLaunchFiles
         }
         finally { if (File.Exists(temp)) File.Delete(temp); }
     }
-    public static void AssertNoPendingOperations(string root, string? ownId = null)
+    public static void AssertNoPendingOperations(string root, string? ownId = null, string? ownWorkspaceId = null)
     {
+        WorkspaceActivationSupervisor.AssertNoPending(root, ownWorkspaceId);
         var directory = Path.Combine(root, "core", "operations");
         if (!Directory.Exists(directory)) return;
         foreach (var path in Directory.EnumerateFiles(directory, "*.json"))

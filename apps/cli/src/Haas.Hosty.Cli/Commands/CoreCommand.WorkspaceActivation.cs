@@ -1,4 +1,5 @@
 using Haas.Hosty.Launch;
+using System.Diagnostics;
 using System.Text.Json;
 using Spectre.Console;
 
@@ -6,69 +7,113 @@ namespace Haas.Hosty.Cli.Commands;
 
 internal sealed partial class CoreCommand
 {
-    // Local operator primitive. The durable supervisor, browser/MCP admission and reconnect flow
-    // build on this boundary; this command deliberately never guesses a different runtime on failure.
     private async Task<int> ActivateWorkspaceAsync(string[] args)
     {
-        if (args.Length != 1) throw new CommandUsageException("Supply a prepared workspace activation UUID.", Usage);
+        if (args.Length == 3 && args[1] == "--helper") return await RunWorkspaceHelperAsync(args[0], args[2]);
+        if (args.Length is < 1 or > 2 || args.Length == 2 && args[1] != "--resume")
+            throw new CommandUsageException("Supply a prepared activation UUID and optionally --resume.", Usage);
         var root = context.Environment.RootDirectory;
-        using var launchLock = CoreLaunchFiles.Lock(root);
-        CoreLaunchFiles.AssertNoPendingOperations(root);
-        var activation = WorkspaceRuntimeFiles.Read(root, args[0]);
-        if (activation.Phase == "active") { context.Console.WriteLine("Workspace activation is already active."); return 0; }
-        if (activation.Phase is not ("prepared" or "apps-active"))
-            throw new CommandUsageException("Activation is not prepared. Inspect its retained state before retrying.", Usage);
+        var helper = WorkspaceActivationSupervisor.Dispatch(root, args[0], args.Length == 2, h =>
+        {
+            var executable = Environment.ProcessPath ?? throw new InvalidOperationException("CLI executable is unavailable.");
+            var command = new List<string>();
+            if (Path.GetFileNameWithoutExtension(executable).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+                command.Add(Path.Combine(AppContext.BaseDirectory, "hosty.dll"));
+            command.AddRange(["--data-root", root, "core", "activate-workspace", h.Id, "--helper", h.Attempt]);
+            DetachedCliProcess.SpawnDetached(executable, command, root, "workspace-" + h.Id + ".log", h.LogPath);
+        });
+        context.Console.WriteLine($"Activation {helper.Id}: {helper.State}. Inspect with core workspace-activation {helper.Id}.");
+        context.Console.WriteLine("Helper log: " + helper.LogPath);
+        return 0;
+    }
+
+    private Task<int> WorkspaceActivationStatusAsync(string[] args)
+    {
+        if (args.Length is < 1 or > 2 || args.Length == 2 && args[1] != "--cancel")
+            throw new CommandUsageException("Supply an activation UUID and optionally --cancel.", Usage);
+        var status = args.Length == 2
+            ? WorkspaceActivationSupervisor.Cancel(context.Environment.RootDirectory, args[0])
+            : WorkspaceActivationSupervisor.Status(context.Environment.RootDirectory, args[0]);
+        context.Console.WriteLine(JsonSerializer.Serialize(status, WorkspaceSupervisorJson.Default.WorkspaceActivationStatus));
+        return Task.FromResult(0);
+    }
+
+    private async Task<int> RunWorkspaceHelperAsync(string id, string attempt)
+    {
+        var root = context.Environment.RootDirectory;
+        // Dispatch still owns the launch lock while the detached process starts (notably Windows).
+        FileStream? lease = null;
+        for (var i = 0; i < 50 && lease is null; i++)
+        {
+            try { lease = CoreLaunchFiles.Lock(root); }
+            catch (IOException) { await Task.Delay(100); }
+        }
+        using var held = lease ?? throw new IOException("Another Core lifecycle operation owns the launch lock. Retry the original activation.");
+        var helper = WorkspaceActivationSupervisor.Claim(root, id, attempt);
         try
         {
-            var status = await ReadCoreStatusAsync();
-            if (status?.Launch is not { } launch || launch != activation.PreviousCore)
-                throw new InvalidOperationException("The running Core no longer matches the reviewed activation.");
-            if (!Uri.TryCreate(status.ListenUrl, UriKind.Absolute, out _))
-                throw new InvalidOperationException("The running Core listen address is unavailable.");
-            CoreStartTarget? target = null;
-            if (activation.CoreProject is not null)
-            {
-                CoreStateSnapshot.Preflight(root);
-                target = await new CoreBuildService(context).PrepareAsync(activation.CoreProject);
-                activation = activation with { PreparedExecutable = target.FileName, Generation = target.GenerationPath, Error = null };
-                WorkspaceRuntimeFiles.Save(root, activation);
-            }
-            using (var core = await CoreControlClient.TryCreateAsync(context, operationTimeout: TimeSpan.FromMinutes(30))
-                ?? throw new InvalidOperationException("The intended Core is unavailable."))
-                _ = await core.PostAsync<JsonElement>("workspace-activations/" + activation.Id + "/apply-apps");
-            activation = WorkspaceRuntimeFiles.Read(root, activation.Id);
-            if (target is null) { context.Console.WriteLine("Selected workspace applications are active."); return 0; }
-            activation = activation with { Phase = "core-stopping" };
-            WorkspaceRuntimeFiles.Save(root, activation);
-            if (await StopCoreAsync(keepApps: true) != StopOutcome.Stopped)
-                throw new IOException("Core did not confirm exit. The candidate was not started.");
-            var snapshot = CoreStateSnapshot.Create(root, activation.Id);
-            activation = activation with { Phase = "core-starting", Snapshot = snapshot.Archive };
-            WorkspaceRuntimeFiles.Save(root, activation);
-            if (await StartAsync(["--project", activation.CoreProject!, "--url", status.ListenUrl!], target) != 0)
-                throw new IOException("Candidate Core did not become ready. Retain its snapshot and sources; no fallback was started.");
-            activation = activation with { Phase = "active", Error = null };
-            WorkspaceRuntimeFiles.Save(root, activation);
-            context.Console.WriteLine("Selected workspace apps and Core are active. Core snapshot: " + snapshot.Archive);
+            CoreLaunchFiles.AssertNoPendingOperations(root, ownWorkspaceId: id);
+            await new WorkspaceActivationHandover(root, new WorkspaceRuntime(this, context)).RunAsync(id);
+            WorkspaceActivationSupervisor.Save(root, helper with { State = "completed", Error = null });
             return 0;
         }
-        catch (Exception ex) when (ex is IOException or InvalidOperationException or CoreControlException)
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or CoreControlException or
+            HttpRequestException or OperationCanceledException or System.ComponentModel.Win32Exception)
         {
-            var latest = WorkspaceRuntimeFiles.Read(root, activation.Id);
-            if (latest.Phase == "prepared")
-            {
-                using var live = await CoreControlClient.TryCreateAsync(context);
-                if (live is not null)
-                {
-                    try { _ = await live.PostAsync<JsonElement>("workspace-activations/" + latest.Id + "/release-preparation"); }
-                    catch (Exception releaseError) when (releaseError is IOException or CoreControlException)
-                    { context.Error.WriteLine("Preparation remains reserved: " + releaseError.Message); }
-                    latest = WorkspaceRuntimeFiles.Read(root, latest.Id);
-                }
-            }
-            WorkspaceRuntimeFiles.Save(root, latest with { Error = "Activation did not complete. Inspect participant journals and the CLI diagnostics; source and data are retained." });
+            WorkspaceActivationSupervisor.Save(root, helper with { State = ex is OperationCanceledException || WorkspaceActivationSupervisor.CancellationRequested(root, id) ? "paused" : "failed",
+                Error = "Activation did not finish. Inspect the retained phase and helper log; resume the original request." });
             context.Error.WriteLine(ex.Message);
             return 1;
+        }
+    }
+
+    private sealed class WorkspaceRuntime(CoreCommand command, CommandContext context) : IWorkspaceActivationRuntime
+    {
+        public async Task<WorkspaceCoreObservation?> ObserveAsync()
+        {
+            var status = await command.ReadCoreStatusAsync(suppressErrors: true);
+            if (status?.Launch is not { } launch || status.ListenUrl is not { } url) return null;
+            using var process = Process.GetProcessById(launch.ProcessId);
+            var executable = process.MainModule?.FileName;
+            if (Path.GetFileNameWithoutExtension(executable) == "dotnet") executable = null;
+            return new(launch, url, executable);
+        }
+        public async Task<WorkspaceCoreOutput> BuildAsync(string project)
+        {
+            var target = await new CoreBuildService(context).PrepareAsync(project);
+            return new(target.FileName, target.GenerationPath!);
+        }
+        private async Task PostAsync(string id, string action)
+        {
+            using var core = await CoreControlClient.TryCreateAsync(context, operationTimeout: TimeSpan.FromMinutes(30))
+                ?? throw new IOException("The intended Core is unavailable.");
+            _ = await core.PostAsync<JsonElement>("workspace-activations/" + id + "/" + action);
+        }
+        public Task ApplyAppsAsync(string id) => PostAsync(id, "apply-apps");
+        public Task VerifyAppsAsync(string id) => PostAsync(id, "verify-apps");
+        public Task ReleasePreparationAsync(string id) => PostAsync(id, "release-preparation");
+        public async Task StopAsync()
+        {
+            if (await command.StopCoreAsync(keepApps: true) is not (StopOutcome.Stopped or StopOutcome.NotRunning))
+                throw new IOException("The previous Core did not confirm exit.");
+        }
+        public async Task RestorePreviousAsync(WorkspaceRuntimeActivation activation)
+        {
+            if (!File.Exists(activation.PreviousExecutable)) throw new IOException("The captured previous Core executable is unavailable.");
+            var prior = activation.PreviousCore;
+            var target = new CoreStartTarget(activation.PreviousExecutable!, Path.GetDirectoryName(activation.PreviousExecutable!)!, [],
+                prior.ProjectPath, prior.GenerationPath);
+            var args = new List<string> { "--url", activation.ListenUrl! };
+            if (prior.ProjectPath is not null) args.AddRange(["--project", prior.ProjectPath]);
+            if (await command.StartAsync(args.ToArray(), target) != 0)
+                throw new IOException("The captured previous Core could not resume the app transition. No alternate target was started.");
+        }
+        public async Task StartAsync(WorkspaceRuntimeActivation activation)
+        {
+            var target = new CoreStartTarget(activation.PreparedExecutable!, Path.GetDirectoryName(activation.CoreProject!)!, [],
+                activation.CoreProject, activation.Generation);
+            if (await command.StartAsync(["--project", activation.CoreProject!, "--url", activation.ListenUrl!], target) != 0)
+                throw new IOException("Candidate readiness was not confirmed. Inspect status and retry the same activation.");
         }
     }
 }

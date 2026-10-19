@@ -273,6 +273,14 @@ internal sealed partial class CoreLifecycleService
             await PersistRuntimePortsAsync(next, selection, ct);
             op = await DevPhaseAsync(op, "bound", ct);
         }
+        if (op.Phase == "starting" && op.ActivationId is not null)
+        {
+            app = await RequireAppAsync(op.AppId, ct);
+            // StartCore persists its verified running projection before the child receipt. Recover
+            // that narrow lost-response window without stopping a fully ready candidate again.
+            if (app.RuntimeState == "running" && (await GetHealthAsync(op.AppId, ct)).Status == "healthy")
+                return await DevPhaseAsync(op, "active", ct, completedRequestId: requestId);
+        }
         if (op.Phase is "bound" or "starting")
         {
             op = await DevPhaseAsync(op, "starting", ct);

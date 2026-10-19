@@ -1,16 +1,16 @@
 ---
 created: 2026-10-19
 updated: 2026-10-19
-summary: Configure Core source and provenance, select workspace participants and prepare local runtime activation with verified managed-data backups.
+summary: Configure Core source and provenance, select workspace participants and supervise resumable local activation with managed-data backups.
 components: [apps/core, apps/cli, shared]
 ---
 
-# Core Source And Workspace Participants
+# Core Source And Workspace Activation
 
-Core exposes configurable development source, immutable build provenance and a read-only workspace
-participant planner. These APIs prepare source and describe candidates; they do not activate a group,
-stop applications or replace Core. Coordinated activation, Return, agent tools and UI are tracked in
-the [remaining plan](plan.md).
+Core exposes configurable development source, immutable build provenance, a read-only workspace
+participant planner and supervised local runtime activation. The local control API and CLI compose
+prepared application runtimes with optional Core replacement. Group Return, agent authority, UI and
+persistent Core workspace consumers are tracked in the [remaining plan](plan.md).
 
 ## Development Source
 
@@ -159,7 +159,8 @@ access; this is not a sandbox. The manifest's declared setup/build is the prefli
 not promise to catch every later hot-reload or startup error. Successful setup is not repeated after
 Stop. Source observations are checked again before apply.
 
-`hosty --data-root <root> core activate-workspace <prepared-id>` composes the local transition. It
+`hosty --data-root <root> core activate-workspace <prepared-id>` admits a detached helper and returns
+its request ID and log path. The helper composes the local transition. It
 builds the exact selected Core project into an isolated generation before stopping any participant.
 Then the control API stops selected apps in reverse dependency order, verifies every selected app's
 managed-data backup before starting any candidate, and starts in dependency order. Unselected apps
@@ -186,12 +187,54 @@ re-preparation with the original request. Core compile failure uses the same rel
 pre-Stop reservations; it refuses an already-started transition. A review tied to a replaced Core or
 changed Core source is retired on release and requires a fresh review. Nothing resets files or data.
 
-The CLI composition is synchronous. The caller must remain alive through Core handover; interruption
-after Core Stop leaves a retained phase for inspection, not a claim of successful recovery. Supervised
-reconciliation, group Return, all-client authority/UI and persistent Core workspace-consumer admission
-remain the unchecked D5-D9 deliverables in [the plan](plan.md). Browser/real-agent and native cross-host
-acceptance remain D11-D12. This primitive is verified in a disposable Core, not by switching the
-operator's installations.
+## Supervision And Recovery
+
+The initiating client or terminal does not own an admitted transition. The detached CLI
+helper holds the existing Core launch lock through build, app application, stopped-Core snapshot,
+replacement and readiness verification. Ordinary Core start/restart and source changes refuse a
+pending group. Helper receipts live separately from group and app receipts; a lost HTTP response
+cannot overwrite a later Core-owned phase. Each dispatch retains its own log and process/start identity.
+
+`POST /control/v1/workspace-activations/{id}/start` admits the same helper through the local control
+secret. `GET /control/v1/workspace-activations/{id}` returns group, helper and current child journals;
+`POST .../{id}/verify-apps` checks the selected installation/runtime/source binding and actual readiness.
+These local endpoints do not grant Harness or MCP new authority. The full client policy remains D7.
+
+The CLI also reads status without a running Core:
+
+```bash
+hosty --data-root <root> core workspace-activation <id>
+hosty --data-root <root> core workspace-activation <id> --cancel
+hosty --data-root <root> core activate-workspace <id> --resume
+```
+
+Cancellation writes a durable request and is observed between participant and Core boundaries.
+It does not kill a writer or restore data. A helper cancelled before app Stop releases preparation
+and retires that request. Once application changes have begun, it pauses with each child's achieved
+phase intact. Explicit `--resume` clears the cancellation and reconciles the original selection.
+Cancellation after a terminal result changes nothing. Preparing source before admission and asking
+for cancellation do not start a helper on their own.
+
+A replacement Core periodically redrives abandoned accepted/running helper attempts with the same
+group ID. A fresh attempt token prevents delayed helpers from taking over a newer attempt. Deterministic
+failures and cancellation remain visible for explicit recovery rather than automatic restart loops.
+When Core is unavailable, the local CLI can resume the original request. During a partial app apply,
+it can restart the captured previous executable/target before continuing. It refuses a different Core
+or an alive but unresponsive process instead of stopping it or choosing a release fallback.
+
+Recovery reads the retained phase before acting. A completed child start whose verified running
+projection survived is reconciled without another stop/start. An uncertain partial start keeps the
+existing verified-stop recovery path. A lost Core Stop response uses the lifetime lock to prove exit;
+a lost candidate Start response checks the exact project/generation and actual ready process. A Core
+that owns the lifetime lock but cannot serve status remains available for diagnosis, and is not started
+again. If a candidate dies during final group verification, recovery restarts its retained generation
+without rebuilding or taking another snapshot. Candidate and selected-app readiness must pass before the group becomes active. Completed or
+returned requests never recreate processes, snapshots or backups.
+
+Core handover keeps its previous listen address and captured launch identity. Snapshot creation and
+replay retain the existing stopped-state and archive verification rules. Source settings saved during
+an active operation do not rewrite its captured previous runtime. Group/Core Return and data-compatibility
+review remain D6; browser/real-agent and Windows/Linux native acceptance remain D11-D12 in the plan.
 
 ## Testing Expectations
 
@@ -210,3 +253,6 @@ operator's installations.
 
 - Verify pre-stop setup/compile failures preserve running processes; verify repair leases and original-request retry.
 - Verify native preparation uses scratch context, mixed dependency order, selected app backups, stopped-Core snapshot hashes, exact replacement identity and retained unrelated processes.
+
+- Interrupt helpers after app apply, Core Stop and candidate Start; reconcile the original request without repeating completed effects or claiming readiness for a different target.
+- Verify cancellation boundaries, stale helper attempts, local-control authorization, dead previous-Core recovery and source/data preservation on isolated native instances.

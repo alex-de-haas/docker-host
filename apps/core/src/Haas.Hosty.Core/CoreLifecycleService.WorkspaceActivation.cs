@@ -39,6 +39,22 @@ internal sealed partial class CoreLifecycleService
         var app = await RequireAppAsync(plan.AppId, ct);
         var id = WorkspaceRuntimeFiles.ChildId(activation.Id, app.Id);
         var op = await AppDevStore.ReadAsync(paths, app, ct);
+        if (op?.ActivationId != activation.Id && File.Exists(AppDevStore.Record(paths, app.Id, id)))
+        {
+            var retained = await AppDevStore.ReadAsync(paths, app.Id, id, ct);
+            if (retained is { Phase: "returned" } && retained.ActivationId == activation.Id && activation.Phase == "preparing")
+                retained = null; // Released before Stop; a repaired preparation may allocate the same child again.
+            if (retained is not null && (retained.Phase != "prepared" || retained.ActivationId != activation.Id ||
+                retained.Installation != app.InstalledAt || retained.PreviousRuntime != app.SelectedRuntime ||
+                retained.PreviousSource != app.SourceState || op is { Active: true }))
+                throw DevError("request_retired", "The child receipt no longer matches this installation. Nothing was reapplied.");
+            if (retained is not null)
+            {
+                op = retained;
+                await apps.UpdateAppAsync(app.Id, a => a with { DevModeId = id }, ct);
+                app = await RequireAppAsync(app.Id, ct);
+            }
+        }
         if (op is null || op.ActivationId != activation.Id)
         {
             if (op is { Active: true }) throw DevError("already_active", "Return the existing runtime before activation.");
@@ -77,6 +93,19 @@ internal sealed partial class CoreLifecycleService
         await ValidateLiveDevManifestAsync(op, ct);
         await ValidateDevSourceAuthorityAsync(app, await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct), op.Actor, ct);
         _ = await DevWorkspaces.WithDevAdmissionAsync(op.WorktreeId!, app, null, () => Task.FromResult(true), ct);
+    }
+
+    internal async Task VerifyActivationAppAsync(WorkspaceRuntimeActivation activation, string appId, CancellationToken ct)
+    {
+        var app = await RequireAppAsync(appId, ct);
+        var op = await AppDevStore.ReadAsync(paths, app, ct);
+        if (op is not { Phase: "active" } || op.ActivationId != activation.Id ||
+            op.Installation != app.InstalledAt || app.SelectedRuntime != op.TargetRuntime || app.SourceState?.LocalOverridePath != op.SourcePath)
+            throw DevError("activation_not_ready", "The selected runtime no longer matches its active child receipt.");
+        await ValidateDevBindingAsync(app, op, ct);
+        var health = await GetHealthAsync(appId, ct);
+        if (health.Status != "healthy")
+            throw DevError("activation_not_ready", $"{appId} has not confirmed readiness ({health.Status}). Inspect its retained operation and logs.");
     }
 
     internal async Task ReleaseActivationPreparationAsync(WorkspaceRuntimeActivation activation, CancellationToken ct)
