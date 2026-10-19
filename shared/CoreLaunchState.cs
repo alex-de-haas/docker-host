@@ -51,21 +51,54 @@ internal static class CoreLaunchFiles
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var backup = OperatingSystem.IsWindows() ? temp + ".previous" : null;
+        var preserveRecovery = false;
         try
         {
             File.WriteAllText(temp, JsonSerializer.Serialize(value, type));
             if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(temp, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            ReplaceWithSharingRetry(temp, path);
+            try { ReplaceWithSharingRetry(temp, path, backup); }
+            catch (IOException error) when (OperatingSystem.IsWindows() && (error.HResult & 0xffff) is 1176 or 1177)
+            {
+                preserveRecovery = true;
+                RecoverPartialReplacement(path, temp, backup!, error);
+                preserveRecovery = false;
+                throw;
+            }
+            if (backup is not null && File.Exists(backup)) File.Delete(backup);
         }
-        finally { if (File.Exists(temp)) File.Delete(temp); }
+        finally { if (!preserveRecovery && File.Exists(temp)) File.Delete(temp); }
     }
-    private static void ReplaceWithSharingRetry(string temp, string path)
+
+    internal static void RecoverPartialReplacement(string path, string temp, string backup, IOException error)
+    {
+        Exception? restoreError = null;
+        if (File.Exists(backup) && !File.Exists(path))
+        {
+            try { File.Move(backup, path, overwrite: false); return; }
+            catch (Exception failure) when (failure is IOException or UnauthorizedAccessException) { restoreError = failure; }
+        }
+        // ReplaceFile documents that 1176 retains the old name when a backup was requested.
+        if ((error.HResult & 0xffff) == 1176 && File.Exists(path) && !File.Exists(backup)) return;
+        throw new IOException($"Receipt replacement failed. Retained recovery files: previous '{backup}', candidate '{temp}', destination '{path}'. No newer receipt was overwritten.",
+            restoreError is null ? error : new AggregateException(error, restoreError));
+    }
+
+    private static void ReplaceWithSharingRetry(string temp, string path, string? backup)
     {
         var started = Stopwatch.StartNew();
         while (true)
         {
-            try { File.Move(temp, path, true); return; }
-            catch (IOException error) when (OperatingSystem.IsWindows() && (error.HResult & 0xffff) is 32 or 33)
+            try
+            {
+                // MoveFileEx cannot overwrite an open destination even when its readers share
+                // delete access. ReplaceFile supports that sharing and preserves the existing ACL.
+                if (OperatingSystem.IsWindows() && File.Exists(path)) File.Replace(temp, path, backup, ignoreMetadataErrors: false);
+                else File.Move(temp, path, overwrite: !OperatingSystem.IsWindows());
+                return;
+            }
+            catch (IOException error) when (OperatingSystem.IsWindows() && ((error.HResult & 0xffff) is 32 or 33 ||
+                (error.HResult & 0xffff) is 80 or 183 && File.Exists(temp) && File.Exists(path)))
             {
                 // Legacy/external readers can omit delete sharing. Retry only that transient
                 // replacement conflict; ACL, path and other I/O failures retain their original error.

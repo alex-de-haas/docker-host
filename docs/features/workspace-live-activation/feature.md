@@ -227,8 +227,11 @@ replacement and readiness verification. Ordinary Core start/restart and source c
 pending group. Helper receipts live separately from group and app receipts; a lost HTTP response
 cannot overwrite a later Core-owned phase. Each dispatch retains its own log and process/start identity.
 Shared receipt readers allow atomic replacement on Windows while retaining their original snapshot.
+Windows replaces existing receipts with `File.Replace`; initial creation and Unix replacement use rename.
 Writers retry only Windows sharing/lock conflicts for up to two seconds; access denial and other I/O
-failures retain their original error.
+failures retain their original error. A partial Windows replacement restores the previous receipt only
+when its destination remains absent; otherwise it retains recovery files and refuses to overwrite a
+newer receipt.
 
 `POST /control/v1/workspace-activations/{id}/start` admits the same helper through the local control
 secret. `GET /control/v1/workspace-activations/{id}` returns group, helper and current child journals;
@@ -385,7 +388,8 @@ used by Shell or another app in a shared worktree.
 - Run the native `return` and `auto` scenarios on macOS, Windows and Linux; CI defines that matrix.
   Windows receipt observers allow delete sharing, retry transient access denial within the existing
   deadline and preserve the final I/O cause. Verify atomic replacement with a concurrent reader,
-  temporary and persistent legacy-reader conflicts, and immediate access-denial refusal.
+  temporary and persistent legacy-reader conflicts, immediate access-denial refusal, concurrent
+  creation and preservation after partial replacement failure.
   Failed CI fixtures export bounded, sanitized owned log tails and selected recovery state; they do
   not upload raw journals, authentication files, snapshots or app data.
 - Exercise managed Git checkout, inspection and removal with paths longer than 260 characters, including Windows with global/system Git configuration disabled.
