@@ -75,6 +75,11 @@ internal static class CoreBuildRetention
             foreach (var item in candidates.Where(x => x.Record.State is "building" or "prepared" or "starting").OrderByDescending(x => x.Record.CreatedAt).Take(1)) keep.Add(item.Path);
             foreach (var item in candidates)
                 if (IsAlive(item.Record.OwnerPid, item.Record.OwnerStartedAt)) keep.Add(item.Path);
+            foreach (var activation in WorkspaceRuntimeFiles.List(root).Where(a => a.Phase != "returned"))
+            {
+                if (activation.Generation is { } generation) keep.Add(generation);
+                if (activation.PreviousCore.GenerationPath is { } previous) keep.Add(previous);
+            }
             var apps = Path.Combine(root, "apps");
             if (Directory.Exists(apps))
                 foreach (var app in Directory.EnumerateDirectories(apps))

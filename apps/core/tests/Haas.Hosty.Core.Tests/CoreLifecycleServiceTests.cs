@@ -7682,8 +7682,14 @@ public sealed partial class CoreLifecycleServiceTests
         public void Dispose() => stopping.Dispose();
     }
 
-    private sealed class RecordingRuntimeAdapter(string type = "docker") : IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
+    private sealed class RecordingRuntimeAdapter(string type = "docker") : IRuntimePreparation, IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
     {
+        public Func<RuntimeLifecycleContext, Task>? PreparationProbe { get; set; }
+        public async Task<RuntimePreparation> PrepareAsync(RuntimeLifecycleContext context, CancellationToken ct)
+        {
+            if (PreparationProbe is { } probe) await probe(context);
+            return new(new Dictionary<string, ArtifactLock>(), context.Manifest.Services.Select(s => s.Key).ToArray());
+        }
         public string Type => type;
 
         // App ids the fake docker daemon reports as having a running labelled container (C-M1 sweep).

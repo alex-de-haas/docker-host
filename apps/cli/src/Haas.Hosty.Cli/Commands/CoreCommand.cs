@@ -86,6 +86,7 @@ internal sealed partial class CoreCommand(CommandContext context)
         }
         return args[0] switch
         {
+            "activate-workspace" => await ActivateWorkspaceAsync(args[1..]),
             "status" => await StatusAsync(args[1..]),
             "logs" => await LogsAsync(args[1..]),
             "settings" => await new CoreSettingsCommand(context).ExecuteAsync(args[1..]),
@@ -965,6 +966,7 @@ internal sealed partial class CoreCommand(CommandContext context)
         Commands:
           start [--port <port>] [--project <csproj-path>] [--url <url>] [--foreground]
           status
+          activate-workspace <prepared-activation-id>
           stop [--keep-apps]
           restart [--keep-apps] [--port <port>] [--project <csproj-path>] [--url <url>] [--foreground]
           logs [--tail <count>]

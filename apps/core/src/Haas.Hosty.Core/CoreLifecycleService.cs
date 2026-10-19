@@ -1053,6 +1053,8 @@ internal sealed partial class CoreLifecycleService(
                 await NotifyManifestInvalidAsync(app, load.ManifestError, cancellationToken);
             }
 
+            if (await AppDevStore.ReadAsync(paths, app, cancellationToken) is { Phase: "starting", PreparedRuntime: { } preparation })
+                context = context with { PreparedSetupServices = preparation.SetupServices };
             var result = await adapter.StartAsync(context, cancellationToken);
             runtimeStarted = true;
             // Adopted containers/processes retain their old environment. Only a complete fresh

@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class LocalCommandRuntimeAdapter(
+internal sealed partial class LocalCommandRuntimeAdapter(
     HostyCoreRuntimeConfig config,
     LocalCommandProcessRegistry registry,
     AppServiceTokenService serviceTokens,
@@ -20,7 +20,7 @@ internal sealed class LocalCommandRuntimeAdapter(
     AppIdentityTokenService? appIdentityTokens = null,
     // The live public origin, injected into a service's environment when its process starts. Optional so
     // existing direct constructions stay valid; DI supplies it, and without it the env baseline stands in.
-    CorePublicOriginResolver? corePublicOrigin = null) : IAppRuntimeAdapter
+    CorePublicOriginResolver? corePublicOrigin = null) : IAppRuntimeAdapter, IRuntimePreparation
 {
     // Resolved per process start rather than once, so a saved origin reaches the next app that starts.
     private string CorePublicOrigin => corePublicOrigin?.Effective ?? config.EffectiveCorePublicOrigin;
@@ -203,7 +203,7 @@ internal sealed class LocalCommandRuntimeAdapter(
         CancellationToken cancellationToken)
     {
         var setup = service.Runtime.Setup;
-        if (string.IsNullOrWhiteSpace(setup))
+        if (string.IsNullOrWhiteSpace(setup) || context.PreparedSetupServices?.Contains(service.Key) == true)
         {
             return;
         }
@@ -520,6 +520,17 @@ internal sealed class LocalCommandRuntimeAdapter(
         List<AppEndpointContract> endpoints,
         IReadOnlyDictionary<string, IReadOnlyDictionary<string, int>> servicePorts)
     {
+        if (context.PreparationOnly)
+        {
+            // Builds receive scratch data and no app identity, settings, mount or dependency grants.
+            startInfo.Environment.Clear();
+            foreach (var key in new[] { "PATH", "HOME", "SystemRoot", "TEMP", "TMP", "TMPDIR" })
+                if (Environment.GetEnvironmentVariable(key) is { } value) startInfo.Environment[key] = value;
+            foreach (var pair in service.Runtime.Environment) startInfo.Environment[pair.Key] = pair.Value;
+            startInfo.Environment["HOSTY_APP_DATA_DIR"] = context.AppDataPath;
+            startInfo.Environment["HOSTY_APP_CACHE_DIR"] = context.AppCachePath;
+            return;
+        }
         startInfo.Environment["HOSTY_APP_ID"] = context.App.Id;
         startInfo.Environment["HOSTY_APP_SERVICE_KEY"] = service.Key;
         foreach (var environment in BuildCoreEnvironment(config, CorePublicOrigin))

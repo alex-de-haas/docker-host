@@ -21,6 +21,7 @@ internal sealed record WorkspaceOwner(string AppId, DateTimeOffset Installation,
             ? UserId == other.UserId && SessionId == other.SessionId && principal.PrincipalId == other.External!.PrincipalId
             : this == other);
 }
+internal sealed record WorkspaceCoreBinding(string SourceRevision, string ProjectPath);
 internal sealed record WorkspaceApp(string AppId, DateTimeOffset Installation, string? Subpath);
 internal sealed record WorkspacePrepare(string RequestId, string SessionId, string AppId, string? SessionPath, string? TargetBranch = null,
     string? LeaseId = null,
@@ -54,6 +55,8 @@ internal sealed record DevelopmentWorkspace
     public required string? SessionPath { get; init; }
     public SourceReadGrant? SourceGrant { get; init; }
     public string State { get; init; } = "preparing";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public WorkspaceCoreBinding? Core { get; init; }
     public WorkspaceApp[] Apps { get; init; } = [];
     public WorkspaceOperation[] Operations { get; init; } = [];
     public string[] Leases { get; init; } = [];

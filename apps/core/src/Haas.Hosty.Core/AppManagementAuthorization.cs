@@ -152,6 +152,8 @@ internal static class AppManagementAuthorization
         Add(CoreAppPermissions.CoreLogs, "GET /api/core/logs");
         Add(CoreAppPermissions.ConfigureCore,
             "GET /api/core/settings", "PUT /api/core/settings", "PUT /api/core/source",
+            "POST /api/core/source/prepare", "POST /api/core/source/workspaces",
+            "POST /api/development/workspaces/{workspaceId}/activation-plan",
             "GET /api/core/agents", "PUT /api/core/agents/{targetId}",
             "GET /api/global-mounts", "POST /api/global-mounts", "DELETE /api/global-mounts/{name}",
             "GET /api/core/public-origin", "POST /api/core/public-origin/publish", "POST /api/core/public-origin/unpublish",

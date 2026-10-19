@@ -6,6 +6,28 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed class LocalCommandRuntimeAdapterTests
 {
+    [Fact]
+    public async Task PrepareAsync_UsesScratchEnvironmentAndStartDoesNotRepeatSetup()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = CreateTempDirectory();
+        var (adapter, registry, context) = CreateSetupScenario(root,
+            "test -z \"$HOSTY_APP_SERVICE_TOKEN\" && test -z \"$PRIVATE_SETTING\" && echo prepared >> setup-count && echo scratch > \"$HOSTY_APP_DATA_DIR/marker\"", "sleep 30");
+        context = context with { DependencyUrls = new Dictionary<string, string> { ["PRIVATE_SETTING"] = "ordinary-secret" }, AppCachePath = Path.Combine(root, "cache") };
+        var scratch = context with { AppDataPath = Path.Combine(root, "scratch"), PreparationOnly = true };
+        try
+        {
+            var prepared = await adapter.PrepareAsync(scratch, default);
+            Assert.Null(registry.Get(context.App.Id, "app"));
+            Assert.False(Directory.Exists(context.AppDataPath));
+            Assert.Equal("scratch\n", await File.ReadAllTextAsync(Path.Combine(scratch.AppDataPath, "marker")));
+            await adapter.StartAsync(context with { PreparedSetupServices = prepared.SetupServices });
+            Assert.Single(await File.ReadAllLinesAsync(Path.Combine(root, "setup-count")));
+            Assert.NotNull(registry.Get(context.App.Id, "app"));
+        }
+        finally { await adapter.StopAsync(context); TryDeleteDirectory(root); }
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]

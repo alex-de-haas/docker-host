@@ -5,6 +5,21 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed class DockerRuntimeAdapterTests
 {
+    [Fact]
+    public async Task PrepareAsync_ResolvesImageWithoutStoppingOrStartingOrdinaryContainers()
+    {
+        var digest = "sha256:" + new string('d', 64);
+        var runner = new FakeDockerCommandRunner(args => args switch
+        {
+            ["pull", ..] => new(1, "", "local image"),
+            ["image", "inspect", "--format", "{{.Id}}", ..] => new(0, digest, ""),
+            _ => new(0, "[{}]", ""),
+        });
+        var prepared = await CreateAdapter(runner).PrepareAsync(CreateDockerContext(CreateDockerAppRecord(null, null)), default);
+        Assert.Equal(digest, prepared.Artifacts["app"].ImageDigest);
+        Assert.DoesNotContain(runner.Commands, c => c[0] is "run" or "stop" or "rm");
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("0123456789abcdef0123456789abcdef")]

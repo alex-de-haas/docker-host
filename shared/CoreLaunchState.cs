@@ -17,7 +17,16 @@ internal sealed record CoreLaunchIdentity(string Mode, string? ProjectPath, stri
     }
 }
 
-internal sealed record CoreSourceSettings(string? OverridePath, string Revision, string? PendingForInstance = null);
+internal sealed record CoreSourceSettings(string? OverridePath, string Revision, string? PendingForInstance = null,
+    string? RepositoryUrl = null, string? Ref = null,
+    string ProjectPath = CoreSourceDefaults.ProjectPath, bool LegacyCheckout = true, int SchemaVersion = 0,
+    string? ConnectionOwnerId = null, string? ConnectionId = null);
+
+internal static class CoreSourceDefaults
+{
+    public const string ProjectPath = "apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj";
+    public const string UpdateRepository = "https://github.com/alex-de-haas/docker-host";
+}
 internal sealed record CoreLaunchOperation(string Id, string Status, string Mode, string? ProjectPath,
     DateTimeOffset CreatedAt, string? SourceRevision = null, string? Error = null, string? LogPath = null,
     string? GenerationPath = null, int? HelperPid = null, DateTimeOffset? HelperStartedAt = null);

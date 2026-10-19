@@ -274,7 +274,7 @@ internal static class DockerSourceRuntime
         }
         args.AddRange(await PrepareGeneratedFilesAsync(context, service, path, mount, cancellationToken));
         // This is CMD, not an entrypoint override: VPN/firewall initialization still executes first.
-        var command = string.IsNullOrWhiteSpace(service.Runtime.Setup) ? service.Runtime.Command! : $"({service.Runtime.Setup}) && {service.Runtime.Command}";
+        var command = string.IsNullOrWhiteSpace(service.Runtime.Setup) || context.PreparedSetupServices?.Contains(service.Key) == true ? service.Runtime.Command! : $"({service.Runtime.Setup}) && {service.Runtime.Command}";
         return new(args, ["/bin/sh", "-lc", command]);
     }
 }

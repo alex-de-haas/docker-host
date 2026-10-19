@@ -150,6 +150,8 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<CoreLifecycleService>();
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();
         builder.Services.AddSingleton<CoreDevelopmentService>();
+        builder.Services.AddSingleton<WorkspaceActivationPlanner>();
+        builder.Services.AddSingleton<WorkspaceActivationService>();
         // Resolve the executable for independent localCommand runners once. DLL-hosted Core copies
         // its managed output closure instead; both paths keep logs and tree ownership outside Core.
         builder.Services.AddSingleton(new LocalCommandShimOptions(LocalCommandShim.ResolveShimPath()));
@@ -407,6 +409,7 @@ internal static class HostyCoreApplication
         CoreLogEndpoints.Map(app);
         RuntimeResourceEndpoints.Map(app);
         CoreRestartEndpoints.Map(app);
+        CoreWorkspaceEndpoints.Map(app);
         CloudflareConnectionEndpoints.Map(app);
         CloudflarePublicationEndpoints.Map(app);
         SourceEndpoints.Map(app);

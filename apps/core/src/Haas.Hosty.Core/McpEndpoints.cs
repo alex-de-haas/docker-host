@@ -327,7 +327,7 @@ internal sealed class HostyCoreTools
         {
             if (grants?.CoreRestart != true) return CoreJson.Text(new McpError("The mcp:core-restart scope is required."));
             outcome = "failed";
-            var operation = await development.RestartAsync(new(requestId, instance, SourceRevision: sourceRevision), cancellationToken);
+            var operation = await development.RestartAsync(new(requestId, instance, SourceRevision: sourceRevision), cancellationToken, grants.ActorUserId);
             outcome = operation.Status;
             return CoreJson.Text(operation);
         }

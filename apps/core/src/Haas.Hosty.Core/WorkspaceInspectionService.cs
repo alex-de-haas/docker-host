@@ -2,7 +2,7 @@ namespace Haas.Hosty.Core;
 
 internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService workspaces, AppRegistryStore apps,
     IClock clock, PublicationService? publications = null, UserDirectoryStore? users = null,
-    UserConnectionService? connections = null, PrivateSourceService? privateSources = null,
+    UserConnectionService? connections = null, ISourceGitAccess? privateSources = null,
     LocalCommandProcessRegistry? processes = null)
 {
     public async Task<WorkspaceInventory> ListAsync(string userId, CancellationToken ct)
@@ -67,6 +67,7 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
 
     private async Task RequireSourceAsync(DevelopmentWorkspace tree, string userId, IReadOnlyList<AppRecord> installed, CancellationToken ct)
     {
+        await workspaces.RequireCoreSourceAsync(tree, userId, ct);
         var repository = workspaces.LogicalRepositoryIdentity(tree.Repository);
         if (tree.SourceGrant is not null)
         {

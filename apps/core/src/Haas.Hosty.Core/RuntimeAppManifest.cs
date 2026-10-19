@@ -1733,6 +1733,13 @@ internal interface IAppRuntimeAdapter
 // Implemented by a runtime adapter that can resolve a compiled artifact's mutable pointer to its
 // immutable identity remotely, without materializing it. The lifecycle service uses it at plan time
 // to surface an artifact-digest change even when the manifest is byte-identical.
+internal interface IRuntimePreparation
+{
+    Task<RuntimePreparation> PrepareAsync(RuntimeLifecycleContext context, CancellationToken ct);
+}
+
+internal sealed record RuntimePreparation(IReadOnlyDictionary<string, ArtifactLock> Artifacts, string[] SetupServices);
+
 internal interface IImageDigestResolver
 {
     Task<string?> ResolveRemoteDigestAsync(RuntimeDockerImage image, CancellationToken cancellationToken = default);
@@ -1813,7 +1820,7 @@ internal sealed class ProcessDockerCommandRunner(TimeSpan? timeout = null) : IDo
     }
 }
 
-internal sealed class DockerRuntimeAdapter(
+internal sealed partial class DockerRuntimeAdapter(
     HostyCoreRuntimeConfig config,
     AppServiceTokenService serviceTokens,
     ILogger<DockerRuntimeAdapter> logger,
@@ -1832,7 +1839,7 @@ internal sealed class DockerRuntimeAdapter(
     // Optional so existing direct constructions stay valid; DI supplies it, and without it the startup
     // env baseline stands in.
     CorePublicOriginResolver? corePublicOrigin = null,
-    DockerCoreListener? dockerCoreListener = null) : IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
+    DockerCoreListener? dockerCoreListener = null) : IAppRuntimeAdapter, IRuntimePreparation, IImageDigestResolver, IRunningContainerProbe
 {
     // Resolved per container create rather than once: a saved origin must reach the next app that starts,
     // not only the apps started after the next Core restart.
@@ -3399,7 +3406,8 @@ internal sealed record RuntimeLifecycleContext(
     Func<string, string?, Task>? ReportUpdateProgress = null,
     IReadOnlyList<RuntimeSelectedService>? GraphServices = null,
     [property: System.Text.Json.Serialization.JsonIgnore]
-    Func<string, string?, Task>? ReportLaunchProgress = null)
+    Func<string, string?, Task>? ReportLaunchProgress = null,
+    string[]? PreparedSetupServices = null, bool PreparationOnly = false)
 {
     public IReadOnlyList<RuntimeSelectedService> AllServices => GraphServices ?? Manifest.Services;
 }

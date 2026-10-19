@@ -17,7 +17,11 @@ internal static class CoreRestartEndpoints
         app.MapPut("/api/core/source", (HttpRequest request, CoreSourceRequest input, UserDirectoryStore users,
             IClock clock, CoreDevelopmentService development, CancellationToken cancellationToken) =>
             CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,
-                () => HandleAsync(async () => CoreJson.Json(await development.SaveAsync(input, cancellationToken))),
+                () => HandleAsync(async () =>
+                {
+                    var actor = await CoreSessionAuthorization.TryResolveSessionAsync(request, users, clock, cancellationToken);
+                    return CoreJson.Json(await development.SaveAsync(input, cancellationToken, actor?.Id));
+                }),
                 requireCsrf: true, cancellationToken: cancellationToken));
 
         app.MapPost("/api/core/restart", (HttpRequest request, CoreRestartRequest input, UserDirectoryStore users,
@@ -29,7 +33,7 @@ internal static class CoreRestartEndpoints
                     var outcome = "failed";
                     try
                     {
-                        var operation = await development.RestartAsync(input, cancellationToken);
+                        var operation = await development.RestartAsync(input, cancellationToken, actor?.Id);
                         outcome = operation.Status;
                         return CoreJson.Json(operation, statusCode: 202);
                     }
@@ -87,6 +91,8 @@ internal static class CoreRestartEndpoints
     private static async Task<IResult> HandleAsync(Func<Task<IResult>> action)
     {
         try { return await action(); }
+        catch (AppLifecycleException ex)
+        { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: 409); }
         catch (ArgumentException ex)
         { return CoreJson.Json(new ErrorResponse("invalid_request", ex.Message), statusCode: 400); }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)

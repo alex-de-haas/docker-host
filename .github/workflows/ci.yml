@@ -103,6 +103,8 @@ jobs:
               - 'package.json'
               - 'global.json'
               - 'Directory.Build.props'
+              - 'Directory.Build.targets'
+              - 'scripts/HostyBuildIdentity.cs'
               - '.github/workflows/ci.yml'
 
             app_sdk:
