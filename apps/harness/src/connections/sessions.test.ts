@@ -245,11 +245,14 @@ describe("sessions with provider connections", () => {
     manager = newManager();
     await manager.postMessage(first.id, "resume");
     await waitFor(async () => calls.some((c) => c.resume === nativeId));
-    // The resume call starts the turn; wait for its persisted result before checking
-    // that a rejected follow-up leaves the transcript unchanged.
-    await waitFor(async () =>
-      (await store.readEvents(first.id)).filter((event) => event.type === "result").length === 2,
-    );
+    // The result is followed by a persisted idle status. Wait for both before
+    // checking that a rejected follow-up leaves the complete transcript unchanged.
+    await waitFor(async () => {
+      const events = await store.readEvents(first.id);
+      const last = events.at(-1);
+      return events.filter((event) => event.type === "result").length === 2
+        && last?.type === "session_status" && last.status === "idle";
+    });
     expect((await manager.getSession(first.id))!.connectionId).toBe(claude.id);
     values.delete(claude.secretKey);
     const count = (await store.readEvents(first.id)).length;
