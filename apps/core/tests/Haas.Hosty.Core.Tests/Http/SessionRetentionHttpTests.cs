@@ -81,13 +81,36 @@ public sealed class SessionRetentionHttpTests
         Assert.Equal("deleted", (await deleted.Content.ReadFromJsonAsync(CoreJson.TypeInfo<SessionRetentionSnapshot>()))!.Workflow!.State);
         Assert.False(Directory.Exists(tree.Path));
         Assert.False(Directory.Exists(stale.DataRoot)); Assert.False(Directory.Exists(accepted.DataRoot));
-        var journal = (await JsonStorage.ReadAsync<WorkspaceCleanupJob>(jobPath))!;
-        Assert.NotEqual(staleRequest, journal.Resources.Single(r => r.Id == stale.Id).RequestId);
-        Assert.Equal(acceptedRequest, journal.Resources.Single(r => r.Id == accepted.Id).RequestId);
-        Assert.Equal(accepted.Revision, journal.Resources.Single(r => r.Id == accepted.Id).Revision);
+        Assert.False(File.Exists(jobPath));
+        Assert.Empty((await workspaces.ListAsync(owner, true, default)).Workspaces);
+        Assert.Null(await workspaces.ReadDeletionAsync(tree.WorkspaceId, default));
+        var staleResult = await environments.ReadAsync(new(owner.UserId), stale.Id, default);
+        Assert.DoesNotContain(staleResult.Operations, o => o.Id == CoreEnvironmentService.RequestId(staleRequest));
+        Assert.Contains(staleResult.Operations, o => o.Kind == "finish" && o.State == "succeeded");
+        var acceptedResult = await environments.ReadAsync(new(owner.UserId), accepted.Id, default);
+        Assert.Single(acceptedResult.Operations, o => o.Id == CoreEnvironmentService.RequestId(acceptedRequest));
+        Assert.True((await (await Read()).Content.ReadFromJsonAsync(CoreJson.TypeInfo<SessionRetentionSnapshot>()))!.WorkspaceAbsent);
         Assert.Equal(HttpStatusCode.OK, (await Read(command: delete)).StatusCode);
         await apps.UpsertAppAsync(app with { InstalledAt = now.AddSeconds(1) });
         Assert.Equal("chat", (await (await Read()).Content.ReadFromJsonAsync(CoreJson.TypeInfo<SessionRetentionSnapshot>()))!.Kind);
+        await apps.UpsertAppAsync(app);
+        // Startup recovery migrates legacy terminal records without touching active source.
+        var legacyOwner = owner with { SessionId = "legacy-deleted" };
+        var legacy = await workspaces.PrepareAsync(legacyOwner, new(Guid.NewGuid().ToString(), legacyOwner.SessionId, "source.app", "/assistant?session=legacy-deleted"), default);
+        await workspaces.ChangeWorkflowAsync(legacyOwner, owner.UserId, "complete", new(Guid.NewGuid().ToString(), 0), new Dictionary<string, string>(), default);
+        await workspaces.ChangeWorkflowAsync(legacyOwner, owner.UserId, "delete", new(Guid.NewGuid().ToString(), 1), new Dictionary<string, string>(), default);
+        var activeOwner = owner with { SessionId = "still-active" };
+        var active = await workspaces.PrepareAsync(activeOwner, new(Guid.NewGuid().ToString(), activeOwner.SessionId, "source.app", "/assistant?session=still-active"), default);
+        using (var recovery = new WorkspaceDeletionRecovery(services.GetRequiredService<WorkspaceCleanupService>(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkspaceDeletionRecovery>.Instance))
+        {
+            await recovery.StartAsync(default);
+            await recovery.ExecuteTask!;
+        }
+        Assert.Empty((await workspaces.ListAsync(legacyOwner, true, default)).Workspaces);
+        Assert.False(Directory.Exists(legacy.Path));
+        Assert.True(Directory.Exists(active.Path));
+        Assert.Single((await workspaces.ListAsync(activeOwner, true, default)).Workspaces);
         await users.UpdateAsync(state => state with { Users = state.Users.Select(u => u with { Disabled = true }).ToArray() });
         Assert.Equal(HttpStatusCode.Forbidden, (await Read()).StatusCode);
     }

@@ -84,7 +84,7 @@ internal sealed record SandboxView(string Id, string AppId, SandboxActor Owner, 
     SandboxContext? Context, long Revision, string Generation, string DataRevision, string State,
     string? PreviewUrl, string? ErrorCode, SandboxLimits Limits, SandboxOperation[] Operations, SandboxUser[] Users, SandboxStorageObservation? Storage = null, string[]? Viewers = null, SandboxPreviewEndpoint[]? Endpoints = null, SandboxMetrics? Metrics = null);
 internal sealed record SandboxInventory(SandboxView[] Instances);
-internal sealed record SandboxReceipt(string Id, SandboxActor Owner, DateTimeOffset DisposedAt, SandboxOperation[] Operations, string AppId = "");
+internal sealed record SandboxReceipt(string Id, SandboxActor Owner, DateTimeOffset DisposedAt, SandboxOperation[] Operations, string AppId = "", SandboxContext? Context = null);
 internal sealed record SandboxSeedRecord(string Revision, SandboxSeedFile[] Files, SandboxUser[] Users);
 internal sealed record SandboxAllocation(string RequestId, string Fingerprint, string InstanceId);
 internal sealed record SandboxAllocationState(SandboxAllocation[] Allocations);

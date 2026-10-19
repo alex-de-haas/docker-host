@@ -11,6 +11,8 @@ namespace Haas.Hosty.Core;
 
 internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateSourceService? privateSources = null)
 {
+    internal event Action<string>? InstalledManifestSaved;
+
     private const string ManifestFileName = "manifest.json";
     private const string SupportedSchemaVersion = "app.0.1";
     private const int MaxManifestBytes = 1024 * 1024;
@@ -144,6 +146,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         await JsonStorage.WriteTextAsync(targetPath, selection.ManifestJson, cancellationToken);
         // Same-size atomic replacements can retain the timestamp on fast filesystems.
         localManifestCache.TryRemove(Path.GetFullPath(targetPath), out _);
+        InstalledManifestSaved?.Invoke(Path.GetFullPath(targetPath));
     }
 
     // Per-file caps for vendored display assets (D7). Mirrors the catalog tooling.

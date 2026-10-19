@@ -131,3 +131,29 @@ it("retains an allocated app when Core has not reconciled its workspace and expi
   await store.saveRecord(record);
   expect(await manager.sweepRetention(now)).toEqual([record.id]);
 });
+
+
+it("reconciles a fully removed workspace after a lost Delete response and Harness restart", async () => {
+  const record = await old();
+  vi.mocked(core.retention).mockImplementation(async (_id, _user, cleanup) => { if (cleanup) throw new Error("response lost"); return completed; });
+  expect(await manager.sweepRetention(now)).toEqual([]);
+  expect((await store.readRecord(record.id))!.retentionCleanup).toBeDefined();
+  await manager.shutdown(); manager = build();
+  vi.mocked(core.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true, workspaceAbsent: true });
+  expect(await manager.sweepRetention(now)).toEqual([record.id]);
+});
+it("allows manual conversation deletion only after Core confirms workspace absence and finished resources", async () => {
+  const record = await old({ publicationReferences: [{ workspaceId: "x", repository: "repo", url: "https://example.test/pr" }] });
+  await expect(manager.deleteSession(record.id, "admin")).rejects.toThrow();
+  vi.mocked(core.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: false, workspaceAbsent: true });
+  await expect(manager.deleteSession(record.id, "admin")).rejects.toThrow();
+  vi.mocked(core.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true, workspaceAbsent: true });
+  expect(await manager.deleteSession(record.id, "admin")).toBe(true);
+});
+it("keeps completed-workspace retention Off after its records have been removed", async () => {
+  const record = await old({ publicationReferences: [{ workspaceId: "x", repository: "repo", url: "https://example.test/pr" }] });
+  await settings.update({ retention: { ordinaryDays: 2, completedWorkspaceDays: null } });
+  vi.mocked(core.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true, workspaceAbsent: true });
+  expect(await manager.sweepRetention(now)).toEqual([]);
+  expect((await manager.sessionRetention(record.id, now)).state).toBe("off");
+});

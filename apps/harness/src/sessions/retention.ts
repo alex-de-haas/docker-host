@@ -23,6 +23,16 @@ export function hasResourceHistory(record: SessionRecord): boolean {
   return !!(record.appCreations?.some(o => o.state !== "rejected") || record.developmentLease || record.developmentWorkspaces?.length || record.publicationReferences?.length || record.coreEnvironments?.length
     || record.sandboxInstances?.length || record.coreEnvironmentOperations?.length || record.sandboxOperations?.length);
 }
+// Core deliberately retains no successful Delete receipt. Only its explicit absence
+// confirmation can reconcile local history; older/unavailable Core remains fail-closed.
+export function reconcileRetentionSnapshot(record: SessionRecord, snapshot: RetentionSnapshot): RetentionSnapshot {
+  const workspaceHistory = record.developmentLease || record.developmentWorkspaces?.length
+    || record.publicationReferences?.length || record.retentionCleanup;
+  if (!snapshot.workspaceAbsent || snapshot.workflow || !workspaceHistory) return snapshot;
+  return { ...snapshot, kind: "workspace", workflow: {
+    state: "deleted", revision: 0, completedAt: record.retention?.completedAt ?? record.updatedAt,
+  } };
+}
 export function retentionStatus(record: SessionRecord, policy: RetentionSettings, snapshot: RetentionSnapshot, now: Date): RetentionStatus {
   const base = { observedAt: now.toISOString(), kind: snapshot.kind };
   if (retentionBusy(record)) return { ...base, state: "protected", message: "Active work, pending input or unresolved operations are retained." };

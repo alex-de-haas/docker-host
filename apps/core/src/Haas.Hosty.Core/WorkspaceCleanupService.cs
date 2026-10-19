@@ -8,7 +8,7 @@ internal sealed record WorkspaceCleanupJob(string WorkspaceId, string UserId, Wo
 internal sealed record WorkspacePreviews(CoreEnvironmentView[] Environments, SandboxView[] Instances, Dictionary<string, CoreEnvironmentApplications> Applications);
 
 // Coordinates existing resource owners. It does not implement another container supervisor.
-internal sealed class WorkspaceCleanupService(CoreDataPaths paths, WorkspaceInspectionService inspection,
+internal sealed partial class WorkspaceCleanupService(CoreDataPaths paths, WorkspaceInspectionService inspection,
     DevelopmentWorkspaceService workspaces, PublicationService publications, AppRegistryStore apps,
     CoreEnvironmentStore environments, CoreEnvironmentService environmentService, CoreEnvironmentAccess access,
     SandboxStore sandboxes, SandboxService sandboxService, SandboxOperations sandboxOperations)
@@ -27,7 +27,7 @@ internal sealed class WorkspaceCleanupService(CoreDataPaths paths, WorkspaceInsp
     {
         var owner = await inspection.WorkflowOwnerAsync(workspaceId, userId, ct);
         var children = (await environments.ListAsync(ct)).Where(e => Belongs(e.Owner, e.Request.Context, owner, workspaceId) && e.State != "finished").ToArray();
-        var instances = (await sandboxes.ListAsync(ct)).Where(s => Belongs(s.Owner, s.Request.Context, owner, workspaceId)).ToArray();
+        var instances = (await sandboxes.ListAsync(ct)).Where(s => Belongs(s.Owner, s.Request.Context, owner, workspaceId) && s.State != "disposed").ToArray();
         if (children.Length > 0) await RequirePermission(appId, CoreAppPermissions.CoreEnvironmentsRead, ct);
         if (instances.Length > 0) await RequirePermission(appId, CoreAppPermissions.SandboxesRead, ct);
         var applications = new Dictionary<string, CoreEnvironmentApplications>();
@@ -63,10 +63,29 @@ internal sealed class WorkspaceCleanupService(CoreDataPaths paths, WorkspaceInsp
         WorkspaceWorkflowCommand input, CancellationToken ct)
     {
         if (!Guid.TryParseExact(input.RequestId, "D", out var request)) throw DevelopmentWorkspaceService.Error("request_invalid", "Use a UUID requestId.");
-        var owner = await inspection.WorkflowOwnerAsync(workspaceId, userId, ct);
+        DevelopmentWorkspaceService.ValidateDelete(workspaceId, input);
         var gate = gates.GetOrAdd(workspaceId, _ => new(1, 1)); await gate.WaitAsync(ct);
         try
         {
+            WorkspaceOwner? owner;
+            try { owner = await inspection.WorkflowOwnerAsync(workspaceId, userId, ct); }
+            catch (AppLifecycleException ex) when (ex.Code == "workspace_not_found")
+            {
+                owner = (await workspaces.ReadDeletionAsync(workspaceId, ct))?.Owner;
+                if (owner is not null && owner.UserId != userId)
+                    throw DevelopmentWorkspaceService.Error("forbidden", "Workspace deletion belongs to another user.");
+            }
+            if (owner is null)
+            {
+                await workspaces.RequireAbsentAsync(workspaceId, ct);
+                await RequireFinishedResourcesAsync(workspaceId, null, ct);
+                return DevelopmentWorkspaceService.DeletedResult(input);
+            }
+            if ((await workspaces.WorkflowAsync(owner, ct)).State == "deleted" || await workspaces.ReadDeletionAsync(workspaceId, ct) is not null)
+            {
+                await FinalizeAsync(owner, ct);
+                return DevelopmentWorkspaceService.DeletedResult(input);
+            }
             var heads = await publications.MergedWorkspaceHeadsAsync(owner, ct);
             var state = await workspaces.ChangeWorkflowAsync(owner, userId, "delete", input, heads, ct, prepareOnly: true);
             if (state.State == "deleted") return state;
@@ -76,7 +95,7 @@ internal sealed class WorkspaceCleanupService(CoreDataPaths paths, WorkspaceInsp
                 throw DevelopmentWorkspaceService.Error("request_conflict", "This cleanup request belongs to another workspace or revision.");
             job ??= new(workspaceId, userId, input, []);
             var children = (await environments.ListAsync(ct)).Where(e => Belongs(e.Owner, e.Request.Context, owner, workspaceId) && e.State != "finished").ToArray();
-            var instances = (await sandboxes.ListAsync(ct)).Where(s => Belongs(s.Owner, s.Request.Context, owner, workspaceId)).ToArray();
+            var instances = (await sandboxes.ListAsync(ct)).Where(s => Belongs(s.Owner, s.Request.Context, owner, workspaceId) && s.State != "disposed").ToArray();
             if (children.Length > 0) await RequirePermission(appId, CoreAppPermissions.CoreEnvironmentsManage, ct);
             if (instances.Length > 0) await RequirePermission(appId, CoreAppPermissions.SandboxesManage, ct);
             var resources = job.Resources.ToList();
@@ -128,7 +147,9 @@ internal sealed class WorkspaceCleanupService(CoreDataPaths paths, WorkspaceInsp
             // Fresh verification still applies after slow shutdowns. Core preserves released
             // worktree receipts, so a partially successful cleanup can safely resume here.
             heads = await publications.MergedWorkspaceHeadsAsync(owner, ct);
-            return await workspaces.ChangeWorkflowAsync(owner, userId, "delete", input, heads, ct);
+            state = await workspaces.ChangeWorkflowAsync(owner, userId, "delete", input, heads, ct);
+            await FinalizeAsync(owner, ct);
+            return state;
         }
         finally { gate.Release(); }
     }

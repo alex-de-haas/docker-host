@@ -492,3 +492,22 @@ it("does not start a multi-repository turn when the second source lease cannot b
   expect(starts).toHaveLength(0);
   expect((await store.readRecord(record.id))!.developmentWorkspaces).toHaveLength(2);
 });
+
+
+it.each(["completed", "deferred"])("requires explicit Resume before a new turn in a %s workspace", async state => {
+  const record = await manager.createSession({ createdBy: "admin" });
+  vi.mocked(client.call).mockResolvedValue({ state, revision: 2 });
+  await expect(manager.postMessage(record.id, "continue", "fresh")).rejects.toMatchObject({ code: "workspace_closed" });
+  expect(starts).toHaveLength(0);
+});
+
+it("coordinates a session Pause through admission, stopping and confirmation", async () => {
+  const record = await manager.createSession({ createdBy: "admin" });
+  const input = { requestId: "25d52b79-385d-41a0-b7df-388f84aed559", expectedRevision: 0 };
+  vi.mocked(client.call).mockImplementation(async (_id, _token, action) => action === "workflow-pause"
+    ? { state: "in-progress", closure: "closing", operations: [{ id: input.requestId, state: "pending" }] }
+    : action === "workflow-pause-confirm" ? { state: "in-progress", closure: "closed", revision: 1 } : { workspaces: [] });
+  expect(await manager.workspaceAction(record.id, "workflow-pause", input, "fresh", "admin")).toMatchObject({ closure: "closed" });
+  expect(client.call).toHaveBeenCalledWith(record.id, "fresh", "workflow-pause", input);
+  expect(client.call).toHaveBeenCalledWith(record.id, "fresh", "workflow-pause-confirm", input);
+});

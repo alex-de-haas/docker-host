@@ -468,6 +468,18 @@ public sealed class SandboxServiceTests
         Assert.Equal(explicitLimits, (await f.Service.PlanAsync(f.Actor, f.Request, default)).Request.Limits);
     }
 
+    [Fact]
+    public async Task DisposalReceiptPreservesWorkspaceContextAcrossLostResponseAndReplay()
+    {
+        using var f = new Fixture(); var context = new SandboxContext(WorkspaceId: new string('a', 64));
+        var item = await f.Prepare(f.Request with { Context = context });
+        var input = new SandboxCommand(Guid.NewGuid().ToString(), item.Revision);
+        await f.Service.CommandAsync(f.Actor, item.Id, "dispose", input, default);
+        var restarted = f.NewService();
+        Assert.Equal(context, (await restarted.ReadAsync(f.Actor, item.Id, default)).Context);
+        Assert.Equal(context, (await restarted.CommandAsync(f.Actor, item.Id, "dispose", input, default)).Context);
+    }
+
     private sealed class Fixture : IDisposable
     {
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "hosty-sandbox-test-" + Guid.NewGuid().ToString("N"));
