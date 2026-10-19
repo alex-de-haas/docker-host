@@ -25,7 +25,7 @@ export function WorkspaceActivationPanel({ request, storageKey, onlyApp }: {
     try { const value = JSON.parse(localStorage.getItem(storageKey + ":applies:v1") ?? "{}"); return value && typeof value === "object" && !Array.isArray(value) ? value : {}; } catch { return {}; }
   });
   const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
-  const [returnApps, setReturnApps] = useState<string[]>([]); const [returnCore, setReturnCore] = useState(false); const [accept, setAccept] = useState(false);
+  const [returnApps, setReturnApps] = useState<string[]>([]); const [returnCore, setReturnCore] = useState(false); const [acceptedActivation, setAcceptedActivation] = useState<string | null>(null);
   const executing = useRef(false);
   const pendingRequest = useRef(pending);
   const applyRequests = useRef(applies);
@@ -62,6 +62,7 @@ export function WorkspaceActivationPanel({ request, storageKey, onlyApp }: {
     return () => abort.abort();
   }, [request, pending, rememberObservedApply]);
   const active = detail?.status.activation.id === id ? detail.status.activation : inventory.find(a => a.id === id);
+  const accept = !!active && acceptedActivation === active.id;
   const inTransition = !!active && !["active", "returned", "cancelled"].includes(active.phase);
   const preparation = active?.phase === "preparing" ? applies[active.id] : undefined;
   const selectedReturnApps = returnApps.filter(app => active?.apps.includes(app) && !active.returnedApps?.includes(app));
@@ -97,7 +98,7 @@ export function WorkspaceActivationPanel({ request, storageKey, onlyApp }: {
     if (executing.current) return; executing.current = true; setBusy(true); setError(""); remember(action);
     const previousId = id;
     const operationId = (action.body.activationId ?? action.body.requestId) as string;
-    if (operationId) setId(operationId);
+    if (operationId) { if (operationId !== id) setAcceptedActivation(null); setId(operationId); }
     try {
       await request(action.kind, action.body);
       rememberApply(action); remember(null); setReview(null); setPreparationReview(null); await load();
@@ -138,7 +139,7 @@ export function WorkspaceActivationPanel({ request, storageKey, onlyApp }: {
       {review && <><p className="text-xs">Target Core: {review.plan.coreInstance}</p><ul className="list-disc pl-5 text-sm">{review.consequences.map(c => <li key={c}>{c}</li>)}</ul>
         <button className={button} disabled={!review.plan.participants.some(p => p.selected)} onClick={() => void run({ kind: "apply", body: preparationReview ? { ...preparationReview.body, planDigest: review.planDigest } : { requestId: crypto.randomUUID(), selection, planDigest: review.planDigest } })}>{preparationReview ? "Retry reviewed preparation" : "Apply reviewed selection"}</button></>}
     </fieldset>}
-    {inventory.length > 0 && <label className="block text-sm">Retained activation <select className="w-full rounded border bg-background p-1" value={id ?? ""} onChange={e => { setId(e.target.value); setReview(null); setPreparationReview(null); setReturnApps([]); setReturnCore(false); }}>
+    {inventory.length > 0 && <label className="block text-sm">Retained activation <select className="w-full rounded border bg-background p-1" value={id ?? ""} onChange={e => { setId(e.target.value); setReview(null); setPreparationReview(null); setReturnApps([]); setReturnCore(false); setAcceptedActivation(null); }}>
       {inventory.map(a => <option key={a.id} value={a.id}>{a.phase} · {a.id}</option>)}</select></label>}
     {active && <div className="space-y-2 text-sm"><p role="status">{active.phase} · {detail?.status.helper?.state ?? "Awaiting helper"}</p><code className="break-all text-xs">{active.id}</code>
       {[active.error, detail?.status.helper?.error].filter(Boolean).map((e, i) => <p key={i} role="alert">{e}</p>)}
@@ -150,7 +151,7 @@ export function WorkspaceActivationPanel({ request, storageKey, onlyApp }: {
       {!["returned", "cancelled"].includes(active.phase) && <fieldset className="space-y-2" disabled={busy || !!pending}><legend className="font-medium">Return to previous runtime</legend>
         {active.apps.filter(a => !(active.returnedApps ?? []).includes(a)).map(a => <label key={a} className="flex gap-2"><input type="checkbox" checked={returnApps.includes(a)} onChange={e => setReturnApps(old => e.target.checked ? [...old, a] : old.filter(id => id !== a))} />{a}</label>)}
         {active.coreProject && !active.coreReturned && <label className="flex gap-2"><input type="checkbox" checked={returnCore} onChange={e => setReturnCore(e.target.checked)} />Core — captured previous executable</label>}
-        <label className="flex gap-2"><input type="checkbox" checked={accept} onChange={e => setAccept(e.target.checked)} />I accept compatibility of current data with the selected previous runtimes. No data is restored.</label>
+        <label className="flex gap-2"><input type="checkbox" checked={accept} onChange={e => setAcceptedActivation(e.target.checked ? active.id : null)} />I accept compatibility of current data with the selected previous runtimes. No data is restored.</label>
         <button className={button} disabled={(!selectedReturnCore && selectedReturnApps.length === 0) || !accept} onClick={() => void run({ kind: "return", body: { activationId: active.id, return: { requestId: crypto.randomUUID(), apps: selectedReturnApps, core: selectedReturnCore, acceptDataChanges: accept } } })}>Return selected participants</button>
       </fieldset>}
     </div>}

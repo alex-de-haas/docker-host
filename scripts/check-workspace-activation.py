@@ -76,13 +76,21 @@ def request(path, body=None, method=None, control=False):
         raise RuntimeError(f'{path}: {error.code} {error.read().decode()[:1500]}') from None
 def wait_for(fn, seconds=90):
     deadline=time.time()+seconds
+    last_error=None
     while time.time()<deadline:
         try:
             value=fn()
             if value: return value
-        except (FileNotFoundError, json.JSONDecodeError, urllib.error.URLError, ConnectionError): pass
+            last_error=None
+        except PermissionError as error:
+            # Windows can briefly deny receipt reads while Core atomically replaces its journal.
+            # Keep the existing deadline and retain the error/path if access never recovers.
+            if not windows: raise
+            last_error=error
+        except (FileNotFoundError, json.JSONDecodeError, urllib.error.URLError, ConnectionError) as error:
+            last_error=error
         time.sleep(.04)
-    raise TimeoutError('Timed out waiting for fixture state')
+    raise TimeoutError('Timed out waiting for fixture state') from last_error
 
 try:
     files=run(['git','ls-files','-z','--cached','--others','--exclude-standard'],workspace).split('\0')
@@ -180,8 +188,7 @@ try:
     deadline=time.time()+180
     interrupted=False
     while scenario != 'return' and time.time()<deadline:
-        a=json.loads(activation_path.read_text())
-        helper=json.loads(helper_path.read_text())
+        a,helper=wait_for(lambda: (json.loads(activation_path.read_text()), json.loads(helper_path.read_text())),5)
         target=(a['phase']=='core-stopping') if scenario=='stop-failure' else (helper['state']=='running' and a['phase']=='prepared' and list((root/'core/builds').glob('*/build.log')))
         if target:
             owned_pids.add(helper['pid'])

@@ -174,7 +174,10 @@ to Docker. A live manifest edit must pass the existing separate update review be
 Each selected app receives a deterministic child ID in its existing development-mode journal, with
 its prior runtime, source, artifacts, initial running state and installation identity. Preparation
 resolves Docker image/build artifacts and native prebuilt artifacts, and executes declared setup in
-scratch data/cache context. Docker source cache volumes and generated-file overlays use a separate
+scratch data/cache context. Docker setup mounts only the selected service's declared data/cache
+targets from that scratch context and injects their container path variables after static environment
+values. It does not mount another service's targets or use ordinary app cache as a fallback.
+Docker source cache volumes and generated-file overlays use a separate
 activation identity inside the owned app cache. Preparation, candidate start and active restarts reuse
 that cache; Return selects the untouched previous runtime cache. No ordinary app data, identity token, configured settings or dependency
 credentials are injected into preparation. A build recipe is trusted code with its existing host/source
@@ -285,7 +288,8 @@ review of the same selection after source repair, preserving its original activa
 The client lists durable groups, observes helper and child phases, and offers boundary pause, original-request
 resume and selected-participant Return. Visible in-progress panels refresh every three seconds;
 visibility restoration and explicit refresh recover missed progress. Terminal groups stop recurring
-requests. The helper remains the operation owner. If returning to an older Core removes these APIs,
+requests. Changing the retained activation clears the Return selection and compatibility acknowledgement.
+The helper remains the operation owner. If returning to an older Core removes these APIs,
 the retained ID and CLI status command remain available for diagnosis.
 
 ## Return And Runtime Consumers
@@ -361,7 +365,7 @@ used by Shell or another app in a shared worktree.
   platform-specific coordinated handover and Harness/browser acceptance independently of unit tests.
 
 - Verify pre-stop setup/compile failures preserve running processes; verify repair leases, original-request retry, and explicit fresh review with the same ID after source repair. Reject selection/authority drift, stale review and review refresh beyond released preparation; retain accepted apply bodies through UI remounts. Verify cleanup ignores unrelated completed journals, preserves active operation ownership and resumes a partially released child without lifecycle effects.
-- Verify native preparation uses scratch context, mixed dependency order, selected app backups, stopped-Core snapshot hashes, exact replacement identity and retained unrelated processes.
+- Verify native and Docker setup use scratch data/cache context and target environment precedence; verify service scoping, missing cache refusal, mixed dependency order, selected app backups, stopped-Core snapshot hashes, exact replacement identity and retained unrelated processes.
 
 - Interrupt helpers after app apply, Core Stop and candidate Start; reconcile the original request without repeating completed effects or claiming readiness for a different target.
 - Verify cancellation boundaries, stale helper attempts, local-control authorization, dead previous-Core recovery and source/data preservation on isolated native instances.
@@ -369,11 +373,11 @@ used by Shell or another app in a shared worktree.
 - Verify individual/group Return, compatibility refusal, partial results, previous-executable mutation,
   lost-response replay, revoked authority and source/data preservation.
 - Exercise policy changes between queue and dispatch, confirmed native exit before lease release,
-  resumed UI requests, selection invalidation and explicit Core compatibility acknowledgement.
+  resumed UI requests, selection invalidation and activation-specific compatibility acknowledgement.
 - Run `python3 scripts/check-workspace-activation.py . return --managed` on a host with Docker after
   Debug Core/CLI builds. The fixture performs normal setup/password login, reviewed HTTP activation,
   exact-target Return and replay, and verifies parent-owned Finish and process/port cleanup.
-- Run the native `return` and `auto` scenarios on macOS, Windows and Linux; CI defines that matrix.
+- Run the native `return` and `auto` scenarios on macOS, Windows and Linux; CI defines that matrix. Receipt polling retries transient Windows access denial within its existing deadline and preserves the final I/O cause if access does not recover.
 - Exercise managed Git checkout, inspection and removal with paths longer than 260 characters, including Windows with global/system Git configuration disabled.
   Passing on one operating system does not establish another platform's process-control result.
 

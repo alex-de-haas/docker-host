@@ -232,3 +232,60 @@ it.each(["returned", "cancelled"])("clears confirmed apply metadata after %s whi
   expect(request.mock.calls.find(([kind]) => kind === "return")![1]).toEqual(uncertain.body);
   expect(localStorage.getItem("test:v1")).toBeNull();
 });
+
+
+it.each(["notes", "Core — captured previous executable"])("requires fresh compatibility acceptance after switching retained activations for %s", async participant => {
+  const activations = ["first-activation", "second-activation"].map(id => ({ id, phase: "active", apps: ["notes"], coreProject: "Core.csproj" }));
+  request.mockImplementation(async (kind, body) => kind === "list" ? activations : kind === "return" ? {}
+    : { status: { activation: activations.find(a => a.id === body.activationId) }, children: [] });
+  await render();
+  const checkbox = (text: string) => [...container.querySelectorAll("label")].find(l => l.textContent === text)!.querySelector<HTMLInputElement>("input")!;
+  const acceptance = "I accept compatibility of current data with the selected previous runtimes. No data is restored.";
+  const selectActivation = async (id: string) => act(async () => {
+    const retained = [...container.querySelectorAll("label")].find(l => l.textContent?.startsWith("Retained activation"))!.querySelector("select")!;
+    retained.value = id; retained.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await act(async () => checkbox(participant).click());
+  await act(async () => checkbox(acceptance).click());
+  expect(button("Return selected participants").disabled).toBe(false);
+  await selectActivation("first-activation");
+  expect(checkbox(acceptance).checked).toBe(false);
+  await act(async () => checkbox(participant).click());
+  expect(button("Return selected participants").disabled).toBe(true);
+  await act(async () => button("Return selected participants").click());
+  expect(request.mock.calls.some(([kind]) => kind === "return")).toBe(false);
+  await act(async () => checkbox(acceptance).click());
+  expect(button("Return selected participants").disabled).toBe(false);
+  await selectActivation("second-activation");
+  expect(checkbox(acceptance).checked).toBe(false);
+  await act(async () => checkbox(participant).click());
+  expect(button("Return selected participants").disabled).toBe(true);
+  await act(async () => checkbox(acceptance).click());
+  await act(async () => button("Return selected participants").click());
+  expect(request.mock.calls.find(([kind]) => kind === "return")![1]).toMatchObject({ activationId: "second-activation", return: { acceptDataChanges: true } });
+});
+
+it("requires fresh compatibility acceptance when applying a new activation changes the current ID", async () => {
+  const original = { id: "original-activation", phase: "active", apps: ["notes"] };
+  let current = original;
+  const base = request.getMockImplementation()!;
+  request.mockImplementation(async (kind, body, signal) => {
+    if (kind === "list") return current === original ? [original] : [original, current];
+    if (kind === "apply") { current = { ...original, id: body.requestId }; return {}; }
+    if (kind === "status") return { status: { activation: body.activationId === original.id ? original : current }, children: [] };
+    return base(kind, body, signal);
+  });
+  await render();
+  const checkbox = (text: string) => [...container.querySelectorAll("label")].find(l => l.textContent === text)!.querySelector<HTMLInputElement>("input")!;
+  const acceptance = "I accept compatibility of current data with the selected previous runtimes. No data is restored.";
+  await act(async () => checkbox("notes").click());
+  await act(async () => checkbox(acceptance).click());
+  expect(button("Return selected participants").disabled).toBe(false);
+  await act(async () => button("Review selection").click());
+  await act(async () => button("Apply reviewed selection").click());
+  expect(current.id).not.toBe(original.id);
+  expect(checkbox(acceptance).checked).toBe(false);
+  expect(button("Return selected participants").disabled).toBe(true);
+  await act(async () => checkbox(acceptance).click());
+  expect(button("Return selected participants").disabled).toBe(false);
+});
