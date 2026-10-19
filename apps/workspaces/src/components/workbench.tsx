@@ -33,6 +33,7 @@ function useRead<T>(url: string, epoch: number | string, events = true) {
       } catch (error) {
         // A revoked grant clears previously displayed source, including a visible diff.
         if (!controller.signal.aborted && current === generation) setState({ url, error: error instanceof Error ? error.message : "Workspace read failed." });
+        return false;
       }
     }
     if (!events) void load();

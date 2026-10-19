@@ -25,7 +25,7 @@ export function SessionWorkspaces({ session, running }: { session: AssistantSess
     let active = true, generation = 0;
     const load = () => { const current = ++generation; return workspaceAction<{ workspaces: Workspace[] }>(session.id, "list").then(result => {
       if (active && current === generation) { setWorkspaces(result.workspaces); if (!pending.current) setError(""); }
-    }).catch(cause => { if (active && current === generation) setError(cause instanceof Error ? cause.message : String(cause)); }); };
+    }).catch(cause => { if (active && current === generation) setError(cause instanceof Error ? cause.message : String(cause)); return false; }); };
     const unsubscribe = subscribeWorkspaceEvents("/api/development-workspaces/events", load, () => {
       generation++; setWorkspaces([]); setError("Workspace updates disconnected. Reconnecting…");
     });
@@ -36,7 +36,7 @@ export function SessionWorkspaces({ session, running }: { session: AssistantSess
     let active = true, generation = 0;
     const load = () => { const current = ++generation; return workspaceAction<{ publications: Publication[] }>(session.id, "pr-list").then(result => {
       if (active && current === generation) { setPublications(result.publications); setPublicationError(""); }
-    }).catch(cause => { if (active && current === generation) setPublicationError(cause instanceof Error ? cause.message : String(cause)); }); };
+    }).catch(cause => { if (active && current === generation) setPublicationError(cause instanceof Error ? cause.message : String(cause)); return false; }); };
     const unsubscribe = subscribeWorkspaceEvents("/api/development-workspaces/events", load, () => {
       generation++; setPublications([]); setPublicationError("Workspace updates disconnected. Reconnecting…");
     });

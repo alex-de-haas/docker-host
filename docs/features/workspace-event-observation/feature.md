@@ -51,7 +51,8 @@ revalidate authority, and Core shutdown cancels streams. Keep-alives do not requ
 
 Harness and Workspaces proxy the bounded inspection route with server-held service credentials.
 Within each app/tab, consumers share one authenticated fetch stream. Hints debounce into
-single-flight reads; another hint during a read retains a follow-up. Disconnect clears source data,
+single-flight reads; another hint during a read retains a follow-up. Failed snapshot reads retry
+with bounded backoff even when the stream stays healthy and no new workspace event arrives. Disconnect clears source data,
 retries with bounded backoff and resynchronizes on `stream.ready`. Visibility restoration and
 page restoration reopen the stream; a silent connection times out after 45 seconds. Unmounting the
 last consumer releases the connection and listeners. PR-only hints do not reread an unchanged diff.

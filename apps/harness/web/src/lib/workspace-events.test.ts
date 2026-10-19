@@ -82,6 +82,19 @@ describe("shared workspace event stream", () => {
     expect(sync).not.toHaveBeenCalled(); expect(unavailable).toHaveBeenCalledTimes(1);
   });
 
+  it("retries failed snapshots without requiring a new workspace event", async () => {
+    const sync = vi.fn<() => Promise<void | boolean>>().mockResolvedValueOnce(false).mockResolvedValue(undefined);
+    const unavailable = vi.fn();
+    const dispose = subscribeWorkspaceEvents("/snapshot-retry", sync, unavailable); cleanup.push(dispose);
+    await vi.advanceTimersByTimeAsync(0); emit("stream.ready"); await vi.advanceTimersByTimeAsync(200);
+    expect(unavailable).toHaveBeenCalledTimes(1); expect(sync).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sync).toHaveBeenCalledTimes(2); expect(mock.fetch).toHaveBeenCalledTimes(1);
+    sync.mockRejectedValue(new Error("temporary failure")); emit("workspace.changed"); await vi.advanceTimersByTimeAsync(200);
+    expect(sync).toHaveBeenCalledTimes(3);
+    dispose(); await vi.advanceTimersByTimeAsync(5000); expect(sync).toHaveBeenCalledTimes(3);
+  });
+
   it("detects a silent connection and removes source when access is revoked", async () => {
     const unavailable = vi.fn();
     cleanup.push(subscribeWorkspaceEvents("/events", vi.fn(async () => {}), unavailable));

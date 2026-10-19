@@ -52,7 +52,7 @@ export function useDevelopmentInventory(enabled: boolean) {
       try {
         const value = await developmentRequest<{ workspaces: DevelopmentWorkspace[] }>("", undefined, abort.signal);
         if (!abort.signal.aborted && generation === current) { setWorkspaces(value.workspaces); setError(""); }
-      } catch (e) { if (!abort.signal.aborted && generation === current) { setWorkspaces([]); setError(e instanceof Error ? e.message : String(e)); } }
+      } catch (e) { if (!abort.signal.aborted && generation === current) { setWorkspaces([]); setError(e instanceof Error ? e.message : String(e)); } return false; }
 
     };
     const unsubscribe = subscribeWorkspaceEvents("/api/development-workspaces/events", load, () => {

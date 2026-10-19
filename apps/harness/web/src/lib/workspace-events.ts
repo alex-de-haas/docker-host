@@ -1,14 +1,14 @@
 "use client";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
 
-type Listener = { sync: () => Promise<void>; unavailable: () => void; running: boolean; queued: boolean; disposed: boolean };
+type Listener = { sync: () => Promise<void | boolean>; unavailable: () => void; running: boolean; queued: boolean; disposed: boolean; retry?: ReturnType<typeof setTimeout>; retryDelay: number };
 const connections = new Map<string, ReturnType<typeof connection>>();
 
 // One authenticated stream per app/tab. Hints coalesce; reconnect and visibility restoration resync.
-export function subscribeWorkspaceEvents(url: string, sync: () => Promise<void>, unavailable: () => void) {
+export function subscribeWorkspaceEvents(url: string, sync: () => Promise<void | boolean>, unavailable: () => void) {
   let shared = connections.get(url);
   if (!shared) { shared = connection(url); connections.set(url, shared); }
-  const listener: Listener = { sync, unavailable, running: false, queued: false, disposed: false };
+  const listener: Listener = { sync, unavailable, running: false, queued: false, disposed: false, retryDelay: 1000 };
   shared.add(listener);
   return () => { listener.disposed = true; shared.remove(listener); };
 }
@@ -24,11 +24,22 @@ function connection(url: string) {
   let legacy = false;
   const visible = () => document.visibilityState !== "hidden";
   async function sync(listener: Listener) {
-    if (listener.disposed) return;
+    if (listener.disposed || !ready || !visible()) return;
+    clearTimeout(listener.retry); listener.retry = undefined;
     if (listener.running) { listener.queued = true; return; }
     listener.running = true;
-    try { await listener.sync(); }
-    catch { if (!listener.disposed) listener.unavailable(); }
+    try {
+      if (await listener.sync() === false) throw new Error("Workspace snapshot unavailable");
+      listener.retryDelay = 1000;
+    } catch {
+      if (!listener.disposed) {
+        listener.unavailable();
+        if (ready && visible()) {
+          listener.retry = setTimeout(() => { listener.retry = undefined; void sync(listener); }, listener.retryDelay);
+          listener.retryDelay = Math.min(listener.retryDelay * 2, 30_000);
+        }
+      }
+    }
     finally {
       listener.running = false;
       if (listener.queued && !listener.disposed) { listener.queued = false; void sync(listener); }
@@ -84,7 +95,7 @@ function connection(url: string) {
           if (!fallback) {
             ready = false; legacy = false;
             clearTimeout(debounce); debounce = undefined;
-            for (const listener of listeners) { listener.queued = false; listener.unavailable(); }
+            for (const listener of listeners) { clearTimeout(listener.retry); listener.retry = undefined; listener.queued = false; listener.unavailable(); }
           }
           retry = setTimeout(() => { retry = undefined; void open(); }, fallback ? 30_000 : delay);
           if (!fallback) delay = Math.min(delay * 2, 30_000);
@@ -93,6 +104,7 @@ function connection(url: string) {
     }
   }
   function stop() {
+    for (const listener of listeners) { clearTimeout(listener.retry); listener.retry = undefined; }
     clearTimeout(retry); retry = undefined; clearTimeout(watchdog); clearTimeout(debounce); debounce = undefined;
     const active = controller; controller = undefined; ready = false; legacy = false; active?.abort();
   }
@@ -108,6 +120,7 @@ function connection(url: string) {
       } else if (ready) void sync(listener);
     },
     remove(listener: Listener) {
+      clearTimeout(listener.retry); listener.retry = undefined;
       listeners.delete(listener);
       if (!listeners.size) {
         stop(); document.removeEventListener("visibilitychange", visibility); window.removeEventListener("pageshow", pageShow);
