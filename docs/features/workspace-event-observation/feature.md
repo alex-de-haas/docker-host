@@ -71,6 +71,29 @@ for both build and runtime. Its default is `out-build`. A native test instance c
 `build/event-observation`, without replacing the export served by a running ordinary Harness.
 This does not change app identity, source selection or runtime authority.
 
+## Verified Rollout
+
+The 2026-10-19 rollout runs platform 0.144.0, native Harness 0.60.0 and Docker Workspaces
+0.5.0. Core restarts preserve the four running apps; the Harness update creates a pre-update
+backup, and its published worker image remains available through the normal install control.
+Workspaces has no app-owned persistent data. Unrelated worktrees remain available throughout.
+
+The isolated Core-managed sandbox verifies normal password login, Shell embedding, both SSE
+proxies, file updates without Refresh, quiet observation and recovery of edits made while Core is
+stopped. Its owner finishes the sandbox and resource removal is verified. After the live rollout,
+both clients also reflect a temporary file's creation and removal without Refresh.
+
+A 90-second macOS comparison uses the same Debug launch mode, six active worktrees and Core's
+own process CPU counters (100% is one logical CPU). Mean CPU is 17.83% before and 6.49% after;
+the peak over one-second intervals is 85.72% before and 30.62% after. Workspace record writes
+fall from 41 (39 without HEAD/source changes) to one real source change. This is an observation
+of an active host with concurrent work, not an isolated benchmark or a CPU guarantee.
+
+The final code passes 3,645 Core tests (four opt-in integrations skipped), 842 Harness tests and
+30 Workspaces tests. Native AOT passes on macOS ARM64 and Linux x64. Eleven focused Core
+identity/event/stream tests also pass on both macOS and Linux. The final published clients have
+regression coverage for legacy-Core compatibility, failed snapshot retries and rejected-stream cleanup.
+
 ## Testing Expectations
 
 - Quiet observation and repeated detail reads perform no scan or record rewrite.
