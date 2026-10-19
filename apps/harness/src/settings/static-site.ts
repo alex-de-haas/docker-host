@@ -9,7 +9,7 @@ import type { ServerResponse } from "node:http";
 // and this process serves it — so the page gets the standard component stack without the gateway
 // gaining a second runtime (docs/features/app-ui-surfaces/plan.md).
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/out-build");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web", process.env.HOSTY_HARNESS_WEB_OUTPUT || "out-build");
 
 const contentTypes = new Map(Object.entries({
   ".html": "text/html; charset=utf-8",

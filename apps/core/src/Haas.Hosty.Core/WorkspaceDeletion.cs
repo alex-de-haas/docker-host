@@ -85,6 +85,7 @@ internal sealed partial class DevelopmentWorkspaceService
         {
             if (!await CanObservePublicationAsync(id, ct)) return false;
             await write();
+            observationState?.Publish(id);
             return true;
         }, ct);
 
@@ -161,6 +162,7 @@ internal sealed partial class DevelopmentWorkspaceService
                     DeleteMetadata(System.IO.Path.Combine(Root, "publications", tree.Id + ".json"));
                     DeleteMetadata(System.IO.Path.Combine(Root, "publications", "external", tree.Id + ".json"));
                     DeleteMetadata(RecordPath(tree.Id));
+                    observationState?.Remove(tree.Id);
                     return Task.FromResult(true);
                 }, ct);
             var cleanup = System.IO.Path.Combine(Root, "cleanup");

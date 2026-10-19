@@ -22,4 +22,6 @@ internal sealed record InspectedWorktree(string Id, string WorkspaceId, string R
 {
     public AppSourceFile[] SessionChanges { get; init; } = [];
     public bool HasSandboxConsumers { get; init; }
+    public string ObservationRevision { get; init; } = "";
+    public string ObservationHealth { get; init; } = "unknown";
 }

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SessionWorkspaces } from "./session-workspaces";
 import { workspaceAction, type AssistantSession } from "@/lib/assistant-api";
 vi.mock("@/lib/assistant-api", () => ({ workspaceAction: vi.fn() }));
+vi.mock("@/lib/workspace-events", () => ({ subscribeWorkspaceEvents: (_url: string, sync: () => Promise<void>) => { void sync(); return () => {}; } }));
 let root: Root; let container: HTMLDivElement;
 const session = { id: "one", appIds: ["notes"] } as AssistantSession;
 beforeEach(() => {

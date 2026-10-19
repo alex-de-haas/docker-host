@@ -141,3 +141,28 @@ it("sends activation through its owned session with the original reviewed body",
   expect(fetcher.mock.calls[0]![1]?.body).toBe(JSON.stringify(input));
   expect(fetcher.mock.calls[0]![1]?.headers).toMatchObject({ "X-Hosty-User-Token": "user" });
 });
+
+it("streams inspection hints with current app identity and cancels with the browser", async () => {
+  const controller = new AbortController();
+  const response = new Response("event: stream.ready\ndata: {}\n\n", { headers: { "Content-Type": "text/event-stream" } });
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response); vi.stubGlobal("fetch", fetcher);
+  const client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
+  expect(await client.inspectionEvents("user", controller.signal)).toBe(response);
+  expect(String(fetcher.mock.calls[0]![0])).toBe("http://core.test/api/internal/apps/hosty.harness/workspace-inspection/events");
+  expect(fetcher.mock.calls[0]![1]).toMatchObject({ redirect: "error", signal: controller.signal,
+    headers: { authorization: "Bearer service", "X-Hosty-User-Token": "user", accept: "text/event-stream" } });
+  controller.abort(); expect(fetcher.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+  fetcher.mockResolvedValue(new Response("denied", { status: 403 }));
+  await expect(client.inspectionEvents("user", new AbortController().signal)).rejects.toMatchObject({ status: 403 });
+  fetcher.mockResolvedValue(Response.json({ workspaces: [] }));
+  await expect(client.inspectionEvents("user", new AbortController().signal)).rejects.toMatchObject({ status: 502 });
+});
+
+it.each([404, 405, 403, 200])("cancels rejected inspection response bodies (%s)", async (status) => {
+  const cancel = vi.fn();
+  const body = new ReadableStream({ cancel });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, { status, headers: { "Content-Type": "text/plain" } })));
+  const client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
+  await expect(client.inspectionEvents("user", new AbortController().signal)).rejects.toMatchObject({ status: status === 200 ? 502 : status });
+  expect(cancel).toHaveBeenCalledTimes(1);
+});
