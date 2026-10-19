@@ -69,3 +69,21 @@ it("keeps a stale-review refusal visible without polling an unadmitted operation
   expect(button("Review selection").disabled).toBe(false);
   expect(localStorage.getItem("test:v1")).toBeNull();
 });
+
+
+it("excludes returned participants from the next Return without remounting", async () => {
+  let a = { id: "retained", phase: "active", apps: ["notes", "shell"], returnedApps: [] as string[], coreProject: "Core.csproj" };
+  request.mockImplementation(async (kind, body) => {
+    if (kind === "list") return [a];
+    if (kind === "return") { a = { ...a, returnedApps: [...a.returnedApps, ...body.return.apps] }; return {}; }
+    return { status: { activation: a }, children: [] };
+  });
+  await render();
+  const checkbox = (text: string) => [...container.querySelectorAll("label")].find(l => l.textContent === text)!.querySelector<HTMLInputElement>("input")!;
+  await act(async () => checkbox("notes").click());
+  await act(async () => button("Return selected participants").click());
+  expect(button("Return selected participants").disabled).toBe(true);
+  await act(async () => checkbox("shell").click());
+  await act(async () => button("Return selected participants").click());
+  expect(request.mock.calls.filter(([kind]) => kind === "return").map(([, body]) => body.return.apps)).toEqual([["notes"], ["shell"]]);
+});

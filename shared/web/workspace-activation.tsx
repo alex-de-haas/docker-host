@@ -41,6 +41,8 @@ export function WorkspaceActivationPanel({ request, storageKey, onlyApp }: {
   }, [request, pending]);
   const active = detail?.status.activation.id === id ? detail.status.activation : inventory.find(a => a.id === id);
   const inTransition = !!active && !["active", "returned", "cancelled"].includes(active.phase);
+  const selectedReturnApps = returnApps.filter(app => active?.apps.includes(app) && !active.returnedApps?.includes(app));
+  const selectedReturnCore = returnCore && !!active?.coreProject && !active.coreReturned;
   useEffect(() => {
     if (!id) return;
     const abort = new AbortController(); statusRequest.current = abort; let timer: ReturnType<typeof setTimeout>; let reading = false;
@@ -123,7 +125,7 @@ export function WorkspaceActivationPanel({ request, storageKey, onlyApp }: {
         {active.apps.filter(a => !(active.returnedApps ?? []).includes(a)).map(a => <label key={a} className="flex gap-2"><input type="checkbox" checked={returnApps.includes(a)} onChange={e => setReturnApps(old => e.target.checked ? [...old, a] : old.filter(id => id !== a))} />{a}</label>)}
         {active.coreProject && !active.coreReturned && <label className="flex gap-2"><input type="checkbox" checked={returnCore} onChange={e => setReturnCore(e.target.checked)} />Core — captured previous executable</label>}
         <label className="flex gap-2"><input type="checkbox" checked={accept} onChange={e => setAccept(e.target.checked)} />I accept compatibility of current data with the selected previous runtimes. No data is restored.</label>
-        <button className={button} disabled={(!returnCore && returnApps.length === 0) || returnCore && !accept} onClick={() => void run({ kind: "return", body: { activationId: active.id, return: { requestId: crypto.randomUUID(), apps: returnApps, core: returnCore, acceptDataChanges: accept } } })}>Return selected participants</button>
+        <button className={button} disabled={(!selectedReturnCore && selectedReturnApps.length === 0) || selectedReturnCore && !accept} onClick={() => void run({ kind: "return", body: { activationId: active.id, return: { requestId: crypto.randomUUID(), apps: selectedReturnApps, core: selectedReturnCore, acceptDataChanges: accept } } })}>Return selected participants</button>
       </fieldset>}
     </div>}
   </section>;

@@ -226,7 +226,7 @@ operation owner.
 - [x] D5. Implement persistent group/child operation receipts, supervised Core handover, readiness reconciliation, cancellation boundaries and original-request recovery across Core, Harness, Shell and helper failures.
 - [x] D6. Implement individual/group Return to captured prior targets and running states, current-data compatibility acknowledgement, Core snapshot/recovery handling and explicit partial outcomes without discarding source/data or unrelated bindings.
 - [x] D7. Enforce per-participant source/lifecycle/Core authority through HTTP, CLI, Harness and direct MCP; add the explicitly reviewed Harness Core capability and verify Ask, Run unprompted, Disabled, denial, revocation and replay.
-- [ ] D8. Add Harness workspace review/activation/progress/Return and Shell per-app workspace runtime selection plus configurable Core Source controls; show actual source, matching reason, Core checkbox, conflicts, interruption and recovery.
+- [x] D8. Add Harness workspace review/activation/progress/Return and Shell per-app workspace runtime selection plus configurable Core Source controls; show actual source, matching reason, Core checkbox, conflicts, interruption and recovery.
 - [x] D9. Integrate persistent app/Core consumers with workspace admission, source edits and cleanup; show live runtime users and Return actions without auto-stopping them during workspace Close or sandbox Finish.
 - [x] D10. Cover repository/fork matching, source migration, multi-repository selection, multiple workspaces, permissions, drift, backup/build/start failure, replay and Return in the affected Core/CLI/Harness/Shell automated suites.
 - [ ] D11. Run isolated Core-managed browser and real-agent acceptance for ordinary apps, Shell, Harness and Core, including Core deselection, live changes, restart/interruption recovery, preserved ordinary data/source and full test-resource cleanup.
@@ -360,6 +360,12 @@ the initiating CLI exited before the detached helper finished. Acceptance verifi
 Verification uses disposable roots and issues no lifecycle actions against the operator's Core or apps. These are native local-control acceptance checks,
 not Shell/Harness browser or real-agent acceptance. D11 retains those scenarios and D12 retains native
 Windows/Linux checks. D6-D9 retain Return, all-client authority/UI and persistent Core consumers.
+
+## D6-D10 Verification — 2026-10-19
+
+Individual Return through Shell restored the Demo app source and running state while Core and Shell remained active in their selected workspace. A subsequent Return from the same panel excludes completed participants; five shared UI regressions and both production UI builds pass. Browser checks cover Core deselection, retained operation progress, reconnect after Core/Shell replacement, workspace selection and current-data acknowledgement. Harness Ask denial, approved deferred dispatch, Run unprompted review and Disabled tool omission were exercised with a real native Codex agent.
+
+Main through `039523e5` is integrated with a regular merge, retaining workspace SSE observation. The merged Core activation/observer group passes 50 tests and the workspace/HTTP group passes 29; Harness passes 857 tests, server typecheck and its production build. CLI passes 271 tests. Core and CLI macOS arm64 Native AOT pass. Final three-host handover CI and the remaining D11 Return/cleanup scenarios retain their gates.
 
 ## Continuation
 
