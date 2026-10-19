@@ -3410,7 +3410,7 @@ internal sealed record RuntimeLifecycleContext(
     IReadOnlyList<RuntimeSelectedService>? GraphServices = null,
     [property: System.Text.Json.Serialization.JsonIgnore]
     Func<string, string?, Task>? ReportLaunchProgress = null,
-    string[]? PreparedSetupServices = null, bool PreparationOnly = false)
+    string[]? PreparedSetupServices = null, bool PreparationOnly = false, string? WorkspaceActivationId = null)
 {
     public IReadOnlyList<RuntimeSelectedService> AllServices => GraphServices ?? Manifest.Services;
 }

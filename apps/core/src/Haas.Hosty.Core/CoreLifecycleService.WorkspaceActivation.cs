@@ -76,7 +76,7 @@ internal sealed partial class CoreLifecycleService
         var candidate = app with { SelectedRuntime = op.TargetRuntime, SourceState = app.SourceState! with { LocalOverridePath = op.SourcePath }, ArtifactLocks = null };
         var context = await CreateRuntimeContextAsync(candidate, target, ct);
         var scratch = Path.Combine(WorkspaceRuntimeFiles.Root(paths.DataRoot), activation.Id, app.Id);
-        context = context with { SourceRoot = op.SourcePath, AppDataPath = Path.Combine(scratch, "data"), AppCachePath = Path.Combine(scratch, "cache"), PreparationOnly = true };
+        context = context with { SourceRoot = op.SourcePath, AppDataPath = Path.Combine(scratch, "data"), AppCachePath = Path.Combine(scratch, "cache"), PreparationOnly = true, WorkspaceActivationId = activation.Id };
         if (ResolveAdapter(target.RuntimeProfile.Type) is not IRuntimePreparation adapter)
             throw DevError("preparation_unsupported", "The selected adapter cannot prepare before Stop.");
         var prepared = await adapter.PrepareAsync(context, ct);

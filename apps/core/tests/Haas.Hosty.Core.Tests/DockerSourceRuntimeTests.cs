@@ -153,6 +153,42 @@ public sealed class DockerSourceRuntimeTests : IDisposable
         Assert.DoesNotContain(bind, sibling!.Arguments);
     }
 
+    [Fact]
+    public async Task ActivationPreparation_IsolatesAndReusesCachesWithoutChangingThePreviousRuntime()
+    {
+        var source = Path.Combine(root, "next-env.d.ts");
+        await File.WriteAllTextAsync(source, "source declaration");
+        var context = Context with { AppRoot = Path.Combine(root, "app"), AppCachePath = Path.Combine(root, "app/cache"),
+            Manifest = Context.Manifest with { RuntimeProfile = new() { Type = "docker", Development = true } } };
+        Directory.CreateDirectory(context.AppRoot);
+        var service = SourceService(new() { GeneratedFiles = ["next-env.d.ts"], Caches = ["node_modules"] });
+        var previous = (await DockerSourceRuntime.PrepareAsync(context, service, new Runner(), default))!;
+        string Overlay(DockerSourceRuntime.Launch launch) => Assert.Single(launch.Arguments,
+            arg => arg.EndsWith("target=/workspace/next-env.d.ts", StringComparison.Ordinal)).Split("source=")[1].Split(",target=")[0];
+        string Volume(DockerSourceRuntime.Launch launch) => Assert.Single(launch.Arguments, arg => arg.StartsWith("type=volume,"));
+        await File.WriteAllTextAsync(Overlay(previous), "previous runtime output");
+        var preparedContext = context with { PreparationOnly = true, WorkspaceActivationId = Guid.NewGuid().ToString(),
+            AppCachePath = Path.Combine(root, "scratch/cache") };
+
+        var prepared = (await DockerSourceRuntime.PrepareAsync(preparedContext, service, new Runner(), default))!;
+
+        Assert.NotEqual(Volume(previous), Volume(prepared));
+        Assert.NotEqual(Overlay(previous), Overlay(prepared));
+        Assert.Equal("source declaration", await File.ReadAllTextAsync(Overlay(prepared)));
+        await File.WriteAllTextAsync(Overlay(prepared), "prepared candidate output");
+        var active = (await DockerSourceRuntime.PrepareAsync(context with { WorkspaceActivationId = preparedContext.WorkspaceActivationId,
+            PreparedSetupServices = [service.Key] }, service, new Runner(), default))!;
+        Assert.Equal(prepared.Arguments, active.Arguments);
+        Assert.Equal("dotnet watch run", active.Command.Last());
+        Assert.Equal("prepared candidate output", await File.ReadAllTextAsync(Overlay(active)));
+        var restarted = (await DockerSourceRuntime.PrepareAsync(context with { WorkspaceActivationId = preparedContext.WorkspaceActivationId }, service, new Runner(), default))!;
+        Assert.Equal(prepared.Arguments, restarted.Arguments);
+        var returned = (await DockerSourceRuntime.PrepareAsync(context, service, new Runner(), default))!;
+        Assert.Equal(previous.Arguments, returned.Arguments);
+        Assert.Equal("previous runtime output", await File.ReadAllTextAsync(Overlay(returned)));
+        Assert.Equal("source declaration", await File.ReadAllTextAsync(source));
+    }
+
     [Theory]
     [InlineData("../escape", "cache")]
     [InlineData("cache/file", "cache")]

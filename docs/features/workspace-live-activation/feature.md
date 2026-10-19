@@ -168,7 +168,9 @@ to Docker. A live manifest edit must pass the existing separate update review be
 Each selected app receives a deterministic child ID in its existing development-mode journal, with
 its prior runtime, source, artifacts, initial running state and installation identity. Preparation
 resolves Docker image/build artifacts and native prebuilt artifacts, and executes declared setup in
-scratch data/cache context. No ordinary app data, identity token, configured settings or dependency
+scratch data/cache context. Docker source cache volumes and generated-file overlays use a separate
+activation identity inside the owned app cache. Preparation, candidate start and active restarts reuse
+that cache; Return selects the untouched previous runtime cache. No ordinary app data, identity token, configured settings or dependency
 credentials are injected into preparation. A build recipe is trusted code with its existing host/source
 access; this is not a sandbox. The manifest's declared setup/build is the preflight boundary: it does
 not promise to catch every later hot-reload or startup error. Successful setup is not repeated after

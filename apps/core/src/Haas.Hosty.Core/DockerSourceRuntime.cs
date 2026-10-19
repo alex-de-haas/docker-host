@@ -239,6 +239,15 @@ internal static class DockerSourceRuntime
         IDockerCommandRunner runner, CancellationToken cancellationToken, string instanceId = "")
     {
         if (service.Runtime.SourceMount is not { } mount) return null;
+        if (context.WorkspaceActivationId is { } activationId)
+        {
+            if (!Guid.TryParseExact(activationId, "D", out _))
+                throw new AppLifecycleException("docker_source_cache_invalid", "The workspace activation cache identity is invalid.");
+            // Preparation and active restarts share this candidate cache; the previous runtime's
+            // cache stays untouched and becomes available again on Return.
+            context = context with { AppCachePath = System.IO.Path.Combine(context.AppRoot, "cache", "workspace-activations", activationId) };
+        }
+        var cacheIdentity = context.AppRoot + (context.WorkspaceActivationId is null ? "" : "|activation:" + context.WorkspaceActivationId);
         var path = ResolveSourcePath(context, mount);
         // Docker resolves bind sources on its daemon host. A remote context cannot mount this checkout.
         var host = Environment.GetEnvironmentVariable("DOCKER_HOST");
@@ -257,7 +266,7 @@ internal static class DockerSourceRuntime
         {
             args.Add("--mount");
             var name = DockerRuntimeAdapter.BuildContainerName("", context.App.Id, service.Key) + "-dev-" +
-                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(context.AppRoot + "|" + mount.Caches[index])))[..16].ToLowerInvariant();
+                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(cacheIdentity + "|" + mount.Caches[index])))[..16].ToLowerInvariant();
             if (!string.IsNullOrEmpty(instanceId))
             {
                 var inspect = await runner.RunAsync(["volume", "inspect", "--format", "{{ index .Labels \"hosty.instance\" }}", name], null, cancellationToken);

@@ -11,7 +11,8 @@ import urllib.request, urllib.error, urllib.parse, http.cookiejar, http.server
 
 workspace = pathlib.Path(sys.argv[1]).resolve()
 scenario = sys.argv[2] if len(sys.argv)>2 else 'return'
-base = pathlib.Path(tempfile.mkdtemp(prefix='hosty-activation-'))
+# Git for Windows bounds linked-worktree administrative paths even with long file paths enabled.
+base = pathlib.Path(tempfile.mkdtemp(prefix='hwa-' if os.name == 'nt' else 'hosty-activation-'))
 managed = '--managed' in sys.argv
 parent = None
 child_id = None
@@ -141,6 +142,7 @@ try:
     lease=str(uuid.uuid4())
     tree=request('/api/core/source/workspaces',{'requestId':str(uuid.uuid4()),'taskId':'native-workspace-activation','leaseId':lease,
         'sourceRevision':source['revision'],'targetBranch':'main','label':'Disposable native activation verification'})
+    assert tree.get('observation', {}).get('state') == 'ok', tree.get('observation')
     sentinel=pathlib.Path(tree['path'])/'uncommitted-sentinel.txt';sentinel.write_text('preserve native fixture source')
     request(f"/api/development/workspaces/{tree['id']}/operations/release-lease",{'requestId':str(uuid.uuid4()),'leaseId':lease})
     activation_id=str(uuid.uuid4())

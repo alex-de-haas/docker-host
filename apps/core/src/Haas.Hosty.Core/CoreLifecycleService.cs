@@ -4689,6 +4689,9 @@ internal sealed partial class CoreLifecycleService(
         // of the slot mode (the slot stays authoritative — it can only further restrict).
         var registry = await globalMounts.ReadAsync(cancellationToken);
         var mounts = AppConfigurationFingerprint.ResolveMounts(app, registry);
+        var development = await AppDevStore.ReadAsync(paths, app, cancellationToken);
+        var activationId = development is { PreparedRuntime: not null, Phase: "starting" or "active" or "restarting" }
+            ? development.ActivationId : null;
 
         return new(
             app,
@@ -4699,7 +4702,7 @@ internal sealed partial class CoreLifecycleService(
             mounts,
             await ResolveTelemetryEndpointAsync(app, cancellationToken),
             ResolveLockedSourceRoot(app, await ResolveRuntimeProfilesAsync(app, cancellationToken)),
-            AppCachePath: GetAppCachePath(app.Id));
+            AppCachePath: GetAppCachePath(app.Id), WorkspaceActivationId: activationId);
     }
 
     // The source root a locked (development: false) source runtime executes from: the managed checkout

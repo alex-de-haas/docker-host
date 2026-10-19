@@ -17,6 +17,14 @@ public sealed partial class CoreLifecycleServiceTests
         var id = Guid.NewGuid().ToString();
         await service.PrepareAsync(tree.WorkspaceId, new(id, owner.UserId, new(false)), default);
         await service.ApplyAppsAsync(id, default);
+        Assert.Equal(id, f.Adapter.LastContext!.WorkspaceActivationId);
+        Assert.NotNull(f.Adapter.LastContext.PreparedSetupServices);
+        var restart = new AppDevRequest(Guid.NewGuid().ToString(), "restart");
+        var actor = new AppDevActor(owner.UserId, "workspace-local", TrustedLocalOperator: true);
+        var review = await f.Service.PlanDevModeAsync("test.created", restart, actor);
+        await f.Service.ApplyDevModeAsync("test.created", restart with { PlanDigest = review.PlanDigest }, actor);
+        Assert.Equal(id, f.Adapter.LastContext.WorkspaceActivationId);
+        Assert.Null(f.Adapter.LastContext.PreparedSetupServices);
         var data = Path.Combine(f.Paths.AppsRoot, "test.created", "data", "new-state");
         Directory.CreateDirectory(Path.GetDirectoryName(data)!); await File.WriteAllTextAsync(data, "candidate writes");
         var request = new WorkspaceReturnRequest(Guid.NewGuid().ToString(), ["test.created"], false, true);
@@ -25,6 +33,7 @@ public sealed partial class CoreLifecycleServiceTests
         var restored = (await f.Apps.GetAppAsync("test.created"))!;
         Assert.Equal(original!.SourceState, restored.SourceState); Assert.Equal(original.SelectedRuntime, restored.SelectedRuntime);
         Assert.Equal(running, AppRuntimeStates.IsUp(restored.RuntimeState));
+        if (running) Assert.Null(f.Adapter.LastContext!.WorkspaceActivationId);
         Assert.Equal("candidate writes", await File.ReadAllTextAsync(data));
         Assert.Equal(new[] { "test.created" }, WorkspaceRuntimeFiles.Read(f.Paths.DataRoot, id).ReturnedApps);
         var starts = f.Adapter.StartCount;
