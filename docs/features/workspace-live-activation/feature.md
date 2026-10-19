@@ -289,6 +289,8 @@ The client lists durable groups, observes helper and child phases, and offers bo
 resume and selected-participant Return. Visible in-progress panels refresh every three seconds;
 visibility restoration and explicit refresh recover missed progress. Terminal groups stop recurring
 requests. Changing the retained activation clears the Return selection and compatibility acknowledgement.
+The retained group stays fixed while a review or action runs, so a delayed review cannot target
+a different group from the one displayed.
 The helper remains the operation owner. If returning to an older Core removes these APIs,
 the retained ID and CLI status command remain available for diagnosis.
 

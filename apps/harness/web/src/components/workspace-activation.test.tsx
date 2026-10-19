@@ -289,3 +289,33 @@ it("requires fresh compatibility acceptance when applying a new activation chang
   await act(async () => checkbox(acceptance).click());
   expect(button("Return selected participants").disabled).toBe(false);
 });
+
+
+it("keeps the reviewed activation selected while review and apply responses are pending", async () => {
+  const first = { requestId: "first-activation", selection: { coreSelected: false, apps: [{ appId: "notes", selected: true }] }, planDigest: "original-review" };
+  const second = { requestId: "second-activation", selection: { coreSelected: false, apps: [{ appId: "other", selected: true }] }, planDigest: "other-review" };
+  localStorage.setItem("test:applies:v1", JSON.stringify(Object.fromEntries([first, second].map(body => [body.requestId, { kind: "apply", body }]))));
+  const activations = [second, first].map(body => ({ id: body.requestId, phase: "preparing", apps: body.selection.apps.map(app => app.appId) }));
+  let completeReview!: (value: unknown) => void, completeApply!: (value: unknown) => void;
+  const pendingReview = new Promise(resolve => { completeReview = resolve; });
+  const pendingApply = new Promise(resolve => { completeApply = resolve; });
+  request.mockImplementation(async (kind, body) => kind === "list" ? activations : kind === "plan" ? pendingReview : kind === "apply" ? pendingApply
+    : { status: { activation: activations.find(a => a.id === body.activationId) }, children: [] });
+  await render();
+  const retained = () => [...container.querySelectorAll("label")].find(l => l.textContent?.startsWith("Retained activation"))!.querySelector("select")!;
+  const attemptSwitch = async () => act(async () => { retained().value = second.requestId; retained().dispatchEvent(new Event("change", { bubbles: true })); });
+  await act(async () => button("Review preparation again").click());
+  expect(retained().disabled).toBe(true);
+  await attemptSwitch();
+  expect(retained().value).toBe(first.requestId);
+  await act(async () => completeReview({ ...review, planDigest: "fresh-review" }));
+  expect(retained().disabled).toBe(false);
+  expect(retained().value).toBe(first.requestId);
+  await act(async () => button("Retry reviewed preparation").click());
+  expect(retained().disabled).toBe(true);
+  await attemptSwitch();
+  expect(retained().value).toBe(first.requestId);
+  await act(async () => completeApply({}));
+  expect(retained().disabled).toBe(false);
+  expect(request.mock.calls.find(([kind]) => kind === "apply")![1]).toEqual({ ...first, planDigest: "fresh-review" });
+});

@@ -3,7 +3,7 @@
   "id": "hosty.harness",
   "name": "Hosty Harness",
   "description": "Host-resident operator assistant with managed Claude and Codex connections, chat and settings UI.",
-  "version": "0.61.4",
+  "version": "0.61.5",
   "role": "system",
   "source": {
     "type": "git",

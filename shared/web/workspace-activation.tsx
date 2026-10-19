@@ -139,7 +139,7 @@ export function WorkspaceActivationPanel({ request, storageKey, onlyApp }: {
       {review && <><p className="text-xs">Target Core: {review.plan.coreInstance}</p><ul className="list-disc pl-5 text-sm">{review.consequences.map(c => <li key={c}>{c}</li>)}</ul>
         <button className={button} disabled={!review.plan.participants.some(p => p.selected)} onClick={() => void run({ kind: "apply", body: preparationReview ? { ...preparationReview.body, planDigest: review.planDigest } : { requestId: crypto.randomUUID(), selection, planDigest: review.planDigest } })}>{preparationReview ? "Retry reviewed preparation" : "Apply reviewed selection"}</button></>}
     </fieldset>}
-    {inventory.length > 0 && <label className="block text-sm">Retained activation <select className="w-full rounded border bg-background p-1" value={id ?? ""} onChange={e => { setId(e.target.value); setReview(null); setPreparationReview(null); setReturnApps([]); setReturnCore(false); setAcceptedActivation(null); }}>
+    {inventory.length > 0 && <label className="block text-sm">Retained activation <select className="w-full rounded border bg-background p-1" value={id ?? ""} disabled={busy} onChange={e => { if (busy) return; setId(e.target.value); setReview(null); setPreparationReview(null); setReturnApps([]); setReturnCore(false); setAcceptedActivation(null); }}>
       {inventory.map(a => <option key={a.id} value={a.id}>{a.phase} · {a.id}</option>)}</select></label>}
     {active && <div className="space-y-2 text-sm"><p role="status">{active.phase} · {detail?.status.helper?.state ?? "Awaiting helper"}</p><code className="break-all text-xs">{active.id}</code>
       {[active.error, detail?.status.helper?.error].filter(Boolean).map((e, i) => <p key={i} role="alert">{e}</p>)}
