@@ -10,7 +10,8 @@ vi.mock("../lib/api", async original => ({
   approveSkill: vi.fn(), call: vi.fn(), loadSettings: vi.fn(), saveSettings: vi.fn(),
 }));
 vi.mock("./agent-runtime", () => ({ AgentRuntime: () => null }));
-vi.mock("./agent-providers", () => ({ AgentProviders: () => null }));
+vi.mock("./agent-providers", () => ({ AgentProviders: () => <div>Agent connection list</div> }));
+vi.mock("./translation-providers", () => ({ TranslationProviders: () => <section aria-label="Translation providers">Translation controls</section> }));
 
 let root: Root;
 let container: HTMLDivElement;
@@ -156,4 +157,15 @@ it("saves independent retention policies without overwriting an unsaved workflow
   expect(saveSettings).toHaveBeenCalledTimes(calls);
   expect(container.querySelector<HTMLTextAreaElement>("#workflow-prompt")!.value).toBe("Default workflow");
   expect(container.textContent).toContain("Unfinished and deferred workspaces never expire");
+});
+
+it("places translation controls in their own tab instead of the agent providers panel", async () => {
+  await act(async () => root.render(<GatewaySettings />));
+  const tab = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(element => element.textContent === "Translation providers")!;
+  expect(container.querySelector('section[aria-label="Translation providers"]')).toBeNull();
+  expect(container.querySelector('[role="tabpanel"][data-state="active"]')?.textContent).toContain("Agent connection list");
+  await act(async () => tab.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  const panel = container.querySelector('[role="tabpanel"][data-state="active"]')!;
+  expect(panel.textContent).toContain("Translation controls");
+  expect(panel.textContent).not.toContain("Agent connection list");
 });
