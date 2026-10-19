@@ -225,6 +225,66 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task WorkspaceEvents_FailedGitScanRetriesWithoutAnotherFilesystemEvent()
+    {
+        var (f, _) = await SourceFixtureAsync();
+        var state = new WorkspaceObservationState(new CoreEventHub(), TimeSpan.FromMilliseconds(800));
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock, observationState: state);
+        var tree = await service.PrepareAsync(WorkspaceTestOwner(f), WorkspaceRequest(), default);
+        using var observer = new DevelopmentWorkspaceObserver(service, state, f.Paths,
+            NullLogger<DevelopmentWorkspaceObserver>.Instance, TimeSpan.FromMilliseconds(100));
+        await observer.StartAsync(default);
+        try
+        {
+            await WaitForObservation(() => Task.FromResult(state.Health(tree.Id) == "watching" && !state.NeedsObservation(tree.Id)));
+            // A missing base object makes the real Git diff fail without breaking the watcher.
+            var record = Path.Combine(f.Paths.CoreRoot, "development/workspaces", tree.Id + ".json");
+            await JsonStorage.WriteAsync(record, (await service.Read(tree.Id, null, default)) with { OriginalBase = new string('f', 40) });
+            state.Invalidate(tree.Id);
+            await WaitForObservation(async () => (await service.Read(tree.Id, null, default)).Observation!.State == "unavailable" && state.Health(tree.Id) == "recovering");
+            Assert.True(state.NeedsObservation(tree.Id));
+            Assert.False(state.CanObserve(tree.Id));
+            var scans = state.ScanCount(tree.Id);
+            for (var i = 0; i < 3; i++) Assert.Equal("unavailable", (await service.ReadObservedAsync(tree.Id, default)).Observation!.State);
+            await Task.Delay(200);
+            Assert.Equal(scans, state.ScanCount(tree.Id));
+            // Repair only the Core record, outside watched source/Git paths. No invalidation follows.
+            await JsonStorage.WriteAsync(record, (await service.Read(tree.Id, null, default)) with { OriginalBase = tree.OriginalBase });
+            await WaitForObservation(async () => (await service.Read(tree.Id, null, default)).Observation!.State == "ok" && state.Health(tree.Id) == "watching");
+            Assert.False(state.NeedsObservation(tree.Id));
+            Assert.True(state.ScanCount(tree.Id) > scans);
+        }
+        finally { await observer.StopAsync(default); }
+    }
+
+    [Fact]
+    public async Task WorkspaceEvents_RelevanceFailureRetainsTheOnlyFileHint()
+    {
+        var (f, _) = await SourceFixtureAsync();
+        var state = new WorkspaceObservationState(new CoreEventHub());
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock, observationState: state);
+        var tree = await service.PrepareAsync(WorkspaceTestOwner(f), WorkspaceRequest(), default);
+        var failures = 0;
+        using var observer = new DevelopmentWorkspaceObserver(service, state, f.Paths,
+            NullLogger<DevelopmentWorkspaceObserver>.Instance, TimeSpan.FromMilliseconds(100), async (root, paths, ct, remember) =>
+            {
+                if (paths.Contains("single-hint.txt") && Interlocked.Increment(ref failures) == 1)
+                    throw new IOException("Transient relevance inspection failure");
+                return await DevelopmentWorkspaceObserver.RelevantAsync(root, paths, ct, remember);
+            });
+        await observer.StartAsync(default);
+        try
+        {
+            await WaitForObservation(() => Task.FromResult(state.Health(tree.Id) == "watching" && !state.NeedsObservation(tree.Id)));
+            await File.WriteAllTextAsync(Path.Combine(tree.Path, "single-hint.txt"), "one edit only");
+            await WaitForObservation(async () => (await service.Read(tree.Id, null, default)).Observation!.Local!.Files.Any(file => file.Path == "single-hint.txt"));
+            Assert.True(failures > 0);
+            Assert.Equal("watching", state.Health(tree.Id));
+        }
+        finally { await observer.StopAsync(default); }
+    }
+
+    [Fact]
     public async Task WorkspaceEvents_IgnoredDirectoryWithTrackedFileCannotSuppressChanges()
     {
         var (f, _) = await SourceFixtureAsync();

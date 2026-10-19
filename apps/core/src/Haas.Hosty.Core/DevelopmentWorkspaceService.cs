@@ -277,7 +277,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         return await Locked(Hash(OwnerIdentity(tree.Owner)), async () =>
         {
             var current = await Read(id, null, ct);
-            if (refresh || (observationState is null || observationState.NeedsObservation(id))
+            if (refresh || (observationState is null || observationState.CanObserve(id))
                 && IsBackgroundActive(await WorkflowAsync(current.Owner, ct)))
                 return await Observe(current, ct);
             return current;
@@ -291,7 +291,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         try
         {
             // Recheck under the owner gate: a pause/completion may have won while queued.
-            if ((observationState is null || observationState.NeedsObservation(id)) && IsBackgroundActive(await WorkflowAsync(workspace.Owner, ct)))
+            if ((observationState is null || observationState.CanObserve(id)) && IsBackgroundActive(await WorkflowAsync(workspace.Owner, ct)))
                 await Observe(await Read(id, null, ct), ct);
         }
         finally { gate.Release(); }
@@ -323,7 +323,8 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             w = w with { Observation = new(clock.UtcNow, "unavailable", Error: ex.Message) };
         }
         w = await Save(w);
-        observationState?.Observed(w.Id, generation);
+        if (w.Observation?.State == "ok") observationState?.Observed(w.Id, generation);
+        else observationState?.ObservationFailed(w.Id);
         return w;
     }
     private static string SourceActivityStamp(string root, AppSourceStatus local, bool conflict)

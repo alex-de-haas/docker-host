@@ -3,8 +3,10 @@ using System.Collections.Concurrent;
 namespace Haas.Hosty.Core;
 
 internal sealed class DevelopmentWorkspaceObserver(DevelopmentWorkspaceService workspaces, WorkspaceObservationState state,
-    CoreDataPaths paths, ILogger<DevelopmentWorkspaceObserver> logger, TimeSpan? healthInterval = null) : BackgroundService
+    CoreDataPaths paths, ILogger<DevelopmentWorkspaceObserver> logger, TimeSpan? healthInterval = null,
+    Func<string, string[], CancellationToken, Action<string[]>?, Task<bool>>? relevance = null) : BackgroundService
 {
+    private readonly Func<string, string[], CancellationToken, Action<string[]>?, Task<bool>> checkRelevance = relevance ?? RelevantAsync;
     private readonly Dictionary<string, SourceWatch> sources = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RepositoryWatch> repositories = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> failed = new(StringComparer.Ordinal);
@@ -54,7 +56,19 @@ internal sealed class DevelopmentWorkspaceObserver(DevelopmentWorkspaceService w
                                     || Path.GetFullPath(Path.Combine(common, path)).StartsWith(source.GitDirectory + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
                                 { ignoredDirectories.TryRemove(source.Tree.Id, out _); state.Invalidate(source.Tree.Id); }
                         }
-                        else if (sources.TryGetValue(id, out var source) && await RelevantAsync(source.Tree.Path, pending.ToArray(), stoppingToken, directories => ignoredDirectories[id] = directories)) state.Invalidate(id);
+                        else if (sources.TryGetValue(id, out var source))
+                        {
+                            bool relevant;
+                            try { relevant = await checkRelevance(source.Tree.Path, pending.ToArray(), stoppingToken, directories => ignoredDirectories[id] = directories); }
+                            catch (Exception ex) when (ex is not OperationCanceledException)
+                            {
+                                // Ignore filtering is an optimization: uncertainty must retain the edit.
+                                ignoredDirectories.TryRemove(id, out _);
+                                logger.LogWarning(ex, "Cannot filter workspace changes for {WorkspaceId}; inspecting source", id);
+                                relevant = true;
+                            }
+                            if (relevant) state.Invalidate(id);
+                        }
                     }
                     foreach (var id in state.Dirty)
                     {

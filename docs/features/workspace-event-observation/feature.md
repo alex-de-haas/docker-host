@@ -89,11 +89,14 @@ the peak over one-second intervals is 85.72% before and 30.62% after. Workspace 
 fall from 41 (39 without HEAD/source changes) to one real source change. This is an observation
 of an active host with concurrent work, not an isolated benchmark or a CPU guarantee.
 
-The final code passes 3,645 Core tests (four opt-in integrations skipped), 850 Harness tests and
-38 Workspaces tests. Native AOT passes on macOS ARM64 and Linux x64. Eleven focused Core
-identity/event/stream tests also pass on both macOS and Linux. The final published clients have
-regression coverage for legacy-Core compatibility, failed snapshot retries and rejected-stream cleanup.
+Local verification passes 180 Core workspace tests, 850 Harness tests and 38 Workspaces tests.
+Native AOT passes on macOS ARM64. CI also runs the full Core suite, real Docker network checks
+and Linux x64 Native AOT; four opt-in integrations are excluded from its default suite.
+The published clients have regression coverage for legacy-Core compatibility, failed snapshot
+retries and rejected-stream cleanup.
 Harness 0.60.1 and Workspaces 0.5.1 include the subsequent browser response cleanup.
+Core 0.144.1 retains failed scans for a delayed retry and treats failed ignore filtering as a
+source invalidation. Healthy idle sources remain unscanned; fresh actions bypass the retry delay.
 Both browser clients and server proxies cancel rejected response bodies before retrying; a
 cancellation failure does not suppress stream recovery or older-Core compatibility.
 
