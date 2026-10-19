@@ -204,7 +204,9 @@ Local activation records retain selected participants, prior Core launch, prepar
 source observations and phase. Build retention preserves candidate and prior generations referenced
 by an unreturned activation. An app startup failure retains its development journal and backup;
 repeating apply continues that participant's existing phases without duplicating the backup.
-A preparation failure releases only pre-Stop app reservations, allowing a new source-edit lease and
+A preparation failure releases only this activation's pre-Stop app reservations; unrelated completed
+Return journals remain unchanged. Active foreign operations and participants that crossed Stop still
+refuse cleanup. This allows a new source-edit lease and
 re-preparation with the original request. Core compile failure uses the same release path.
 After source repair, an explicit fresh review can update the digest of that same request only while
 preparation is released and no runtime transition has started. Participant selection, workspace,
@@ -358,7 +360,7 @@ used by Shell or another app in a shared worktree.
 - Run affected Core/CLI suites, builds, Core Native AOT and documentation/version validation. Run
   platform-specific coordinated handover and Harness/browser acceptance independently of unit tests.
 
-- Verify pre-stop setup/compile failures preserve running processes; verify repair leases, original-request retry, and explicit fresh review with the same ID after source repair. Reject selection/authority drift, stale review and review refresh beyond released preparation; retain accepted apply bodies through UI remounts.
+- Verify pre-stop setup/compile failures preserve running processes; verify repair leases, original-request retry, and explicit fresh review with the same ID after source repair. Reject selection/authority drift, stale review and review refresh beyond released preparation; retain accepted apply bodies through UI remounts. Verify cleanup ignores unrelated completed journals, preserves active operation ownership and resumes a partially released child without lifecycle effects.
 - Verify native preparation uses scratch context, mixed dependency order, selected app backups, stopped-Core snapshot hashes, exact replacement identity and retained unrelated processes.
 
 - Interrupt helpers after app apply, Core Stop and candidate Start; reconcile the original request without repeating completed effects or claiming readiness for a different target.

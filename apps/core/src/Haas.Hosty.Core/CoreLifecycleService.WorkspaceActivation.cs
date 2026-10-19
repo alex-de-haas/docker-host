@@ -114,15 +114,21 @@ internal sealed partial class CoreLifecycleService
         foreach (var id in activation.Apps)
         {
             var op = await AppDevStore.ReadAsync(paths, await RequireAppAsync(id, ct), ct);
-            if (op is not null && (op.ActivationId != activation.Id || op.Phase != "prepared"))
+            if (op is not null && (op.ActivationId == activation.Id
+                    ? op.Phase is not ("prepared" or "returned") : op.Active))
                 throw DevError("preparation_in_use", "A participant has crossed Stop or changed ownership; inspect its journal.");
         }
         foreach (var id in activation.Apps)
         {
             var op = await AppDevStore.ReadAsync(paths, await RequireAppAsync(id, ct), ct);
-            if (op is null) continue;
-            await AppDevStore.SaveAsync(paths, op with { Phase = "returned", Error = "Preparation released before Stop for source repair." }, ct);
-            await apps.UpdateAppAsync(id, app => app with { DevModeId = null }, ct);
+            // A later participant may still point to an unrelated, completed dev operation when
+            // an earlier preparation fails. It owns no reservation in this group and stays intact.
+            if (op?.ActivationId != activation.Id) continue;
+            if (op.Phase == "prepared")
+                await AppDevStore.SaveAsync(paths, op with { Phase = "returned", Error = "Preparation released before Stop for source repair." }, ct);
+            // Resume cleanup if the process exited after returning this pre-Stop journal but before
+            // clearing its pointer. Never clear a pointer to another operation.
+            await apps.UpdateAppAsync(id, app => app.DevModeId == op.Id ? app with { DevModeId = null } : app, ct);
         }
     }
 
