@@ -854,7 +854,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             start.Environment["GIT_AUTHOR_EMAIL"] = start.Environment["GIT_COMMITTER_EMAIL"] = author.AuthorEmail;
         }
         foreach (var arg in new[] { "--literal-pathspecs", "-c", "core.hooksPath=" + (OperatingSystem.IsWindows() ? "NUL" : "/dev/null"),
-            "-c", "core.fsmonitor=false", "-c", "credential.helper=", "-c", "commit.gpgSign=false", "-c", "protocol.ext.allow=never" }.Concat(args)) start.ArgumentList.Add(arg);
+            "-c", "core.fsmonitor=false", "-c", "core.longpaths=true", "-c", "credential.helper=", "-c", "commit.gpgSign=false", "-c", "protocol.ext.allow=never" }.Concat(args)) start.ArgumentList.Add(arg);
         return start;
     }
 }

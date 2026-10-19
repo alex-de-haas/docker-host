@@ -346,4 +346,5 @@ used by Shell or another app in a shared worktree.
   Debug Core/CLI builds. The fixture performs normal setup/password login, reviewed HTTP activation,
   exact-target Return and replay, and verifies parent-owned Finish and process/port cleanup.
 - Run the native `return` and `auto` scenarios on macOS, Windows and Linux; CI defines that matrix.
+- Exercise managed Git checkout, inspection and removal with paths longer than 260 characters, including Windows with global/system Git configuration disabled.
   Passing on one operating system does not establish another platform's process-control result.
