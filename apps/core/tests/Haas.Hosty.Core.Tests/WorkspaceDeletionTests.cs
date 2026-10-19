@@ -63,6 +63,11 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Empty((await service.ListAsync(owner, true, default)).Workspaces);
         Assert.NotNull(await service.ReadDeletionAsync(tree.WorkspaceId, default));
         Assert.False(await service.SessionWorkspaceAbsentAsync(owner, default));
+        var reinstalled = owner with { Installation = owner.Installation.AddSeconds(1) };
+        Assert.False(await service.SessionWorkspaceAbsentAsync(reinstalled, default));
+        Assert.True(await service.SessionWorkspaceAbsentAsync(reinstalled with { SessionId = "other-session" }, default));
+        Assert.True(await service.SessionWorkspaceAbsentAsync(reinstalled with { UserId = "other-user" }, default));
+        Assert.True(await service.SessionWorkspaceAbsentAsync(reinstalled with { AppId = "other-app" }, default));
         await Assert.ThrowsAsync<AppLifecycleException>(() => service.PrepareAsync(owner, WorkspaceRequest(), default));
         File.Delete(jobPath);
         service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
@@ -70,6 +75,7 @@ public sealed partial class CoreLifecycleServiceTests
         await service.FinalizeDeletionAsync(owner, default);
         Assert.Null(await service.ReadDeletionAsync(tree.WorkspaceId, default));
         Assert.Empty(await service.DeletedOwnersAsync(default));
+        Assert.True(await service.SessionWorkspaceAbsentAsync(reinstalled, default));
     }
 
     [Theory]

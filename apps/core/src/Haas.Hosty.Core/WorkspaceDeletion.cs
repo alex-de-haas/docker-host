@@ -60,7 +60,13 @@ internal sealed partial class DevelopmentWorkspaceService
             if (!tree.Owner.IsExternal && tree.Owner.AppId == owner.AppId && tree.Owner.UserId == owner.UserId
                 && tree.Owner.SessionId == owner.SessionId) return false;
         }
-        return await ReadDeletionAsync(WorkspaceIdFor(owner), ct) is null;
+        if (Directory.Exists(Deletions)) foreach (var path in Directory.EnumerateFiles(Deletions, "*.json"))
+        {
+            var journal = await ReadDeletionAsync(System.IO.Path.GetFileNameWithoutExtension(path), ct);
+            if (journal is not null && !journal.Owner.IsExternal && journal.Owner.AppId == owner.AppId
+                && journal.Owner.UserId == owner.UserId && journal.Owner.SessionId == owner.SessionId) return false;
+        }
+        return true;
     }
 
     internal async Task<bool> CanObservePublicationAsync(string id, CancellationToken ct)

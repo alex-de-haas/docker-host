@@ -68,7 +68,7 @@ public sealed partial class CoreLifecycleServiceTests
         await File.WriteAllTextAsync(Path.Combine(tree.Path, "unfinished.txt"), "preserve this work");
         await File.WriteAllTextAsync(Path.Combine(repository, "upstream.txt"), "new target");
         await RunGitAsync(repository, ["add", "upstream.txt"]);
-        await RunGitAsync(repository, ["commit", "-m", "Advance target"]);
+        await RunGitAsync(repository, ["-c", "user.name=Tests", "-c", "user.email=tests@hosty.local", "commit", "-m", "Advance target"]);
         f.Clock.UtcNow += TimeSpan.FromMinutes(1);
         await service.ObserveAvailableAsync(tree.Id, default);
         Assert.DoesNotContain((await service.Read(tree.Id, owner, default)).Observation!.Local!.Files, file => file.Path == "unfinished.txt");

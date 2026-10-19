@@ -40,7 +40,10 @@ Core exposes POST `/api/internal/apps/{appId}/sessions/{sessionId}/retention` fo
 confirmed assistant's service identity. The original session owner must still be an enabled
 administrator. Core resolves the workspace and resources from the installation, owner and session;
 the caller cannot submit an arbitrary workspace ID. Retained source owned by an earlier installation
-blocks classification until reconciled. No browser credential is saved for scheduled execution.
+blocks classification until reconciled. A pending deletion journal from any installation also blocks
+workspace-absence confirmation, even after all worktree records are gone; unrelated app/user/session
+journals do not block it. Unreadable ownership evidence never authorizes conversation removal.
+No browser credential is saved for scheduled execution.
 
 Background source cleanup additionally requires the explicitly reviewed optional
 `apps.workspaces.cleanup` permission and existing full source authority. Existing sandbox/environment
