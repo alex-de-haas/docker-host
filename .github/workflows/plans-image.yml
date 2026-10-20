@@ -192,7 +192,7 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest@v4
         with:
-          predicate-type: https://slsa.dev/provenance/v1
+          predicate-type: https://github.com/alex-de-haas/docker-host/blob/main/docs/features/ci-feedback-loop/feature.md#publication-provenance-v1
           predicate-path: publication-provenance.json
           subject-name: ${{ steps.image.outputs.name }}
           subject-digest: ${{ steps.build.outputs.digest }}

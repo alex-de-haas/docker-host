@@ -60,7 +60,14 @@ Signed image/native provenance records the validated code revision separately fr
 
 ### Publication Provenance v1
 
-Image and native publishers use the SLSA v1 predicate with build type `https://github.com/alex-de-haas/docker-host/blob/main/docs/features/ci-feedback-loop/feature.md#publication-provenance-v1`. This repository-owned type describes completed-CI publication and manual recovery. The [GitHub workflow build type](https://github.com/actions/buildtypes/blob/main/workflow/v1/README.md) excludes `workflow_run`, so these publishers do not claim that type.
+Image and native publishers use the Hosty custom predicate type and build type `https://github.com/alex-de-haas/docker-host/blob/main/docs/features/ci-feedback-loop/feature.md#publication-provenance-v1`. This repository-owned type describes completed-CI publication and manual recovery. Its payload follows the SLSA build-definition/run-details structure, but is stored as a custom attestation: GitHub rejects custom build types under the standard SLSA predicate type. The custom-predicate mode of `actions/attest` signs and stores the same source-bound claims without declaring unsupported SLSA semantics. The [GitHub workflow build type](https://github.com/actions/buildtypes/blob/main/workflow/v1/README.md) excludes `workflow_run`, so these publishers do not claim that type.
+
+Verify an artifact using the explicit Hosty predicate type; the CLI's default SLSA filter does not select custom attestations:
+
+```bash
+gh attestation verify <artifact-or-oci-reference> --repo alex-de-haas/docker-host \
+  --predicate-type https://github.com/alex-de-haas/docker-host/blob/main/docs/features/ci-feedback-loop/feature.md#publication-provenance-v1
+```
 
 The required external parameters are `workflow` (repository URL, main ref and workflow path), `source` (repository URL and validated full commit), `validation` (CI workflow path and successful run ID), and `operation` (`build-image`, `build-native-release`, `publish-verified-ci-firmware` or `build-firmware-for-manual-publication`). The operation distinguishes a firmware artifact consumed from CI from a manual rebuild. The actual trigger remains `workflow_run` or `workflow_dispatch`.
 
