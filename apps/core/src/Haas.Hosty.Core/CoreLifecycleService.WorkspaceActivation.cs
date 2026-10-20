@@ -17,8 +17,11 @@ internal sealed partial class CoreLifecycleService
             var plan = owned is { Phase: "prepared" } && owned.ActivationId == activation.Id
                 ? new AppDevPlan(app.Id, "enter", "", owned.Id, app.SelectedRuntime, owned.TargetRuntime, owned.WorktreeId, owned.SourcePath, owned.SourceHead, [], false, [])
                 : await PlanDevModeCoreAsync(app.Id, request, actor, ct, workspaceActivation: true);
-            await EnsureRequiredSettingsConfiguredAsync(app, ct);
-            _ = EnsureMountsReadyForStart(await CreateRuntimeContextAsync(app, await manifests.LoadAsync(app.ManifestPath!, row.TargetRuntime, ct), ct));
+            var candidate = await PrepareExecutionCandidateAsync(app, plan.SourcePath!, row.TargetRuntime!, actor, ct);
+            await EnsureExecutionCandidateApprovedAsync(candidate, app, ct);
+            var projection = BuildAppRecord(candidate.Selection, app.ManifestPath!, app.ManifestUrl, app.System, app);
+            await EnsureRequiredSettingsConfiguredAsync(projection, ct);
+            _ = EnsureMountsReadyForStart(await CreateRuntimeContextAsync(projection, candidate.Selection, ct));
             if ((await apps.ListAppRecordsAsync(ct)).Any(consumer => AppRuntimeStates.IsUp(consumer.RuntimeState) &&
                     (consumer.ActiveSourcePaths ?? []).Any(p => DevelopmentWorkspaceService.IsUnder(p, plan.SourcePath!) ||
                         DevelopmentWorkspaceService.IsUnder(plan.SourcePath!, p))))
@@ -51,6 +54,7 @@ internal sealed partial class CoreLifecycleService
             if (retained is not null)
             {
                 op = retained;
+                await ClaimExecutionTargetAsync(app, id, ct);
                 await apps.UpdateAppAsync(app.Id, a => a with { DevModeId = id }, ct);
                 app = await RequireAppAsync(app.Id, ct);
             }
@@ -66,14 +70,20 @@ internal sealed partial class CoreLifecycleService
                 plan.TargetRuntime!, plan.SourcePath!, plan.WorktreeId, previous.ManifestDigest, saved, app.SelectedRuntime,
                 app.SourceState, app.ArtifactLocks, AppRuntimeStates.IsUp(app.RuntimeState), await DevConfigurationHashAsync(app, ct),
                 "prepared", Receipts: [new(id, activation.Fingerprint, "enter", "pending")], SourceHead: plan.Head, ActivationId: activation.Id);
+            op = await SaveExecutionCandidateAsync(op, await PrepareExecutionCandidateAsync(app, plan.SourcePath!,
+                plan.TargetRuntime!, op.Actor, ct), ct);
+            await ClaimExecutionTargetAsync(app, id, ct);
             await AppDevStore.SaveAsync(paths, op, ct);
             await apps.UpdateAppAsync(app.Id, a => a with { DevModeId = id }, ct);
         }
         _ = await DevWorkspaces.WithDevAdmissionAsync(op.WorktreeId!, app, null, () => Task.FromResult(true), ct);
         await ValidateDevBindingAsync(await RequireAppAsync(app.Id, ct), op, ct);
         await ValidateLiveDevManifestAsync(op, ct);
-        var target = await manifests.LoadAsync(op.PreviousManifest, op.TargetRuntime, ct);
-        var candidate = app with { SelectedRuntime = op.TargetRuntime, SourceState = app.SourceState! with { LocalOverridePath = op.SourcePath }, ArtifactLocks = null };
+        // Adopt a prepared pointer written by an older Core before execution ownership existed.
+        await ClaimExecutionTargetAsync(app, id, ct);
+        var target = await LoadDevExecutionSelectionAsync(op, ct);
+        var candidate = BuildDevelopmentRecord(app, target, op) with { SelectedRuntime = op.TargetRuntime,
+            SourceState = app.SourceState! with { LocalOverridePath = op.SourcePath }, ArtifactLocks = null };
         var context = await CreateRuntimeContextAsync(candidate, target, ct);
         var scratch = Path.Combine(WorkspaceRuntimeFiles.Root(paths.DataRoot), activation.Id, app.Id);
         context = context with { SourceRoot = op.SourcePath, AppDataPath = Path.Combine(scratch, "data"), AppCachePath = Path.Combine(scratch, "cache"), PreparationOnly = true, WorkspaceActivationId = activation.Id };

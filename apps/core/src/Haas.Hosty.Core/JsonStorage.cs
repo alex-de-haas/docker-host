@@ -1,3 +1,4 @@
+using Haas.Hosty.Launch;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
@@ -33,12 +34,17 @@ internal static class JsonStorage
             ?? throw new NotSupportedException(
                 $"Type '{typeof(T).FullName}' is not registered in {nameof(CoreJsonSerializerContext)}.");
 
-    public static async Task<T?> ReadAsync<T>(string path, CancellationToken cancellationToken = default)
+    public static Task<T?> ReadAsync<T>(string path, CancellationToken cancellationToken = default)
+        => ReadAsync(path, TypeInfo<T>(), cancellationToken);
+
+    internal static async Task<T?> ReadAsync<T>(string path, JsonTypeInfo<T> type, CancellationToken cancellationToken = default)
     {
         try
         {
-            await using var stream = File.OpenRead(path);
-            return await JsonSerializer.DeserializeAsync(stream, TypeInfo<T>(), cancellationToken);
+            // Keep a stable snapshot without blocking a concurrent atomic replacement on Windows.
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.Asynchronous);
+            return await JsonSerializer.DeserializeAsync(stream, type, cancellationToken);
         }
         catch (FileNotFoundException)
         {
@@ -65,7 +71,6 @@ internal static class JsonStorage
         try
         {
             await File.WriteAllTextAsync(tempPath, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), cancellationToken);
-            File.Move(tempPath, path, overwrite: true);
         }
         catch
         {
@@ -80,6 +85,8 @@ internal static class JsonStorage
 
             throw;
         }
+
+        CoreLaunchFiles.PublishTemporaryFile(tempPath, path);
     }
 
     public static Task WriteAsync<T>(string path, T value, CancellationToken cancellationToken = default)
@@ -121,7 +128,6 @@ internal static class JsonStorage
                 await stream.FlushAsync(cancellationToken);
             }
 
-            File.Move(tempPath, path, overwrite: true);
         }
         catch
         {
@@ -136,5 +142,7 @@ internal static class JsonStorage
 
             throw;
         }
+
+        CoreLaunchFiles.PublishTemporaryFile(tempPath, path);
     }
 }

@@ -1,6 +1,6 @@
 ---
 created: 2026-05-19
-updated: 2026-10-13
+updated: 2026-10-20
 summary: Shell is the Core-managed browser UI app that authenticates users and embeds app pages.
 components: [apps/shell]
 ---
@@ -89,6 +89,15 @@ flowchart TD
   E --> J["Core auth/user + settings APIs"]
 ```
 
+## Sandbox Overview
+
+Dashboard combines child Core environments and individual app sandboxes in one initially collapsed
+Sandboxes list. Rows identify their workspace by name; expansion exposes applications, observed
+states, authorized preview links and existing lifecycle controls. Confirmed-empty lists hide the
+section, while inventory, startup and cleanup failures remain visible. Saved launch permissions
+remain available in Settings → App permissions. See [Core Sandbox Instances](../app-sandbox-runtimes/feature.md)
+for isolation, ownership and recovery contracts.
+
 ## Installed apps
 
 Dashboard is the administrator management surface for installed apps: one table holding non-system runtime apps and Core-managed system apps together, the latter marked by a `System` badge.
@@ -148,11 +157,37 @@ it, so an action is never only in one place. Version strings — each app's, and
 monospaced so the digits line up down the column, and Core's version is printed bare, without a `v`
 prefix, in the same shape as an app's. Core and non-development apps show one package icon before
 their version block, vertically centered across the installed and available versions when both
-are present; development apps show their Git branch icon instead. The live-source icon beside the
-runtime exposes the full explanation and last adopted manifest changes in a hover/focus tooltip,
-without a repeated informational banner in the expanded service details.
-The tooltip distinguishes an active live-source runtime from a selected development profile whose
-source is not active; only the active live state says reviewed updates are unavailable.
+are present; development Core and apps show a workspace icon when matched to a registered workspace,
+or a Git branch icon otherwise.
+
+Core and application rows use one runtime label: `workspace` for a registered active workspace,
+`source` for an ordinary source folder, or the selected package runtime name. Core uses `release`
+for its installed package. The label does not repeat the underlying development recipe or a dev-mode
+indicator. A stopped app retains its selected source classification. Workspace names remain in
+Version / source, where branch, commit and source details are available on hover or keyboard focus.
+Source change summaries use the same layout for Core and apps: available added/deleted line totals
+first, then the changed-file count, with spacing between the numbers and a small gap below the name.
+
+The runtime column provides one selector containing installed release
+profiles and applicable named workspaces. Raw development recipes are hidden. Selecting a package
+entry directly returns to the installed package; no separate workspace popup or previous-runtime
+Return action appears. Core retains the last package runtime independently of workspace transitions.
+The selector contains its choices without a heading and appears only when at least one available
+choice differs from the current target; a source runtime alone does not create an empty menu.
+Shell retains exact request IDs across a self-switch and reconnect, and opens Core confirmation only
+when a candidate requests additional authority.
+
+For a development runtime whose source matches a registered, app-bound worktree, **Version / source**
+shows one workspace icon and label in place of the Git branch, with change counts below. Hovering
+or focusing the label exposes the full workspace name, Git branch, commit, installed package version
+and the existing source details in a tooltip. The label does not open the activation dialog. A registered workspace alone does not
+change a packaged runtime's version display. Dashboard shares the inventory request across rows,
+refreshing on source selection changes, app/workspace events and return to the visible page. A workspace rename updates the label without changing its running process.
+Core uses the same workspace icon, name and hover/focus source details when its factual development
+project is inside an active registered worktree. It does not infer a workspace from a branch name
+or the source configured for the next restart. Unregistered or ambiguous project paths retain the
+Git branch display. Core and app rows share one inventory read, including when no app runs from
+source or the app list is filtered.
 
 ### Secret settings
 
@@ -254,7 +289,10 @@ a previous failure into the new version's icon.
 
 Shell development explicitly selects Turbopack. Next transpiles the workspace SDK's TypeScript
 sources in place, and Turbopack resolves their `.js` imports without custom aliases. The explicit
-dev flag selects Turbopack despite the retained webpack configuration. Production builds explicitly
+dev flag selects Turbopack despite the retained webpack configuration. Development disables
+Turbopack's persistent filesystem cache: each managed process restart rebuilds the HMR entry graph,
+preventing a restored graph from repeatedly reloading the browser. In-process Fast Refresh remains
+active. Production builds explicitly
 select webpack; its extension aliases resolve `.js` imports to TypeScript sources. The Docker image
 uses the same production build command.
 
@@ -313,10 +351,25 @@ Required coverage:
 Build and lint checks complement these suites. Behavior requiring a live Core browser session is
 verified against a Core-managed Shell rather than a standalone app without Hosty identity.
 
-- Dev bundler changes cover normal password login on an isolated Core, client and server SDK
+- Dev bundler changes cover stable Dashboard loading after managed Shell restarts, with no repeated
+  entry-level HMR restart or full-page navigation, as well as normal password login on an isolated Core, client and server SDK
   imports, navigation between Dashboard, Settings and Apps, and Fast Refresh of workspace SDK
   components without losing the document or session. Compare first visits and repeated transitions
   separately; retain the webpack production build check.
 
 - Icon coverage includes manifest-declared names without catalog metadata for both live and compiled
   runtimes, unknown names, image priority, and recovery after a failed URL changes.
+
+- Dashboard component checks keep runtime selection visible, select package/workspace targets directly,
+  preserve multiple development runtime choices, distinguish source folders from registered workspaces
+  with one source/workspace/package label, hide menus without an available alternative, and
+  remove workspace metadata after Return.
+- Recover a retained switch receipt even when its package is already selected or the app is initially
+  starting, stopping or updating; a completed Return must not block the next workspace selection.
+- Core and app source summaries keep line totals before changed-file counts, retain truncated counts,
+  and omit unavailable totals.
+- Core source matching uses its factual development project inside a unique active registered tree;
+  packaged Core, pending source settings, path-prefix lookalikes and inaccessible inventory never
+  produce a workspace label. Core-only workspaces and rename events retain the shared read.
+- Workspace source matching requires an exact bound path; stale responses, inaccessible inventory,
+  released worktrees and packaged runtimes never imply an active workspace.

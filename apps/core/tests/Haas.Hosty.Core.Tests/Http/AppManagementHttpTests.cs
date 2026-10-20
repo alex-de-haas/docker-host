@@ -325,6 +325,69 @@ public sealed class AppManagementHttpTests
     }
 
     [Fact]
+    public async Task WorkspaceStreamRequiresExplicitMetadataPermission()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        using var client = await CreateAppClient(host, "example.console", CoreAppPermissions.Known
+            .Where(permission => permission != CoreAppPermissions.WorkspacesRead).ToArray());
+        using var response = await client.GetAsync("/api/events?topics=workspaces");
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.False(host.Services.GetRequiredService<CoreEventHub>().HasWorkspaceSubscribers);
+    }
+
+    [Fact]
+    public async Task WorkspaceTopicDeliversAuthorizedHintsOverTheActualSharedHttpStream()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        using var client = await CreateAppClient(host, "example.console", CoreAppPermissions.Known);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var response = await client.GetAsync("/api/events?topics=workspaces", HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        response.EnsureSuccessStatusCode();
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(timeout.Token));
+        Assert.Equal(": connected", await reader.ReadLineAsync(timeout.Token));
+        Assert.Equal("", await reader.ReadLineAsync(timeout.Token));
+        Assert.Equal("event: stream.ready", await reader.ReadLineAsync(timeout.Token));
+        Assert.Equal("data: {\"workspaces\":1}", await reader.ReadLineAsync(timeout.Token));
+        Assert.Equal("", await reader.ReadLineAsync(timeout.Token));
+        var hub = host.Services.GetRequiredService<CoreEventHub>();
+        Assert.True(hub.HasWorkspaceSubscribers);
+        Assert.False(hub.HasResourceSubscribers);
+        var next = reader.ReadLineAsync(timeout.Token).AsTask();
+        hub.PublishWorkspaceChange(new string('f', 64));
+        await Task.Delay(100, timeout.Token);
+        Assert.False(next.IsCompleted); // An unrelated or inaccessible source is never announced.
+        hub.PublishWorkspaceChange("*"); // The catalog hint emitted by a successful workspace rename.
+        Assert.Equal("event: workspace.changed", await next);
+        Assert.Equal("data: {}", await reader.ReadLineAsync(timeout.Token));
+        Assert.Equal("", await reader.ReadLineAsync(timeout.Token));
+        await SetPermissions(host, "example.console", CoreAppPermissions.Known.Where(permission => permission != CoreAppPermissions.WorkspacesRead).ToArray());
+        hub.PublishWorkspaceChange("*");
+        Assert.Null(await reader.ReadLineAsync(timeout.Token));
+        Assert.False(hub.HasWorkspaceSubscribers);
+    }
+
+    [Fact]
+    public async Task OrdinarySharedStreamDoesNotSubscribeToWorkspaceMetadata()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        using var client = await CreateAppClient(host, "example.console", CoreAppPermissions.Known);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var response = await client.GetAsync("/api/events", HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        response.EnsureSuccessStatusCode();
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(timeout.Token));
+        Assert.Equal(": connected", await reader.ReadLineAsync(timeout.Token));
+        Assert.Equal("", await reader.ReadLineAsync(timeout.Token));
+        var hub = host.Services.GetRequiredService<CoreEventHub>();
+        Assert.False(hub.HasWorkspaceSubscribers);
+        var next = reader.ReadLineAsync(timeout.Token).AsTask();
+        hub.PublishWorkspaceChange("*");
+        await Task.Delay(100, timeout.Token);
+        Assert.False(next.IsCompleted);
+        hub.PublishAppEvent(CoreEventHub.AppChanged, "ordinary-update");
+        Assert.Equal("event: app.changed", await next);
+    }
+
+    [Fact]
     public async Task OwnProfileAppApi_NeedsOnlyIdentity_AndKeepsOwnerAndSecretsInsideCore()
     {
         await using var host = await CoreHttpHarness.StartAsync();

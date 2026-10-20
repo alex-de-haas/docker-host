@@ -133,6 +133,20 @@ public sealed class EventStreamEndpointsTests
         Assert.Empty(BodyOf(context));
     }
 
+    [Fact]
+    public async Task WorkspaceTopicRequiresAdministrator()
+    {
+        var fixture = await Fixture.CreateAsync();
+        var context = RequestContext("session_user");
+        context.Request.QueryString = new QueryString("?topics=workspaces");
+        var hub = new CoreEventHub();
+        var result = await EventStreamEndpoints.StreamForSessionAsync(context.Request, context.Response,
+            fixture.Users, fixture.Clock, hub, CancellationToken.None);
+        Assert.Equal(403, StatusOf(result));
+        Assert.False(hub.HasWorkspaceSubscribers);
+        Assert.Empty(BodyOf(context));
+    }
+
     [Theory]
     [InlineData("disconnect")]
     [InlineData("shutdown")]

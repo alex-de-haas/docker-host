@@ -1,13 +1,13 @@
 ---
 created: 2026-09-18
-updated: 2026-10-19
+updated: 2026-10-20
 summary: Run Core from source in Debug, restart into isolated build generations and switch back to the installed release.
 components: [apps/core, apps/cli, apps/shell]
 ---
 
 # Core Development Mode
 
-Core remains a CLI-launched platform process. The Dashboard Core row exposes release/dev selection,
+Core remains a CLI-launched platform process. The Dashboard Core row exposes release/source selection,
 Restart, console logs, and a Source-only settings dialog. Its state comes from the running Core;
 there is no browser-owned launch mode and no persisted default mode.
 
@@ -34,9 +34,12 @@ process start time on authenticated/control surfaces. A direct launch without la
 reports `unmanaged`; Shell displays it as `external` with a keyboard-accessible tooltip explaining
 the external launch and CLI recovery. No runtime dropdown is shown when launch control is unavailable.
 Managed Core modes use the same runtime label typography, separate chevron button, and menu layout
-as app runtime selectors, with a checkmark on the current mode. The dev indicator describes source
-builds that require a restart, rather than live reload. When Git inspection fails, the indicator
-turns amber and exposes the diagnostic through its accessible name and hover/keyboard tooltip.
+as app runtime selectors, with a checkmark on the current mode. The visible source label is
+`workspace` when the factual development project matches an active registered worktree, otherwise
+`source`; the backend launch mode remains `dev`. A configured source change does not relabel the
+currently running project. No dev-mode indicator or Runtime menu heading is shown. The label
+tooltip explains that source builds require a restart rather than live reload and includes Git
+inspection diagnostics when available.
 Managed dev/release launches also require a resolvable Hosty CLI to enable these controls.
 
 Start, Restart, Stop, Update, Source edits and detached restart operations coordinate through one

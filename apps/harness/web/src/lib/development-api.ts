@@ -23,7 +23,7 @@ export type Worktree = { observationHealth?: string; observationRevision?: strin
   observation?: { at: string; state: string; conflict?: boolean; head?: string; error?: string; sessionFiles?: string[];
     local?: { files: Change[]; truncated: boolean; lineStats?: { additions: number; deletions: number } } };
   detailError?: string; path?: string; hasSandboxConsumers?: boolean; consumers?: { kind: string; reference: string; name?: string; managementUrl?: string }[]; leases: string[]; };
-export type DevelopmentWorkspace = { id: string; state: string; updatedAt?: string | null; workflow: Workflow;
+export type DevelopmentWorkspace = { name?: string; id: string; state: string; updatedAt?: string | null; workflow: Workflow;
   owner: { kind: string; label: string; reference: string; appId?: string }; worktrees: Worktree[] };
 export function orderWorkspaces(workspaces: readonly DevelopmentWorkspace[]): DevelopmentWorkspace[] {
   return [...workspaces].sort((left, right) => activityTime(right) - activityTime(left) || left.id.localeCompare(right.id));

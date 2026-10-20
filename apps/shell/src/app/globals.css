@@ -143,7 +143,7 @@
 .dashboard-apps-toolbar,
 .dashboard-table .dashboard-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) 108px minmax(0, 1fr) 64px 136px 224px;
+  grid-template-columns: minmax(0, 1.2fr) 136px minmax(0, 1fr) 64px 136px 224px;
   align-items: center;
 }
 .dashboard-toolbar-filters { grid-column: 1 / -3; }
@@ -162,7 +162,7 @@
 @container dashboard (width < 1240px) {
   .dashboard-apps-toolbar,
   .dashboard-table .dashboard-row {
-    grid-template-columns: minmax(0, 1.2fr) 108px minmax(0, 1fr) 64px 136px 40px;
+    grid-template-columns: minmax(0, 1.2fr) 136px minmax(0, 1fr) 64px 136px 40px;
   }
   .dashboard-action-shortcuts,
   .dashboard-toolbar-shortcuts { display: none; }

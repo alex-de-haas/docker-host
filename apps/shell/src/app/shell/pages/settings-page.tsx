@@ -26,6 +26,7 @@ import { SettingsMountsSection } from "./settings-mounts-section";
 import { SettingsAgentsSection } from "./settings-agents-section";
 import { SettingsTokensSection } from "./settings-tokens-section";
 import { SettingsPermissionsSection } from "./settings-permissions-section";
+import { SandboxLaunchPermissions } from "./settings-sandbox-permissions";
 import { SourceProviders } from "./source-providers";
 import { UserProfilePage } from "./user-profile-page";
 import { UserManagementPanel } from "./user-management-page";
@@ -117,7 +118,10 @@ export function SettingsPage({
 
       {canManageApps && resolvedTab === "agents" && <SettingsAgentsSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />}
 
-      {canManageApps && resolvedTab === "permissions" && <SettingsPermissionsSection coreOrigin={coreOrigin} apps={apps} />}
+      {canManageApps && resolvedTab === "permissions" && <div className="flex flex-col gap-8">
+        <SettingsPermissionsSection coreOrigin={coreOrigin} apps={apps} />
+        <SandboxLaunchPermissions coreOrigin={coreOrigin} apps={apps} sendCsrfJson={sendCsrfJson} />
+      </div>}
 
       {resolvedTab === "tokens" && (
         <SettingsTokensSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />

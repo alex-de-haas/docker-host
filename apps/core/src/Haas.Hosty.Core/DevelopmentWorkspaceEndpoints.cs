@@ -24,6 +24,7 @@ internal static class DevelopmentWorkspaceEndpoints
 {
     public static void Map(WebApplication app)
     {
+        WorkspaceNameEndpoints.Map(app);
         var routes = app.MapGroup("").AddEndpointFilter(async (context, next) =>
         {
             context.HttpContext.Response.Headers.CacheControl = "no-store";

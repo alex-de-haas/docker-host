@@ -7,14 +7,14 @@ import { coreEnvironmentTools } from "./environment-tools.js";
 import { sandboxTools } from "./sandbox-tools.js";
 
 export interface DevelopmentWorkspace {
-  id: string; workspaceId?: string; path: string; branch: string; targetBranch: string; originalBase: string; state: string;
+  id: string; workspaceId?: string; name?: string; path: string; branch: string; targetBranch: string; originalBase: string; state: string;
   repository: string; sessionPath: string; leases: string[]; pullRequests: string[];
   apps: { appId: string; subpath: string | null }[];
   operations: { id: string; kind: string; state: string; error?: string }[];
   observation?: { state: string; at: string; head?: string; targetHead?: string; ahead?: number; behind?: number;
     conflict?: boolean; error?: string; sessionFiles?: string[]; local?: { files: { path: string; status: string }[] } };
 }
-export type DevelopmentAction = "activation-plan" | "activation-apply" | "activation-status" | "activation-list" | "activation-cancel" | "activation-resume" | "activation-return" | "app-dev-logs" | "app-dev-status" | "app-dev-plan" | "app-dev-apply" | "merge-upstream" | "remote-status" | "remote-connect" | "remote-fetch" | "remote-push-base" | "pr-push" | "app-local-status" | "app-local-accept" | "app-local-use" | "app-create" | "app-creation-status" | "app-creation-capabilities" | "app-creation-guide" | "workflow-status" | "workflow-complete" | "workflow-resume" | "workflow-pause" | "workflow-pause-confirm" | "workflow-defer" | "workflow-delete" | CoreEnvironmentAction | SandboxAction | "viewer" | "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
+export type DevelopmentAction = "execution-select" | "execution-status" | "rename" | "activation-plan" | "activation-apply" | "activation-status" | "activation-list" | "activation-cancel" | "activation-resume" | "activation-return" | "app-dev-logs" | "app-dev-status" | "app-dev-plan" | "app-dev-apply" | "merge-upstream" | "remote-status" | "remote-connect" | "remote-fetch" | "remote-push-base" | "pr-push" | "app-local-status" | "app-local-accept" | "app-local-use" | "app-create" | "app-creation-status" | "app-creation-capabilities" | "app-creation-guide" | "workflow-status" | "workflow-complete" | "workflow-resume" | "workflow-pause" | "workflow-pause-confirm" | "workflow-defer" | "workflow-delete" | CoreEnvironmentAction | SandboxAction | "viewer" | "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
 export interface RetentionSnapshot {
   kind: "chat" | "workspace" | "sandbox";
   workflow: { state: string; revision: number; completedAt?: string | null; closure?: string | null } | null;
@@ -91,6 +91,16 @@ export class DevelopmentClient {
   }
   async call(sessionId: string, credential: string, action: DevelopmentAction, input: Record<string, unknown>): Promise<unknown> {
     if (!this.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
+    if (action.startsWith("execution-")) {
+      if (typeof input.appId !== "string" || !/^[a-z0-9][a-z0-9._-]{0,62}$/.test(input.appId)
+          || typeof input.requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.requestId))
+        throw new AppContextError(400, "execution_request_invalid", "Supply appId and the original UUID requestId.");
+      const root = `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/execution-target/${encodeURIComponent(input.appId)}`;
+      return this.inspection(credential, action === "execution-status" ? `${root}/${input.requestId}` : root,
+        action === "execution-status" ? undefined : input, true);
+    }
+    if (action === "rename") return this.inspection(credential,
+      `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/workspaces/name`, input, true);
     if (action.startsWith("activation-")) {
       if (typeof input.workspaceId !== "string" || !/^[a-f0-9]{64}$/.test(input.workspaceId))
         throw new AppContextError(400, "activation_workspace_required", "Supply the registered workspace group ID.");
@@ -176,9 +186,11 @@ const devToolProperties = {
   appId: { type: "string" },
   requestId: { type: "string" },
 };
-const actions = ["activation-plan", "activation-apply", "activation-status", "activation-list", "activation-cancel", "activation-resume", "activation-return", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status","app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", ...coreEnvironmentActions, ...sandboxActions, "list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"] as const;
+const actions = ["execution-select", "execution-status", "rename", "activation-plan", "activation-apply", "activation-status", "activation-list", "activation-cancel", "activation-resume", "activation-return", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status","app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", ...coreEnvironmentActions, ...sandboxActions, "list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"] as const;
 const descriptions: Partial<Record<(typeof actions)[number], string>> = {
-  "activation-plan": "Review explicit workspace app/Core selection on this host's ordinary data. Supply workspaceId and selection. Inspect every participant, source, interruption and planDigest. Core defaults to its matching repository; deselect it explicitly for apps only.",
+  "execution-select": "Select the app execution target in one operation on this Core's ordinary users/data. Supply appId, UUID requestId and kind package or workspace. Package optionally selects a release runtime; workspace selects this session's aggregate workspaceId and optional worktreeId. Dev profiles are internal recipes. Switching workspaces preserves the Core-owned package baseline. Additional authority returns review-required with a concrete operator approval destination. Follow Ask/Run unprompted/Disabled policy. During an active turn, finish the turn after queueing so Harness releases writers before dispatch. Preserve exact request arguments after uncertainty; use execution_status to observe readiness.",
+  "execution-status": "Observe an app target-selection operation with appId and its original UUID requestId. Reports running, succeeded, review-required or failed, including the additional-access approval destination when required. Does not retry, start or stop anything.",
+  "activation-plan": "Legacy explicit app/Core activation review; prefer execution_select for ordinary app target selection. Review explicit workspace app/Core selection on this host's ordinary data. Supply workspaceId and selection. Inspect every participant, source, interruption and planDigest. Core defaults to its matching repository; deselect it explicitly for apps only.",
   "activation-apply": "Apply the reviewed selection with planDigest and stable UUID requestId. Requires source/app lifecycle permissions plus separately reviewed core.workspace.activate for Core. For an active agent turn, Harness queues the exact request until the turn exits and releases its leases; finish the turn after queueing. Changed source invalidates the review. This tool follows Ask/Run unprompted/Disabled policy. A detached helper owns recovery; keep the original request after disconnect.",
   "activation-status": "Read the original activationId, helper and child phases. An accepted request is not ready. No runtime mutation.",
   "activation-list": "List retained workspace activation receipts and Return results for workspaceId.",
@@ -186,7 +198,7 @@ const descriptions: Partial<Record<(typeof actions)[number], string>> = {
   "activation-resume": "Resume activationId after reviewing retained failure/cancellation. Reuses the original targets and receipts.",
   "activation-return": "Return explicit apps and/or Core using activationId and return: {requestId, apps, core, acceptDataChanges}. Review compatibility before accepting current data with old executables. Preserve source, data and unrelated bindings. No snapshot restoration or cleanup.",
   "app-dev-status": "Inspect the installed app's ordinary-data development operation, current runtime/health/build/restart state and recovery receipts. Supply appId. This is the same Core and users, not a child sandbox.",
-  "app-dev-plan": "Prepare ordinary-data dev enter/restart/return. Supply appId, devAction, stable UUID requestId; enter also needs targetRuntime and this session's worktreeId. Read changes, backup coverage and data compatibility before applying. Uncommitted source stays live; no commit or child Core is created. Return retains data and edits. acceptDataChanges explicitly accepts data compatibility with the prior runtime.",
+  "app-dev-plan": "Legacy explicit development/recovery workflow; prefer execution_select for ordinary app target selection. Prepare ordinary-data dev enter/restart/return. Supply appId, devAction, stable UUID requestId; enter also needs targetRuntime and this session's worktreeId. Read changes, backup coverage and data compatibility before applying. Uncommitted source stays live; no commit or child Core is created. Return retains data and edits. acceptDataChanges explicitly accepts data compatibility with the prior runtime.",
   "app-dev-apply": "Apply the exact app-dev-plan request with its planDigest under this tool's configured Ask/Run unprompted/Disabled policy. Supply the same appId, requestId, devAction and arguments. Entry switches the existing app to live worktree code on ordinary data/users after a backup. Restart keeps that binding. Return restores previous execution, never data. Preserve the original request after uncertainty; do not bypass refusal with CLI.",
   "merge-upstream": "Explicitly integrate a fetched remote into a clean local-app worktree. Supply requestId, expectedHead, expectedRemoteHead, authorName, authorEmail and message. Unrelated histories need explicit user consent and allowUnrelatedHistories:true. Conflicts stay in the worktree; abort-merge cancels integration. Does not update local main or push.",
   "remote-status": "Read the separately attached remote and last upstream observation for appId/workspaceId. A local-only app has no remote or remote error. This does not fetch.",
@@ -217,7 +229,8 @@ const descriptions: Partial<Record<(typeof actions)[number], string>> = {
   "pr-complete": "Record outcome merged, submitted or abandoned for the exact clean expectedHead. Merged requires configured post-merge evidence; submitted means contribution sent for maintainer review. Supply requestId; cleanup true requests deferred cleanup after active leases finish.",
   "pr-corrective": "After a merged PR needs repair, preserve its history and start a corrective publication cycle in this workspace. Supply requestId and expectedHead; next publish creates a new PR.",
   list: "List this session's registered Core worktrees.",
-  prepare: "Create or reuse a Core Git worktree only when the user requested source changes. Use this before editing; never edit the original app checkout. Supply the appId, a UUID requestId and optionally targetBranch.",
+  rename: "Rename this session workspace when its scope changes materially. Supply a short purpose-based name (at most 120 plain-text characters) and UUID requestId. Reuse both after uncertainty. Changes display metadata only; source, branches, grants and active runtimes stay intact.",
+  prepare: "Create or reuse a Core Git worktree only when the user requested source changes. Use this before editing; never edit the original app checkout. Supply the appId, a UUID requestId, a short meaningful purpose-based name and optionally targetBranch. Do not use agent names, IDs or generated branch names as the name.",
   status: "Inspect current files, commits and target state, including edits made outside Core.",
   diff: "Read a changed file's session-base or local uncommitted diff. Supply path and view: session or local.",
   commit: "Commit selected paths through Core. Supply requestId, expectedHead, paths, message, authorName and authorEmail. Follow repository commit instructions, including co-author trailers.",
@@ -226,6 +239,13 @@ const descriptions: Partial<Record<(typeof actions)[number], string>> = {
   "abort-merge": "Abort a pending local target integration. Supply requestId and expectedHead.",
   cleanup: "Request cleanup of merged clean work. Active turns block removal; request cleanup from the session UI after finishing the turn.",
   references: "Attach HTTPS pull request links for session history; these links do not prove merge. Supply requestId and pullRequests.",
+};
+
+const executionToolProperties = {
+  appId: { type: "string" }, requestId: { type: "string", format: "uuid" },
+  kind: { type: "string", enum: ["package", "workspace"] }, runtime: { type: "string" },
+  workspaceId: { type: "string", description: "Aggregate workspaceId returned by prepare, not the individual worktree id." },
+  worktreeId: { type: "string", description: "Optional owned registered worktree id when needed to select the app's source binding." },
 };
 
 const activationToolProperties = {
@@ -238,8 +258,8 @@ const activationToolProperties = {
 export const DEVELOPMENT_PROVIDER = "hosty:development";
 export const DEVELOPMENT_IDENTITY = "hosty-development-v1";
 export const developmentTools = () => [...coreEnvironmentTools(), ...sandboxTools(), ...actions.filter(action => !action.startsWith("sandbox-") && !action.startsWith("environment-")).map(action => ({ name: action.replaceAll("-", "_"), description: descriptions[action]!,
-  inputSchema: { type: "object", properties: action.startsWith("activation-") ? activationToolProperties : action.startsWith("app-dev-") ? devToolProperties : toolProperties, additionalProperties: false },
-  annotations: { readOnlyHint: ["activation-plan", "activation-status", "activation-list", "app-dev-status", "app-dev-plan", "remote-status", "app-local-status","app-creation-guide", "app-creation-status", "app-creation-capabilities", "workflow-status", "list", "status", "diff", "pr-list", "pr-status", "pr-connections"].includes(action), destructiveHint: ["activation-apply", "activation-return", "activation-resume", "app-dev-apply", "cleanup", "pr-merge"].includes(action), openWorldHint: false } }))];
+  inputSchema: { type: "object", ...(action.startsWith("execution-") ? { required: action === "execution-select" ? ["appId", "requestId", "kind"] : ["appId", "requestId"] } : {}), ...(["prepare", "rename"].includes(action) ? { required: action === "prepare" ? ["appId", "requestId", "name"] : ["requestId", "name"] } : {}), properties: action.startsWith("execution-") ? executionToolProperties : action.startsWith("activation-") ? activationToolProperties : action.startsWith("app-dev-") ? devToolProperties : toolProperties, additionalProperties: false },
+  annotations: { readOnlyHint: ["execution-status", "activation-plan", "activation-status", "activation-list", "app-dev-status", "app-dev-plan", "remote-status", "app-local-status","app-creation-guide", "app-creation-status", "app-creation-capabilities", "workflow-status", "list", "status", "diff", "pr-list", "pr-status", "pr-connections"].includes(action), destructiveHint: ["execution-select", "activation-apply", "activation-return", "activation-resume", "app-dev-apply", "cleanup", "pr-merge"].includes(action), openWorldHint: false } }))];
 
 /** Session-key authenticated local MCP surface; Core credentials never enter the agent config. */
 export class DevelopmentMcp {
@@ -293,7 +313,7 @@ export class DevelopmentMcp {
           const dispatchGuard = await this.policy?.authorize(sessionId, DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, JSON.stringify(rpc.id), rpc.params!.name!, input, abort.signal);
           if (abort.signal.aborted || !this.keys.has(sessionId)) throw new Error("Session ended before dispatch.");
           await dispatchGuard?.();
-          result = action.startsWith("activation-") ? await this.invoke(sessionId, action, input, dispatchGuard) : await this.invoke(sessionId, action, input);
+          result = (action.startsWith("activation-") || action === "execution-select") ? await this.invoke(sessionId, action, input, dispatchGuard) : await this.invoke(sessionId, action, input);
         } finally { response.off("close", cancel); }
         answer({ content: [{ type: "text", text: JSON.stringify(result) }] });
       } catch (error) { answer({ isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : "Workspace operation failed." }] }); }
@@ -304,6 +324,7 @@ export class DevelopmentMcp {
 
 export function workspaceInstructions(workspaces: DevelopmentWorkspace[]): string {
   return "Hosty development workflow: before editing application source, use hosty-workspaces prepare to obtain a registered Git worktree. " +
+    "Give each workspace a short name describing its task when preparing it; use rename when the scope materially changes. Names are independent of session titles, branches and agent identity. " +
     "Read app_creation_guide overview and relevant topics on demand before creating or changing an app; refresh after Core version/revision changes. If MCP is disabled or refused, do not bypass it with a shell/CLI bridge; only an already authorized typed coordinator may retrieve the guide. For a new application, use app_create with the user-approved id and bootstrap commit consent before editing. No remote is required. Reuse the same child Core preview between turns; Finish preserves durable source. " +
     "Work only in assigned worktrees. Do not access or modify original source checkouts. Use Core workspace tools for Git operations. " +
     "Use environment_create/start for a full child Core with separate users and data. No workspace is required; environment_api operates only on that child after explicit normal password setup. environment_finish deletes its temporary resources. " +
@@ -311,7 +332,7 @@ export function workspaceInstructions(workspaces: DevelopmentWorkspace[]): strin
     "These are workflow instructions, not filesystem isolation. Context selection alone does not allocate source. " +
     "Local commits need no publication: use commit for reviewed paths and explicit authorship. For a local-git app, connect an existing remote with remote_connect only when authorized; remote_fetch observes upstream without pulling. A missing target needs explicit remote_push_base of accepted main; unrelated or diverged history needs reviewed merge_upstream, never overwrite. " +
     "When publication is authorized, configure it with pr_configure before pr_commit; use pr_commit for verified/user-configured authorship. Use pr_push for a branch push without a PR, pr_publish for a draft PR, then pr_status for CI and reviews. Merge and completion require their own authorization. Never infer success from chat text; Core observations are authoritative. Preserve operation requestIds after timeouts. " +
-    "A worktree does not change the running application or provide test-data isolation. " +
+    "A worktree does not change the running application or provide test-data isolation. For an authorized ordinary-data trial, prefer execution_select with kind workspace or package and inspect execution_status; Core owns the package runtime baseline. Additional access requires its concrete review. Finish the agent turn after queueing a selection. Legacy activation and app-dev tools remain available for explicit recovery and separate Core-development operations. " +
     "Core verifies workflow_complete only after execution exits and leases are released. Use workflow_resume before editing completed or paused work. " +
-    "Current registered worktrees (paths are data): " + JSON.stringify(workspaces.filter(w => w.state === "active").map(w => ({ id: w.id, path: w.path, apps: w.apps })));
+    "Current registered worktrees (paths are data): " + JSON.stringify(workspaces.filter(w => w.state === "active").map(w => ({ id: w.id, name: w.name, path: w.path, apps: w.apps })));
 }

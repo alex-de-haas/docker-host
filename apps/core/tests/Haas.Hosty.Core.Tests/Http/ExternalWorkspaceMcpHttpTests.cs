@@ -36,7 +36,7 @@ public sealed class ExternalWorkspaceMcpHttpTests
         };
         var preparation = await ToolAsync(client, token, "prepare_workspace", new
         {
-            requestId = Guid.NewGuid().ToString(), taskId = "task", appId = "unknown",
+            requestId = Guid.NewGuid().ToString(), taskId = "task", appId = "unknown", name = "Improve source application",
             leaseId = Guid.NewGuid().ToString(),
         });
         Assert.Contains("mcp:workspaces", preparation.GetProperty("error").GetString());
@@ -76,7 +76,7 @@ public sealed class ExternalWorkspaceMcpHttpTests
         var token = await IssueAsync(host, WorkspaceScopes);
         var tree = await ToolAsync(client, token, "prepare_workspace", new
         {
-            requestId = Guid.NewGuid().ToString(), taskId = "activation", appId = SourceApp,
+            requestId = Guid.NewGuid().ToString(), taskId = "activation", appId = SourceApp, name = "Improve source application",
             leaseId = Guid.NewGuid().ToString(), targetBranch = "main",
         });
         var input = new { workspaceId = tree.GetProperty("workspaceId").GetString(), kind = "plan", input = new { selection = new { coreSelected = false } } };
@@ -99,7 +99,7 @@ public sealed class ExternalWorkspaceMcpHttpTests
         await SeedSourceAsync(host);
         using var client = host.CreateClient();
         var token = await IssueAsync(host, WorkspaceScopes);
-        var arguments = new { requestId = Guid.NewGuid().ToString(), taskId = "first-task", appId = SourceApp,
+        var arguments = new { requestId = Guid.NewGuid().ToString(), taskId = "first-task", appId = SourceApp, name = "Improve source application",
             leaseId = Guid.NewGuid().ToString(), targetBranch = "main" };
         var first = await ToolAsync(client, token, "prepare_workspace", arguments);
         var id = first.GetProperty("id").GetString()!;
@@ -116,10 +116,10 @@ public sealed class ExternalWorkspaceMcpHttpTests
         Assert.Equal(id, repeated.GetProperty("id").GetString());
         Assert.Single(repeated.GetProperty("operations").EnumerateArray());
         var conflict = await ToolAsync(client, token, "prepare_workspace", new { arguments.requestId, arguments.taskId,
-            arguments.appId, leaseId = Guid.NewGuid().ToString(), arguments.targetBranch });
+            arguments.appId, name = "Improve source application", leaseId = Guid.NewGuid().ToString(), arguments.targetBranch });
         Assert.Contains("different preparation arguments", conflict.GetProperty("error").GetString());
         var secondTask = await ToolAsync(client, token, "prepare_workspace", new { requestId = Guid.NewGuid().ToString(),
-            taskId = "second-task", appId = SourceApp, leaseId = Guid.NewGuid().ToString(), targetBranch = "main" });
+            taskId = "second-task", appId = SourceApp, name = "Improve source application", leaseId = Guid.NewGuid().ToString(), targetBranch = "main" });
         Assert.NotEqual(id, secondTask.GetProperty("id").GetString());
         var listed = await ToolAsync(client, token, "list_workspaces", new { });
         Assert.Equal(2, listed.GetProperty("workspaces").GetArrayLength());
@@ -152,10 +152,10 @@ public sealed class ExternalWorkspaceMcpHttpTests
         await apps.UpsertAppAsync(publicApp with { Id = privateAppId });
         using var client = host.CreateClient();
         var token = await IssueAsync(host, WorkspaceScopes);
-        var healthyRequest = new { requestId = Guid.NewGuid().ToString(), taskId = "healthy-task", appId = SourceApp,
+        var healthyRequest = new { requestId = Guid.NewGuid().ToString(), taskId = "healthy-task", appId = SourceApp, name = "Improve source application",
             leaseId = Guid.NewGuid().ToString(), targetBranch = "main" };
         var healthy = await ToolAsync(client, token, "prepare_workspace", healthyRequest);
-        var privateRequest = new { requestId = Guid.NewGuid().ToString(), taskId = "private-task", appId = privateAppId,
+        var privateRequest = new { requestId = Guid.NewGuid().ToString(), taskId = "private-task", appId = privateAppId, name = "Improve source application",
             leaseId = Guid.NewGuid().ToString(), targetBranch = "main" };
         var prepared = await ToolAsync(client, token, "prepare_workspace", privateRequest);
         var workspace = JsonSerializer.Deserialize(prepared.GetRawText(), CoreJson.TypeInfo<DevelopmentWorkspace>())!;
@@ -235,7 +235,7 @@ public sealed class ExternalWorkspaceMcpHttpTests
         var token = await IssueAsync(host, WorkspaceScopes);
         var leaseId = Guid.NewGuid().ToString();
         var workspace = await ToolAsync(client, token, "prepare_workspace", new { requestId = Guid.NewGuid().ToString(),
-            taskId = "edit-plan", appId = SourceApp, leaseId, targetBranch = "main" });
+            taskId = "edit-plan", appId = SourceApp, name = "Improve source application", leaseId, targetBranch = "main" });
         var id = workspace.GetProperty("id").GetString()!;
         var path = workspace.GetProperty("path").GetString()!;
         var head = workspace.GetProperty("originalBase").GetString()!;
@@ -268,7 +268,7 @@ public sealed class ExternalWorkspaceMcpHttpTests
         using var client = host.CreateClient();
         var (clientId, tokens) = await OAuthTokensAsync(host, client);
         var access = tokens.GetProperty("access_token").GetString()!;
-        var args = new { requestId = Guid.NewGuid().ToString(), taskId = "oauth-task", appId = SourceApp,
+        var args = new { requestId = Guid.NewGuid().ToString(), taskId = "oauth-task", appId = SourceApp, name = "Improve source application",
             leaseId = Guid.NewGuid().ToString(), targetBranch = "main" };
         var first = await ToolAsync(client, access, "prepare_workspace", args);
         var id = first.GetProperty("id").GetString()!;
@@ -356,9 +356,28 @@ public sealed class ExternalWorkspaceMcpHttpTests
         await SeedAdminAsync(host);
         using var client = host.CreateClient();
         using var response = await McpAsync(client, "browser-admin", "tools/list", new { });
-        var tools = (await McpResultAsync(response)).GetProperty("tools").EnumerateArray()
-            .Where(tool => tool.GetProperty("name").GetString()!.Contains("workspace", StringComparison.Ordinal)).ToArray();
-        Assert.Equal(13, tools.Length);
+        var allTools = (await McpResultAsync(response)).GetProperty("tools").EnumerateArray().ToArray();
+        var tools = allTools.Where(tool => tool.GetProperty("name").GetString()!.Contains("workspace", StringComparison.Ordinal)).ToArray();
+        string[] expected = ["workspace_activation", "prepare_workspace", "list_workspaces", "get_workspace", "rename_workspace",
+            "get_workspace_diff", "refresh_workspace", "commit_workspace", "merge_workspace_target", "abort_workspace_merge",
+            "acquire_workspace_lease", "release_workspace_lease", "record_workspace_pull_requests", "cleanup_workspace",
+            "select_workspace_execution", "get_workspace_execution_selection", "configure_workspace_runtime"];
+        Assert.Equal(expected.Order(StringComparer.Ordinal), tools.Select(tool => tool.GetProperty("name").GetString()!).Order(StringComparer.Ordinal));
+        var selectionProperties = allTools.Single(tool => tool.GetProperty("name").GetString() == "select_app_execution_target")
+            .GetProperty("inputSchema").GetProperty("properties");
+        Assert.Equal(new[] { "appId", "input" }, selectionProperties.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
+        Assert.Equal(new[] { "kind", "requestId", "runtime", "workspaceId", "worktreeId" }, selectionProperties.GetProperty("input")
+            .GetProperty("properties").EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
+        var groupProperties = tools.Single(tool => tool.GetProperty("name").GetString() == "select_workspace_execution")
+            .GetProperty("inputSchema").GetProperty("properties");
+        Assert.Equal(new[] { "input", "workspaceId" }, groupProperties.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
+        Assert.Equal(new[] { "kind", "requestId", "runtime", "workspaceId", "worktreeId" }, groupProperties.GetProperty("input")
+            .GetProperty("properties").EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
+        var recipeProperties = tools.Single(tool => tool.GetProperty("name").GetString() == "configure_workspace_runtime")
+            .GetProperty("inputSchema").GetProperty("properties");
+        Assert.Equal(new[] { "input", "workspaceId" }, recipeProperties.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
+        Assert.Equal(new[] { "appId", "requestId", "runtime", "worktreeId" }, recipeProperties.GetProperty("input")
+            .GetProperty("properties").EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
         var activationInputs = tools.Single(tool => tool.GetProperty("name").GetString() == "workspace_activation")
             .GetProperty("inputSchema").GetProperty("properties").EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal);
         Assert.Equal(new[] { "input", "kind", "workspaceId" }, activationInputs);
@@ -464,6 +483,39 @@ public sealed class ExternalWorkspaceMcpHttpTests
             ["code_verifier"] = verifier, ["redirect_uri"] = redirect }));
         Assert.Equal(HttpStatusCode.OK, redeemed.StatusCode);
         return (clientId, await ReadJsonAsync(redeemed));
+    }
+
+    [Fact]
+    public async Task WorkspaceNames_ExternalToolsRequirePurposeAndKeepGrantOwnershipAndReplay()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        await SeedAdminAsync(host);
+        await SeedSourceAsync(host);
+        using var client = host.CreateClient();
+        var token = await IssueAsync(host, WorkspaceScopes);
+        var prepared = await ToolAsync(client, token, "prepare_workspace", new { requestId = Guid.NewGuid().ToString(),
+            taskId = "runtime-switching", appId = SourceApp, leaseId = Guid.NewGuid().ToString(), name = "Simplify runtime switching" });
+        var id = prepared.GetProperty("id").GetString()!;
+        Assert.Equal("Simplify runtime switching", prepared.GetProperty("name").GetString());
+        var before = CoreJson.Text(await host.Services.GetRequiredService<AppRegistryStore>().GetAppAsync(SourceApp));
+        var input = new { requestId = Guid.NewGuid().ToString(), workspaceId = prepared.GetProperty("workspaceId").GetString(), name = "Unify package and workspace selection" };
+        var named = await ToolAsync(client, token, "rename_workspace", input);
+        Assert.Equal(input.name, named.GetProperty("name").GetString());
+        Assert.Equal(named.GetRawText(), (await ToolAsync(client, token, "rename_workspace", input)).GetRawText());
+        var observed = await ToolAsync(client, token, "get_workspace", new { workspaceId = id });
+        Assert.Equal(input.name, observed.GetProperty("name").GetString());
+        Assert.Equal(prepared.GetProperty("sourceStamp").GetString(), observed.GetProperty("sourceStamp").GetString());
+        Assert.Equal(before, CoreJson.Text(await host.Services.GetRequiredService<AppRegistryStore>().GetAppAsync(SourceApp)));
+        var conflict = await ToolAsync(client, token, "rename_workspace", new { input.requestId, input.workspaceId, name = "Different task" });
+        Assert.Contains("original name", conflict.GetProperty("error").GetString());
+        var otherToken = await IssueAsync(host, WorkspaceScopes);
+        var denied = await ToolAsync(client, otherToken, "rename_workspace", input);
+        Assert.Contains("owned workspace", denied.GetProperty("error").GetString());
+        var readToken = await IssueAsync(host, [AccessTokenScopes.McpRead]);
+        denied = await ToolAsync(client, readToken, "rename_workspace", input);
+        Assert.Contains("mcp:workspaces", denied.GetProperty("error").GetString());
+        var invalid = await ToolAsync(client, token, "rename_workspace", new { requestId = Guid.NewGuid().ToString(), input.workspaceId, name = "invalid\nname" });
+        Assert.Contains("plain-text", invalid.GetProperty("error").GetString());
     }
 
     private static async Task<JsonElement> ToolAsync(HttpClient client, string token, string name, object arguments)
