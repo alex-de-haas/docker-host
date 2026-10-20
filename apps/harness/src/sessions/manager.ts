@@ -137,6 +137,7 @@ export class SessionManager {
     private readonly connections: AgentConnections | null = null,
     private readonly development: DevelopmentClient | null = null,
     readonly worker: SharedDockerWorker | null = null,
+    private readonly executionMode?: "native" | "docker",
   ) {
     this.mcpPolicy = new McpToolPolicy(settings,
       (id, event) => this.serialize(id, async () => {
@@ -607,7 +608,7 @@ export class SessionManager {
       const title = normalizeTitle(input.title);
       const record: SessionRecord = {
         retentionVersion: 1,
-        executionMode: (await this.settings?.read())?.executionMode ?? "native",
+        executionMode: this.executionMode ?? (await this.settings?.read())?.executionMode ?? "native",
         id: input.reservedHandoffId ?? randomUUID(),
         ...(input.reservedHandoffId ? { handoffPending: true } : {}),
         ...binding,
@@ -853,11 +854,12 @@ export class SessionManager {
   }
 
   async listSessions(): Promise<SessionRecord[]> {
-    return (await this.store.listRecords()).filter(record => !record.handoffPending);
+    return (await this.store.listRecords()).filter(record => !record.handoffPending).map(record => this.runtimeProjection(record));
   }
 
   async getSession(id: string): Promise<SessionRecord | null> {
-    return this.live.get(id)?.record ?? this.store.readRecord(id);
+    const record = this.live.get(id)?.record ?? await this.store.readRecord(id);
+    return record ? this.runtimeProjection(record) : null;
   }
 
   /**
@@ -1035,14 +1037,17 @@ export class SessionManager {
   }
 
   async runtimeStatus(): Promise<unknown> {
-    return { defaultMode: (await this.settings?.read())?.executionMode ?? "native",
-      docker: this.worker ? await this.worker.health() : { available: false, reason: "Managed Docker storage is unavailable." },
+    return { defaultMode: this.executionMode ?? (await this.settings?.read())?.executionMode ?? "native", managed: this.executionMode !== undefined,
+      docker: this.executionMode === "native" && !this.worker?.current ? { available: false, state: null }
+        : this.worker ? await this.worker.health() : { available: false, reason: "Managed Docker storage is unavailable." },
       usage: this.worker?.activeSession ? (await this.store.readRecord(this.worker.activeSession))?.workerUsage ?? null : null,
       limits: WORKER_LIMITS,
       support: "Initial target: macOS with Docker Desktop and Linux containers. Native Linux and Windows host acceptance remains pending." };
   }
 
   async setExecutionMode(value: unknown): Promise<void> {
+    if (this.executionMode !== undefined)
+      throw new WorkerError("runtime_selected_by_core", "Select Docker or Local through Core's application runtime controls.", 409);
     if (value !== "native" && value !== "docker") throw new WorkerError("execution_mode_invalid", "Choose native or docker execution.", 400);
     if ([...this.live.values()].some(session => ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)))
       throw new WorkerError("worker_busy", "Finish active conversations before changing the default runtime.");
@@ -1125,6 +1130,8 @@ export class SessionManager {
       } else if (session.record.developmentWorkspaces?.length || session.record.developmentLease) {
         throw new AppContextError(401, "workspace_credentials_required", "Refresh Hosty credentials to verify workspace admission before continuing.");
       }
+      if (this.executionMode !== undefined && session.record.executionMode !== this.executionMode)
+        throw new WorkerError("worker_recovery_required", "Recover the previous worker before resuming this conversation in the selected application runtime.");
       const docker = session.record.executionMode === "docker";
       let claimed = false;
       let release: (() => void) | undefined;
@@ -1316,7 +1323,7 @@ export class SessionManager {
       ? appServers : { ...appServers, ...this.developmentMcp.config(session.record.id, this.proxyBaseUrl) };
     if (session.record.executionMode !== "docker") return servers;
     if (!this.proxyBaseUrl) throw new WorkerError("worker_mcp_unavailable", "Docker MCP requires the Harness loopback endpoint.");
-    this.workerBridge ??= new WorkerMcpBridge(this.proxyBaseUrl);
+    this.workerBridge ??= new WorkerMcpBridge(this.proxyBaseUrl, this.executionMode === "docker" ? "127.0.0.1" : undefined);
     return this.workerBridge.rewrite(session.record.id, servers);
   }
 
@@ -1820,9 +1827,26 @@ export class SessionManager {
     }
   }
 
+  private runtimeProjection(record: SessionRecord): SessionRecord {
+    if (this.executionMode === undefined || this.worker?.current?.sessionId === record.id) return record;
+    return { ...record, executionMode: this.executionMode };
+  }
+
+  private async reconcileRuntime(record: SessionRecord): Promise<void> {
+    if (this.executionMode === undefined || record.executionMode === this.executionMode) return;
+    // developmentLease is a reusable operation identity, retained even after Core releases it.
+    // Only a persisted worker generation requires its old mode for recovery. Preserve source
+    // associations and lease IDs while adopting the installed profile.
+    await this.worker?.load();
+    if (this.worker?.current?.sessionId === record.id) return;
+    record.executionMode = this.executionMode;
+    await this.store.saveRecord(record);
+  }
+
   private async requireLive(id: string): Promise<LiveSession> {
     const existing = this.live.get(id);
     if (existing) {
+      await this.reconcileRuntime(existing.record);
       return existing;
     }
 
@@ -1835,6 +1859,7 @@ export class SessionManager {
 
     const loaded = this.live.get(id);
     if (loaded) return loaded;
+    await this.reconcileRuntime(record);
 
     if (record.workspaceActivation?.state === "queued") {
       record.workspaceActivation = { ...record.workspaceActivation, state: "blocked", error: "Harness restarted before dispatch. Review Core state and retry the original operation explicitly." };

@@ -26,7 +26,7 @@ export function SessionAutonomy({ session, busy, onChange, onSavingChange }: {
   };
   const Icon = autonomous ? ShieldAlert : Shield;
   return <div className="flex min-w-0 flex-col text-xs">
-    <span className="px-2 text-muted-foreground">{session.executionMode === "docker" ? "Shared Docker" : "Native host"}</span>
+    <span className="px-2 text-muted-foreground">{session.executionMode === "docker" ? "Docker" : "Local"}</span>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button type="button" variant="ghost" className="h-9 gap-1.5 px-2" disabled={busy || saving || active}

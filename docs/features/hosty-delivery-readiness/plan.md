@@ -48,7 +48,12 @@ Core API boundary, so its owning plan is Ready.
 ## Verified Sandbox Progress (2026-10-15)
 
 After PR #595, the owner requested supported Harness execution in one shared Docker container.
-The [shared runtime](../assistant-shared-docker-runtime/feature.md) records the completed local delivery, with both providers and selected-account authorization import verified. Per-session containment remains a separate Draft scope.
+The [shared runtime](../assistant-shared-docker-runtime/feature.md) records the completed local
+delivery, with both providers and selected-account authorization import verified. The 2026-10-20
+[production-runtime plan](../assistant-shared-docker-runtime/plan.md) adds Docker and Local as
+ordinary application runtime profiles, declares Docker as the manifest default and integrates
+packaging, switching and acceptance with Core. Per-session containment remains a separate Draft
+scope and does not gate that delivery.
 
 Sandbox now ships independent single-app instances and trusted child Core environments, Harness
 lifecycle tools, Shell/Harness previews, separate data/caches and interrupted-Finish recovery.
@@ -226,6 +231,8 @@ implementation checklist:
 2. **Use the verified shared worker.** The [Shared Docker Agent Runtime](../assistant-shared-docker-runtime/feature.md)
    implements the native coordinator, both provider transports, read-only Git metadata, selected
    credentials and stop/recovery contract. Separate agent/app execution is verified locally.
+   Complete the [production-runtime integration](../assistant-shared-docker-runtime/plan.md):
+   Docker as the manifest default, equally supported Local, and ordinary Core install/switch/update.
    Per-session containers and concurrency comparisons retain their separate Draft scope.
 3. **Complete the demonstration journey.** Compose sandbox/browser evidence with the existing
    Git/PR/CI/review path and creation from Shell, then apply ready visual references with parity

@@ -402,6 +402,60 @@ describe("provider connections", () => {
     expect(JSON.parse(await readFile(path.join(host, "auth.json"), "utf8"))).toEqual(auth);
   });
 
+  it("uses an explicitly imported host login after switching to a Docker coordinator without host filesystem access", async () => {
+    const host = path.join(root, "portable-host"); await mkdir(host);
+    await writeFile(path.join(host, "auth.json"), JSON.stringify({ OPENAI_API_KEY: "synthetic-portable-key" }));
+    const connection = await registry.update({ name: "Portable", kind: "codex", auth: "host-login", hostDirectory: host });
+    const binding = (await registry.binding(connection.id))!;
+    await registry.prepareDockerAuthorization(connection.id);
+    await rm(host, { recursive: true });
+    const dockerRegistry = new AgentConnections(data, cache, secrets, "docker");
+    try {
+      expect(await dockerRegistry.binding(connection.id)).toEqual(binding);
+      expect(await (await dockerRegistry.adapter(binding)).probe()).toEqual({ available: true });
+      const secretKey = [...secrets.values.keys()][0]!;
+      secrets.values.set(secretKey, JSON.stringify({ OPENAI_API_KEY: "another-synthetic-account" }));
+      await expect(dockerRegistry.adapter(binding)).rejects.toMatchObject({ code: "provider_host_account_changed" });
+      secrets.values.clear();
+      await expect(dockerRegistry.adapter(binding)).rejects.toMatchObject({ code: "provider_import_required" });
+    } finally { await dockerRegistry.shutdown(); }
+  });
+
+  it.each(["native", "docker"] as const)("gives %s translations a disposable HOME without host configuration", async mode => {
+    const connection = await registry.update({ name: "Translation", kind: "claude", auth: "claude-token", secret: "synthetic-token" });
+    const selected = new AgentConnections(data, cache, secrets, mode);
+    let home = "";
+    try {
+      await selected.withTranslationRuntime((await selected.binding(connection.id))!, async runtime => {
+        home = runtime.home;
+        expect(runtime.env.HOME).toBe(home);
+        expect(runtime.env.CLAUDE_CONFIG_DIR).toBe(home);
+        expect(home).toContain(path.join(cache, "translation-runs"));
+        await writeFile(path.join(runtime.env.HOME!, "incidental-provider-state"), "temporary");
+      });
+      expect(await stat(home).catch(() => null)).toBeNull();
+    } finally { await selected.shutdown(); }
+  });
+
+  it.each(["codex", "claude"] as const)("preserves %s managed history across application profile switches", async kind => {
+    const connection = await registry.update({ name: "Portable", kind, auth: "api-key", secret: "synthetic-key" });
+    const binding = (await registry.binding(connection.id))!;
+    await registry.adapter(binding);
+    const directory = kind === "codex" ? "sessions" : "projects";
+    const native = path.join(cache, "agent-providers", connection.id, "1", directory);
+    await writeFile(path.join(native, "existing-conversation.jsonl"), "existing provider history");
+    const dockerRegistry = new AgentConnections(data, cache, secrets, "docker");
+    try {
+      await dockerRegistry.adapter(binding);
+      const container = path.join(cache, "agent-docker-providers", connection.id, "1", directory);
+      expect(await readFile(path.join(container, "existing-conversation.jsonl"), "utf8")).toBe("existing provider history");
+      await writeFile(path.join(container, "existing-conversation.jsonl"), "resumed provider history");
+      await registry.adapter(binding);
+      expect(await readFile(path.join(native, "existing-conversation.jsonl"), "utf8")).toBe("resumed provider history");
+      expect(await dockerRegistry.binding(connection.id)).toEqual(binding);
+    } finally { await dockerRegistry.shutdown(); }
+  });
+
   it("keeps Docker provider configuration out of native probes and homes", async () => {
     const connection = await registry.update(api("split")); const binding = (await registry.binding(connection.id))!;
     const docker = await registry.adapter(binding, true);

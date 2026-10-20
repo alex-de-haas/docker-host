@@ -36,3 +36,10 @@ it("does not interpret a legacy Core roster as an offer", async () => {
   expect(await directory.read()).toBeNull();
   expect(directory.core()).toBeNull();
 });
+
+it.each(["127.0.0.1", "notes.i-test.hosty.localhost"].flatMap(host => [false, true].map(container => ({ host, container }))))("routes app MCP $host endpoints for container=$container", async ({ host, container }) => {
+  const target = { ...entry("notes", true), interfaces: [{ key: "default", url: `http://${host}:3100/mcp`, readiness: "ready" }] };
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ apps: [], agents: { revision: "r1", targets: [target] } }));
+  const directory = new ProviderDirectory("http://core", "service", "assistant", null, container);
+  expect(await directory.resolveOffered("notes")).toBe(container ? "http://host.docker.internal:3100/mcp" : `http://${host}:3100/mcp`);
+});

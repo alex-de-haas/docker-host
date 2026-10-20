@@ -387,10 +387,15 @@ async function route(
     if (method === "DELETE") await connections.cancelLogin(loginMatch[1]!);
     if (method === "GET" || method === "DELETE") { sendJson(response, 200, connections.loginView(loginMatch[1]!)); return; }
   }
-  const connectionMatch = url.pathname.match(/^\/api\/connections\/([a-zA-Z0-9-]+)(\/test|\/login)?$/);
+  const connectionMatch = url.pathname.match(/^\/api\/connections\/([a-zA-Z0-9-]+)(\/test|\/login|\/prepare-docker)?$/);
   if (connections && connectionMatch) {
     const id = connectionMatch[1]!; const action = connectionMatch[2] ?? "";
     if (method !== "GET" && action !== "/test") await manager.assertWorkerProviderInactive(id);
+    if (action === "/prepare-docker" && method === "POST") {
+      await manager.assertWorkerProviderInactive(id);
+      await connections.prepareDockerAuthorization(id);
+      sendJson(response, 200, { ready: true }); return;
+    }
     if (action === "/test" && method === "POST") { sendJson(response, 200, await connections.health(await connections.binding(id))); return; }
     if (action === "/login" && method === "POST") { sendJson(response, 200, await connections.startLogin(id)); return; }
     if (!action && method === "PUT") { sendJson(response, 200, await connections.update(await readJson(request), id)); return; }

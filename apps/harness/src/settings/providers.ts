@@ -42,6 +42,7 @@ export class ProviderDirectory {
     private readonly serviceToken: string | null,
     private readonly appId: string,
     private readonly coreMcpUrl: string | null = null,
+    private readonly container = false,
   ) {}
 
   get revision(): string | undefined { return this.snapshot?.agents.revision; }
@@ -103,10 +104,18 @@ export class ProviderDirectory {
     return (await this.refresh())?.apps ?? null;
   }
 
+  private reachableUrl(value: string): string {
+    if (!this.container) return value;
+    const url = new URL(value);
+    if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) && !url.hostname.endsWith(".hosty.localhost")) return value;
+    url.hostname = "host.docker.internal";
+    return url.href;
+  }
+
   private provider(target: AgentTarget): McpProvider {
     const declarations = target.interfaces.filter(item => item.url && item.readiness === "ready");
     const interfaces = declarations.map(item => ({
-      key: item.key, url: target.id === CORE_PROVIDER_ID && this.coreMcpUrl ? this.coreMcpUrl : item.url!,
+      key: item.key, url: this.reachableUrl(target.id === CORE_PROVIDER_ID && this.coreMcpUrl ? this.coreMcpUrl : item.url!),
     }));
     return {
       policyIdentity: JSON.stringify([target.id, target.installedAt ?? "core", interfaces]),

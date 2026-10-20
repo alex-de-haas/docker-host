@@ -699,6 +699,19 @@ Decisions 1–5: 2026-08-19.
     it is not replaced by attaching production data to a child Core. Repositories not registered
     as Hosty source keep their documented workflow until an explicit integration or fallback exists.
 
+49. **Docker and Local are ordinary Harness production runtimes (2026-10-20).**
+    The owner requires two equally supported production profiles, Docker and Local, with Docker
+    declared as the manifest default. Users select either at installation or later through normal
+    Core runtime controls. Core owns the selected profile and the common behavior for remembering
+    a user's production preference. Local is not a privileged-task mode or a chat-level override.
+
+    The [production-runtime plan](features/assistant-shared-docker-runtime/plan.md) owns Docker
+    packaging, lifecycle integration, compatibility and acceptance, reusing the shared Codex/Claude
+    worker. Development profiles are separately marked `development: true`; their redesign and
+    general preference persistence remain platform work. Runtime startup failures use the normal
+    Core diagnostics. This clarifies decisions 35/46/47 while retaining the separate per-session
+    isolation and application-sandbox work. This update changes the plan, not the live installation.
+
 ## Expectations And Later Directions
 
 - **Apps ship with source.** The default is open source; a company's internal apps are closed by

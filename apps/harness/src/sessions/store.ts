@@ -30,7 +30,7 @@ export interface SessionRecord {
   retentionVersion?: 1;
   retention?: import("./retention.js").RetentionStatus;
   retentionCleanup?: { requestId: string; expectedRevision: number };
-  /** Existing records remain native until an explicit new conversation selects Docker. */
+  /** Recorded execution mode for legacy data and recovery; the selected application profile governs idle sessions. */
   executionMode?: "native" | "docker";
   workerUsage?: { memoryBytes: number; peakMemoryBytes: number; pids: number; observedAt: string; diskBytes?: number; diskObservedAt?: string };
   autonomy?: SessionAutonomy;

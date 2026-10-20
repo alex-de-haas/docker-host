@@ -7,6 +7,47 @@ namespace Haas.Hosty.Core.Tests;
 public sealed class RuntimeAppManifestRepositoryTests
 {
     [Fact]
+    public async Task Harness_DefaultsToDockerAndPreservesExplicitLocalSelection()
+    {
+        var path = Path.Combine(FindRepositoryRoot(), "apps", "harness", "manifest.json");
+        var manifests = new AppManifestService();
+        var initial = await manifests.LoadAsync(path, validateAllProfiles: true);
+        Assert.Equal("docker", initial.RuntimeProfile.Key);
+        Assert.Equal("docker", initial.RuntimeProfile.Type);
+        Assert.False(initial.RuntimeProfile.Development);
+        Assert.NotNull(initial.Manifest.AgentWorker);
+        var local = await manifests.LoadAsync(path, "local");
+        Assert.Equal("localCommand", local.RuntimeProfile.Type);
+        Assert.False(local.RuntimeProfile.Development);
+        Assert.Equal("native", Assert.Single(local.Services).Runtime.Environment["HOSTY_HARNESS_RUNTIME"]);
+        Assert.True((await manifests.LoadAsync(path, "dev")).RuntimeProfile.Development);
+        Assert.Equal("local", (await manifests.LoadAsync(path, "local", forceRead: true)).RuntimeProfile.Key);
+    }
+
+    [Theory]
+    [InlineData("registry.example:5000/worker", false)]
+    [InlineData("registry.example:5000/worker:", false)]
+    [InlineData("registry.example:5000/worker:latest", false)]
+    [InlineData("registry.example:5000/worker:0.62.0", true)]
+    public async Task Harness_WorkerRequiresAnExplicitVersionBeyondRegistryPort(string image, bool valid)
+    {
+        var document = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(
+            Path.Combine(FindRepositoryRoot(), "apps/harness/manifest.json")))!;
+        document["agentWorker"]!["image"] = image;
+        var root = Path.Combine(Path.GetTempPath(), "hosty-worker-manifest-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var file = Path.Combine(root, "manifest.json");
+        try
+        {
+            await File.WriteAllTextAsync(file, document.ToJsonString());
+            if (valid) Assert.Equal(image, (await new AppManifestService().LoadAsync(file)).Manifest.AgentWorker!.Image);
+            else Assert.Contains((await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(file))).Errors,
+                error => error.Code == "app_manifest_agent_worker_invalid");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public async Task ShellManifest_DeclaresDockerAndLocalCommandRuntimeProfiles()
     {
         var manifestPath = Path.Combine(FindRepositoryRoot(), "apps", "shell", "manifest.json");

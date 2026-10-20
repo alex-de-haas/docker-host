@@ -274,6 +274,13 @@ export function AgentProviders() {
                     Set default
                   </DropdownMenuItem>
                 )}
+                {connection.auth === "host-login" && <DropdownMenuItem
+                    onSelect={() => void act(async () => {
+                      await call(`/connections/${connection.id}/prepare-docker`, { method: "POST" });
+                      setNotice("Selected host authorization is ready for Docker.");
+                      await refresh();
+                    })}
+                  >Prepare for Docker</DropdownMenuItem>}
                 {connection.auth === "chatgpt" && (
                   <DropdownMenuItem
                     disabled={login?.status === "pending"}

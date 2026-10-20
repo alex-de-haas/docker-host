@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 
 export interface DockerCommands {
+  readonly remote?: boolean;
   run(args: string[], timeoutMs?: number): Promise<string>;
   spawn(args: string[], env: NodeJS.ProcessEnv): ChildProcessWithoutNullStreams;
 }

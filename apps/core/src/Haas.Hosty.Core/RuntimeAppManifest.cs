@@ -533,6 +533,15 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
                     errors.Add(new("app_manifest_ui_panel_id_duplicate", "Panel IDs must be unique within the app.", $"$.ui.panels[{index}].id"));
             }
         }
+        if (manifest.AgentWorker is { } worker && (
+            string.IsNullOrWhiteSpace(worker.Service) || string.IsNullOrWhiteSpace(worker.Image)
+            || worker.Image.StartsWith('-') || worker.Image.Any(char.IsWhiteSpace)
+            || worker.Image.LastIndexOf(':') <= worker.Image.LastIndexOf('/') || worker.Image.EndsWith(':') || worker.Image.EndsWith(":latest", StringComparison.Ordinal)
+            || !manifest.Services.Any(s => s.Key == worker.Service)
+            || !manifest.Provides.Contains("assistant", StringComparer.Ordinal)
+            || !manifest.CorePermissions.Contains(CoreAppPermissions.Sources, StringComparer.Ordinal)
+            || manifest.Data?.Enabled != true || manifest.Cache?.Enabled != true))
+            errors.Add(new("app_manifest_agent_worker_invalid", "Agent workers require a versioned image, an existing coordinator service, assistant role, source authority and managed data/cache.", "$.agentWorker"));
         foreach (var permission in manifest.CorePermissions.Concat(manifest.OptionalCorePermissions))
         {
             if (!allowUnsupportedPermissions && !CoreAppPermissions.Known.Contains(permission, StringComparer.Ordinal))
@@ -1842,7 +1851,8 @@ internal sealed partial class DockerRuntimeAdapter(
     // Optional so existing direct constructions stay valid; DI supplies it, and without it the startup
     // env baseline stands in.
     CorePublicOriginResolver? corePublicOrigin = null,
-    DockerCoreListener? dockerCoreListener = null) : IAppRuntimeAdapter, IRuntimePreparation, IImageDigestResolver, IRunningContainerProbe
+    DockerCoreListener? dockerCoreListener = null,
+    AgentWorkerService? agentWorkers = null) : IAppRuntimeAdapter, IRuntimePreparation, IImageDigestResolver, IRunningContainerProbe
 {
     // Resolved per container create rather than once: a saved origin must reach the next app that starts,
     // not only the apps started after the next Core restart.
@@ -1880,6 +1890,11 @@ internal sealed partial class DockerRuntimeAdapter(
     public async Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
     {
         if (dockerCoreListener is not null) await dockerCoreListener.EnsureReadyAsync(cancellationToken);
+        if (context.Manifest.Manifest.AgentWorker is { } workerDeclaration)
+        {
+            if (agentWorkers is null) throw new AppLifecycleException("agent_worker_unavailable", "Core agent worker support is unavailable.");
+            await agentWorkers.PrepareImageAsync(workerDeclaration, cancellationToken);
+        }
         var endpoints = new List<AppEndpointContract>();
         var services = OrderServices(context.Manifest.Services);
         await RemoveObsoleteServicesAsync(context, cancellationToken);
@@ -2046,6 +2061,8 @@ internal sealed partial class DockerRuntimeAdapter(
 
             runArgs.Add("-e");
             runArgs.Add("HOSTY_APP_SERVICE_TOKEN");
+            if (context.Manifest.Manifest.AgentWorker?.Service == service.Key)
+                runArgs.AddRange(["--user", await AgentWorkerService.HostUser(cancellationToken)]);
             containerEnvironment["HOSTY_APP_SERVICE_TOKEN"] = serviceTokens.CreateToken(context.App.Id);
 
             if (delegatedTokenKey is not null)
@@ -2110,7 +2127,7 @@ internal sealed partial class DockerRuntimeAdapter(
                 (string.IsNullOrWhiteSpace(context.Manifest.DataTarget.Service) ||
                     string.Equals(context.Manifest.DataTarget.Service, service.Key, StringComparison.Ordinal)))
             {
-                var containerPath = string.IsNullOrWhiteSpace(context.Manifest.DataTarget.ContainerPath)
+                var containerPath = context.Manifest.Manifest.AgentWorker?.Service == service.Key ? MountPathPolicy.ResolveRealPath(context.AppDataPath) : string.IsNullOrWhiteSpace(context.Manifest.DataTarget.ContainerPath)
                     ? "/app/data"
                     : context.Manifest.DataTarget.ContainerPath;
                 var environmentName = string.IsNullOrWhiteSpace(context.Manifest.DataTarget.Environment)
@@ -2129,7 +2146,7 @@ internal sealed partial class DockerRuntimeAdapter(
                     string.Equals(context.Manifest.CacheTarget.Service, service.Key, StringComparison.Ordinal)))
             {
                 var appCachePath = context.AppCachePath ?? Path.Combine(context.AppRoot, "cache");
-                var cacheContainerPath = string.IsNullOrWhiteSpace(context.Manifest.CacheTarget.ContainerPath)
+                var cacheContainerPath = context.Manifest.Manifest.AgentWorker?.Service == service.Key ? MountPathPolicy.ResolveRealPath(appCachePath) : string.IsNullOrWhiteSpace(context.Manifest.CacheTarget.ContainerPath)
                     ? "/app/cache"
                     : context.Manifest.CacheTarget.ContainerPath;
                 var cacheEnvironmentName = string.IsNullOrWhiteSpace(context.Manifest.CacheTarget.Environment)
@@ -2204,11 +2221,17 @@ internal sealed partial class DockerRuntimeAdapter(
                 $"docker stop did not stop container(s): {string.Join(", ", stillRunning)}.");
         }
 
+        if (context.Manifest.Manifest.AgentWorker is not null)
+        {
+            if (agentWorkers is null) throw new AppLifecycleException("agent_worker_unavailable", "Worker shutdown support is unavailable.");
+            await agentWorkers.StopInstallationAsync(context.App, cancellationToken);
+        }
         return new AppRuntimeOperationResult("stopped");
     }
 
     public async Task<AppRuntimeOperationResult> RemoveAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
     {
+        if (context.Manifest.Manifest.AgentWorker is not null) await StopAsync(context, cancellationToken);
         foreach (var service in context.Manifest.Services)
         {
             await RemoveContainerIfOwnedAsync(context.App.Id, BuildContainerName(config.InstanceId, context.App.Id, service.Key), cancellationToken);
@@ -3466,6 +3489,7 @@ internal sealed class RuntimeAppManifest
 {
     // Explicit opt-in: older SDKs cannot safely interpret instance-scoped test administrators.
     public SandboxManifest? Sandbox { get; init; }
+    public AgentWorkerManifest? AgentWorker { get; init; }
     // Collection properties coalesce null to empty in the getter so that members absent
     // from the JSON behave the same under the source generator (used for Native AOT) as
     // under the reflection serializer, which preserved the `= []` initializer.

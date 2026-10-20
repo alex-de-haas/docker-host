@@ -538,8 +538,9 @@ internal sealed partial class LocalCommandRuntimeAdapter(
             startInfo.Environment[environment.Key] = environment.Value;
         }
 
-        startInfo.Environment["HOSTY_APP_DATA_DIR"] = context.AppDataPath;
         Directory.CreateDirectory(context.AppDataPath);
+        startInfo.Environment["HOSTY_APP_DATA_DIR"] = context.Manifest.Manifest.AgentWorker?.Service == service.Key
+            ? MountPathPolicy.ResolveRealPath(context.AppDataPath) : context.AppDataPath;
 
         // Unlike data (unconditional above), the cache directory exists only for apps that declared
         // it — no target lookup: localCommand has no container, so there is nothing to bind and the
@@ -547,8 +548,9 @@ internal sealed partial class LocalCommandRuntimeAdapter(
         if (context.Manifest.Manifest.Cache?.Enabled == true)
         {
             var appCachePath = context.AppCachePath ?? Path.Combine(context.AppRoot, "cache");
-            startInfo.Environment["HOSTY_APP_CACHE_DIR"] = appCachePath;
             Directory.CreateDirectory(appCachePath);
+            startInfo.Environment["HOSTY_APP_CACHE_DIR"] = context.Manifest.Manifest.AgentWorker?.Service == service.Key
+                ? MountPathPolicy.ResolveRealPath(appCachePath) : appCachePath;
         }
 
         // External mounts: localCommand has no container, so the app reads the operator host

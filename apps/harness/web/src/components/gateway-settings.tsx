@@ -130,7 +130,7 @@ export function GatewaySettings({
           forceMount
           className="data-[state=inactive]:hidden"
         >
-          <AgentRuntime mode={data.settings.executionMode ?? "native"} onMode={mode => save({ executionMode: mode })} />
+          <AgentRuntime />
           {data.agentConnections && <AgentProviders />}
         </TabsContent>
         <TabsContent value="translation">

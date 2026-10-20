@@ -1,6 +1,6 @@
 ---
 created: 2026-09-17
-updated: 2026-10-16
+updated: 2026-10-20
 summary: Named Claude and Codex agent connections that administrators manage in the Harness Providers settings.
 components: [apps/harness]
 ---
@@ -171,6 +171,13 @@ configuration and unrelated sessions are not copied. Native and Docker refresh s
 Core's secret authoritative; removed authorization requires reconnecting. Native probes do not execute
 container-written configuration. A persisted unreconciled worker blocks credential changes until
 Stop/recovery confirms termination.
+
+Docker and Local are application profiles selected in Core. Managed connections retain their
+binding and durable history across profile changes. A host-login connection offers
+**Prepare for Docker** in Local (`POST /api/connections/:id/prepare-docker`); only its selected
+portable authorization is imported. The Docker coordinator uses the saved import and reports
+missing/revoked authorization through normal connection diagnostics. Translation can use the same
+import and saves renewed authorization back to Core. No host directory is mounted to satisfy login.
 
 ## Testing Expectations
 

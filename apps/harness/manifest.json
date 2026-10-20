@@ -2,8 +2,8 @@
   "schemaVersion": "app.0.1",
   "id": "hosty.harness",
   "name": "Hosty Harness",
-  "description": "Host-resident operator assistant with managed Claude and Codex connections, chat and settings UI.",
-  "version": "0.61.6",
+  "description": "Hosty assistant with Docker and Local production runtimes, managed Claude and Codex connections, chat and settings.",
+  "version": "0.62.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -12,9 +12,13 @@
   },
   "runtimeProfiles": [
     {
-      "key": "local",
-      "type": "localCommand",
+      "key": "docker",
+      "type": "docker",
       "default": true
+    },
+    {
+      "key": "local",
+      "type": "localCommand"
     },
     {
       "key": "dev",
@@ -22,7 +26,7 @@
       "development": true
     }
   ],
-  "defaultRuntime": "local",
+  "defaultRuntime": "docker",
   "services": [
     {
       "key": "api",
@@ -45,6 +49,9 @@
             "port": 3400,
             "path": "/healthz",
             "timeoutSeconds": 5
+          },
+          "environment": {
+            "HOSTY_HARNESS_RUNTIME": "native"
           }
         },
         "dev": {
@@ -66,6 +73,30 @@
             "path": "/healthz",
             "timeoutSeconds": 5
           }
+        },
+        "docker": {
+          "type": "docker",
+          "image": "ghcr.io/alex-de-haas/hosty-harness:0.62.0",
+          "environment": {
+            "HOSTY_HARNESS_RUNTIME": "docker",
+            "PORT": "3400"
+          },
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3400,
+              "protocol": "http",
+              "public": true
+            }
+          ],
+          "healthcheck": {
+            "type": "exec",
+            "command": "node -e \"fetch('http://127.0.0.1:3400/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+            "intervalSeconds": 10,
+            "timeoutSeconds": 5,
+            "retries": 3,
+            "gracePeriodSeconds": 20
+          }
         }
       }
     }
@@ -73,6 +104,12 @@
   "data": {
     "enabled": true,
     "targets": [
+      {
+        "runtime": "docker",
+        "service": "api",
+        "containerPath": "/app/data",
+        "environment": "HOSTY_APP_DATA_DIR"
+      },
       {
         "runtime": "local",
         "environment": "HOSTY_APP_DATA_DIR"
@@ -86,6 +123,12 @@
   "cache": {
     "enabled": true,
     "targets": [
+      {
+        "runtime": "docker",
+        "service": "api",
+        "containerPath": "/app/cache",
+        "environment": "HOSTY_APP_CACHE_DIR"
+      },
       {
         "runtime": "local",
         "environment": "HOSTY_APP_CACHE_DIR"
@@ -155,7 +198,7 @@
   ],
   "catalogMetadata": {
     "icon": "assets/icon.svg",
-    "summary": "Admin-only Hosty assistant: operator chat sessions on a host-resident agent harness."
+    "summary": "Admin-only Hosty assistant with Docker and Local runtimes."
   },
   "ui": {
     "entrypoint": {
@@ -207,5 +250,9 @@
     "core.environments.read",
     "core.environments.manage",
     "core.workspace.activate"
-  ]
+  ],
+  "agentWorker": {
+    "service": "api",
+    "image": "ghcr.io/alex-de-haas/hosty-agent-worker:0.62.0"
+  }
 }

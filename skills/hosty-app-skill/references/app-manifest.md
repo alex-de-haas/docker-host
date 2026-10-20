@@ -128,6 +128,19 @@ Use `cache.enabled: true` for **derived, rebuildable data** — media indexes, t
 - **The app must treat cache content as absent-at-any-time**: a restore can make the database older than the cache, a runtime switch to a profile without a cache target runs without the variable entirely (that is not an error, unlike a missing `data` target), and the operator may delete the directory between runs. Key cache entries so stale ones invalidate themselves — for example by stamping them with the source file's size and mtime.
 - Additive under `app.0.1`; a Core that predates the contract simply never sets the variable, so apps should fall back (typically to a subdirectory of `HOSTY_APP_DATA_DIR`).
 
+## Assistant Agent Worker
+
+Harness declares `agentWorker: { "service": "api", "image": "ghcr.io/alex-de-haas/hosty-agent-worker:<version>" }`.
+This optional Core-managed contract requires the assistant role, required `apps.sources.full`
+permission, enabled data/cache and an existing coordinator service. Use a versioned worker image.
+Only a selected Docker coordinator receives the constrained worker API. Core verifies the reviewed
+installation, active source lease, paths and container ownership; the app receives no Docker socket.
+Core uses the host's numeric UID/GID and canonical app data/cache paths for that coordinator so
+provider-history paths remain valid across Local/Docker switches. Its Docker listener still uses
+the declared container port; `HOSTY_PORT_HTTP` contains the published host port.
+See [Harness shared runtime](../../../docs/features/assistant-shared-docker-runtime/feature.md)
+for supported hosts, storage, lifecycle and credential boundaries.
+
 ## External Mounts
 
 Use `externalMounts` when the app needs large operator-owned host folders that live **outside** app data — for example media catalog roots. Unlike `data`, external mounts are operator-configured after install, are never backed up or deleted by Hosty, and survive update / restart / runtime-switch / app removal.
