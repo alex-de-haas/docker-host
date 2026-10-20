@@ -222,8 +222,31 @@ itself fails, keep its root and run the same opt-in test with `HOSTY_TEST_HARNES
 that root and the working Docker endpoint. Recovery validates the fixture identity, replays the
 journaled Finish request through its owner and deletes parent test data only after verified Finish.
 
-The [remaining acceptance plan](plan.md) tracks separately authorized Git/PR publication and release
-verification. Local image builds are distinct from registry publication. The primary Core/Harness runtime selection and lifecycle are unchanged by test fixtures. Provider
+Post-merge release verification on 2026-10-20 confirms publication of both 0.62.0 runtime images
+from [source implementation PR #629](https://github.com/alex-de-haas/docker-host/pull/629), merged at
+`0ff7485883b19732e9d93c6779df3efb95579683`. The
+[runtime image publication run](https://github.com/alex-de-haas/docker-host/actions/runs/39449768950)
+succeeds for both images. Independent anonymous registry checks verify the image indexes, platform
+manifests and configs for `linux/amd64` and `linux/arm64`; every OCI revision label equals that merge
+SHA. Actual anonymous pulls of all four platform images pass. The immutable image index digests are:
+
+| Image | Version | Index digest |
+| --- | --- | --- |
+| `ghcr.io/alex-de-haas/hosty-agent-worker` | `0.62.0` | `sha256:9c471ef210599f0f5a24b85d5b3221ad988d7a7f21ba602900d1e9e636601a0a` |
+| `ghcr.io/alex-de-haas/hosty-harness` | `0.62.0` | `sha256:b4a0dc4cb00812ccb0f18bb024de9e4d7ad04ecc44d71aab4418bf201f3ddaf3` |
+
+Signed provenance verification with `gh attestation verify` passes for both immutable index digests
+using downloaded signed bundles and the repository-specific `publication-provenance-v1` predicate.
+The verified signature certificates identify
+`.github/workflows/harness-worker-image.yml@refs/heads/main`, source commit
+`0ff7485883b19732e9d93c6779df3efb95579683` and the successful
+[main CI run 39448520481](https://github.com/alex-de-haas/docker-host/actions/runs/39448520481).
+
+The release coordinator runs in the isolated Core. The [remaining acceptance plan](plan.md) retains
+D10/D12/D14/D15 until Git/PR acceptance and final closure are verified. Docker Git/PR publication is
+under verification; Local Git/PR acceptance and final closure remain pending. The registry and signed
+provenance evidence establishes image delivery, without establishing those remaining checks.
+The primary Core/Harness runtime selection and lifecycle are unchanged by test fixtures. Provider
 authorizations are used only with explicit owner permission. Core 0.146.0 supplies the required
 worker API and canonical storage placement for Harness 0.62.0.
 
