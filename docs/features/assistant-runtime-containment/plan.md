@@ -20,7 +20,7 @@ not a current prohibition on that shared-worker work.
 
 Owner clarification, 2026-10-20: Docker and Local are ordinary production runtime profiles of the
 Harness application, with Docker as the manifest default. The
-[production-runtime plan](../assistant-shared-docker-runtime/plan.md) owns packaging, Core lifecycle
+[production-runtime feature](../assistant-shared-docker-runtime/feature.md) records verified packaging, Core lifecycle
 integration and compatible switching. Local is an equally supported runtime selected through normal
 Core controls. This does not wait for this plan's per-session isolation or change its Draft status.
 The existing shared worker's administrator-wide visibility remains distinct from restricted-user
@@ -40,8 +40,9 @@ coordinator and broad service credentials outside model-accessible execution rem
 
 This revises the sequencing in [vision decisions 26 and 32](../../vision.md), recorded by decision
 35. It does not turn a shared container into session isolation. The eventual per-session target
-below remains tracked by D1-D10; shared-host delivery now belongs to the linked shared-runtime
-plan, with eventual mode comparisons under D9. Common host-control restrictions also apply to the shared runner. Neither the shared runner nor
+below remains tracked by D1-D10; verified shared-host delivery is recorded in the
+[shared-runtime feature](../assistant-shared-docker-runtime/feature.md), with eventual mode comparisons
+under D9. Common host-control restrictions also apply to the shared runner. Neither the shared runner nor
 its performance results satisfy ordinary-user acceptance under decision 28.
 
 ## Restricted Operator Direction (2026-10-16)
@@ -60,7 +61,8 @@ The native-runtime parity assessment belongs to
 [Development Controls D1](../app-development-controls/plan.md#deliverables). Source-based execution
 remains supported. The 2026-10-20 direction retains Local as an ordinary Harness production
 runtime alongside Docker. Shared-worker backend delivery is already implemented; application
-runtime packaging and acceptance belong to its production-runtime plan. Workspace allocation does
+runtime packaging and acceptance are recorded in the
+[production-runtime feature](../assistant-shared-docker-runtime/feature.md). Workspace allocation does
 not contain a privileged external client's native process.
 
 ## Approved Bounded Experiment (2026-10-13)

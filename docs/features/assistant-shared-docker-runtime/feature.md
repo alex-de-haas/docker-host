@@ -165,8 +165,9 @@ Real-provider acceptance on this host also passes Codex and Claude chat/translat
 Docker -> Local -> Docker, retaining provider session IDs and conversation content. Both profiles
 prepare a registered workspace, use scoped development MCP, edit a temporary file, inspect a Git
 diff and build Core. Browser acceptance uses normal password login and Shell embedding. A Demo-only
-activation and Return run inside the child Core. Full Core verification passes 3,800 tests (five opt-in integration tests
-skipped in that run); Harness passes 893 tests and lint. Both profiles' app MCP routes are also exercised
+activation and Return run inside the child Core. Full Core verification passes 3,807 tests (five opt-in integration tests
+skipped in that run); Harness passes 894 tests across 98 files and lint. The Core build has four
+existing warnings and zero errors. Both profiles' app MCP routes are also exercised
 against an independently running Demo App. The separately enabled production integration test
 passes and Finish removes the child Core data and resources, confirmed by independent inventory.
 
@@ -176,9 +177,9 @@ fresh evidence export. Startup takes 44.8 seconds in Docker and 41.7 seconds in 
 stop and dispose succeed, followed by independent resource-removal checks. These checks temporarily
 stop the unbounded Workspaces app with explicit owner permission and restore it healthy through Core.
 
-The production failure matrix passes 20 checks using real Codex turns, ordinary Core/Harness
+The production failure matrix passes 20/20 checks using real Codex turns, ordinary Core/Harness
 identity and Docker -> Local -> Docker switching. The same provider session and remembered content
-survive the sequence. The final full run completes in 5 minutes 37 seconds, including exact resource
+survive the sequence. The final full run completes in 6 minutes 29 seconds, including exact resource
 and Stop error diagnostics. Its Docker transport fixture also exercises both provider binaries and the
 real Claude SDK; the failure-turn assertions use Codex.
 
@@ -222,10 +223,47 @@ itself fails, keep its root and run the same opt-in test with `HOSTY_TEST_HARNES
 that root and the working Docker endpoint. Recovery validates the fixture identity, replays the
 journaled Finish request through its owner and deletes parent test data only after verified Finish.
 
-The [remaining acceptance plan](plan.md) tracks separately authorized Git/PR publication and release
-verification. Local image builds are distinct from registry publication. The primary Core/Harness runtime selection and lifecycle are unchanged by test fixtures. Provider
-authorizations are used only with explicit owner permission. Core 0.146.0 supplies the required
-worker API and canonical storage placement for Harness 0.62.0.
+Post-merge release verification on 2026-10-20 confirms publication of both 0.62.0 runtime images
+from [source implementation PR #629](https://github.com/alex-de-haas/docker-host/pull/629), merged at
+`0ff7485883b19732e9d93c6779df3efb95579683`. The
+[runtime image publication run](https://github.com/alex-de-haas/docker-host/actions/runs/39449768950)
+succeeds for both images. Independent anonymous registry checks verify the image indexes, platform
+manifests and configs for `linux/amd64` and `linux/arm64`; every OCI revision label equals that merge
+SHA. Actual anonymous pulls of all four platform images pass. The immutable image index digests are:
+
+| Image | Version | Index digest |
+| --- | --- | --- |
+| `ghcr.io/alex-de-haas/hosty-agent-worker` | `0.62.0` | `sha256:9c471ef210599f0f5a24b85d5b3221ad988d7a7f21ba602900d1e9e636601a0a` |
+| `ghcr.io/alex-de-haas/hosty-harness` | `0.62.0` | `sha256:b4a0dc4cb00812ccb0f18bb024de9e4d7ad04ecc44d71aab4418bf201f3ddaf3` |
+
+Signed provenance verification with `gh attestation verify` passes for both immutable index digests
+using downloaded signed bundles and the repository-specific `publication-provenance-v1` predicate.
+The verified signed provenance identifies
+`.github/workflows/harness-worker-image.yml@refs/heads/main`, source commit
+`0ff7485883b19732e9d93c6779df3efb95579683` and the successful
+[main CI run 39448520481](https://github.com/alex-de-haas/docker-host/actions/runs/39448520481).
+
+Real Git/PR acceptance passes in both production profiles through the same registered workspace
+and [PR #631](https://github.com/alex-de-haas/docker-host/pull/631). Docker commits and publishes
+head `8f15cb7356d38ecdcb917c9fb7aeb2cf38cd6328`; after switching and restarting in Local,
+Core commits and updates that same PR to `090cc9d199bd48911b19dc69fd7cf8ed05826059`.
+Independent PR URL/head observations confirm both publications. Harness then switches back to
+production Docker and restarts with the same conversation, workspace and PR retained.
+
+The fixture uses normal Core login, a selected explicitly authorized provider and GitHub connection,
+scoped MCP publication and separate test data. GitHub credentials remain in Core; the agent receives
+no GitHub token. The published coordinator and worker image IDs match the registry-verified ARM64 configs during
+active execution. The production publication integration test passes in 7 minutes 14 seconds,
+including the return to Docker and a third publication. The owner finishes the test environment;
+independent inventory confirms removal of its child/parent data roots, native processes, containers,
+networks and volumes. Temporary GitHub authorization is disconnected before Finish, and selected
+provider authorization renewal is returned only when its original source is unchanged.
+
+[Implementation PR #629](https://github.com/alex-de-haas/docker-host/pull/629) ships Platform
+0.146.0 and Harness 0.62.0. This documentation closure has no version change. Core 0.146.0 supplies
+the required worker API and canonical storage placement. The primary Core/Harness runtime selection
+and lifecycle are unchanged by test fixtures. Provider authorizations are used only with explicit
+owner permission.
 
 Core passes agent environment values through an owner-only temporary Docker env file. The host
 Docker CLI retains Core's environment and context; provider secrets stay out of its arguments. The

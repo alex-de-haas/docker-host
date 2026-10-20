@@ -35,7 +35,7 @@ removal of product APIs. The shipped unified live-data dev mode and Return remai
 
 Owner clarification, 2026-10-20: Harness retains Docker and Local as ordinary production runtime
 profiles, with Docker as the manifest default. Its
-[production-runtime plan](../assistant-shared-docker-runtime/plan.md) owns packaging and integration.
+[production-runtime feature](../assistant-shared-docker-runtime/feature.md) records verified packaging and integration.
 Development profiles remain separately marked `development: true`; their redesign and general
 production-preference persistence belong to platform work. D1 must preserve Local as a supported
 production runtime. Harness does not add a per-conversation runtime selector.
