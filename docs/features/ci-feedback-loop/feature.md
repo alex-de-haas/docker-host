@@ -13,7 +13,7 @@ Implement a coherent feature batch, run the affected local tests and build, and 
 
 The fast PR path contains classification, version consistency, documentation validation and CI policy tests. Affected components add their lint, type checks, bounded tests and build. Shell and Demo App include their existing unit suites. Component jobs are parallel siblings.
 
-`ci-required` evaluates the actual job results against the classification plan. Every selected job must succeed. Missing, cancelled, failed and unexpectedly skipped jobs fail the aggregate; only unaffected skips are accepted. The policy/wiring tests ensure every workflow job belongs to the aggregate. Existing branch protection remains in place during the [staged rollout](plan.md).
+`ci-required` evaluates the actual job results against the classification plan. Every selected job must succeed. Missing, cancelled, failed and unexpectedly skipped jobs fail the aggregate; only unaffected skips are accepted. The policy/wiring tests ensure every workflow job belongs to the aggregate. Main protection requires this GitHub Actions check and keeps strict up-to-date enforcement. The replacement was enabled alongside the original contexts before those contexts were removed, so protection had no gap.
 
 ## Automatic Selection
 

@@ -106,6 +106,8 @@ cancellation failure does not suppress stream recovery or older-Core compatibili
 - External writes, atomic replacement, rename/delete, staging, commits and target refs invalidate
   the correct worktree; ignored bursts cannot conceal tracked changes.
 - Busy owner locks, events during scans, missing roots, watcher failure and restart retain recovery.
+- A relevance-filter failure retains a single file hint. Readiness assertions observe both the persisted
+  change and completed observation health; a saved snapshot alone does not acknowledge its generation.
 - Pause stops observation, Resume is fresh, and Complete/Delete retain safety checks.
 - Streams enforce app/user/source authority, recover dropped events and close on shutdown/revocation.
 - Multiple UI consumers share a stream and handle reconnect, hidden pages, silent transport and
