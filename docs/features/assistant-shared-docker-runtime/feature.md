@@ -227,6 +227,11 @@ verification. Local image builds are distinct from registry publication. The pri
 authorizations are used only with explicit owner permission. Core 0.146.0 supplies the required
 worker API and canonical storage placement for Harness 0.62.0.
 
+Core passes agent environment values through an owner-only temporary Docker env file. The host
+Docker CLI retains Core's environment and context; provider secrets stay out of its arguments. The
+file is removed when execution ends, including transport startup failure. Environment values with
+line breaks or NUL are rejected before the file is created.
+
 ## Testing Expectations
 
 - Assert global busy admission before transcript persistence, including approval/question waits.

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Haas.Hosty.Core;
@@ -134,6 +135,75 @@ public sealed partial class CoreLifecycleServiceTests
             }
         }
         finally { Directory.Delete(f.Root, recursive: true); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AgentWorker_ExecIsolatesContainerEnvironmentAndDeletesSecretFile(bool failToStart)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "hosty-agent-exec-" + Guid.NewGuid().ToString("N"));
+        string? environmentFile = null;
+        try
+        {
+            var host = new ProcessStartInfo("docker");
+            var input = new AgentWorkerExec(Guid.NewGuid().ToString("D"), "codex", ["app-server"], "/workspace",
+                new() { ["HOME"] = "/worker/home", ["TMPDIR"] = "/worker/tmp",
+                    ["HOSTY_MCP_SESSION_TOKEN"] = "private=test-token", ["CODEX_HOME"] = "/provider/codex" });
+            using (var execution = await AgentWorkerService.PrepareExecutionAsync(root, "owned-worker", input, default))
+            {
+                var start = execution.StartInfo;
+                Assert.Equal(host.Environment.OrderBy(pair => pair.Key), start.Environment.OrderBy(pair => pair.Key));
+                Assert.DoesNotContain(start.ArgumentList, value => value.Contains("private=test-token", StringComparison.Ordinal));
+                environmentFile = start.ArgumentList[start.ArgumentList.IndexOf("--env-file") + 1];
+                Assert.Equal(input.Environment.Select(pair => pair.Key + "=" + pair.Value), await File.ReadAllLinesAsync(environmentFile));
+                if (!OperatingSystem.IsWindows())
+                {
+                    Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(environmentFile));
+                    Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(root));
+                }
+                if (failToStart)
+                {
+                    start.FileName = Path.Combine(root, "missing-docker");
+                    Assert.Throws<System.ComponentModel.Win32Exception>(() => Process.Start(start));
+                }
+            }
+            Assert.False(File.Exists(environmentFile));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(root));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task AgentWorker_ExecDeletesSecretFileWhenPreparationIsCancelled()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "hosty-agent-exec-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var input = new AgentWorkerExec(Guid.NewGuid().ToString("D"), "codex", [], "/workspace",
+                new() { ["HOSTY_MCP_SESSION_TOKEN"] = "private-token" });
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => AgentWorkerService.PrepareExecutionAsync(
+                root, "owned-worker", input, new CancellationToken(canceled: true)));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(root));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Theory]
+    [InlineData("HOME", "/worker/home\nDOCKER_HOST=tcp://unexpected")]
+    [InlineData("HOME", "/worker/home\r")]
+    [InlineData("HOME", "/worker/home\0")]
+    [InlineData("DOCKER_CONFIG", "/untrusted")]
+    public async Task AgentWorker_ExecRejectsInvalidEnvironmentBeforeWritingSecrets(string key, string value)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "hosty-agent-exec-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var input = new AgentWorkerExec(Guid.NewGuid().ToString("D"), "codex", [], "/workspace", new() { [key] = value });
+            await Assert.ThrowsAsync<AppLifecycleException>(() => AgentWorkerService.PrepareExecutionAsync(root, "owned-worker", input, default));
+            Assert.False(Directory.Exists(root));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
     [Theory]

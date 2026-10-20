@@ -17,6 +17,12 @@ internal sealed record AgentWorkerExec(string Generation, string Provider, strin
     string Cwd, Dictionary<string, string> Environment);
 internal sealed record AgentWorkerFrame(string Kind, string? Data = null, int? Code = null);
 
+internal sealed class AgentWorkerExecution(ProcessStartInfo startInfo, string environmentFile) : IDisposable
+{
+    internal ProcessStartInfo StartInfo { get; } = startInfo;
+    public void Dispose() => File.Delete(environmentFile);
+}
+
 // The coordinator never receives Docker control. All host paths, image references, ownership,
 // resource limits and network placement are resolved here from the installed application.
 internal sealed class AgentWorkerService(CoreDataPaths paths, HostyCoreRuntimeConfig config,
@@ -277,7 +283,7 @@ internal sealed class AgentWorkerService(CoreDataPaths paths, HostyCoreRuntimeCo
         finally { gate.Release(); }
     }
 
-    internal async Task<ProcessStartInfo> ExecAsync(AppRecord app, AgentWorkerExec input, CancellationToken ct)
+    internal async Task<AgentWorkerExecution> ExecAsync(AppRecord app, AgentWorkerExec input, CancellationToken ct)
     {
         await Declaration(app, ct);
         await RequireLease(app, input.Generation, ct);
@@ -286,17 +292,38 @@ internal sealed class AgentWorkerService(CoreDataPaths paths, HostyCoreRuntimeCo
             || input.Environment.Count > 64) throw Error("Invalid agent execution request.");
         var cwd = Canonical(input.Cwd);
         if (!Beneath(cwd, SourceRoots()[0])) AllowedPrivatePath(app, cwd);
-        var start = new ProcessStartInfo("docker") { RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var value in new[] { "exec", "-i", "--workdir", cwd }) start.ArgumentList.Add(value);
+        return await PrepareExecutionAsync(Path.Combine(paths.CoreRoot, "agent-worker-exec"),
+            Name(app, input.Generation), input with { Cwd = cwd }, ct);
+    }
+
+    internal static async Task<AgentWorkerExecution> PrepareExecutionAsync(string directory, string name,
+        AgentWorkerExec input, CancellationToken ct)
+    {
         foreach (var (key, value) in input.Environment)
+            if (!AllowedEnvironment(key) || value.Length > 65536 || value.IndexOfAny(['\r', '\n', '\0']) >= 0)
+                throw Error("Invalid agent environment.");
+
+        // Request values belong only to the container. In particular, HOME must not change the
+        // host Docker CLI's context/configuration. Keep provider secrets out of process arguments.
+        SecureFileSystem.EnsurePrivateDirectory(directory);
+        var environmentFile = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".env");
+        try
         {
-            if (!AllowedEnvironment(key) || value.Length > 65536) throw Error("Invalid agent environment.");
-            start.ArgumentList.Add("--env"); start.ArgumentList.Add(key); start.Environment[key] = value;
+            await using (var file = SecureFileSystem.CreatePrivateFile(environmentFile, FileMode.CreateNew))
+            await using (var writer = new StreamWriter(file, new UTF8Encoding(false)))
+                foreach (var (key, value) in input.Environment)
+                    await writer.WriteLineAsync($"{key}={value}".AsMemory(), ct);
+            var start = new ProcessStartInfo("docker") { RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+            foreach (var value in new[] { "exec", "-i", "--workdir", input.Cwd, "--env-file", environmentFile,
+                name, "/opt/hosty-worker/" + input.Provider }) start.ArgumentList.Add(value);
+            foreach (var argument in input.Arguments) start.ArgumentList.Add(argument);
+            return new(start, environmentFile);
         }
-        start.ArgumentList.Add(Name(app, input.Generation));
-        start.ArgumentList.Add("/opt/hosty-worker/" + input.Provider);
-        foreach (var argument in input.Arguments) start.ArgumentList.Add(argument);
-        return start;
+        catch
+        {
+            File.Delete(environmentFile);
+            throw;
+        }
     }
 
     internal static bool AllowedEnvironment(string key) => key is "HOME" or "XDG_CACHE_HOME" or "TMPDIR"
@@ -342,7 +369,8 @@ internal static class AgentWorkerEndpoints
             var app = await service.AuthenticateAsync(appId, context.Request, ct);
             var first = await ReadLine(reader, ct);
             var input = JsonSerializer.Deserialize(first, CoreJson.TypeInfo<AgentWorkerExec>()) ?? throw new InvalidDataException();
-            using var process = Process.Start(await service.ExecAsync(app, input, ct)) ?? throw new IOException("Cannot start agent transport.");
+            using var execution = await service.ExecAsync(app, input, ct);
+            using var process = Process.Start(execution.StartInfo) ?? throw new IOException("Cannot start agent transport.");
             using var cancelled = ct.Register(() => { try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { } });
             context.Response.ContentType = "application/x-ndjson";
             context.Response.Headers.CacheControl = "no-store";
