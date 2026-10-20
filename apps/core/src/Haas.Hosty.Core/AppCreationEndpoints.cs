@@ -62,7 +62,7 @@ internal static class AppCreationEndpoints
                 var user = (await users.ReadAsync(ct)).Users.First(u => u.Id == owner.UserId);
                 var created = await lifecycle.CreateLocalAppAsync(owner, input, user.GitIdentity, ct);
                 var tree = await workspaces.PrepareAsync(owner, new(input.RequestId, sessionId, input.AppId,
-                    "/assistant?session=" + Uri.EscapeDataString(sessionId), "main", Name: ("Create " + input.Name)[..Math.Min(120, 7 + input.Name.Length)]), ct);
+                    "/assistant?session=" + Uri.EscapeDataString(sessionId), "main", Name: ("Create " + input.Name)[..Math.Min(120, 7 + input.Name.Length)].TrimEnd()), ct);
                 await audit.AppendAsync(new("audit_" + Guid.NewGuid().ToString("N"), "app.creation", "app", input.AppId,
                     "prepared", owner.UserId, clock.UtcNow, new Dictionary<string, string> { ["requestId"] = input.RequestId, ["assistant"] = appId }), ct);
                 return created with { Workspace = tree };

@@ -63,7 +63,10 @@ Group requests use `POST /api/development/workspaces/{workspaceId}/execution-tar
 `GET .../execution-target/{requestId}`; Harness uses the authorized workspace-inspection equivalents.
 The response names each app and its result. Retrying preserves the group ID and skips completed
 children. Group return only affects apps still using that workspace; it leaves an app moved to B or
-a package untouched. Core itself is not implicitly included. Sandbox links remain separate and
+a package untouched. Package return authorizes the retained workspace owner and current app bindings
+without requiring workspace source to remain readable; revoked private-source access or a missing
+worktree cannot block return to the installed package. Workspace use still requires source admission.
+Core itself is not implicitly included. Sandbox links remain separate and
 open a Core instance with its own users, data and dependencies.
 
 ### Workspace Manifests And Access Review
@@ -528,6 +531,8 @@ used by Shell or another app in a shared worktree.
 
 - Version and execution edits admit ordinary/system workspace participants without replacing the
   installed package. Actual access expansion requires exact scoped approval before setup or Stop.
+- Verify workspace-wide package return after private-source revocation or source loss, retained
+  request replay, and refusal of foreign users/credentials without app lifecycle effects.
 - Verify package -> A -> B -> package, changed release defaults, current-data preservation, invalid
   source Stop/return, old-request retirement and healthy lost-response recovery. A failed candidate
   build preserves the running app; a live preparation lease protects its source until native

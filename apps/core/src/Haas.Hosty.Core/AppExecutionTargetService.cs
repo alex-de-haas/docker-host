@@ -84,7 +84,15 @@ internal sealed class AppExecutionTargetService(CoreDataPaths paths, AppRegistry
     {
         if (input.Kind is not ("workspace" or "package")) throw new AppLifecycleException("execution_target_invalid", "Choose workspace or package.");
         await ValidateAsync(actor, ct, input.Kind == "workspace");
-        var owner = await inspection.WorkflowOwnerAsync(workspaceId, actor.UserId, ct);
+        // Returning already admitted apps needs ownership metadata, not Git access. A revoked
+        // provider connection or unavailable worktree must not prevent restoring their packages.
+        var recorded = input.Kind == "package"
+            ? (await workspaces.ListAsync(null, true, ct)).Workspaces.Where(t => t.WorkspaceId == workspaceId).ToArray()
+            : null;
+        var owner = recorded is null ? await inspection.WorkflowOwnerAsync(workspaceId, actor.UserId, ct)
+            : recorded.FirstOrDefault()?.Owner ?? throw DevelopmentWorkspaceService.Error("not_found", "Workspace not found.");
+        if (owner.UserId != actor.UserId || recorded?.Any(t => !t.Owner.SameIdentity(owner)) == true)
+            throw DevelopmentWorkspaceService.Error("forbidden", "Only the workspace owner can manage its lifecycle.");
         if (actor.Principal is { } principal && (principal.StartsWith("oauth:", StringComparison.Ordinal) || principal.StartsWith("manual:", StringComparison.Ordinal))
             && owner.External?.PrincipalId != principal) throw new AppIdentityException("workspace_forbidden", "This credential does not own the workspace.");
         var path = AppExecutionStore.GroupFile(paths, workspaceId, input.RequestId);
@@ -97,8 +105,11 @@ internal sealed class AppExecutionTargetService(CoreDataPaths paths, AppRegistry
             if (prior is not null && prior.Fingerprint != fingerprint)
                 throw new AppLifecycleException("execution_request_conflict", "Keep the original workspace selection and requestId.");
             if (prior?.State == "completed") return await WorkspaceStatusAsync(workspaceId, input.RequestId, actor.UserId, ct);
-            var trees = (await workspaces.ListAsync(owner, false, ct)).Workspaces;
-            var bound = trees.SelectMany(t => t.Apps).Select(a => a.AppId).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            var trees = recorded ?? (await workspaces.ListAsync(owner, false, ct)).Workspaces;
+            var installed = recorded is null ? null : await apps.ListAppRecordsAsync(ct);
+            var bound = trees.SelectMany(t => t.Apps)
+                .Where(binding => installed is null || installed.Any(app => app.Id == binding.AppId && app.InstalledAt == binding.Installation))
+                .Select(a => a.AppId).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
             var operation = prior is null ? new(workspaceId, input, actor, bound, fingerprint) : prior with { State = "running" };
             if (operation.Apps.Length == 0) throw new AppLifecycleException("execution_empty", "No applications are bound to this workspace.");
             await AppExecutionStore.SaveGroupAsync(paths, operation, ct);

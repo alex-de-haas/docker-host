@@ -49,6 +49,8 @@ Inspection managers use `POST .../workspace-inspection/{workspaceId}/name`; brow
 Direct external agents use `rename_workspace` with their own worktree or aggregate workspace ID.
 The existing workspace management permission, current ownership and source authorization apply.
 Names accept at most 120 nonempty plain-text characters without control or surrounding whitespace.
+App creation derives a bounded name from the application title and removes trailing whitespace
+after truncation, so valid application names also produce valid workspace names.
 
 Core stores one atomic metadata record and replay receipt per logical workspace. Same-ID retries
 preserve the original name arguments and never roll back a later rename. Renaming changes no Git
@@ -234,6 +236,9 @@ only after Docker confirms all writers stopped. An unknown worker outcome requir
 lease age and a stopped local Docker client do not prove termination.
 
 ## Testing Expectations
+
+- App creation accepts trailing title whitespace and a space at the generated-name truncation
+  boundary; exact-request retries recover the same valid creation workspace.
 
 - Aggregate identity survives serialization, restart and external label changes; two repositories
   join one owner while legacy worktree IDs, paths and operations remain unchanged.
