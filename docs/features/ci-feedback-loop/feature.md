@@ -54,7 +54,17 @@ Manual recovery remains restricted to main and requires successful push CI for t
 
 Cardputer CI uploads all four firmware/recovery binaries, exact checksums and source metadata. Normal publication downloads from the validated CI run, verifies source, completeness, regular files, checksums and OTA size, then publishes those bytes. Manual recovery builds and verifies the same source when recovering a release. Missing or corrupt normal artifacts fail publication.
 
+Image metadata reads the validated Git checkout. Publishers attach an ephemeral local branch to that exact commit because Docker metadata cannot infer a ref from an unnamed detached SHA checkout. Image revision labels and SHA tags therefore describe the validated source; mutable tags still require the independent main-tip guard.
+
 Signed image/native provenance records the validated code revision separately from the publishing workflow's execution revision. GitHub's automatic provenance uses the [OIDC workflow SHA](https://github.com/actions/toolkit/blob/main/packages/attest/src/provenance.ts), so a completion-triggered build uses an explicit source-bound predicate rather than attributing old source bytes to newer main. SDK trusted publishing keeps its [automatic npm provenance](https://docs.npmjs.com/trusted-publishers/).
+
+### Publication Provenance v1
+
+Image and native publishers use the SLSA v1 predicate with build type `https://github.com/alex-de-haas/docker-host/blob/main/docs/features/ci-feedback-loop/feature.md#publication-provenance-v1`. This repository-owned type describes completed-CI publication and manual recovery. The [GitHub workflow build type](https://github.com/actions/buildtypes/blob/main/workflow/v1/README.md) excludes `workflow_run`, so these publishers do not claim that type.
+
+The required external parameters are `workflow` (repository URL, main ref and workflow path), `source` (repository URL and validated full commit), `validation` (CI workflow path and successful run ID), and `operation` (`build-image`, `build-native-release`, `publish-verified-ci-firmware` or `build-firmware-for-manual-publication`). The operation distinguishes a firmware artifact consumed from CI from a manual rebuild. The actual trigger remains `workflow_run` or `workflow_dispatch`.
+
+The internal GitHub parameters record the actual trigger, stable numeric repository and owner IDs, runner environment and execution SHA. Missing or invalid identities stop publication before signing. Resolved dependencies bind the publishing repository's main ref to the workflow SHA, the separate source commit to the validated code SHA, and the successful CI run to validation or firmware production. The builder is the signing workflow URL; the invocation identifies the publishing run and attempt. Consumers verify the signed workflow identity and source dependency separately rather than assuming the workflow revision is the artifact's code revision.
 
 The [existing release model](../repository-release-model/feature.md) still governs immutable versions, per-artifact concurrency, mutable-tag freshness and SDK trusted publication. A completed old main CI run cannot move a rolling tag over newer main. PR merge artifacts never qualify a different main SHA.
 
@@ -68,6 +78,6 @@ Review the complete change once, collect findings into a consolidated correction
 
 - Policy tests cover affected/shared/unknown inputs, semantic version metadata, deleted/renamed paths and exact source resolution.
 - Gate tests cover failed classification, missing/cancelled/failed/required-skipped jobs and workflow coverage.
-- Publication tests cover exact main identity, stale source, current run attempts, failed or missing CI, and complete verified artifact consumption.
+- Publication tests cover exact main identity, stale source, current run attempts, failed or missing CI, complete verified artifact consumption, and required signing identity/source/workflow fields.
 - GitHub Actions syntax and composite shell scripts are linted; docs/index and version checks run on every PR.
 - Hosted operating-system and publication results are reported separately from local static/unit validation. Branch protection migrates only after a successful hosted aggregate.
