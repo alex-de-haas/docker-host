@@ -340,6 +340,8 @@ pending group. Helper receipts live separately from group and app receipts; a lo
 cannot overwrite a later Core-owned phase. Each dispatch retains its own log and process/start identity.
 Shared receipt readers allow atomic replacement on Windows while retaining their original snapshot. Core JSON storage uses the same
 replacement path for workspace metadata, so concurrent catalog reads do not block lease writes.
+A bounded lock table serializes same-path publication within each process, including concurrent first
+writes, while readers continue to observe complete snapshots.
 Windows replaces existing receipts with `File.Replace`; initial creation and Unix replacement use rename.
 Writers retry only Windows sharing/lock conflicts for up to two seconds; access denial and other I/O
 failures retain their original error. A partial Windows replacement restores the previous receipt only
