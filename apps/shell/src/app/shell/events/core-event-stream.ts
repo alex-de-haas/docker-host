@@ -7,6 +7,7 @@ export const CoreEventNames = {
   resourcesChanged: "resources.changed",
   resourcesSample: "resources.sample",
   appChanged: "app.changed",
+  workspaceChanged: "workspace.changed",
   appRemoved: "app.removed",
   appUpdateCheckChanged: "app.update-check.changed",
   fleetUpdateCheckChanged: "apps.update-check.changed",
@@ -19,8 +20,8 @@ export interface CoreEventSubscription {
   onSync: () => void | Promise<void>;
   onEvent?: (name: CoreEventName, data: unknown) => void;
   syncDebounceMs?: number;
-  /** Resource interest exists only while the page is visible. */
-  topic?: "resources";
+  /** Optional high-volume or source metadata interest exists only while the page is visible. */
+  topic?: "resources" | "workspaces";
   onStreamState?: (state: CoreStreamState) => void;
   /** The consumer buffers/reconciles payloads itself instead of fetching again for every event. */
   receiveWhileSyncing?: boolean;
@@ -123,7 +124,9 @@ function reconcile(connection: Connection, force = false): boolean {
   source.addEventListener("stream.ready", event => {
     if (!current()) return;
     try {
-      if (JSON.parse((event as MessageEvent).data).resources === 1) acknowledge(connection, "stream");
+      const capabilities = JSON.parse((event as MessageEvent).data);
+      if (topics.split(",").includes("resources") ? capabilities.resources === 1 : capabilities.workspaces === 1)
+        acknowledge(connection, "stream");
     } catch { /* Ignore malformed capability messages. */ }
   });
   for (const name of Object.values(CoreEventNames)) source.addEventListener(name, event => {
@@ -140,6 +143,8 @@ function reconcile(connection: Connection, force = false): boolean {
     if (!current()) return;
     clearAcknowledgement(connection);
     setState(connection, "error");
+    // An optional subscriber may release its interest and replace this source on error.
+    if (!current()) return;
     // EventSource retries interrupted streams, but a proxy's HTTP 502/503 can leave it CLOSED.
     // Retry those with capped backoff too; otherwise a Core restart strands a visible Dashboard.
     // This is connection recovery only: no resource GET runs until a stream opens and acknowledges.

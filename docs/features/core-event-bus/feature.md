@@ -1,7 +1,7 @@
 ---
 created: 2026-07-24
-updated: 2026-10-19
-summary: One authorized SSE stream carries ephemeral domain hints, notifications and opt-in resource measurements.
+updated: 2026-10-20
+summary: One authorized SSE stream carries ephemeral domain hints, notifications and opt-in resource measurements and workspace metadata hints.
 components: [apps/core, apps/shell]
 ---
 
@@ -54,7 +54,8 @@ data: {"name":"app.changed","appId":"com.haas.demo-app","occurredAt":"2026-07-24
 | `apps.update-check.changed` | The fleet update sweep starts or finishes. |
 | `resources.changed` | Legacy resource refresh hint while a viewer is active. |
 | `resources.sample` | A sampler frame, delivered only to authorized subscribers requesting `topics=resources`. |
-| `stream.ready` | Resource topic acknowledgement (`{"resources":1}`) at connection start. |
+| `workspace.changed` | An authorized workspace changes, including display-name updates; opt-in `topics=workspaces` delivery contains an empty refresh hint. |
+| `stream.ready` | Requested topic acknowledgement (`{"resources":1}`, `{"workspaces":1}`, or both) at connection start. |
 | `notification` | A notification is published for the subscriber (payload: the same view `GET /api/notifications` returns). |
 
 `app.changed` does not distinguish create from update: consumers re-read the list either way, and the
@@ -84,6 +85,7 @@ open a window in which a second concurrent sweep could start.
 ```text
 GET /api/events                    # Named events; live-only
 GET /api/events?topics=resources   # Also receive sequenced resource measurements
+GET /api/events?topics=workspaces  # Also receive authorized workspace metadata hints
 ```
 
 One stream carries both domain events and the session's notifications, so a tab opens one connection
@@ -101,7 +103,8 @@ runtime-app stop sweep behind it.
 
 Shell uses its BFF to reach this stream with app-bound user authority; direct Core sessions are
 also supported. Delegated access requires `apps.read`, `core.read` and `apps.notifications`, and
-resource interest additionally requires an administrator. Delivery rechecks current authority,
+resource interest additionally requires an administrator. Workspace interest requires an administrator
+and, for delegated callers, `apps.workspaces.read`. Delivery rechecks current authority,
 including role changes and direct-session expiry. Resource subscriptions own fast sampler demand;
 completion/disposal releases it. There is no app producer endpoint. Durable app-facing replay is a
 separate contract tracked by the
@@ -135,7 +138,13 @@ launcher list refreshes on navigation and on demand as before.
 ## Workspace Inspection
 
 The internal workspace inspection stream uses a separate opt-in subscription on this hub.
-Workspace hints do not enter ordinary app subscriptions. Bounded-channel drops retain a counter
+Dashboard workspace choices use the shared `/api/events?topics=workspaces` stream: delivery rechecks
+the current authorized workspace inventory and emits `{}` rather than private worktree identifiers.
+Name changes trigger a fresh execution-target inventory without an app restart. Shell enables the
+optional topic only after an authorized inventory read and drops it on denial or connection failure,
+so unavailable workspace access does not interrupt notification or resource consumers. The visible
+consumer owns topic interest; hiding or removing it releases workspace demand while other shared
+subscriptions remain. Workspace hints do not enter ordinary app subscriptions. Bounded-channel drops retain a counter
 that forces an authorized snapshot resync. See [Workspace Event Observation](../workspace-event-observation/feature.md)
 for per-worktree filtering, authority revalidation and browser recovery.
 
@@ -152,5 +161,8 @@ for per-worktree filtering, authority revalidation and browser recovery.
 - Endpoint: anonymous callers get 401, the initial comment and idle heartbeat are written, domain
   events reach an admin session and are withheld from a non-admin one, and the stream ends on
   `ApplicationStopping` — the regression guard for the shutdown-starvation class.
+- Workspace topics: actual HTTP delivery after opt-in, permission denial and revocation, private
+  workspace filtering, no subscription without a consumer, and rename recovery during an in-flight
+  inventory request.
 - The endpoint-authorization harness enumerates every mapped route, so this one is covered against
   losing its session gate.

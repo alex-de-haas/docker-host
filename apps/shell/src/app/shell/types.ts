@@ -965,3 +965,36 @@ export type AppPermissionObservation = {
   granted: string[]; missingRequired: string[]; unsupportedRequired?: string[]; unsupportedOptional?: string[]; reviewRequired: boolean; unconfirmedRoles: string[];
   error: string | null; checkedAt: string | null; descriptions: Record<string, string>;
 };
+
+export type AppExecutionTarget = {
+  kind: "package" | "workspace" | "legacy";
+  runtime?: string;
+  workspaceId?: string;
+  worktreeId?: string;
+  name?: string;
+};
+export type AppExecutionChoice = AppExecutionTarget & {
+  label?: string;
+  available: boolean;
+  unavailable?: string;
+};
+export type AppExecutionTargets = {
+  appId: string;
+  current: AppExecutionTarget;
+  packageRuntime: string;
+  choices: AppExecutionChoice[];
+};
+export type AppExecutionSelection = {
+  kind: "package" | "workspace";
+  runtime?: string;
+  workspaceId?: string;
+  worktreeId?: string;
+};
+export type AppExecutionResult = {
+  requestId: string;
+  state: "completed" | "running" | "review-required" | "failed";
+  app?: CoreApp;
+  error?: string;
+  code?: string;
+  review?: import("@hosty-sdk/app/install").InstallationSource & { workspaceManifest: Record<string, unknown> };
+};

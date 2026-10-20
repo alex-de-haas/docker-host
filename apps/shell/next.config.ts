@@ -11,6 +11,8 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_SHELL_VERSION: shellVersion,
   },
   experimental: {
+    // Restoring the dev chunk graph can replay entry-level HMR restarts after a managed restart.
+    turbopackFileSystemCacheForDev: false,
     optimizePackageImports: ["lucide-react"],
   },
   output: "standalone",

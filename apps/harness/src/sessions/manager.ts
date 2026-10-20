@@ -267,15 +267,15 @@ export class SessionManager {
       if (!this.development?.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
       const token = credential ?? session.workspaceCredential ?? session.credential;
       if (!token) throw new AppContextError(401, "workspace_credentials_required", "Refresh the session's Hosty credentials before using workspaces.");
-      if (!["activation-plan", "activation-apply", "activation-status", "activation-list", "activation-cancel", "activation-resume", "activation-return", "app-dev-logs", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status", "app-local-accept", "app-local-use", "app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", "workflow-defer", "workflow-delete", "list", "prepare", "status", "diff", "viewer", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"].includes(action))
+      if (!["execution-select", "execution-status", "rename", "activation-plan", "activation-apply", "activation-status", "activation-list", "activation-cancel", "activation-resume", "activation-return", "app-dev-logs", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status", "app-local-accept", "app-local-use", "app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", "workflow-defer", "workflow-delete", "list", "prepare", "status", "diff", "viewer", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"].includes(action))
         throw new AppContextError(400, "workspace_action_invalid", "Unknown workspace action.");
-      if (["activation-apply", "activation-return", "activation-resume"].includes(action) && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
+      if (["execution-select", "activation-apply", "activation-return", "activation-resume"].includes(action) && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
         if (userId) throw new SessionBusyError();
         if (!dispatchGuard) throw new AppContextError(403, "activation_review_required", "Activation requires the tool policy's reviewed dispatch.");
         const queued = session.record.workspaceActivation;
         if (queued?.state === "queued" && (queued.action !== action || JSON.stringify(queued.input) !== JSON.stringify(input)))
           throw new AppContextError(409, "activation_pending", "Preserve the already queued selection. Finish this turn before another activation.");
-        session.record.workspaceActivation = { action: action as "activation-apply" | "activation-return" | "activation-resume", input: structuredClone(input), state: "queued" };
+        session.record.workspaceActivation = { action: action as "execution-select" | "activation-apply" | "activation-return" | "activation-resume", input: structuredClone(input), state: "queued" };
         this.activationGuards.set(id, dispatchGuard);
         await this.store.saveRecord(session.record);
         return { state: "queued", requestId: input.requestId ?? input.activationId, message: "Finish this turn. Harness dispatches the reviewed request only after native execution stops and workspace leases release. Observe the original ID after reconnect." };
@@ -309,7 +309,7 @@ export class SessionManager {
         if (!(session.record.appIds ?? []).includes(String(input.appId))) throw new AppContextError(409, "workspace_app_required", "Attach the source app to this session first.");
         session.record.developmentLease ??= randomUUID();
         await this.store.saveRecord(session.record);
-        input = { ...input, sessionPath: `/assistant?session=${encodeURIComponent(id)}`,
+        input = { ...input, name: input.name ?? session.record.title ?? undefined, sessionPath: `/assistant?session=${encodeURIComponent(id)}`,
           leaseId: ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status) ? session.record.developmentLease : undefined };
       }
       if (action === "pr-commit") {
@@ -2138,7 +2138,7 @@ export class SessionManager {
         await guard();
         await this.development.call(id, credential, queued.action, queued.input);
         session.record.workspaceActivation = { ...queued, state: "dispatched" };
-        await this.append(id, { type: "notice", message: "Workspace activation dispatched to Core. Observe the original request ID; a detached helper owns progress." });
+        await this.append(id, { type: "notice", message: "Execution selection dispatched to Core. Observe the original request ID for progress." });
       } catch (error) {
         session.record.workspaceActivation = { ...queued, state: "blocked", error: error instanceof Error ? error.message : String(error) };
         await this.append(id, { type: "notice", message: `Workspace activation was not confirmed: ${session.record.workspaceActivation.error}` });

@@ -61,7 +61,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AppIdentityTokenService>();
         // Core MCP: the protocol server plus the tool type it reflects over. The tools resolve Core's
         // own services per call, so the MCP layer holds no state of its own.
-        builder.Services.AddMcpServer().WithHttpTransport().WithTools<HostyCoreTools>().WithTools<ExternalWorkspaceMcpTools>().WithTools<AppDevModeMcpTools>().WithTools<WorkspaceActivationMcpTools>(CoreJsonSerializerContext.Default.Options);
+        builder.Services.AddMcpServer().WithHttpTransport().WithTools<HostyCoreTools>().WithTools<ExternalWorkspaceMcpTools>().WithTools<AppDevModeMcpTools>().WithTools<WorkspaceActivationMcpTools>(CoreJsonSerializerContext.Default.Options).WithTools<AppExecutionTargetMcpTools>(CoreJsonSerializerContext.Default.Options);
         builder.Services.AddSingleton<ExternalWorkspaceMcpAuthorization>();
         // The MCP mutation tools read the caller's grants out of HttpContext.Items, where the
         // endpoint filter put them; the accessor is how a static tool method reaches the request.
@@ -155,6 +155,8 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<CoreDevelopmentService>();
         builder.Services.AddSingleton<WorkspaceActivationPlanner>();
         builder.Services.AddSingleton<WorkspaceActivationService>();
+        builder.Services.AddSingleton<AppExecutionTargetService>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<AppExecutionTargetService>());
         builder.Services.AddSingleton<WorkspaceActivationAccess>();
         builder.Services.AddSingleton<WorkspaceActivationActions>();
         builder.Services.AddSingleton<WorkspaceActivationRecovery>();
@@ -424,6 +426,7 @@ internal static class HostyCoreApplication
         AgentWorkerEndpoints.Map(app);
         AppCreationEndpoints.Map(app);
         AppDevModeEndpoints.Map(app);
+        AppExecutionTargetEndpoints.Map(app);
         SessionRetentionEndpoints.Map(app);
         SourceDocumentEndpoints.Map(app);
         WorkspaceInspectionEndpoints.Map(app);

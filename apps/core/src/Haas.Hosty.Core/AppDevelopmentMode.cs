@@ -14,7 +14,12 @@ internal sealed record AppDevOperation(string Id, string AppId, DateTimeOffset I
     string TargetRuntime, string SourcePath, string? WorktreeId, string ManifestDigest, string PreviousManifest,
     string? PreviousRuntime, AppSourceState? PreviousSource, IReadOnlyDictionary<string, ArtifactLock>? PreviousArtifacts,
     bool WasRunning, string ConfigurationHash, string Phase, string? BackupId = null, string? DataHash = null,
-    string? Error = null, AppDevReceipt[]? Receipts = null, string? SourceHead = null, string? ActivationId = null, RuntimePreparation? PreparedRuntime = null)
+    string? Error = null, AppDevReceipt[]? Receipts = null, string? SourceHead = null, string? ActivationId = null, RuntimePreparation? PreparedRuntime = null,
+    string? ExecutionManifest = null, string? ExecutionManifestDigest = null, string? RunningManifest = null,
+    bool PackageReturn = false, string? PackageRuntime = null, string[]? BaseGrantedPermissions = null,
+    string[]? ExecutionGrantedPermissions = null, string[]? BaseConfirmedRoles = null, string[]? ExecutionConfirmedRoles = null,
+    string? ExecutionConfigurationHash = null, string? PriorExecutionConfigurationHash = null,
+    string? ReturnConfigurationHash = null, bool ExecutionProjectionPending = false)
 {
     [JsonIgnore] public bool Active => Phase != "returned";
 }

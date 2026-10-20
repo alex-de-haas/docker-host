@@ -1099,6 +1099,7 @@ internal sealed partial class CoreLifecycleService(
                 ManifestError = load.ManifestError,
             }, cancellationToken);
 
+            await MarkDevelopmentManifestRunningAsync(appId, cancellationToken);
             await ReconcileIngressAsync(cancellationToken);
             return new AppLifecycleResponse(await BuildAppSummaryAsync(updated.App, cancellationToken), null, "started");
         }
@@ -1536,6 +1537,7 @@ internal sealed partial class CoreLifecycleService(
                 ManifestError = load.ManifestError,
             }, cancellationToken);
 
+            await MarkDevelopmentManifestRunningAsync(appId, cancellationToken);
             // Same best-effort ingress reconciliation as start/stop: an adopted live edit can change
             // the endpoint/public-origin shape, so ingress must not stay pinned to the old contract.
             await ReconcileIngressAsync(cancellationToken);
@@ -3512,6 +3514,12 @@ internal sealed partial class CoreLifecycleService(
 
             try
             {
+                // Workspace execution projections survive a Core upgrade independently of the
+                // installed package. Never replace them with package metadata during boot healing.
+                var development = await AppDevStore.ReadAsync(paths, app, cancellationToken);
+                if (development is { Active: true, ExecutionManifest: not null } &&
+                    app.SelectedRuntime == development.TargetRuntime && !development.Phase.StartsWith("return-", StringComparison.Ordinal))
+                    manifestPath = development.RunningManifest ?? development.ExecutionManifest;
                 var manifest = await JsonStorage.ReadAsync<RuntimeAppManifest>(manifestPath, cancellationToken);
                 // A copy that no longer describes this app is an on-disk inconsistency, not something to
                 // project onto the record — same guard as the live-source reconcile's id check.
@@ -5081,20 +5089,30 @@ internal sealed partial class CoreLifecycleService(
             throw new AppLifecycleException("manifest_path_required", $"Runtime app '{app.Id}' has no manifest path.");
         }
 
-        // The reviewed internal copy is always valid (validated + saved at install/update); it is the
-        // last-good snapshot a live source app falls back to when its folder manifest is mid-edit.
+        var development = await AppDevStore.ReadAsync(paths, app, cancellationToken);
+        if (development is { Active: true, ExecutionManifest: not null } && app.SelectedRuntime == development.TargetRuntime &&
+            !development.Phase.StartsWith("return-", StringComparison.Ordinal))
+        {
+            var admitted = await LoadDevExecutionSelectionAsync(development, cancellationToken, running: !validateDevelopmentContract);
+            if (!validateDevelopmentContract) return new(admitted, false, null);
+            var candidate = await PrepareExecutionCandidateAsync(app, development.SourcePath, development.TargetRuntime, development.Actor, cancellationToken);
+            await EnsureExecutionCandidateApprovedAsync(candidate, app, cancellationToken);
+            return new(candidate.Selection, development.ExecutionProjectionPending || candidate.Selection.ManifestDigest != admitted.ManifestDigest, null,
+                await LoadDevExecutionSelectionAsync(development, cancellationToken, running: true));
+        }
+        // The reviewed installed copy remains separate from admitted workspace snapshots.
         var lastGood = await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken, allowUnsupportedPermissions: true);
-        if (await AppDevStore.ReadAsync(paths, app, cancellationToken) is { Active: true } development)
+        if (development is { Active: true })
         {
             // Launching code requires the reviewed live contract. Stop, logs and health use the
             // installed recipe even when a source edit is invalid or changes that contract.
             if (validateDevelopmentContract && app.SelectedRuntime == development.TargetRuntime &&
                 app.SourceState?.LocalOverridePath == development.SourcePath && !development.Phase.StartsWith("return-", StringComparison.Ordinal))
             {
-                var live = await manifests.LoadAsync(CombineManifestSubpath(development.SourcePath, app.SourceState?.ManifestSubpath),
-                    app.SelectedRuntime, cancellationToken, forceRead: true);
-                if (live.ManifestDigest != development.ManifestDigest)
-                    throw new AppLifecycleException("dev_contract_changed", "The development manifest changed. Return and review the new contract; ordinary source edits remain live.");
+                // Use the exact validated source bytes for the applied digest. Legacy bindings
+                // permit version-only edits without replacing the installed package contract.
+                var live = await ValidateLiveDevManifestAsync(development, cancellationToken);
+                return new(live, LiveReconciled: false, ManifestError: null, Baseline: lastGood);
             }
             return new AppSelectionLoad(lastGood, LiveReconciled: false, ManifestError: null);
         }
@@ -5157,6 +5175,8 @@ internal sealed partial class CoreLifecycleService(
     // binding (orphaned, inert) via PreserveMounts (R7).
     internal async Task<AppRecord> ReconcileLiveContractAsync(AppRecord app, AppSelectionLoad load, CancellationToken cancellationToken)
     {
+        if (await AppDevStore.ReadAsync(paths, app, cancellationToken) is { Active: true, ExecutionManifest: not null } development)
+            return await ReconcileDevelopmentManifestAsync(app, load, development, cancellationToken);
         await apps.HostPathMutationLock.WaitAsync(cancellationToken);
         try
         {

@@ -4,17 +4,19 @@ import { fetchCore } from "./core-transport.js";
 
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, FolderGit2, GitBranch, LoaderCircle, Lock, Radio } from "lucide-react";
+import { Boxes, Check, ChevronDown, FolderGit2, GitBranch, LoaderCircle, Lock, Radio } from "lucide-react";
 import { toast } from "@/components/reui/operation-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useShellActions } from "./shell-context";
 import { readCoreError } from "./core-api";
 import { InlineError } from "./ui";
+import type { WorkspaceSource } from "./workspace-sources";
+import { SourceChangeSummary } from "./source/source-change-summary";
 
 export type CoreLaunch = { mode: string; projectPath: string | null; generationPath: string | null; processId: number; startedAt: string };
 export type CoreDevelopment = {
@@ -118,9 +120,11 @@ export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
   return { state, phase, busy, restart, save };
 }
 
-export function CoreModeControl({ state, disabled, onChange }: { state: CoreDevelopment | null; disabled: boolean; onChange: (mode: "release" | "dev") => void }) {
+export function CoreModeControl({ state, workspace, disabled, onChange }: { state: CoreDevelopment | null; workspace?: WorkspaceSource; disabled: boolean; onChange: (mode: "release" | "dev") => void }) {
   const mode = state?.launch.mode;
   const external = mode === "unmanaged";
+  const sourceLabel = mode === "dev" && workspace ? "workspace" : "source";
+  const label = external ? "external" : mode === "dev" ? sourceLabel : mode ?? "unknown";
   const description = external
     ? "Core was started outside the Hosty CLI, for example from an IDE or with dotnet run. Its launch mode is unknown, so Shell cannot switch or restart it. Start Core through the Hosty CLI to enable these controls."
     : !state
@@ -128,7 +132,7 @@ export function CoreModeControl({ state, disabled, onChange }: { state: CoreDeve
       : !state.manageable
         ? "The Hosty CLI is unavailable. Restore CLI access to switch or restart Core."
         : mode === "dev"
-          ? "Core runs a build from source. Restart to rebuild and apply changes; there is no hot reload."
+          ? `Core runs a build from ${workspace ? "a registered workspace" : "source"}. Restart to rebuild and apply changes; there is no hot reload.`
           : "Core runs the installed release. Switching runtime restarts Core.";
 
   return (
@@ -136,29 +140,12 @@ export function CoreModeControl({ state, disabled, onChange }: { state: CoreDeve
       <div className="flex min-w-0 items-center gap-x-1">
         <Tooltip>
           <TooltipTrigger asChild>
-            <span tabIndex={0} className="min-w-0 cursor-help truncate font-mono text-sm">
-              {external ? "external" : mode ?? "unknown"}
+            <span tabIndex={0} className="shrink-0 cursor-help whitespace-nowrap text-sm">
+              {label}
             </span>
           </TooltipTrigger>
-          <TooltipContent className="max-w-sm">{description}</TooltipContent>
+          <TooltipContent className="max-w-sm">{description}{state?.gitError && ` Git warning: ${state.gitError}`}</TooltipContent>
         </Tooltip>
-        {mode === "dev" && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span
-                tabIndex={0}
-                role="img"
-                aria-label={state?.gitError ? `Development runtime — Git warning: ${state.gitError}` : "Development runtime"}
-                className={cn("inline-flex shrink-0 cursor-help", state?.gitError ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400")}
-              >
-                <Radio aria-hidden="true" className="size-3.5" />
-              </span>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-sm">
-              {state?.gitError ? `Git warning: ${state.gitError}` : "Core runs a build from source. Restart to rebuild and apply changes; there is no hot reload."}
-            </TooltipContent>
-          </Tooltip>
-        )}
         {state?.manageable && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -167,18 +154,17 @@ export function CoreModeControl({ state, disabled, onChange }: { state: CoreDeve
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-56">
-              <DropdownMenuLabel>Runtime</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              {(["release", "dev"] as const).map(target => (
-                <DropdownMenuItem key={target} disabled={disabled || mode === target} onSelect={() => onChange(target)}>
-                  <Check className={cn("h-4 w-4", mode === target ? "opacity-100" : "opacity-0")} />
-                  <span className="min-w-0 flex-1 truncate">{target}</span>
-                  <span className={cn("ml-auto inline-flex shrink-0 items-center gap-1 text-[11px]", target === "dev" ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>
-                    {target === "dev" ? <Radio className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-                    {target === "dev" ? "Source" : "Locked"}
-                  </span>
-                </DropdownMenuItem>
-              ))}
+              <DropdownMenuGroup>
+                {(["release", "dev"] as const).map(target => (
+                  <DropdownMenuItem key={target} disabled={disabled || mode === target} onSelect={() => onChange(target)}>
+                    <Check className={cn("h-4 w-4", mode === target ? "opacity-100" : "opacity-0")} />
+                    <span className="min-w-0 flex-1 truncate">{target === "dev" ? sourceLabel : target}</span>
+                    {target === "release" && <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+                      <Lock className="size-3" />Locked
+                    </span>}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuGroup>
             </DropdownMenuContent>
           </DropdownMenu>
         )}
@@ -187,10 +173,37 @@ export function CoreModeControl({ state, disabled, onChange }: { state: CoreDeve
   );
 }
 
-export function CoreGitCell({ state }: { state: CoreDevelopment | null }) {
-  return <div className="min-w-0 text-xs" title={state?.gitError ?? `${state?.launch.projectPath ?? ""}\n${state?.commit ?? ""}`}>
-    <div className="flex min-w-0 items-center gap-1 font-mono text-sm"><GitBranch className="size-3.5 shrink-0" /><span className="truncate">{state?.branch ?? state?.commit?.slice(0, 10) ?? "Source unavailable"}</span></div>
-    {state?.changedFiles != null && <span>{state.changedFiles}{state.gitTruncated ? "+" : ""} changed files</span>}
+export function CoreGitCell({ state, workspace }: { state: CoreDevelopment | null; workspace?: WorkspaceSource }) {
+  return <div className="flex min-w-0 flex-col gap-1 text-xs">
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span tabIndex={0} aria-label={workspace ? `Workspace: ${workspace.label}` : undefined}
+            className="flex min-w-0 cursor-help items-center gap-1 text-sm">
+            {workspace ? <Boxes aria-hidden="true" className="size-3.5 shrink-0" />
+              : <GitBranch aria-hidden="true" className="size-3.5 shrink-0" />}
+            <span className={cn("truncate underline decoration-dotted decoration-muted-foreground/70 underline-offset-4", !workspace && "font-mono")}>
+              {workspace?.label ?? state?.branch ?? state?.commit?.slice(0, 10) ?? "Source unavailable"}
+            </span>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-sm">
+          <div className="space-y-1">
+            <div className="font-medium">Hosty Core · source</div>
+            {workspace && <div className="break-all">Workspace: {workspace.label}</div>}
+            {state?.branch && <div className="break-all">Branch: {state.branch}</div>}
+            {state?.commit && <div>Commit: <span className="break-all font-mono">{state.commit}</span></div>}
+            {state?.changedFiles != null && <div>Changed files: {state.changedFiles}{state.gitTruncated ? "+ (incomplete list)" : ""}</div>}
+            {state?.additions != null && state.deletions != null && <div>Lines: +{state.additions} / −{state.deletions} (HEAD to working tree)</div>}
+            {state?.launch.projectPath && <div className="break-all">Project: {state.launch.projectPath}</div>}
+            {state?.gitError && <div>{state.gitError}</div>}
+            {!state && <div>Source unavailable</div>}
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+    {state?.changedFiles != null && <SourceChangeSummary fileCount={state.changedFiles} truncated={state.gitTruncated}
+      lineStats={state.additions != null && state.deletions != null ? { additions: state.additions, deletions: state.deletions } : null} />}
   </div>;
 }
 
@@ -246,7 +259,7 @@ export function CoreSourceDialog({ open, onOpenChange, state, disabled, onSave }
               {error && <div role="alert"><InlineError message={error} /></div>}
               <div className="space-y-2">
                 <div className="text-sm font-medium">Development profiles</div>
-                <p className="text-sm text-muted-foreground">Select dev from the dashboard runtime menu to develop Core.</p>
+                <p className="text-sm text-muted-foreground">Use the Dashboard runtime menu to switch between the installed release and a source build.</p>
                 <label className="block text-sm">Development repository URL<Input value={repository} disabled={unavailable} onChange={e => setRepository(e.target.value)} placeholder="https://github.com/owner/repository.git" /></label>
                 <label className="block text-sm">Tracked branch or ref<Input value={sourceRef} disabled={unavailable} onChange={e => setSourceRef(e.target.value)} placeholder="Repository default branch" /></label>
                 <label className="block text-sm">Project path relative to repository<Input value={project} disabled={unavailable} onChange={e => setProject(e.target.value)} /></label>

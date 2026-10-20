@@ -1,13 +1,12 @@
 "use client";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { FileDiff, MoreHorizontal, RefreshCw } from "lucide-react";
+import { FileDiff, MoreHorizontal, Pencil, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { developmentRequest, repositoryName, changeTotals, workflowIsActive, workflowLabel, type DevelopmentWorkspace, type Worktree, type Diff, type Workflow } from "@/lib/development-api";
 import { LocalRepositoryActions } from "./local-repository-actions";
-import { AppDevMode } from "./app-dev-mode";
 import { LocalAppHandoff } from "./local-app-handoff";
 import { WorkspaceActivation } from "./workspace-activation";
 import { WorkspaceConsumers } from "./workspace-consumers";
@@ -87,7 +86,7 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
   const currentDiff = trees.find(t => t.id === diffTree);
   return <aside aria-label="Workspace details" className="h-full overflow-y-auto">
     <div className="flex items-start gap-2 border-b p-4">
-      <div className="min-w-0 flex-1"><h2 className="break-words text-base font-semibold">{title || "Workspace"}</h2>
+      <div className="min-w-0 flex-1"><WorkspaceName key={workspace.id} workspace={workspace} fallback={title} refresh={refresh} />
         <p className="mt-1 text-xs text-muted-foreground">{workflowLabel(state)}{state.completedAt ? ` · ${new Date(state.completedAt).toLocaleDateString()}` : ""}</p></div>
       <Button size="icon-sm" variant="ghost" aria-label="Refresh workspace" onClick={() => { setDetailRefresh(n => n + 1); refresh(); }}><RefreshCw className="size-4" /></Button>
       <DropdownMenu><DropdownMenuTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="Workspace actions"><MoreHorizontal /></Button></DropdownMenuTrigger>
@@ -117,7 +116,8 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
           refresh();
         }} />}
       <WorkspacePreviews key={`previews:${workspace.id}`} workspaceId={workspace.id} canStart={!state.closure && state.state === "in-progress"} disabled={busy || recovering} refresh={refresh} />
-      <WorkspaceActivation workspaceId={workspace.id} /><WorkspaceConsumers trees={trees} />
+      <WorkspaceActivation workspaceId={workspace.id} apps={[...new Map(trees.flatMap(tree => tree.apps).map(app => [app.appId, app])).values()]}
+        disabled={busy || recovering} canUse={workflowIsActive(state)} refresh={refresh} /><WorkspaceConsumers trees={trees} />
       {trees.map(tree => {
         const known = tree.sessionChanges !== undefined && tree.observation?.state === "ok" && !tree.detailError;
         const files = tree.sessionChanges ?? [];
@@ -139,8 +139,6 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
             <LocalRepositoryActions sessionId={sessionId} appId={app.appId} tree={tree}
               disabled={!!running || busy || tree.state !== "active"} refresh={refresh} />
           </div>)}
-          {sessionId && tree.apps.map(app => <AppDevMode key={`${sessionId}:${app.appId}:${tree.id}`} sessionId={sessionId} appId={app.appId} worktreeId={tree.id}
-            observation={tree.observation?.at} disabled={!!running || busy || tree.state !== "active"} refresh={refresh} />)}
           {(tree.detailError || tree.observation?.error) && <p role="status" className="text-xs text-destructive">{tree.detailError || tree.observation?.error}</p>}
         </section>;
       })}
@@ -200,4 +198,37 @@ function WorkspaceDiff({ workspaceId, tree, choice, onChoice }: { workspaceId: s
     <div className="flex min-h-0 flex-1 flex-col gap-3 sm:flex-row"><nav aria-label="Changed files" className="max-h-32 shrink-0 overflow-auto sm:max-h-none sm:w-56">{files.map(f => <button key={f.path} type="button" aria-current={selected === f.path ? "true" : undefined} onClick={() => onChoice({ ...choice, path: f.path })} className={`block w-full break-all rounded px-2 py-1.5 text-left text-xs hover:bg-muted ${selected === f.path ? "bg-muted" : ""}`}>{f.path}</button>)}</nav>
       <div className="min-h-0 min-w-0 flex-1 overflow-auto rounded border bg-background">{error ? <p role="alert" className="p-3 text-sm">{error}</p> : !selected ? <p className="p-3 text-sm">No changes in this scope.</p> : !diff ? <p role="status" className="p-3 text-sm">Loading diff…</p> : <WorkspaceDiffView diff={diff} layout={layout} wrap={wrap} />}</div>
     </div></>;
+}
+
+function WorkspaceName({ workspace, fallback, refresh }: { workspace: DevelopmentWorkspace; fallback: string; refresh: () => void }) {
+  const canonical = workspace.name || workspace.owner.label || fallback || "Workspace";
+  const [saved, setSaved] = useState<{ base: string; name: string } | null>(null);
+  const name = saved?.base === canonical ? saved.name : canonical;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(name);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const request = useRef<{ requestId: string; name: string } | null>(null);
+  const rename = async () => {
+    const next = draft.trim();
+    if (busy || !next) return;
+    if (next === name) { setEditing(false); return; }
+    setBusy(true); setError("");
+    if (request.current?.name !== next) request.current = { requestId: crypto.randomUUID(), name: next };
+    try {
+      const value = await developmentRequest<{ name: string }>(`/${workspace.id}/name`, request.current);
+      setSaved({ base: canonical, name: value.name }); setEditing(false); request.current = null; refresh();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+  return editing ? <form className="space-y-2" onSubmit={event => { event.preventDefault(); void rename(); }}>
+    <label className="sr-only" htmlFor={`workspace-name-${workspace.id}`}>Workspace name</label>
+    <input id={`workspace-name-${workspace.id}`} autoFocus maxLength={120} value={draft} disabled={busy}
+      className="w-full rounded border bg-background px-2 py-1 text-sm" onChange={event => setDraft(event.target.value)} />
+    <div className="flex gap-2"><Button type="submit" size="sm" disabled={busy || !draft.trim()}>{busy ? "Saving…" : "Save name"}</Button>
+      <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => setEditing(false)}>Cancel</Button></div>
+    {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+  </form> : <div className="flex min-w-0 items-start gap-2"><h2 className="min-w-0 flex-1 break-words text-base font-semibold">{name}</h2>
+    <Button variant="ghost" size="icon-sm" aria-label="Rename workspace" onClick={() => { setDraft(name); setError(""); setEditing(true); }}><Pencil className="size-3.5" /></Button>
+  </div>;
 }

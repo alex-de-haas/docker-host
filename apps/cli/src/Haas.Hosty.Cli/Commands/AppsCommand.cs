@@ -13,6 +13,7 @@ internal sealed partial class AppsCommand(CommandContext context)
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
     [JsonSerializable(typeof(AppDevelopmentGuideResponse))]
     [JsonSerializable(typeof(AppDevRequest))]
+    [JsonSerializable(typeof(AppExecutionTargetRequest))]
     [JsonSerializable(typeof(JsonElement))]
     [JsonSerializable(typeof(AppsResponse))]
     [JsonSerializable(typeof(AppHealthSummary))]
@@ -60,6 +61,9 @@ internal sealed partial class AppsCommand(CommandContext context)
         return args[0] switch
         {
             "guide" => await GuideAsync(args[1..]),
+            "execution-targets" => await ExecutionTargetAsync(args[1..], "list"),
+            "select-target" => await ExecutionTargetAsync(args[1..], "select"),
+            "execution-selection" => await ExecutionTargetAsync(args[1..], "status"),
             "list" => await ListAsync(args[1..]),
             "install" => await InstallAsync(args[1..]),
             "autostart" => await AutostartAsync(args[1..]),
@@ -1779,6 +1783,9 @@ internal sealed partial class AppsCommand(CommandContext context)
           dev-status <app-id>
           dev-plan <app-id> --action <enter|restart|return> --request-id <uuid> [--runtime <key>] [--worktree <id>] [--accept-data-changes]
           dev-apply <app-id> --action <enter|restart|return> --request-id <uuid> --plan-digest <digest> [--runtime <key>] [--worktree <id>] [--accept-data-changes]
+          execution-targets <app-id>
+          select-target <app-id> --request-id <uuid> [--package [--runtime <release-key>]|--workspace <id> [--worktree <id>] [--runtime <recipe>]]
+          execution-selection <app-id> --request-id <uuid>
           switch-runtime-plan <app-id> --runtime <key>
           switch-runtime <app-id> --runtime <key> --plan-digest <digest>
           remove <app-id> [--delete-data] [--delete-backups] [--delete-source] [--keep-state] [--ignore-runtime-errors]

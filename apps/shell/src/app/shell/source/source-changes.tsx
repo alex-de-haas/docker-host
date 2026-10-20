@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { GitBranch } from "lucide-react";
+import { Boxes, GitBranch } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
 import { fetchCore } from "../core-transport.js";
 import { useShellActions, useShellState } from "../shell-context";
 import type { CoreApp } from "../types";
+import type { WorkspaceSource } from "../workspace-sources";
+import { SourceChangeSummary } from "./source-change-summary";
 import type { SourceLineStats } from "./source-preview-data";
 
 type SourceStatus = {
@@ -57,23 +59,31 @@ function sourceLabel(status: SourceStatus | null, error: string | null, includeC
   return includeCommit ? `${branch} · ${status.head?.slice(0, 8) ?? "no commits"}` : branch;
 }
 
-export function SourceVersionCell({ app }: { app: CoreApp }) {
+export function SourceVersionCell({ app, workspace }: {
+  app: CoreApp; workspace?: WorkspaceSource;
+}) {
   const { canManageApps } = useShellState();
   const { status, error } = useSourceStatus(`/api/apps/${encodeURIComponent(app.id)}/source`, canManageApps, `${app.sourceOverridePath}:${app.sourceManagedPath}`);
   if (!canManageApps) return <span className="font-mono text-sm" title="Manifest version">{app.version}</span>;
-  return <>
+  return <div className="flex min-w-0 flex-col gap-1">
     <TooltipProvider delayDuration={150}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <span tabIndex={0} className="flex min-w-0 cursor-help items-center gap-1 font-mono text-sm">
-            <GitBranch className="size-3.5 shrink-0" />
-            <span className="truncate underline decoration-dotted decoration-muted-foreground/70 underline-offset-4">{sourceLabel(status, error, false)}</span>
+          <span tabIndex={0} aria-label={workspace ? `Workspace: ${workspace.label}` : undefined}
+            className="flex min-w-0 cursor-help items-center gap-1 text-sm">
+            {workspace ? <Boxes aria-hidden="true" className="size-3.5 shrink-0" />
+              : <GitBranch aria-hidden="true" className="size-3.5 shrink-0" />}
+            <span className={`truncate underline decoration-dotted decoration-muted-foreground/70 underline-offset-4${workspace ? "" : " font-mono"}`}>
+              {workspace?.label ?? sourceLabel(status, error, false)}
+            </span>
           </span>
         </TooltipTrigger>
         <TooltipContent className="max-w-sm">
           <div className="space-y-1">
             <div className="font-medium">{app.displayName} · source</div>
-            <div className="break-all">{sourceLabel(status, error, false)}</div>
+            {workspace && <div className="break-all">Workspace: {workspace.label}</div>}
+            <div>Installed package: {app.version}</div>
+            <div className="break-all">{!error && status?.branch ? `Branch: ${status.branch}` : sourceLabel(status, error, false)}</div>
             {error && <div>{error}</div>}
             {!error && status && <>
               {status.head && <div>Commit: <span className="break-all font-mono">{status.head}</span></div>}
@@ -91,12 +101,9 @@ export function SourceVersionCell({ app }: { app: CoreApp }) {
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
-    <span className="text-xs text-muted-foreground">
-      {!error && status && ["clean", "changes"].includes(status.state)
-        ? `${status.fileCount}${status.truncated ? "+" : ""} changed files` : ""}
-      {!error && status?.fileCount && status.lineStats ? <LineCounts stats={status.lineStats} /> : null}
-    </span>
-  </>;
+    {!error && status && ["clean", "changes"].includes(status.state) &&
+      <SourceChangeSummary fileCount={status.fileCount} truncated={status.truncated} lineStats={status.lineStats} />}
+  </div>;
 }
 
 export function SourceChangesButton({ app }: { app: CoreApp }) {
@@ -113,11 +120,4 @@ export function SourceToolsLink({ context = "source code" }: { context?: string 
       href={`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/open?redirectUri=${encodeURIComponent(app.embeddedUrl!)}`}>Open {app.displayName}</a>)}
     {!tools.length && <p>No app with source access is available. Install and authorize Hosty Harness to work with source code.</p>}
   </div>;
-}
-
-function LineCounts({ stats }: { stats: SourceLineStats }) {
-  return <span className="inline-flex shrink-0 gap-2 whitespace-nowrap font-mono text-xs tabular-nums" role="img" aria-label={`${stats.additions} lines added, ${stats.deletions} lines deleted`}>
-    <span aria-hidden="true" className="text-green-700 dark:text-green-400">+{stats.additions}</span>
-    <span aria-hidden="true" className="text-red-700 dark:text-red-400">−{stats.deletions}</span>
-  </span>;
 }

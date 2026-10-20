@@ -14,7 +14,9 @@ class FakeEventSource extends EventTarget {
   constructor(public url: string) { super(); FakeEventSource.instances.push(this); }
   open(supported = true) {
     this.readyState = 1; this.onopen?.();
-    if (supported && this.url.includes("topics=resources")) this.emit("stream.ready", { resources: 1 });
+    if (supported && this.url.includes("topics=")) this.emit("stream.ready", {
+      ...(this.url.includes("resources") ? { resources: 1 } : {}), ...(this.url.includes("workspaces") ? { workspaces: 1 } : {}),
+    });
   }
   emit(name: string, data: unknown) { this.dispatchEvent(new MessageEvent(name, { data: JSON.stringify(data) })); }
   error() { this.readyState = 0; this.onerror?.(); }
@@ -208,6 +210,27 @@ describe("Dashboard resource delivery", () => {
     window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
     latestSource().open(); await settle();
     expect(transport.fetch).toHaveBeenCalledTimes(2);
+  });
+  it("requests workspace hints only for visible workspace consumers and shares the resource connection", async () => {
+    const notification = subscribeToCoreEvents(origin, { names: [CoreEventNames.notification], onSync: vi.fn() });
+    disposers.push(notification);
+    expect(latestSource().url).not.toContain("topics");
+    const workspace = () => subscribeToCoreEvents(origin, { names: [CoreEventNames.workspaceChanged], topic: "workspaces", onSync: vi.fn() });
+    const one = workspace(); disposers.push(one);
+    expect(latestSource().url).toContain("topics=workspaces");
+    const source = latestSource(); source.open(); await settle();
+    const two = workspace(); disposers.push(two);
+    expect(latestSource()).toBe(source);
+    const resources = watch(); latestSource().open(); await settle();
+    expect(latestSource().url).toContain("topics=resources,workspaces");
+    one(); expect(latestSource().url).toContain("workspaces");
+    visible(false);
+    expect(latestSource().url).not.toContain("topics");
+    visible(true); latestSource().open(); await settle();
+    expect(latestSource().url).toContain("topics=resources,workspaces");
+    two(); expect(latestSource().url).toContain("topics=resources");
+    expect(latestSource().url).not.toContain("workspaces");
+    resources.stop(); expect(latestSource().url).not.toContain("topics");
   });
   it("uses legacy hint/lease reads only for an open stream without resource capability", async () => {
     watch(); const source = latestSource(); source.open(false);

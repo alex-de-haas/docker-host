@@ -108,6 +108,13 @@ internal static class AppManagementAuthorization
             foreach (var route in routes) result.Add(route, [permission]);
         }
         result["GET /api/development/activation-workspaces"] = [CoreAppPermissions.WorkspacesRead];
+        result["POST /api/development/workspaces/{workspaceId}/execution-recipe"] = [CoreAppPermissions.Sources];
+        result["GET /api/apps/execution-targets"] = [CoreAppPermissions.ReadApps, CoreAppPermissions.WorkspacesRead];
+        result["GET /api/apps/{appId}/execution-targets"] = [CoreAppPermissions.ReadApps, CoreAppPermissions.WorkspacesRead];
+        result["POST /api/apps/{appId}/execution-target"] = [CoreAppPermissions.AppLifecycle];
+        result["GET /api/apps/{appId}/execution-target/{requestId}"] = [CoreAppPermissions.AppLifecycle];
+        result["POST /api/development/workspaces/{workspaceId}/execution-target"] = [CoreAppPermissions.WorkspacesRead, CoreAppPermissions.AppLifecycle];
+        result["GET /api/development/workspaces/{workspaceId}/execution-target/{requestId}"] = [CoreAppPermissions.WorkspacesRead];
         result["POST /api/development/workspaces/{workspaceId}/activation/{kind}"] = [CoreAppPermissions.WorkspacesRead];
         result["GET /api/apps/{appId}/dev-mode"] = [CoreAppPermissions.AppLifecycle];
         result["POST /api/apps/{appId}/dev-mode/{kind}"] = [CoreAppPermissions.AppLifecycle];

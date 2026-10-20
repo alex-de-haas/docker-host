@@ -45,9 +45,13 @@ internal static class EventStreamEndpoints
             clock,
             async user =>
             {
-                var resources = request.Query["topics"].ToString().Split(',').Contains("resources", StringComparer.Ordinal);
-                if (resources && !AppAccessPolicy.IsAdmin(user))
-                    return CoreJson.Json(new ErrorResponse("admin_required", "Resource subscriptions require a Host administrator."), 403);
+                var topics = request.Query["topics"].ToString().Split(',');
+                var resources = topics.Contains("resources", StringComparer.Ordinal);
+                var workspaces = topics.Contains("workspaces", StringComparer.Ordinal);
+                if ((resources || workspaces) && !AppAccessPolicy.IsAdmin(user))
+                    return CoreJson.Json(new ErrorResponse("admin_required", "Resource and workspace subscriptions require a Host administrator."), 403);
+                if (workspaces && AppManagementAuthorization.RequireAdditional(request, CoreAppPermissions.WorkspacesRead) is { } denied)
+                    return denied;
                 // The /api/events delegated policy already requires core.read + apps.read (and
                 // notifications), a superset of /api/core/resources. Resolve it again during delivery.
                 response.Headers.ContentType = "text/event-stream";
@@ -60,15 +64,19 @@ internal static class EventStreamEndpoints
                 using var subscription = events.Subscribe(
                     user.Id,
                     AppAccessPolicy.IsAdmin(user),
-                    CoreSessionAuthorization.ReadSessionId(request), resources);
+                    CoreSessionAuthorization.ReadSessionId(request), resources, workspaces);
+                using var streamCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, applicationStopping);
+                var streamToken = streamCts.Token;
+                var inspection = workspaces ? request.HttpContext.RequestServices.GetRequiredService<WorkspaceInspectionService>() : null;
+                async Task<HashSet<string>> AllowedWorkspacesAsync()
+                    => (await inspection!.ListAsync(user.Id, streamToken)).Workspaces.SelectMany(w => w.Worktrees)
+                        .Select(w => w.Id).ToHashSet(StringComparer.Ordinal);
+                var allowedWorkspaces = workspaces ? await AllowedWorkspacesAsync() : [];
 
                 // End the stream on Core shutdown, not only on client disconnect. Kestrel's graceful
                 // stop waits for in-flight requests and an SSE response never completes on its own —
                 // one open stream would otherwise hold shutdown for the full
                 // HostOptions.ShutdownTimeout and starve the runtime-app stop sweep behind it.
-                using var streamCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, applicationStopping);
-                var streamToken = streamCts.Token;
-
                 async Task<bool> IsStillAuthorizedAsync()
                 {
                     if (!subscription.IsActive) return false;
@@ -80,7 +88,8 @@ internal static class EventStreamEndpoints
                     var current = await AppManagementAuthorization.ResolveAsync(request, streamToken);
                     // A subscription captures its audience at creation. End it when the role changes,
                     // even if the user can still access the calling app, before delivering queued data.
-                    return current.Error is null && current.Caller?.User.Role == user.Role;
+                    return current.Error is null && current.Caller?.User.Role == user.Role &&
+                        (!workspaces || current.Caller is { } caller && AppManagementAuthorization.HasPermission(caller.App, CoreAppPermissions.WorkspacesRead));
                 }
 
                 try
@@ -91,8 +100,12 @@ internal static class EventStreamEndpoints
                     await response.WriteAsync(": connected\n\n", streamToken);
                     // Older Core ignores the topic query and sends no acknowledgement. New clients
                     // must see this before retiring their legacy hint/GET path.
-                    if (resources)
-                        await response.WriteAsync("event: stream.ready\ndata: {\"resources\":1}\n\n", streamToken);
+                    if (resources || workspaces)
+                    {
+                        var capabilities = resources ? workspaces ? "{\"resources\":1,\"workspaces\":1}" : "{\"resources\":1}"
+                            : "{\"workspaces\":1}";
+                        await response.WriteAsync($"event: stream.ready\ndata: {capabilities}\n\n", streamToken);
+                    }
                     await response.Body.FlushAsync(streamToken);
 
                     while (true)
@@ -127,9 +140,21 @@ internal static class EventStreamEndpoints
                             if (!await IsStillAuthorizedAsync())
                                 return Results.Empty;
 
-                            // Named events: a client subscribes to what it cares about with
-                            // addEventListener, and new names are additive for older clients.
-                            await response.WriteAsync($"event: {envelope.Name}\ndata: {envelope.Data}\n\n", streamToken);
+                            if (envelope.Name == CoreEventHub.WorkspaceChanged)
+                            {
+                                if (!workspaces) continue;
+                                // Metadata interest does not grant private source access. Recheck the
+                                // authorized inventory and emit only a hint, never internal worktree IDs.
+                                var currentAllowed = await AllowedWorkspacesAsync();
+                                var changed = envelope.Data == "*" || currentAllowed.Contains(envelope.Data) || allowedWorkspaces.Contains(envelope.Data);
+                                allowedWorkspaces = currentAllowed;
+                                if (changed) await response.WriteAsync("event: workspace.changed\ndata: {}\n\n", streamToken);
+                            }
+                            else
+                            {
+                                // Named events stay additive for older clients.
+                                await response.WriteAsync($"event: {envelope.Name}\ndata: {envelope.Data}\n\n", streamToken);
+                            }
                         }
 
                         await response.Body.FlushAsync(streamToken);
