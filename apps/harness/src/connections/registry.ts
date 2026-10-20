@@ -105,6 +105,7 @@ export class AgentConnections {
     private readonly dataDir: string,
     private readonly cacheDir: string | null,
     private readonly secrets: ConnectionSecrets,
+    private readonly applicationMode?: "native" | "docker",
   ) {
     this.syncTimer = setInterval(() => {
       void this.syncCredentials();
@@ -243,10 +244,13 @@ export class AgentConnections {
     };
   }
   private async hostIdentity(connection: AgentConnection): Promise<string> {
+    const portable = this.applicationMode === "docker" ? await this.secretGet(connection.secretKey) : null;
+    if (this.applicationMode === "docker" && (!connection.dockerImportIdentity || !portable))
+      throw new ConnectionError(409, "provider_import_required", "This host login has no portable authorization. Import the selected login in Local or connect a managed account in Harness settings.");
     let identity: string | undefined;
     try {
       const auth = JSON.parse(
-        await readFile(
+        portable ?? await readFile(
           path.join(connection.hostDirectory!, "auth.json"),
           "utf8",
         ),
@@ -273,7 +277,7 @@ export class AgentConnections {
     } catch {
       /* Keychain-backed homes may have no auth.json. */
     }
-    if (!identity) {
+    if (!identity && this.applicationMode !== "docker") {
       const worker = new CodexLogin(connection.hostDirectory!, false);
       try {
         await worker.initialize();
@@ -296,7 +300,10 @@ export class AgentConnections {
         "provider_host_identity_unavailable",
         "Cannot identify the account in this Codex home. Sign in on the host or choose a managed connection.",
       );
-    return createHash("sha256").update(identity).digest("hex");
+    const fingerprint = createHash("sha256").update(identity).digest("hex");
+    if (this.applicationMode === "docker" && fingerprint !== connection.dockerImportIdentity)
+      throw new ConnectionError(409, "provider_host_account_changed", "The imported account changed. Prepare the selected host login again in Local.");
+    return fingerprint;
   }
   async reserve(binding: ConnectionBinding): Promise<() => void> {
     return this.serialize(async () => {
@@ -557,7 +564,22 @@ export class AgentConnections {
     const home = await this.nativeHome(connection, true);
     return [{ source: await realpath(home) }, ...await Promise.all((connection.kind === "codex" ? ["sessions", "archived_sessions"] : ["projects"]).map(async directory => ({ source: await realpath(path.join(home, directory)) })))];
   }
+  /** Explicit operator action while Local can read the selected host login. */
+  async prepareDockerAuthorization(id: string): Promise<void> {
+    if (this.applicationMode === "docker")
+      throw new ConnectionError(409, "host_login_unavailable", "Select Local in Core to import this host login, or connect a managed account here.");
+    const connection = await this.get(id);
+    if (connection.auth !== "host-login")
+      throw new ConnectionError(400, "provider_import_unneeded", "Managed provider connections already work in both runtimes.");
+    this.assertInactive(id);
+    const binding = (await this.binding(id))!;
+    this.changing.add(id);
+    try { await this.adapter(binding, true); }
+    finally { this.changing.delete(id); }
+  }
+
   async adapter(binding: ConnectionBinding, docker = false): Promise<HarnessAdapter> {
+    docker = this.applicationMode === "docker" || docker;
     const adapter = await this.serialize(async () => {
       if (this.translationActive.has(binding.connectionId))
         throw new ConnectionError(409, "provider_in_use", "This connection is translating. Retry after it finishes.");
@@ -731,11 +753,18 @@ export class AgentConnections {
       const cwd = path.join(root, "work");
       await mkdir(home, { mode: 0o700 }); await mkdir(cwd, { mode: 0o700 });
       const env = translationEnvironment();
+      // Numeric container identities need a home even when /etc/passwd has no matching user.
+      // Keep incidental provider files inside the disposable translation profile on both runtimes.
+      env.HOME = home;
       if (connection.auth === "host-login") {
         if (binding.connectionIdentity !== await this.hostIdentity(connection))
           throw new ConnectionError(409, "translation_connection_changed", "Select the current host account again in translation settings.");
-        sourceAuth = path.join(connection.hostDirectory!, "auth.json");
-        originalAuth = await readFile(sourceAuth, "utf8").catch(() => undefined);
+        if (this.applicationMode === "docker") {
+          originalAuth = await this.secretGet(connection.secretKey) ?? undefined;
+        } else {
+          sourceAuth = path.join(connection.hostDirectory!, "auth.json");
+          originalAuth = await readFile(sourceAuth, "utf8").catch(() => undefined);
+        }
         if (!originalAuth) throw new ConnectionError(503, "translation_unavailable", "Translation requires a file-backed Codex login. Select a managed connection for keychain-only logins.");
       } else {
         const secret = await this.secretGet(connection.secretKey);
@@ -759,6 +788,14 @@ export class AgentConnections {
       return await action({ kind: connection.kind, cwd, home, env });
     } finally {
       try {
+        if (home && originalAuth && connection.auth === "host-login" && this.applicationMode === "docker") {
+          const refreshed = await readFile(path.join(home, "auth.json"), "utf8").catch(() => originalAuth);
+          if (refreshed !== originalAuth) await this.serialize(async () => {
+            if (await this.secretGet(connection.secretKey) !== originalAuth)
+              throw new ConnectionError(409, "translation_connection_changed", "The imported authorization changed during translation.");
+            await this.secrets.set(connection.secretKey, refreshed!);
+          });
+        }
         if (home && sourceAuth && originalAuth) {
           const refreshed = await readFile(path.join(home, "auth.json"), "utf8").catch(() => originalAuth);
           if (refreshed !== originalAuth) {

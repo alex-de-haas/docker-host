@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-09-16
-updated: 2026-10-19
+updated: 2026-10-20
 summary: Deferred source-override migration assessment after unified ordinary-app dev mode, live data, shared manual and MCP control, and recoverable runtime return.
 components: [apps/core, apps/cli, apps/harness, apps/shell]
 ---
@@ -32,6 +32,13 @@ D1 must retain private/local/no-Git and system/Harness self-development parity, 
 apps and external agents. Evaluate restrictions on host-native localCommand separately from source
 runtime support. Clearing obsolete local Source settings is authorized operational cleanup, not
 removal of product APIs. The shipped unified live-data dev mode and Return remain supported.
+
+Owner clarification, 2026-10-20: Harness retains Docker and Local as ordinary production runtime
+profiles, with Docker as the manifest default. Its
+[production-runtime plan](../assistant-shared-docker-runtime/plan.md) owns packaging and integration.
+Development profiles remain separately marked `development: true`; their redesign and general
+production-preference persistence belong to platform work. D1 must preserve Local as a supported
+production runtime. Harness does not add a per-conversation runtime selector.
 
 ## Related Workspace Activation
 

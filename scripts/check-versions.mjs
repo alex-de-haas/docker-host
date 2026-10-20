@@ -140,11 +140,13 @@ expectEqual("plans version", {
 expectEqual("plans feed identity", { manifest: plansManifest.id, feeds: json("apps/plans/feeds.json").appId });
 if (json("apps/plans/feeds.json").schemaVersion !== "app-feeds.0.1") problems.push("plans feeds schema must be app-feeds.0.1");
 
-// harness: manifest ↔ package (localCommand-only app, no image tag to pin).
+// Harness coordinator and worker images ship with the application.
 expectEqual("harness version", {
   manifest: json("apps/harness/manifest.json").version,
   packageJson: json("apps/harness/package.json").version,
   webPackage: json("apps/harness/web/package.json").version,
+  coordinatorImage: json("apps/harness/manifest.json").services[0].runtimes.docker.image.split(":").at(-1),
+  workerDeclaration: json("apps/harness/manifest.json").agentWorker.image.split(":").at(-1),
 });
 
 // channels: the rolling channel (releaseTag cli-dev tracks main HEAD) must advertise the platform version.

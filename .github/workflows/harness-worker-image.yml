@@ -1,4 +1,4 @@
-name: Harness Worker Image
+name: Harness Runtime Images
 
 on:
   workflow_dispatch:
@@ -84,13 +84,21 @@ jobs:
         run: npm run harness:test
 
   build-and-push:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: hosty-agent-worker
+            dockerfile: apps/harness/worker/Dockerfile
+          - image: hosty-harness
+            dockerfile: apps/harness/Dockerfile
     needs: [validation, test]
     runs-on: ubuntu-latest
     # Serialize publishes and never cancel: two runs racing to move the `:latest` and version tags can
     # leave them pointing at the older image, and a half-finished registry push is worse than a queued
     # one. Only this job is grouped, so the gate tests of a later commit still run in parallel.
     concurrency:
-      group: ${{ github.workflow }}-publish
+      group: ${{ github.workflow }}-${{ matrix.image }}-publish
       cancel-in-progress: false
     permissions:
       contents: read
@@ -108,7 +116,7 @@ jobs:
       - name: Compute image name
         id: image
         shell: bash
-        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/hosty-agent-worker" >> "$GITHUB_OUTPUT"
+        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/${{ matrix.image }}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve app version
         id: version
@@ -174,15 +182,15 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
-          file: ./apps/harness/worker/Dockerfile
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=harness-worker-image
+          cache-from: type=gha,scope=${{ matrix.image }}
           # mode=max caches the dependency and build stages too, not just the thin final layer, so
           # QEMU arm64 builds don't rebuild from scratch each run.
-          cache-to: type=gha,scope=harness-worker-image,mode=max
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
 
       - name: Prepare source-bound provenance
         env:

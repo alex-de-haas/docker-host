@@ -1,6 +1,6 @@
 ---
 created: 2026-10-15
-updated: 2026-10-15
+updated: 2026-10-20
 summary: Harness runs Codex and Claude in one bounded shared Docker worker while Core owns workspaces, credentials, Git operations and separate application sandboxes.
 components: [apps/harness, apps/core, apps/demo-app]
 ---
@@ -9,19 +9,28 @@ components: [apps/harness, apps/core, apps/demo-app]
 
 ## Execution Contract
 
-Harness remains a trusted native coordinator. Its Agent execution setting selects Native or Shared
-Docker for **new conversations**; each record persists the choice and older records remain native.
-The session interface shows the actual mode. Docker mode requires managed Core storage, provider
-connections, the reviewed workspace grant, a local Linux Docker engine and its release-matching
-image. Unavailable Docker never falls back to native execution. Per-session health combines provider
-setup with Docker readiness; the settings panel also exposes readiness, Stop/recovery and sampled
-memory/disk usage. Changing the default refuses active conversations and does not migrate old ones.
+Harness declares two ordinary production application profiles: `docker` and `local`. Docker is the
+manifest default; Local runs the coordinator and agents as host processes. Core owns installation,
+runtime selection, start, stop, restart and update. An explicit stored selection takes precedence
+over the manifest default. The separate `dev` profile remains a development profile.
+
+The selected production profile determines execution for new and existing conversations. Settings
+shows the profile and worker readiness/recovery instead of a per-conversation runtime choice.
+Legacy conversation fields are reconciled without changing provider session IDs or transcript data;
+outstanding execution leases require recovery before changing a retained conversation's mode.
+Legacy settings cannot override a production profile.
+
+The Docker coordinator is an application container. Core's coordinator-only worker API controls
+the shared agent container; the coordinator has no Docker socket. Creation requires an installed
+assistant with reviewed source authority and an active lease for that installation. Core derives
+the image, names, labels, network and allowed source/storage mounts. Agent stdin/stdout/stderr uses
+a bounded streaming transport from the trusted coordinator through Core to `docker exec`. Provider
+credentials are passed only in the allowed exec environment, never process arguments.
 
 One Docker workload occupies the worker across both Codex and Claude. A second turn is refused
 before its user message is recorded. Waiting for approval or an answer still occupies the worker.
 The existing Normal/Autonomous choice and Core tool policy retain their meaning. Codex app-server
-stdio and Claude Agent SDK custom spawning run through `docker exec`; only the coordinator controls
-Docker. A completed turn stops and removes the generation, including detached commands. A later
+stdio and Claude Agent SDK custom spawning run through `docker exec` under Core ownership. A completed turn stops and removes the generation, including detached commands. A later
 turn starts another generation and resumes its durable provider conversation.
 
 Applications and their browsers run separately. Agent Stop does not Finish a child Core or its apps.
@@ -31,12 +40,12 @@ packages; it is not network confinement or a malware-analysis environment.
 
 ## Image And Filesystem
 
-Harness pins `ghcr.io/alex-de-haas/hosty-agent-worker:0.53.0`, resolving it to an immutable local image
-ID before creation. The worker package pins Codex 0.160.0 and Claude Agent SDK 0.3.288, matching the
-coordinator. The image includes Node, Git, Python, ripgrep and .NET SDK 10. The dedicated image
-workflow builds arm64/amd64, builds the settings export before running Harness checks, and uses
-the repository publication guard and provenance flow. Install worker image pulls this fixed release,
-not a caller-supplied image.
+Harness pins `ghcr.io/alex-de-haas/hosty-harness:0.62.0` and
+`ghcr.io/alex-de-haas/hosty-agent-worker:0.62.0`. Core prepares the worker image before starting the
+Docker coordinator; each generation uses an immutable local image ID. The worker package pins
+Codex 0.162.1 and Claude Agent SDK 0.3.296, matching the coordinator. The image includes Node, Git, Python, ripgrep and .NET SDK 10. The runtime image
+workflow builds both images for arm64/amd64, builds the settings export before running Harness checks, and uses
+the repository publication guard and provenance flow. Prepare worker image retries the declared release preparation.
 
 Core supplies canonical source roots through an authenticated internal binding descriptor. The
 worker mounts all registered Core worktrees read/write and common Git metadata read-only at the
@@ -49,7 +58,7 @@ administrators. It exposes other worktrees and repository metadata in the same C
 Other mounts are limited to the selected provider home/history, this session's workspace and staged
 attachments, disposable worker home and reusable worker caches. The host home, Docker socket,
 coordinator data, Core service token and unrelated app data are not mounted. Canonical root redirects
-are refused. The worker root filesystem is read-only; it runs with the coordinator's numeric UID/GID,
+are refused. The worker root filesystem is read-only; it runs with the Core host's numeric UID/GID,
 dropped capabilities and no-new-privileges.
 
 Demo's development image explicitly sets readable modes on copied dependency metadata and scripts.
@@ -64,20 +73,31 @@ selected connection's durable conversation directories are mounted. Docker-writt
 is not used by native provider probes. API keys and Claude tokens come from Core's app-secret store;
 container transport does not inherit unrelated host credentials.
 
-A selected Codex host login imports only portable authorization fields into the managed Docker home
-and Core secret namespace. It does not copy host config, hooks, MCP definitions or unrelated history.
+In Local, a selected Codex host login's **Prepare for Docker** action imports only portable
+authorization fields into the managed Docker home and Core secret namespace. Docker consumes that
+explicit import without reading the host login directory. A missing import reports a connection
+setup error; it does not replace the stored connection or its conversation history. It does not copy host config, hooks, MCP definitions or unrelated history.
 An account identity change requires a new binding. An absent previously imported Core secret requires
 reconnection, rather than resurrecting it from worker cache. Unsupported/keychain-only credentials
 require ordinary Harness login. Native and Docker refresh synchronization compares remembered values
 and refresh timestamps so an unchanged stale home does not overwrite newer Core authorization.
 
-A dedicated bridge exposes only registered session workspace and app-MCP routes through
-`host.docker.internal`. Each route requires the current session bearer; native loopback handlers and
+A dedicated bridge exposes only registered session workspace and app-MCP routes. The production
+worker shares its coordinator's container network namespace and reaches the bridge through loopback.
+The existing native development coordinator uses `host.docker.internal`. Each route requires the current session bearer; native loopback handlers and
 call-time Core authorization remain in force. The bridge preserves MCP session/protocol headers
 and the last-event cursor for SSE resumption. It is not a generic host HTTP proxy and forwards
 no browser cookies or Core service credentials, bounds request bodies and removes session routes
 when execution stops. The listener is container-reachable; possession of its route bearer grants
 only the corresponding existing session MCP authority.
+
+Core mounts the coordinator's own data and cache at their canonical host paths. Both production
+profiles use those paths, so provider history links and session workspaces keep their identity.
+Managed native and Docker provider homes remain separate; their durable conversation directories
+point to the same app data. Translation uses managed or explicitly imported credentials in the
+selected profile and persists renewed imported authorization to Core. The coordinator image includes
+system CA certificates for native provider HTTPS. Translation sets `HOME` to its disposable profile,
+including when the coordinator runs as a numeric host UID absent from the container's passwd database.
 
 ## Ownership, Recovery And Resource Accounting
 
@@ -97,7 +117,7 @@ the owning administrator's fresh Core credential to release retained leases. Pro
 transcript retention protect a persisted unreconciled worker. Abandonment stops Docker before
 releasing its provider or pending approvals.
 
-| Resource | Policy |
+| Resource | Default policy outside a child Core |
 | --- | --- |
 | Memory / swap ceiling | 4 GiB / equal 4 GiB ceiling |
 | CPU / PIDs | 2 CPUs / 512 PIDs |
@@ -105,6 +125,18 @@ releasing its provider or pending approvals.
 | Container logs | Two 5 MiB files |
 | Soft disk | 20 GiB across source trees, selected history, session files, worker home/cache |
 | Observation | cgroup current/peak memory and PIDs every five seconds; disk approximately every thirty seconds |
+
+Inside a Core-managed child environment, worker creation reserves an additional application share
+through the normal environment admission lock. Its coordinator remains counted separately. The
+worker uses that environment's memory, CPU, PID and log limits and carries the instance/app/service
+labels used by resource observation and Finish. Insufficient capacity rejects creation before Docker
+allocates the worker. Core admission and lifecycle diagnostics remain typed runtime errors in
+Harness, so the caller receives the resource or Docker failure reason. A disconnected Core reports
+worker API unavailability with a retry instruction.
+
+Core's application Stop removes verified worker containers after stopping the coordinator, including
+detached processes the coordinator no longer tracks. Leases remain until the owning conversation
+reconciles termination; a failed Docker inventory never counts as successful removal.
 
 A soft-disk excess stops execution and preserves source. Sampling permits overshoot and is not a
 hard filesystem quota. Cgroup peaks persist on the conversation across worker generations; they
@@ -115,29 +147,97 @@ remain distinct from the worker ceiling.
 
 ## Verification Boundary
 
-The initial acceptance host is macOS arm64 with Docker Desktop running Linux containers. Native
-Linux and Windows host acceptance is not established by this result. Both provider binaries and the
-actual Claude SDK initialization protocol run in the release-matching image. Real Codex and Claude
-turns prepare worktrees, edit Demo and pass its unit tests and production build. The reusable
-`scripts/check-harness-worker.mjs` needs no credentials: it checks both providers, SDK initialization,
-read-only metadata, absent Docker socket and termination of a detached writer after persisted-state
-recovery. [Acceptance](../../reviews/2026-10-15-shared-docker-agent-acceptance.md) records both real-provider browser
-journeys, coordinator SIGKILL recovery, cancellation, resource samples and complete fixture cleanup.
-Codex and Claude preserve their provider conversation IDs across worker generations and Harness
-restart. Demo runs in separate containers; its held-open page receives both agents' source edits.
-Media Server and a dedicated Transcode Engine also run in the child Core, with read-only external
-media. The temporary provider authorization is removed after acceptance.
+The acceptance host is macOS arm64 with Docker Desktop Linux containers. Native Linux and Windows
+host acceptance is not established. The original
+[acceptance report](../../reviews/2026-10-15-shared-docker-agent-acceptance.md) covers real Codex and
+Claude journeys with a native coordinator and shared Docker worker; it does not establish
+production Docker-coordinator acceptance.
 
-The local worker image is built and verified. Registry publication and GitHub CI execution are
-release operations, not outcomes of this local acceptance. The primary Core/Harness installation
-is not switched by the development fixture.
+`scripts/check-harness-worker.mjs` checks both provider binaries, actual Claude SDK initialization,
+read-only metadata, absence of a Docker socket, resource accounting and detached-writer removal
+after persisted-state recovery without model credentials. The opt-in Core test
+`Harness_ProductionDockerRunsCoreOwnedWorkerAndFinishesSandbox` uses a Core-managed child environment,
+ordinary setup/password login and installation, then runs both provider binaries through the
+Docker coordinator's Core transport. Its worker lease is an explicitly synthetic test fixture;
+it does not claim a model turn or workspace-user authorization check.
+
+Real-provider acceptance on this host also passes Codex and Claude chat/translation through
+Docker -> Local -> Docker, retaining provider session IDs and conversation content. Both profiles
+prepare a registered workspace, use scoped development MCP, edit a temporary file, inspect a Git
+diff and build Core. Browser acceptance uses normal password login and Shell embedding. A Demo-only
+activation and Return run inside the child Core. Full Core verification passes 3,800 tests (five opt-in integration tests
+skipped in that run); Harness passes 893 tests and lint. Both profiles' app MCP routes are also exercised
+against an independently running Demo App. The separately enabled production integration test
+passes and Finish removes the child Core data and resources, confirmed by independent inventory.
+
+Both production profiles also pass Demo App sandbox preparation from a registered worktree, separate
+sandbox-user provisioning, preview resolution, private-browser page assertions and screenshot, and
+fresh evidence export. Startup takes 44.8 seconds in Docker and 41.7 seconds in Local. Sandbox restart,
+stop and dispose succeed, followed by independent resource-removal checks. These checks temporarily
+stop the unbounded Workspaces app with explicit owner permission and restore it healthy through Core.
+
+The production failure matrix passes 20 checks using real Codex turns, ordinary Core/Harness
+identity and Docker -> Local -> Docker switching. The same provider session and remembered content
+survive the sequence. The final full run completes in 5 minutes 37 seconds, including exact resource
+and Stop error diagnostics. Its Docker transport fixture also exercises both provider binaries and the
+real Claude SDK; the failure-turn assertions use Codex.
+
+| Failure or recovery path | Observed result |
+| --- | --- |
+| Provider absent/unconfigured; source app unattached | Specific setup/authority errors; refused messages do not enter the transcript. |
+| Worker image unavailable, pull failure, Docker connection loss before dispatch | Runtime diagnostics report unavailability; no worker generation is admitted. |
+| Child container budget exhausted | Worker allocation is refused, preparation cleanup is verified and its lease is released. |
+| Shared Docker worker busy; explicit cancellation | A second conversation is refused before transcript persistence; Stop removes the worker and both foreground/detached writers stop. |
+| Connection lost during Stop, removal refused, removal reply lost after actual deletion | The generation and source lease remain until explicit recovery verifies absence, then the lease is released. |
+| Local CLI missing; Docker connection unavailable | Local diagnoses its missing provider executable and continues real provider work independently of Docker. |
+| Local active conversation and cancellation | Same-chat overlap is refused; another chat can run concurrently. Unproven native descendant termination retains source activity. |
+| Active Docker or Local coordinator killed, followed by explicit restart | No uncertain message is replayed. Durable history and provider identity survive; retained execution is reconciled. |
+| Core Docker start with unavailable engine/worker image/coordinator image | Start reports failure for the selected profile; explicit retry after repair starts that profile successfully. |
+| Owner Finish and recovery of an interrupted Finish | Child data, containers, networks, volumes and native processes are independently absent after completion. |
+
+`scripts/experiments/harness-production/run.mjs` runs this opt-in acceptance against a disposable
+Core. It forwards Docker traffic through a private Unix socket used only by that test. The proxy
+injects connection loss, image/pull errors and removal failures into real Core/coordinator calls;
+its three tests cover streaming response headers, fault scope/recovery and response loss after an
+upstream deletion. The shared Docker engine process stays running and existing host images remain
+present. This establishes production transport-failure recovery; it does not claim a physical Docker
+Desktop restart or a registry pull. Container kills, resource exhaustion and native process kills
+are real and target only the test environment.
+
+Build the Core test project with `--artifacts-path artifacts/harness-runtime-final`, then run:
+
+```sh
+node --test scripts/experiments/harness-production/docker-fault-proxy.test.mjs
+HOSTY_TEST_DOCKER_DEVELOPMENT=1 \
+HOSTY_TEST_HARNESS_PROVIDER_SOURCE=/absolute/authorized-core-root \
+HOSTY_TEST_HARNESS_PROVIDER_CONNECTION=explicit-managed-codex-connection-id \
+HOSTY_TEST_HARNESS_FAILURE_REPORT=/absolute/outside-repository/failures.json \
+node scripts/experiments/harness-production/run.mjs
+```
+
+The source authorization requires explicit owner permission. The test imports only that selected
+managed Codex login, returns renewed authorization only when its source is unchanged, and stores raw
+evidence outside the repository. The normal fixture calls Finish on success or failure. If Finish
+itself fails, keep its root and run the same opt-in test with `HOSTY_TEST_HARNESS_RECOVERY_ROOT` set to
+that root and the working Docker endpoint. Recovery validates the fixture identity, replays the
+journaled Finish request through its owner and deletes parent test data only after verified Finish.
+
+The [remaining acceptance plan](plan.md) tracks separately authorized Git/PR publication and release
+verification. Local image builds are distinct from registry publication. The primary Core/Harness runtime selection and lifecycle are unchanged by test fixtures. Provider
+authorizations are used only with explicit owner permission. Core 0.146.0 supplies the required
+worker API and canonical storage placement for Harness 0.62.0.
+
+Core passes agent environment values through an owner-only temporary Docker env file. The host
+Docker CLI retains Core's environment and context; provider secrets stay out of its arguments. The
+file is removed when execution ends, including transport startup failure. Environment values with
+line breaks or NUL are rejected before the file is created.
 
 ## Testing Expectations
 
 - Assert global busy admission before transcript persistence, including approval/question waits.
 - Exercise Codex and Claude transport, provider revision/refresh/revocation, imported account binding,
   and preservation of native execution and durable conversation resume.
-- Verify canonical mounts, newly prepared worktrees, exact Git trust paths, Core-mediated mutations,
+- Verify canonical mounts (including paths containing `=`), newly prepared worktrees, exact Git trust paths, Core-mediated mutations,
   scoped MCP authority and route revocation without broadening host access.
 - Retain ownership/provider/source leases on unknown Stop; recover the same generation after restart.
   Cover abandoned sessions, retention, cancelled turns and detached processes with real Docker.

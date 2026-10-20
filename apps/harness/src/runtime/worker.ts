@@ -124,10 +124,14 @@ export class SharedDockerWorker {
     await this.load();
     if (this.claimant !== sessionId || this.state) throw new WorkerError("worker_recovery_required", "Reconcile the previous worker generation before launching.");
     if (!hash.test(bindings.instanceId) || !hash.test(bindings.installationId) || !uuid.test(leaseId)) throw new Error("Core returned invalid worker ownership.");
-    const trees = await canonicalMount(bindings.treesRoot), repositories = await canonicalMount(bindings.repositoriesRoot);
+    const verify = this.docker.remote ? async (value: string) => {
+      if (!validPath(value)) throw new Error("Core returned an invalid source path.");
+      return value;
+    } : canonicalMount;
+    const trees = await verify(bindings.treesRoot), repositories = await verify(bindings.repositoriesRoot);
     if (path.dirname(trees) !== path.dirname(repositories) || path.basename(trees) !== "trees" || path.basename(repositories) !== "repositories") throw new Error("Core returned invalid shared source roots.");
     const sourceMounts = [{ source: trees }, { source: repositories, readonly: true }, { source: await canonicalMount(cwd) }, ...providerMounts];
-    for (const mount of sourceMounts) await canonicalMount(mount.source);
+    for (const mount of sourceMounts) await verify(mount.source);
     await this.validateDaemon();
     const generation = leaseId, imageId = await this.image();
     this.state = { version: 1, generation, sessionId, leaseId, instanceId: bindings.instanceId,
@@ -173,7 +177,8 @@ export class SharedDockerWorker {
     if (!this.state) return;
     for (const tree of paths) {
       if (path.dirname(tree) !== bindings.treesRoot || !hash.test(path.basename(tree))) throw new Error("Core returned an invalid worktree path.");
-      await canonicalMount(tree); this.safeDirectories.add(tree);
+      if (!this.docker.remote) await canonicalMount(tree);
+      this.safeDirectories.add(tree);
     }
     // Git config string quoting is deliberately independent of shell quoting.
     const config = "[safe]\n" + [...this.safeDirectories].map(tree => `\tdirectory = ${JSON.stringify(tree)}\n`).join("");

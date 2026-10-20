@@ -6,7 +6,7 @@ export class WorkerMcpBridge {
   private server: Server | null = null;
   private origin: string | null = null;
   private readonly routes = new Map<string, { sessionId: string; bearer: string }>();
-  constructor(private readonly upstream: string) {
+  constructor(private readonly upstream: string, private readonly workerHost = "host.docker.internal") {
     const url = new URL(upstream);
     if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.pathname !== "/") throw new Error("Worker MCP upstream must be the Harness loopback origin.");
   }
@@ -45,7 +45,7 @@ export class WorkerMcpBridge {
     await new Promise<void>((resolve, reject) => { this.server!.once("error", reject); this.server!.listen(0, "0.0.0.0", resolve); });
     const address = this.server.address();
     if (!address || typeof address === "string") throw new Error("Worker MCP listener has no port.");
-    this.origin = `http://host.docker.internal:${address.port}`;
+    this.origin = `http://${this.workerHost}:${address.port}`;
   }
   async rewrite(sessionId: string, servers: Record<string, unknown> | undefined): Promise<Record<string, unknown> | undefined> {
     await this.start();

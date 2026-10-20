@@ -5466,6 +5466,11 @@ internal sealed partial class CoreLifecycleService(
             changes.Add("role:runtime->system");
         }
 
+        if (currentSelection.Manifest.AgentWorker != targetSelection.Manifest.AgentWorker)
+        {
+            static string WorkerDescription(AgentWorkerManifest? worker) => worker is null ? "none" : $"{worker.Service}@{worker.Image}";
+            changes.Add($"agentWorker:{WorkerDescription(currentSelection.Manifest.AgentWorker)}->{WorkerDescription(targetSelection.Manifest.AgentWorker)}");
+        }
         AddUpdateServiceChanges(changes, currentSelection, targetSelection);
         AddSettingChanges(changes, app.Settings, BuildSettingDefinitions(targetSelection));
         changes.AddRange(BuildExternalMountChanges(currentSelection.Manifest.ExternalMounts, targetSelection.Manifest.ExternalMounts));

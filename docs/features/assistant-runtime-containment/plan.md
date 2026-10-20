@@ -15,8 +15,16 @@ The 2026-10-15 owner request starts the shared-worker delivery under the separat
 This plan remains Draft for the stricter per-session scope. Former D11-D13 are transferred and
 retired here without being completed; historical references still identify that original scope.
 The shared feature records the approved two-provider/selected-login contract and verified
-implementation boundaries. The older experiment authorizations below describe their original dates, not a current
-prohibition on the newly requested shared-worker work.
+implementation boundaries. The older experiment authorizations below describe their original dates,
+not a current prohibition on that shared-worker work.
+
+Owner clarification, 2026-10-20: Docker and Local are ordinary production runtime profiles of the
+Harness application, with Docker as the manifest default. The
+[production-runtime plan](../assistant-shared-docker-runtime/plan.md) owns packaging, Core lifecycle
+integration and compatible switching. Local is an equally supported runtime selected through normal
+Core controls. This does not wait for this plan's per-session isolation or change its Draft status.
+The existing shared worker's administrator-wide visibility remains distinct from restricted-user
+isolation.
 
 Owner revision, 2026-10-13: protect the host first and prefer one shared administrator agent
 container for the [November demonstration](../hosty-delivery-readiness/plan.md). Return this plan
@@ -50,9 +58,10 @@ This clarification neither authorizes new experiments nor changes the prior boun
 
 The native-runtime parity assessment belongs to
 [Development Controls D1](../app-development-controls/plan.md#deliverables). Source-based execution
-remains supported; restricting host-native execution is a separate future decision. Shared-worker
-delivery is already implemented and is not reopened by this recovered clarification. Workspace
-allocation does not contain a privileged external client's native process.
+remains supported. The 2026-10-20 direction retains Local as an ordinary Harness production
+runtime alongside Docker. Shared-worker backend delivery is already implemented; application
+runtime packaging and acceptance belong to its production-runtime plan. Workspace allocation does
+not contain a privileged external client's native process.
 
 ## Approved Bounded Experiment (2026-10-13)
 

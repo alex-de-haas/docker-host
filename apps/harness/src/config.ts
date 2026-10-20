@@ -5,6 +5,8 @@ import path from "node:path";
 // own settings. Manifest settings arrive as plain env vars, so everything is read once here.
 export interface GatewayConfig {
   port: number;
+  /** Selected application profile; legacy agent settings do not override it. */
+  executionMode?: "native" | "docker";
   dataDir: string;
   /** Directory operator harness sessions start in. Host-wide work is the point of the operator
    * profile, so this defaults to the operator's home rather than the app checkout. */
@@ -44,7 +46,11 @@ export function resolveHarnessKind(value: string | undefined): HarnessKind {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig {
   const retention = Number.parseInt(env.HOSTY_HARNESS_RETENTION_DAYS ?? "30", 10);
   return {
-    port: Number.parseInt(env.HOSTY_PORT_HTTP ?? env.PORT ?? "3400", 10),
+    executionMode: env.HOSTY_HARNESS_RUNTIME === "docker" ? "docker" : env.HOSTY_HARNESS_RUNTIME === "native" ? "native" : undefined,
+    // Core's HOSTY_PORT_HTTP is the published host port. A Docker bridge listener must bind
+    // its declared container port; Local listens directly on the allocated host port.
+    port: Number.parseInt(env.HOSTY_HARNESS_RUNTIME === "docker"
+      ? env.PORT ?? "3400" : env.HOSTY_PORT_HTTP ?? env.PORT ?? "3400", 10),
     dataDir: env.HOSTY_APP_DATA_DIR ?? path.join(os.tmpdir(), "hosty-harness-data"),
     // A fallback cwd for a gateway started outside Core, where no cache directory is injected. It used
     // to default to the home directory, which is the last place to run an agent that reads files.
