@@ -65,7 +65,12 @@ Image and native publishers use the Hosty custom predicate type and build type `
 Verify an artifact using the explicit Hosty predicate type; the CLI's default SLSA filter does not select custom attestations:
 
 ```bash
-gh attestation verify <artifact-or-oci-reference> --repo alex-de-haas/docker-host \
+# Downloaded release binary
+gh attestation verify ./hosty-cardputer.bin --repo alex-de-haas/docker-host \
+  --predicate-type https://github.com/alex-de-haas/docker-host/blob/main/docs/features/ci-feedback-loop/feature.md#publication-provenance-v1
+
+# Container image: the oci:// prefix is required.
+gh attestation verify oci://ghcr.io/alex-de-haas/hosty-shell:latest --repo alex-de-haas/docker-host \
   --predicate-type https://github.com/alex-de-haas/docker-host/blob/main/docs/features/ci-feedback-loop/feature.md#publication-provenance-v1
 ```
 
