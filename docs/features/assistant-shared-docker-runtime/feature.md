@@ -165,8 +165,8 @@ Real-provider acceptance on this host also passes Codex and Claude chat/translat
 Docker -> Local -> Docker, retaining provider session IDs and conversation content. Both profiles
 prepare a registered workspace, use scoped development MCP, edit a temporary file, inspect a Git
 diff and build Core. Browser acceptance uses normal password login and Shell embedding. A Demo-only
-activation and Return run inside the child Core. Full Core verification passes 3,800 tests (five opt-in integration tests
-skipped in that run); Harness passes 893 tests and lint. Both profiles' app MCP routes are also exercised
+activation and Return run inside the child Core. Full Core verification passes 3,807 tests (five opt-in integration tests
+skipped in that run); Harness passes 894 tests across 98 files and lint. The Core build has four existing warnings and zero errors. Both profiles' app MCP routes are also exercised
 against an independently running Demo App. The separately enabled production integration test
 passes and Finish removes the child Core data and resources, confirmed by independent inventory.
 
@@ -176,9 +176,9 @@ fresh evidence export. Startup takes 44.8 seconds in Docker and 41.7 seconds in 
 stop and dispose succeed, followed by independent resource-removal checks. These checks temporarily
 stop the unbounded Workspaces app with explicit owner permission and restore it healthy through Core.
 
-The production failure matrix passes 20 checks using real Codex turns, ordinary Core/Harness
+The production failure matrix passes 20/20 checks using real Codex turns, ordinary Core/Harness
 identity and Docker -> Local -> Docker switching. The same provider session and remembered content
-survive the sequence. The final full run completes in 5 minutes 37 seconds, including exact resource
+survive the sequence. The final full run completes in 6 minutes 29 seconds, including exact resource
 and Stop error diagnostics. Its Docker transport fixture also exercises both provider binaries and the
 real Claude SDK; the failure-turn assertions use Codex.
 
@@ -243,8 +243,11 @@ The verified signature certificates identify
 [main CI run 39448520481](https://github.com/alex-de-haas/docker-host/actions/runs/39448520481).
 
 The release coordinator runs in the isolated Core. The [remaining acceptance plan](plan.md) retains
-D10/D12/D14/D15 until Git/PR acceptance and final closure are verified. Docker Git/PR publication is
-under verification; Local Git/PR acceptance and final closure remain pending. The registry and signed
+D12/D14/D15 until final Git/PR acceptance and documentation closure are verified. D10 passes
+publication, anonymous platform pulls, coordinator/worker image identity and signed provenance
+verification alongside the topology/lifecycle checks. Docker Core publication succeeds with its PR
+URL and head independently checked. Local Git/PR publication is under verification through the
+same draft PR; final acceptance and documentation closure remain pending. The registry and signed
 provenance evidence establishes image delivery, without establishing those remaining checks.
 The primary Core/Harness runtime selection and lifecycle are unchanged by test fixtures. Provider
 authorizations are used only with explicit owner permission. Core 0.146.0 supplies the required

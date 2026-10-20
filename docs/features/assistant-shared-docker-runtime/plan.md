@@ -158,7 +158,7 @@ the production-runtime work after the owner's clarification. The separate Contai
 former D11–D13 are not reopened.
 
 - [x] D9. Declare Docker and Local as ordinary production profiles with Docker as the manifest default; integrate with Core installation/selection, retain the separate dev profile and consume the platform's persisted user-choice contract.
-- [ ] D10. Settle and implement the supported production Docker service/transport topology, packaging, storage, health checks and image delivery through Core; maintain Local as an equally supported production runtime.
+- [x] D10. Settle and implement the supported production Docker service/transport topology, packaging, storage, health checks and image delivery through Core; maintain Local as an equally supported production runtime.
 - [x] D11. Reconcile internal agent-mode settings and conversation metadata with the selected application profile; preserve data, provider connections, history, translation and supported Codex/Claude resume across Docker/Local switches.
 - [ ] D12. Verify and fix complete operation in both production profiles through managed workspace, Git/PR, app MCP, sandbox and live-activation journeys, reusing existing platform authority.
 - [x] D13. Integrate and verify shared-worker admission, resources, stop/restart and recovery with application lifecycle and profile switching, including exact ownership, retained leases and independently checked cleanup.
@@ -174,10 +174,13 @@ former D11–D13 are not reopened.
   after explicit owner approval; renewed credentials return to the unchanged source authorization.
   Host-login import/account compatibility also has unit coverage.
 - Platform 0.146.0 and Harness 0.62.0 implement the coordinator/worker contract. Coordinator and
-  worker images build locally for linux/arm64 and linux/amd64. Registry publication is not performed.
+  worker images build for linux/arm64 and linux/amd64. D10 passes registry publication, anonymous
+  platform pulls, coordinator/worker image identity and signed provenance verification, in addition
+  to the previously passing topology/lifecycle checks; [release evidence](feature.md#verification-boundary)
+  records the immutable 0.62.0 indexes and source commit.
   Core 0.146.0 is required for the new Docker worker API and canonical storage placement.
-- The exact Core project and test project build without warnings or errors. Full Core verification
-  passes 3,800 tests, with five opt-in integration skips and zero failures. The full Harness suite passes 893
+- The Core build has four existing warnings and zero errors. Full Core verification
+  passes 3,807 tests, with five opt-in integration skips and zero failures. The full Harness suite passes 894
   tests across 98 files; lint passes. Image builds also compile the settings UI.
 - Real acceptance verifies normal Core setup/password login, Shell embedding, preserved workspace
   history, and both profiles' workspace MCP, temporary file editing, Git diff and .NET build.
@@ -219,14 +222,15 @@ former D11–D13 are not reopened.
   inventory confirms removal of its data, containers, networks, volumes and native processes.
 
 - Exact diagnostic assertions exposed and fixed Core worker errors being masked as generic gateway
-  errors. The final coordinator image passes the complete matrix in 5 minutes 37 seconds, including
+  errors. The final coordinator image passes the complete matrix (20/20) in 6 minutes 29 seconds, including
   the resource-budget reason and typed uncertain-Stop errors. Three new regression tests pass; the
-  full Harness suite passes 893 tests across 98 files and lint passes. Final arm64/amd64 coordinator
+  full Harness suite passes 894 tests across 98 files and lint passes. Final arm64/amd64 coordinator
   builds succeed. Independent Finish checks confirm no retained fixture data or processes, and
   Workspaces remains running and healthy.
 
-D10 and D14 retain registry delivery/publication verification. D12 retains separately authorized
-Git/PR publication. D15 retains final plan closure after those deliverables pass. Unverified native
+D12 and D14 retain final Git/PR acceptance. Docker Core publication succeeds with its PR URL and
+head independently checked; Local publication is under verification through the same draft PR.
+D15 retains final documentation and plan closure after those deliverables pass. Unverified native
 Linux and Windows hosts are not advertised as accepted.
 
 ## Verification And Delivery
