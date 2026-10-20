@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Haas.Hosty.Core;
 using Haas.Hosty.Core.Tests.Http;
 using Microsoft.Extensions.DependencyInjection;
@@ -11,9 +12,14 @@ namespace Haas.Hosty.Core.Tests;
 public sealed partial class CoreLifecycleServiceTests
 {
     [Theory]
-    [InlineData("{ unreadable")]
-    [InlineData("{}")]
-    public async Task ExecutionInventory_InvalidRecipeIsIsolatedWhileDirectAppRequestRetainsDiagnosis(string corruptRecipe)
+    [InlineData("aggregate-json")]
+    [InlineData("aggregate-incomplete")]
+    [InlineData("dev-missing")]
+    [InlineData("dev-corrupt")]
+    [InlineData("legacy-json")]
+    [InlineData("legacy-directory")]
+    [InlineData("package-json")]
+    public async Task ExecutionInventory_PerAppStateReadFailureIsIsolatedWhileDirectAppRequestRetainsDiagnosis(string failure)
     {
         var (f, owner, workspaces, healthyTree, _, _) = await LocalHandoffFixture();
         await AddManifestPackageRuntime(f, healthyTree);
@@ -21,10 +27,33 @@ public sealed partial class CoreLifecycleServiceTests
         await f.Service.CreateLocalAppAsync(owner, badRequest, null, default);
         var badTree = await workspaces.PrepareAsync(owner, new(badRequest.RequestId, owner.SessionId,
             badRequest.AppId, "/assistant", "main"), default);
-        var recipePath = Path.Combine(AppExecutionStore.DirectoryFor(f.Paths, badRequest.AppId),
-            "workspace-recipes", badTree.WorkspaceId + ".json");
-        Directory.CreateDirectory(Path.GetDirectoryName(recipePath)!);
-        await File.WriteAllTextAsync(recipePath, corruptRecipe);
+        string metadataPath;
+        string? contents = null;
+        if (failure == "package-json")
+        {
+            metadataPath = Path.Combine(AppExecutionStore.DirectoryFor(f.Paths, badRequest.AppId), "package.json");
+            contents = "{ unreadable";
+        }
+        else if (failure.StartsWith("dev-", StringComparison.Ordinal))
+        {
+            var journalId = Guid.NewGuid().ToString("D");
+            await f.Apps.UpdateAppAsync(badRequest.AppId, app => app with { DevModeId = journalId });
+            metadataPath = AppDevStore.Record(f.Paths, badRequest.AppId, journalId);
+            if (failure == "dev-corrupt") contents = "{ unreadable";
+        }
+        else
+        {
+            var legacy = failure.StartsWith("legacy-", StringComparison.Ordinal);
+            metadataPath = Path.Combine(AppExecutionStore.DirectoryFor(f.Paths, badRequest.AppId),
+                legacy ? "recipes" : "workspace-recipes", (legacy ? badTree.Id : badTree.WorkspaceId) + ".json");
+            if (failure == "legacy-directory") Directory.CreateDirectory(metadataPath);
+            else contents = failure == "aggregate-incomplete" ? "{}" : "{ unreadable";
+        }
+        if (contents is not null)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(metadataPath)!);
+            await File.WriteAllTextAsync(metadataPath, contents);
+        }
         var appRecords = (await f.Apps.ListAppRecordsAsync()).ToDictionary(app => app.Id, app => CoreJson.Text(app));
         await using var host = await CoreHttpHarness.StartAsync(f.Clock, services =>
         {
@@ -47,11 +76,22 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal("test.created", healthy.AppId);
         Assert.Contains(healthy.Choices, choice => choice.Kind == "package" && choice.Runtime == "docker");
         Assert.Contains(healthy.Choices, choice => choice.Kind == "workspace" && choice.WorktreeId == healthyTree.Id && choice.Available);
-        var direct = await client.GetAsync($"/api/apps/{badRequest.AppId}/execution-targets");
-        Assert.Equal(HttpStatusCode.Conflict, direct.StatusCode);
-        Assert.Equal("dev_recipe_invalid", (await direct.Content.ReadFromJsonAsync(CoreJson.TypeInfo<ErrorResponse>()))!.Code);
+        if (failure.StartsWith("legacy-", StringComparison.Ordinal) || failure == "package-json")
+        {
+            var direct = await Record.ExceptionAsync(() => client.GetAsync($"/api/apps/{badRequest.AppId}/execution-targets"));
+            Assert.True(direct is JsonException or IOException or UnauthorizedAccessException, direct?.ToString());
+        }
+        else
+        {
+            var direct = await client.GetAsync($"/api/apps/{badRequest.AppId}/execution-targets");
+            Assert.Equal(HttpStatusCode.Conflict, direct.StatusCode);
+            Assert.Equal(failure.StartsWith("dev-", StringComparison.Ordinal) ? "dev_state_unavailable" : "dev_recipe_invalid",
+                (await direct.Content.ReadFromJsonAsync(CoreJson.TypeInfo<ErrorResponse>()))!.Code);
+        }
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/apps/test.created/execution-targets")).StatusCode);
-        Assert.Equal(corruptRecipe, await File.ReadAllTextAsync(recipePath));
+        if (contents is not null) Assert.Equal(contents, await File.ReadAllTextAsync(metadataPath));
+        else if (failure == "legacy-directory") Assert.True(Directory.Exists(metadataPath));
+        else Assert.False(File.Exists(metadataPath));
         foreach (var app in await f.Apps.ListAppRecordsAsync()) Assert.Equal(appRecords[app.Id], CoreJson.Text(app));
         Assert.Equal(0, f.Adapter.StartCount);
         Assert.Equal(0, f.Adapter.StopCount);

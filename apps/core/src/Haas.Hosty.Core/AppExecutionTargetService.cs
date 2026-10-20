@@ -21,10 +21,10 @@ internal sealed class AppExecutionTargetService(CoreDataPaths paths, AppRegistry
         foreach (var app in await apps.ListAppRecordsAsync(ct))
         {
             try { targets.Add(await lifecycle.ReadExecutionTargetsAsync(app.Id, inventory, ct, selectable)); }
-            catch (AppManifestException) { /* A broken unrelated app does not hide the remaining choices. */ }
-            catch (AppLifecycleException ex) when (ex.Code == "dev_recipe_invalid")
+            catch (Exception ex) when (ex is AppManifestException or AppLifecycleException or
+                System.Text.Json.JsonException or IOException or UnauthorizedAccessException)
             {
-                logger.LogWarning(ex, "Cannot read execution choices for app {AppId}: workspace runtime metadata is invalid.", app.Id);
+                logger.LogWarning(ex, "Cannot read execution choices for app {AppId}.", app.Id);
             }
         }
         return new(targets.ToArray());
