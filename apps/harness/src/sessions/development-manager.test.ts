@@ -513,19 +513,19 @@ it("coordinates a session Pause through admission, stopping and confirmation", a
 });
 
 
-it("queues reviewed activation until agent exit and rechecks its dispatch guard", async () => {
+it.each(["activation-apply", "execution-select"] as const)("queues reviewed %s until agent exit and rechecks its dispatch guard", async action => {
   const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
   await manager.postMessage(record.id, "work", "token");
   const input = { workspaceId: "a".repeat(64), requestId: "c0da75ef-bd6c-4b61-99ad-241a613aa2d7", selection: { coreSelected: false }, planDigest: "review" };
   const guard = vi.fn().mockResolvedValue(undefined);
   vi.mocked(client.call).mockClear();
-  await expect(manager.workspaceAction(record.id, "activation-apply", input, undefined, undefined, guard)).resolves.toMatchObject({ state: "queued" });
-  expect(client.call).not.toHaveBeenCalledWith(record.id, expect.anything(), "activation-apply", expect.anything());
+  await expect(manager.workspaceAction(record.id, action, input, undefined, undefined, guard)).resolves.toMatchObject({ state: "queued" });
+  expect(client.call).not.toHaveBeenCalledWith(record.id, expect.anything(), action, expect.anything());
   await finish(record.id);
-  await vi.waitFor(() => expect(client.call).toHaveBeenCalledWith(record.id, "token", "activation-apply", input));
+  await vi.waitFor(() => expect(client.call).toHaveBeenCalledWith(record.id, "token", action, input));
   expect(guard).toHaveBeenCalledOnce();
   const calls = vi.mocked(client.call).mock.calls.map(c => c[2]);
-  expect(calls.indexOf("release-lease")).toBeLessThan(calls.indexOf("activation-apply"));
+  expect(calls.indexOf("release-lease")).toBeLessThan(calls.indexOf(action));
 });
 it("does not dispatch queued activation after policy revocation", async () => {
   const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });

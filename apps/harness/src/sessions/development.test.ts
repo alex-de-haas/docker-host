@@ -1,11 +1,44 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer, type Server } from "node:http";
-import { DevelopmentClient, DevelopmentMcp, workspaceInstructions } from "./development.js";
+import { DevelopmentClient, DevelopmentMcp, developmentTools, workspaceInstructions } from "./development.js";
 
 let server: Server | undefined;
 afterEach(async () => { vi.unstubAllGlobals(); if (server) { server.closeAllConnections(); await new Promise<void>(resolve => server!.close(() => resolve())); server = undefined; } });
 
 describe("Core workspaces transport", () => {
+  it("selects package/workspace targets and observes the same request without replaying mutation", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ state: "running" })));
+    vi.stubGlobal("fetch", fetcher);
+    const client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
+    const input = { appId: "example.app", requestId: "34cdd66f-2d85-4a94-809c-293310d443ec", kind: "workspace", workspaceId: "a".repeat(64) };
+    await client.call("session-one", "user", "execution-select", input);
+    await client.call("session-one", "user", "execution-status", input);
+    expect(String(fetcher.mock.calls[0]![0])).toBe("http://core.test/api/internal/apps/hosty.harness/sessions/session-one/execution-target/example.app");
+    expect(fetcher.mock.calls[0]![1]).toMatchObject({ method: "POST", body: JSON.stringify(input) });
+    expect(String(fetcher.mock.calls[1]![0])).toBe(`http://core.test/api/internal/apps/hosty.harness/sessions/session-one/execution-target/example.app/${input.requestId}`);
+    expect(fetcher.mock.calls[1]![1]).toMatchObject({ method: "GET", body: undefined });
+    const tools = developmentTools();
+    expect(tools.find(t => t.name === "execution_select")).toMatchObject({ annotations: { readOnlyHint: false, destructiveHint: true }, inputSchema: { required: ["appId", "requestId", "kind"] } });
+    expect(tools.find(t => t.name === "execution_status")).toMatchObject({ annotations: { readOnlyHint: true, destructiveHint: false } });
+    await expect(client.call("session-one", "user", "execution-status", { ...input, requestId: "../escape" })).rejects.toMatchObject({ code: "execution_request_invalid" });
+  });
+
+  it("requires task names in agent creation tools and routes rename as metadata only", async () => {
+    const tools = developmentTools();
+    expect(tools.find(t => t.name === "prepare")!.inputSchema).toMatchObject({ required: ["appId", "requestId", "name"] });
+    expect(tools.find(t => t.name === "rename")!.inputSchema).toMatchObject({ required: ["requestId", "name"] });
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ name: "Simplify runtime switching" })));
+    vi.stubGlobal("fetch", fetcher);
+    const client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
+    const input = { requestId: "original-id", name: "Simplify runtime switching" };
+    await client.call("session-one", "current-user", "rename", input);
+    await client.call("session-one", "current-user", "rename", input);
+    expect(String(fetcher.mock.calls[0]![0])).toBe("http://core.test/api/internal/apps/hosty.harness/sessions/session-one/workspaces/name");
+    expect(fetcher.mock.calls[0]![1]).toMatchObject({ method: "POST", body: JSON.stringify(input) });
+    expect(fetcher.mock.calls[0]![1]?.body).toBe(fetcher.mock.calls[1]![1]?.body);
+    expect(workspaceInstructions([])).toContain("short name describing its task");
+  });
+
   it("forwards bounded guide topics without mutations and preserves Core refusals", async () => {
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ topic: "identity", revision: "r", text: "guide" })));
     vi.stubGlobal("fetch", fetcher);

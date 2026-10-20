@@ -1,13 +1,106 @@
 ---
 created: 2026-10-19
-updated: 2026-10-19
-summary: Review workspace apps and matching Core, activate live source with supervised handover, and Return selected participants while preserving current data.
+updated: 2026-10-20
+summary: Select named app workspaces or installed package runtimes with scoped access review, retained package choices and recoverable Core-owned transitions.
 components: [apps/core, apps/cli, apps/shell, apps/harness, shared]
 ---
 
 # Core Source And Workspace Activation
 
-Core exposes configurable development source, immutable build provenance, reviewed workspace activation and individual/group Return. Harness, Shell, direct MCP and local operator controls use the same persistent group and child operations. Activation uses ordinary data in the selected Core; sandbox preview is separate.
+Core exposes configurable development source, immutable build provenance and one package/workspace execution selector for apps. Shell, Harness, direct MCP and local CLI use retained Core-owned selection requests. Execution uses ordinary data in the selected Core; sandbox preview is separate. Explicit Core handover retains its supervised group operations.
+
+## Package And Workspace Selection
+
+Dashboard uses one execution selector for each app. Package entries are the installed manifest's
+release profiles. Workspace entries are named, explicitly app-bound worktrees with a supported
+development recipe. Raw development profiles are internal recipes and do not appear as independent
+choices. Selectable workspace entries belong to the current user and, for direct credentials, the
+current principal. Public source inspection remains broader; another user's already active workspace
+keeps its current name without becoming a selectable target. A recipe uses its declared development default, the conventional `dev` profile when
+present, or the sole development profile; an explicit workspace selection can configure another
+recipe with `runtime`, which Core retains for that binding. An unresolved ambiguity has a concrete
+setup reason rather than guessing another worktree.
+`configure_workspace_runtime` or `POST /api/development/workspaces/{workspaceId}/execution-recipe`
+sets `{requestId, appId, worktreeId, runtime}` once with source management authority. It changes
+recipe metadata without starting the app and publishes a workspace refresh event.
+
+Core retains the selected package release runtime independently of workspace execution. Entering
+workspace A and then B preserves that package choice. Selecting a package entry directly runs the
+current installed package with the selected release runtime. It never restores an old workspace,
+package manifest or data backup. A missing release profile is reported as unavailable.
+Source edits and current ordinary data remain intact.
+
+`GET /api/apps/execution-targets` returns one shared inventory; the app-specific variant is
+`GET /api/apps/{appId}/execution-targets`. An explicit choice is:
+
+```json
+{ "requestId": "UUID", "kind": "workspace", "workspaceId": "aggregate-id", "worktreeId": "tree-id" }
+```
+
+`POST /api/apps/{appId}/execution-target` accepts that choice or
+`{ "requestId": "UUID", "kind": "package", "runtime": "docker" }`. Omitting the package runtime
+uses Core's retained package selection. The response has `state` `running`, `completed`, `failed`
+or `review-required`. `GET /api/apps/{appId}/execution-target/{requestId}` recovers the same request.
+Core owns the accepted operation independently of Shell/Harness connections and resumes running
+requests on startup. A newer admitted selection retires an older request's authority to change that
+app, even when the older caller retries after interruption. Completed requests do not repeat effects.
+
+Preparation validates settings, mounts, source authority and the candidate execution contract before
+replacing the current runtime. A failed build keeps the current app running. Package/workspace
+transitions reuse verified stop/start, managed-data backups and durable development journals.
+There is no routine compatibility acknowledgement or separate per-app Return dialog.
+
+Workspace detail exposes **Use this workspace** and **Return to package** for its bound apps.
+Group requests use `POST /api/development/workspaces/{workspaceId}/execution-target` and retained
+`GET .../execution-target/{requestId}`; Harness uses the authorized workspace-inspection equivalents.
+The response names each app and its result. Retrying preserves the group ID and skips completed
+children. Group return only affects apps still using that workspace; it leaves an app moved to B or
+a package untouched. Core itself is not implicitly included. Sandbox links remain separate and
+open a Core instance with its own users, data and dependencies.
+
+### Workspace Manifests And Access Review
+
+The admitted workspace manifest is a private execution snapshot, separate from the installed
+package. Valid version and display metadata edits and execution changes within existing authority
+need no extra permission prompt. Additional rights, provider roles, host access, network exposure
+and runtime privileges require a concrete review. Optional declarations are not automatic grants.
+The candidate, source/runtime, installation, actor and current authority bind the consent; source
+or grant changes require revalidation before setup or replacement. Scoped workspace rights do not
+become package rights, and later revocations remain effective.
+
+A `review-required` result carries `review`, an `InstallationPrepare` with `workspaceManifest`.
+Shell/Harness prepare and submit it through the existing Core confirmation API and display the
+resulting approval request. They then retry the original execution choice. A local CLI selection
+requiring additional rights directs the operator to select the workspace in Dashboard under their
+signed-in identity. It cannot manufacture approval for a synthetic operator.
+
+Restart refreshes an admitted candidate and checks current access again. Stop uses the last
+launched snapshot, so invalid live JSON does not trap an app. Package return uses the current
+installed contract and strips temporary workspace authority. Native, system, Docker and mixed
+recipes retain their supported execution paths.
+
+### Names And Automation
+
+Workspace names describe the work and are separate from owner labels, session titles, Git branches
+and stable IDs. Agents supply a concise purpose name when creating a workspace and rename it when
+the task scope changes. Authorized renaming updates shared display metadata only and publishes
+workspace observation events; it does not restart apps or change execution approval, source stamps,
+branches or ownership. Legacy meaningful labels remain readable. Naming APIs are described in
+[external workspaces](../external-development-workspaces/feature.md).
+
+The runtime column shows the actual execution type; **Version / source** displays the active
+workspace's icon and name. Hover/focus preserves branch, commit and source details. The inventory
+refreshes on app/workspace events and visibility recovery, including renames with unchanged source.
+
+Direct MCP exposes `get_app_execution_targets`, `select_app_execution_target`,
+`get_app_execution_selection`, `select_workspace_execution` and
+`get_workspace_execution_selection`. Direct workspace/lifecycle authority and current ownership
+remain required for mutations. Harness agents use `execution_select` and `execution_status`
+through their existing tool policy and session ownership. CLI equivalents are
+`hosty apps execution-targets <app>`, `hosty apps select-target <app> --request-id <uuid>
+--package|--workspace <id>` and `hosty apps execution-selection <app> --request-id <uuid>`.
+These paths do not create sandboxes or publish source.
+
 
 ## Development Source
 
@@ -169,7 +262,11 @@ active source overlap with any running app. Required dependencies outside the se
 be available; it never starts an unrelated provider implicitly. Required missing endpoints and selected
 cycles are refused. Current native/system, Docker and mixed profiles use their existing adapters.
 Native recipes, including those used by Shell/Harness, retain native execution; they are not converted
-to Docker. A live manifest edit must pass the existing separate update review before activation.
+to Docker. A valid top-level manifest version change or JSON reformatting is accepted without a
+separate update. Workspace execution changes use a transient admitted manifest. Additional authority requires the
+scoped Core review described above before activation. The installed package and retained Return contract keep their original version.
+Existing source-stamp and stale-review checks still apply: edits after preparation require a fresh
+preparation/review before execution.
 
 Each selected app receives a deterministic child ID in its existing development-mode journal, with
 its prior runtime, source, artifacts, initial running state and installation identity. Preparation
@@ -281,12 +378,11 @@ an active operation do not rewrite its captured previous runtime.
 The digest covers participant facts, source contents and installed runtime/configuration identity;
 changes invalidate admission. The earlier `activation-plan` endpoint remains a selection-only API.
 
-Harness's workspace details contain **Use workspace on this Core**. The review keeps explicit app
-choices, runtime/worktree ambiguity controls and a separate Core checkbox. Clearing Core changes the
-executable selection without affecting app choices. Shell's per-app **Workspace…** runtime control
-lists registered bindings for that app and uses the same review. Core Source exposes repository URL,
-ref, relative project and optional source connection alongside the running build and update origin.
-Unsaved source fields retain their opening revision; background status cannot overwrite them.
+The advanced activation APIs retain explicit app/Core selections for Core handover and recovery.
+Ordinary app selection uses the unified execution paths above; Dashboard and workspace detail do not
+expose the retained-activation panel or its participant/compatibility controls. Core Source exposes
+repository URL, ref, relative project and optional source connection alongside the running build and
+update origin. Unsaved source fields retain their opening revision; background status cannot overwrite them.
 
 The client retains uncertain action IDs and exact request bodies locally, without credentials.
 Accepted apply bodies also survive remounts. A released preparation offers exact retry or an explicit
@@ -409,8 +505,8 @@ used by Shell or another app in a shared worktree.
   The guarded action must refuse before lifecycle effects; a superseded/completed Return cannot be
   reapplied. Older Core without that endpoint retains pending diagnostics without a generic fallback.
 
-- Require current-data compatibility acceptance before dispatching app-only or Core Return, including
-  API/CLI admission. Refusal must not stop a participant or create a pending Return receipt.
+- Keep compatibility acceptance on the explicit legacy captured-activation/Core-handover contracts.
+  Unified package/workspace selection and its CLI/MCP paths require no routine acknowledgement.
 
 - Exercise Docker deferred apply, Return and resume with real policy generations, including Ask
   approval and policy disable/revocation while shutdown waits. Worker shutdown alone must not cancel
@@ -421,3 +517,12 @@ used by Shell or another app in a shared worktree.
 
 - Generate the typed activation MCP schema without constructing invocation services. Expose only
   workspaceId, kind and typed input; service dependencies never become model-selected arguments.
+
+- Version and execution edits admit ordinary/system workspace participants without replacing the
+  installed package. Actual access expansion requires exact scoped approval before setup or Stop.
+- Verify package -> A -> B -> package, changed release defaults, current-data preservation, invalid
+  source Stop/return, old-request retirement and healthy lost-response recovery. A failed candidate
+  build preserves the running app; a live preparation lease protects its source until native
+  consumers exit and the app journal owns the binding.
+- Verify named workspace creation/rename, source-only recipe configuration without activation,
+  exact replay, unchanged source stamps and UI rename refresh without page reload.

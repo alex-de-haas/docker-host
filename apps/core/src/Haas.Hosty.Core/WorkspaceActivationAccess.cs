@@ -5,7 +5,7 @@ namespace Haas.Hosty.Core;
 internal sealed class WorkspaceActivationAccess(UserDirectoryStore users, OAuthStore oauth, AppRegistryStore apps,
     CoreSettingsService settings, IClock clock, AppIdentityService identity)
 {
-    internal async Task ValidateAsync(WorkspaceActivationActor actor, bool core, CancellationToken ct)
+    internal async Task ValidateAsync(WorkspaceActivationActor actor, bool core, CancellationToken ct, bool sourceRequired = true)
     {
         var state = await users.ReadAsync(ct);
         if (!state.Users.Any(u => u.Id == actor.UserId && !u.Disabled && AppAccessPolicy.IsAdmin(u))) throw Denied();
@@ -14,7 +14,7 @@ internal sealed class WorkspaceActivationAccess(UserDirectoryStore users, OAuthS
             if (actor.AppIdentityHash is null || (await identity.RequireActivityHashAsync(actor.AppIdentityHash, appId, ct)).UserId != actor.UserId) throw Denied();
             var app = await apps.GetAppAsync(appId, ct);
             if (app is null || app.InstalledAt != actor.Installation ||
-                !AppManagementAuthorization.HasPermission(app, CoreAppPermissions.Sources) ||
+                sourceRequired && !AppManagementAuthorization.HasPermission(app, CoreAppPermissions.Sources) ||
                 !AppManagementAuthorization.HasPermission(app, CoreAppPermissions.AppLifecycle) ||
                 core && !AppManagementAuthorization.HasPermission(app, CoreAppPermissions.WorkspaceCore)) throw Denied();
         }
@@ -40,7 +40,7 @@ internal sealed class WorkspaceActivationAccess(UserDirectoryStore users, OAuthS
                     s.Audience == AccessTokenScopes.CoreAudience && "manual:" + DevelopmentWorkspaceService.Hash(s.Id) == principal &&
                     CoreSessionAuthorization.IsSessionLive(s, clock.UtcNow, settings.AuthLifetimes.IdleFor(s.Kind)))?.Scopes;
             if (scopes is null || !AccessTokenScopes.Grants(scopes, AccessTokenScopes.McpRead) ||
-                !AccessTokenScopes.Grants(scopes, AccessTokenScopes.McpWorkspaces) ||
+                sourceRequired && !AccessTokenScopes.Grants(scopes, AccessTokenScopes.McpWorkspaces) ||
                 !AccessTokenScopes.Grants(scopes, AccessTokenScopes.McpLifecycle) ||
                 core && !AccessTokenScopes.Grants(scopes, AccessTokenScopes.McpCoreRestart)) throw Denied();
         }

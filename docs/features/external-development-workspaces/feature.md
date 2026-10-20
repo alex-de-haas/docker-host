@@ -33,6 +33,10 @@ discoverable with their operation IDs and activity leases; records with validate
 explicit unavailable observation remain visible. Omitted records expose no cached source or change
 metadata. Direct reads and operations still require current source authority.
 
+Preparation requires a short purpose-based workspace `name`, separate from the external agent label.
+The `rename_workspace` tool changes that aggregate name with an exact UUID replay receipt; names
+propagate through workspace observation without changing source, ownership or active runtimes.
+
 Preparation selects an installed app's declared repository and optional target branch. It returns
 a Core-owned absolute directory, registered branch, target branch and original base. External
 preparation requires an explicit activity lease and accepts no assistant session path. Native file

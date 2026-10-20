@@ -1,158 +1,170 @@
 ---
 created: 2026-10-18
-updated: 2026-10-19
-summary: One recoverable dev-mode operation for ordinary installed apps, shared by Shell, Harness, CLI and direct MCP, using live source and ordinary data in the same Core.
+updated: 2026-10-20
+summary: Core-owned execution selection runs installed packages or registered workspace manifests on ordinary app data, with scoped access review and recoverable lifecycle operations.
 components: [apps/core, apps/cli, apps/harness, apps/shell]
 ---
 
 # Development Controls For Existing Apps
 
-## Same Installation, Live Code
+## Same Installation, Live Workspace Code
 
-Managed dev mode switches an **ordinary installed application in its existing Core** to an installed
-Docker profile marked `development: true`. It retains the installation, Core users and identity
-signing domain, ordinary data, settings, permissions, dependencies and approved mounts. It creates
-no child Core and imports no sandbox users or data. Only one ordinary runtime writes the data:
-Core stops all services before selecting and starting the development profile.
+An installed application runs from its package release runtime or an explicitly associated registered
+workspace. The [workspace execution selector](../workspace-live-activation/feature.md) is the ordinary
+operator control. Development runtime profiles are source execution recipes used by workspace
+bindings. Native, Docker and mixed recipes support ordinary and system applications. Core itself has
+a separate explicit development selection; an app workspace never implicitly restarts Core.
 
-Source is an existing Git working directory or a registered worktree. Uncommitted edits are allowed.
-The Docker profile determines source mounts, caches, watchers and hot reload. Live code edits do not
-require repeated runtime approval. A profile without browser HMR can require a page reload; Core
-reports runtime health and restart requirements independently of browser verification.
+Workspace execution retains the app installation, Core identity domain, ordinary users and data,
+operator settings and authorized mount bindings. It creates no child Core and imports no sandbox
+users or data. A separate sandbox has its own users, data and lifecycle. Core prepares a candidate
+before stopping its current runtime where the adapter supports preparation, then replaces all
+services so only the selected target writes ordinary data.
 
-The executable manifest must match the installed contract. Changing services, runtime commands,
-permissions or mounts requires returning and reviewing/installing the new contract. Managed dev
-mode does not silently adopt a changed manifest on restart. The installed recipe remains available
-to stop and return even when the source manifest is broken.
+The working tree can contain uncommitted edits. Source mounts, watchers, setup/build commands and
+hot reload follow the workspace manifest. Ordinary code edits need no repeated runtime approval.
+Browser HMR and runtime readiness remain separate: a profile without HMR can need a page reload.
+Source overrides remain supported for existing manual workflows; their retirement belongs to the
+[development controls plan](plan.md).
 
-System applications retain their existing manual workflow. Native/mixed profiles, non-Git folders
-and managed checkouts without a registered worktree retain the existing manual Switch runtime
-path. Shell explains when that path has no managed Return operation. Agents do not use it as a
-fallback after a refused managed operation. Source overrides remain supported; their removal is
-not part of this feature.
+## Workspace Manifest Admission
 
-## Shared API And Authority
+Core reads the workspace manifest at its bound source path and validates the installed app identity,
+supported schema and runtime recipe. The installed package manifest stays unchanged. Core stores
+an admitted execution snapshot in its private development journal directory; its raw JSON retains
+unknown extension fields. The registry projects the active execution contract while preserving the
+installed package version and original install/update source.
 
-Core owns `plan`, `apply` and `status`; `enter`, `restart` and `return` are operation actions. Shell,
-CLI, Harness and direct MCP call the same lifecycle service. The review includes installation,
-source/HEAD, dirty-file count, runtime recipe changes, interruption, data effects and backup coverage.
-The digest binds the actor and current installation/source/runtime/configuration facts. It does not
-freeze future edits. A stale review requires a new plan before admission.
+Manifest classification follows actual authority:
 
-| Client | Entry point and authority |
-| --- | --- |
-| Shell/operator | Session-authenticated admin `/api/apps/{appId}/dev-mode`, POST `plan` / `apply`, CSRF and app-management authority |
-| Local CLI | Authenticated local control equivalents; `hosty apps dev-status`, `dev-plan`, `dev-apply` |
-| Harness | Session-bound internal API; normal administrator identity, current `apps.sources.full` and `apps.lifecycle`; registered worktree required for entry |
-| Direct MCP | `get_app_dev_mode`, `plan_app_dev_mode`, `apply_app_dev_mode`; direct `mcp:lifecycle`, plus direct workspace authority and ownership when a worktree is involved |
+- Valid release-version and presentation metadata changes need no additional approval.
+- Commands, setup/build instructions, environment values and service topology can evolve within
+  existing authority. They do not require a package update or a routine review dialog.
+- Required Core permissions absent from current grants, new provider roles, host-command execution,
+  Docker host networking, capabilities/devices, wider source access, source writes, bound host-mount
+  write expansion and new network exposure require concrete approval. New optional declarations
+  remain ungranted unless the operator selects them explicitly.
+- Unknown extension changes require conservative exact-candidate review. A different app identity or
+  unsupported manifest schema is rejected rather than adopted.
 
-MCP arguments use `action`; Harness tools `app_dev_status`, `app_dev_plan`, `app_dev_apply` use
-`devAction` to distinguish the requested lifecycle action from the Harness transport action.
-The user and installation come from authenticated authority, not caller-supplied approval flags.
-Read-only/delegated credentials cannot gain mutation authority by choosing an unprompted policy.
-The authenticated local control endpoint can use an already reviewed private-source connection;
-its owner/connection validity is still rechecked. Browser and MCP actors retain owner checks.
-Private source checks apply to entry, restart and pending-request recovery, using the persisted
-manifest URL for private manifest grants. Generic Start/Restart refuse active private
-trials because those calls carry no source-owner identity; the reviewed dev restart performs the
-current grant checks. Ordinary Stop, logs and health use the installed recipe even when the live
-manifest is damaged or changed; Stop remains available after source access is revoked. Return does not grant new source access;
-restarting a prior private runtime can still fail if its required authority has been revoked.
+Additional-access confirmation uses Core's existing `/api/installations` and `/install/confirm/...`
+flow with a `workspaceManifest` request. It requires source and lifecycle authority rather than app
+installation authority. The operator sees the concrete added access. Consent is bound to the exact
+candidate digest, installed package, installation, source path, recipe, actor and current permission,
+settings and mount state. The decision nonce remains exclusive to the authenticated Core page.
+A denial grants nothing. Candidate edits, revoked permissions or changed authority require a fresh
+review; retries retain their execution request UUID. A client cannot submit its own approval flag.
 
-Harness uses the existing **Ask / Run unprompted / Disabled** policy. Ask in Normal mode presents
-the concrete tool request; denial or cancellation before dispatch leaves runtime state unchanged.
-Run unprompted dispatches an authorized request without a second mandatory browser confirmation.
-Disabled remains unavailable in Autonomous mode. Direct clients apply their own MCP confirmation
-policy. Tool policy never creates missing Core permissions.
+Approval records scoped consent; it does not update the installed manifest or immediately grant
+permissions to the package. The active workspace receives admitted required rights and explicitly
+selected optional rights through its execution projection. Switching away removes those temporary
+additions. Later revocations are respected rather than restored from a captured grant list.
 
-## Durable Entry, Recovery And Return
+## Refresh, Stop And Package Return
 
-Each caller supplies a stable UUID `requestId`. Apply retains a journal before changing the app:
-actor, installation, source/worktree/observed HEAD, manifest digest, prior source/runtime/artifact
-selection, initial running state, configuration fingerprint, backup and action receipts. The app
-points to this journal. Exact replay observes or resumes the original request. Harness clears a request superseded by
-another client’s Return and explains the outcome before enabling a new operation. Changed arguments
-or authority are refused; a request retired by a later trial cannot accidentally restart old work.
-Terminal phase and successful receipt are persisted in one atomic journal write, so failure of the
-following registry update or loss of the response cannot repeat a completed transition. Exact replay
-repairs a missed terminal registry status without repeating runtime effects or overwriting later
-ordinary lifecycle statuses. Internal dev starts retain their transition status until completion.
-HTTP disconnect does not cancel an admitted transition. Core shutdown can interrupt it; retry uses
-the same arguments and UUID. Interrupted restart and Return retain their actual phase and error.
+Start and Restart re-read the workspace manifest, current source authority and current consent.
+Harmless changes refresh the separate admitted execution snapshot and registry projection. An
+additional-access change is refused before replacement until its concrete review succeeds. Setup
+and preparation use the admitted recipe; manifest changes after preparation cannot silently replace
+the prepared candidate. Unchanged environment images retain their immutable artifact locks.
 
-Entry stops the app, verifies a stable managed-data backup, binds source/profile, then starts it.
-A partial start remains inspectable; retry stops partial services before starting them again.
-An active binding survives Core/Harness restart. A Core restart with `--keep-apps` does not stop an
-active trial merely because the ordinary installation has autostart disabled. Autostart itself is
-unchanged. Full shutdown and an explicitly stopped trial still require their normal lifecycle.
+Core retains the last launched manifest separately from an admitted replacement. Stop, logs and
+health use that launched snapshot even if live JSON is invalid, a service was renamed/removed, or a
+restart was interrupted. Core upgrade projection healing also reads the admitted workspace snapshot
+instead of overwriting its contract from package metadata.
 
-**Return to previous runtime** restores the recorded source/profile/artifact selection.
-The original install-manifest path is preserved, including an absent path for URL/internal installs;
-the journal snapshot never becomes an update source. It restarts
-only an app that was running before entry. It retains current data, source edits, worktrees, caches
-and backups. It performs no Git reset, commit, acceptance, push or publication. Configuration or
-binding drift refuses a stale return instead of overwriting a later operator decision. Missing or
-corrupt journals block mutations, including data restore, while the Dashboard identifies the
-unavailable operation. Startup reports the failure per app and continues processing unrelated apps.
+Selecting a package runtime returns to the **currently installed package** using Core's independent
+package-runtime baseline. Switching workspace A to workspace B does not create a previous-workspace
+stack. Explicitly selecting another package runtime changes the baseline. Package return does not
+restore an old manifest, data archive, settings snapshot or revoked grants. Current source edits,
+worktrees, caches and ordinary app data survive. There is no mandatory generic data-compatibility
+acknowledgement in the unified switching contract.
 
-The worktree is a persistent ordinary-runtime consumer. Active authorized writers can continue
-editing; transitions block new writers and destructive Git/cleanup operations. Manual transitions
-refuse active writer leases. A preview consumer remains independent; releasing it does not release
-the ordinary-runtime guard, and Return does not delete preview resources or source. This is
-coordination for trusted agents, not a per-session filesystem isolation boundary.
+## Durable Operations And Authority
+
+Each execution intent has a stable UUID `requestId`, a durable target journal and child development
+receipt. Journals record actor, installation, source/worktree, observed HEAD, manifest snapshots,
+current phase, preparation, backup and successful request receipts. The app points to its current
+child journal. Exact replay observes or resumes that intent. Changed arguments, authority or a later
+binding cannot replay an obsolete target onto a newer choice.
+
+Terminal phase and successful receipt share an atomic journal write. A verified healthy start or
+package return can finish its receipt after a lost response without restarting the same runtime.
+HTTP disconnect does not cancel admitted replacement; Core shutdown can interrupt it and the same
+UUID resumes it. Journals contain execution references rather than copies of credentials or data.
+A missing/corrupt required journal blocks mutation and is surfaced per app without hiding unrelated
+Dashboard rows.
+
+Shell, Harness, local control and direct MCP use the same target selection service. The authenticated
+user, app installation and workspace owner are checked again before mutation. Source authority alone
+does not grant lifecycle authority. A delegated or read-only connection cannot create it by choosing
+a tool policy. Private-source grants are revalidated for new source execution. Stop remains available
+after source access is revoked; starting a private package can still require its current source grant.
+
+Harness retains its existing **Ask / Run unprompted / Disabled** policy. Ask presents the concrete
+requested tool action; refusal before dispatch changes no runtime. Run unprompted needs no second
+routine browser approval. Additional authority still requires the concrete Core confirmation.
+Logs are bounded and retain the existing `apps.logs` permission.
+
+The worktree is a persistent ordinary-runtime consumer. Authorized writers can continue editing.
+Transitions fence destructive workspace operations; Return does not delete the worktree or an
+independent sandbox. Runtime/source consumers remain independent of workspace Close and sandbox
+Finish. This coordination is not a per-session filesystem isolation boundary for trusted agents.
 
 ## Data And Backups
 
-The pre-entry backup includes managed application data. It excludes shared/external mounts,
-remote databases, provider state and external side effects. Review identifies external mount paths
-and access modes. Unsafe data links, unavailable backup storage or an unverifiable retained backup
-prevent entry before development code starts. Replaying entry reuses the verified backup ID only
-while managed data still matches the baseline saved before archive creation. Data drift across an
-interrupted backup attempt refuses entry; Return followed by a new entry creates a fresh backup
-without discarding the changed data.
+Before source execution Core verifies a stable backup of managed application data. Shared/external
+mounts, remote databases, provider state and external side effects are outside that archive. Unsafe
+data links, unavailable backup storage or an unverifiable retained backup prevent execution before
+new code starts. A replay reuses a backup only while the saved data baseline remains valid.
 
-Return never restores data. When managed data changed, Core cannot infer schema downgrade safety:
-it stops and refuses an unaccepted return. `acceptDataChanges` explicitly accepts compatibility of
-current data with the previous runtime. Shell and Harness explain that consequence before applying.
-Restoring a backup is the separate existing authorized action and requires a stopped app; it can
-lose newer data and does not reset source or erase the development journal.
+Return keeps current data and never restores an archive. Backup restore remains a separate authorized
+action that requires the app to be stopped and can discard newer data. It does not reset source,
+accept a Git worktree or erase the development journal.
 
-## Operator Surfaces And Audit
+## Legacy Development API
 
-Shell's runtime selector enters supported managed dev mode and offers Return and interrupted-request
-retry even when the app has only one runtime profile. Harness adds the same actions beside the session's attached applications, with ordinary-data
-wording, source, prior runtime, backup, phase, health and restart-required state. Open app uses the
-normal app endpoint. Logs are bounded and require the existing `apps.logs` permission; missing
-permission is displayed rather than granted implicitly. Both surfaces retain uncertain request
-identities across page reload, and discard a definitively stale pre-admission review.
+The existing `dev-mode` status/plan/apply APIs, CLI `dev-status` / `dev-plan` / `dev-apply` and direct
+MCP `get_app_dev_mode` / `plan_app_dev_mode` / `apply_app_dev_mode` remain compatible for existing
+clients and retained recovery receipts. These APIs support `enter`, `restart` and `return`. Their
+explicit plan digest binds the actor and current installation/source/runtime/configuration facts.
+Harness's legacy tools use `devAction` to distinguish lifecycle intent from transport dispatch.
 
-Core audit records apply attempts, refusals, progress and outcome with actor, installation,
-worktree, source HEAD/manifest, review digest and request/operation IDs. Harness retains its normal
-MCP approval/automatic-dispatch records. These are distinct from observed runtime readiness.
-Journal/audit payloads contain execution references rather than copies of credentials or app data.
+The raw legacy entry path keeps its installed Docker recipe contract. It allows valid top-level
+version changes and JSON formatting/property-order changes, while retaining other fields, unknown
+fields and nested versions in the comparison. It does not adopt changed commands/services/rights.
+Its captured-previous-runtime recovery and `acceptDataChanges` parameter remain for old callers;
+the ordinary package/workspace selector does not submit or expose that compatibility acknowledgement.
+Legacy private-source owner checks and generic Start/Restart restrictions remain in force.
+A fresh Start or Restart executes the same live manifest that passed the legacy contract check and
+records that manifest's digest as applied. Accepted version or formatting differences therefore do
+not leave a permanent restart requirement against the installed package. Adopted services retain
+their previous applied digest; later source changes still require a fresh start. The installed
+package manifest and version remain unchanged.
 
-## Workspace Runtime Activation
+## Audit
 
-[Workspace activation](../workspace-live-activation/feature.md) composes explicitly bound applications
-and repository-matched Core with a reviewed selection, supervised handover and individual/group
-Return. Runtime consumers persist independently of workspace Close and sandbox Finish. Core
-participation requires separate Core authority; ordinary source or lifecycle access is insufficient.
-Return preserves current data and live source edits.
+Core records requested selection, additional-access review, progress, refusal and outcome with the
+actor, installation, worktree, source HEAD/manifest, review digest and request/operation IDs. Harness
+also retains its normal tool approval/dispatch records. Neither an accepted operation nor its audit
+record substitutes for observed runtime readiness and browser verification.
 
 ## Testing Expectations
 
-The [published-build acceptance](../../reviews/2026-10-18-unified-app-dev-mode-release-qa.md)
-records Core/CLI 0.141.0, Harness/worker 0.58.0 and Shell 0.105.0 with real Codex, browser
-live edits, Core/Harness restart, exact replay, preserved ordinary data and full fixture cleanup.
-
-- Real Core-managed ordinary app, normal password login, real Harness agent, live source edit,
-  browser write/read, prompted denial/approval, unprompted Return and preserved source/data.
-- Manual Shell and direct external MCP without a chat; current authority and stale-review refusal;
-  Disabled in Autonomous; no privileged fallback after a tool refusal.
-- Running/stopped entry, stable backup replay, failed backup/start, interrupted restart/Return,
-  original-ID recovery, retired IDs and corrupt/missing journal behavior.
-- Separate explicit restore; compatibility acceptance; source/manifest drift and cleanup guards;
-  independent preview consumer and writer coordination.
-- Core/CLI tests, Harness policy/transport/UI tests, Shell tests, production builds, Core Native AOT,
-  version consistency and documentation validation. Report native-host/profile coverage separately
-  from macOS with Linux Docker containers.
+- Classify metadata, command/environment/topology changes and optional declarations without new
+  authority; require exact review for rights, devices/capabilities, mounts, source writes and exposure.
+- Reject invalid identity/schema and conservatively retain unknown fields. Test stale/denied approval,
+  permission revocation, actor binding, preparation failure and replay before runtime replacement.
+- Execute ordinary/system applications with native, Docker and mixed source recipes. Keep the package
+  manifest/version unchanged and report simulated-adapter coverage separately from real runtime QA.
+- Refresh a workspace command across service recreation; retain last-launched topology for Stop/logs,
+  and return from invalid live JSON without losing current source/data or restoring revoked rights.
+- Verify package Docker -> workspace A -> workspace B -> package Docker, explicit package baseline
+  changes, healthy interruption recovery and ownership-aware group Return.
+- Retain legacy version-only compatibility, strict raw recipe checks and correct applied workspace
+  digests after generic and planned restarts, without marking adopted or failed starts as applied.
+  Cover stable backups, failed starts, original-UUID recovery, retired IDs, private-source checks and
+  corrupt-journal behavior.
+- Use a Core-managed isolated integration environment, normal password authentication and actual
+  preview URLs for browser/agent verification. Run affected Core/CLI/Harness/Shell tests and builds,
+  Core Native AOT, version consistency and documentation validation.

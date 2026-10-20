@@ -26,7 +26,8 @@ internal sealed record WorkspaceApp(string AppId, DateTimeOffset Installation, s
 internal sealed record WorkspacePrepare(string RequestId, string SessionId, string AppId, string? SessionPath, string? TargetBranch = null,
     string? LeaseId = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ExternalLabel = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ExpectedLocalHead = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ExpectedLocalHead = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Name = null);
 internal sealed record WorkspaceCommand(string RequestId, string? ExpectedHead = null, string? Message = null,
     string[]? Paths = null, string? AuthorName = null, string? AuthorEmail = null, string? LeaseId = null,
     string[]? PullRequests = null,
@@ -43,6 +44,9 @@ internal sealed record DevelopmentWorkspace
 {
     public required string Id { get; init; }
     public required WorkspaceOwner Owner { get; init; }
+    // Projection only; canonical display metadata belongs to the aggregate workspace.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Name { get; init; }
     // Derived from the persisted owner; existing worktree allocation and replay IDs stay unchanged.
     public string WorkspaceId => DevelopmentWorkspaceService.Hash("workspace\n" + DevelopmentWorkspaceService.OwnerIdentity(Owner));
     public required string Repository { get; init; }

@@ -73,7 +73,7 @@ export type ShellActionsContextValue = {
   // and Core's digest-bound feed plan path.
   openInstallDialog: (manifestPath?: string) => void;
   runAppAction: (app: CoreApp, action: AppAction) => Promise<void>;
-  switchAppRuntime: (app: CoreApp, targetRuntime: string) => Promise<void>;
+  switchAppRuntime: (app: CoreApp, targetRuntime: string | import("./types").AppExecutionSelection) => Promise<void>;
   // Plan-first updates: one-click apply of a routine verdict from the row, the fleet update-check
   // trigger, and the apply-everything-routine action.
   applyUpdateFromRow: (app: CoreApp) => Promise<void>;

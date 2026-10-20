@@ -331,12 +331,58 @@ API marker is an exported test fixture, not a shipped Core response field.
 
 ## Shell And Harness Controls
 
-The Shell dashboard lists child environments visible to its administrator. It shows observed
-lifecycle state, source-build progress and running applications with runtime/health status. The
-shared `@hosty-sdk/app/sandbox/react` panel supports normal test-account connection, Open Core,
-installation-bound preview links, Start/Stop and confirmed Finish. It uses the optional
-`core.environments.inspect` and `core.environments.operate` operator permissions, independently of
-Harness's caller-owned `core.environments.read/manage` grants.
+The Shell Dashboard has one Sandboxes section containing child Core environments and individual
+app sandboxes visible to its administrator. Each initially collapsed row shows the sandbox name,
+observed state and the human-readable workspace name. Independent runs are labeled explicitly;
+unavailable workspace metadata never falls back to an opaque workspace ID. The shared authorized
+workspace inventory updates names after a rename, including when all ordinary apps use packages.
+
+Expanding a child Core reads its application inventory and shows application/runtime health states
+and installation-bound preview links for running web apps. It retains Open Core, normal test-account
+setup/login, Start/Stop/Restart, confirmed deletion and resource/access details. Expanding an
+individual sandbox shows its application state, real-operator and test-persona preview links,
+logs, embedding, Start/Stop/Restart, confirmed Finish and resource details. Preview links accept
+only HTTP(S) destinations without embedded credentials. The shared SDK operator panel remains
+available to other consumers; the Dashboard owns this combined presentation.
+
+The section stays hidden after both inventories are successfully empty. Finished child records and
+disposed app receipts are omitted; stopped, failed, unhealthy and incomplete-cleanup instances stay
+visible. A read failure remains visible and preserves the last successful inventory for each type.
+Closed rows still expose start and deletion errors. Polling while visible and refresh on visibility
+recovery reconcile both independent inventories without resetting expanded rows or account drafts.
+Existing operation journals and exact request IDs survive reloads and uncertain outcomes; missing
+individual rows are reconciled through their disposal receipts before clearing pending requests.
+
+Saved child-Core launch permissions live under Settings → App permissions, where they remain
+revocable after the last sandbox is deleted. Revocation blocks delegated access and launches;
+running child processes remain until explicitly stopped or deleted. The existing optional
+`core.environments.inspect/operate` and `apps.sandboxes.inspect/operate` operator authorities remain
+independent; this UI does not expand either backend's permissions or isolation contract.
+
+The 2026-10-20 browser acceptance runs Shell 0.108.0 in a managed child Core with separate
+Docker app data and a normally created password account. It verifies the combined populated view,
+workspace names, lazy application states, a real Demo App preview, optional-permission denial and
+the successfully empty view. The initial individual-sandbox start exposes an unprepared offline
+runtime policy without hiding its row. Confirmed Finish/Delete removes the test records, and
+independent checks confirm owned-resource removal while preserving source and the primary Core.
+The primary Shell source restart reports no pending restart. The Shell suite passes 556 tests
+and its Docker production build succeeds.
+
+The owner-authorized follow-up prepares the relay and private browser worker from their pinned
+Dockerfiles, records immutable local image IDs in the primary runtime policy and limits concurrency
+to one instance. Core reads the policy on Start without a restart. The operator separately approves
+a 2 GiB RAM / 4 GiB RAM-plus-swap ceiling for the existing Workspaces container; its process-start
+identity remains unchanged. A fresh individual Demo artifact sandbox reaches `ready`, opens from
+Dashboard with an active real-operator session and then an explicitly confirmed test-persona session.
+The persona has no host role and sees only its instance directory. The private browser worker passes
+navigation, heading visibility/text and screenshot assertions with non-stale evidence. Its app
+containers use read-only root filesystems and writable data mounts under only the sandbox root.
+Dashboard Finish produces a successful disposal receipt. Independent checks confirm all four
+recorded container identities are absent, no owned Docker containers/networks/volumes or preview
+listener remain, and both mutable data and instance metadata roots are deleted, including realm
+credentials and evidence. The primary Core, source worktree and live activity lease remain intact.
+The prepared runtime policy and shared images remain available after disposal. Relay and browser
+policy tests pass all 13 cases; this follow-up changes configuration and documentation only.
 
 [Harness](../harness-development-ui/feature.md) exposes child Core and app sandbox previews and
 supported lifecycle controls. Its agent tools create current/release/source child Core environments,
@@ -502,6 +548,14 @@ build cache and credentials. The primary Core process and all 41 existing contai
 505 build-cache records, 15 volumes and 26 networks remain unchanged.
 
 ## Testing Expectations
+
+- Dashboard component tests cover both inventories, confirmed-empty hiding, human workspace names,
+  lazy expansion, application states and safe links, partial read failures, retained start/cleanup
+  errors, kind-specific row identity, rename continuity and exact legacy-operation replay.
+- Settings tests preserve launch-permission revocation with no remaining sandbox and visible read
+  or revocation failures. Browser acceptance uses normal login and Core-managed test environments;
+  candidate app data and credentials remain separate and owned resources are removed by Finish.
+
 
 Verify Harness agent creation in current/source mode, normal child login and application preview,
 Shell inventory, supported lifecycle deletion, source retention and removal of owned runtime resources.

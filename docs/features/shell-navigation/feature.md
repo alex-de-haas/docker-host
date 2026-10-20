@@ -1,6 +1,6 @@
 ---
 created: 2026-07-30
-updated: 2026-10-15
+updated: 2026-10-20
 summary: Shell's three destinations, Dashboard, Settings and Apps, with the route table and the sidebar.
 components: [apps/shell]
 ---
@@ -169,8 +169,10 @@ status column reserves 64px for its dot/spinner and optional manual-start marker
 action shortcuts are hidden; each row retains its complete actions menu. Runtime remains beside
 version/source until the Dashboard is narrower than 960px, when the two form a tight stack beside
 the app identity. Each stack aligns around its shared boundary rather than spreading across the row.
-Runtime labels, development indicators, and switch arrows stay on one line; long profile keys
-truncate with their full value available on hover, keeping the switch arrow visible.
+Runtime labels and switch arrows stay on one line. Core and apps show `workspace` for registered
+workspaces, `source` for ordinary source folders, or the package runtime name (`release` for Core).
+There is no secondary source label or dev-mode icon. Long package profile keys truncate with their
+full value available on hover, keeping the switch arrow visible.
 Only below 560px does app identity occupy its own line; below 400px, status and resources get their own row.
 Long names and branches truncate, badges and source change counts wrap, and both lists fit without
 horizontal scrolling. Expanded endpoint details also respond to the Dashboard width. App details
