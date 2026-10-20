@@ -166,7 +166,8 @@ Docker -> Local -> Docker, retaining provider session IDs and conversation conte
 prepare a registered workspace, use scoped development MCP, edit a temporary file, inspect a Git
 diff and build Core. Browser acceptance uses normal password login and Shell embedding. A Demo-only
 activation and Return run inside the child Core. Full Core verification passes 3,807 tests (five opt-in integration tests
-skipped in that run); Harness passes 894 tests across 98 files and lint. The Core build has four existing warnings and zero errors. Both profiles' app MCP routes are also exercised
+skipped in that run); Harness passes 894 tests across 98 files and lint. The Core build has four
+existing warnings and zero errors. Both profiles' app MCP routes are also exercised
 against an independently running Demo App. The separately enabled production integration test
 passes and Finish removes the child Core data and resources, confirmed by independent inventory.
 
@@ -242,16 +243,26 @@ The verified signature certificates identify
 `0ff7485883b19732e9d93c6779df3efb95579683` and the successful
 [main CI run 39448520481](https://github.com/alex-de-haas/docker-host/actions/runs/39448520481).
 
-The release coordinator runs in the isolated Core. The [remaining acceptance plan](plan.md) retains
-D12/D14/D15 until final Git/PR acceptance and documentation closure are verified. D10 passes
-publication, anonymous platform pulls, coordinator/worker image identity and signed provenance
-verification alongside the topology/lifecycle checks. Docker Core publication succeeds with its PR
-URL and head independently checked. Local Git/PR publication is under verification through the
-same draft PR; final acceptance and documentation closure remain pending. The registry and signed
-provenance evidence establishes image delivery, without establishing those remaining checks.
-The primary Core/Harness runtime selection and lifecycle are unchanged by test fixtures. Provider
-authorizations are used only with explicit owner permission. Core 0.146.0 supplies the required
-worker API and canonical storage placement for Harness 0.62.0.
+Real Git/PR acceptance passes in both production profiles through the same registered workspace
+and [draft PR #631](https://github.com/alex-de-haas/docker-host/pull/631). Docker commits and publishes
+head `8f15cb7356d38ecdcb917c9fb7aeb2cf38cd6328`; after switching and restarting in Local,
+Core commits and updates that same PR to `090cc9d199bd48911b19dc69fd7cf8ed05826059`.
+Independent PR URL/head observations confirm both publications. Harness then switches back to
+production Docker and restarts with the same conversation, workspace and PR retained.
+
+The fixture uses normal Core login, a selected explicitly authorized provider and GitHub connection,
+scoped MCP publication and separate test data. GitHub credentials remain in Core; the agent receives
+no GitHub token. The release coordinator runs in the isolated Core. D9–D14 implementation and
+acceptance pass on the documented host, including D10 image delivery/provenance, D12 real Git/PR
+journeys and D14 the production-profile matrix. D15 closes the documentation and removes the
+completed plan. Previous independent Finish checks verify cleanup; the current publication fixture
+remains available for its owner's Finish after this documentation hook, which is not yet complete.
+
+[Implementation PR #629](https://github.com/alex-de-haas/docker-host/pull/629) ships Platform
+0.146.0 and Harness 0.62.0. This documentation closure has no version change. Core 0.146.0 supplies
+the required worker API and canonical storage placement. The primary Core/Harness runtime selection
+and lifecycle are unchanged by test fixtures. Provider authorizations are used only with explicit
+owner permission.
 
 Core passes agent environment values through an owner-only temporary Docker env file. The host
 Docker CLI retains Core's environment and context; provider secrets stay out of its arguments. The

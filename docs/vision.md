@@ -705,12 +705,12 @@ Decisions 1–5: 2026-08-19.
     Core runtime controls. Core owns the selected profile and the common behavior for remembering
     a user's production preference. Local is not a privileged-task mode or a chat-level override.
 
-    The [production-runtime plan](features/assistant-shared-docker-runtime/plan.md) owns Docker
+    The [production-runtime feature](features/assistant-shared-docker-runtime/feature.md) records verified Docker
     packaging, lifecycle integration, compatibility and acceptance, reusing the shared Codex/Claude
     worker. Development profiles are separately marked `development: true`; their redesign and
     general preference persistence remain platform work. Runtime startup failures use the normal
     Core diagnostics. This clarifies decisions 35/46/47 while retaining the separate per-session
-    isolation and application-sandbox work. This update changes the plan, not the live installation.
+    isolation and application-sandbox work. The feature records the shipped production profiles and their acceptance limits.
 
 ## Expectations And Later Directions
 

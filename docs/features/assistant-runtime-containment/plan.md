@@ -20,7 +20,7 @@ not a current prohibition on that shared-worker work.
 
 Owner clarification, 2026-10-20: Docker and Local are ordinary production runtime profiles of the
 Harness application, with Docker as the manifest default. The
-[production-runtime plan](../assistant-shared-docker-runtime/plan.md) owns packaging, Core lifecycle
+[production-runtime feature](../assistant-shared-docker-runtime/feature.md) records verified packaging, Core lifecycle
 integration and compatible switching. Local is an equally supported runtime selected through normal
 Core controls. This does not wait for this plan's per-session isolation or change its Draft status.
 The existing shared worker's administrator-wide visibility remains distinct from restricted-user
