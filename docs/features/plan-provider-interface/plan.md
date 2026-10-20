@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-08
-updated: 2026-10-09
+updated: 2026-10-20
 summary: Early ideas for an optional plan-provider interface across Markdown specification-driven plans, task trackers and checklists, with possible MCP tools.
 components: [apps/plans, apps/harness, apps/core, packages/app-sdk]
 ---
@@ -11,8 +11,8 @@ components: [apps/plans, apps/harness, apps/core, packages/app-sdk]
 ## Idea And Status
 
 An intentionally early idea sketch requested by the owner on 2026-10-08. Defer this work until after
-the [Workspaces app](../workspaces-app/feature.md). No protocol, permission, schema or implementation is
-approved. See [platform vision decision 23](../../vision.md).
+the established [Harness development workflow](../harness-development-ui/feature.md). Retirement of
+the standalone Workspaces app does not approve a protocol, permission, schema or implementation. See [platform vision decision 23](../../vision.md).
 
 Today [Hosty Plans](../plan-tracking/feature.md) reads source documents with `apps.sources.read`
 and interprets the repository's Markdown format. That permission makes it an API consumer, not a
@@ -51,7 +51,7 @@ discipline is proposed. Write operations must preserve source-specific verificat
 
 A future session may attach several plans for one workspace, or a reviewed Start implementation
 action may create a session and request its workspace. No mandatory plan association belongs to
-the initial Workspaces app. Keep explicit provider-bound references as one candidate.
+the workspace inspection UI. Keep explicit provider-bound references as one candidate.
 
 PR descriptions may cite document paths and deliverable IDs. They can supply attributed related-plan
 hints, but do not prove current canonical progress, verified deliverable completion or target-branch

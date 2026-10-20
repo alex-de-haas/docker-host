@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-19
+updated: 2026-10-20
 summary: Harness combines app-grouped conversations, multi-repository workspace details, sandbox previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -15,8 +15,9 @@ idle views issue no periodic Git reads. Explicit refresh and lifecycle actions r
 
 Harness exposes `/development` as its entrypoint and a Shell navigation entry. `/assistant` remains
 the compact assistant panel. Both render the same conversation component and use the same session,
-streaming, provider, question, approval, app-context and attachment APIs. Workspaces and Plans are
-not installation dependencies and remain available as separate apps.
+streaming, provider, question, approval, app-context and attachment APIs. Plans is not an installation dependency and remains a separate app. The standalone
+[Workspaces app is retired](../workspaces-app/feature.md). Child Core creation and test-account setup
+remain available through Harness's development tools; its former operator creation form is removed.
 
 The full page places app-grouped sessions on the left, conversation in the center and workspace
 context on the right. A multi-app session appears in each associated group with the same session
@@ -376,7 +377,7 @@ Coverage mapping for the broader D6 contract:
 | Real provider, questions/approvals, retained preview data and agent-owned Finish | D4 and normal-mode lifecycle acceptance above; existing provider/approval regressions rerun |
 | Several PRs, missing/stale/failed CI, comments/reviews, unknown statistics and preview permission revocation | Workspace details/navigation/preview regression tests; Core inspection/workflow coverage recorded above |
 | Completion, resume, deletion and unfinished-work preservation | UI/lifecycle and D5 retention acceptance; broader cancellation/discard work stays in its owning plan |
-| Navigation migration | Harness manifest entry, no Workspaces/Plans dependency, standalone Workspaces remains installed where the operator chose it; no uninstall or redirect |
+| Navigation migration | Harness manifest entry and no Workspaces/Plans dependency; the later standalone-app retirement leaves existing installations and data untouched and routes workspace viewers to the owning session |
 
 Final verification:
 

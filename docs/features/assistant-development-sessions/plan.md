@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-24
-updated: 2026-10-18
+updated: 2026-10-20
 summary: Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -123,8 +123,8 @@ records; the [workspace model](../assistant-session-workspaces/feature.md) owns 
 compatibility. Sessions and context remain assistant-owned, with successive agent execution inside
 the same session. Workspaces does not become a provider or a second conversation engine.
 
-The [Workspaces app](../workspaces-app/feature.md) begins with read-only inventory and per-worktree
-changes/PRs. Testing and browser execution use the independent Core Sandbox feature under acceptance; plan associations
+The standalone [Workspaces app is retired](../workspaces-app/feature.md). Harness displays
+workspace changes and PR observations through the existing Core inspection contract. Testing and browser execution use the independent Core Sandbox feature under acceptance; plan associations
 and implementation handoffs stay deferred. Source allocation starts with authorized edits, not
 ordinary questions. Future operator close ends development authority while retaining discussion;
 closing, cancellation and physical cleanup are distinct and must not assume native processes stopped.
@@ -143,7 +143,7 @@ its installed instance beside sandbox instances. Source ownership and consumer c
 when a worktree is selected; scheduling remains with the calling workflow.
 
 The [sandbox runtime acceptance summary](../app-sandbox-runtimes/feature.md#integrations-and-verification-boundary) verifies
-the Harness/worktree loop and independent QA without workspace allocation. Shell and Workspaces
+the Harness/worktree loop and independent QA without workspace allocation. Shell and Harness
 consume that same API. The [shared Docker runtime](../assistant-shared-docker-runtime/feature.md) now provides supported
 Codex/Claude execution. The [D9 Git acceptance](../../reviews/2026-10-15-sandbox-d9-git-acceptance.md)
 records one real Codex conversation publishing a test PR through Core, observing CI, fixing review,

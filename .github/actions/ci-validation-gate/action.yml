@@ -1,0 +1,54 @@
+name: Require validated main commit
+description: Validates completed main CI and selects affected publication for its exact source SHA.
+
+inputs:
+  token:
+    description: GitHub token with actions read permission.
+    required: true
+  components:
+    description: Comma-separated shared CI policy components published by this workflow.
+    required: true
+  timeout-seconds:
+    description: Maximum wait for the matching CI run, including its registration delay.
+    default: "1800"
+    required: false
+
+outputs:
+  publish:
+    description: Whether the validated commit affects this publication's components.
+    value: ${{ steps.selection.outputs.publish }}
+  run-id:
+    description: Successful ci.yml push run for this exact main SHA.
+    value: ${{ steps.validation.outputs.run-id }}
+  source-sha:
+    description: Full validated main commit SHA.
+    value: ${{ steps.validation.outputs.source-sha }}
+
+runs:
+  using: composite
+  steps:
+    - name: Require successful CI for this main commit
+      id: validation
+      shell: bash
+      env:
+        CI_GATE_TOKEN: ${{ inputs.token }}
+        CI_GATE_TIMEOUT_SECONDS: ${{ inputs.timeout-seconds }}
+      run: node "${GITHUB_ACTION_PATH}/gate.mjs"
+
+    - name: Download the successful CI run's component selection
+      if: github.event_name == 'workflow_run'
+      uses: actions/download-artifact@v8.0.2
+      with:
+        name: ci-selection-${{ steps.validation.outputs.source-sha }}
+        run-id: ${{ steps.validation.outputs.run-id }}
+        github-token: ${{ inputs.token }}
+        path: ${{ runner.temp }}/hosty-publication-selection
+
+    - name: Select publication from verified CI evidence
+      id: selection
+      shell: bash
+      env:
+        CI_GATE_COMPONENTS: ${{ inputs.components }}
+        CI_GATE_SOURCE_SHA: ${{ steps.validation.outputs.source-sha }}
+        CI_GATE_SELECTION_PATH: ${{ runner.temp }}/hosty-publication-selection/selection.json
+      run: node "${GITHUB_ACTION_PATH}/select-publication.mjs"

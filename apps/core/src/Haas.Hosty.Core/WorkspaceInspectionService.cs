@@ -266,5 +266,14 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
         return new(uri.AbsoluteUri, null);
     }
     public async Task<WorkspaceDestination> DestinationAsync(DevelopmentWorkspace tree, CancellationToken ct)
-        => BrowserDestination(await apps.GetAppAsync("hosty.workspaces", ct), "/?workspace=" + tree.WorkspaceId + "&worktree=" + tree.Id);
+    {
+        if (tree.Owner.IsExternal)
+            return new(null, "Inspect this external workspace in Harness's External workspaces view or through the Core workspace API.");
+        var assistant = await apps.GetAppAsync(tree.Owner.AppId, ct);
+        if (assistant?.InstalledAt != tree.Owner.Installation)
+            return new(null, "The owning assistant installation was removed or replaced.");
+        var path = tree.Owner.AppId == "hosty.harness"
+            ? "/development?session=" + Uri.EscapeDataString(tree.Owner.SessionId) : tree.SessionPath;
+        return BrowserDestination(assistant, path);
+    }
 }

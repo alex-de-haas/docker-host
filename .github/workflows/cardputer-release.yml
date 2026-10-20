@@ -2,22 +2,58 @@ name: Cardputer Firmware Release
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - "apps/shell-cardputer/**"
-      - ".github/workflows/cardputer-release.yml"
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
+  validation:
+    # Ignore non-push, failed and foreign CI completions before allocating a runner.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    name: Require full CI for this main SHA
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      publish: ${{ steps.validation.outputs.publish }}
+      run-id: ${{ steps.validation.outputs.run-id }}
+      source-sha: ${{ steps.validation.outputs.source-sha }}
+    steps:
+      # Select with trusted default-branch policy, then build only the validated source commit.
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Set up Node.js for publication policy
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Require successful main CI
+        id: validation
+        uses: ./.github/actions/ci-validation-gate
+        with:
+          token: ${{ github.token }}
+          components: cardputer-shell
+
   publish:
+    needs: validation
+    if: needs.validation.outputs.publish == 'true'
     name: Publish cardputer-dev firmware
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
       id-token: write
       attestations: write
     concurrency:
@@ -26,63 +62,76 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validation.outputs.source-sha }}
 
       # `cardputer-dev` is force-retagged and its assets are clobbered, and the firmware OTA client
       # downloads from exactly this release, so an older run admitted to the group after a newer one
       # would push stale firmware to every device. Nothing is published unless this commit is still
       # the tip of main; the newer run has already shipped, or is queued behind us.
       #
-      # First step after checkout on purpose. Unlike the image workflows, this job builds *inside*
-      # its own concurrency group, so a stale run would otherwise hold `cardputer-dev-release` shut
-      # through a full ESP-IDF build whose output it then discards, delaying the fresh run behind it.
-      # `ci.yml`'s `cardputer-shell` job covers the build on the PR side, so skipping it here costs
-      # no validation.
+      # Decide freshness before downloading the complete verified output of the same main CI run.
       - name: Guard the rolling tag
         id: guard
         uses: ./.github/actions/publish-guard
+        with:
+          source-sha: ${{ needs.validation.outputs.source-sha }}
 
-      - name: Run bounded host tests
-        if: steps.guard.outputs.fresh == 'true'
+      - name: Download verified firmware from main CI
+        if: steps.guard.outputs.fresh == 'true' && github.event_name != 'workflow_dispatch'
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: hosty-cardputer-${{ needs.validation.outputs.source-sha }}
+          run-id: ${{ needs.validation.outputs.run-id }}
+          github-token: ${{ github.token }}
+          path: verified-cardputer
+
+      # Manual publication is an explicit recovery path, including main commits whose affected CI
+      # did not build firmware. It still requires successful full CI for this exact main SHA.
+      - name: Run bounded host tests for manual recovery
+        if: steps.guard.outputs.fresh == 'true' && github.event_name == 'workflow_dispatch'
         run: apps/shell-cardputer/tools/host-test.sh
 
-      - name: Build ESP32-S3 firmware
-        if: steps.guard.outputs.fresh == 'true'
+      - name: Build firmware for manual recovery
+        if: steps.guard.outputs.fresh == 'true' && github.event_name == 'workflow_dispatch'
         run: apps/shell-cardputer/tools/docker-build.sh
 
-      - name: Prepare release assets
+      - name: Prepare complete firmware evidence for manual recovery
+        if: steps.guard.outputs.fresh == 'true' && github.event_name == 'workflow_dispatch'
+        env:
+          VALIDATED_SOURCE_SHA: ${{ needs.validation.outputs.source-sha }}
+        run: node .github/actions/ci-validation-gate/prepare-cardputer.mjs apps/shell-cardputer/build "$VALIDATED_SOURCE_SHA" verified-cardputer
+
+      - name: Verify and prepare release assets
         if: steps.guard.outputs.fresh == 'true'
-        run: |
-          set -euo pipefail
-          image=apps/shell-cardputer/build/hosty_cardputer_shell.bin
-          maximum=$((0x3d0000))
-          actual=$(stat --format=%s "$image")
-          if (( actual > maximum )); then
-            echo "Firmware is ${actual} bytes; OTA slot is ${maximum} bytes" >&2
-            exit 1
-          fi
-          mkdir -p dist
-          cp "$image" dist/hosty-cardputer.bin
-          cp apps/shell-cardputer/build/bootloader/bootloader.bin dist/hosty-cardputer-bootloader.bin
-          cp apps/shell-cardputer/build/partition_table/partition-table.bin dist/hosty-cardputer-partition-table.bin
-          cp apps/shell-cardputer/build/ota_data_initial.bin dist/hosty-cardputer-ota-data.bin
-          (
-            cd dist
-            sha256sum hosty-cardputer*.bin > SHA256SUMS
-          )
+        env:
+          VALIDATED_SOURCE_SHA: ${{ needs.validation.outputs.source-sha }}
+        run: node .github/actions/ci-validation-gate/verify-cardputer.mjs verified-cardputer "$VALIDATED_SOURCE_SHA" dist
+
+      - name: Prepare source-bound provenance
+        if: steps.guard.outputs.fresh == 'true'
+        env:
+          PUBLISH_SOURCE_SHA: ${{ needs.validation.outputs.source-sha }}
+          VALIDATED_CI_RUN_ID: ${{ needs.validation.outputs.run-id }}
+          PUBLICATION_KIND: firmware
+        run: node .github/actions/ci-validation-gate/provenance.mjs
 
       - name: Attest build provenance
         if: steps.guard.outputs.fresh == 'true'
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest@v4
         with:
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: publication-provenance.json
           subject-path: "dist/hosty-cardputer*.bin"
 
       - name: Publish rolling prerelease
         if: steps.guard.outputs.fresh == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          PUBLISH_SOURCE_SHA: ${{ needs.validation.outputs.source-sha }}
         run: |
           set -euo pipefail
-          git tag --force cardputer-dev "$GITHUB_SHA"
+          git tag --force cardputer-dev "$PUBLISH_SOURCE_SHA"
           git push --force origin refs/tags/cardputer-dev
           if gh release view cardputer-dev >/dev/null 2>&1; then
             gh release upload cardputer-dev dist/* --clobber

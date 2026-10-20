@@ -1,8 +1,8 @@
 ---
 created: 2026-10-11
-updated: 2026-10-16
+updated: 2026-10-20
 summary: Explicit navigation and tool policy, manifest navigation, and retained tool instances shared by Shell, desktop hosts and standalone apps.
-components: [packages/app-sdk, apps/core, apps/shell, apps/plans, apps/demo-app, apps/harness, apps/workspaces, apps/marketplace, apps/telemetry-ui, apps/shell-swift]
+components: [packages/app-sdk, apps/core, apps/shell, apps/plans, apps/demo-app, apps/harness, apps/marketplace, apps/telemetry-ui, apps/shell-swift]
 ---
 
 # SDK UI Composition
@@ -240,7 +240,7 @@ container. `ShellWorkspaceSplit` provides Shell resizing and preference persiste
 presentation only: host verification, panel targets, context delivery and the authorization overlay
 remain SDK-owned. Standalone keeps the standard SDK workspace.
 
-Workspaces, Marketplace and Telemetry UI mount the SDK UI server adapter as well as the overlay.
+Marketplace and Telemetry UI mount the SDK UI server adapter as well as the overlay.
 Their `/api/hosty/ui/[...action]` GET/POST routes require an active administrator session and forward
 only the bounded SDK operations to Core. This lets embedded clients accept live Shell policy and
 standalone clients load navigation metadata.
@@ -255,8 +255,8 @@ return `unsupported_composition`. No fallback creates a nested host. Host loss r
 verified chrome, disables remote actions and offers recovery rather than changing ownership.
 Silent renewal preserves same-actor frames; actual access/identity changes keep existing boundaries.
 
-Plans, Marketplace and Workspaces use standard navigation. Shell, Demo, Harness and Telemetry use
-custom boundaries. All seven roots use the optional Next adapter and before-paint bootstrap.
+Plans and Marketplace use standard navigation. Shell, Demo, Harness and Telemetry use
+custom boundaries. All six remaining roots use the optional Next adapter and before-paint bootstrap.
 Demo's ordinary root explicitly disables local tools with `panelLayout="none"`; `/composition`
 enables a two-window fixture and reviewed optional catalog access. Native Shell sends explicit
 navigation/launcher-hide and tools-disabled hints plus its legacy native launch hint. Its

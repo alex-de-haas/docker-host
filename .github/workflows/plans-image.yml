@@ -1,20 +1,11 @@
 name: Plans Image
 
 on:
-  # Manual trigger: GitHub occasionally fails to deliver push events (observed
-  # 2026-07-19, #245 merge produced zero runs); this keeps image publishing unblockable.
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - "apps/plans/**"
-      - "packages/app-sdk/**"
-      # The Dockerfile's deps stage copies both of these and runs `npm ci` against them, so a root
-      # lockfile bump changes what ships in the image even when nothing under apps/plans does.
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/plans-image.yml"
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
@@ -23,13 +14,52 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  validation:
+    # Ignore non-push, failed and foreign CI completions before allocating a runner.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    name: Require full CI for this main SHA
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      publish: ${{ steps.validation.outputs.publish }}
+      run-id: ${{ steps.validation.outputs.run-id }}
+      source-sha: ${{ steps.validation.outputs.source-sha }}
+    steps:
+      # Select with trusted default-branch policy, then build only the validated source commit.
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Set up Node.js for publication policy
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Require successful main CI
+        id: validation
+        uses: ./.github/actions/ci-validation-gate
+        with:
+          token: ${{ github.token }}
+          components: plans
+
   # Gate publication on behavior tests as well as the Docker compilation check.
   test:
+    needs: validation
+    if: needs.validation.outputs.publish == 'true'
     name: Gate on tests
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validation.outputs.source-sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -50,7 +80,7 @@ jobs:
         run: npm run plans:test
 
   build-and-push:
-    needs: test
+    needs: [validation, test]
     runs-on: ubuntu-latest
     # Serialize publishes and never cancel: two runs racing to move the `:latest` and version tags can
     # leave them pointing at the older image, and a half-finished registry push is worse than a queued
@@ -68,6 +98,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validation.outputs.source-sha }}
 
       - name: Compute image name
         id: image
@@ -95,6 +127,7 @@ jobs:
         id: guard
         uses: ./.github/actions/publish-guard
         with:
+          source-sha: ${{ needs.validation.outputs.source-sha }}
           image: ${{ steps.image.outputs.name }}
           version: ${{ steps.version.outputs.version }}
           registry_token: ${{ secrets.GITHUB_TOKEN }}
@@ -109,6 +142,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
+          context: git
           images: ${{ steps.image.outputs.name }}
           # The version tag is created once and never moved (see the guard). A rebuild that does not
           # change the manifest version - a Dependabot lockfile bump - still ships through `latest`
@@ -142,9 +176,18 @@ jobs:
           # QEMU arm64 builds don't rebuild from scratch each run.
           cache-to: type=gha,scope=plans-image,mode=max
 
+      - name: Prepare source-bound provenance
+        env:
+          PUBLISH_SOURCE_SHA: ${{ needs.validation.outputs.source-sha }}
+          VALIDATED_CI_RUN_ID: ${{ needs.validation.outputs.run-id }}
+          PUBLICATION_KIND: build-image
+        run: node .github/actions/ci-validation-gate/provenance.mjs
+
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest@v4
         with:
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: publication-provenance.json
           subject-name: ${{ steps.image.outputs.name }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true

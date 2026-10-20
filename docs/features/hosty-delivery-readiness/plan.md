@@ -1,9 +1,9 @@
 ---
 status: Draft
 created: 2026-10-13
-updated: 2026-10-18
+updated: 2026-10-20
 summary: Local demo priorities through November 5 for host-contained agents, workspace Docker sandboxes, app creation, Git review, optional feedback and gradual redesign.
-components: [apps/core, apps/harness, apps/shell, apps/workspaces]
+components: [apps/core, apps/harness, apps/shell]
 ---
 
 # Hosty Delivery Readiness
@@ -51,7 +51,7 @@ After PR #595, the owner requested supported Harness execution in one shared Doc
 The [shared runtime](../assistant-shared-docker-runtime/feature.md) records the completed local delivery, with both providers and selected-account authorization import verified. Per-session containment remains a separate Draft scope.
 
 Sandbox now ships independent single-app instances and trusted child Core environments, Harness
-lifecycle tools, Shell/Workspaces previews, separate data/caches and interrupted-Finish recovery.
+lifecycle tools, Shell/Harness previews, separate data/caches and interrupted-Finish recovery.
 See [current behavior](../app-sandbox-runtimes/feature.md), rather than treating the original
 September/October design gaps below as unimplemented platform foundations. The
 [fresh-login/HMR acceptance](../../reviews/2026-10-15-sandbox-login-hmr-acceptance.md) verifies the
@@ -75,7 +75,7 @@ This checkpoint does not approve implementation of this Draft umbrella.
 | Area | Reuse | Remaining work for this journey |
 | --- | --- | --- |
 | Docker Development | [Mixed Development Runtimes](../mixed-development-runtimes/feature.md): Docker source mount, image/build recipe, watch command and cache volumes | Workspace/source and child ownership now ship; complete relevant [remaining platform acceptance](../mixed-development-runtimes/plan.md) |
-| Workspaces | [Session workspaces](../assistant-session-workspaces/feature.md) and [Workspaces viewer](../workspaces-app/feature.md) | Child runtime status and preview controls ship; complete the remaining integrated acceptance without making the viewer a second orchestrator |
+| Workspaces | [Session workspaces](../assistant-session-workspaces/feature.md) and [Harness workspace UI](../harness-development-ui/feature.md) | Child runtime status and preview controls ship; complete the remaining integrated acceptance without introducing a second orchestrator |
 | Git and review | [PR lifecycle](../assistant-pr-lifecycle/feature.md): commits, push, draft/ready PRs, CI/review observation and completion | The shared-worker test PR journey is verified in Sandbox D9; merge/release and broader development-session acceptance retain their separate scope |
 | App creation | [Local app creation](../app-prototype-workspaces/feature.md), [Development Controls](../app-development-controls/plan.md), [App Authoring](../app-authoring/plan.md) | Local creation/continuation, recovery, Accept/Use locally and existing-remote PR flow verified on 2026-10-18; broader integration/adaptation and release/catalog delivery retain their own plans |
 | Agent boundary | [Shared Docker Agent Runtime](../assistant-shared-docker-runtime/feature.md) and [Containment](../assistant-runtime-containment/plan.md) | Shared worker implementation and both-provider local acceptance complete; stricter session isolation retains its separate Draft plan |

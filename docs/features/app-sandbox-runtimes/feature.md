@@ -1,8 +1,8 @@
 ---
 created: 2026-10-14
-updated: 2026-10-17
-summary: Independent app sandboxes and parent-managed child Core environments with separate data, shared Docker, lifecycle recovery and Harness, Shell and Workspaces controls.
-components: [apps/core, apps/harness, apps/shell, apps/workspaces, apps/demo-app, packages/app-sdk]
+updated: 2026-10-20
+summary: Independent app sandboxes and parent-managed child Core environments with separate data, shared Docker, lifecycle recovery and Harness and Shell controls.
+components: [apps/core, apps/harness, apps/shell, apps/demo-app, packages/app-sdk]
 ---
 
 # Core Sandbox Instances
@@ -137,7 +137,7 @@ Three reports are retained per instance until explicit evidence cleanup or dispo
 The server-only SDK `SandboxClient` supports interactive and background authority. Harness adapts
 these actions to its attachment/session rules and retains mutation identities. Shell displays
 instances, lifecycle progress, sampled resources, bounded service log tails, preview and persona
-links. Workspaces filters instances by optional workspace context. These integrations use the independent Core service.
+links. Harness filters instances by their workspace context. These integrations use the independent Core service.
 
 The Core-managed QA fixture in `scripts/experiments/sandbox-core` has no Harness/workspace API.
 Its `verify.py` uses normal password login and app PKCE, then exercises artifact allocation,
@@ -283,8 +283,7 @@ Stop preserves users and data. Normal parent shutdown stops owned children and t
 `keep-apps` preserves them for adoption. Parent SIGKILL does not immediately stop children: the
 replacement parent reconciles persisted PID/start identities and child control discovery. Interrupted
 operations retain an explicit failed outcome for inspection and a deliberate retry using the **same
-request UUID and original arguments**. Successful or superseded operations do not rerun. Shell and
-Workspaces preserve a failed Finish request across refresh while it remains the latest journal
+request UUID and original arguments**. Successful or superseded operations do not rerun. Shell and Harness preserve a failed Finish request across refresh while it remains the latest journal
 operation. A newer operation supersedes that saved replay; the panel clears it and allows a fresh
 delete request against the current revision instead of leaving all controls blocked.
 Offline single-app plans inside a managed child default to 2 GiB, 0.5 CPU and 128 PIDs,
@@ -330,50 +329,37 @@ API in a normal browser session, and hot reload preserves the child identity. Fi
 child process, root and labeled Docker resources while preserving borrowed source. The temporary
 API marker is an exported test fixture, not a shipped Core response field.
 
-## Shell And Workspaces Controls
+## Shell And Harness Controls
 
-Workspaces shows a separate **Sandbox environments** section for the selected workspace. Create
-sandbox selects one to sixteen active worktrees and starts a fresh child Core. The default copies
-the current Core build; **Build Core from a worktree** selects an attached tree and a relative project
-path. Core validates workspace membership and current source authority, rejects escaping/symlinked
-project paths, and retains the selected trees until Finish. A sandbox created by the owning operator
-for an assistant workspace retains that assistant's ownership and session association. External
-workspaces create operator-owned environments.
+The Shell dashboard lists child environments visible to its administrator. It shows observed
+lifecycle state, source-build progress and running applications with runtime/health status. The
+shared `@hosty-sdk/app/sandbox/react` panel supports normal test-account connection, Open Core,
+installation-bound preview links, Start/Stop and confirmed Finish. It uses the optional
+`core.environments.inspect` and `core.environments.operate` operator permissions, independently of
+Harness's caller-owned `core.environments.read/manage` grants.
 
-The Shell dashboard lists all child environments visible to its administrator and links back to
-Workspaces. Both surfaces show observed lifecycle state, including source builds in progress, and
-running applications with runtime/health status. They offer normal child-account setup, Open Core,
-installation-bound Open preview links, Start/Stop and explicit permanent deletion. A fresh child
-starts empty: application installation/configuration uses the child Core's existing APIs and review
-flow or Harness. Attaching source does not silently install or start those applications.
+[Harness](../harness-development-ui/feature.md) exposes child Core and app sandbox previews and
+supported lifecycle controls. Its agent tools create current/release/source child Core environments,
+attach authorized worktrees, start/restart them and perform ordinary child-account setup/password
+login. A fresh child starts empty; application installation uses the child's ordinary APIs and
+review flow. Attaching source does not silently install or start applications.
 
-The public API adds `POST /api/core-environments/from-workspace` and
-`GET /api/core-environments/{id}/apps`. The latter projects only app identity, display/version,
-runtime/health and an installation-bound launch destination from the child's ordinary app inventory.
-Unavailable or unauthenticated child inventory is explicit, never reported as a healthy empty list.
-The existing Core launch contract verifies the selected installation/surface and performs ordinary
-child login and app authorization; it does not transfer the parent identity.
+The standalone [Workspaces app and its operator creation form are retired](../workspaces-app/feature.md).
+The Core API remains: `POST /api/core-environments/from-workspace` validates one to sixteen active
+worktrees, current source authority and any relative Core project, rejecting escaping or linked
+paths. It retains selected worktrees until Finish and preserves the owning assistant/session
+association when the current operator owns that workspace. External workspaces stay operator-owned.
+`GET /api/core-environments/{id}/apps` retains bounded observed app state and authorized preview links.
+Core workspace records, worktrees and existing installations are preserved.
 
-The shared `@hosty-sdk/app/sandbox/react` panel takes a host-provided authenticated transport.
-Shell and Workspaces request the optional `core.environments.inspect` and
-`core.environments.operate` permissions. These operator permissions are separate from Harness's
-caller-owned `core.environments.read/manage`. Creation from a workspace additionally requires
-`apps.workspaces.read`. Workspaces forwards only bounded UI routes with a live administrator app
-identity and its service credential; it does not expose arbitrary child API transport. Mutation
-routes check same-origin JSON requests. Parent browser cookies are not forwarded.
+The Shell panel polls only while visible, ignores superseded observations and persists lifecycle
+UUIDs before dispatch. Uncertain outcomes retain the original request for retry. Passwords never
+enter replay storage. Deletion requires confirmation; failed cleanup stays visible until Finish
+succeeds. Source and shared folders are preserved.
 
-The panel polls while visible, prevents overlapping polls and ignores superseded observations.
-It persists lifecycle request UUIDs in tab session storage before sending and offers the same-request
-retry after an uncertain response or page reload. Account passwords never enter replay storage.
-Delete requires explicit confirmation and invokes Finish. Cleanup failure remains visible and
-retryable; the UI removes a row only after observing `finished`. Worktree source and shared folders
-are preserved. The older single-app panel remains separately labelled **Individual app sandboxes**.
-
-The [UI acceptance](../../reviews/2026-10-14-sandbox-ui-acceptance.md) verifies current/source Core
-creation inside Shell-embedded Workspaces, visible build progress, ordinary child-account setup,
-Demo app health and identity through Open preview, Shell inventory, Stop/Start and confirmed Finish
-from both surfaces. Independent checks confirm removed roots/listeners/Docker resources and retained
-workspace source with released sandbox consumers.
+The dated [2026-10-14 UI acceptance](../../reviews/2026-10-14-sandbox-ui-acceptance.md) records the
+former Workspaces form and Shell lifecycle journey. The current retired-app boundary is described
+above; that historical report does not attest to a replacement creation form.
 
 ## Media Dependency Acceptance
 
@@ -419,7 +405,7 @@ assistant workspace owner. Legacy app-owned records without that marker or conse
 before delegated start/restart, setup or child API access. The original creation request attaches
 approved consent without replacing the child; operator authority and Stop/Finish remain available.
 
-The shared Shell/Workspaces panel shows effective consent and supports revocation. Shell also lists
+The shared Shell panel shows effective consent and supports revocation. Shell also lists
 saved permissions when no environment remains. Effective access and saved permissions report a
 changed or unavailable binary target instead of an active launch permission, while preserving
 revocation and ordinary operator lifecycle controls. Each list response computes a distinct
@@ -517,12 +503,12 @@ build cache and credentials. The primary Core process and all 41 existing contai
 
 ## Testing Expectations
 
-Verify embedded Workspaces creation in current/source mode, normal child login and application preview,
-Shell inventory, deletion from both surfaces, source retention, and removal of owned runtime resources.
+Verify Harness agent creation in current/source mode, normal child login and application preview,
+Shell inventory, supported lifecycle deletion, source retention and removal of owned runtime resources.
 Cover operator grant denial/revocation, private source selection, in-flight status and same-request UI retry.
 
 Run Core tests and a NativeAOT build, SDK tests/build, Harness tests/lint/web build, and affected
-Demo App, Shell and Workspaces checks. Verify versions and the generated docs index. Preserve
+Demo App and Shell checks. Verify versions and the generated docs index. Preserve
 regressions for replay, ownership, scope-first identity, grant revocation, source-consumer retention,
 fixture reset, interrupted operations, orphan browser jobs and session-bound persona confirmation.
 
