@@ -62,16 +62,23 @@ Signed image/native provenance records the validated code revision separately fr
 
 Image and native publishers use the Hosty custom predicate type and build type `https://github.com/alex-de-haas/docker-host/blob/main/docs/features/ci-feedback-loop/feature.md#publication-provenance-v1`. This repository-owned type describes completed-CI publication and manual recovery. Its payload follows the SLSA build-definition/run-details structure, but is stored as a custom attestation: GitHub rejects custom build types under the standard SLSA predicate type. The custom-predicate mode of `actions/attest` signs and stores the same source-bound claims without declaring unsupported SLSA semantics. The [GitHub workflow build type](https://github.com/actions/buildtypes/blob/main/workflow/v1/README.md) excludes `workflow_run`, so these publishers do not claim that type.
 
-Verify an artifact using the explicit Hosty predicate type; the CLI's default SLSA filter does not select custom attestations:
+The CLI's default verification filter selects SLSA rather than Hosty custom attestations. For a downloaded binary, first download its bundles without a predicate filter, then verify using the bundle path printed by the command. Replace `BUNDLE_PATH` below with that `.jsonl` path (`sha256:<digest>.jsonl` on POSIX or `sha256-<digest>.jsonl` on Windows). This avoids GitHub's lookup API rejecting a custom `predicate_type` query even though attestation storage accepts it.
 
 ```bash
-# Downloaded release binary
-gh attestation verify ./hosty-cardputer.bin --repo alex-de-haas/docker-host \
-  --predicate-type https://github.com/alex-de-haas/docker-host/blob/main/docs/features/ci-feedback-loop/feature.md#publication-provenance-v1
+gh attestation download ./hosty-cardputer.bin --repo alex-de-haas/docker-host
+gh attestation verify ./hosty-cardputer.bin --bundle BUNDLE_PATH \
+  --repo alex-de-haas/docker-host \
+  --predicate-type https://github.com/alex-de-haas/docker-host/blob/main/docs/features/ci-feedback-loop/feature.md#publication-provenance-v1 \
+  --signer-workflow alex-de-haas/docker-host/.github/workflows/cardputer-release.yml
+```
 
-# Container image: the oci:// prefix is required.
-gh attestation verify oci://ghcr.io/alex-de-haas/hosty-shell:latest --repo alex-de-haas/docker-host \
-  --predicate-type https://github.com/alex-de-haas/docker-host/blob/main/docs/features/ci-feedback-loop/feature.md#publication-provenance-v1
+For an image, the `oci://` prefix and `--bundle-from-oci` fetch the signature from the registry and apply the custom-type filter locally. The command uses the registry's existing authentication:
+
+```bash
+gh attestation verify oci://ghcr.io/alex-de-haas/hosty-telemetry-backend:latest \
+  --bundle-from-oci --repo alex-de-haas/docker-host \
+  --predicate-type https://github.com/alex-de-haas/docker-host/blob/main/docs/features/ci-feedback-loop/feature.md#publication-provenance-v1 \
+  --signer-workflow alex-de-haas/docker-host/.github/workflows/telemetry-backend-image.yml
 ```
 
 The required external parameters are `workflow` (repository URL, main ref and workflow path), `source` (repository URL and validated full commit), `validation` (CI workflow path and successful run ID), and `operation` (`build-image`, `build-native-release`, `publish-verified-ci-firmware` or `build-firmware-for-manual-publication`). The operation distinguishes a firmware artifact consumed from CI from a manual rebuild. The actual trigger remains `workflow_run` or `workflow_dispatch`.
