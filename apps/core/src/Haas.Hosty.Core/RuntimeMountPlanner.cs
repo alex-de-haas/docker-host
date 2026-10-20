@@ -22,7 +22,7 @@ internal static class RuntimeMountPlanner
             return [];
         }
 
-        var slotsByKey = slots.ToDictionary(slot => slot.Key, StringComparer.Ordinal);
+        var slotsByKey = slots.Where(slot => slot.Kind == "host-path").ToDictionary(slot => slot.Key, StringComparer.Ordinal);
         return bindings
             .Where(binding => slotsByKey.ContainsKey(binding.Key))
             .OrderBy(binding => binding.Key, StringComparer.Ordinal)
@@ -100,7 +100,7 @@ internal static class RuntimeMountPlanner
 
         foreach (var slot in slots)
         {
-            if (slot.Required && !configuredKeys.Contains(slot.Key))
+            if (slot.Kind == "host-path" && slot.Required && !configuredKeys.Contains(slot.Key))
             {
                 throw new AppLifecycleException(
                     "app_mount_required_unconfigured",
@@ -153,4 +153,5 @@ internal sealed record RuntimeMount(
     string HostPath,
     string ContainerPath,
     bool ReadOnly,
-    string? Service);
+    string? Service,
+    bool ManagedCollection = false);

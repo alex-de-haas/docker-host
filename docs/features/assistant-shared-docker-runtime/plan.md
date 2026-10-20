@@ -1,7 +1,7 @@
 ---
-status: Ready
+status: In Progress
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 summary: Make worker an ordinary Harness service with a direct API, native Windows support and shared Core-owned worktrees, without workspace migration or cleanup restarts.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -18,8 +18,7 @@ boundary for eventual independent agent-provider applications.
 This consolidated plan incorporates the owner's 2026-10-20 clarifications in
 [vision decisions 50 and 51](../../vision.md). The owner approved the design and selected simple
 HTTP JSON plus SSE, deferring separate protocol adoption, on 2026-10-20. The same conversation
-requested model and reasoning-effort selection as part of this refactor. This plan is Ready;
-implementation has not started. No production reset or workspace cleanup is authorized by this
+requested model and reasoning-effort selection as part of this refactor. Implementation began on 2026-10-20 after explicit owner authorization. No production reset or workspace cleanup is authorized by this
 documentation update. [feature.md](feature.md) continues to describe the shipped implementation.
 
 Planning baseline: `ad9368ecbd6d48c6bfb03a8a8dea05e0eabedd4f`, Core 0.146.0 / Harness 0.62.0.
@@ -186,7 +185,7 @@ native session state. Preserve Normal/Autonomous behavior, supported same-runtim
 translation, attachments, connection setup/renewal and app MCP callbacks. An agent-controlled
 policy field is not new authority. Reject stale/cross-run control responses.
 
-Use one worker-local durable journal/event store, proposed as SQLite, with no separate database
+Use one worker-local durable journal/event store, implemented as atomic fsynced per-run JSON records, with no separate database
 service or broker. Commit acceptance before replying. Coordinator reconnect retrieves the known
 run; worker restart marks interrupted work and never automatically repeats side effects. Keep
 small request-ID/hash tombstones so retries after event expiry cannot relaunch old work.
@@ -352,34 +351,55 @@ Do not assume an OpenAI/Ollama model-generation API covers stateful runs, approv
 ## Deliverables
 
 Historical D1-D15 are completed/retired. Keep D16-D26 stable; D27 adds model/effort selection. Deliver the implementation in one
-branch/PR. All remain unchecked until their implementation and required verification pass.
+branch/PR. Checks record completed implementation and its verification; platform/live-provider acceptance remains D25.
 
 ### Phase 1: Contracts And Ordinary Services
 
-- [ ] D16. Finalize typed HTTP/SSE API and manifest compatibility examples against this owner-approved plan before implementation; no unanswered product decision is delegated to Core agent-specific behavior.
-- [ ] D17. Implement generic service injection filters, contained storage targets and managed collection mount/consumer semantics; verify a non-agent fixture, existing app compatibility and specific-worktree cleanup checks.
-- [ ] D18. Package and declare api/worker for Docker, Local and development, with SDK/CLI dependencies, discovery, health, normal lifecycle/rollback and resource limits.
+- [x] D16. Finalize typed HTTP/SSE API and manifest compatibility examples against this owner-approved plan before implementation; no unanswered product decision is delegated to Core agent-specific behavior.
+- [x] D17. Implement generic service injection filters, contained storage targets and managed collection mount/consumer semantics; verify a non-agent fixture, existing app compatibility and specific-worktree cleanup checks.
+- [x] D18. Package and declare api/worker for Docker, Local and development, with SDK/CLI dependencies, discovery, health, normal lifecycle/rollback and resource limits.
 
 ### Phase 2: Execution And Source Access
 
-- [ ] D19. Implement direct HTTP/SSE client and worker adapters, durable/idempotent runs, controls, trust, cancellation and provider/translation/attachment/MCP parity.
-- [ ] D27. Implement connection-scoped model and per-model reasoning-effort choices, between-turn UI/session updates, native adapter application, per-turn attribution and resume/error coverage for Codex and Claude; no service restart or Core agent API.
-- [ ] D20. Implement portable resource/path access and fresh-runtime Git behavior; verify that existing Core-owned external workspace records, metadata, files, owners and leases remain unchanged and usable. No workspace migration/import implementation.
-- [ ] D21. Implement ordinary process handling, specific worktree activity and service accounting; verify creation/deletion while services stay running, known background work, uncertain specific consumers and recovery. No bespoke supervisor or per-run containment.
+- [x] D19. Implement direct HTTP/SSE client and worker adapters, durable/idempotent runs, controls, trust, cancellation and provider/translation/attachment/MCP parity.
+- [x] D27. Implement connection-scoped model and per-model reasoning-effort choices, between-turn UI/session updates, native adapter application, per-turn attribution and resume/error coverage for Codex and Claude; no service restart or Core agent API.
+- [x] D20. Implement portable resource/path access and fresh-runtime Git behavior; verify that existing Core-owned external workspace records, metadata, files, owners and leases remain unchanged and usable. No workspace migration/import implementation.
+- [x] D21. Implement ordinary process handling, specific worktree activity and service accounting; verify creation/deletion while services stay running, known background work, uncertain specific consumers and recovery. No bespoke supervisor or per-run containment.
 
 ### Phase 3: Replacement And Verification
 
-- [ ] D22. Deliver clean Harness update and remove the Core execution proxy, special worker lifecycle/manifest and global worker-cleanup paths; reject incompatible versions and retain normal platform APIs.
-- [ ] D23. Show worker through ordinary service health/logs/resources and expose useful run status/errors in Harness without a separate container-management surface.
-- [ ] D24. Verify the same client against a separately hosted provider fixture and reconcile Agent Provider D1-D3 ownership without implementing its public platform.
+- [x] D22. Deliver clean Harness update and remove the Core execution proxy, special worker lifecycle/manifest and global worker-cleanup paths; reject incompatible versions and retain normal platform APIs.
+- [x] D23. Show worker through ordinary service health/logs/resources and expose useful run status/errors in Harness without a separate container-management surface.
+- [x] D24. Verify the same client against a separately hosted provider fixture and reconcile Agent Provider D1-D3 ownership without implementing its public platform.
 - [ ] D25. Pass native-Windows/Docker acceptance plus macOS/Linux regressions, both providers/profiles, cleanup without restart, external-workspace non-regression, failure cases, image checks and sandbox Finish.
 - [ ] D26. Update current-reality docs and related plans, record release versions/evidence, regenerate the index and delete this plan only after all preceding deliverables are verified.
 
 ## Verification And Completion
 
-For this documentation change, run `node scripts/docs-index.mjs --fix`, `--check` and
-`git diff --check`, including whitespace validation of the new untracked plan. No version bump,
-build or runtime deployment is required to review this plan.
+Implementation is in progress in the registered Core workspace. Verified local evidence:
+
+- `npm run harness:test`: 907 tests passed; `npm run harness:lint` and the web production build passed.
+- Full Core regression: 3901 passed, five opt-in integration tests skipped. After the final generic
+  storage/adoption changes, all 227 affected Core tests passed again in an isolated artifacts directory.
+- `npm run cli:build` and `npm run core:aot` passed. Native AOT targets macOS arm64 with no new
+  trim/AOT warnings; existing compiler/platform analyzer warnings remain.
+- Shell: 193 Node tests and 368 Vitest tests passed; production build passed; lint has zero errors
+  and two existing warnings in unchanged code.
+- CI-selection and Docker fault-proxy tests: 30 passed. Version, documentation/link and whitespace checks passed.
+- API and Worker images built for linux/arm64 and linux/amd64. Both Worker architectures passed
+  credential/process/Git probes, including root-owned source reads and relative Git worktrees.
+  Actual credential-free Codex/Claude native model/control handshakes passed in the arm64 image.
+- Isolated child Core passed normal setup/login/app authorization, declared Docker services,
+  Docker/Local/Docker switching, stop/start, state preservation and sandbox Finish/resource removal.
+
+These checks use the final implementation batch; the full Core regression preceded the final
+affected-test rerun. AMD64 image execution on this machine uses emulation, not a native Linux host.
+
+D25 remains open for actual native Windows Core + Docker Desktop, native Linux host acceptance
+and live authenticated Codex/Claude turns/resume/tool flows. No provider credentials were copied
+from live installations. Linux containers on macOS and synthetic native protocol fixtures are
+reported separately from that evidence. D26 retains final evidence reconciliation and plan removal
+until every required deliverable passes. A draft PR does not represent release acceptance.
 
 During implementation use focused contract/lifecycle/provider tests, `npm run harness:test`,
 `npm run harness:lint`, `npm run build --workspace @haas/hosty-harness-web`, `npm run core:test`,
@@ -407,7 +427,7 @@ Sandbox success does not authorize live-data trial or production cutover.
 Implementation changes platform contracts and Harness behavior: apply minor versions to the
 then-current Core/CLI and Harness artifacts, keeping related images/package versions in step.
 Bump other artifacts only when their code changes. One PR lists D16-D27, this folder and version
-outcome. This documentation-only update creates no commit and changes no release version.
+outcome. Current release versions are Core/CLI 0.147.8 → 0.148.0, Harness 0.63.3 → 0.64.0 and Shell 0.108.0 → 0.108.1.
 
 ## Related Scope
 

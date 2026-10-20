@@ -82,6 +82,20 @@ export class ClaudeHarnessAdapter implements HarnessAdapter {
     return { available: true };
   }
 
+  async models(): Promise<import("../worker/contracts.js").ModelCatalog> {
+    const { query } = await import("@anthropic-ai/claude-agent-sdk");
+    const { catalog, effortLabel } = await import("../worker/models.js");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30000);
+    const input = (async function* () { await new Promise<void>(resolve => controller.signal.addEventListener("abort", () => resolve(), { once: true })); })();
+    const client = query({ prompt: input, options: { env: this.environment, settingSources: [], persistSession: false,
+      abortController: controller, tools: [], mcpServers: {}, strictMcpConfig: true } });
+    try {
+      return catalog((await client.supportedModels()).map(m => ({ id: m.value, label: m.displayName,
+        efforts: (m.supportedEffortLevels ?? []).map(id => ({ id, label: effortLabel(id) })) })));
+    } finally { clearTimeout(timer); controller.abort(); client.close(); }
+  }
+
   start(options: HarnessStartOptions): HarnessRun {
     return new ClaudeRun(options, this.environment);
   }
@@ -227,10 +241,16 @@ class ClaudeRun implements HarnessRun {
   private async runLoop(): Promise<void> {
     try {
       const sdk = await import("@anthropic-ai/claude-agent-sdk");
+      let releaseInput: () => void = () => {};
+      const configured = new Promise<void>(resolve => { releaseInput = resolve; });
+      const input = this.input;
+      const prompt = (async function* () { await configured; for await (const message of input) yield message; })();
       const query = sdk.query({
-        prompt: this.input as AsyncIterable<never>,
+        prompt: prompt as AsyncIterable<never>,
         options: {
           cwd: this.options.cwd,
+          ...(this.options.model ? { model: this.options.model } : {}),
+          ...(this.options.reasoningEffort ? { effort: this.options.reasoningEffort } : {}),
           ...(this.options.processTransport ? {
             pathToClaudeCodeExecutable: "/opt/hosty-worker/claude",
             spawnClaudeCodeProcess: (input: { args: string[]; cwd?: string; env: NodeJS.ProcessEnv }) =>
@@ -258,8 +278,14 @@ class ClaudeRun implements HarnessRun {
           canUseTool: (toolName: string, input: Record<string, unknown>, context?: ApprovalContext) =>
             this.requestApproval(toolName, input, context),
         },
-      } as never) as AsyncIterable<Record<string, never>> & { interrupt(): Promise<unknown>; close(): void };
+      } as never) as AsyncIterable<Record<string, never>> & { interrupt(): Promise<unknown>; close(): void;
+        applyFlagSettings(settings: { model: string | null; effortLevel: string | null }): Promise<unknown> };
       this.query = query;
+      try {
+        if (this.options.model !== undefined || this.options.reasoningEffort !== undefined)
+          await query.applyFlagSettings({ model: this.options.model ?? null, effortLevel: this.options.reasoningEffort ?? null });
+      } catch (error) { this.input.end(); query.close(); throw error; }
+      finally { releaseInput(); }
 
       for await (const message of query) {
         this.dispatch(message as Record<string, unknown>);
@@ -346,6 +372,16 @@ class ClaudeRun implements HarnessRun {
       return;
     }
     if (type === "system" && message.subtype === "init" && typeof message.session_id === "string") {
+      if (this.options.resumeHarnessSessionId && message.session_id !== this.options.resumeHarnessSessionId) {
+        this.options.onEvent({ type: "error", message: "Claude did not resume the requested native session; existing history is preserved." });
+        void this.stop(); return;
+      }
+      if (typeof message.model === "string") {
+        this.options.onEvent({ type: "execution_model", requested: { model: this.options.model ?? null, reasoningEffort: this.options.reasoningEffort ?? null },
+          reported: { model: message.model, reasoningEffort: typeof message.effort === "string" ? message.effort : null } });
+      }
+      if (this.options.reasoningEffort && "effort" in message && message.effort !== this.options.reasoningEffort)
+        this.options.onEvent({ type: "notice", message: `Claude applied ${String(message.effort ?? "no effort parameter")} instead of requested ${this.options.reasoningEffort}.` });
       this.options.onEvent({ type: "harness_session", harnessSessionId: message.session_id });
       return;
     }

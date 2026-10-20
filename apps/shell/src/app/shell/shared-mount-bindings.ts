@@ -21,6 +21,7 @@ export function assignmentChanges(baseline: MountAssignments, selected: MountAss
 }
 
 export function mountSlotConflict(slot: CoreMountSlot, name: string): string | null {
+  if (slot.kind === "managed-workspaces") return "Core supplies this workspace collection automatically; shared mounts cannot replace it.";
   const other = slot.bindings.filter(binding => binding.globalMountName !== name);
   if (!slot.multiple && other.length) return `Already uses ${other[0].label}. This slot accepts one folder.`;
   if (other.some(binding => binding.label === name)) return `An inline binding already uses the label ${name}.`;

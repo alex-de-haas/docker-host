@@ -1,6 +1,6 @@
 ---
 created: 2026-06-16
-updated: 2026-10-05
+updated: 2026-10-21
 summary: Apps declare external mount slots and operators bind host folders to them, injected as HOSTY_MOUNT_{KEY} and never backed up or deleted.
 components: [apps/core, apps/cli, apps/shell]
 ---
@@ -14,6 +14,21 @@ contract, keeps them across update, restart, runtime switch and removal, and nev
 deletes them. [Global mounts](../global-mounts/feature.md) extend this with a host-level library of
 named folders that bindings can reference.
 
+## Managed Workspace Collections
+
+An app with reviewed `apps.sources.full` permission can instead declare `kind: "managed-workspaces"`,
+`scope: "instance"` and an explicit service. Core automatically mounts its development trees and
+repository metadata at `/mnt/<key>/managed/trees` and `/mnt/<key>/managed/repositories`. Trees use
+the declared access mode; repository metadata is read-only. Local receives the canonical host paths.
+The collection roots cannot redirect through symlinks/junctions. Shell displays automatic exposure
+instead of path editors, and global mounts cannot be assigned to these slots.
+
+The collection is persistent across child creation/removal and does not reserve every child tree.
+Core cleanup still refuses specific activity leases, direct overlapping mounts, sandboxes and
+unknown consumers. An authenticated declared collection mount is excluded only after its service,
+source, destination and read/write mode match. Revoking collection access itself uses ordinary Stop.
+This mount does not transfer workspace ownership or include Core settings/registry/credentials.
+
 ## Behavior
 
 A manifest declares external-mount **slots**: what the app can accept.
@@ -21,7 +36,7 @@ A manifest declares external-mount **slots**: what the app can accept.
 ```jsonc
 "externalMounts": {
   "catalogRoots": {
-    "kind": "host-path",   // the only supported kind
+    "kind": "host-path",   // operator-owned path slot
     "multiple": true,       // more than one host path in the slot
     "mode": "rw",           // "rw" (default) or "ro"; authoritative
     "service": "api",       // optional: bind only into this service

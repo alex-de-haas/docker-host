@@ -269,7 +269,7 @@ public sealed class LocalCommandRuntimeAdapterTests
             await adapter.StopAsync(context);
 
             var cachePath = Path.Combine(declaredRoot, "cache");
-            Assert.Equal(cachePath, await File.ReadAllTextAsync(Path.Combine(declaredRoot, "cache-env.txt")));
+            Assert.Equal(MountPathPolicy.ResolveRealPath(cachePath), await File.ReadAllTextAsync(Path.Combine(declaredRoot, "cache-env.txt")));
             Assert.True(Directory.Exists(cachePath));
 
             var (undeclaredAdapter, _, undeclaredContext) = CreateSetupScenario(

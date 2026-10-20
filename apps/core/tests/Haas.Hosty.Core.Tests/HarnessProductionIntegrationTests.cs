@@ -12,7 +12,7 @@ namespace Haas.Hosty.Core.Tests;
 public sealed partial class CoreLifecycleServiceTests
 {
     [DockerDevelopmentFact]
-    public async Task Harness_ProductionDockerRunsCoreOwnedWorkerAndFinishesSandbox()
+    public async Task Harness_ProductionDockerRunsDeclaredServicesAndFinishesSandbox()
     {
         if (Environment.GetEnvironmentVariable("HOSTY_TEST_HARNESS_RECOVERY_ROOT") is { Length: > 0 } recoveryRoot)
         {
@@ -64,110 +64,21 @@ public sealed partial class CoreLifecycleServiceTests
             Assert.Contains(CoreAppPermissions.Sources, harness.GrantedCorePermissions!);
             var coordinator = DockerRuntimeAdapter.BuildContainerName(child.Id, harness.Id, "api");
             var appRoot = Path.Combine(MountPathPolicy.ResolveRealPath(dataRoot), "apps", harness.Id);
-            var generation = Guid.NewGuid().ToString("D");
-            var owner = new WorkspaceOwner(harness.Id, harness.InstalledAt, "isolated-transport-fixture", "transport-check");
-            var workspaces = new DevelopmentWorkspaceService(childPaths, childApps, new SystemClock());
-            var bindings = await workspaces.WorkerBindingsAsync(owner, default);
-            // This transport fixture is synthetic and tests no user identity. Ordinary child setup
-            // and password login above use the real public contracts; workspace auth has its own tests.
-            await JsonStorage.WriteAsync(Path.Combine(childPaths.CoreRoot, "development", "worker-leases", generation + ".json"),
-                new DevelopmentWorkerLease(owner, generation, true));
-            var cwd = Path.Combine(appRoot, "cache", "sessions", "transport-check", "workspace");
-            Directory.CreateDirectory(cwd);
-            var probe = Path.Combine(appRoot, "cache", "runtime-probe.mjs");
-            var prefix = $"const generation={JsonSerializer.Serialize(generation)}, bindings={CoreJson.Text(bindings)}, cwd={JsonSerializer.Serialize(cwd)};\n";
-            await File.WriteAllTextAsync(probe, prefix + """
-                import assert from 'node:assert/strict';
-                import { loadConfig } from '/repo/apps/harness/src/config.ts';
-                import { SharedDockerWorker } from '/repo/apps/harness/src/runtime/worker.ts';
-                import { CoreWorkerCommands } from '/repo/apps/harness/src/runtime/core-worker.ts';
-                const config = loadConfig();
-                const worker = new SharedDockerWorker(config.dataDir, config.cacheDir,
-                  new CoreWorkerCommands(config.coreOrigin, config.appId, config.serviceToken));
-                let successful = false;
-                try {
-                  worker.claim('transport-check');
-                  const transport = await worker.prepare('transport-check', generation, bindings, cwd, [], async () => {});
-                  for (const provider of ['codex', 'claude']) {
-                    await new Promise((resolve, reject) => {
-                      const child = transport.spawn(provider, ['--version'], { cwd, env: {} });
-                      let text = '';
-                      child.stdout.on('data', bytes => { text += bytes; });
-                      child.stderr.on('data', bytes => { text += bytes; });
-                      child.on('error', reject);
-                      child.on('close', code => code === 0 && text.length ? resolve() : reject(new Error(provider + ': ' + code + ' ' + text)));
-                      child.stdin.end();
-                    });
-                  }
-                  // Use the real SDK protocol, without a model prompt or provider credentials.
-                  const { createRequire } = await import('node:module');
-                  const require = createRequire('/repo/apps/harness/package.json');
-                  const { query } = await import(require.resolve('@anthropic-ai/claude-agent-sdk'));
-                  let finishInput, timeout;
-                  const input = (async function* () { await new Promise(resolve => { finishInput = resolve; }); })();
-                  const sdk = query({ prompt: input, options: {
-                    cwd, env: { CLAUDE_CONFIG_DIR: cwd + '/claude' }, settingSources: [],
-                    pathToClaudeCodeExecutable: '/opt/hosty-worker/claude',
-                    spawnClaudeCodeProcess: args => transport.spawn('claude', args.args, { cwd: args.cwd ?? cwd, env: args.env }),
-                  } });
-                  try {
-                    await Promise.race([(async () => {
-                      assert.ok(await sdk.initializationResult());
-                      await new Promise(resolve => setTimeout(resolve, 10000));
-                      assert.ok(await sdk.reinitialize());
-                    })(), new Promise((_, reject) => {
-                      timeout = setTimeout(() => reject(new Error('Idle SDK transport timed out')), 45000);
-                    })]);
-                  } finally { clearTimeout(timeout); finishInput?.(); sdk.close(); }
-                  assert.ok((await worker.sample()).memoryBytes > 0);
-                  assert.ok(await worker.diskUsage() >= 0);
-                  console.log('Both provider transports and accounting passed.');
-                  successful = true;
-                } finally {
-                  if (!successful) await worker.stop();
-                  // Leave the successful generation for Core's application Stop to terminate.
-                }
-                """);
-            var probeResult = await docker.RunAsync(["exec", coordinator, "node", "--import", "tsx", probe]);
-            Assert.True(probeResult.ExitCode == 0, probeResult.StandardOutput + probeResult.StandardError);
-            var workerName = $"hosty-agent-{bindings.InstanceId[..12]}-{bindings.InstallationId[..12]}-{generation}";
-            var workerInspection = await docker.RunAsync(["inspect", workerName]);
-            using (var inspected = JsonDocument.Parse(workerInspection.StandardOutput))
+            var workerName = DockerRuntimeAdapter.BuildContainerName(child.Id, harness.Id, "worker");
+            foreach (var name in new[] { coordinator, workerName })
             {
+                var inspection = await docker.RunAsync(["inspect", name]);
+                using var inspected = JsonDocument.Parse(inspection.StandardOutput);
                 var container = inspected.RootElement[0];
-                Assert.Equal(child.Id, container.GetProperty("Config").GetProperty("Labels").GetProperty("hosty.instance").GetString());
-                Assert.Equal("agent-worker", container.GetProperty("Config").GetProperty("Labels").GetProperty("hosty.app.service").GetString());
-                Assert.Equal(2147483648, container.GetProperty("HostConfig").GetProperty("Memory").GetInt64());
-                Assert.Equal(256, container.GetProperty("HostConfig").GetProperty("PidsLimit").GetInt64());
+                Assert.True(container.GetProperty("State").GetProperty("Running").GetBoolean());
+                Assert.Equal(harness.Id, container.GetProperty("Config").GetProperty("Labels").GetProperty("hosty.app.id").GetString());
+                Assert.DoesNotContain(container.GetProperty("Mounts").EnumerateArray(), mount => mount.GetProperty("Destination").GetString() == "/var/run/docker.sock");
             }
-            var writer = Path.Combine(cwd, "detached-writer");
-            var writerStart = await docker.RunAsync(["exec", "-d", workerName, "sh", "-c",
-                "while true; do date +%s >> $1; sleep .1; done", "probe", writer]);
-            Assert.Equal(0, writerStart.ExitCode);
-            await Task.Delay(500);
-            // A coordinator crash must not hide its still-running detached worker from Core Stop.
-            Assert.Equal(0, (await docker.RunAsync(["kill", coordinator])).ExitCode);
-            var liveWorker = await docker.RunAsync(["inspect", "--format", "{{.State.Running}}", workerName]);
-            Assert.Equal("true", liveWorker.StandardOutput.Trim());
+            foreach (var binary in new[] { "/opt/hosty-worker/codex", "/opt/hosty-worker/claude" })
+                Assert.Equal(0, (await docker.RunAsync(["exec", "--user", "1000:1000", workerName, binary, "--version"])).ExitCode);
             await Cli("apps", "stop", harness.Id);
-            var size = new FileInfo(writer).Length;
-            await Task.Delay(500);
-            Assert.Equal(size, new FileInfo(writer).Length);
-            var removed = await docker.RunAsync(["ps", "-a", "--filter", $"name=^/{workerName}$", "--format", "{{.ID}}"]);
-            Assert.Equal(0, removed.ExitCode); Assert.Empty(removed.StandardOutput.Trim());
-            Assert.True((await JsonStorage.ReadAsync<DevelopmentWorkerLease>(
-                Path.Combine(childPaths.CoreRoot, "development", "worker-leases", generation + ".json")))!.Active);
-            await workspaces.WorkerLeaseAsync(owner, new(generation, false), default);
-            // Clear this synthetic fixture only after the real coordinator has stopped. An
-            // independent writer cannot clear a running coordinator's cached ownership state.
-            var clearFixture = new ProcessStartInfo("node") { WorkingDirectory = repository.FullName };
-            foreach (var argument in new[] { "--import", "tsx", "--input-type=module", "-e",
-                "import { SharedDockerWorker } from './apps/harness/src/runtime/worker.ts'; const worker = new SharedDockerWorker(process.env.HOSTY_TEST_DATA, process.env.HOSTY_TEST_CACHE); await worker.load(); await worker.stop(); await worker.finish();" })
-                clearFixture.ArgumentList.Add(argument);
-            clearFixture.Environment["HOSTY_TEST_DATA"] = Path.Combine(appRoot, "data");
-            clearFixture.Environment["HOSTY_TEST_CACHE"] = Path.Combine(appRoot, "cache");
-            var cleared = await ProcessRunner.RunAsync(clearFixture, TimeSpan.FromSeconds(30), default);
-            Assert.True(cleared.ExitCode == 0, cleared.StandardError);
+            foreach (var name in new[] { coordinator, workerName })
+                Assert.Equal("false", (await docker.RunAsync(["inspect", "--format", "{{.State.Running}}", name])).StandardOutput.Trim());
             await Cli("apps", "start", harness.Id);
             var sentinel = Path.Combine(appRoot, "data", "runtime-switch-sentinel");
             await File.WriteAllTextAsync(sentinel, "preserved");

@@ -15,34 +15,31 @@ public sealed class RuntimeAppManifestRepositoryTests
         Assert.Equal("docker", initial.RuntimeProfile.Key);
         Assert.Equal("docker", initial.RuntimeProfile.Type);
         Assert.False(initial.RuntimeProfile.Development);
-        Assert.NotNull(initial.Manifest.AgentWorker);
+        Assert.Null(initial.Manifest.AgentWorker);
+        Assert.Equal(2, initial.Services.Count);
+        Assert.False(initial.Services.Single(s => s.Key == "worker").Injection!.AppServiceToken);
         var local = await manifests.LoadAsync(path, "local");
         Assert.Equal("localCommand", local.RuntimeProfile.Type);
         Assert.False(local.RuntimeProfile.Development);
-        Assert.Equal("native", Assert.Single(local.Services).Runtime.Environment["HOSTY_HARNESS_RUNTIME"]);
+        Assert.All(local.Services, service => Assert.Equal("native", service.Runtime.Environment["HOSTY_HARNESS_RUNTIME"]));
         Assert.True((await manifests.LoadAsync(path, "dev")).RuntimeProfile.Development);
         Assert.Equal("local", (await manifests.LoadAsync(path, "local", forceRead: true)).RuntimeProfile.Key);
     }
 
-    [Theory]
-    [InlineData("registry.example:5000/worker", false)]
-    [InlineData("registry.example:5000/worker:", false)]
-    [InlineData("registry.example:5000/worker:latest", false)]
-    [InlineData("registry.example:5000/worker:0.62.0", true)]
-    public async Task Harness_WorkerRequiresAnExplicitVersionBeyondRegistryPort(string image, bool valid)
+    [Fact]
+    public async Task Harness_RejectsRetiredAgentWorkerContract()
     {
         var document = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(
             Path.Combine(FindRepositoryRoot(), "apps/harness/manifest.json")))!;
-        document["agentWorker"]!["image"] = image;
+        document["agentWorker"] = new System.Text.Json.Nodes.JsonObject { ["service"] = "api", ["image"] = "registry.example/worker:1.0" };
         var root = Path.Combine(Path.GetTempPath(), "hosty-worker-manifest-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
-        var file = Path.Combine(root, "manifest.json");
         try
         {
+            var file = Path.Combine(root, "manifest.json");
             await File.WriteAllTextAsync(file, document.ToJsonString());
-            if (valid) Assert.Equal(image, (await new AppManifestService().LoadAsync(file)).Manifest.AgentWorker!.Image);
-            else Assert.Contains((await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(file))).Errors,
-                error => error.Code == "app_manifest_agent_worker_invalid");
+            Assert.Contains((await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(file))).Errors,
+                error => error.Code == "app_manifest_agent_worker_retired");
         }
         finally { Directory.Delete(root, recursive: true); }
     }

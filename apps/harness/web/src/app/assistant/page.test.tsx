@@ -136,7 +136,7 @@ it.each(["running", "awaiting_approval", "awaiting_question"])("keeps a draft un
   // Completion never automatically sends the draft.
   expect(api.postMessage).not.toHaveBeenCalled();
   await act(async () => button("Send")!.click());
-  expect(api.postMessage).toHaveBeenCalledExactlyOnceWith(record.id, "Next message", [], 0, false);
+  expect(api.postMessage).toHaveBeenCalledExactlyOnceWith(record.id, "Next message", [], 0, false, 0);
 });
 
 it("locks immediately after sending, including before SSE, and unlocks on completion", async () => {
@@ -277,7 +277,7 @@ it("sends mention text only after the app association commits, with the returned
   await act(async () => resolve({ ...record, appIds: ["media"], appContextRevision: 1 }));
   expect(input().value).toBe("Compare @Media Server ");
   await act(async () => button("Send")!.click());
-  expect(api.postMessage).toHaveBeenCalledExactlyOnceWith(record.id, "Compare @Media Server (media)", [], 1, false);
+  expect(api.postMessage).toHaveBeenCalledExactlyOnceWith(record.id, "Compare @Media Server (media)", [], 1, false, 0);
 });
 
 

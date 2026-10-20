@@ -626,8 +626,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Build shared agent worker
-        run: docker build -f apps/harness/worker/Dockerfile -t "ghcr.io/alex-de-haas/hosty-agent-worker:$(node -p 'require("./apps/harness/manifest.json").version')" .
+      - name: Build declared worker service
+        run: docker build -f apps/harness/worker/Dockerfile -t "ghcr.io/alex-de-haas/hosty-harness-worker:$(node -p 'require("./apps/harness/manifest.json").version')" .
       - name: Verify worker process and mount lifecycle
         run: node --import tsx scripts/check-harness-worker.mjs
 

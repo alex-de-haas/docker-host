@@ -1,6 +1,6 @@
 ---
 created: 2026-09-27
-updated: 2026-10-20
+updated: 2026-10-21
 summary: Session-owned logical workspaces group repository worktrees with compatible Git operations and a separately authorized inspection API.
 components: [apps/core, apps/harness]
 ---
@@ -224,19 +224,14 @@ including Shell. Registered worktrees have no exception to this rule. Direct CLI
 still select them subject to the common source-path restrictions. Harness's workspace API and source
 editing keep their existing `apps.sources.full` authorization; Shell does not acquire that permission.
 
-## Shared Docker Consumers
+## Declared Worker Source Access
 
-The [shared Harness worker](../assistant-shared-docker-runtime/feature.md) uses coordinator-only
-`GET .../workspaces/worker-bindings` and `POST .../workspaces/worker-bindings/lease` (`leaseId`,
-`acquire`). Existing app-service, reviewed source permission and administrator/session checks apply;
-external principals cannot obtain this binding descriptor. It exposes canonical shared roots and
-verified tree paths, not an isolated per-owner projection. Enabling this administrator-wide mode
-explicitly shares source across workspaces/users; the ordinary inspection API remains scoped.
-
-An active worker lease protects every tree against cleanup, including later allocations. Core
-serializes binding acquisition with cleanup and retains released UUID tombstones. Harness releases
-only after Docker confirms all writers stopped. An unknown worker outcome requires explicit recovery;
-lease age and a stopped local Docker client do not prove termination.
+Harness's [Worker service](../assistant-shared-docker-runtime/feature.md) sees the Core-owned tree
+collection through a persistent generic mount. Workspaces remain Core records with their existing
+paths, owners, branches and leases; resetting Harness does not import or migrate them. External
+agents keep their existing bindings. Creating/removing an eligible tree does not restart either
+Harness service, while specific consumers still prevent cleanup. The shared administrator runtime
+does not isolate one exposed worktree from another.
 
 ## Testing Expectations
 

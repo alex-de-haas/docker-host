@@ -7,7 +7,7 @@ import { SessionStore } from "./store.js";
 import { SettingsStore } from "../settings/store.js";
 import { AuditReporter } from "../audit.js";
 import { FakeHarnessAdapter } from "../harness/fake.js";
-import { SharedDockerWorker } from "../runtime/worker.js";
+import { WorkerClient } from "../worker/client.js";
 
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const action of cleanup.splice(0).reverse()) await action(); vi.restoreAllMocks(); });
@@ -39,11 +39,11 @@ it.each(["native", "docker"] as const)("uses the installed %s profile for existi
 it("Local runtime status does not require a Docker daemon", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "hosty-local-"));
   cleanup.push(() => rm(root, { recursive: true, force: true }));
-  const worker = new SharedDockerWorker(root, path.join(root, "cache"));
-  const health = vi.spyOn(worker, "health").mockRejectedValue(new Error("Docker is not installed"));
+  const worker = new WorkerClient("http://127.0.0.1:1", { version: 1, installation: "fixture", secret: "fixture" });
+  const health = vi.spyOn(worker, "capabilities").mockResolvedValue({ protocol: 1, capacity: 32 });
   const manager = new SessionManager(new SessionStore(root), new FakeHarnessAdapter(),
     new AuditReporter(null, null, "hosty.harness"), root, null, null, null, null, null, null, null, null, worker, "native");
   cleanup.push(() => manager.shutdown());
   expect(await manager.runtimeStatus()).toMatchObject({ defaultMode: "native" });
-  expect(health).not.toHaveBeenCalled();
+  expect(health).toHaveBeenCalledOnce();
 });

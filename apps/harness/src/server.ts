@@ -1,4 +1,6 @@
-import { WorkerError } from "./runtime/worker.js";
+import { WorkerApiError } from "./worker/contracts.js";
+import type { ConnectionService } from "./connections/service.js";
+import { WorkerError } from "./runtime/errors.js";
 import { createHostySessionResponse } from "@hosty-sdk/app/session/server";
 import { createHostyUiResponse } from "@hosty-sdk/app/ui/server";
 import { readOwnPermissionNotice } from "@hosty-sdk/app/permissions/server";
@@ -9,7 +11,8 @@ import { isTranslationKind, TranslationService } from "./translation/service.js"
 import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { ProviderError, type ProviderInvocation } from "@hosty-sdk/app/providers";
 import { HandoffStore } from "./handoff/store.js";
-import { ConnectionError, type AgentConnections } from "./connections/registry.js";
+import { ConnectionError } from "./connections/errors.js";
+import type { AgentConnections } from "./connections/registry.js";
 import { AppContextError, readContextApps, parseAppIds, captureContext, contextFromRoster } from "./sessions/app-context.js";
 import { AttachmentRefusedError, listAttachments, storeAttachment, type AttachmentRefusal } from "./sessions/attachments.js";
 import { pipeline } from "node:stream/promises";
@@ -59,11 +62,12 @@ export function createGatewayServer(
   providers: ProviderDirectory | null = null,
   proxy: McpProxy | null = null,
   facade: McpFacade | null = null,
-  connections: AgentConnections | null = null,
+  connections: ConnectionService | null = null,
+  internal?: (request: IncomingMessage, response: ServerResponse) => Promise<boolean>,
 ): Server {
   const handoffs = new HandoffStore(manager, settings, providers);
   const translations = connections && settings ? new TranslationService(connections, settings) : null;
-  const recovered = handoffs.sweep().then(() => manager.recoverMcpApprovals()).catch(error => {
+  const recovered = handoffs.sweep().then(() => manager.recoverWorkerRuns()).then(() => manager.recoverMcpApprovals()).catch(error => {
     // A transient directory/storage failure is retried by the periodic sweep. Keep unrelated
     // endpoints available and attach the handler immediately, before the first request arrives.
     console.error("[handoff] startup recovery failed", error);
@@ -71,14 +75,14 @@ export function createGatewayServer(
   const timer = setInterval(() => { void handoffs.sweep().catch(error => console.error("[handoff] cleanup failed", error)); }, 60_000);
   timer.unref();
   const server = createServer((request, response) => {
-    void recovered.then(() => route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations)).catch((error) => {
+    void recovered.then(async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations); }).catch((error) => {
       if (response.destroyed) return;
       if (error instanceof ProviderError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
       if (error instanceof SessionBusyError) {
         sendJson(response, 409, { code: "session_busy", message: error.message });
         return;
       }
-      if (error instanceof AppContextError || error instanceof ConnectionError || error instanceof WorkerError) {
+      if (error instanceof AppContextError || error instanceof ConnectionError || error instanceof WorkerError || error instanceof WorkerApiError) {
         sendJson(response, error.status, { code: error.code, message: error.message });
         return;
       }
@@ -113,7 +117,7 @@ async function route(
   providers: ProviderDirectory | null,
   proxy: McpProxy | null,
   facade: McpFacade | null,
-  connections: AgentConnections | null,
+  connections: ConnectionService | null,
   handoffs: HandoffStore,
   translations: TranslationService | null,
 ): Promise<void> {
@@ -348,14 +352,6 @@ async function route(
   // client builds `mcp__<server>__<tool>` from it and the grant set is keyed on it. So the id stays
   // and the label is translated, here, where the roster already is.
   if (url.pathname === "/api/runtime" && method === "GET") { sendJson(response, 200, await manager.runtimeStatus()); return; }
-  if (url.pathname === "/api/runtime/image" && method === "POST") {
-    if (!manager.worker) throw new WorkerError("worker_unavailable", "Managed worker storage is unavailable.", 503);
-    await manager.worker.install(); sendJson(response, 200, await manager.runtimeStatus()); return;
-  }
-  if (url.pathname === "/api/runtime/stop" && method === "POST") {
-    await manager.recoverDocker(actor.userId, actor.via === "app-session" ? readAppCredential(request) : undefined);
-    sendJson(response, 200, await manager.runtimeStatus()); return;
-  }
   if (method === "GET" && url.pathname === "/api/apps") {
     const discovered = providers ? await providers.read() : null;
     const core = providers?.core() ?? null;
@@ -395,7 +391,7 @@ async function route(
   const loginMatch = url.pathname.match(/^\/api\/provider-logins\/([a-zA-Z0-9-]+)$/);
   if (connections && loginMatch) {
     if (method === "DELETE") await connections.cancelLogin(loginMatch[1]!);
-    if (method === "GET" || method === "DELETE") { sendJson(response, 200, connections.loginView(loginMatch[1]!)); return; }
+    if (method === "GET" || method === "DELETE") { sendJson(response, 200, await connections.fetchLogin(loginMatch[1]!)); return; }
   }
   const connectionMatch = url.pathname.match(/^\/api\/connections\/([a-zA-Z0-9-]+)(\/test|\/login|\/prepare-docker)?$/);
   if (connections && connectionMatch) {
@@ -640,6 +636,9 @@ async function route(
   }
 
 
+  if (rest === "/models" && method === "GET") { sendJson(response, 200, await manager.modelCatalog(sessionId)); return; }
+  if (rest === "/model" && method === "PUT") { sendJson(response, 200, await manager.setModel(sessionId, await readJson(request))); return; }
+
   if (rest === "/provider" && method === "PUT") {
     const body = await readJson(request);
     sendJson(response, 200, await manager.setConnection(sessionId, body.connectionId, body.confirmLegacy === true)); return;
@@ -725,7 +724,7 @@ async function route(
     }
     try {
       // The presented token seeds the session's delegation chain; see SessionManager.postMessage.
-      await manager.postMessage(sessionId, body.text, await delegationCredential(request, false), attachments, { expectedRevision: body.appContextRevision, withoutDetails: body.withoutAppDetails === true,
+      await manager.postMessage(sessionId, body.text, await delegationCredential(request, false), attachments, { selectionRevision: body.selectionRevision, expectedRevision: body.appContextRevision, withoutDetails: body.withoutAppDetails === true,
         workspaceCredential: actor.via === "app-session" ? readAppCredential(request) : undefined });
     } catch (error) {
       if (error instanceof Error && /attachments need a workspace/.test(error.message)) {

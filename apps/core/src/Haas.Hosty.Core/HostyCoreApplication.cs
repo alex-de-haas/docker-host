@@ -122,7 +122,6 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<SourceDocumentService>();
         builder.Services.AddSingleton<SourceDocumentAuthorization>();
         builder.Services.AddSingleton<WorkspaceAuthorization>();
-        builder.Services.AddSingleton<AgentWorkerService>();
         builder.Services.AddSingleton<PublicationService>();
         builder.Services.AddHostedService<WorkspaceDeletionRecovery>();
         builder.Services.AddHostedService<PublicationObserver>();
@@ -423,7 +422,6 @@ internal static class HostyCoreApplication
         CloudflarePublicationEndpoints.Map(app);
         SourceEndpoints.Map(app);
         DevelopmentWorkspaceEndpoints.Map(app);
-        AgentWorkerEndpoints.Map(app);
         AppCreationEndpoints.Map(app);
         AppDevModeEndpoints.Map(app);
         AppExecutionTargetEndpoints.Map(app);

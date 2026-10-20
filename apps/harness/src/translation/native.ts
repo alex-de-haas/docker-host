@@ -6,6 +6,8 @@ import { ProviderError } from "@hosty-sdk/app/providers";
 import { isNodeEntry, resolveCodexCommand } from "../harness/codex-binary.js";
 
 export interface TranslationRuntime {
+  processTransport?: import("../runtime/transport.js").AgentProcessTransport;
+  execute?: (input: string, signal: AbortSignal, options: TranslationOptions) => Promise<string>;
   kind: "codex" | "claude";
   home: string;
   cwd: string;
@@ -73,6 +75,7 @@ export function translationText(value: unknown): string {
 
 export async function runTranslation(runtime: TranslationRuntime, input: string, signal: AbortSignal, options: TranslationOptions = {}): Promise<string> {
   signal.throwIfAborted();
+  if (runtime.execute) return runtime.execute(input, signal, options);
   const start = performance.now();
   const mark: TimingMark = (phase, detail) => options.observe?.({ phase, milliseconds: Math.round(performance.now() - start), ...detail });
   return runtime.kind === "claude" ? runClaude(runtime, input, signal, mark, options.model) : runCodex(runtime, input, signal, mark, options.model);
@@ -96,6 +99,8 @@ async function runClaude(runtime: TranslationRuntime, input: string, signal: Abo
   let stream: ReturnType<typeof query> | undefined;
   try {
     stream = query({ prompt: input, options: {
+      ...(runtime.processTransport ? { pathToClaudeCodeExecutable: "/opt/hosty-worker/claude",
+        spawnClaudeCodeProcess: (input: { args: string[]; cwd?: string; env: NodeJS.ProcessEnv }) => runtime.processTransport!.spawn("claude", input.args, { cwd: input.cwd ?? runtime.cwd, env: input.env }) } : {}),
       cwd: runtime.cwd, env: { ...runtime.env,
         ...(oauth ? { CLAUDE_CODE_SAFE_MODE: "1" } : { CLAUDE_CODE_SIMPLE: "1" }),
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", DISABLE_AUTOUPDATER: "1" },
@@ -132,14 +137,14 @@ async function runClaude(runtime: TranslationRuntime, input: string, signal: Abo
 
 async function runCodex(runtime: TranslationRuntime, input: string, signal: AbortSignal, mark: TimingMark, model?: string | null): Promise<string> {
   const schemaFile = path.join(runtime.home, "translation-schema.json");
-  await writeFile(schemaFile, JSON.stringify(TRANSLATION_SCHEMA), { mode: 0o600 });
+  await writeFile(schemaFile, JSON.stringify(TRANSLATION_SCHEMA), { mode: runtime.processTransport ? 0o644 : 0o600 });
   signal.throwIfAborted();
   const executable = resolveCodexCommand();
   const args = ["exec", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--json", "--output-schema", schemaFile,
     ...(model ? ["--model", model] : []),
     ...CODEX_TRANSLATION_CONFIG.flatMap(value => ["-c", value]), "-c", `developer_instructions=${JSON.stringify(TRANSLATION_INSTRUCTIONS + MARKDOWN_INSTRUCTIONS)}`, "-"];
   return new Promise<string>((resolve, reject) => {
-    const child = spawn(isNodeEntry(executable) ? process.execPath : executable,
+    const child = runtime.processTransport ? runtime.processTransport.spawn("codex", args, { cwd: runtime.cwd, env: runtime.env }) : spawn(isNodeEntry(executable) ? process.execPath : executable,
       isNodeEntry(executable) ? [executable, ...args] : args,
       { cwd: runtime.cwd, env: runtime.env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
     child.once("spawn", () => mark("spawned"));
@@ -149,7 +154,8 @@ async function runCodex(runtime: TranslationRuntime, input: string, signal: Abor
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     const kill = (force: boolean) => {
       if (!child.pid) return;
-      if (process.platform === "win32") {
+      if (runtime.processTransport) { child.kill(force ? "SIGKILL" : "SIGTERM"); }
+      else if (process.platform === "win32") {
         const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
         killer.on("error", () => child.kill("SIGKILL"));
       } else {

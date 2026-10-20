@@ -659,7 +659,8 @@ function MountsForm({
   globalMounts: CoreGlobalMount[];
   onConfigureMounts: (app: CoreApp, mounts: MountBindingInput[]) => void;
 }) {
-  const slots: CoreMountSlot[] = app.mounts || [];
+  const managed = (app.mounts ?? []).filter(slot => slot.kind === "managed-workspaces");
+  const slots: CoreMountSlot[] = (app.mounts ?? []).filter(slot => slot.kind !== "managed-workspaces");
   const slotsSignature = JSON.stringify(
     slots.map((slot) => [slot.key, slot.bindings.map((binding) => [binding.source ?? "local", binding.globalMountName ?? "", binding.label, binding.hostPath])]),
   );
@@ -694,7 +695,7 @@ function MountsForm({
     setRows((current) => ({ ...current, [key]: (current[key] ?? []).filter((_, rowIndex) => rowIndex !== index) }));
   };
 
-  if (slots.length === 0) {
+  if (slots.length === 0 && managed.length === 0) {
     return <EmptyState icon={HardDrive} title="No external storage" description="This app does not declare any external mount slots." />;
   }
 
@@ -727,6 +728,10 @@ function MountsForm({
         <p className="text-sm text-muted-foreground">
           Global mounts come from Shared mounts — label and path are fixed. Local paths bind a host folder directly; they must be absolute and outside the Hosty data root. External folders are never backed up or deleted by Hosty.
         </p>
+        {managed.map(slot => <div key={slot.key} className="space-y-1 rounded-md border p-3">
+          <p className="text-sm font-medium">Managed workspaces · {slot.service ?? "all services"}</p>
+          <p className="text-sm text-muted-foreground">Core supplies its worktree collection automatically ({slot.mode}). Repository metadata is read-only. This exposes sibling worktrees; active work still requires a workspace lease.</p>
+        </div>)}
         {slots.map((slot) => {
           const slotRows = rows[slot.key] ?? [];
           const canAdd = slot.multiple || slotRows.length === 0;
@@ -825,7 +830,7 @@ function MountsForm({
         })}
       </DialogBody>
       <DialogFooter>
-        <Button type="submit" disabled={busy || !canManageApps}>
+        <Button type="submit" disabled={busy || !canManageApps || slots.length === 0}>
           {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <HardDrive className="h-4 w-4" />}
           Save mounts
         </Button>

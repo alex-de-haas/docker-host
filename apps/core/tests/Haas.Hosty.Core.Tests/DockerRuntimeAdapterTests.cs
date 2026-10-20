@@ -3,7 +3,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core.Tests;
 
-public sealed class DockerRuntimeAdapterTests
+public sealed partial class DockerRuntimeAdapterTests
 {
     [Fact]
     public async Task PrepareAsync_ResolvesImageWithoutStoppingOrStartingOrdinaryContainers()
@@ -1041,6 +1041,7 @@ public sealed class DockerRuntimeAdapterTests
             {
                 Manifest = context.Manifest with
                 {
+                    Manifest = new RuntimeAppManifest { Cache = new() { Enabled = true, Targets = [new() { Runtime = "docker", Service = "app", ContainerPath = "/app/cache", Environment = "HOSTY_APP_CACHE_DIR" }] } },
                     CacheTarget = new RuntimeAppDataTarget
                     {
                         Runtime = "docker",
@@ -1056,7 +1057,7 @@ public sealed class DockerRuntimeAdapterTests
             var run = runner.Find("run");
             Assert.NotNull(run);
             var arguments = string.Join(' ', run);
-            Assert.Contains($"-v {Path.Combine(appRoot, "cache")}:/app/cache", arguments, StringComparison.Ordinal);
+            Assert.Contains($"-v {MountPathPolicy.ResolveRealPath(Path.Combine(appRoot, "cache"))}:/app/cache", arguments, StringComparison.Ordinal);
             Assert.Contains("-e HOSTY_APP_CACHE_DIR=/app/cache", arguments, StringComparison.Ordinal);
             Assert.True(Directory.Exists(Path.Combine(appRoot, "cache")));
         }

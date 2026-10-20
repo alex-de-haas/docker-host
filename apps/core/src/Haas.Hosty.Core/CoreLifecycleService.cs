@@ -893,7 +893,7 @@ internal sealed partial class CoreLifecycleService(
         foreach (var input in inputs)
         {
             var key = input.Key?.Trim() ?? string.Empty;
-            if (!slots.TryGetValue(key, out var slot))
+            if (!slots.TryGetValue(key, out var slot) || slot.Kind != "host-path")
             {
                 throw new AppLifecycleException("app_mount_slot_unknown", $"App '{app.Id}' does not declare an external mount slot '{key}'.");
             }
@@ -3937,7 +3937,7 @@ internal sealed partial class CoreLifecycleService(
     private static IReadOnlyList<AppMountSlot> BuildMountSlots(RuntimeAppManifest manifest)
         => manifest.ExternalMounts
             .OrderBy(entry => entry.Key, StringComparer.Ordinal)
-            .Select(entry => new AppMountSlot(entry.Key, entry.Value.Mode, entry.Value.Multiple, entry.Value.Required, entry.Value.Service))
+            .Select(entry => new AppMountSlot(entry.Key, entry.Value.Mode, entry.Value.Multiple || entry.Value.Kind == "managed-workspaces", entry.Value.Required, entry.Value.Service, entry.Value.Kind))
             .ToArray();
 
     private static IReadOnlyList<AppMountBinding> PreserveMounts(
@@ -4700,7 +4700,8 @@ internal sealed partial class CoreLifecycleService(
         // entry was deleted is dropped (inert); an entry capped to read-only forces ReadOnly on top
         // of the slot mode (the slot stays authoritative — it can only further restrict).
         var registry = await globalMounts.ReadAsync(cancellationToken);
-        var mounts = AppConfigurationFingerprint.ResolveMounts(app, registry);
+        var mounts = AppConfigurationFingerprint.ResolveMounts(app, registry)
+            .Concat(ManagedWorkspaceMounts.Resolve(paths, app, selection.Manifest)).ToArray();
         var development = await AppDevStore.ReadAsync(paths, app, cancellationToken);
         var activationId = development is { PreparedRuntime: not null, Phase: "starting" or "active" or "restarting" }
             ? development.ActivationId : null;
@@ -4776,11 +4777,11 @@ internal sealed partial class CoreLifecycleService(
         {
             var policy = new HostPathAuthority(paths, apps);
             await policy.AppAsync(context.App, ct);
-            foreach (var mount in context.Mounts) await policy.MountAsync(mount.HostPath, ct, context.App);
+            foreach (var mount in context.Mounts.Where(m => !m.ManagedCollection)) await policy.MountAsync(mount.HostPath, ct, context.App);
             var sourcePaths = HostPathAuthority.CodePaths(context.App).Select(MountPathPolicy.ResolveRealPath).ToArray();
             await apps.UpdateAppAsync(context.App.Id, current => current with
             {
-                ActiveMountPaths = (current.ActiveMountPaths ?? []).Concat(context.Mounts.Select(m => m.HostPath)).Distinct().ToArray(),
+                ActiveMountPaths = (current.ActiveMountPaths ?? []).Concat(context.Mounts.Where(m => !m.ManagedCollection).Select(m => m.HostPath)).Distinct().ToArray(),
                 ActiveSourcePaths = (current.ActiveSourcePaths ?? []).Concat(sourcePaths).Distinct().ToArray(),
             }, ct);
             return context;
@@ -4812,7 +4813,9 @@ internal sealed partial class CoreLifecycleService(
             // repointed at a forbidden location since (TOCTOU). EnsureAllowed resolves internally, fails
             // closed on a resolution error, and returns the exact real path it validated so existence
             // and the mount both use that single resolution (no second resolve to race against).
-            var realPath = mountPathPolicy.EnsureAllowed(mount.HostPath);
+            var realPath = mount.ManagedCollection
+                ? ManagedWorkspaceMounts.Validate(paths, context.App, context.Manifest.Manifest, mount)
+                : mountPathPolicy.EnsureAllowed(mount.HostPath);
             if (!MountPathPolicy.HostPathExists(realPath))
             {
                 throw new AppLifecycleException(
@@ -5490,11 +5493,6 @@ internal sealed partial class CoreLifecycleService(
             changes.Add("role:runtime->system");
         }
 
-        if (currentSelection.Manifest.AgentWorker != targetSelection.Manifest.AgentWorker)
-        {
-            static string WorkerDescription(AgentWorkerManifest? worker) => worker is null ? "none" : $"{worker.Service}@{worker.Image}";
-            changes.Add($"agentWorker:{WorkerDescription(currentSelection.Manifest.AgentWorker)}->{WorkerDescription(targetSelection.Manifest.AgentWorker)}");
-        }
         AddUpdateServiceChanges(changes, currentSelection, targetSelection);
         AddSettingChanges(changes, app.Settings, BuildSettingDefinitions(targetSelection));
         changes.AddRange(BuildExternalMountChanges(currentSelection.Manifest.ExternalMounts, targetSelection.Manifest.ExternalMounts));

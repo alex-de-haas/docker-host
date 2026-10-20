@@ -44,7 +44,7 @@ internal sealed partial class SandboxDockerRuntime(IDockerCommandRunner docker, 
                     ApplicationPids: requested.Pids + 80));
             var policy = await JsonStorage.ReadAsync<SandboxRuntimePolicy>(Path.Combine(store.Root, "runtime.json"), ct)
                 ?? throw Error("sandbox_runtime_not_prepared", "Prepare the trusted sandbox relay image and runtime policy first.");
-            if (!OperatingSystem.IsMacOS() || policy.MaxRunningInstances is < 1 or > 2 || policy.ReservedAgentBytes is < 0 or > 4294967296)
+            if (!OperatingSystem.IsMacOS() || policy.MaxRunningInstances is < 1 or > 2)
                 throw Error("sandbox_host_unsupported", "This reviewed profile supports local macOS Docker Desktop only.");
             if (!ValidImage(policy.RelayImage)) throw Error("sandbox_runtime_not_prepared", "The relay must be pinned by immutable local image ID.");
             await Admit(instance, policy, recordResource, ct);
@@ -380,9 +380,8 @@ internal sealed partial class SandboxDockerRuntime(IDockerCommandRunner docker, 
         var running = (await store.ListAsync(ct)).Where(i => (browser || i.Id != instance.Id) && i.State is "ready" or "starting" or "unhealthy" or "stopping" or "unknown").ToArray();
         if (!browser && running.Length >= policy.MaxRunningInstances) throw Error("sandbox_concurrency_exceeded", "Stop a running sandbox before starting another; this profile has no queue.");
         var reserved = running.Sum(i => (i.Request.Limits ?? new()).MemoryBytes + 268435456)
-            + (browser ? 1610612736 : (instance.Request.Limits ?? new()).MemoryBytes + 268435456) + policy.ReservedAgentBytes + 2 * GiB;
+            + (browser ? 1610612736 : (instance.Request.Limits ?? new()).MemoryBytes + 268435456) + 2 * GiB;
         var live = await Run(["ps", "--quiet", "--no-trunc"], ct);
-        var remainingAgentReservation = policy.ReservedAgentBytes;
         foreach (var id in live.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var inspected = await Run(["container", "inspect", id], ct);
@@ -394,9 +393,7 @@ internal sealed partial class SandboxDockerRuntime(IDockerCommandRunner docker, 
             if (CoveredByAppReservation(running, item.GetProperty("Id").GetString()!)) continue;
             var memory = item.GetProperty("HostConfig").GetProperty("Memory").GetInt64();
             if (memory <= 0) throw Error("resource_budget_unknown", "A running Docker workload has no memory ceiling; its reservation must be coordinated before sandbox admission.");
-            var coveredAgent = await SharedWorkerReservationAsync(item, config.DataRoot, remainingAgentReservation, ct);
-            remainingAgentReservation -= coveredAgent;
-            reserved += memory - coveredAgent;
+            reserved += memory;
         }
         if (reserved > document.RootElement.GetProperty("MemTotal").GetInt64())
             throw Error("resource_budget_exceeded", $"The local sandbox profile requires {reserved} bytes including existing workloads and 2 GiB headroom.");

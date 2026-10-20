@@ -611,7 +611,7 @@ internal sealed record AppStorageMapping(string Key, string HostPath, string Tar
 
 // External host-path mount slot declared by the manifest, denormalized onto the app record
 // (like AppRuntimeProfileSummary) so the API can describe slots without re-loading the manifest.
-internal sealed record AppMountSlot(string Key, string Mode, bool Multiple, bool Required, string? Service);
+internal sealed record AppMountSlot(string Key, string Mode, bool Multiple, bool Required, string? Service, string Kind = "host-path");
 
 // Operator-configured binding of a host path into a declared mount slot. The container path
 // is derived deterministically from the operator-chosen Label (`/mnt/{Key}/{Label}`) so it is
@@ -1311,7 +1311,7 @@ internal sealed record AppSummary(
                         RuntimeMountPlanner.BuildContainerPath(binding.Key, binding.Label),
                         binding.GlobalMountName is null ? "local" : "global",
                         binding.GlobalMountName))
-                    .ToArray()))
+                    .ToArray(), slot.Kind))
             .ToArray();
     }
 
@@ -1463,7 +1463,7 @@ internal sealed record AppMountSummary(
     bool Multiple,
     bool Required,
     string? Service,
-    IReadOnlyList<AppMountBindingSummary> Bindings);
+    IReadOnlyList<AppMountBindingSummary> Bindings, string Kind = "host-path");
 
 // Source is "global" (HostPath resolved from the shared-mounts library entry named GlobalMountName)
 // or "local" (inline operator path). HostPath for a global binding is the last-resolved display cache.

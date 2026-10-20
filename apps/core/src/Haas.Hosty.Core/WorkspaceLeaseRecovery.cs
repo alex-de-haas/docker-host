@@ -36,7 +36,7 @@ internal sealed partial class DevelopmentWorkspaceService
             tree = await Observe(tree, ct);
             if (tree.Observation?.State != "ok" || string.IsNullOrWhiteSpace(input.ExpectedHead) || input.ExpectedHead != tree.Observation.Head)
                 throw Error("stale_head", "Workspace HEAD changed or is unavailable. Review the source before recovery.");
-            return await Locked("shared-worker-bindings", async () =>
+            return await Locked("workspace-consumers", async () =>
             {
                 // Ignore only the activity markers, not sandbox, dev-mode, service or worker consumers.
                 foreach (var app in await apps.ListAppRecordsAsync(ct))

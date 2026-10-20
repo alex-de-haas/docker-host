@@ -70,7 +70,7 @@ describe("provider connections", () => {
       HOSTY_HARNESS_CODEX_COMMAND: path.resolve(
         "test/fake-codex-server.mjs",
       ),
-      HOSTY_TEST_LOGIN_MODE: "complete",
+      TEST_LOGIN_MODE: "complete",
     });
   });
   afterEach(async () => {
@@ -333,7 +333,7 @@ describe("provider connections", () => {
       kind: "codex",
       auth: "chatgpt",
     });
-    process.env.HOSTY_TEST_LOGIN_MODE = "pending";
+    process.env.TEST_LOGIN_MODE = "pending";
     const [a, b] = await Promise.all([
       registry.startLogin(c.id),
       registry.startLogin(c.id),
@@ -342,11 +342,11 @@ describe("provider connections", () => {
     await registry.cancelLogin(a.id);
     expect(registry.loginView(a.id).status).toBe("cancelled");
     expect(secrets.values.size).toBe(0);
-    process.env.HOSTY_TEST_LOGIN_MODE = "complete";
+    process.env.TEST_LOGIN_MODE = "complete";
     const success = await registry.startLogin(c.id);
     await waitFor(() => registry.loginView(success.id).status === "complete");
     const previous = await registry.get(c.id);
-    process.env.HOSTY_TEST_LOGIN_MODE = "fail";
+    process.env.TEST_LOGIN_MODE = "fail";
     const fail = await registry.startLogin(c.id);
     await waitFor(() => registry.loginView(fail.id).status === "failed");
     expect((await registry.get(c.id)).secretKey).toBe(previous.secretKey);
@@ -391,12 +391,10 @@ describe("provider connections", () => {
     const connection = await registry.update({ name: "Portable", kind: "codex", auth: "host-login", hostDirectory: host });
     const binding = (await registry.binding(connection.id))!;
     await registry.adapter(binding, true);
-    const mounts = await registry.workerMounts(binding);
-    const home = mounts[0]!.source;
+    const home = path.join(cache, "agent-docker-providers", connection.id, String(connection.revision));
     expect(home).toContain("agent-docker-providers"); expect(home).not.toBe(await realpath(host));
     expect(JSON.parse(await readFile(path.join(home, "auth.json"), "utf8"))).toEqual({ OPENAI_API_KEY: "selected-host-key" });
     expect(await readFile(path.join(home, "config.toml"), "utf8").catch(() => null)).toBeNull();
-    expect(mounts.every(m => m.source !== host && !m.source.endsWith("/data"))).toBe(true);
     secrets.values.clear();
     await expect(registry.adapter(binding, true)).rejects.toMatchObject({ code: "provider_reconnect_required" });
     expect(JSON.parse(await readFile(path.join(host, "auth.json"), "utf8"))).toEqual(auth);
@@ -460,7 +458,7 @@ describe("provider connections", () => {
     const connection = await registry.update(api("split")); const binding = (await registry.binding(connection.id))!;
     const docker = await registry.adapter(binding, true);
     expect(await docker.probe()).toEqual({ available: true });
-    const home = (await registry.workerMounts(binding))[0]!.source;
+    const home = path.join(cache, "agent-docker-providers", connection.id, String(connection.revision));
     await writeFile(path.join(home, "config.toml"), "container-only-settings");
     await registry.adapter(binding);
     const native = path.join(cache, "agent-providers", connection.id, String(connection.revision));

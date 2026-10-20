@@ -1,5 +1,6 @@
 "use client";
 import { HostyNavigationBoundary } from "@hosty-sdk/app/react";
+import { SessionModel } from "@/components/session-model";
 import { SessionAutonomy } from "@/components/session-autonomy";
 import { useHostyUi } from "@hosty-sdk/app/ui/react";
 import { AssistantActivity } from "@/components/assistant-activity";
@@ -229,6 +230,14 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           const revision = ++settingsRefresh;
           void getSession(record.id).then(value => { if (!abort.signal.aborted && revision === settingsRefresh && activeSessionId.current === record.id) onSessionChange(value); }).catch(() => {});
           void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
+          return;
+        }
+        if (event.type === "model_selection_changed") {
+          const revision = Number(event.revision);
+          const selection = event.selection as AssistantSession["executionSelection"];
+          const apply = (current: AssistantSession) => current.id === record.id && revision > (current.selectionRevision ?? 0)
+            ? { ...current, executionSelection: selection, selectionRevision: revision } : current;
+          setSession(current => current ? apply(current) : current); setSessions(current => current.map(apply));
           return;
         }
         if (event.type === "user_message") setSession(current => current?.id === record.id ? { ...current, ...(current.providerLocked !== undefined ? { providerLocked: true } : {}) } : current);
@@ -578,7 +587,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       if (activeSessionId.current === session.id) setUploadingFile(null);
       // Lock the composer before the HTTP response: SSE may confirm (or finish) the turn first.
       if (activeSessionId.current === session.id) setStatus("running");
-      await postMessage(session.id, trimmed, stored.map((attachment) => attachment.name), session.appContextRevision ?? 0, withoutAppDetails);
+      await postMessage(session.id, trimmed, stored.map((attachment) => attachment.name), session.appContextRevision ?? 0, withoutAppDetails, session.selectionRevision ?? 0);
       // Clear only after acceptance, and never overwrite another session opened during the request.
       clearDraft(session.id);
       setSessions(current => current.map(item => item.id === session.id ? { ...item, handoffDraft: undefined } : item));
@@ -986,6 +995,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                         </DropdownMenuGroup>
                       </DropdownMenuContent>
                     </DropdownMenu>
+                    {session?.connectionId && <SessionModel key={`${session.id}:${session.connectionId}:${session.connectionRevision}`} session={{ ...session, status }} busy={sending || stopping || mentionSaving || contextSaving || providerSaving}
+                      onSavingChange={onProviderSaving} onChange={onSessionChange} />}
                     {session && <SessionAutonomy key={session.id} session={{ ...session, status }} busy={sending || stopping || mentionSaving || contextSaving || providerSaving}
                       onSavingChange={onProviderSaving} onChange={onSessionChange} />}
                     {session && session.providerLocked !== undefined && <SessionProvider key={`${session.id}:${session.connectionId}:${session.connectionRevision}`} session={session} busy={sending || mentionSaving || contextSaving || providerSaving} onSavingChange={onProviderSaving} onChange={record => {

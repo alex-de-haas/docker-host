@@ -60,3 +60,7 @@ test("an error without a message never becomes a successful assignment", async (
   assert.match(results[0].error, /failed/);
   assert.deepEqual(acceptSavedAssignments({ app: [] }, results), { app: [] });
 });
+
+test("managed source collections cannot be assigned shared host folders", () => {
+  assert.match(mountSlotConflict({ ...slot("development"), kind: "managed-workspaces" }, "disk"), /automatically/);
+});

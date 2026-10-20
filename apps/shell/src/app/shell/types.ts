@@ -378,6 +378,7 @@ export type CoreMountBinding = {
 };
 
 export type CoreMountSlot = {
+  kind?: "host-path" | "managed-workspaces";
   key: string;
   mode: string;
   multiple: boolean;

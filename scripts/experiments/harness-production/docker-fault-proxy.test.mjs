@@ -41,7 +41,7 @@ test('forwards wait headers before a later request completes its body', async t 
 test('scopes image and connection faults to proxy clients and recovers', async t => {
   const f = await fixture(t, (_req, res) => res.end('upstream'));
   await f.fault('worker-image');
-  const refused = await f.request('GET', '/v1.52/images/ghcr.io%2Fexample%2Fhosty-agent-worker%3A0.62.0/json');
+  const refused = await f.request('GET', '/v1.52/images/ghcr.io%2Fexample%2Fhosty-harness-worker%3A0.62.0/json');
   assert.equal(refused.statusCode, 404); await body(refused);
   assert.equal(await body(await f.request('GET', '/info')), 'upstream');
   await f.fault('offline');

@@ -47,15 +47,8 @@ interface RegistryState {
   imported: boolean;
   retiredKeys?: string[];
 }
-export class ConnectionError extends Error {
-  constructor(
-    public readonly status: number,
-    public readonly code: string,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+import { ConnectionError } from "./errors.js";
+export { ConnectionError } from "./errors.js";
 export type ConnectionBinding = {
   connectionId: string;
   connectionRevision: number;
@@ -558,11 +551,10 @@ export class AgentConnections {
     }
     return docker ? await realpath(home) : home;
   }
-  async workerMounts(binding: ConnectionBinding): Promise<import("../runtime/worker.js").WorkerMount[]> {
+  async executionHome(binding: ConnectionBinding): Promise<string> {
     const connection = await this.get(binding.connectionId);
-    if (connection.revision !== binding.connectionRevision) throw new ConnectionError(409, "provider_credentials_changed", "Select the updated connection in a new chat.");
-    const home = await this.nativeHome(connection, true);
-    return [{ source: await realpath(home) }, ...await Promise.all((connection.kind === "codex" ? ["sessions", "archived_sessions"] : ["projects"]).map(async directory => ({ source: await realpath(path.join(home, directory)) })))];
+    if (connection.revision !== binding.connectionRevision) throw new ConnectionError(409, "provider_credentials_changed", "Select the current connection.");
+    return this.nativeHome(connection, this.applicationMode === "docker");
   }
   /** Explicit operator action while Local can read the selected host login. */
   async prepareDockerAuthorization(id: string): Promise<void> {
@@ -670,6 +662,7 @@ export class AgentConnections {
     return {
       name: adapter.name,
       capabilities: adapter.capabilities,
+      models: adapter.models ? () => adapter.models!() : undefined,
       probe: () => docker ? Promise.resolve({ available: true }) : adapter.probe(),
       start: (options) => {
         if (this.translationActive.has(binding.connectionId))
@@ -858,6 +851,22 @@ export class AgentConnections {
         }
       }
     });
+  }
+  async fetchLogin(id: string) { return this.loginView(id); }
+  private modelCatalogs = new Map<string, { expires: number; value: Promise<import("../worker/contracts.js").ModelCatalog> }>();
+  async models(id: string) {
+    const binding = await this.binding(id);
+    if (!binding) throw new ConnectionError(404, "provider_not_found", "Provider not found.");
+    const key = JSON.stringify(binding), cached = this.modelCatalogs.get(key);
+    if (cached && cached.expires > Date.now()) return cached.value;
+    const value = (async () => {
+      const adapter = await this.adapter(binding);
+      if (!adapter.models) throw new ConnectionError(503, "catalog_unavailable", "Provider does not expose a model catalog.");
+      return adapter.models();
+    })();
+    if (this.modelCatalogs.size >= 100) this.modelCatalogs.clear();
+    this.modelCatalogs.set(key, { expires: Date.now() + 60000, value });
+    try { return await value; } catch (error) { this.modelCatalogs.delete(key); throw error; }
   }
   async summary() {
     const defaultHealth = await this.health();

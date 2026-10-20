@@ -8,7 +8,7 @@ import type { AssistantHandoff } from "@hosty-sdk/app/assistant";
 import type { SessionManager } from "../sessions/manager.js";
 import type { SettingsStore } from "../settings/store.js";
 import type { ProviderDirectory } from "../settings/providers.js";
-import { ConnectionError } from "../connections/registry.js";
+import { ConnectionError } from "../connections/errors.js";
 import { AppContextError, parseAppIds, validateSelection } from "../sessions/app-context.js";
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_SESSION, MAX_SESSION_ATTACHMENT_BYTES, sanitizeAttachmentName, fitToBytes } from "../sessions/attachments.js";
 
