@@ -3,6 +3,8 @@ import { pathToFileURL } from 'node:url';
 
 const sha = value => /^[a-f0-9]{40}$/.test(value ?? '');
 const runId = value => /^[1-9][0-9]*$/.test(String(value ?? ''));
+const numericIdentity = value => typeof value === 'string' && /^[1-9][0-9]*$/.test(value);
+const buildType = 'https://github.com/alex-de-haas/docker-host/blob/main/docs/features/ci-feedback-loop/feature.md#publication-provenance-v1';
 
 // Automatic provenance uses the signing workflow's OIDC SHA, which can be newer than workflow_run
 // source. Keep execution identity honest and declare the validated input separately:
@@ -17,6 +19,10 @@ export function publicationProvenance(env) {
     || !runId(env.VALIDATED_CI_RUN_ID) || !runId(env.GITHUB_RUN_ID) || !runId(env.GITHUB_RUN_ATTEMPT)) {
     throw new Error('Provenance requires full source/execution/workflow SHAs, repository and validated run identities.');
   }
+  if (!numericIdentity(env.GITHUB_REPOSITORY_ID) || !numericIdentity(env.GITHUB_REPOSITORY_OWNER_ID)) {
+    throw new Error('Provenance requires positive numeric repository and owner IDs as strings.');
+  }
+  if (!['github-hosted', 'self-hosted'].includes(env.RUNNER_ENVIRONMENT)) throw new Error('Provenance requires a recognized runner environment.');
   if (!['workflow_run', 'workflow_dispatch'].includes(env.GITHUB_EVENT_NAME)) throw new Error('Unexpected publication provenance event.');
   const prefix = `${repository}/`;
   const workflowRef = env.GITHUB_WORKFLOW_REF;
@@ -36,22 +42,30 @@ export function publicationProvenance(env) {
   }
   return {
     buildDefinition: {
-      buildType: 'https://actions.github.io/buildtypes/workflow/v1',
+      buildType,
       externalParameters: {
         workflow: { ref, repository: repositoryUrl, path: workflowPath },
         source: { repository: repositoryUrl, commit: sourceSha },
         validation: { workflow: '.github/workflows/ci.yml', runId: String(env.VALIDATED_CI_RUN_ID) },
         operation,
       },
-      internalParameters: { github: { event_name: env.GITHUB_EVENT_NAME, execution_sha: executionSha } },
+      internalParameters: {
+        github: {
+          event_name: env.GITHUB_EVENT_NAME,
+          repository_id: env.GITHUB_REPOSITORY_ID,
+          repository_owner_id: env.GITHUB_REPOSITORY_OWNER_ID,
+          runner_environment: env.RUNNER_ENVIRONMENT,
+          execution_sha: executionSha,
+        },
+      },
       resolvedDependencies: [
-        { uri: `git+${repositoryUrl}@refs/heads/main`, name: 'validated-source', digest: { gitCommit: sourceSha } },
-        { uri: `git+${repositoryUrl}/${workflowPath}@${ref}`, name: 'publishing-workflow', digest: { gitCommit: workflowSha } },
+        { uri: `git+${repositoryUrl}@${sourceSha}`, name: 'validated-source', digest: { gitCommit: sourceSha } },
+        { uri: `git+${repositoryUrl}@${ref}`, name: 'publishing-workflow', digest: { gitCommit: workflowSha } },
         { uri: ciRun, name: firmware && env.GITHUB_EVENT_NAME === 'workflow_run' ? 'firmware-producer-ci-run' : 'successful-ci-validation' },
       ],
     },
     runDetails: {
-      builder: { id: 'https://github.com/actions/runner/github-hosted' },
+      builder: { id: `${server}/${workflowRef}` },
       metadata: { invocationId: `${repositoryUrl}/actions/runs/${env.GITHUB_RUN_ID}/attempts/${env.GITHUB_RUN_ATTEMPT}` },
     },
   };

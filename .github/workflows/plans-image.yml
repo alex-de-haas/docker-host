@@ -138,6 +138,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
+      # Metadata reads the validated Git commit; a raw SHA checkout has no branch to infer.
+      - name: Attach validated source for Git metadata
+        env:
+          PUBLISH_SOURCE_SHA: ${{ needs.validation.outputs.source-sha }}
+        run: git switch --create hosty-publish-source "$PUBLISH_SOURCE_SHA"
+
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6

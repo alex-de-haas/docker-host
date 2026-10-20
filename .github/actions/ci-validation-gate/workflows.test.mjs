@@ -126,7 +126,10 @@ test('completed-CI publications bind every source consumer while SDKs preserve p
     assert.match(text, /source-sha: \$\{\{ needs.validation.outputs.source-sha \}\}/);
     assert.doesNotMatch(text, /uses: actions\/attest-build-provenance/);
     assert.match(text, /predicate-type: https:\/\/slsa.dev\/provenance\/v1\n          predicate-path: publication-provenance.json/);
-    if (file.endsWith('-image.yml')) assert.match(text, /context: git/);
-    else assert.match(text, /git tag --force (?:cli-dev|cardputer-dev) "\$\{?PUBLISH_SOURCE_SHA\}?"/);
+    if (file.endsWith('-image.yml')) {
+      assert.match(text, /context: git/);
+      const attach = text.indexOf('run: git switch --create hosty-publish-source "$PUBLISH_SOURCE_SHA"');
+      assert.ok(attach > 0 && attach < text.indexOf('- name: Extract Docker metadata'), `${file} gives exact-SHA Git metadata a named local ref`);
+    } else assert.match(text, /git tag --force (?:cli-dev|cardputer-dev) "\$\{?PUBLISH_SOURCE_SHA\}?"/);
   }
 });
