@@ -36,7 +36,9 @@ package manifest or data backup. A missing release profile is reported as unavai
 Source edits and current ordinary data remain intact.
 
 `GET /api/apps/execution-targets` returns one shared inventory; the app-specific variant is
-`GET /api/apps/{appId}/execution-targets`. An explicit choice is:
+`GET /api/apps/{appId}/execution-targets`. A malformed workspace recipe is isolated to its app in
+the shared inventory; the app-specific endpoint retains the validation error for diagnosis. Other
+apps keep their available choices. An explicit choice is:
 
 ```json
 { "requestId": "UUID", "kind": "workspace", "workspaceId": "aggregate-id", "worktreeId": "tree-id" }
@@ -533,6 +535,8 @@ used by Shell or another app in a shared worktree.
 
 - Version and execution edits admit ordinary/system workspace participants without replacing the
   installed package. Actual access expansion requires exact scoped approval before setup or Stop.
+- Corrupt one app's recipe and verify shared inventory retains healthy app choices while the
+  app-specific endpoint still reports the validation failure without mutating metadata or runtimes.
 - Verify workspace/package group admission omits removed or reinstalled bindings while current
   participants complete, without creating stale child journals or changing admitted replay intent.
 - Verify workspace-wide package return after private-source revocation or source loss, retained

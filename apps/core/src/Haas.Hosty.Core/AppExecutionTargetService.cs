@@ -22,6 +22,10 @@ internal sealed class AppExecutionTargetService(CoreDataPaths paths, AppRegistry
         {
             try { targets.Add(await lifecycle.ReadExecutionTargetsAsync(app.Id, inventory, ct, selectable)); }
             catch (AppManifestException) { /* A broken unrelated app does not hide the remaining choices. */ }
+            catch (AppLifecycleException ex) when (ex.Code == "dev_recipe_invalid")
+            {
+                logger.LogWarning(ex, "Cannot read execution choices for app {AppId}: workspace runtime metadata is invalid.", app.Id);
+            }
         }
         return new(targets.ToArray());
     }
