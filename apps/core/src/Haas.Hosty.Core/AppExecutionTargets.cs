@@ -14,7 +14,7 @@ internal sealed record AppExecutionStatus(string RequestId, string State, AppSum
     string? Code = null, string? Error = null, InstallationPrepare? Review = null);
 internal sealed record AppPackageBaseline(DateTimeOffset Installation, string Runtime);
 internal sealed record AppExecutionOwner(DateTimeOffset Installation, string RequestId);
-internal sealed record WorkspaceExecutionRecipe(string AppId, DateTimeOffset Installation, string Runtime, WorkspaceRecipeRequest[]? Requests = null);
+internal sealed record WorkspaceExecutionRecipe(string AppId, DateTimeOffset Installation, string Runtime, WorkspaceRecipeRequest[]? Requests = null, string? WorktreeId = null);
 internal sealed record AppExecutionOperation(string AppId, AppExecutionTargetRequest Request,
     WorkspaceActivationActor Actor, DateTimeOffset Installation, string ExpectedBinding, string Fingerprint,
     string State = "running", string Phase = "pending", RuntimePreparation? Prepared = null,

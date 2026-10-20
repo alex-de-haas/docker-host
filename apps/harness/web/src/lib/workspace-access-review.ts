@@ -5,7 +5,8 @@ export type WorkspaceAccessReview = InstallationSource & { workspaceManifest: Re
 /** Register and submit the exact review before opening Core; a plan alone has no approval URL. */
 export async function approveWorkspaceAccess(review: WorkspaceAccessReview, submitted: (request: InstallationRequest) => void): Promise<InstallationRequest> {
   const client = createInstallationClient({ baseUrl: "/api/workspace-access-reviews" });
-  const prepared = await client.prepare(review);
+  const candidate: WorkspaceAccessReview = { workspaceManifest: review.workspaceManifest };
+  const prepared = await client.prepare(candidate);
   if (prepared.status !== "draft") throw new Error("Core returned an unexpected access review state.");
   const deadline = Date.parse(prepared.expiresAt);
   const check = () => { if (!Number.isFinite(deadline) || Date.now() >= deadline) throw new Error("Core access confirmation expired. Review the current workspace candidate again."); };

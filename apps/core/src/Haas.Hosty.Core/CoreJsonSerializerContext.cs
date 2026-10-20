@@ -287,6 +287,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppPackageBaseline))]
 [JsonSerializable(typeof(AppExecutionOwner))]
 [JsonSerializable(typeof(WorkspaceExecutionRecipe))]
+[JsonSerializable(typeof(WorkspaceExecutionSelection))]
 [JsonSerializable(typeof(WorkspaceRecipeRequest))]
 [JsonSerializable(typeof(WorkspaceRecipeReceipt))]
 [JsonSerializable(typeof(AppExecutionOperation))]

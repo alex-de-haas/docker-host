@@ -167,6 +167,9 @@ record substitutes for observed runtime readiness and browser verification.
   corrupt-journal behavior.
 - A newer public runtime switch or legacy development selection supersedes an interrupted unified
   package request. Replaying that old UUID must not replace the newer target or perform lifecycle work.
+- Configure a selected app worktree across multiple repository bindings; inventory and group
+  execution agree, old configuration retries preserve newer choices, and stale/foreign/reinstalled
+  bindings or unresolved ambiguity fail before lifecycle effects.
 - Use a Core-managed isolated integration environment, normal password authentication and actual
   preview URLs for browser/agent verification. Run affected Core/CLI/Harness/Shell tests and builds,
   Core Native AOT, version consistency and documentation validation.

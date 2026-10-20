@@ -54,6 +54,7 @@ internal sealed partial class CoreLifecycleService
             if (retained is not null)
             {
                 op = retained;
+                await ClaimExecutionTargetAsync(app, id, ct);
                 await apps.UpdateAppAsync(app.Id, a => a with { DevModeId = id }, ct);
                 app = await RequireAppAsync(app.Id, ct);
             }
@@ -71,12 +72,15 @@ internal sealed partial class CoreLifecycleService
                 "prepared", Receipts: [new(id, activation.Fingerprint, "enter", "pending")], SourceHead: plan.Head, ActivationId: activation.Id);
             op = await SaveExecutionCandidateAsync(op, await PrepareExecutionCandidateAsync(app, plan.SourcePath!,
                 plan.TargetRuntime!, op.Actor, ct), ct);
+            await ClaimExecutionTargetAsync(app, id, ct);
             await AppDevStore.SaveAsync(paths, op, ct);
             await apps.UpdateAppAsync(app.Id, a => a with { DevModeId = id }, ct);
         }
         _ = await DevWorkspaces.WithDevAdmissionAsync(op.WorktreeId!, app, null, () => Task.FromResult(true), ct);
         await ValidateDevBindingAsync(await RequireAppAsync(app.Id, ct), op, ct);
         await ValidateLiveDevManifestAsync(op, ct);
+        // Adopt a prepared pointer written by an older Core before execution ownership existed.
+        await ClaimExecutionTargetAsync(app, id, ct);
         var target = await LoadDevExecutionSelectionAsync(op, ct);
         var candidate = BuildDevelopmentRecord(app, target, op) with { SelectedRuntime = op.TargetRuntime,
             SourceState = app.SourceState! with { LocalOverridePath = op.SourcePath }, ArtifactLocks = null };

@@ -21,8 +21,13 @@ present, or the sole development profile; an explicit workspace selection can co
 recipe with `runtime`, which Core retains for that binding. An unresolved ambiguity has a concrete
 setup reason rather than guessing another worktree.
 `configure_workspace_runtime` or `POST /api/development/workspaces/{workspaceId}/execution-recipe`
-sets `{requestId, appId, worktreeId, runtime}` once with source management authority. It changes
-recipe metadata without starting the app and publishes a workspace refresh event.
+sets `{requestId, appId, worktreeId, runtime}` with source management authority. Core retains the
+chosen worktree and runtime for the logical workspace/app installation in one atomic selection
+record with replay receipts. Inventory and workspace-wide execution use the same choice even when
+reviewed repository changes leave multiple eligible app-bound worktrees. Explicit worktree choices
+remain supported. Old configuration retries do not replace a newer selection; a stale or ambiguous
+binding reports an actionable setup error before lifecycle work. Configuration changes metadata
+without starting the app and publishes a workspace refresh event.
 
 Core retains the selected package release runtime independently of workspace execution. Entering
 workspace A and then B preserves that package choice. Selecting a package entry directly runs the
@@ -42,8 +47,11 @@ Source edits and current ordinary data remain intact.
 uses Core's retained package selection. The response has `state` `running`, `completed`, `failed`
 or `review-required`. `GET /api/apps/{appId}/execution-target/{requestId}` recovers the same request.
 Core owns the accepted operation independently of Shell/Harness connections and resumes running
-requests on startup. A newer admitted selection retires an older request's authority to change that
-app, even when the older caller retries after interruption. Completed requests do not repeat effects.
+requests on startup. Execution holds the app's shared operation mutex through preparation and
+replacement. Submission queues an intent; it does not acquire execution ownership. A newer selection
+that acquires that ownership retires an older request's authority to change the app. A queued intent
+whose captured owner changed fails with `dev_selection_changed` before lifecycle effects; its caller
+can make a fresh explicit selection. Completed requests do not repeat effects.
 
 Preparation validates settings, mounts, source authority and the candidate execution contract before
 replacing the current runtime. A failed build keeps the current app running. Package/workspace

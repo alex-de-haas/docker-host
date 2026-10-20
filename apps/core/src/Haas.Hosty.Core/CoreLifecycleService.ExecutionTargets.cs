@@ -31,18 +31,20 @@ internal sealed partial class CoreLifecycleService
             var candidates = workspace.Worktrees.Where(t => t.State == "active" && t.Apps.Any(a => a.AppId == appId && a.Installed)).ToArray();
             if (candidates.Length == 0) continue;
             var allowed = candidates.Where(t => selectableWorktrees is null || selectableWorktrees.Contains(t.Id)).ToArray();
-            var tree = allowed.SingleOrDefault(t => t.Id == operation?.WorktreeId) ?? (allowed.Length == 1 ? allowed[0] : null);
-            var recipe = tree is null ? null : await ReadWorkspaceRecipeAsync(app, installed, tree.Id, ct);
-            var reason = tree is null ? "Choose this application's worktree during workspace setup."
+            var resolved = await ResolveWorkspaceTreeAsync(app, workspace.Id, allowed.Select(t => t.Id).ToArray(),
+                null, operation is { Active: true } ? operation.WorktreeId : null, ct);
+            var tree = allowed.SingleOrDefault(t => t.Id == resolved.WorktreeId);
+            var recipe = tree is null ? null : await ReadWorkspaceRecipeAsync(app, installed, tree.Id, ct, resolved.Runtime);
+            var reason = tree is null ? resolved.Unavailable
                 : recipe is null ? "Configure a development runtime for this workspace."
                 : tree.Observation?.State is "unavailable" ? "Workspace source is unavailable." : null;
             var choice = new AppExecutionChoice("workspace", recipe, workspace.Id, tree?.Id,
                 workspace.Name ?? workspace.Owner.Label, reason is null, reason);
             if (allowed.Length > 0) choices.Add(choice);
             if (operation is { Active: true } && candidates.SingleOrDefault(t => t.Id == operation.WorktreeId) is { } activeTree)
-                current = allowed.Any(t => t.Id == activeTree.Id) ? choice with { Runtime = app.SelectedRuntime }
-                    : new("workspace", app.SelectedRuntime, workspace.Id, activeTree.Id, choice.Name, false,
-                        "This workspace belongs to another user or credential.");
+                current = new("workspace", app.SelectedRuntime, workspace.Id, activeTree.Id, choice.Name,
+                    allowed.Any(t => t.Id == activeTree.Id), allowed.Any(t => t.Id == activeTree.Id) ? null
+                        : "This workspace belongs to another user or credential.");
         }
         return new(appId, current, await PackageRuntimeAsync(app, ct), choices.ToArray());
     }
@@ -50,9 +52,11 @@ internal sealed partial class CoreLifecycleService
     private string WorkspaceRecipePath(string appId, string treeId) => Path.Combine(
         AppExecutionStore.DirectoryFor(paths, appId), "recipes", treeId + ".json");
 
-    private async Task<string?> ReadWorkspaceRecipeAsync(AppRecord app, RuntimeAppManifestSelection installed, string treeId, CancellationToken ct)
+    private async Task<string?> ReadWorkspaceRecipeAsync(AppRecord app, RuntimeAppManifestSelection installed, string treeId, CancellationToken ct,
+        string? configured = null)
     {
         var profiles = installed.Manifest.RuntimeProfiles.Where(p => p.Development).ToArray();
+        if (configured is not null) return profiles.Any(p => p.Key == configured) ? configured : null;
         var recipe = await JsonStorage.ReadAsync<WorkspaceExecutionRecipe>(WorkspaceRecipePath(app.Id, treeId), ct);
         if (recipe?.Installation == app.InstalledAt && profiles.Any(p => p.Key == recipe.Runtime)) return recipe.Runtime;
         return profiles.FirstOrDefault(p => p.Default)?.Key ?? profiles.FirstOrDefault(p => p.Key == "dev")?.Key
@@ -148,11 +152,16 @@ internal sealed partial class CoreLifecycleService
             return journal with { State = "completed", Phase = "completed", Code = null, Error = null, Review = null };
         }
 
-        var candidateTree = request.WorktreeId is { } requestedTree
-            ? await DevWorkspaces.Read(requestedTree, null, ct)
-            : (await DevWorkspaces.ListAsync(null, false, ct)).Workspaces.SingleOrDefault(t =>
-                t.WorkspaceId == request.WorkspaceId && t.Apps.Any(a => a.AppId == app.Id && a.Installation == app.InstalledAt))
-                ?? throw DevError("worktree_required", "Configure this application's worktree in the workspace.");
+        var candidates = (await DevWorkspaces.ListAsync(null, false, ct)).Workspaces.Where(t =>
+            t.WorkspaceId == request.WorkspaceId && t.State == "active" &&
+            t.Apps.Any(a => a.AppId == app.Id && a.Installation == app.InstalledAt)).ToArray();
+        var explicitTree = request.WorktreeId is { } requestedTree ? await DevWorkspaces.Read(requestedTree, null, ct) : null;
+        if (explicitTree is not null && (explicitTree.WorkspaceId != request.WorkspaceId || explicitTree.Owner.UserId != journal.Actor.UserId))
+            throw DevError("workspace_forbidden", "This workspace does not belong to the acting user.");
+        var resolvedTree = await ResolveWorkspaceTreeAsync(app, request.WorkspaceId!, candidates.Select(t => t.Id).ToArray(),
+            explicitTree?.Id, active is { Active: true } ? active.WorktreeId : null, ct);
+        var candidateTree = candidates.SingleOrDefault(t => t.Id == resolvedTree.WorktreeId)
+            ?? throw DevError("worktree_required", resolvedTree.Unavailable ?? "Configure this application's worktree in the workspace.");
         if (candidateTree.WorkspaceId != request.WorkspaceId || candidateTree.Owner.UserId != journal.Actor.UserId)
             throw DevError("workspace_forbidden", "This workspace does not belong to the acting user.");
         if (journal.Actor.Principal is { } principal && (principal.StartsWith("oauth:", StringComparison.Ordinal) || principal.StartsWith("manual:", StringComparison.Ordinal))
@@ -161,7 +170,7 @@ internal sealed partial class CoreLifecycleService
         // The operator deliberately selects editable workspace source; an editing lease is not a lifecycle lock.
         await DevWorkspaces.CheckDevTreeAsync(candidateTree, app, candidateTree.Owner, ct);
         var installedRecipe = await manifests.LoadAsync(app.ManifestPath!, null, ct);
-        var runtime = request.Runtime ?? await ReadWorkspaceRecipeAsync(app, installedRecipe, candidateTree.Id, ct)
+        var runtime = request.Runtime ?? await ReadWorkspaceRecipeAsync(app, installedRecipe, candidateTree.Id, ct, resolvedTree.Runtime)
             ?? throw DevError("recipe_required", "Configure a development runtime during workspace setup.");
         if (!installedRecipe.Manifest.RuntimeProfiles.Any(p => p.Key == runtime && p.Development))
             throw DevError("profile_unsupported", "The workspace needs an installed development execution recipe.");

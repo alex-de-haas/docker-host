@@ -6,14 +6,16 @@ namespace Haas.Hosty.Core.Tests;
 public sealed partial class CoreLifecycleServiceTests
 {
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    [InlineData(true, true)]
+    [InlineData(false, "package")]
+    [InlineData(true, "package")]
+    [InlineData(false, "dev")]
+    [InlineData(true, "dev")]
+    [InlineData(false, "activation")]
+    [InlineData(true, "activation")]
     public async Task ExecutionTargets_InterruptedPackageRequestCannotDisplaceNewerLegacySelection(
-        bool fromWorkspace, bool newerDevelopment)
+        bool fromWorkspace, string newerSelection)
     {
-        var (f, owner, _, tree, _, _) = await LocalHandoffFixture();
+        var (f, owner, workspaces, tree, _, _) = await LocalHandoffFixture();
         await AddManifestPackageRuntime(f, tree);
         var app = (await f.Apps.GetAppAsync("test.created"))!;
         foreach (var path in new[] { app.ManifestPath!, Path.Combine(tree.Path, "manifest.json") })
@@ -47,7 +49,14 @@ public sealed partial class CoreLifecycleServiceTests
         var interrupted = completed with { State = "running", Phase = "switching" };
         await AppExecutionStore.SaveAsync(f.Paths, interrupted, default);
 
-        if (newerDevelopment)
+        if (newerSelection == "activation")
+        {
+            var activations = ActivationService(f, workspaces);
+            var activation = new WorkspaceActivationRequest(Guid.NewGuid().ToString(), owner.UserId, new(false));
+            Assert.Equal("prepared", (await activations.PrepareAsync(tree.WorkspaceId, activation, default)).Phase);
+            Assert.Equal("active", (await activations.ApplyAppsAsync(activation.RequestId, default)).Phase);
+        }
+        else if (newerSelection == "dev")
             await ApplyReviewedDev(f.Service, DevRequest("enter", tree.Id), DevActor(owner));
         else
             await SwitchPackage("alternate");
@@ -60,7 +69,7 @@ public sealed partial class CoreLifecycleServiceTests
 
         Assert.Equal("dev_selection_changed", error.Code);
         var current = (await f.Apps.GetAppAsync(app.Id))!;
-        Assert.Equal(newerDevelopment ? "dev" : "alternate", current.SelectedRuntime);
+        Assert.Equal(newerSelection == "package" ? "alternate" : "dev", current.SelectedRuntime);
         Assert.Equal(selected.DevModeId, current.DevModeId);
         Assert.Equal(selected.SourceState, current.SourceState);
         Assert.Equal(starts, f.Adapter.StartCount);
