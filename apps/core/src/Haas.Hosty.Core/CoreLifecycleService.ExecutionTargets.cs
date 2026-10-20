@@ -83,7 +83,7 @@ internal sealed partial class CoreLifecycleService
             throw DevError("selection_changed", "A newer selection owns this app. The retained request was not reapplied.");
         async Task ClaimAsync()
         {
-            await JsonStorage.WriteAsync(ownerFile, new AppExecutionOwner(app.InstalledAt, journal.Request.RequestId), true, ct);
+            await ClaimExecutionTargetAsync(app, journal.Request.RequestId, ct);
         }
         if (app.InstalledAt != journal.Installation) throw DevError("installation_changed", "This request belongs to another installation.");
         var request = journal.Request;
@@ -142,7 +142,7 @@ internal sealed partial class CoreLifecycleService
                 journal = journal with { Phase = "switching" };
                 await AppExecutionStore.SaveAsync(paths, journal, ct);
                 var plan = await CreateRuntimeSwitchPlanAsync(app.Id, new(target), ct);
-                await ApplyRuntimeSwitchCoreAsync(app.Id, new(target, plan.PlanDigest), ct);
+                await ApplyRuntimeSwitchCoreAsync(app.Id, new(target, plan.PlanDigest), ct, request.RequestId);
             }
             await SavePackageRuntimeAsync(await RequireAppAsync(app.Id, ct), target, ct);
             return journal with { State = "completed", Phase = "completed", Code = null, Error = null, Review = null };
@@ -281,6 +281,10 @@ internal sealed partial class CoreLifecycleService
         }
     }
 
+    private Task ClaimExecutionTargetAsync(AppRecord app, string requestId, CancellationToken ct) =>
+        JsonStorage.WriteAsync(Path.Combine(AppExecutionStore.DirectoryFor(paths, app.Id), "owner.json"),
+            new AppExecutionOwner(app.InstalledAt, requestId), true, ct);
+
     private Task SavePackageRuntimeAsync(AppRecord app, string runtime, CancellationToken ct) =>
         JsonStorage.WriteAsync(Path.Combine(AppExecutionStore.DirectoryFor(paths, app.Id), "package.json"),
             new AppPackageBaseline(app.InstalledAt, runtime), true, ct);
@@ -294,4 +298,3 @@ internal sealed partial class CoreLifecycleService
             Phase = activation.CoreProject is null && activation.Apps.All(returned.Contains) ? "returned" : activation.Phase });
     }
 }
-

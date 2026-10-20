@@ -364,6 +364,8 @@ verified against a Core-managed Shell rather than a standalone app without Hosty
   preserve multiple development runtime choices, distinguish source folders from registered workspaces
   with one source/workspace/package label, hide menus without an available alternative, and
   remove workspace metadata after Return.
+- Recover a retained switch receipt even when its package is already selected or the app is initially
+  starting, stopping or updating; a completed Return must not block the next workspace selection.
 - Core and app source summaries keep line totals before changed-file counts, retain truncated counts,
   and omit unavailable totals.
 - Core source matching uses its factual development project inside a unique active registered tree;

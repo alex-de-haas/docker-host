@@ -165,6 +165,8 @@ record substitutes for observed runtime readiness and browser verification.
   digests after generic and planned restarts, without marking adopted or failed starts as applied.
   Cover stable backups, failed starts, original-UUID recovery, retired IDs, private-source checks and
   corrupt-journal behavior.
+- A newer public runtime switch or legacy development selection supersedes an interrupted unified
+  package request. Replaying that old UUID must not replace the newer target or perform lifecycle work.
 - Use a Core-managed isolated integration environment, normal password authentication and actual
   preview URLs for browser/agent verification. Run affected Core/CLI/Harness/Shell tests and builds,
   Core Native AOT, version consistency and documentation validation.

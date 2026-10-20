@@ -36,4 +36,3 @@ internal sealed partial class AppsCommand
         return 0;
     }
 }
-

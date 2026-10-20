@@ -2593,7 +2593,8 @@ internal sealed partial class CoreLifecycleService(
     private async Task<AppLifecycleResponse> ApplyRuntimeSwitchCoreAsync(
         string appId,
         AppRuntimeSwitchApplyRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? executionRequestId = null)
     {
         var plan = await CreateRuntimeSwitchPlanAsync(appId, new AppRuntimeSwitchPlanRequest(request.TargetRuntime), cancellationToken);
         if (!string.Equals(plan.PlanDigest, request.PlanDigest, StringComparison.Ordinal))
@@ -2610,6 +2611,9 @@ internal sealed partial class CoreLifecycleService(
         // Caller cancellation still governs lock acquisition, plan validation and stop preparation.
         cancellationToken.ThrowIfCancellationRequested();
         cancellationToken = hostLifetime?.ApplicationStopping ?? CancellationToken.None;
+        // The public switch is a newer selection too. Fence interrupted unified requests
+        // before Stop; an internal unified switch keeps its durable request as the owner.
+        await ClaimExecutionTargetAsync(app, executionRequestId ?? Guid.NewGuid().ToString("D"), cancellationToken);
         if (wasRunning)
         {
             await ResolveAdapter(currentSelection.RuntimeProfile.Type).StopAsync(stopContext!, cancellationToken);

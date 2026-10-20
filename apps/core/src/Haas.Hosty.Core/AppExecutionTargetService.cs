@@ -228,4 +228,3 @@ internal sealed class AppExecutionTargetService(CoreDataPaths paths, AppRegistry
         await AppExecutionStore.SaveGroupAsync(paths, group with { State = result }, ct);
     }
 }
-

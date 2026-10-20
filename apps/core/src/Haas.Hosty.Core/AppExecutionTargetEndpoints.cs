@@ -159,4 +159,3 @@ internal sealed class AppExecutionTargetMcpTools(IHttpContextAccessor accessor, 
         catch (AppManifestException ex) { return CoreJson.Text(new ErrorResponse(ex.Code, ex.Message)); }
     }
 }
-

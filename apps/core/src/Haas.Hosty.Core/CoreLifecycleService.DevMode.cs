@@ -148,6 +148,9 @@ internal sealed partial class CoreLifecycleService
                     throw DevError("request_retired", "This requestId belongs to an earlier development operation; inspect it rather than applying it again.");
                 var plan = await PlanDevModeCoreAsync(appId, input, actor, ct);
                 if (plan.PlanDigest != input.PlanDigest) throw DevError("plan_changed", "The development plan changed. Prepare and review it again.");
+                // Legacy controls also supersede earlier execution selections. Claim before
+                // persisting their app pointer so recovery cannot return a newer workspace.
+                await ClaimExecutionTargetAsync(app, input.RequestId, ct);
                 if (input.Action == "enter")
                 {
                     var selection = await manifests.LoadAsync(app.ManifestPath!, plan.TargetRuntime, ct);

@@ -61,4 +61,3 @@ internal static class AppExecutionStore
             throw new AppLifecycleException("execution_target_invalid", "Choose an installed package runtime or a registered workspace.");
     }
 }
-

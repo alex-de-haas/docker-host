@@ -222,4 +222,3 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(before, await File.ReadAllTextAsync(app.ManifestPath!));
     }
 }
-

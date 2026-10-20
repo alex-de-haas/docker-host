@@ -36,4 +36,3 @@ internal sealed partial class CoreLifecycleService
         return result;
     }, ct, developmentOperation: true);
 }
-
