@@ -222,10 +222,28 @@ itself fails, keep its root and run the same opt-in test with `HOSTY_TEST_HARNES
 that root and the working Docker endpoint. Recovery validates the fixture identity, replays the
 journaled Finish request through its owner and deletes parent test data only after verified Finish.
 
-The [remaining acceptance plan](plan.md) tracks separately authorized Git/PR publication and release
-verification. Local image builds are distinct from registry publication. The primary Core/Harness runtime selection and lifecycle are unchanged by test fixtures. Provider
+Post-merge registry verification on 2026-10-20 confirms both production runtime images at version
+`0.62.0`, built from source implementation [PR #629](https://github.com/alex-de-haas/docker-host/pull/629),
+merged at `0ff7485883b19732e9d93c6779df3efb95579683`. The
+[runtime image publication workflow](https://github.com/alex-de-haas/docker-host/actions/runs/39449768950)
+succeeded for both images. Independent anonymous registry checks verified each index, both platform
+manifests and their configs for `linux/amd64` and `linux/arm64`; every OCI revision label equals that
+merge SHA. Actual anonymous pulls of all four platform images passed.
+
+| Published image | Immutable index digest |
+| --- | --- |
+| `ghcr.io/alex-de-haas/hosty-agent-worker:0.62.0` | `sha256:9c471ef210599f0f5a24b85d5b3221ad988d7a7f21ba602900d1e9e636601a0a` |
+| `ghcr.io/alex-de-haas/hosty-harness:0.62.0` | `sha256:b4a0dc4cb00812ccb0f18bb024de9e4d7ad04ecc44d71aab4418bf201f3ddaf3` |
+
+The release coordinator is running in the isolated Core. The [remaining acceptance plan](plan.md)
+retains Git/PR publication acceptance: Docker publication is being verified, and Local publication
+plus final closure remain pending. The registry evidence above establishes image delivery for D10
+and D14; it does not establish those remaining Git/PR checks or final D12/D15 acceptance.
+
+The primary Core/Harness runtime selection and lifecycle are unchanged by test fixtures. Provider
 authorizations are used only with explicit owner permission. Core 0.146.0 supplies the required
-worker API and canonical storage placement for Harness 0.62.0.
+worker API and canonical storage placement for Harness 0.62.0. This evidence update has no version
+change because it is documentation-only.
 
 Core passes agent environment values through an owner-only temporary Docker env file. The host
 Docker CLI retains Core's environment and context; provider secrets stay out of its arguments. The
