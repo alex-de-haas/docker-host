@@ -19,6 +19,13 @@
 
 set -euo pipefail
 
+# workflow_run's GITHUB_SHA can name a newer default-branch commit than the validated source.
+source_sha="${PUBLISH_SOURCE_SHA:-$GITHUB_SHA}"
+if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "publish-guard requires a full source commit SHA" >&2
+  exit 1
+fi
+
 # --- Freshness: may we move mutable tags? ---------------------------------------------------------
 # The caller's job-level `concurrency` group serializes publishes but does not order them. GitHub
 # makes no FIFO promise about which queued run is admitted next, and the gate `test` job sits outside
@@ -36,7 +43,7 @@ if [[ -z "$tip" ]]; then
   exit 1
 fi
 
-if [[ "$tip" == "$GITHUB_SHA" ]]; then
+if [[ "$tip" == "$source_sha" ]]; then
   fresh=true
   echo "fresh=true" >> "$GITHUB_OUTPUT"
 else
@@ -45,7 +52,7 @@ else
   # Deliberately generic: callers differ in what they still publish when stale. The image workflows
   # push their immutable `sha-` tag (and may still create an absent version tag); cli-release and
   # cardputer-release publish nothing at all, having no immutable artifact to fall back on.
-  echo "::notice title=Stale publish::${GITHUB_SHA} is no longer the tip of main (${tip}). No mutable tag is moved; whatever this workflow publishes immutably is unaffected."
+  echo "::notice title=Stale publish::${source_sha} is no longer the tip of main (${tip}). No mutable tag is moved; whatever this workflow publishes immutably is unaffected."
 fi
 
 # --- Version tag: may we create it? ---------------------------------------------------------------
@@ -102,9 +109,9 @@ case "$http_status" in
     # the full 40-character SHA names a tag that does not exist, so following this notice to
     # `docker pull` it 404s. Keep the two in step if any workflow ever sets `format=long`.
     if [[ "$fresh" == "true" ]]; then
-      reachable="latest and sha-${GITHUB_SHA:0:7}"
+      reachable="latest and sha-${source_sha:0:7}"
     else
-      reachable="sha-${GITHUB_SHA:0:7}"
+      reachable="sha-${source_sha:0:7}"
     fi
     echo "::notice title=Version tag frozen::${IMAGE}:${VERSION} already exists and is not moved. Bump the app manifest version to publish a new one; this build is still available as ${reachable}."
     ;;

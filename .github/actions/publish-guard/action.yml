@@ -4,6 +4,10 @@ description: >-
   commit still the tip of main, and has this artifact version already been published.
 
 inputs:
+  source-sha:
+    description: Full validated source SHA; defaults to workflow SHA for ordinary callers.
+    required: false
+    default: ${{ github.sha }}
   image:
     description: >-
       Fully qualified ghcr.io image to check the version tag against, e.g.
@@ -46,6 +50,7 @@ runs:
       id: guard
       shell: bash
       env:
+        PUBLISH_SOURCE_SHA: ${{ inputs.source-sha }}
         IMAGE: ${{ inputs.image }}
         VERSION: ${{ inputs.version }}
         REGISTRY_TOKEN: ${{ inputs.registry_token }}

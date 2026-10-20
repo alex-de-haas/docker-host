@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-09
-updated: 2026-10-18
+updated: 2026-10-20
 summary: Deferred execution-scoped credentials for assistant and external-agent source operations, independently of the workspace viewer.
 components: [apps/core, apps/harness]
 ---
@@ -10,7 +10,7 @@ components: [apps/core, apps/harness]
 
 ## Boundary
 
-The read-only Workspaces app does not change the existing source mutation authorization contract.
+Read-only workspace inspection does not change the existing source mutation authorization contract.
 This plan receives execution-scope D7 and the corresponding design portion of D5 from the session
 workspace draft. External task IDs within one OAuth grant remain allocation labels, not isolation
 boundaries. App/user-wide assistant credentials retain their existing checks. Neither is advertised
@@ -51,7 +51,7 @@ equal native privileges for internal and external clients.
 
 ## Related Work
 
-[Workspace inspection](../workspaces-app/feature.md) owns the read-only UI;
+[Harness Development](../harness-development-ui/feature.md) owns the workspace UI;
 [lifecycle controls](../workspace-lifecycle-controls/feature.md) owns coordinated closing;
 [agent isolation](../assistant-runtime-containment/plan.md) owns the future session execution boundary;
 [approval rules](../assistant-approval-rules/plan.md) owns permission choices, lifetime and decision audit.

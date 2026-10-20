@@ -12,5 +12,5 @@ export function CoreEnvironments({ coreOrigin }: { coreOrigin: string }) {
     if (!response.ok) throw Object.assign(new Error(data.message ?? "Sandbox request failed."), { status: response.status });
     return data;
   }, [coreOrigin, sendCsrfJson]);
-  return <CoreEnvironmentPanel request={request} storageKey={`hosty:core-environment:${coreOrigin}`} workspaceHref={id => `/workspace?${new URLSearchParams({ app: "hosty.workspaces", path: `/?workspace=${id}` })}`} />;
+  return <CoreEnvironmentPanel request={request} storageKey={`hosty:core-environment:${coreOrigin}`} />;
 }

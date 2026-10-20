@@ -1,8 +1,8 @@
 ---
 created: 2026-09-27
-updated: 2026-10-16
+updated: 2026-10-20
 summary: Session-owned logical workspaces group repository worktrees with compatible Git operations and a separately authorized inspection API.
-components: [apps/core, apps/harness, apps/workspaces]
+components: [apps/core, apps/harness]
 ---
 
 # Assistant Session Workspaces
@@ -56,7 +56,7 @@ and session ownership. Existing read-only Core MCP credentials confer no workspa
 | GET collection | List this session's bindings, including released records |
 | POST collection | Prepare with `requestId`, `sessionId`, `appId`, `sessionPath`, optional `targetBranch` / `leaseId` |
 | GET `/{id}` | Observe current source state |
-| GET `/{id}/viewer` | Resolve the installed Workspaces app URL with aggregate and worktree selection |
+| GET `/{id}/viewer` | Resolve the current owning assistant session, or an explicit unavailable reason |
 | POST `/{id}/diff` | Preview `{ path, view: "session" or "local" }` |
 | POST `/{id}/operations/{kind}` | Run a managed operation with a UUID `requestId` |
 
@@ -65,12 +65,12 @@ Administrators use `/api/development/workspaces` to list active records across a
 CSRF. Responses use `Cache-Control: no-store`. Managed requests produce Core audit records; observed
 external Git activity does not acquire a fabricated managed-operation audit entry.
 
-[Workspaces](../workspaces-app/feature.md) remains a standalone inspector. The
-[Harness development page](../harness-development-ui/feature.md) also reads the same Core projection. Shell displays its
-manifest navigation entry without reading source; the former dashboard launcher is removed.
-Harness resolves the viewer destination through the owning session's existing Core authorization.
-The link opens the current installed `hosty.workspaces` browser origin with workspace and worktree
-IDs; an unavailable installation produces a reason instead of a fabricated destination.
+The [Harness development page](../harness-development-ui/feature.md) reads the Core inspection
+projection. The [standalone Workspaces app is retired](../workspaces-app/feature.md).
+Harness resolves viewer destinations through the owning session's existing Core authorization.
+The destination opens the current owning assistant's session, with Harness sessions using its
+Development page. Missing/replaced assistant installations and external owners return explicit
+unavailability instead of a fabricated conversation link.
 
 ## Read-Only Inspection Contract
 

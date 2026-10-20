@@ -1,19 +1,26 @@
 name: CI
 
-# The workflow itself has no `paths:` filter — it runs on every PR to main and every push to main, and
-# each job decides for itself whether it has anything to do (see the `changes` job below).
-#
-# A workflow-level `paths:` filter cannot express this: it is a union over every component, so touching
-# any one of them ran all ten jobs. It is also incompatible with required status checks — when the
-# filter excludes a change the workflow never starts, the required checks never report, and the PR sits
-# pending forever. A job skipped by `if:` reports as skipped, which counts as success.
+# Automatic affected checks and selected risk suites. The final ci-required job is the stable gate.
+# No workflow-level path filter: documentation-only PRs must still report a result.
 on:
   pull_request:
-    branches:
-      - main
   push:
     branches:
       - main
+
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Exact source revision to qualify (resolved and recorded as a full commit SHA)
+        default: main
+        type: string
+      scope:
+        description: Additional qualification (normal PR selection is automatic)
+        default: all
+        type: choice
+        options: [all, lifecycle, windows, docker, whisper]
+  schedule:
+    - cron: '19 2 * * *'
 
 permissions:
   contents: read
@@ -22,31 +29,17 @@ concurrency:
   # Collapse superseded runs of the same pull request — every push to a branch used to start a full
   # matrix without cancelling the one before it. Pushes to main are keyed by commit instead, so no
   # main commit loses its validation to the commit merged a few seconds later.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.revision || github.sha }}-${{ inputs.scope || 'affected' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
 
 jobs:
-  # Maps the changed files onto the components they affect — for pushes to main as much as for pull
-  # requests. The push side used to skip the filter and run the full matrix: a merge that bumped one
-  # Dockerfile still built the Swift client and the Cardputer firmware, ~10x the runner time the diff
-  # justified, and it duplicated the gate jobs the image and release workflows already run before they
-  # publish anything.
-  #
-  # What a push-side diff cannot catch is a semantic conflict between two PRs merged in parallel: this
-  # repository uses merge commits, so main can differ from the tree any single PR tested. The branch
-  # protection rule "Require branches to be up to date before merging" is what closes that gap — it
-  # forces a PR onto current main before it can land, so the PR run and the push run see the same tree.
-  # That rule is load-bearing here; if it is ever turned off, this filter has to go back to running the
-  # full matrix on push.
   changes:
     name: Detect changes
-    runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
-    # Underscored, not hyphenated, and deliberately out of step with the hyphenated job ids: a `-` in an
-    # expression property name parses as subtraction, so an `outputs.app-sdk` reference would silently
-    # evaluate to something other than the output it appears to name.
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       shell: ${{ steps.filter.outputs.shell }}
       app_sdk: ${{ steps.filter.outputs.app_sdk }}
@@ -54,156 +47,60 @@ jobs:
       whisper: ${{ steps.filter.outputs.whisper }}
       demo_app: ${{ steps.filter.outputs.demo_app }}
       core: ${{ steps.filter.outputs.core }}
+      core_aot: ${{ steps.filter.outputs.core_aot }}
       core_transport: ${{ steps.filter.outputs.core_transport }}
+      core_windows_process_control: ${{ steps.filter.outputs.core_windows_process_control }}
+      workspace_native_activation: ${{ steps.filter.outputs.workspace_native_activation }}
+      harness_worker: ${{ steps.filter.outputs.harness_worker }}
+      whisper_native: ${{ steps.filter.outputs.whisper_native }}
       cli: ${{ steps.filter.outputs.cli }}
       telemetry_backend: ${{ steps.filter.outputs.telemetry_backend }}
       marketplace: ${{ steps.filter.outputs.marketplace }}
       plans: ${{ steps.filter.outputs.plans }}
-      workspaces: ${{ steps.filter.outputs.workspaces }}
       harness: ${{ steps.filter.outputs.harness }}
       telemetry_ui: ${{ steps.filter.outputs.telemetry_ui }}
       swift_shell: ${{ steps.filter.outputs.swift_shell }}
       cardputer_shell: ${{ steps.filter.outputs.cardputer_shell }}
       workflows: ${{ steps.filter.outputs.workflows }}
+      plan: ${{ steps.filter.outputs.plan }}
+      sha: ${{ steps.filter.outputs.sha }}
     steps:
-      - name: Check out repository
+      - name: Check out workflow source and history
         uses: actions/checkout@v7
-
-      - name: Filter changed paths
-        id: filter
-        uses: dorny/paths-filter@v4
         with:
-          # A branch name, not a SHA: when `base` names the branch that was pushed to, the action diffs
-          # against the push's `before` commit — for a merge commit that is the PR's whole changeset.
-          # On pull_request events this input is ignored outright and the PR's base branch is used. On a
-          # zero `before` (force-push, or a branch's first push) it degrades to listing every file as
-          # added, so the full matrix runs rather than nothing.
-          base: ${{ github.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Select affected checks and record exact source
+        id: filter
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci-select.mjs
+      - name: Preserve exact push selection for publication
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: ci-selection-${{ steps.filter.outputs.sha }}
+          path: ${{ runner.temp }}/hosty-ci-selection/selection.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
 
-          # Shared paths are scoped by runtime rather than pooled into one list. A single `global` pool
-          # looked safe but made the filtering nearly inert: every version bump touches either
-          # `package-lock.json` (npm workspaces record their version there) or `Directory.Build.props`
-          # (the platform version), and AGENTS.md requires the bump in the same commit — so almost every
-          # PR matched every filter. An npm lockfile cannot change a .NET build and the .NET SDK pin
-          # cannot change a Node one, so the split costs nothing in safety.
-          #
-          # `package.json` is in both: the root manifest holds the `core:build` / `cli:build` /
-          # `telemetry-backend:build` scripts the .NET jobs invoke, so it is not Node-only.
-          #
-          # The four Node apps also depend on the `@hosty-sdk/app` workspace package, so they list
-          # `packages/app-sdk/**` too. Core and CLI also compile the shared launch contracts; other
-          # .NET components keep their own source paths.
-          filters: |
-            node_shared: &node_shared
-              - 'package.json'
-              - 'package-lock.json'
-              - '.github/workflows/ci.yml'
-
-            dotnet_shared: &dotnet_shared
-              - 'package.json'
-              - 'global.json'
-              - 'Directory.Build.props'
-              - 'Directory.Build.targets'
-              - 'scripts/HostyBuildIdentity.cs'
-              - 'scripts/check-workspace-activation.py'
-              - '.github/workflows/ci.yml'
-
-            app_sdk:
-              - *node_shared
-              - 'packages/app-sdk/**'
-
-            whisper:
-              - *dotnet_shared
-              - 'apps/whisper/**'
-              - 'packages/app-sdk-dotnet/**'
-
-            app_sdk_dotnet:
-              - *dotnet_shared
-              - 'packages/app-sdk-dotnet/**'
-
-            shell:
-              - *node_shared
-              - 'packages/app-sdk/**'
-              - 'apps/shell/**'
-              - 'shared/web/**'
-
-            demo_app:
-              - *node_shared
-              - 'packages/app-sdk/**'
-              - 'apps/demo-app/**'
-
-            marketplace:
-              - *node_shared
-              - 'packages/app-sdk/**'
-              - 'apps/marketplace/**'
-
-            plans:
-              - *node_shared
-              - 'apps/plans/**'
-              - 'packages/app-sdk/**'
-              - 'scripts/docs-index.mjs'
-              - 'docs/**'
-
-            workspaces:
-              - *node_shared
-              - 'apps/workspaces/**'
-              - 'packages/app-sdk/**'
-
-            harness:
-              - 'scripts/check-harness-worker.mjs'
-              - '.github/workflows/harness-worker-image.yml'
-              - *node_shared
-              - 'packages/app-sdk/**'
-              - 'apps/harness/**'
-              - 'shared/web/**'
-
-            telemetry_ui:
-              - *node_shared
-              - 'packages/app-sdk/**'
-              - 'apps/telemetry-ui/**'
-
-            core_transport:
-              - 'apps/core/src/Haas.Hosty.Core/DockerCoreListener.cs'
-              - 'apps/core/src/Haas.Hosty.Core/Program.cs'
-              - 'apps/core/src/Haas.Hosty.Core/HostyCoreApplication.cs'
-              - 'apps/core/src/Haas.Hosty.Core/RuntimeAppManifest.cs'
-              - 'scripts/check-docker-core-transport.py'
-              - '.github/workflows/ci.yml'
-
-            core:
-              - *dotnet_shared
-              - 'apps/core/**'
-              - 'shared/**'
-              # The AOT gate is part of this job, so a change to the gate itself must run it.
-              - 'scripts/check-core-aot.mjs'
-              - 'scripts/check-docker-core-transport.py'
-
-            cli:
-              - *dotnet_shared
-              - 'apps/cli/**'
-              - 'shared/**'
-              - 'scripts/install.sh'
-              - 'scripts/install.ps1'
-
-            telemetry_backend:
-              - *dotnet_shared
-              - 'apps/telemetry-backend/**'
-
-            # Shares nothing with the Node or .NET pools: the Apple client has its own toolchain and its
-            # own version file, and it is the only job that needs a macOS runner.
-            swift_shell:
-              - 'apps/shell-swift/**'
-              - '.github/workflows/ci.yml'
-
-            cardputer_shell:
-              - 'apps/shell-cardputer/**'
-              - 'scripts/check-versions.mjs'
-              - '.github/workflows/ci.yml'
-
-            workflows:
-              - '.github/workflows/**'
-              # Composite actions the workflows call are linted by the same job.
-              - '.github/actions/**'
+  ci-policy:
+    name: CI policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: changes
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Test selection, required gate and publication denial
+        run: node --test scripts/ci*.test.mjs .github/actions/ci-validation-gate/*.test.mjs
 
   # Ungated on purpose: it reads version fields out of every manifest and package.json in the repo, so
   # any filter narrow enough to be useful would also be wrong. It needs no `npm ci` and finishes in
@@ -211,9 +108,13 @@ jobs:
   versions:
     name: Version consistency
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: changes
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -228,9 +129,13 @@ jobs:
   docs:
     name: Docs index
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: changes
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -251,11 +156,14 @@ jobs:
   actionlint:
     name: Workflow lint
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.workflows == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       - name: Lint workflows
         uses: docker://rhysd/actionlint:1.7.12
@@ -281,11 +189,14 @@ jobs:
   shell:
     name: Shell
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.shell == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -296,17 +207,25 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      - name: Lint and test Shell
+        run: |
+          npm run shell:lint
+          npm run shell:test
+
       - name: Build Shell
         run: npm run shell:build
 
   app-sdk:
     name: App SDK
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.app_sdk == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -328,11 +247,14 @@ jobs:
   app-sdk-dotnet:
     name: App SDK (.NET)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.app_sdk_dotnet == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
@@ -343,31 +265,54 @@ jobs:
         run: dotnet test packages/app-sdk-dotnet/HostySdk.App.Tests/HostySdk.App.Tests.csproj
 
   whisper:
-    name: Whisper (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Whisper
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.whisper == 'true'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Test Whisper provider (bounded unit suite)
+        run: dotnet test apps/whisper/Hosty.Whisper.Tests/Hosty.Whisper.Tests.csproj
+
+  whisper-native:
+    name: Whisper native (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    needs: changes
+    if: needs.changes.outputs.whisper_native == 'true'
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
       - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
-      - name: Test Whisper provider
+      - name: Test real native CPU inference
         env:
-          HOSTY_WHISPER_INTEGRATION: "1"
+          HOSTY_WHISPER_INTEGRATION: '1'
         run: dotnet test apps/whisper/Hosty.Whisper.Tests/Hosty.Whisper.Tests.csproj
 
   demo-app:
     name: Demo App
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.demo_app == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -381,22 +326,28 @@ jobs:
       - name: Lint Demo App
         run: npm run demo-app:lint
 
+      - name: Test Demo App
+        run: npm run test --workspace @haas/hosty-demo-app
+
       - name: Build Demo App
         run: npm run demo-app:build
 
   core:
     name: Core
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.core == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: 10.0.x
+          global-json-file: global.json
 
       - name: Build Core
         run: npm run core:build
@@ -404,34 +355,61 @@ jobs:
       - name: Test Core
         run: npm run core:test
 
-      - name: Check Core transport from real Docker networks
-        if: needs.changes.outputs.core_transport == 'true'
-        run: python3 scripts/check-docker-core-transport.py apps/core/src/Haas.Hosty.Core/bin/Debug/net10.0/hosty-core.dll
-
-      # Core ships as a Native AOT binary, but its publish used to run only at release time — so a
-      # trimming regression could sit on main until a release surfaced it. Core now has a NuGet
-      # dependency (the MCP SDK), which makes that surface something a version bump can change.
-      - name: Install Native AOT prerequisites
+  core-aot:
+    name: Core NativeAOT
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: changes
+    if: needs.changes.outputs.core_aot == 'true'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Ensure NativeAOT prerequisites
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang zlib1g-dev
-
-      - name: Publish Core (Native AOT)
+          if ! command -v clang >/dev/null || ! dpkg-query -W -f='${Status}' zlib1g-dev 2>/dev/null | grep -q 'install ok installed'; then
+            sudo apt-get update
+            sudo apt-get install -y clang zlib1g-dev
+          fi
+      - name: Publish Core and reject new trim/AOT warnings
         run: npm run core:aot
+
+  core-transport:
+    name: Core Docker transport
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: changes
+    if: needs.changes.outputs.core_transport == 'true'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - run: npm run core:build
+      - name: Check Core transport from real Docker networks
+        run: python3 scripts/check-docker-core-transport.py apps/core/src/Haas.Hosty.Core/bin/Debug/net10.0/hosty-core.dll
 
   core-windows-process-control:
     name: Core (Windows process control)
     runs-on: windows-latest
+    timeout-minutes: 20
     needs: changes
-    if: needs.changes.outputs.core == 'true'
+    if: needs.changes.outputs.core_windows_process_control == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: 10.0.x
+          global-json-file: global.json
 
       # The main Core gate runs on Linux. Keep this Windows lane narrow: it exists for the native
       # handle/job-object behaviors that a Linux run necessarily skips, including the harness
@@ -442,17 +420,25 @@ jobs:
           --filter
           "FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop|FullyQualifiedName~SourceDocuments_ReferenceMetadataSupportsLfAndCrLf|FullyQualifiedName~WorkspaceGit_"
 
+      - name: Verify Windows shared receipt replacement
+        run: >-
+          dotnet test apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj
+          --filter FullyQualifiedName~SharedReceiptSharingTests
+
   workspace-native-activation:
     name: Workspace activation (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     needs: changes
-    if: needs.changes.outputs.core == 'true' || needs.changes.outputs.cli == 'true'
+    if: needs.changes.outputs.workspace_native_activation == 'true'
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
       - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
@@ -485,16 +471,19 @@ jobs:
   cli:
     name: CLI
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.cli == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: 10.0.x
+          global-json-file: global.json
 
       - name: Validate installer syntax
         run: |
@@ -510,16 +499,19 @@ jobs:
   telemetry-backend:
     name: Telemetry Backend
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.telemetry_backend == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: 10.0.x
+          global-json-file: global.json
 
       - name: Build Telemetry Backend
         run: npm run telemetry-backend:build
@@ -530,11 +522,14 @@ jobs:
   marketplace:
     name: Marketplace
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.marketplace == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -557,11 +552,14 @@ jobs:
   plans:
     name: Plans
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.plans == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -581,41 +579,17 @@ jobs:
       - name: Build Plans
         run: npm run plans:build
 
-  workspaces:
-    name: Workspaces
-    runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.workspaces == 'true'
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Install Node dependencies
-        run: npm ci
-
-      - name: Lint Workspaces
-        run: npm run workspaces:lint
-
-      - name: Test Workspaces
-        run: npm run workspaces:test
-
-      - name: Build Workspaces
-        run: npm run workspaces:build
-
   harness:
     name: Hosty Harness
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.harness == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -637,20 +611,37 @@ jobs:
       - name: Test Hosty Harness
         run: npm run harness:test
 
+  harness-worker:
+    name: Harness Docker worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: changes
+    if: needs.changes.outputs.harness_worker == 'true'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
       - name: Build shared agent worker
         run: docker build -f apps/harness/worker/Dockerfile -t "ghcr.io/alex-de-haas/hosty-agent-worker:$(node -p 'require("./apps/harness/manifest.json").version')" .
-
       - name: Verify worker process and mount lifecycle
         run: node --import tsx scripts/check-harness-worker.mjs
 
   telemetry-ui:
     name: Telemetry UI
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.telemetry_ui == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -675,6 +666,7 @@ jobs:
     # The only macOS job in the workflow: Xcode exists nowhere else. The repository is public, so
     # GitHub-hosted macOS runners are free; the paths filter keeps it off unrelated commits anyway.
     runs-on: macos-latest
+    timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.swift_shell == 'true'
     defaults:
@@ -683,6 +675,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       # A runner's *default* Xcode is not necessarily its newest, and this project needs Xcode 26: it
       # targets the iOS/macOS 26 SDKs and HostyKit declares swift-tools-version 6.2. Selecting the newest
@@ -724,11 +718,14 @@ jobs:
   cardputer-shell:
     name: Cardputer Shell
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.cardputer_shell == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
 
       - name: Run bounded host tests
         run: apps/shell-cardputer/tools/host-test.sh
@@ -749,11 +746,37 @@ jobs:
           # The container builds as root, so build/ is root-owned and this step cannot write into it.
           # Collect what gets uploaded in a directory this job owns instead.
           mkdir -p cardputer-artifacts
-          cp "$image" cardputer-artifacts/
-          ( cd cardputer-artifacts && sha256sum hosty_cardputer_shell.bin > SHA256SUMS )
+          cp "$image" cardputer-artifacts/hosty-cardputer.bin
+          cp apps/shell-cardputer/build/bootloader/bootloader.bin cardputer-artifacts/hosty-cardputer-bootloader.bin
+          cp apps/shell-cardputer/build/partition_table/partition-table.bin cardputer-artifacts/hosty-cardputer-partition-table.bin
+          cp apps/shell-cardputer/build/ota_data_initial.bin cardputer-artifacts/hosty-cardputer-ota-data.bin
+          ( cd cardputer-artifacts && sha256sum hosty-cardputer*.bin > SHA256SUMS )
+          node -e 'require("node:fs").writeFileSync("cardputer-artifacts/verification.json", JSON.stringify({sourceSha: process.env.SOURCE_SHA, format: 1}) + "\n")'
+        env:
+          SOURCE_SHA: ${{ needs.changes.outputs.sha }}
 
       - name: Upload firmware verification artifact
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: hosty-cardputer-${{ github.sha }}
+          name: hosty-cardputer-${{ needs.changes.outputs.sha }}
+          overwrite: true
           path: cardputer-artifacts/
+
+  ci-required:
+    name: ci-required
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always()
+    needs: [changes, versions, docs, ci-policy, actionlint, shell, app-sdk, app-sdk-dotnet, whisper, whisper-native, demo-app, core, core-aot, core-transport, core-windows-process-control, workspace-native-activation, cli, telemetry-backend, marketplace, plans, harness, harness-worker, telemetry-ui, swift-shell, cardputer-shell]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Require every selected check to succeed
+        env:
+          CI_PLAN: ${{ needs.changes.outputs.plan }}
+          CI_NEEDS_JSON: ${{ toJSON(needs) }}
+        run: node scripts/ci-policy.mjs gate

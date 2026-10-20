@@ -1,6 +1,6 @@
 ---
 created: 2026-05-12
-updated: 2026-10-05
+updated: 2026-10-20
 summary: The repository layout, release artifacts and versioning rules for every component.
 ---
 
@@ -53,7 +53,7 @@ independently of the platform, browser Shell, and Apple client.
 
 ### The shared root lockfile
 
-Every Node artifact here - the four Next.js apps, `apps/harness`, and `packages/app-sdk` - resolves
+The Node runtime apps, `apps/harness` and `packages/app-sdk` resolve
 through one root `package.json` / `package-lock.json` pair (npm workspaces). A component boundary in the
 diagram above is therefore not a dependency boundary: one lockfile decides what all of them install.
 
@@ -85,109 +85,21 @@ commit probe in [Runtime App Update](../runtime-app-update/feature.md) for sourc
 
 ## GitHub Actions Model
 
-Builds are independent:
+[CI Feedback Loop](../ci-feedback-loop/feature.md) owns automatic affected checks, additional native qualification, the stable `ci-required` aggregate and the development/review readiness rules.
 
-- `ci.yml` - shared checks on pull requests and pushes;
-- `claude-code-review.yml` - advisory Claude Code review of pull requests, posted as inline comments;
-- `shell-image.yml` - build and push the Hosty Shell Docker image on `main`;
-- `marketplace-image.yml` - test, build, attest, and push the Hosty Marketplace Docker image on `main`;
-- `demo-app-image.yml` - build and push the first-party Demo App Docker image;
-- `cli-release.yml` - build and publish standalone CLI and Core executable artifacts.
-- `cardputer-release.yml` - build, attest, and publish rolling Cardputer ADV firmware and recovery images.
+`ci.yml` runs on every PR and main push without a workflow-level path filter. Cheap policy, version and documentation checks run first; affected component checks and relevant risk suites run in parallel. Core unit tests and NativeAOT are separate jobs. Manual exact-revision and nightly-main qualification use the same policy. Shared web changes affect Shell/Harness; root Node dependencies affect Node consumers; genuine .NET toolchain/configuration changes affect .NET consumers. Strictly verified platform version-only metadata does not run every native scenario.
 
-No workflow packages or publishes `apps/shell-swift` (see [Swift Shell](../swift-shell/feature.md)); it is built from Xcode and checked by the `swift-shell` job in `ci.yml`. Cardputer uses the pinned ESP-IDF container in both the `cardputer-shell` CI job and its dedicated release workflow.
+Image and native-release workflows start after completed main CI, validate the exact successful main push revision, and select affected artifacts. Unrelated CI completions are no-ops. SDK workflows retain path-filtered push triggers and their trusted execution context, waiting for the exact main validation before publication. Artifact-specific production validation stays where CI does not produce reusable release output. Cardputer normal publication consumes the complete verified firmware/recovery artifact of that exact CI run. Manual main recovery remains available.
 
-Unlike `ci.yml`, the publishing workflows do filter at the workflow level - there is no required status
-check to leave pending, and not publishing is the correct outcome for an unrelated commit. Their
-`paths:` lists must match what actually lands in the artifact, in both directions. The four Node image
-workflows watch `package.json` and `package-lock.json` because each Dockerfile's `deps` stage copies
-exactly those two files and runs `npm ci` against them, so a root lockfile bump changes the shipped
-image even when nothing under `apps/<component>/` does. Conversely they must *not* watch `global.json`
-or `Directory.Build.props`: those are .NET-only, and while `marketplace-image.yml` listed them every
-platform version bump republished the image - the slowest build here, multi-arch under QEMU - for no
-change at all.
+The standalone Workspaces app and `workspaces-image.yml` are retired; Core workspace APIs and Harness agent tools remain supported. No workflow packages the native Apple client; its HostyKit/macOS/iOS builds remain in CI. Cardputer retains the pinned ESP-IDF build environment.
 
-### Path filtering in `ci.yml`
+`claude-code-review.yml` remains an advisory PR review, separate from build validation. SDK npm/NuGet workflows retain their trusted-publisher filenames and independent version publication.
 
-`ci.yml` carries every component's checks as sibling jobs, so its filtering is **per job, not per
-workflow**. A `changes` job runs [`dorny/paths-filter`](https://github.com/dorny/paths-filter) and each
-component job gates on the matching output.
+### Concurrency And Source Identity
 
-A workflow-level `paths:` filter cannot do this. It is a union over every component, so a change to any
-one of them starts all of them - which is what the repository did until this was split out. It is also
-incompatible with required status checks: when the filter excludes a change the workflow never starts,
-its checks never report, and the pull request waits on them forever. A job skipped by `if:` reports as
-skipped, which GitHub counts as success.
+Superseded PR runs are cancelled. Distinct main commits retain independent validation, and manual/nightly runs cannot cancel their push validation. Publication starts after CI rather than occupying runners while waiting for it.
 
-Shared paths are scoped **by runtime**, not pooled into one list:
-
-```text
-node_shared:                    dotnet_shared:
-  package.json                    package.json
-  package-lock.json               global.json
-  .github/workflows/ci.yml        Directory.Build.props
-                                  .github/workflows/ci.yml
-
-Shell / Demo App / Marketplace / Telemetry UI:
-  <node_shared>
-  packages/app-sdk/**          # all four depend on the @hosty-sdk/app workspace package
-  apps/<component>/**
-
-App SDK:            <node_shared>   + packages/app-sdk/**
-App SDK (.NET):     <dotnet_shared> + packages/app-sdk-dotnet/**
-Core:               <dotnet_shared> + apps/core/**
-Telemetry Backend:  <dotnet_shared> + apps/telemetry-backend/**
-CLI:                <dotnet_shared> + apps/cli/** + scripts/install.sh + scripts/install.ps1
-Cardputer Shell:    apps/shell-cardputer/** + scripts/check-versions.mjs
-Workflow lint:      .github/workflows/** + .github/actions/**
-```
-
-The split is not cosmetic. A single shared pool was tried first and made the filtering nearly inert:
-every version bump touches either `package-lock.json` (npm workspaces record their version there) or
-`Directory.Build.props` (the platform version), and the versioning policy above requires that bump in
-the same commit - so almost every pull request matched every filter. An npm lockfile cannot change a
-.NET build and the .NET SDK pin cannot change a Node one, so scoping them costs nothing in safety.
-
-`package.json` is in both lists: the root manifest holds the `core:build` / `cli:build` /
-`telemetry-backend:build` scripts the .NET jobs invoke, so it is not Node-only.
-
-Within a runtime the filters still err toward over-triggering - a `package-lock.json` change runs all
-four Node apps, because a version-only bump and a real dependency bump are indistinguishable by path.
-Under-triggering on a shared dependency change is the failure worth avoiding, so when in doubt a path
-belongs in the shared list for its runtime.
-
-Two jobs are deliberately ungated:
-
-- **Version consistency.** `scripts/check-versions.mjs` reads version fields from every manifest and
-  `package.json` in the repository, so any filter narrow enough to be useful would also be wrong. It
-  needs no `npm ci` and finishes in seconds.
-- **Docs index.** `scripts/docs-index.mjs --check` validates headers and the generated index across the
-  whole `docs/` tree, for the same reason and at the same cost.
-
-The filter applies to **pushes to `main` as well as pull requests**. The `changes` job passes
-`base: ${{ github.ref }}`, which on a push diffs against the commit before the push - for a merge
-commit, the merged pull request's whole changeset. On a zero `before` (force-push, or a branch's first
-push) `paths-filter` degrades to listing every file as added, so the full matrix runs rather than
-nothing.
-
-This relies on a branch protection rule. A push-side diff cannot see a semantic conflict between two
-pull requests merged in parallel: the repository uses merge commits, so `main` can differ from the tree
-any single pull request tested. **Require branches to be up to date before merging** closes that gap by
-forcing a pull request onto current `main` before it can land, so the pull request run and the push run
-see the same tree. That rule is load-bearing; without it the filter has to go back to running the full
-matrix on every push.
-
-### Concurrency
-
-`ci.yml` groups runs by pull request number, cancelling superseded ones - a branch pushed three times
-no longer keeps three full matrices alive. Pushes to `main` are keyed by commit instead, so no `main`
-commit loses its validation to the commit merged seconds after it.
-
-Every publishing workflow serializes its publishing job (`build-and-push`, or the release job in
-`cli-release.yml` and `cardputer-release.yml`) and never cancels in progress: two runs racing to move
-`:latest`, a version tag, or the `cli-dev` / `cardputer-dev` tag can leave the moving tag on whichever
-finished last, and a half-finished registry push is worse than a queued one. Only the publishing job is
-grouped, so a later commit's gate tests still run in parallel.
+Each artifact's publishing job remains serialized without cancellation where mutable tags/releases require it. SDK publishes remain independent so intermediate unpublished versions cannot be cancelled away. The checked-out, built and tagged revision is the validated CI source SHA, even when main has advanced since that run started. Freshness checks use that source SHA, not the newer default-branch SHA of a workflow completion event.
 
 ### Mutable tags and the publish guard
 
@@ -263,27 +175,15 @@ action, so the same job runs shellcheck (pinned image, same rationale) over `.gi
 That is why the publish guard's logic sits in `guard.sh` rather than inline in its `action.yml`: as an
 ordinary script it is lintable, and `action.yml` stays declarative.
 
-The single-purpose image and release workflows keep their own workflow-level `paths:` filters; with one
-component each, the union problem does not arise.
+Image and native release workflows select their affected artifact after successful main CI. SDK workflows retain path-filtered push triggers. The exact automatic policy, component suites and risk qualification are documented in [CI Feedback Loop](../ci-feedback-loop/feature.md). Cardputer CI produces the complete firmware/recovery bundle rather than only an application image.
 
-Full CI runs Shell build, Marketplace lint/test/build, Demo App lint/build, Telemetry UI
-lint/test/build, Core build/tests, Telemetry Backend build/tests, App SDK tests (Node and .NET),
-installer syntax validation for shell and PowerShell installers, CLI build, and CLI xUnit tests. The
-Cardputer job runs bounded host tests, builds the ESP32-S3 image, enforces the OTA-slot limit, and
-uploads the image with its checksum. The
-root `npm run ci` script mirrors the primary Shell, Marketplace, Demo App, Core, and CLI validation
-sequence for local validation.
-
-Pull request CI and default-branch CI therefore run the same checks, both restricted to the components
-the diff touches - a push to `main` is filtered against the commit before the push exactly as a pull
-request is filtered against its base.
+The root `npm run ci` command remains a local convenience sequence for primary components; it does not replace automatically selected CI or feature-specific acceptance.
 
 ### Pull request review
 
 `claude-code-review.yml` runs the Claude Code `code-review` plugin once per pull request - when it is
 opened as a non-draft, or when a draft is marked ready for review - and posts its findings as inline
-comments. It is advisory: the check is not required, and it does not run on later pushes; a fresh
-review needs the pull request converted back to draft and marked ready again. The job is skipped, not
+comments. It is advisory: the check is not required, and it does not run on later pushes. A green advisory workflow does not prove a fresh review of a later revision; the upstream plugin can also stop after finding its existing review comment. The job is skipped, not
 failed, for drafts, fork pull requests, and bot-authored pull requests such as Dependabot's, because
 GitHub withholds repository secrets from the latter two.
 
@@ -309,7 +209,7 @@ ghcr.io/alex-de-haas/hosty-shell:latest
 ghcr.io/alex-de-haas/hosty-shell:sha-<commit>
 ```
 
-The Shell image is the Core-managed system runtime app artifact for the browser UI. Its source of truth is `apps/shell/manifest.json` and `apps/shell/Dockerfile`. The `shell-image.yml` workflow publishes `latest` and `sha-<commit>` tags to GitHub Container Registry on pushes to `main`.
+The Shell image is the Core-managed system runtime app artifact for the browser UI. Its source of truth is `apps/shell/manifest.json` and `apps/shell/Dockerfile`. The `shell-image.yml` workflow publishes `latest` and `sha-<commit>` tags to GitHub Container Registry after successful affected `main` CI.
 
 Demo App image artifact:
 
@@ -340,13 +240,7 @@ ghcr.io/alex-de-haas/hosty-telemetry-ui:<manifest-version>
 Both read their version from `apps/telemetry/manifest.json` - the telemetry app ships as one unit - and
 each also publishes `latest` and `sha-<commit>` into its own repository.
 
-Across all of these, `sha-<commit>` is the only tag guaranteed to name one immutable build. `<commit>`
-is the 7-character short SHA - `d2d339e`, giving the tag `sha-d2d339e` - not the full 40-character
-one; the image workflows tag with docker/metadata-action's `type=sha,prefix=sha-`, which abbreviates
-by default. A version tag is written once and never moved afterwards, and `:latest` tracks the newest
-commit that was still the tip of `main` when it published; both are enforced by the
-[publish guard](#mutable-tags-and-the-publish-guard). A commit whose declared version was already
-published claims no version tag, and is still fully retrievable as `sha-<commit>`.
+Across these images, `sha-<commit>` records a short source SHA. It is a lookup tag, not a verified immutable build identity: a rerun can rebuild the same source. Verified artifact reuse requires the full source SHA and content digest. Version tags are written once and never moved; `:latest` follows a source revision that still passes the main freshness guard. A stale run may create an absent immutable version, but cannot move a rolling tag over newer main.
 
 CLI release artifacts:
 

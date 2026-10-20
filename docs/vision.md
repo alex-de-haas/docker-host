@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-18
+updated: 2026-10-20
 ---
 
 # Hosty Platform Vision
@@ -308,13 +308,14 @@ Decisions 1–5: 2026-08-19.
     outside Shell and replace its dashboard workspace launcher when the app ships. Workspaces adds
     no provider role and owns neither conversations nor plan parsing. Open the recorded owner's
     session when possible; external agents may have no session URL. The
-    [Workspaces app](features/workspaces-app/feature.md) documents the shipped read-only experience.
+    [retirement record](features/workspaces-app/feature.md) documents the 2026-10-20 decision to remove
+    this separate application and its operator form while retaining Core APIs and Harness tools.
 
 22. **Default applications belong to Core (2026-10-08).** Explore shared default choices for
     supported roles/provider interfaces, starting with shell and assistant. Shell renders settings;
     preferences do not grant permissions. This supersedes assistant selection being exclusively
-    local to each UI client. Explicit owner/provider references always take precedence. Workspaces
-    remains an ordinary app, and Plans does not become a provider by reading source documents.
+    local to each UI client. Explicit owner/provider references always take precedence. The former
+    Workspaces app added no provider role, and Plans does not become a provider by reading source documents.
     The [default applications plan](features/default-applications/plan.md) owns shared selection;
     the [replaceable UI-client plan](features/replaceable-ui-clients/plan.md) retains shell-specific
     work. Scope, fallback and migration details remain Draft.
@@ -335,7 +336,7 @@ Decisions 1–5: 2026-08-19.
     of per-repository worktree records and the inspection authority boundary.
 
 25. **Read-only workspace inspection first (2026-10-09).** The initial
-    [Workspaces app](features/workspaces-app/feature.md) shows workspace/worktree inventory, source
+    [Workspaces app](features/workspaces-app/feature.md) originally shipped workspace/worktree inventory, source
     changes, owners and existing publication facts. The read-only implementation has the separate
     `apps.workspaces.read` grant. Management capabilities and stronger operator/session-execution
     scope remain deferred. Later close

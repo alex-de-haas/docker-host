@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-10-18
+updated: 2026-10-20
 summary: Remaining per-session execution isolation, scoped access and verified shutdown; the shared Docker worker is implemented and verified separately.
 components: [apps/harness, apps/core]
 ---
@@ -244,7 +244,7 @@ deleted directory is not proof of termination. Live unmount is not assumed.
 | [Agent Providers](../agent-provider-interface/plan.md) | Shared invocation contract and caller authority; tool-executing runs consume this boundary |
 | [App Sandbox](../app-sandbox-runtimes/plan.md) | Applications under test, isolated runtime/data and browser verification |
 
-This work does not gate the shipped Workspaces viewer or instruction-based worktree workflow.
+This work does not gate the shipped Harness workspace inspector or instruction-based worktree workflow.
 Current administrator host-native risk remains as described in the
 [Bridge](../ai-agent-bridge/feature.md#accepted-risk) and session autonomy feature. Administrator-only
 access does not prevent untrusted app data or logs from steering an administrator's own agent.

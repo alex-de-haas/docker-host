@@ -91,7 +91,7 @@ function WorkspaceCard({ workspace: w, sessionId, busy, cleanup, refresh }: {
     let active = true;
     void workspaceAction<{ url?: string | null; unavailable?: string | null }>(sessionId, "viewer", { workspaceId: w.id })
       .then(value => { if (active) setViewer(value); })
-      .catch(() => { if (active) setViewer({ unavailable: "Workspaces app is unavailable." }); });
+      .catch(() => { if (active) setViewer({ unavailable: "The owning session is unavailable." }); });
     return () => { active = false; };
   }, [sessionId, w.id]);
   const viewerUrl = (() => {
@@ -111,7 +111,7 @@ function WorkspaceCard({ workspace: w, sessionId, busy, cleanup, refresh }: {
     } catch (cause) { if (current === generation.current) setError(cause instanceof Error ? cause.message : String(cause)); }
   };
   return <section className="space-y-2 rounded border p-2" aria-label={`Workspace ${w.id.slice(0, 8)}`}>
-    {viewerUrl && <Button size="sm" variant="outline" asChild><a href={viewerUrl} target="_blank" rel="noreferrer">Open in Workspaces</a></Button>}
+    {viewerUrl && <Button size="sm" variant="outline" asChild><a href={viewerUrl} target="_blank" rel="noreferrer">Open owning session</a></Button>}
     {viewer?.unavailable && <p className="text-xs text-muted-foreground">{viewer.unavailable}</p>}
     <p className="break-all font-medium">{w.apps.map(a => a.appId).join(", ")} · {w.state}</p>
     <p className="break-all font-mono text-xs">{w.path}</p>

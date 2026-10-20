@@ -25,7 +25,28 @@ permissions:
 # second publish — a visible failed run instead of a silently dropped version.
 
 jobs:
+  validation:
+    name: Require full CI for this main SHA
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run-id: ${{ steps.validation.outputs.run-id }}
+      source-sha: ${{ steps.validation.outputs.source-sha }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Require successful main CI
+        id: validation
+        uses: ./.github/actions/ci-validation-gate
+        with:
+          token: ${{ github.token }}
+          components: app-sdk
+
   publish:
+    needs: validation
     name: Publish @hosty-sdk/app
     runs-on: ubuntu-latest
     steps:

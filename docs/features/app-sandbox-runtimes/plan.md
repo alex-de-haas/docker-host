@@ -1,9 +1,9 @@
 ---
 status: In Progress
 created: 2026-09-25
-updated: 2026-10-18
+updated: 2026-10-20
 summary: Remaining host and recipe acceptance plus optional remote preview after verified local release, cold-engine and agent workflows.
-components: [apps/core, apps/harness, apps/shell, apps/workspaces, packages/app-sdk]
+components: [apps/core, apps/harness, apps/shell, packages/app-sdk]
 ---
 
 # Independent Sandbox Instances In Core
@@ -13,7 +13,7 @@ components: [apps/core, apps/harness, apps/shell, apps/workspaces, packages/app-
 PR #590 merged on 2026-10-14 at `eb9768017de3ec3cfb037c1d6c5e23b4ce13c8aa`.
 [feature.md](feature.md) describes the shipped APIs, their verification and limits.
 This plan separates remaining work from the earlier design iterations; it does not reopen
-the implemented child Core manager, user model, Harness tools or Shell/Workspaces controls.
+the implemented child Core manager, user model, Harness tools or Shell/Harness controls.
 
 The owner now authorizes the Media Server plus dedicated Transcode Engine scenario, through
 Harness and a normal authenticated browser, including resource measurements and complete
@@ -194,7 +194,7 @@ Technical restart and ordinary source edits within the reviewed contract must no
 ## Proposed Core Integration Contract
 
 The independent APIs are already delivered; clients do not require a workspace or an agent session.
-Workspace/worktree bindings retain borrowed source until Finish. Harness, Shell and Workspaces
+Workspace/worktree bindings retain borrowed source until Finish. Harness and Shell
 use the same Core lifecycle. A fresh child is empty: attaching worktrees does not install apps.
 Reuse normal child installation review, dependency discovery and shared-mount registration for
 the next scenario. Add narrowly scoped fixes only when the runtime check demonstrates a gap.
@@ -270,7 +270,7 @@ The checked items below record the verified scope merged in #590; expanded requi
 - [x] D21. Implement the parent Core environment registry, authorized create/list/status/stop/restart/Finish APIs, bounded graceful child shutdown, fallback cleanup and restart/crash reconciliation; integrate Harness and local operator preview while preserving the existing verified baseline.
 - [x] D22. Verify a real model-driven Harness agent creating and setting up a child Core, changing Demo App in its reviewed worktree, installing and starting the Docker source runtime through ordinary Core approval, checking it in a browser, and finishing the environment with independently verified cleanup. Preserve sanitized evidence and fix regressions exposed by the run.
 - [x] D23. Verify a real Harness agent editing both Core and Demo App in its session worktree, building a source-mode child Core from that project, consuming the changed Core API in Demo through normal browser authentication, running affected checks, and finishing with independently verified complete cleanup. Preserve sanitized evidence and repair any regressions exposed by the run.
-- [x] D24. Integrate child Core environments into Workspaces and Shell: create/start from validated workspace worktrees with optional source Core selection, ordinary test-account setup, observed app status and authenticated preview links, replayable lifecycle controls and explicit complete Finish. Verify the real embedded browser journey, permission denial, source retention and cleanup, then document the shipped UI.
+- [x] D24. Integrate child Core environments into the operator UI: validate workspace/source inputs, ordinary test-account setup, observed app status, authenticated previews and replayable lifecycle/Finish controls; verify browser permissions, source retention and cleanup. The original Workspaces creation form and standalone app are retired on 2026-10-20; Harness agent tools retain creation/setup and Shell retains inspection and lifecycle controls. See the [retirement record](../workspaces-app/feature.md).
 
 ### Current Recovery Delivery
 
@@ -480,7 +480,7 @@ and complete child cleanup. D9 retains the remaining matrix and measurement limi
   its fixture only; run affected builds/tests and full real Core/Shell acceptance during implementation.
 
 Implementation verification includes `npm run core:build`, `npm run core:test`, SDK build/tests,
-Harness lint/tests/web build, and lint/tests/builds for changed Demo App, Workspaces and Shell code.
+Harness lint/tests/web build, and lint/tests/builds for changed Demo App and Shell code.
 Run CLI checks if its contract changes, plus `node scripts/check-versions.mjs` and docs validation.
 Use a separate test Core data root with normal setup/password login and a genuine installed-app
 baseline. Never restart the operator's Core merely to execute these tests. The implementation requires the affected product builds/tests, index/link validation and

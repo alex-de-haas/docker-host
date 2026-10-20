@@ -2,34 +2,63 @@ name: Hosty Release Assets
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - "apps/core/**"
-      - "apps/cli/**"
-      - "shared/**"
-      - "scripts/install.sh"
-      - "scripts/install.ps1"
-      - "global.json"
-      - "Directory.Build.props"
-      - "Directory.Build.targets"
-      - "scripts/HostyBuildIdentity.cs"
-      - ".github/workflows/cli-release.yml"
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
+  validation:
+    # Ignore non-push, failed and foreign CI completions before allocating a runner.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    name: Require full CI for this main SHA
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      publish: ${{ steps.validation.outputs.publish }}
+      run-id: ${{ steps.validation.outputs.run-id }}
+      source-sha: ${{ steps.validation.outputs.source-sha }}
+    steps:
+      # Select with trusted default-branch policy, then build only the validated source commit.
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Set up Node.js for publication policy
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Require successful main CI
+        id: validation
+        uses: ./.github/actions/ci-validation-gate
+        with:
+          token: ${{ github.token }}
+          components: core,cli
+
   # Gate publishing on the tests for exactly what this workflow ships (Core + CLI). Without it a commit
   # whose tests fail still force-retags `cli-dev` — the default install/update target — and re-uploads
   # binaries, since publishing ran in parallel with (not gated on) CI. Every publish job needs this.
   test:
+    needs: validation
+    if: needs.validation.outputs.publish == 'true'
     name: Gate on tests
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validation.outputs.source-sha }}
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
@@ -50,7 +79,7 @@ jobs:
 
   publish-artifacts:
     name: Build ${{ matrix.rid }}
-    needs: test
+    needs: [validation, test]
     env:
       HostyBuildRepository: ${{ github.server_url }}/${{ github.repository }}
     runs-on: ${{ matrix.os }}
@@ -82,6 +111,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validation.outputs.source-sha }}
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
@@ -173,7 +204,7 @@ jobs:
 
   publish-cli-dev-release:
     name: Publish cli-dev release
-    needs: publish-artifacts
+    needs: [validation, publish-artifacts]
     runs-on: ubuntu-latest
     concurrency:
       group: cli-dev-release
@@ -189,6 +220,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validation.outputs.source-sha }}
 
       # `cli-dev` is force-retagged and its assets are clobbered, so this job has no immutable output
       # to fall back on: an older run admitted to the group after a newer one would move the default
@@ -201,6 +234,8 @@ jobs:
       - name: Guard the rolling tag
         id: guard
         uses: ./.github/actions/publish-guard
+        with:
+          source-sha: ${{ needs.validation.outputs.source-sha }}
 
       - name: Download release artifacts
         if: steps.guard.outputs.fresh == 'true'
@@ -262,10 +297,20 @@ jobs:
             ls -la
           )
 
+      - name: Prepare source-bound provenance
+        if: steps.guard.outputs.fresh == 'true'
+        env:
+          PUBLISH_SOURCE_SHA: ${{ needs.validation.outputs.source-sha }}
+          VALIDATED_CI_RUN_ID: ${{ needs.validation.outputs.run-id }}
+          PUBLICATION_KIND: build-native-release
+        run: node .github/actions/ci-validation-gate/provenance.mjs
+
       - name: Attest build provenance
         if: steps.guard.outputs.fresh == 'true'
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest@v4
         with:
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: publication-provenance.json
           subject-path: "dist/hosty-*"
 
       - name: Publish rolling prerelease
@@ -273,18 +318,19 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          PUBLISH_SOURCE_SHA: ${{ needs.validation.outputs.source-sha }}
         run: |
           set -euo pipefail
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag --force cli-dev "${GITHUB_SHA}"
+          git tag --force cli-dev "${PUBLISH_SOURCE_SHA}"
           git push --force origin refs/tags/cli-dev
 
           cat > release-notes.md <<EOF
           Rolling development release for Hosty CLI and Core.
 
-          Commit: ${GITHUB_SHA}
+          Commit: ${PUBLISH_SOURCE_SHA}
 
           Assets are overwritten by the CLI release workflow on each main build.
           EOF

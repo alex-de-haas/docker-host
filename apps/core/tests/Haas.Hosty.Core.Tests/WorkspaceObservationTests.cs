@@ -277,9 +277,17 @@ public sealed partial class CoreLifecycleServiceTests
         {
             await WaitForObservation(() => Task.FromResult(state.Health(tree.Id) == "watching" && !state.NeedsObservation(tree.Id)));
             await File.WriteAllTextAsync(Path.Combine(tree.Path, "single-hint.txt"), "one edit only");
-            await WaitForObservation(async () => (await service.Read(tree.Id, null, default)).Observation!.Local!.Files.Any(file => file.Path == "single-hint.txt"));
+            string? observedHealth = null;
+            // The record is saved before its generation is acknowledged; capture a completed observation.
+            await WaitForObservation(async () =>
+            {
+                var observed = await service.Read(tree.Id, null, default);
+                observedHealth = state.Health(tree.Id);
+                return observed.Observation!.Local!.Files.Any(file => file.Path == "single-hint.txt")
+                    && observedHealth == "watching";
+            });
             Assert.True(failures > 0);
-            Assert.Equal("watching", state.Health(tree.Id));
+            Assert.Equal("watching", observedHealth);
         }
         finally { await observer.StopAsync(default); }
     }

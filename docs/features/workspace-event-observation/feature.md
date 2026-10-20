@@ -1,8 +1,8 @@
 ---
 created: 2026-10-19
-updated: 2026-10-19
-summary: Core observes workspace changes through filesystem and mutation events, while Harness and Workspaces share authorized SSE updates.
-components: [apps/core, apps/harness, apps/workspaces]
+updated: 2026-10-20
+summary: Core observes workspace changes through filesystem and mutation events, while Harness consumes authorized SSE updates.
+components: [apps/core, apps/harness]
 ---
 
 # Workspace Event Observation
@@ -51,7 +51,7 @@ worktree changes, authority/inventory changes or a dropped-event resync reach th
 Each snapshot request independently checks authorization. Stream batches and 20-second keep-alives
 revalidate authority, and Core shutdown cancels streams. Keep-alives do not request a UI snapshot.
 
-Harness and Workspaces proxy the bounded inspection route with server-held service credentials.
+Harness proxies the bounded inspection route with server-held service credentials.
 Within each app/tab, consumers share one authenticated fetch stream. Hints debounce into
 single-flight reads; another hint during a read retains a follow-up. Failed snapshot reads retry
 with bounded backoff even when the stream stays healthy and no new workspace event arrives. Disconnect clears source data,
@@ -106,6 +106,8 @@ cancellation failure does not suppress stream recovery or older-Core compatibili
 - External writes, atomic replacement, rename/delete, staging, commits and target refs invalidate
   the correct worktree; ignored bursts cannot conceal tracked changes.
 - Busy owner locks, events during scans, missing roots, watcher failure and restart retain recovery.
+- A relevance-filter failure retains a single file hint. Readiness assertions observe both the persisted
+  change and completed observation health; a saved snapshot alone does not acknowledge its generation.
 - Pause stops observation, Resume is fresh, and Complete/Delete retain safety checks.
 - Streams enforce app/user/source authority, recover dropped events and close on shutdown/revocation.
 - Multiple UI consumers share a stream and handle reconnect, hidden pages, silent transport and
