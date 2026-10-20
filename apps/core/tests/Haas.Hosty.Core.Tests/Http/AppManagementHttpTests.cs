@@ -79,7 +79,7 @@ public sealed class AppManagementHttpTests
     }
 
     [Theory]
-    [InlineData("/api/core/settings", "core.configure")]
+    [InlineData("/api/core/settings", "core.read")]
     [InlineData("/api/core/logs", "core.logs")]
     [InlineData("/api/global-mounts", "core.configure")]
     [InlineData("/api/auth/users", "users.read")]

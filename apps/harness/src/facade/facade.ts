@@ -282,7 +282,7 @@ export class McpFacade {
     }
 
     try {
-      const current = await this.providers.resolveOffered(entry.appId, entry.url);
+      const current = await this.providers.resolveOffered(entry.appId, entry.url, true);
       if (!current) {
         send(response, 200, { jsonrpc: "2.0", id, error: { code: -32000, message: "This target is no longer offered. Refresh the tool list." } });
         return;
@@ -336,8 +336,8 @@ export class McpFacade {
     const core = this.providers.core();
     const sources = sourcesFor(
       discovered?.providers ?? [],
-      Object.fromEntries((discovered?.providers ?? []).map(provider => [provider.appId, provider.offered === true])),
-      discovered && core?.offered && core.url ? { appId: CORE_TARGET, displayName: "Hosty Core", url: core.url } : null,
+      Object.fromEntries((discovered?.providers ?? []).map(provider => [provider.appId, true])),
+      discovered && core?.url ? { appId: CORE_TARGET, displayName: "Hosty Core", url: core.url } : null,
     );
 
     const catalog = await buildCatalog(sources, (appId) =>

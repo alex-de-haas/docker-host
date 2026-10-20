@@ -13,13 +13,10 @@ beforeEach(() => {
 });
 afterEach(() => { document.body.replaceChildren(); vi.unstubAllGlobals(); });
 const start = () => { new Function(source)(); };
-it("groups same-name OAuth clients by exact ID and hides admin-only rename from regular users", async () => {
-  history.replaceState(null, "", "/account/tokens");
-  request.mockImplementation(async path => Response.json(path === "/api/auth/session" ? { user: { role: "host.user" } }
-    : path === "/api/auth/credentials" ? { credentials: ["first", "second"].map((client, index) => ({ id: `fingerprint-${index}`, kind: "oauth", label: "Grant", userId: "u", userDisplayName: "Alice", oauthClientId: client, oauthClientName: "Same name", createdAt: "2026-10-01T00:00:00Z", lastSeenAt: "2026-10-01T00:00:00Z" })) }
-    : path === "/api/apps" ? { apps: [] } : { requests: [] }));
-  start(); await vi.waitFor(() => expect(document.querySelectorAll("h3")).toHaveLength(2));
-  expect([...document.querySelectorAll("h3")].map(node => node.textContent)).toEqual(["Same name · first", "Same name · second"]);
-  expect(document.body.textContent).toContain("fingerprint-0");
-  expect([...document.querySelectorAll("button")].some(node => node.textContent === "Rename")).toBe(false);
+it("renders only token creation without credential or client listings", async () => {
+  request.mockImplementation(async path => Response.json(path === "/api/auth/session" ? { user: { role: "host.user" } } : { apps: [] }));
+  start(); await vi.waitFor(() => expect(document.querySelector("form")).not.toBeNull());
+  expect(document.body.textContent).toContain("Create an access token");
+  expect(request.mock.calls.map(call => call[0])).toEqual(["/api/auth/session", "/api/apps"]);
+  expect(document.body.textContent).not.toContain("Registered OAuth clients");
 });

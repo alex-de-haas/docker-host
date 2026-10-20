@@ -53,7 +53,7 @@ it.each(["autostart", "app setting", "public origins tab"])(
         });
         if (change === "public origins tab") {
           const tab = [...dialog.querySelectorAll<HTMLButtonElement>("button")]
-            .find(button => button.textContent === "Public origins")!;
+            .find(button => button.textContent === "Network")!;
           await act(async () => tab.click());
         }
       }

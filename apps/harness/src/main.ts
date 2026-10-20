@@ -39,6 +39,8 @@ const store = new SessionStore(config.dataDir, config.cacheDir);
 const audit = new AuditReporter(config.coreOrigin, config.serviceToken, config.appId);
 const notifier = new WaitingNotifier(config.coreOrigin, config.serviceToken, config.appId);
 const settings = new SettingsStore(config.dataDir, config.retentionDays);
+// Capture legacy launch preferences once; subsequent reads use the app-owned file.
+await settings.update({});
 // Core's MCP endpoint, resolved once for both consumers: the facade lists it beside the apps for
 // external clients, and the provider directory offers it to the assistant's own sessions.
 const coreMcpUrl = config.coreOrigin ? `${config.coreOrigin.replace(/\/$/, "")}/api/mcp` : null;

@@ -101,7 +101,7 @@ public sealed class OnBehalfOfTokenHttpTests
         using var before = await OnBehalfOfAsync(client, harness, "hosty.harness", credential, "com.example.notes");
         Assert.Equal(HttpStatusCode.OK, before.StatusCode);
 
-        using var revoked = await SendAsync(
+        using var revoked = await CoreReviewFixture.AsUserAsync(
             client, HttpMethod.Delete, $"/api/auth/credentials/{credential.Fingerprint}", owner);
         Assert.Equal(HttpStatusCode.OK, revoked.StatusCode);
 
@@ -248,7 +248,7 @@ public sealed class OnBehalfOfTokenHttpTests
         var users = harness.Services.GetRequiredService<UserDirectoryStore>();
         var now = harness.Services.GetRequiredService<IClock>().UtcNow;
         var user = new HostUserRecord(userId, $"{userId}@example.test", userId, role, false, now, now);
-        var session = new AuthSessionRecord($"session_{userId}", userId, now, now.AddHours(1), null, now);
+        var session = new AuthSessionRecord($"session_{userId}", userId, now, now.AddHours(1), null, now, BrowserOrigin: "http://localhost");
 
         if (append)
         {

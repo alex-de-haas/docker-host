@@ -2,170 +2,125 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { GatewaySettings } from "./gateway-settings";
-import { approveSkill, call, loadSettings, saveSettings, type SettingsResponse } from "../lib/api";
-
-vi.mock("../lib/api", async original => ({
-  ...await original<typeof import("../lib/api")>(),
-  approveSkill: vi.fn(), call: vi.fn(), loadSettings: vi.fn(), saveSettings: vi.fn(),
-}));
-vi.mock("./agent-runtime", () => ({ AgentRuntime: () => null }));
-vi.mock("./agent-providers", () => ({ AgentProviders: () => <div>Agent connection list</div> }));
-vi.mock("./translation-providers", () => ({ TranslationProviders: () => <section aria-label="Translation providers">Translation controls</section> }));
-
-let root: Root;
-let container: HTMLDivElement;
-let data: SettingsResponse;
+import { McpAccess } from "./mcp-access";
+import { ApiError, call, loadSettings, type SettingsResponse } from "../lib/api";
+vi.mock("../lib/api", async original => ({ ...await original<typeof import("../lib/api")>(), call: vi.fn(), loadSettings: vi.fn() }));
+let root: Root, container: HTMLDivElement, data: SettingsResponse;
+const refresh = vi.fn();
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  HTMLElement.prototype.scrollIntoView = vi.fn();
   data = {
-    settings: { systemPrompt: "", mcpProviders: { "hosty:core": true, projects: true, media: false }, mcpAutoAllow: { "hosty:core": true } },
-    providers: [
-      { appId: "hosty:core", displayName: "Hosty Core", url: "https://core.example", running: true },
-      { appId: "projects", displayName: "Project Manager", url: "https://projects.example", running: true },
-      { appId: "media", displayName: "Media Server", url: null, running: false },
-    ],
-    discovery: "ok",
-    mcpReviewBaseUrl: "https://core.test/install/agents/hosty.harness",
-    instructions: [{ appId: "projects", markdown: "Complete updated instructions", approved: false }],
-    agentConnections: true,
+    settings: { systemPrompt: "", mcpProviders: {}, mcpAutoAllow: {}, mcpDefaults: {}, mcpToolRules: {}, mcpSkillApprovals: {} },
+    providers: [{ appId: "notes", displayName: "Notes", url: "http://notes/mcp", running: true, offered: true, deniedTools: [] },
+      { appId: "media", displayName: "Media", url: "http://media/mcp", running: true, offered: false, deniedTools: [] }],
+    accessRevision: "access-one", mcpRevision: "local-one", discovery: "ok", agentConnections: true,
     harness: { name: "Claude", capabilities: { autoAllow: true, liveReconfigure: true } },
-    pendingSkills: [{ appId: "projects", displayName: "Project Manager", markdown: "Complete updated instructions", approvedDigest: "old" }],
+    toolCatalogs: [{ provider: "notes", identity: "notes-1", tools: [{ name: "read" }, { name: "delete" }] }, { provider: "media", identity: "media-1", tools: [{ name: "play" }] }],
+    instructions: [{ appId: "notes", identity: "notes-1", digest: "content-1", markdown: "Reviewed notes guidance", approved: false }],
   };
   vi.mocked(loadSettings).mockImplementation(async () => structuredClone(data));
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
+  vi.mocked(call).mockImplementation(async (url) => Response.json(url === "/settings/tools" ? { catalogs: data.toolCatalogs } : url === "/settings/mcp/review" ? { id: "review", status: "succeeded", approvalUrl: "https://core.test/install/confirm/review" } : {}));
+  vi.spyOn(window, "open").mockReturnValue(null); refresh.mockResolvedValue(undefined);
+  container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.resetAllMocks();
-  vi.unstubAllGlobals();
+afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
+const render = async () => {
+  await act(async () => root.render(<McpAccess data={data} busy={false} error={null} status={null} feedbackAppId={null} onRefresh={refresh} onSave={vi.fn()} />));
+  vi.mocked(call).mockClear();
+};
+const button = (text: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent?.includes(text))!;
+const click = (node: HTMLElement) => act(async () => node.click());
+const save = () => click(button("Save"));
+
+it("keeps access edits as a draft and submits one Core batch before local preferences", async () => {
+  await render(); await click(container.querySelector('[aria-label="Allow Media"]')!);
+  await click(button("Notes")); await click(container.querySelector('#tool-notes-delete')!);
+  expect(call).not.toHaveBeenCalled(); await save();
+  expect(vi.mocked(call).mock.calls.map(args => args[0])).toEqual(["/settings/mcp/review", "/settings/mcp/preferences"]);
+  const input = JSON.parse(vi.mocked(call).mock.calls[0]![1]!.body as string);
+  expect(input.targets).toEqual([{ targetId: "notes", enabled: true, deniedTools: ["delete"] }, { targetId: "media", enabled: true, deniedTools: [] }]);
+  expect(input).not.toHaveProperty("assistantId"); expect(input.requestId).toBeTruthy();
 });
-const render = async () => act(async () => root.render(<GatewaySettings section="access" />));
-const details = () => container.querySelector<HTMLElement>("#mcp-application-details")!;
-async function select(name: string) {
-  const button = [...container.querySelectorAll<HTMLButtonElement>('nav[aria-label="Select an MCP application"] button')].find(button => button.textContent?.includes(name))!;
-  await act(async () => button.click());
-}
-async function search(value: string) {
-  const input = container.querySelector<HTMLInputElement>('[aria-label="Search applications"]')!;
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
+it("preserves the draft when Core refuses and does not save invocation preferences", async () => {
+  vi.mocked(call).mockImplementation(async url => Response.json(url === "/settings/tools" ? { catalogs: data.toolCatalogs } : { id: "review", status: "denied" }));
+  await render(); await click(container.querySelector('[aria-label="Allow Media"]')!); await save();
+  expect(call).toHaveBeenCalledTimes(1); expect(container.textContent).toContain("draft is preserved");
+  expect(container.querySelector('[aria-label="Allow Media"]')?.getAttribute("data-state")).toBe("checked");
+});
+it("retries local failure without asking Core to approve the saved access again", async () => {
+  let fail = true;
+  vi.mocked(call).mockImplementation(async url => {
+    if (url === "/settings/tools") return Response.json({ catalogs: data.toolCatalogs });
+    if (url === "/settings/mcp/review") return Response.json({ id: "review", status: "succeeded" });
+    if (fail) { fail = false; throw new Error("Local storage unavailable"); } return Response.json({});
   });
-}
-
-it("selects and searches applications without changing access or showing another app's instructions", async () => {
-  await render();
-  expect(details().querySelector("h2")?.textContent).toBe("Hosty Core");
-  await select("Project Manager");
-  expect(details().textContent).toContain("Complete updated instructions");
-  await select("Media Server");
-  expect(details().textContent).not.toContain("Complete updated instructions");
-  expect(details().textContent).toContain("Refresh tools to load the available actions.");
-  await search("projects");
-  expect(details().querySelector("h2")?.textContent).toBe("Project Manager");
-  await search("missing");
-  expect(details().textContent).toContain("No matching applications");
-  await search("");
-  expect(details().querySelector("h2")?.textContent).toBe("Media Server");
-  expect(saveSettings).not.toHaveBeenCalled();
-  expect(approveSkill).not.toHaveBeenCalled();
+  await render(); await click(container.querySelector('[aria-label="Allow Media"]')!); await save();
+  expect(container.textContent).toContain("Local storage unavailable"); await save();
+  expect(vi.mocked(call).mock.calls.filter(args => args[0] === "/settings/mcp/review")).toHaveLength(1);
+});
+it("accepts reviewed application instructions in Harness without a Core request", async () => {
+  await render(); await click(button("Notes"));
+  const controls = [...container.querySelectorAll<HTMLButtonElement>('[role="checkbox"]')];
+  const acceptance = controls.find(node => node.id.startsWith("instructions-")) ?? controls[controls.length - 1]!;
+  await click(acceptance); await save();
+  expect(vi.mocked(call).mock.calls.map(args => args[0])).toEqual(["/settings/mcp/preferences"]);
+  expect(JSON.parse(vi.mocked(call).mock.calls[0]![1]!.body as string).skills.notes).toEqual({ identity: "notes-1", digest: "content-1" });
+});
+it("explains future-tool availability once, on demand", async () => {
+  await render(); expect(container.textContent).not.toContain("New tools from enabled");
+  await click(container.querySelector('[aria-label="About new tools"]')!);
+  expect(document.body.textContent).toContain("New tools from enabled applications become available automatically");
+  expect(document.querySelectorAll('[data-slot="popover-content"]')).toHaveLength(1);
+});
+it("keeps unavailable tool denials when enabling the application's current catalog", async () => {
+  data.providers[0]!.deniedTools = ["removed_tool", "delete"];
+  await render(); await click(container.querySelector('[aria-label="Allow Notes"]')!); await save();
+  const input = JSON.parse(vi.mocked(call).mock.calls[0]![1]!.body as string);
+  expect(input.targets).toEqual([{ targetId: "notes", enabled: true, deniedTools: ["removed_tool"] }]);
 });
 
-it("opens Core review from Harness without a Shell redirect or silent policy mutation", async () => {
-  const open = vi.spyOn(window, "open").mockReturnValue(null);
-  await render();
-  await select("Project Manager");
-  expect(details().textContent).toContain("Core permissions and repository checks still apply.");
-  expect(details().querySelector('[role="switch"]')).toBeNull();
-  expect(details().querySelector("pre")?.textContent).toBe("Complete updated instructions");
-  const review = [...details().querySelectorAll("button")].find(button => button.textContent === "Change access and review instructions")!;
-  await act(async () => review.click());
-  expect(open).toHaveBeenCalledWith("https://core.test/install/agents/hosty.harness/projects", "_blank", "noopener,noreferrer");
-  expect(details().querySelector<HTMLAnchorElement>("a")?.href).toBe("https://core.test/install/agents/hosty.harness/projects");
-  await act(async () => window.dispatchEvent(new Event("focus")));
-  expect(loadSettings).toHaveBeenCalledTimes(2);
-  expect(container.querySelector('a[target="_top"]')).toBeNull();
-  expect(approveSkill).not.toHaveBeenCalled();
-  expect(saveSettings).not.toHaveBeenCalled();
+it("refreshes a stale access revision without discarding the draft or overwriting concurrent choices", async () => {
+  let refused = true;
+  vi.mocked(call).mockImplementation(async url => {
+    if (url === "/settings/tools") return Response.json({ catalogs: data.toolCatalogs });
+    if (url === "/settings/mcp/review") {
+      if (refused) { refused = false; throw new ApiError(409, "agent_policy_changed", "Refresh tools and review again."); }
+      return Response.json({ id: "new-review", status: "succeeded" });
+    }
+    return Response.json({});
+  });
+  await render(); await click(container.querySelector('[aria-label="Allow Media"]')!); await save();
+  const original = JSON.parse(vi.mocked(call).mock.calls[0]![1]!.body as string);
+  data = { ...data, accessRevision: "access-two", providers: data.providers.map(p => p.appId === "notes" ? { ...p, deniedTools: ["delete"] } : p) };
+  await click(button("Refresh tools"));
+  expect(container.querySelector('[aria-label="Allow Media"]')?.getAttribute("data-state")).toBe("checked");
+  await save();
+  const calls = vi.mocked(call).mock.calls.filter(args => args[0] === "/settings/mcp/review");
+  const retried = JSON.parse(calls[1]![1]!.body as string);
+  expect(retried.revision).toBe("access-two"); expect(retried.requestId).not.toBe(original.requestId);
+  expect(retried.targets).toEqual([{ targetId: "media", enabled: true, deniedTools: [] }]);
 });
 
-it("reports discovery failure without exposing legacy skill approvals", async () => {
-  data.discovery = "unavailable";
-  await render();
-  expect(container.textContent).toContain("Could not reach Core");
-  expect(container.textContent).not.toContain("Complete updated instructions");
-  expect(container.textContent).not.toContain("Approve instructions");
+it("shows legacy disabled built-in tools and reenables them locally without Core review", async () => {
+  data.toolCatalogs!.push({ provider: "hosty:development", identity: "development-1", tools: [{ name: "edit_file" }] });
+  const key = JSON.stringify(["hosty:development", "edit_file"]);
+  data.settings.mcpToolRules![key] = { identity: "development-1", mode: "disabled" };
+  await render(); expect(button("Development tools").textContent).toContain("0/1");
+  await click(button("Development tools"));
+  const toggle = document.getElementById("tool-hosty:development-edit_file")!;
+  expect(toggle.getAttribute("data-state")).toBe("unchecked");
+  expect(container.querySelector('[aria-label="Approval for edit_file"]')?.hasAttribute("disabled")).toBe(true);
+  await click(toggle); await save();
+  expect(vi.mocked(call).mock.calls.map(args => args[0])).toEqual(["/settings/mcp/preferences"]);
+  expect(JSON.parse(vi.mocked(call).mock.calls[0]![1]!.body as string).removeRules).toContain(key);
 });
-
-it("offers shared write approval controls even when the native adapter has no auto-allow callback", async () => {
-  data.harness = { name: "Codex", capabilities: { autoAllow: false } };
-  data.toolCatalogs = [{ provider: "hosty:core", identity: "core-1", tools: [{ name: "merge" }] }];
-  await render();
-  const select = details().querySelector<HTMLSelectElement>('[aria-label="Approval for merge"]')!;
-  expect(select.disabled).toBe(false);
-  expect([...select.options].map(o => o.text)).toEqual(["Ask", "Run unprompted", "Disabled"]);
-});
-
-it("loads tools without selecting or creating a chat", async () => {
-  vi.mocked(call).mockResolvedValue(Response.json({ catalogs: [{ provider: "hosty:core", identity: "core", tools: [{ name: "list_apps" }] }] }));
-  await render();
-  expect(container.querySelector('[aria-label="Tool discovery session"]')).toBeNull();
-  const refresh = [...details().querySelectorAll("button")].find(button => button.textContent === "Refresh tools")!;
-  await act(async () => refresh.click());
-  expect(call).toHaveBeenCalledWith("/settings/tools");
-  expect(details().querySelector('[aria-label="Approval for list_apps"]')).not.toBeNull();
-  expect(saveSettings).not.toHaveBeenCalled();
-});
-
-it("asks the embedder to open review without supplying an assistant identity", async () => {
-  const postMessage = vi.fn();
-  vi.stubGlobal("parent", { postMessage });
-  await render();
-  await select("Project Manager");
-  const review = [...details().querySelectorAll("button")].find(button => button.textContent === "Change access and review instructions")!;
-  await act(async () => review.click());
-  expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: "hosty:request-mcp-review", targetAppId: "projects" }, "*");
-  expect(saveSettings).not.toHaveBeenCalled();
-});
-
-it("saves independent retention policies without overwriting an unsaved workflow draft", async () => {
-  data.settings.workflowPrompt = "Original workflow";
-  data.settings.retention = { ordinaryDays: 2, completedWorkspaceDays: null };
-  data.defaults = { workflowPrompt: "Default workflow" };
-  vi.mocked(saveSettings).mockImplementation(async patch => { data.settings = { ...data.settings, ...patch }; return structuredClone(data); });
-  await act(async () => root.render(<GatewaySettings section="prompt" />));
-  async function input(id: string, text: string) {
-    const element = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(`#${id}`)!;
-    const proto = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    await act(async () => { Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(element, text); element.dispatchEvent(new Event("input", { bubbles: true })); });
-  }
-  const button = (name: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === name)!;
-  await input("workflow-prompt", "My process without Plans");
-  await input("ordinary-retention", "");
-  await input("workspace-retention", "7");
-  await act(async () => button("Save retention").click());
-  expect(saveSettings).toHaveBeenLastCalledWith({ retention: { ordinaryDays: null, completedWorkspaceDays: 7 } });
-  expect(container.querySelector<HTMLTextAreaElement>("#workflow-prompt")!.value).toBe("My process without Plans");
-  await act(async () => button("Save workflow").click());
-  expect(saveSettings).toHaveBeenLastCalledWith({ workflowPrompt: "My process without Plans" });
-  const calls = vi.mocked(saveSettings).mock.calls.length;
-  await act(async () => button("Restore default draft").click());
-  expect(saveSettings).toHaveBeenCalledTimes(calls);
-  expect(container.querySelector<HTMLTextAreaElement>("#workflow-prompt")!.value).toBe("Default workflow");
-  expect(container.textContent).toContain("Unfinished and deferred workspaces never expire");
-});
-
-it("places translation controls in their own tab instead of the agent providers panel", async () => {
-  await act(async () => root.render(<GatewaySettings />));
-  const tab = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(element => element.textContent === "Translation providers")!;
-  expect(container.querySelector('section[aria-label="Translation providers"]')).toBeNull();
-  expect(container.querySelector('[role="tabpanel"][data-state="active"]')?.textContent).toContain("Agent connection list");
-  await act(async () => tab.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
-  const panel = container.querySelector('[role="tabpanel"][data-state="active"]')!;
-  expect(panel.textContent).toContain("Translation controls");
-  expect(panel.textContent).not.toContain("Agent connection list");
+it("disables a built-in tool through the local preferences save", async () => {
+  data.toolCatalogs!.push({ provider: "hosty:development", identity: "development-1", tools: [{ name: "edit_file" }] });
+  await render(); await click(button("Development tools"));
+  await click(document.getElementById("tool-hosty:development-edit_file")!); await save();
+  expect(vi.mocked(call).mock.calls.map(args => args[0])).toEqual(["/settings/mcp/preferences"]);
+  expect(JSON.parse(vi.mocked(call).mock.calls[0]![1]!.body as string).rules).toEqual({
+    '["hosty:development","edit_file"]': { identity: "development-1", mode: "disabled" },
+  });
 });

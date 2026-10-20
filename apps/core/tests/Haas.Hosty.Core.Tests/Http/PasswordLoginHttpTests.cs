@@ -201,7 +201,7 @@ public sealed class PasswordLoginHttpTests
         client.DefaultRequestHeaders.Add("Cookie", cookie.Split(';')[0]);
         using var page = await client.GetAsync(path);
         page.EnsureSuccessStatusCode();
-        Assert.Contains("HOSTY CORE", await page.Content.ReadAsStringAsync());
+        Assert.Contains("core-frame", await page.Content.ReadAsStringAsync());
         Assert.Equal("DENY", Assert.Single(page.Headers.GetValues("X-Frame-Options")));
         Assert.Contains("frame-ancestors 'none'", Assert.Single(page.Headers.GetValues("Content-Security-Policy")));
         Assert.False(page.Headers.Contains("Access-Control-Allow-Origin"));

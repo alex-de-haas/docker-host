@@ -38,6 +38,36 @@ public sealed class CorePageMarkupHttpTests
         Assert.Contains("autocomplete=\"current-password\"", html, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("plex-sans-latin.woff2")]
+    [InlineData("plex-sans-latin-ext.woff2")]
+    [InlineData("plex-sans-cyrillic.woff2")]
+    [InlineData("jetbrains-mono-latin.woff2")]
+    [InlineData("jetbrains-mono-latin-ext.woff2")]
+    [InlineData("jetbrains-mono-cyrillic.woff2")]
+    public async Task CoreFont_IsAvailableBeforeLoginAsLocalWoff2(string name)
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        using var client = harness.CreateClient();
+        using var response = await client.GetAsync("/core-assets/" + name);
+
+        response.EnsureSuccessStatusCode();
+        Assert.Equal("font/woff2", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
+        var bytes = await response.Content.ReadAsByteArrayAsync();
+        Assert.Equal("wOF2"u8.ToArray(), bytes[..4]);
+    }
+
+    [Fact]
+    public async Task CoreAssets_DoesNotExposeOtherEmbeddedResources()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        using var client = harness.CreateClient();
+        using var response = await client.GetAsync("/core-assets/account.html");
+
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     // The sign-in page states nothing about the deployment. Which Core answered and where its Shell lives
     // are facts for a signed-in operator, not for the one screen anyone on the network can reach.
     [Fact]

@@ -1,6 +1,6 @@
 ---
 created: 2026-06-25
-updated: 2026-10-12
+updated: 2026-10-20
 summary: The optional Marketplace app that owns catalog discovery and requests Core-confirmed installations.
 components: [apps/marketplace]
 ---
@@ -28,13 +28,15 @@ Marketplace failure affects discovery only. Direct installs and lifecycle operat
 
 ## Catalog Source
 
-Marketplace reads one HTTP(S) catalog URL from its normal runtime-app setting:
+Marketplace persists one HTTP(S) catalog URL in its app-owned settings file. Its `/settings` page
+works standalone and as the manifest's `ui.settings` surface in Shell. `GET/PUT /api/settings`
+requires an authenticated app administrator. Writes carry the previous source URL for stale-write
+protection and reject non-HTTP(S) values and embedded credentials.
 
-```text
-HOSTY_MARKETPLACE_SOURCE_URL
-```
-
-The first-party manifest supplies the official catalog URL as its default. An administrator changes the value through the ordinary system-app settings surface; Core persists and injects it like any other manifest setting. Multiple sources, federation, and local host paths are not supported.
+The file initializes once from the former `HOSTY_MARKETPLACE_SOURCE_URL` environment value or the
+official catalog default. Atomic writes use owner-only permissions; corrupt existing storage is
+reported rather than silently reset. Core preserves the retired value for migration but removes it
+from the manifest editor. Multiple sources, federation and local host paths are not supported.
 
 Marketplace requires catalog schema `marketplace.0.2`. Unsupported, malformed, oversized, or unreachable input is reported by the app and does not fall back to a Core catalog or an older schema.
 
@@ -119,7 +121,7 @@ There is no compatibility proxy or legacy schema/state migration. Catalog config
 
 ## Distribution
 
-Marketplace supports a Docker runtime and a Core-managed `dev` local-command runtime. Its manifest declares a source repository, app data, health endpoint, public UI endpoint, system role, and the source URL setting. The repository CI builds/tests the Next.js app and publishes the Marketplace image independently from Core and Shell.
+Marketplace supports a Docker runtime and a Core-managed `dev` local-command runtime. Its manifest declares a source repository, app data, health endpoint, public UI endpoint, system role, and an app-owned settings surface. The repository CI builds/tests the Next.js app and publishes the Marketplace image independently from Core and Shell.
 
 ## Links
 

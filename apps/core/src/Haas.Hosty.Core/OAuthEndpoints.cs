@@ -654,8 +654,9 @@ internal static class OAuthEndpoints
         app.MapDelete("/api/auth/oauth/clients/{clientId}", (
             string clientId, HttpRequest request, UserDirectoryStore users, IClock clock,
             OAuthStore oauth, CoreEventHub events, AuditStore audit, CancellationToken cancellationToken) =>
-            CoreSessionAuthorization.RequireAdminBrowserAsync(request, users, clock, async user =>
+            CoreSessionAuthorization.RequireSessionAsync(request, users, clock, async user =>
             {
+                if (!AppAccessPolicy.IsAdmin(user)) return Results.StatusCode(403);
                 var deleted = await oauth.UpdateAsync(state =>
                 {
                     var client = state.Clients.FirstOrDefault(candidate => candidate.ClientId == clientId);
@@ -683,7 +684,7 @@ internal static class OAuthEndpoints
                 }
                 await AppendAuditAsync(audit, clock, "auth.oauth.client", "deleted", deleted.Name, null, user.Id, cancellationToken);
                 return Results.Ok();
-            }, cancellationToken));
+            }, requireCsrf: true, cancellationToken: cancellationToken));
 
         // The operator-visible client list: who may start an authorization flow against this host.
         app.MapGet("/api/auth/oauth/clients", (

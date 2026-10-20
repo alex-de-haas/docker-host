@@ -97,7 +97,7 @@ internal static class CoreSettingsEndpoints
         return CoreJson.Json(Build(settings, origins));
     }
 
-    private static CoreSettingsResponse Build(CoreSettingsService settings, CorePublicOriginResolver origins)
+    internal static CoreSettingsResponse Build(CoreSettingsService settings, CorePublicOriginResolver origins)
     {
         var rows = new List<CoreSettingSummary>();
         foreach (var row in settings.GetAuthRows().Where(r => r.Definition.Key != "HOSTY_AUTH_APP_ACTIVITY_HOURS"))

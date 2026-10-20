@@ -34,7 +34,8 @@ describe("app skills in a session", () => {
     }),
     // No Core row: these tests are about app skills, and Core declares none.
     core: () => null,
-    approvedSkills: () => approved,
+    migrateInstructions: async () => undefined,
+    localApprovedSkills: () => approved,
     readSkill: async (appId: string) =>
       appId === APP ? { appId: APP, displayName: "Notes", markdown: "Call list_people first." } : null,
   } as unknown as ProviderDirectory;

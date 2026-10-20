@@ -1,7 +1,7 @@
 ---
 created: 2026-07-31
-updated: 2026-10-01
-summary: Device-flow access tokens that let clients without a browser engine sign in to Core, plus the page that lists and revokes them.
+updated: 2026-10-20
+summary: Device-flow access tokens that let clients without a browser engine sign in to Core, with Shell metadata management and compact trusted Core credential actions.
 components: [apps/core, apps/shell, apps/shell-swift]
 ---
 
@@ -11,7 +11,7 @@ Core accepts a session as `Authorization: Bearer <session id>`, but a session co
 by posting Core's HTML login form — which is why the Swift Shell used to sign in through a `WKWebView`
 on `/login`. A client with no browser engine had no way in at all.
 
-Two ways in now exist. A device shows a short code and someone approves it on Core `/account/tokens`; or a credential is
+Two ways in now exist. A device shows a short code and someone approves it on Core `/account/device`; or a credential is
 created on that Core page directly and its value shown once. Both produce the same thing. The Swift Shell is
 the consumer — it signs in this way rather than in a web view, because an embedded web view is where a
 saved password cannot be reached ([swift-shell](../swift-shell/feature.md)). `hosty login` was the
@@ -63,11 +63,9 @@ Both are unauthenticated, because the caller has no credential yet — that is t
 the only two public routes here; approval and credential management are session-gated
 ([AccessTokenEndpoints.cs](../../../apps/core/src/Haas.Hosty.Core/AccessTokenEndpoints.cs)).
 
-`verificationUri` points at Core `/account/tokens`. Core's password login preserves this
-allowlisted continuation; neither device approval nor token management requires Shell. Shell's
-Tokens settings section links to Core. The page groups OAuth grants by exact client ID, shows
-fingerprints and owner/timing information, and requires explicit revocation confirmation.
-Credential renaming remains administrator-only.
+`verificationUri` points at Core `/account/device`. Core's password login preserves this
+allowlisted continuation. Core renders only the device-code action there and manual issuance at
+`/account/tokens`. Shell lists metadata under My profile → Tokens & devices and opens these actions.
 
 Pending requests live in memory only
 ([DeviceAuthorizationStore.cs](../../../apps/core/src/Haas.Hosty.Core/DeviceAuthorizationStore.cs)).
@@ -101,18 +99,17 @@ login cannot prune a live access token whose window is much longer.
 
 ## Management surface
 
-Shell's **Access tokens** tab groups device and manual credentials separately and nests OAuth
-grants under their exact client registration id. Matching display names or addresses do not merge
-connections. Each row shows its stable credential fingerprint, label, permissions, approver,
-creation time and last authenticated request; OAuth rows also show last refresh separately.
-OAuth client names and ids remain visible after renaming a grant.
+Shell's **My profile → Tokens & devices** lists the current user's browser sessions, manual/device
+credentials and OAuth grant chains. It displays fingerprints, labels, audience/scopes and supported
+activity/expiry metadata. OAuth client identity remains visible after a grant label changes.
+Authorized administrators inspect another user's metadata from that user's detail; there is no global
+token screen. Listing supports an explicit user filter with user-read authority.
 
-`PATCH /api/auth/credentials/{fingerprint}/label` accepts a label from an administrator browser
-session with CSRF. It changes only the session/grant label and records an audit event; ids,
-permissions, ownership, tokens and expiry are unchanged. Labels are operator descriptions, not
-verified device identities. A `host.user` still sees and revokes their own credentials; an admin
-sees all and can rename them. Revocation confirmation names the selected label, fingerprint and
-permissions. Client deletion is described in [OAuth](../mcp-oauth/feature.md#removing-a-client).
+`PATCH /api/auth/credentials/{fingerprint}/label` accepts the owner or an authorized administrator;
+browser requests require CSRF. Cross-user app callers additionally need user-management permission.
+It changes only the label and records an audit event. Labels are descriptions, not verified identities.
+Revocation uses an exact Core-owned review and the original authenticated endpoint. App callers need
+the credential read/revoke permissions. Client deletion is described in [OAuth](../mcp-oauth/feature.md#removing-a-client).
 
 OAuth `LastRequestAt` lives on the grant. Successful authenticated MCP/introspection/delegation
 requests update it at most once per five minutes per grant, checked under the OAuth-store gate.
@@ -123,10 +120,8 @@ or deleted grants are never revived. Pruning access-token sessions cannot erase 
 Historical unknown activity is shown as unknown, not unused. Device/manual rows use existing sampled
 session activity, without treating the timestamp initialized at issuance as proof of a request.
 
-Settings is otherwise an administrator page, and this is the one tab on it that is not. An ordinary user
-reaches Settings only for this tab, sees only this tab, and every other tab is gated on the admin check
-in both the tab strip and the body — so a hand-typed `?tab=` cannot render an administration surface.
-Without that, a role Core deliberately supports would have had no way to manage its own credentials.
+Personal Profile and Tokens & devices are available to ordinary users. Administrative routes retain
+role checks in navigation and rendering, and Core enforces the corresponding API boundaries.
 
 **A listed credential never carries its own value.** A session id *is* the bearer credential, so the
 listing shows a SHA-256 fingerprint and revocation matches on that — the same leak-safe projection the
@@ -218,5 +213,6 @@ action taxonomy. See [Testing Expectations](#testing-expectations) for what is c
 - OAuth projection preserves exact client linkage and fingerprint through label edits, request
   activity, refresh and access-session pruning. First use, five-minute per-grant throttling,
   advisory storage failure and revoked/deleted grants are covered.
-- Browser-admin label edits for device/manual/OAuth credentials preserve all authorization fields;
-  bearer and CSRF refusals remain explicit. UI distinguishes request time from refresh time.
+- Owner and authorized administrative label edits for browser/device/manual/OAuth credentials preserve
+  authorization fields. Cross-user permissions, CSRF and reviewed revocation remain explicit.
+  UI distinguishes request time from refresh time.

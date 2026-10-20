@@ -7,7 +7,7 @@ namespace Haas.Hosty.Core;
 internal sealed record AssistantMcpTokenRequest(string TargetAppId, string? SessionId = null);
 internal sealed record AssistantMcpClaims(string Caller, string Audience, string UserId, string GrantHash,
     DateTimeOffset CallerInstallation, DateTimeOffset? TargetInstallation, string GrantRevision, long Expires, string? SessionId = null, string? LeaseRevision = null, bool DiscoveryOnly = false);
-internal sealed record AssistantMcpActor(string UserId, string Role, AppRecord Caller, bool DiscoveryOnly = false, IReadOnlyList<string>? AllowedTools = null);
+internal sealed record AssistantMcpActor(string UserId, string Role, AppRecord Caller, bool DiscoveryOnly = false, IReadOnlyList<string>? AllowedTools = null, IReadOnlyList<string>? DeniedTools = null);
 
 // A separate signed format is never accepted by session, delegated-token or app API validators.
 // Receiving MCP handlers introspect every call, so policy and parent-session revocation apply online.
@@ -17,7 +17,7 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
     internal const string Prefix = "hosty_mcp.1.";
 
     private async Task<(AppRecord Caller, AppRecord? Target, AssistantTargetGrant Grant)> RequireLinkAsync(
-        string callerId, string targetId, CancellationToken ct)
+        string callerId, string targetId, CancellationToken ct, bool preview = false)
     {
         var caller = await apps.GetAppAsync(callerId, ct);
         if (caller is null || !AgentMcpDirectory.IsAssistant(caller))
@@ -27,7 +27,13 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
             throw new AppIdentityException("mcp_target_invalid", "The target does not expose MCP.");
         var policy = (await policies.ReadAsync(ct)).Targets.GetValueOrDefault(targetId);
         var grant = policy?.Assistants?.GetValueOrDefault(callerId);
-        if (policy?.Offered != true || policy.InstalledAt != target?.InstalledAt || grant?.InstalledAt != caller.InstalledAt)
+        if (preview)
+        {
+            if (caller.GrantedCorePermissions?.Contains(CoreAppPermissions.RequestMcpAccess, StringComparer.Ordinal) != true)
+                throw new AppIdentityException("app_permission_required", "The assistant needs permission to configure MCP access.");
+            return (caller, target, new(caller.InstalledAt, "preview"));
+        }
+        if (grant is null || !(grant.Enabled ?? policy!.Offered) || policy!.InstalledAt != target?.InstalledAt || grant.InstalledAt != caller.InstalledAt)
             throw new AppIdentityException("mcp_access_denied", "Core has not granted this assistant access to the target MCP.");
         return (caller, target, grant);
     }
@@ -56,7 +62,7 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
             : await authority.RequireAsync(callerId, sessionId!, hash, ct);
         if (discoveryOnly && actor.HostRole != "host.admin")
             throw new AppIdentityException("admin_required", "Catalog settings require an administrator.");
-        var link = await RequireLinkAsync(callerId, targetId, ct);
+        var link = await RequireLinkAsync(callerId, targetId, ct, discoveryOnly);
         var grantHash = AppIdentityService.HashToken(userToken);
         var parent = await grants.TryResolveAsync(grantHash, ct);
         if (parent is null || parent.CreatedAt < link.Caller.InstalledAt)
@@ -83,7 +89,7 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
             if (parts.Length != 2 || !signing.Verify(Encoding.UTF8.GetBytes(Prefix + parts[0]), Decode(parts[1]))) return null;
             var claims = JsonSerializer.Deserialize(Decode(parts[0]), CoreJson.TypeInfo<AssistantMcpClaims>());
             if (claims is null || claims.Audience != audience || claims.Expires <= clock.UtcNow.ToUnixTimeSeconds()) return null;
-            var link = await RequireLinkAsync(claims.Caller, audience, ct);
+            var link = await RequireLinkAsync(claims.Caller, audience, ct, claims.DiscoveryOnly);
             if (link.Caller.InstalledAt != claims.CallerInstallation || link.Target?.InstalledAt != claims.TargetInstallation
                 || link.Grant.Revision != claims.GrantRevision) return null;
             var source = await grants.TryResolveAsync(claims.GrantHash, ct);
@@ -108,7 +114,7 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
             }
             if (actor.UserId != claims.UserId) return null;
             await RequireTargetUserAsync(audience, actor, ct);
-            return new(actor.UserId, actor.HostRole ?? "", link.Caller, claims.DiscoveryOnly, scope?.Actions);
+            return new(actor.UserId, actor.HostRole ?? "", link.Caller, claims.DiscoveryOnly, scope?.Actions, link.Grant.DeniedTools);
         }
         catch (Exception ex) when (ex is FormatException or JsonException or CryptographicException or ArgumentException or AppIdentityException)
         { return null; }

@@ -1188,7 +1188,7 @@ internal sealed record AppSummary(
             app.LastOperation,
             app.LastError,
             app.Capabilities,
-            BuildSettingSummaries(app.Settings, app.Endpoints),
+            BuildSettingSummaries(app.Settings.Where(pair => !CoreLifecycleService.IsRetiredNativePreference(app.Id, pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value), app.Endpoints),
             endpoints,
             profiles,
             ui?.EntryPath,

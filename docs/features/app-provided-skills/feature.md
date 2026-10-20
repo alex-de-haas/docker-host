@@ -1,6 +1,6 @@
 ---
 created: 2026-08-21
-updated: 2026-09-27
+updated: 2026-10-20
 summary: Apps ship an agent skill file that explains how their tools are meant to be used.
 components: [apps/core, apps/harness]
 ---
@@ -33,18 +33,18 @@ second resolver beside it would be the one missing those checks.
 One skill per app. An app with several `interfaces.mcp` entries still has one story about how it is
 worked; division is sections in the file rather than another axis in the manifest.
 
-## Core Offers And Reviewed Instructions
+## MCP Access And Reviewed Instructions
 
-The [Core Agent MCP Directory](../agent-mcp-directory/feature.md) owns the host offer policy and
-approved skill digests. Administrators enable an app's tools and review its complete instruction text
-in Shell Settings → Agents. These are separate actions: enabling tools never approves unseen text.
-The same policy applies to assistant sessions, the Gateway facade and the CLI connector.
+The [Core Agent MCP Directory](../agent-mcp-directory/feature.md) owns assistant MCP access.
+Harness Settings → MCP access owns local acceptance of complete app instruction text against its
+installation and digest. Enabling tools never approves unseen text. CLI/facade consumers retain their
+separate global Core digest acceptance; local Harness acceptance does not change it.
 
 ## Reaching An Agent
 
 | Reader | Condition | Path |
 | --- | --- | --- |
-| The Hosty assistant | Core offers the provider, approves its skill digest, and the session got its tools | `GET /api/internal/apps/{caller}/agent-skills/{target}` |
+| Hosty Harness | Core allows the provider, Harness accepts its current installation/digest, and the session got its tools | `GET /api/internal/apps/{caller}/agent-skills/{target}` |
 | `hosty mcp` | Core offers the app, approves its skill digest, and the app contributed tools | `GET /control/v1/apps/{appId}/agent-skill` |
 
 Both are keyed off **tools the client actually has**, never off policy alone: instructions for tools a
@@ -94,11 +94,11 @@ less than an assistant that will not open because one app is mid-update.
 
 ## A Changed Skill Is Withheld
 
-Approvals are keyed by app and skill in Core. Shell submits the digest of the full displayed text and
-its directory revision. An update between rendering and approval is refused. Consumers deliver only
-text matching the approved digest; a changed or unreadable skill is withheld while tools keep their
-offer state. Existing conversation text is not retracted. Uninstall clears approvals, including when
-data is retained. Legacy Gateway digests are not imported.
+Harness approvals are keyed by provider installation and digest in Harness settings. Local acceptance
+revalidates the displayed text before saving. CLI/facade global approvals remain in Core. Consumers
+deliver only matching text; changed or unreadable content is withheld while tool access is unchanged.
+Existing conversation text is not retracted. Reinstallation does not inherit an earlier acceptance.
+Migration imports only matching previously approved text for an enabled relationship.
 
 **This is stricter than the rest of the platform, and knowingly so.** An app update rewrites its tool
 *names and descriptions* silently while the provider stays enabled — the same app-authored text,
@@ -130,4 +130,4 @@ asymmetry rather than smoothed over: it is a gap on that surface, not a reason t
   both delivery routes read whatever is on disk and a survivor is text the installed app no longer
   contains.
 - **Session policy**: Gateway tests verify that a disabled provider contributes no skill and legacy
-  local approval values cannot bypass the Core policy.
+  local approval values cannot grant Core MCP access or accept a changed instruction digest.

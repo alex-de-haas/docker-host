@@ -207,7 +207,7 @@ export function CoreGitCell({ state, workspace }: { state: CoreDevelopment | nul
   </div>;
 }
 
-export function CoreSourceDialog({ open, onOpenChange, state, disabled, onSave }: { open: boolean; onOpenChange: (open: boolean) => void; state: CoreDevelopment | null; disabled: boolean; onSave: (path: string | null, repository?: CoreSourceRepository, expectedRevision?: string) => Promise<void> }) {
+export function CoreSourceDialog({ inline = false, open, onOpenChange, state, disabled, onSave }: { inline?: boolean; open: boolean; onOpenChange: (open: boolean) => void; state: CoreDevelopment | null; disabled: boolean; onSave: (path: string | null, repository?: CoreSourceRepository, expectedRevision?: string) => Promise<void> }) {
   const [override, setOverride] = useState(false);
   const [path, setPath] = useState("");
   const [repository, setRepository] = useState("");
@@ -230,17 +230,7 @@ export function CoreSourceDialog({ open, onOpenChange, state, disabled, onSave }
   const dirty = repositoryDirty || (override ? trimmedPath !== (state?.source.overridePath ?? "") : !!state?.source.overridePath);
   const canSave = !unavailable && dirty && (!override || trimmedPath.length > 0);
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>Settings · Hosty Core</DialogTitle>
-          <DialogDescription>hosty-core</DialogDescription>
-        </DialogHeader>
-        <div className="flex min-h-0 flex-1 flex-col gap-3">
-          <div className="flex gap-1 border-b">
-            <div className="-mb-px border-b-2 border-foreground px-3 py-2 text-sm font-medium text-foreground">Source</div>
-          </div>
+  const form = (
           <form className="flex min-h-0 flex-1 flex-col gap-4" onSubmit={async event => {
             event.preventDefault();
             if (!canSave) return;
@@ -248,7 +238,8 @@ export function CoreSourceDialog({ open, onOpenChange, state, disabled, onSave }
             setError(null);
             try {
               await onSave(override ? trimmedPath : null, repositoryDirty ? { repositoryUrl: repository.trim(), ref: sourceRef.trim() || null, projectPath: project.trim(), connectionId: connection.trim() || null } : undefined, draftRevision);
-              onOpenChange(false);
+              if (!inline) onOpenChange(false);
+              else { setDraftRevision(undefined); }
             } catch (e) {
               setError(e instanceof Error ? e.message : "Could not save source.");
             } finally {
@@ -306,8 +297,27 @@ export function CoreSourceDialog({ open, onOpenChange, state, disabled, onSave }
               </Button>
             </DialogFooter>
           </form>
+  );
+  if (inline) return form;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Settings · Hosty Core</DialogTitle>
+          <DialogDescription>hosty-core</DialogDescription>
+        </DialogHeader>
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+          <div className="flex gap-1 border-b">
+            <div className="-mb-px border-b-2 border-foreground px-3 py-2 text-sm font-medium text-foreground">Source</div>
+          </div>
+          {form}
         </div>
       </DialogContent>
     </Dialog>
   );
+}
+
+export function CoreSourceSettings({ coreOrigin }: { coreOrigin: string }) {
+  const development = useCoreDevelopment(coreOrigin, true);
+  return <CoreSourceDialog inline open onOpenChange={() => undefined} state={development.state} disabled={development.busy} onSave={development.save} />;
 }

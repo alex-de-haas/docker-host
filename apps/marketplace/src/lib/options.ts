@@ -19,7 +19,7 @@ function readString(value: string | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
-function readHttpUrl(value: string | undefined): string | null {
+export function readHttpUrl(value: string | undefined): string | null {
   const candidate = readString(value);
   if (!candidate) {
     return null;

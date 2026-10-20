@@ -191,6 +191,7 @@ export function Storefront() {
       {installation && <InstallDialog client={installationClient} source={installation.source} confirmationWindow={installation.popup}
         onClose={closeInstallation}
         onInstalled={() => { closeInstallation(); loadInstalledAppIds(); }} />}
+      <a href="/settings" className="self-end text-sm underline underline-offset-4">Settings</a>
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         {/* Shell already renders the app name; Refresh acts on the catalog below. */}
         <HostyNavigationBoundary><div className="min-w-0 space-y-1">

@@ -70,31 +70,13 @@ function safeExternalLink(parent, text, value) {
 }
 
 async function tokensPage() {
-  const [session, listing, pending, roster] = await Promise.all([
-    read('/api/auth/session'), read('/api/auth/credentials'), read('/api/auth/device/requests'), read('/api/apps'),
-  ]);
+  const [session, roster] = await Promise.all([read('/api/auth/session'), read('/api/apps')]);
   content.replaceChildren();
-  const requests = section('Authorize a device');
-  element('p', 'Approve only a code displayed by a device you are connecting. The credential has your current host role.', requests);
-  const deviceForm = form(requests, 'Device code', async () => {
-    if (!confirm(`Authorize device code ${code.value}? This device will act with your host role.`)) return;
-    await mutate('/api/auth/device/requests/approve', { userCode: code.value }); await tokensPage();
-  });
-  const code = input(deviceForm, 'Code shown on your device'); code.required = true; submit(deviceForm, 'Authorize device');
-  for (const request of pending.requests) {
-    const item = row(requests, request.label || 'Device', `${request.userCode} · expires ${`${request.expiresInSeconds} seconds from now`}`);
-    button(item, 'Approve', async () => {
-      if (!confirm(`Authorize ${request.label || 'this device'} with code ${request.userCode}?`)) return;
-      await mutate('/api/auth/device/requests/approve', { userCode: request.userCode }); await tokensPage();
-    });
-    button(item, 'Deny', async () => { await mutate('/api/auth/device/requests/deny', { userCode: request.userCode }); await tokensPage(); });
-  }
-  button(requests, 'Refresh requests', tokensPage);
   const create = form(content, 'Create an access token', async () => {
     const audience = access.value;
     const scopes = audience ? ['mcp:read', ...(audience === 'hosty:core' ? scopeInputs.filter(i => i.checked).map(i => i.value) : [])] : undefined;
     const issued = await mutate('/api/auth/credentials', { label: label.value, audience: audience || undefined, scopes });
-    await tokensPage();
+    content.replaceChildren();
     const result = section('Copy your token now');
     element('p', 'This value is shown only once. Store it securely.', result);
     element('pre', issued.token, result).className = 'token';
@@ -111,43 +93,17 @@ async function tokensPage() {
     .map(([scope, label]) => input(scopes, label, scope, 'checkbox'));
   access.onchange = () => { scopes.hidden = access.value !== 'hosty:core'; }; access.onchange();
   submit(create, 'Create token');
-  const credentials = section('Your tokens and devices');
-  if (!listing.credentials.length) element('p', 'No credentials.', credentials);
-  const groups = new Map();
-  for (const credential of listing.credentials) {
-    const key = credential.oauthClientId || '';
-    if (!groups.has(key)) {
-      const group = element('section', undefined, credentials);
-      element('h3', key ? `${credential.oauthClientName || 'OAuth client'} · ${key}` : 'Direct tokens and devices', group);
-      groups.set(key, group);
-    }
-    const item = row(groups.get(key), credential.label || credential.kind,
-      `${credential.audience || 'Full host role'} · ${(credential.scopes || []).join(', ')}`);
-    element('p', `Fingerprint: ${credential.id} · User: ${credential.userDisplayName || credential.userId}`, item);
-    element('p', `Created: ${new Date(credential.createdAt).toLocaleString()} · Last used: ${new Date(credential.lastSeenAt).toLocaleString()}`, item);
-    if (credential.lastRefreshAt) element('p', `Last refresh: ${new Date(credential.lastRefreshAt).toLocaleString()}`, item);
-    if (credential.lastRequestAt) element('p', `Last request: ${new Date(credential.lastRequestAt).toLocaleString()}`, item);
-    if (session.user?.role === 'host.admin') {
-      const label = input(item, 'Label', credential.label || '');
-      button(item, 'Rename', async () => { await mutate(`/api/auth/credentials/${id(credential.id)}/label`, { label: label.value }, 'PATCH'); await tokensPage(); });
-    }
-    button(item, 'Revoke', async () => {
-      if (!confirm(`Revoke ${credential.label || credential.kind} (${credential.id}) for ${credential.userDisplayName || credential.userId}?${credential.oauthClientId ? ' This revokes the entire OAuth grant, including refreshed credentials.' : ''}`)) return;
-      await mutate(`/api/auth/credentials/${id(credential.id)}`, undefined, 'DELETE'); await tokensPage();
-    });
-  }
-  if (session.user?.role === 'host.admin') {
-    await backgroundSection(roster.apps);
-    const clients = await read('/api/auth/oauth/clients');
-    const registered = section('Registered OAuth clients');
-    for (const client of clients.clients) {
-      const item = row(registered, client.name, `${client.clientId} · ${client.liveGrants} active grants · ${client.redirectUris.join(', ')}`);
-      button(item, 'Remove client', async () => {
-        if (!confirm(`Remove ${client.name} (${client.clientId}) and revoke its grants?`)) return;
-        await mutate('/api/auth/oauth/clients/' + id(client.clientId), undefined, 'DELETE'); await tokensPage();
-      });
-    }
-  }
+
+}
+async function devicePage() {
+  content.replaceChildren();
+  const deviceForm = form(content, 'Authorize a device', async () => {
+    await mutate('/api/auth/device/requests/approve', { userCode: code.value });
+    content.replaceChildren(); element('p', 'Device authorized. You can close this window.');
+  });
+  element('p', 'Enter only the code displayed by a device you are connecting. It will act with your host role.', deviceForm);
+  const code = input(deviceForm, 'Device code'); code.required = true;
+  submit(deviceForm, 'Authorize device');
 }
 
 async function backgroundSection(apps) {
@@ -161,7 +117,7 @@ async function backgroundSection(apps) {
     const expiresAt = expiry.value ? new Date(expiry.value).toISOString() : null;
     if (!confirm(`Allow ${consumer.value} to use ${scope.kind} access on ${scope.targetAppId}: ${scope.actions.join(', ') || scope.providerKind + '/' + scope.key}? ${expiresAt ? 'Expires ' + expiresAt : 'Until revoked'}. This survives sign-out.`)) return;
     await mutate('/api/auth/background-grants', { appId: consumer.value, label: label.value, scopes: [scope], expiresAt });
-    await tokensPage();
+    content.replaceChildren(); element("p", "Background access authorized. You can close this window.");
   });
   const label = input(create, 'Purpose'); label.required = true;
   const consumer = select(create, 'App performing the work', apps.map(a => [a.id, a.displayName]));
@@ -178,18 +134,6 @@ async function backgroundSection(apps) {
   const expiry = input(create, 'Optional expiry — leave empty for until revoked', '', 'datetime-local');
   kind.onchange = () => { coreFields.hidden = kind.value !== 'core'; providerFields.hidden = kind.value !== 'provider'; mcpFields.hidden = kind.value !== 'mcp'; };
   kind.onchange(); submit(create, 'Authorize selected background access');
-  const grants = await read('/api/auth/background-grants');
-  for (const grant of grants) {
-    const entry = row(root, grant.label, `${grant.appId} · ${grant.revokedAt ? 'Revoked' : grant.expiresAt ? 'Expires ' + grant.expiresAt : 'Until revoked'}`);
-    element('p', `Reference: ${grant.id}`, entry);
-    for (const scope of grant.scopes) element('p', `${scope.id}: ${scope.kind} → ${scope.targetAppId} · ${scope.actions.join(', ') || scope.providerKind + '/' + scope.key}`, entry);
-    if (!grant.revokedAt) button(entry, 'Revoke background access', async () => { await mutate('/api/auth/background-grants/' + id(grant.id), undefined, 'DELETE'); await tokensPage(); });
-  }
-  button(root, 'Revoke all my authorizations', async () => {
-    if (!confirm('End all your browser sessions, device/access tokens and background grants? You will need to sign in again.')) return;
-    await mutate('/api/auth/background-grants/revoke-all-authorizations', {});
-    location.assign('/login');
-  });
 }
 
 async function consentPage() {
@@ -215,4 +159,5 @@ async function consentPage() {
   button(panel, 'Deny', () => decide('deny'));
   button(panel, 'Allow selected access', () => decide('approve')).className = 'primary';
 }
-void run(location.pathname === '/oauth/consent' ? consentPage : tokensPage);
+void run(location.pathname === '/oauth/consent' ? consentPage : location.pathname === '/account/device' ? devicePage
+  : location.pathname === '/account/background' ? async () => { const roster = await read('/api/apps'); content.replaceChildren(); await backgroundSection(roster.apps); } : tokensPage);
