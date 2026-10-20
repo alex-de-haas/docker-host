@@ -51,12 +51,27 @@ internal static class CoreLaunchFiles
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        var backup = OperatingSystem.IsWindows() ? temp + ".previous" : null;
-        var preserveRecovery = false;
         try
         {
             File.WriteAllText(temp, JsonSerializer.Serialize(value, type));
             if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(temp, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        catch
+        {
+            if (File.Exists(temp)) File.Delete(temp);
+            throw;
+        }
+        PublishTemporaryFile(temp, path);
+    }
+
+    // Takes ownership of the complete temporary file, including cleanup or retention after a
+    // partial Windows replacement. Callers finish serialization and set permissions beforehand.
+    internal static void PublishTemporaryFile(string temp, string path)
+    {
+        var backup = OperatingSystem.IsWindows() ? temp + ".previous" : null;
+        var preserveRecovery = false;
+        try
+        {
             try { ReplaceWithSharingRetry(temp, path, backup); }
             catch (IOException error) when (OperatingSystem.IsWindows() && (error.HResult & 0xffff) is 1176 or 1177)
             {

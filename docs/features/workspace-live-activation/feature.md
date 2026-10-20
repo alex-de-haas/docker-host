@@ -338,7 +338,8 @@ helper holds the existing Core launch lock through build, app application, stopp
 replacement and readiness verification. Ordinary Core start/restart and source changes refuse a
 pending group. Helper receipts live separately from group and app receipts; a lost HTTP response
 cannot overwrite a later Core-owned phase. Each dispatch retains its own log and process/start identity.
-Shared receipt readers allow atomic replacement on Windows while retaining their original snapshot.
+Shared receipt readers allow atomic replacement on Windows while retaining their original snapshot. Core JSON storage uses the same
+replacement path for workspace metadata, so concurrent catalog reads do not block lease writes.
 Windows replaces existing receipts with `File.Replace`; initial creation and Unix replacement use rename.
 Writers retry only Windows sharing/lock conflicts for up to two seconds; access denial and other I/O
 failures retain their original error. A partial Windows replacement restores the previous receipt only
@@ -500,7 +501,8 @@ used by Shell or another app in a shared worktree.
   Windows receipt observers allow delete sharing, retry transient access denial within the existing
   deadline and preserve the final I/O cause. Verify atomic replacement with a concurrent reader,
   temporary and persistent legacy-reader conflicts, immediate access-denial refusal, concurrent
-  creation and preservation after partial replacement failure.
+  creation and preservation after partial replacement failure. Core JSON storage tests hold a reader
+  open across typed, owner-only and text writes and verify old/new snapshots and temporary-file cleanup.
   Failed CI fixtures export bounded, sanitized owned log tails and selected recovery state; they do
   not upload raw journals, authentication files, snapshots or app data.
 - Exercise managed Git checkout, inspection and removal with paths longer than 260 characters, including Windows with global/system Git configuration disabled.
