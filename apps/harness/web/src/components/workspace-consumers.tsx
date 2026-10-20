@@ -9,7 +9,7 @@ export function WorkspaceConsumers({ trees }: { trees: Worktree[] }) {
     {consumers.length > 0 && <section aria-label="Applications using source" className="flex flex-col gap-3">
       <h3 className="text-sm text-muted-foreground">Applications using this workspace</h3>
       {consumers.map(c => <Alert key={c.reference}><AlertTitle>{c.name ?? c.reference.split("/")[0]}</AlertTitle><AlertDescription>
-        <p>{c.kind === "local-service" ? "Runs from this workspace." : c.kind === "dev-runtime" ? "Uses these sources in dev mode with ordinary application data." : "Selects this workspace as its source."} Stop the runtime and return or change its source before removing this workspace.</p>
+        <p>{c.kind === "local-service" ? "Runs from this workspace." : c.kind === "core-runtime" ? "Core uses this workspace. Open Use workspace on this Core to Return its retained activation." : c.kind === "dev-runtime" ? "Uses these sources in dev mode with ordinary application data." : "Selects this workspace as its source."} Stop the runtime and return or change its source before removing this workspace.</p>
         {safeLink(c.managementUrl) && <Button asChild size="sm" variant="outline"><a href={safeLink(c.managementUrl)} target="_blank" rel="noreferrer">Manage application</a></Button>}
       </AlertDescription></Alert>)}
     </section>}

@@ -52,7 +52,7 @@ Plans: 11 In Progress · 1 Blocked · 39 Draft · 7 On Hold.
 - [App Code Exchange](features/app-code-exchange/feature.md) — Authorization codes require target-app service identity and private S256 proof, with browser-origin and nonce-bound sign-in attempts. · [plan](features/app-code-exchange/plan.md): Blocked, 16/20, updated 2026-10-08
 - [App Installation And Configuration Experience](features/app-configuration-experience/feature.md) — Default-only installation, shared configuration readiness and optional app-author guidance for manifest and app-owned settings.
 - [Feature: App Data Backup Retention](features/app-data-backup-retention/feature.md) — Retention and cleanup of app data backups, which cover only each app's primary data directory. · [plan](features/app-data-backup-retention/plan.md): Draft, 0/2, updated 2026-10-05
-- [Development Controls For Existing Apps](features/app-development-controls/feature.md) — One recoverable dev-mode operation for ordinary installed apps, shared by Shell, Harness, CLI and direct MCP, using live source and ordinary data in the same Core. · [plan](features/app-development-controls/plan.md): In Progress, 8/9, updated 2026-10-18
+- [Development Controls For Existing Apps](features/app-development-controls/feature.md) — One recoverable dev-mode operation for ordinary installed apps, shared by Shell, Harness, CLI and direct MCP, using live source and ordinary data in the same Core. · [plan](features/app-development-controls/plan.md): In Progress, 8/9, updated 2026-10-19
 - [App Embedding Restrictions — Only Operator-Designated Embedders May Frame An App](features/app-embedding-restrictions/plan.md) — Restrict app framing to operator-designated embedders while preserving the assistant browser runner. · On Hold, 0/7, updated 2026-10-10
 - [App Feedback Inbox](features/app-feedback-inbox/plan.md) — Durable draft app observations, administrator triage and reviewed batch delivery with optional assistant grouping into development sessions. · Draft, 0/6, updated 2026-10-13
 - [Runtime App Feeds](features/app-feeds/feature.md) — Apps publish named update sources in an app-owned feeds.json that Core validates and follows without a catalog or Marketplace.
@@ -96,7 +96,7 @@ Plans: 11 In Progress · 1 Blocked · 39 Draft · 7 On Hold.
 - [Continuous App Access](features/continuous-app-access/feature.md) — Silent maintenance of browser and native app sessions, with separately authorized and revocable background delegation.
 - [Core API](features/core-api/feature.md) — Core's browser and control APIs and the serialization rules every endpoint must follow.
 - [Core App Shell](features/core-app-shell/feature.md) — Shell is the Core-managed browser UI app that authenticates users and embeds app pages.
-- [Core Development Mode](features/core-dev-target/feature.md) — Run Core from source in Debug, restart into isolated build generations and switch back to the installed release. · [plan](features/core-dev-target/plan.md): In Progress, 0/3, updated 2026-09-18
+- [Core Development Mode](features/core-dev-target/feature.md) — Run Core from source in Debug, restart into isolated build generations and switch back to the installed release. · [plan](features/core-dev-target/plan.md): In Progress, 0/3, updated 2026-10-19
 - [Core Event Bus — Ephemeral Domain Events Over A Unified SSE Stream](features/core-event-bus/feature.md) — One authorized SSE stream carries ephemeral domain hints, notifications and opt-in resource measurements.
 - [Core Extension Model](features/core-extension-model/feature.md) — Current boundaries between runtime apps, confirmed provider roles, Core permissions and platform-owned operations.
 - [Core Lifecycle Parallelism](features/core-lifecycle-parallelism/feature.md) — Core runs per-app lifecycle work concurrently and queries Docker in batches.
@@ -177,6 +177,7 @@ Plans: 11 In Progress · 1 Blocked · 39 Draft · 7 On Hold.
 - [User Profile And Provider Connections](features/user-profile-connections/feature.md) — Shell manages personal GitHub accounts and Git identity through Core-owned connections and narrow app permissions.
 - [Workspace Event Observation](features/workspace-event-observation/feature.md) — Core observes workspace changes through filesystem and mutation events, while Harness and Workspaces share authorized SSE updates.
 - [Workspace Lifecycle Controls](features/workspace-lifecycle-controls/feature.md) — Core coordinates recoverable workspace pause, suspends inactive source observation, verifies completion and deletes merged workspaces without discarding unfinished changes.
+- [Core Source And Workspace Activation](features/workspace-live-activation/feature.md) — Review workspace apps and matching Core, activate live source with supervised handover, and Return selected participants while preserving current data.
 - [Workspaces App](features/workspaces-app/feature.md) — Workspace and source inspection, pull-request evidence, and optional child Core sandbox creation, preview and lifecycle controls.
 
 <!-- docs-index:end -->

@@ -19,12 +19,12 @@ internal sealed partial class CoreLifecycleService
     public Task<AppDevPlan> PlanDevModeAsync(string appId, AppDevRequest input, AppDevActor actor, CancellationToken ct = default)
         => WithAppLockAsync(appId, () => PlanDevModeCoreAsync(appId, input, actor, ct), ct, developmentOperation: true);
 
-    private async Task<AppDevPlan> PlanDevModeCoreAsync(string appId, AppDevRequest input, AppDevActor actor, CancellationToken ct)
+    private async Task<AppDevPlan> PlanDevModeCoreAsync(string appId, AppDevRequest input, AppDevActor actor, CancellationToken ct, bool workspaceActivation = false)
     {
         _ = AppDevStore.Record(paths, appId, input.RequestId);
         if (input.Action is not ("enter" or "return" or "restart")) throw DevError("action_invalid", "Choose enter, restart or return.");
         var app = await RequireAppAsync(appId, ct);
-        if (app.System) throw DevError("system_unsupported", "System app development keeps its existing manual workflow.");
+        if (app.System && !workspaceActivation && input.Action == "enter") throw DevError("system_unsupported", "System app development keeps its existing manual workflow.");
         var op = await AppDevStore.ReadAsync(paths, app, ct);
         string? source, treeId, head = null;
         var changes = new List<string>();
@@ -39,7 +39,8 @@ internal sealed partial class CoreLifecycleService
         {
             if (op is { Active: true }) throw DevError("already_active", "This installation already has a development operation. Inspect it, retry its original request or return first.");
             var selection = await manifests.LoadAsync(app.ManifestPath!, target, ct);
-            if (!selection.RuntimeProfile.Development || selection.Services.Any(s => s.Runtime.Type != "docker"))
+            if (!selection.RuntimeProfile.Development || selection.Services.Any(s => workspaceActivation
+                ? s.Runtime.Type is not ("docker" or "localCommand") : s.Runtime.Type != "docker"))
                 throw DevError("profile_unsupported", "Choose an installed Docker development profile. Other manual runtime profiles remain available through Switch runtime.");
             target = selection.RuntimeProfile.Key;
             if (app.SourceState is null) throw DevError("source_required", "Configure the application's Git source first.");
@@ -228,7 +229,7 @@ internal sealed partial class CoreLifecycleService
         return op;
     }
 
-    private async Task<AppDevOperation> EnterDevAsync(AppDevOperation op, string requestId, CancellationToken ct)
+    private async Task<AppDevOperation> EnterDevAsync(AppDevOperation op, string requestId, CancellationToken ct, bool backupOnly = false)
     {
         await ValidateLiveDevManifestAsync(op, ct);
         var app = await RequireAppAsync(op.AppId, ct);
@@ -255,6 +256,7 @@ internal sealed partial class CoreLifecycleService
             op = op with { BackupId = backup.BackupId };
             op = await DevPhaseAsync(op, "backed-up", ct);
         }
+        if (backupOnly) return op;
         if (op.Phase == "backed-up")
         {
             app = await RequireAppAsync(op.AppId, ct);
@@ -267,9 +269,17 @@ internal sealed partial class CoreLifecycleService
             finally { apps.HostPathMutationLock.Release(); }
             app = await RequireAppAsync(op.AppId, ct);
             var next = BuildAppRecord(selection, app.ManifestPath!, app.ManifestUrl, app.System, app) with
-            { InstallManifestPath = app.InstallManifestPath, SourceState = app.SourceState, DevModeId = op.Id, RuntimeState = "stopped", OperationStatus = "development", LastError = null };
+            { InstallManifestPath = app.InstallManifestPath, SourceState = app.SourceState, ArtifactLocks = op.PreparedRuntime?.Artifacts ?? app.ArtifactLocks, DevModeId = op.Id, RuntimeState = "stopped", OperationStatus = "development", LastError = null };
             await PersistRuntimePortsAsync(next, selection, ct);
             op = await DevPhaseAsync(op, "bound", ct);
+        }
+        if (op.Phase == "starting" && op.ActivationId is not null)
+        {
+            app = await RequireAppAsync(op.AppId, ct);
+            // StartCore persists its verified running projection before the child receipt. Recover
+            // that narrow lost-response window without stopping a fully ready candidate again.
+            if (app.RuntimeState == "running" && (await GetHealthAsync(op.AppId, ct)).Status == "healthy")
+                return await DevPhaseAsync(op, "active", ct, completedRequestId: requestId);
         }
         if (op.Phase is "bound" or "starting")
         {
@@ -304,6 +314,12 @@ internal sealed partial class CoreLifecycleService
                 RuntimeState = "stopped", OperationStatus = "development-returning", ManifestError = null, LiveChanges = null };
             await PersistRuntimePortsAsync(restored, previous, ct);
             op = await DevPhaseAsync(op, "return-bound", ct);
+        }
+        if (op.Phase == "return-starting" && op.ActivationId is not null && op.WasRunning)
+        {
+            var current = await RequireAppAsync(op.AppId, ct);
+            if (current.RuntimeState == "running" && (await GetHealthAsync(op.AppId, ct)).Status == "healthy")
+                return await DevPhaseAsync(op, "returned", ct, completedRequestId: requestId);
         }
         if (op.Phase is "return-bound" or "return-starting")
         {

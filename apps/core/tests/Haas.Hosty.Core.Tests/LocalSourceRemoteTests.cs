@@ -6,7 +6,7 @@ namespace Haas.Hosty.Core.Tests;
 public sealed partial class CoreLifecycleServiceTests
 {
     // Real local Git exercises refs and worktree preservation; only authenticated transport is replaced.
-    private sealed class RemoteGitFixture(string remote) : ISourceGitAccess
+    internal sealed class RemoteGitFixture(string remote) : ISourceGitAccess
     {
         public const string Url = "https://github.com/owner/repo.git";
         public Func<Task>? BeforeValidate;

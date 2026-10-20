@@ -13,7 +13,7 @@ let dir: string, manager: SessionManager, store: SessionStore, client: Developme
 let starts: HarnessStartOptions[], sent: string[];
 const tree = { id: "a".repeat(64), path: "/owned/worktree", state: "active", apps: [{ appId: "notes" }], operations: [], leases: [] };
 const adapter: HarnessAdapter = { name: "recording", capabilities: { questions: false, appMcp: true, liveReconfigure: true, autoAllow: false, denyReason: false },
-  probe: async () => ({ available: true }), start: options => { starts.push(options); return { send: text => sent.push(text), stop: async () => {}, interrupt: async () => {}, setMcpServers: async () => true, resolveApproval: () => false, resolveQuestion: () => false }; } };
+  probe: async () => ({ available: true }), start: options => { starts.push(options); return { send: text => sent.push(text), stop: async () => {}, stopAndWait: async () => {}, interrupt: async () => {}, setMcpServers: async () => true, resolveApproval: () => false, resolveQuestion: () => false }; } };
 let directory: ProviderDirectory;
 const build = () => new SessionManager(store, adapter, new AuditReporter(null, null, "hosty.harness"), dir, null, directory, null, null, "http://127.0.0.1:3400", null, null, client);
 beforeEach(async () => {
@@ -510,4 +510,29 @@ it("coordinates a session Pause through admission, stopping and confirmation", a
   expect(await manager.workspaceAction(record.id, "workflow-pause", input, "fresh", "admin")).toMatchObject({ closure: "closed" });
   expect(client.call).toHaveBeenCalledWith(record.id, "fresh", "workflow-pause", input);
   expect(client.call).toHaveBeenCalledWith(record.id, "fresh", "workflow-pause-confirm", input);
+});
+
+
+it("queues reviewed activation until agent exit and rechecks its dispatch guard", async () => {
+  const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+  await manager.postMessage(record.id, "work", "token");
+  const input = { workspaceId: "a".repeat(64), requestId: "c0da75ef-bd6c-4b61-99ad-241a613aa2d7", selection: { coreSelected: false }, planDigest: "review" };
+  const guard = vi.fn().mockResolvedValue(undefined);
+  vi.mocked(client.call).mockClear();
+  await expect(manager.workspaceAction(record.id, "activation-apply", input, undefined, undefined, guard)).resolves.toMatchObject({ state: "queued" });
+  expect(client.call).not.toHaveBeenCalledWith(record.id, expect.anything(), "activation-apply", expect.anything());
+  await finish(record.id);
+  await vi.waitFor(() => expect(client.call).toHaveBeenCalledWith(record.id, "token", "activation-apply", input));
+  expect(guard).toHaveBeenCalledOnce();
+  const calls = vi.mocked(client.call).mock.calls.map(c => c[2]);
+  expect(calls.indexOf("release-lease")).toBeLessThan(calls.indexOf("activation-apply"));
+});
+it("does not dispatch queued activation after policy revocation", async () => {
+  const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+  await manager.postMessage(record.id, "work", "token");
+  const guard = vi.fn().mockRejectedValue(new Error("Tool disabled"));
+  await manager.workspaceAction(record.id, "activation-apply", { requestId: "original" }, undefined, undefined, guard);
+  await finish(record.id);
+  await vi.waitFor(async () => expect((await store.readRecord(record.id))!.workspaceActivation?.state).toBe("blocked"));
+  expect(client.call).not.toHaveBeenCalledWith(record.id, expect.anything(), "activation-apply", expect.anything());
 });

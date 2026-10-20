@@ -1,6 +1,6 @@
 ---
 created: 2026-09-18
-updated: 2026-09-27
+updated: 2026-10-19
 summary: Run Core from source in Debug, restart into isolated build generations and switch back to the installed release.
 components: [apps/core, apps/cli, apps/shell]
 ---
@@ -50,10 +50,14 @@ identity. The Core settings dialog follows app settings layout: a wide dialog wi
 a Source section, Standard Hosty source and Custom source folder cards, and a fixed Save source footer.
 Save is enabled only for a changed, nonempty custom path or clearing an existing override.
 Save failures appear inline with alert semantics for assistive technology.
-Standard uses `<root>/core/source` and clones the official repository's default branch
-on first use. Restart reuses the checkout without an implicit pull. Override is an absolute host
-repository directory containing `apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj`; saving it
-does not rewrite or clean the repository.
+The existing Shell dialog edits the folder override; the administrator API also supports a repository
+URL, ref and relative project path through [Core source configuration](../workspace-live-activation/feature.md).
+New selections use separate managed checkouts; legacy `<root>/core/source` and overrides remain intact.
+Restart reuses the selected checkout without an implicit pull. An override is an absolute host
+repository directory containing the configured Core project; saving it does not rewrite or clean
+the repository. The default project path remains `apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj`.
+The development API reports embedded build provenance separately from selected source and release
+update origin.
 
 Git presentation describes the running project in dev mode, including branch (or detached commit),
 changed files and available additions/deletions, including untracked files. The changed-file
@@ -73,7 +77,9 @@ before comparison so Windows separator differences do not leave a spurious pendi
 Admin HTTP routes are:
 
 - `GET /api/core/development`: factual launch and selected-source state.
-- `PUT /api/core/source`: `{ overridePath, revision }`, with browser CSRF protection.
+- `PUT /api/core/source`: `{ overridePath, revision, repository? }`, with browser CSRF protection.
+  The optional repository selection and preparation/workspace routes are documented in
+  [Core source and participants](../workspace-live-activation/feature.md).
 - `POST /api/core/restart`: `{ requestId, instance, mode?, sourceRevision }`, with browser CSRF
   protection. Omitted mode preserves the live target and applies pending Source changes.
 - `GET /api/core/operations/{requestId}`: durable operation status and diagnostics.
@@ -197,6 +203,14 @@ PR review regression checks cover unavailable CLI paths for both managed modes, 
 Core suite passes 1976 tests with the same four opt-in skips. The Windows process-control CI lane
 also covers runner log survival and explicit recovery, including adoption and Stop after the command
 shell exits while its detached descendant remains alive.
+
+## Workspace Runtime Activation
+
+[Workspace activation](../workspace-live-activation/feature.md) composes explicitly bound applications
+and repository-matched Core with a reviewed selection, supervised handover and individual/group
+Return. Runtime consumers persist independently of workspace Close and sandbox Finish. Core
+participation requires separate Core authority; ordinary source or lifecycle access is insufficient.
+Return preserves current data and live source edits.
 
 ## Testing Expectations
 

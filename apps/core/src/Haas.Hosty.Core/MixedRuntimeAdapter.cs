@@ -2,7 +2,7 @@ namespace Haas.Hosty.Core;
 
 // Executes one dependency graph across existing adapters. A service projection keeps the full
 // graph for peer discovery, while lifecycle operations only touch the selected service.
-internal sealed class MixedRuntimeAdapter(IEnumerable<IAppRuntimeAdapter> adapters) : IAppRuntimeAdapter
+internal sealed class MixedRuntimeAdapter(IEnumerable<IAppRuntimeAdapter> adapters) : IAppRuntimeAdapter, IRuntimePreparation
 {
     public string Type => "mixed";
 
@@ -26,6 +26,23 @@ internal sealed class MixedRuntimeAdapter(IEnumerable<IAppRuntimeAdapter> adapte
                 CacheTarget = Target(context.Manifest.Manifest.Cache, context.Manifest.CacheTarget),
             },
         };
+    }
+
+    public async Task<RuntimePreparation> PrepareAsync(RuntimeLifecycleContext context, CancellationToken ct)
+    {
+        var artifacts = new Dictionary<string, ArtifactLock>(StringComparer.Ordinal);
+        var setup = new List<string>();
+        foreach (var service in DockerRuntimeAdapter.OrderServices(context.Manifest.Services))
+        {
+            _ = RuntimeServiceDiscovery.BuildEnvironment(context.AllServices, service,
+                (target, port) => RuntimeServiceDiscovery.BuildPeerUrl(context, service, target, port)).ToArray();
+            if (Adapter(service) is not IRuntimePreparation adapter)
+                throw new AppLifecycleException("activation_prepare_unsupported", "This runtime cannot prepare before stopping.");
+            var result = await adapter.PrepareAsync(ForService(context, service), ct);
+            foreach (var pair in result.Artifacts) artifacts[pair.Key] = pair.Value;
+            setup.AddRange(result.SetupServices);
+        }
+        return new(artifacts, setup.ToArray());
     }
 
     public async Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)

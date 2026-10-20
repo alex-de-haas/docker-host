@@ -9,6 +9,7 @@ import { developmentRequest, repositoryName, changeTotals, workflowIsActive, wor
 import { LocalRepositoryActions } from "./local-repository-actions";
 import { AppDevMode } from "./app-dev-mode";
 import { LocalAppHandoff } from "./local-app-handoff";
+import { WorkspaceActivation } from "./workspace-activation";
 import { WorkspaceConsumers } from "./workspace-consumers";
 import { WorkspaceLeaseRecovery } from "./workspace-lease-recovery";
 import { WorkspacePreviews } from "./workspace-previews";
@@ -116,7 +117,7 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
           refresh();
         }} />}
       <WorkspacePreviews key={`previews:${workspace.id}`} workspaceId={workspace.id} canStart={!state.closure && state.state === "in-progress"} disabled={busy || recovering} refresh={refresh} />
-      <WorkspaceConsumers trees={trees} />
+      <WorkspaceActivation workspaceId={workspace.id} /><WorkspaceConsumers trees={trees} />
       {trees.map(tree => {
         const known = tree.sessionChanges !== undefined && tree.observation?.state === "ok" && !tree.detailError;
         const files = tree.sessionChanges ?? [];

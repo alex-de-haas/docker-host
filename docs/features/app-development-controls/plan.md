@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-09-16
-updated: 2026-10-18
+updated: 2026-10-19
 summary: Deferred source-override migration assessment after unified ordinary-app dev mode, live data, shared manual and MCP control, and recoverable runtime return.
 components: [apps/core, apps/cli, apps/harness, apps/shell]
 ---
@@ -32,6 +32,14 @@ D1 must retain private/local/no-Git and system/Harness self-development parity, 
 apps and external agents. Evaluate restrictions on host-native localCommand separately from source
 runtime support. Clearing obsolete local Source settings is authorized operational cleanup, not
 removal of product APIs. The shipped unified live-data dev mode and Return remain supported.
+
+## Related Workspace Activation
+
+The separately approved [workspace activation](../workspace-live-activation/feature.md) extends
+the shipped controls to reviewed groups of bound apps, including Shell/Harness, and optional Core
+selected by configured repository identity. It owns those new source, orchestration and Return
+contracts. Its acceptance can inform D1's parity assessment but does not authorize retiring
+overrides or close that assessment automatically.
 
 ## Settled Boundaries
 

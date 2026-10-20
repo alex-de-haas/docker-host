@@ -13,6 +13,8 @@ on:
       - "scripts/install.ps1"
       - "global.json"
       - "Directory.Build.props"
+      - "Directory.Build.targets"
+      - "scripts/HostyBuildIdentity.cs"
       - ".github/workflows/cli-release.yml"
 
 permissions:
@@ -49,6 +51,8 @@ jobs:
   publish-artifacts:
     name: Build ${{ matrix.rid }}
     needs: test
+    env:
+      HostyBuildRepository: ${{ github.server_url }}/${{ github.repository }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

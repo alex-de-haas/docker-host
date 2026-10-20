@@ -148,3 +148,5 @@
 html[data-hosty-navigation="hide"] [data-hosty-navigation-boundary] {
   display: none;
 }
+
+@source "../../../../../shared/web";

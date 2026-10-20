@@ -1,6 +1,6 @@
 ---
 created: 2026-08-09
-updated: 2026-10-18
+updated: 2026-10-19
 summary: Core MCP exposes app state, logs and bounded audit search, with explicit grants for lifecycle actions and reviewed updates.
 components: [apps/core]
 ---
@@ -259,6 +259,14 @@ and OAuth consent expose the explicit scope. The tool is disruptive, with dedupl
 ID, and records audit outcomes. Build/test final source edits first. If Core cannot start, use local
 CLI logs and `core restart --keep-apps --project <absolute-csproj>` for recovery; omitting project
 selects release. See [Core development mode](../core-dev-target/feature.md).
+
+## Workspace Runtime Activation
+
+[Workspace activation](../workspace-live-activation/feature.md) composes explicitly bound applications
+and repository-matched Core with a reviewed selection, supervised handover and individual/group
+Return. Runtime consumers persist independently of workspace Close and sandbox Finish. Core
+participation requires separate Core authority; ordinary source or lifecycle access is insufficient.
+Return preserves current data and live source edits.
 
 ## Testing Expectations
 

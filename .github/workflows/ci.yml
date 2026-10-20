@@ -103,6 +103,9 @@ jobs:
               - 'package.json'
               - 'global.json'
               - 'Directory.Build.props'
+              - 'Directory.Build.targets'
+              - 'scripts/HostyBuildIdentity.cs'
+              - 'scripts/check-workspace-activation.py'
               - '.github/workflows/ci.yml'
 
             app_sdk:
@@ -122,6 +125,7 @@ jobs:
               - *node_shared
               - 'packages/app-sdk/**'
               - 'apps/shell/**'
+              - 'shared/web/**'
 
             demo_app:
               - *node_shared
@@ -151,6 +155,7 @@ jobs:
               - *node_shared
               - 'packages/app-sdk/**'
               - 'apps/harness/**'
+              - 'shared/web/**'
 
             telemetry_ui:
               - *node_shared
@@ -435,7 +440,47 @@ jobs:
         run: >-
           dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj
           --filter
-          "FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop|FullyQualifiedName~SourceDocuments_ReferenceMetadataSupportsLfAndCrLf"
+          "FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop|FullyQualifiedName~SourceDocuments_ReferenceMetadataSupportsLfAndCrLf|FullyQualifiedName~WorkspaceGit_"
+
+  workspace-native-activation:
+    name: Workspace activation (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.core == 'true' || needs.changes.outputs.cli == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Build native process fixtures
+        run: |
+          dotnet build apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj
+          dotnet build apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj
+      - name: Verify shared receipt replacement on Windows
+        if: runner.os == 'Windows'
+        run: >-
+          dotnet test apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj
+          --filter FullyQualifiedName~SharedReceiptSharingTests
+      - name: Verify activation and Return through real processes
+        env:
+          HOSTY_ACTIVATION_DIAGNOSTICS: ${{ runner.temp }}/hosty-workspace-activation-diagnostics
+        run: python scripts/check-workspace-activation.py . return
+      - name: Verify detached helper recovery
+        env:
+          HOSTY_ACTIVATION_DIAGNOSTICS: ${{ runner.temp }}/hosty-workspace-activation-diagnostics
+        run: python scripts/check-workspace-activation.py . auto
+      - name: Upload sanitized activation failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: workspace-activation-${{ matrix.os }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hosty-workspace-activation-diagnostics/**/*.log
+          if-no-files-found: warn
+          retention-days: 7
 
   cli:
     name: CLI

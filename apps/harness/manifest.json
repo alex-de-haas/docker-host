@@ -3,7 +3,7 @@
   "id": "hosty.harness",
   "name": "Hosty Harness",
   "description": "Host-resident operator assistant with managed Claude and Codex connections, chat and settings UI.",
-  "version": "0.60.1",
+  "version": "0.61.5",
   "role": "system",
   "source": {
     "type": "git",
@@ -30,7 +30,7 @@
         "local": {
           "type": "localCommand",
           "workingDirectory": "apps/harness",
-          "setup": "npm ci --workspace @haas/hosty-harness --workspace @haas/hosty-harness-web && npm run build:web",
+          "setup": "npm --prefix ../.. ci && npm run build:web",
           "command": "npm run start",
           "ports": [
             {
@@ -50,7 +50,7 @@
         "dev": {
           "type": "localCommand",
           "workingDirectory": "apps/harness",
-          "setup": "npm install --workspace @haas/hosty-harness --workspace @haas/hosty-harness-web && npm run build:web",
+          "setup": "npm --prefix ../.. install && npm run build:web",
           "command": "npm run dev",
           "ports": [
             {
@@ -147,7 +147,7 @@
       "default": "30",
       "required": false,
       "label": "Transcript retention (days)",
-      "description": "Initial ordinary-chat retention. Harness Settings → Instructions and retention overrides this value and separately controls verified completed workspaces. Unfinished work never expires."
+      "description": "Initial ordinary-chat retention. Harness Settings \u2192 Instructions and retention overrides this value and separately controls verified completed workspaces. Unfinished work never expires."
     }
   ],
   "capabilities": [
@@ -166,7 +166,13 @@
       "endpoint": "http",
       "path": "/settings"
     },
-    "navigation": [{ "label": "Harness", "endpoint": "http", "path": "/development" }],
+    "navigation": [
+      {
+        "label": "Harness",
+        "endpoint": "http",
+        "path": "/development"
+      }
+    ],
     "panels": [
       {
         "id": "assistant",
@@ -199,6 +205,7 @@
     "apps.sandboxes.read",
     "apps.sandboxes.manage",
     "core.environments.read",
-    "core.environments.manage"
+    "core.environments.manage",
+    "core.workspace.activate"
   ]
 }

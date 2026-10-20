@@ -279,7 +279,7 @@ internal sealed partial class AppSourceService
     private static async Task<ProcessRunResult> WorktreeGitAsync(string scope, IReadOnlyList<string> args, CancellationToken cancellationToken,
         bool allowFailure = false, int limit = MaxGitOutput, Encoding? outputEncoding = null, string? indexPath = null)
     {
-        var start = CreateGitStartInfo(scope, ["--literal-pathspecs", "-c", "core.fsmonitor=false", "-c", "core.quotePath=false", .. args]);
+        var start = CreateGitStartInfo(scope, ["--literal-pathspecs", "-c", "core.fsmonitor=false", "-c", "core.longpaths=true", "-c", "core.quotePath=false", .. args]);
         if (outputEncoding is not null) start.StandardOutputEncoding = outputEncoding;
         foreach (var key in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT" })
             start.Environment.Remove(key);

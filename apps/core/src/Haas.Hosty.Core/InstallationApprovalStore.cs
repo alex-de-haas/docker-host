@@ -13,6 +13,7 @@ internal static class CoreAppPermissions
     public const string ConfigureApps = "apps.configure";
     public const string ReadCore = "core.read";
     public const string UpdateCore = "core.update";
+    public const string WorkspaceCore = "core.workspace.activate";
     public const string CoreLifecycle = "core.lifecycle";
     public const string ConfigureCore = "core.configure";
     public const string CoreLogs = "core.logs";
@@ -36,7 +37,7 @@ internal static class CoreAppPermissions
     public const string SpeechProviders = "providers.speech-to-text";
     public const string TranslationProviders = "providers.translation";
     public const string AssistantProviders = "providers.assistant";
-    public static readonly string[] Known = [Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, SandboxesRead, SandboxesManage, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SandboxesInspect, SandboxesOperate, SourceConnections, ReadSkills, SpeechProviders, TranslationProviders, AssistantProviders];
+    public static readonly string[] Known = [WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, SandboxesRead, SandboxesManage, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SandboxesInspect, SandboxesOperate, SourceConnections, ReadSkills, SpeechProviders, TranslationProviders, AssistantProviders];
 
     // The old name grants exactly the same authority. Other retired permissions remain unsupported.
     public static string Normalize(string permission) => permission == LegacySources ? Sources : permission;
@@ -83,6 +84,7 @@ internal static class CoreAppPermissions
         ConfigureApps => "Read and change application settings, including sensitive values, mounts and backups",
         ReadCore => "Read Core state",
         UpdateCore => "Update Core",
+        WorkspaceCore => "Activate and Return reviewed workspace Core builds on ordinary host data, including Core interruption and recovery",
         CoreLifecycle => "Restart Core",
         ConfigureCore => "Read and change Core settings, shared mounts and ingress",
         CoreLogs => "Read Core logs",

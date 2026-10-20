@@ -208,3 +208,5 @@
 }
 
 @source "../../../../packages/app-sdk/src/sandbox-react.tsx";
+
+@source "../../../../shared/web";

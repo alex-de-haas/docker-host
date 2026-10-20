@@ -61,7 +61,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AppIdentityTokenService>();
         // Core MCP: the protocol server plus the tool type it reflects over. The tools resolve Core's
         // own services per call, so the MCP layer holds no state of its own.
-        builder.Services.AddMcpServer().WithHttpTransport().WithTools<HostyCoreTools>().WithTools<ExternalWorkspaceMcpTools>().WithTools<AppDevModeMcpTools>();
+        builder.Services.AddMcpServer().WithHttpTransport().WithTools<HostyCoreTools>().WithTools<ExternalWorkspaceMcpTools>().WithTools<AppDevModeMcpTools>().WithTools<WorkspaceActivationMcpTools>(CoreJsonSerializerContext.Default.Options);
         builder.Services.AddSingleton<ExternalWorkspaceMcpAuthorization>();
         // The MCP mutation tools read the caller's grants out of HttpContext.Items, where the
         // endpoint filter put them; the accessor is how a static tool method reaches the request.
@@ -152,6 +152,12 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<CoreLifecycleService>();
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();
         builder.Services.AddSingleton<CoreDevelopmentService>();
+        builder.Services.AddSingleton<WorkspaceActivationPlanner>();
+        builder.Services.AddSingleton<WorkspaceActivationService>();
+        builder.Services.AddSingleton<WorkspaceActivationAccess>();
+        builder.Services.AddSingleton<WorkspaceActivationActions>();
+        builder.Services.AddSingleton<WorkspaceActivationRecovery>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<WorkspaceActivationRecovery>());
         // Resolve the executable for independent localCommand runners once. DLL-hosted Core copies
         // its managed output closure instead; both paths keep logs and tree ownership outside Core.
         builder.Services.AddSingleton(new LocalCommandShimOptions(LocalCommandShim.ResolveShimPath()));
@@ -409,6 +415,7 @@ internal static class HostyCoreApplication
         CoreLogEndpoints.Map(app);
         RuntimeResourceEndpoints.Map(app);
         CoreRestartEndpoints.Map(app);
+        CoreWorkspaceEndpoints.Map(app);
         CloudflareConnectionEndpoints.Map(app);
         CloudflarePublicationEndpoints.Map(app);
         SourceEndpoints.Map(app);

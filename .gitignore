@@ -55,6 +55,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# Native release staging must not mark the following Core build dirty.
+/artifacts/
+/core-artifacts/
+
 # dotnet
 **/bin/
 **/obj/

@@ -208,7 +208,8 @@ describe("provider connections", () => {
     await expect(registry.remove(c.id)).rejects.toMatchObject({
       code: "provider_in_use",
     });
-    await run.stop();
+    expect(run.stopAndWait).toBeTypeOf("function");
+    await run.stopAndWait!();
     await registry.setDefault(c.id);
     await registry.remove(c.id);
     expect((await registry.list()).defaultId).toBeNull();

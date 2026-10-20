@@ -17,7 +17,16 @@ internal sealed record CoreLaunchIdentity(string Mode, string? ProjectPath, stri
     }
 }
 
-internal sealed record CoreSourceSettings(string? OverridePath, string Revision, string? PendingForInstance = null);
+internal sealed record CoreSourceSettings(string? OverridePath, string Revision, string? PendingForInstance = null,
+    string? RepositoryUrl = null, string? Ref = null,
+    string ProjectPath = CoreSourceDefaults.ProjectPath, bool LegacyCheckout = true, int SchemaVersion = 0,
+    string? ConnectionOwnerId = null, string? ConnectionId = null);
+
+internal static class CoreSourceDefaults
+{
+    public const string ProjectPath = "apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj";
+    public const string UpdateRepository = "https://github.com/alex-de-haas/docker-host";
+}
 internal sealed record CoreLaunchOperation(string Id, string Status, string Mode, string? ProjectPath,
     DateTimeOffset CreatedAt, string? SourceRevision = null, string? Error = null, string? LogPath = null,
     string? GenerationPath = null, int? HelperPid = null, DateTimeOffset? HelperStartedAt = null);
@@ -31,21 +40,78 @@ internal static class CoreLaunchFiles
     }
     public static string SourcePath(string root) => Path.Combine(root, "core", "source-settings.json");
     public static T? Read<T>(string path, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type)
-        => File.Exists(path) ? JsonSerializer.Deserialize(File.ReadAllText(path), type) : default;
+    {
+        if (!File.Exists(path)) return default;
+        // A receipt is replaced atomically. Readers retain their old snapshot without preventing
+        // another process from publishing its next version on Windows.
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        return JsonSerializer.Deserialize(stream, type);
+    }
     public static void Write<T>(string path, T value, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var backup = OperatingSystem.IsWindows() ? temp + ".previous" : null;
+        var preserveRecovery = false;
         try
         {
             File.WriteAllText(temp, JsonSerializer.Serialize(value, type));
             if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(temp, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            File.Move(temp, path, true);
+            try { ReplaceWithSharingRetry(temp, path, backup); }
+            catch (IOException error) when (OperatingSystem.IsWindows() && (error.HResult & 0xffff) is 1176 or 1177)
+            {
+                preserveRecovery = true;
+                RecoverPartialReplacement(path, temp, backup!, error);
+                preserveRecovery = false;
+                throw;
+            }
+            if (backup is not null && File.Exists(backup)) File.Delete(backup);
         }
-        finally { if (File.Exists(temp)) File.Delete(temp); }
+        finally { if (!preserveRecovery && File.Exists(temp)) File.Delete(temp); }
     }
-    public static void AssertNoPendingOperations(string root, string? ownId = null)
+
+    internal static void RecoverPartialReplacement(string path, string temp, string backup, IOException error)
     {
+        Exception? restoreError = null;
+        if (File.Exists(backup) && !File.Exists(path))
+        {
+            try { File.Move(backup, path, overwrite: false); return; }
+            catch (Exception failure) when (failure is IOException or UnauthorizedAccessException) { restoreError = failure; }
+        }
+        // ReplaceFile documents that 1176 retains the old name when a backup was requested.
+        if ((error.HResult & 0xffff) == 1176 && File.Exists(path) && !File.Exists(backup)) return;
+        throw new IOException($"Receipt replacement failed. Retained recovery files: previous '{backup}', candidate '{temp}', destination '{path}'. No newer receipt was overwritten.",
+            restoreError is null ? error : new AggregateException(error, restoreError));
+    }
+
+    private static void ReplaceWithSharingRetry(string temp, string path, string? backup)
+    {
+        var started = Stopwatch.StartNew();
+        while (true)
+        {
+            try
+            {
+                // MoveFileEx cannot overwrite an open destination even when its readers share
+                // delete access. ReplaceFile supports that sharing and preserves the existing ACL.
+                if (OperatingSystem.IsWindows() && File.Exists(path)) File.Replace(temp, path, backup, ignoreMetadataErrors: false);
+                else File.Move(temp, path, overwrite: !OperatingSystem.IsWindows());
+                return;
+            }
+            catch (IOException error) when (OperatingSystem.IsWindows() && ((error.HResult & 0xffff) is 32 or 33 ||
+                (error.HResult & 0xffff) is 80 or 183 && File.Exists(temp) && File.Exists(path)))
+            {
+                // Legacy/external readers can omit delete sharing. Retry only that transient
+                // replacement conflict; ACL, path and other I/O failures retain their original error.
+                var remaining = TimeSpan.FromSeconds(2) - started.Elapsed;
+                if (remaining <= TimeSpan.Zero) throw;
+                Thread.Sleep(remaining < TimeSpan.FromMilliseconds(20) ? remaining : TimeSpan.FromMilliseconds(20));
+            }
+        }
+    }
+
+    public static void AssertNoPendingOperations(string root, string? ownId = null, string? ownWorkspaceId = null)
+    {
+        WorkspaceActivationSupervisor.AssertNoPending(root, ownWorkspaceId);
         var directory = Path.Combine(root, "core", "operations");
         if (!Directory.Exists(directory)) return;
         foreach (var path in Directory.EnumerateFiles(directory, "*.json"))

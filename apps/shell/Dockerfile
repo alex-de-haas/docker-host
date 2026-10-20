@@ -7,6 +7,7 @@ COPY apps/shell/package.json apps/shell/package.json
 COPY packages/app-sdk/package.json packages/app-sdk/package.json
 RUN npm ci --no-audit --no-fund --workspace @haas/hosty-shell
 COPY apps/shell apps/shell
+COPY shared/web shared/web
 COPY packages/app-sdk packages/app-sdk
 ENV NODE_ENV=production
 RUN npm run shell:build \

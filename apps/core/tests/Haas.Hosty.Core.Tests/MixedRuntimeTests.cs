@@ -5,6 +5,18 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed class MixedRuntimeTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Prepare_OrdersMixedDependenciesAndFailureNeverStartsServices(bool failure)
+    {
+        var events = new List<string>();
+        var adapter = new MixedRuntimeAdapter([new FakeAdapter("docker", events), new FakeAdapter("localCommand", events, fail: failure ? "backend" : null)]);
+        if (failure) await Assert.ThrowsAsync<IOException>(() => adapter.PrepareAsync(Context(), default));
+        else Assert.Equal(new[] { "collector", "backend", "ui" }, (await adapter.PrepareAsync(Context(), default)).SetupServices);
+        Assert.Equal(failure ? new[] { "prepare:collector", "prepare:backend" } : new[] { "prepare:collector", "prepare:backend", "prepare:ui" }, events);
+    }
+
     private const string Manifest = """
     {"schemaVersion":"app.0.1","id":"com.example.mixed","name":"Mixed","version":"1.0.0",
      "runtimeProfiles":[{"key":"dev","type":"mixed","development":true}],
@@ -149,9 +161,16 @@ public sealed class MixedRuntimeTests
         Assert.True(DockerSourceRuntime.RequiresReview(baseline, Selection(json.ToJsonString())));
     }
 
-    private sealed class FakeAdapter(string type, List<string> events, string? fail = null, bool running = false, string? failStop = null, bool recreated = false) : IAppRuntimeAdapter
+    private sealed class FakeAdapter(string type, List<string> events, string? fail = null, bool running = false, string? failStop = null, bool recreated = false) : IAppRuntimeAdapter, IRuntimePreparation
     {
         public string Type => type;
+        public Task<RuntimePreparation> PrepareAsync(RuntimeLifecycleContext context, CancellationToken ct)
+        {
+            var service = Assert.Single(context.Manifest.Services);
+            events.Add("prepare:" + service.Key);
+            if (service.Key == fail) throw new IOException("setup failed");
+            return Task.FromResult(new RuntimePreparation(new Dictionary<string, ArtifactLock>(), [service.Key]));
+        }
         public Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
         {
             var service = Assert.Single(context.Manifest.Services);

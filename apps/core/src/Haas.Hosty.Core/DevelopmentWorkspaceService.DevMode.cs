@@ -44,11 +44,38 @@ internal sealed partial class DevelopmentWorkspaceService
         foreach (var app in await apps.ListAppRecordsAsync(ct))
             if (await AppDevStore.ReadAsync(paths, app, ct) is { Active: true } op && op.WorktreeId == tree.Id)
                 result.Add(app.Id);
+        if (CoreActivationConsumers(tree).Length > 0 || RunningCoreUses(tree)) result.Add("hosty:core");
         return result.ToArray();
     }
 
+    internal async Task ReserveCoreActivationAsync(Haas.Hosty.Launch.WorkspaceRuntimeActivation activation, CancellationToken ct)
+    {
+        var tree = await Read(activation.CoreWorktreeId!, null, ct);
+        await Locked(Hash(OwnerIdentity(tree.Owner)), () => Locked("repository-admission:" + tree.RepositoryId, async () =>
+        {
+            tree = await Read(tree.Id, null, ct);
+            if (tree.Leases.Length > 0 || tree.State != "active" || tree.Operations.Any(o => o.State is "pending" or "unknown"))
+                throw Error("in_use", "Pause workspace writers before reserving Core source.");
+            await RequireOpenWorkflow(tree.Owner, ct);
+            await WorkspaceGrantAsync(tree, ct);
+            Haas.Hosty.Launch.WorkspaceRuntimeFiles.Save(paths.DataRoot, activation);
+            return true;
+        }, ct), ct);
+    }
+
+    internal Haas.Hosty.Launch.WorkspaceRuntimeActivation[] CoreActivationConsumers(DevelopmentWorkspace tree) =>
+        Haas.Hosty.Launch.WorkspaceRuntimeFiles.List(paths.DataRoot).Where(a => a.CoreProject is not null && !a.CoreReturned &&
+            a.Phase is not ("returned" or "cancelled") && (a.Phase != "preparing" || a.CoreReserved) &&
+            (a.CoreWorktreeId == tree.Id || a.PreviousCore.ProjectPath is { } prior && IsUnder(tree.Path, prior))).ToArray();
+
+    private bool RunningCoreUses(DevelopmentWorkspace tree) => coreDevelopment?.Launch.ProjectPath is { } project && IsUnder(tree.Path, project);
+
     private async Task RequireDevConsumerIdleAsync(DevelopmentWorkspace tree, CancellationToken ct, bool writer = false)
     {
+        if (!writer && RunningCoreUses(tree))
+            throw Error("in_use", "The running Core uses this worktree. Select another Core target before destructive Git or cleanup.");
+        if (CoreActivationConsumers(tree).Any(a => !writer || a.Phase != "active"))
+            throw Error("in_use", "Core consumes this worktree through a workspace activation. Return Core before destructive Git or cleanup; resume an interrupted transition before editing.");
         foreach (var app in await apps.ListAppRecordsAsync(ct))
             if (await AppDevStore.ReadAsync(paths, app, ct) is { Active: true } op && op.WorktreeId == tree.Id &&
                 (!writer || op.Phase != "active"))

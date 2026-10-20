@@ -1,0 +1,22 @@
+<Project>
+  <UsingTask TaskName="HostyBuildIdentity" TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <Task><Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)scripts/HostyBuildIdentity.cs" /></Task>
+  </UsingTask>
+  <Target Name="HostyBuildProvenance" BeforeTargets="GetAssemblyAttributes"
+          Condition="'$(AssemblyName)' == 'hosty-core' Or '$(AssemblyName)' == 'hosty'">
+    <HostyBuildIdentity RepositoryRoot="$(MSBuildThisFileDirectory)" ProjectFile="$(MSBuildProjectFullPath)"
+                        RepositoryOverride="$(HostyBuildRepository)">
+      <Output TaskParameter="Repository" PropertyName="_HostySafeRepository" />
+      <Output TaskParameter="Commit" PropertyName="_HostyCommit" />
+      <Output TaskParameter="Dirty" PropertyName="_HostyDirty" />
+      <Output TaskParameter="ProjectPath" PropertyName="_HostyProject" />
+    </HostyBuildIdentity>
+    <ItemGroup>
+      <AssemblyMetadata Include="Hosty.Repository" Value="$(_HostySafeRepository)" />
+      <AssemblyMetadata Include="Hosty.Commit" Value="$(_HostyCommit)" />
+      <AssemblyMetadata Include="Hosty.Dirty" Value="$(_HostyDirty)" />
+      <AssemblyMetadata Include="Hosty.Project" Value="$(_HostyProject)" />
+    </ItemGroup>
+  </Target>
+</Project>

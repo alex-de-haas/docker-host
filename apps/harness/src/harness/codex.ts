@@ -113,6 +113,7 @@ class ReconfigurableCodexRun implements HarnessRun {
   resolveQuestion(): boolean { return false; }
   interrupt(): Promise<void> { return this.active.interrupt(); }
   async stop(): Promise<void> { this.stopped = true; await this.active.stop(); }
+  async stopAndWait(): Promise<void> { this.stopped = true; await this.active.stopAndWait(); }
   async setMcpServers(servers: Record<string, unknown>): Promise<boolean> {
     if (this.stopped || this.replacing || !this.active.resumableThread) return false;
     this.replacing = true;
@@ -286,6 +287,16 @@ class CodexRun implements HarnessRun {
     if (this.threadId) {
       await this.request(CODEX_METHODS.turnInterrupt, { threadId: this.threadId }).catch(() => undefined);
     }
+  }
+
+  async stopAndWait(): Promise<void> {
+    if (this.child.exitCode !== null || this.child.signalCode !== null) return;
+    await new Promise<void>((resolve, reject) => {
+      const done = () => { clearTimeout(timer); this.child.off("exit", done); resolve(); };
+      const timer = setTimeout(() => { this.child.off("exit", done); reject(new Error("Codex process exit was not confirmed. Source lease remains held.")); }, 10_000);
+      this.child.once("exit", done);
+      void this.stop().catch(error => { clearTimeout(timer); this.child.off("exit", done); reject(error); });
+    });
   }
 
   async stop(): Promise<void> {

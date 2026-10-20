@@ -107,6 +107,8 @@ internal static class AppManagementAuthorization
         {
             foreach (var route in routes) result.Add(route, [permission]);
         }
+        result["GET /api/development/activation-workspaces"] = [CoreAppPermissions.WorkspacesRead];
+        result["POST /api/development/workspaces/{workspaceId}/activation/{kind}"] = [CoreAppPermissions.WorkspacesRead];
         result["GET /api/apps/{appId}/dev-mode"] = [CoreAppPermissions.AppLifecycle];
         result["POST /api/apps/{appId}/dev-mode/{kind}"] = [CoreAppPermissions.AppLifecycle];
         Add(CoreAppPermissions.CoreEnvironmentsInspect, "GET /api/core-environments", "GET /api/core-environments/{id}", "GET /api/core-environments/{id}/apps");
@@ -152,6 +154,8 @@ internal static class AppManagementAuthorization
         Add(CoreAppPermissions.CoreLogs, "GET /api/core/logs");
         Add(CoreAppPermissions.ConfigureCore,
             "GET /api/core/settings", "PUT /api/core/settings", "PUT /api/core/source",
+            "POST /api/core/source/prepare", "POST /api/core/source/workspaces",
+            "POST /api/development/workspaces/{workspaceId}/activation-plan",
             "GET /api/core/agents", "PUT /api/core/agents/{targetId}",
             "GET /api/global-mounts", "POST /api/global-mounts", "DELETE /api/global-mounts/{name}",
             "GET /api/core/public-origin", "POST /api/core/public-origin/publish", "POST /api/core/public-origin/unpublish",

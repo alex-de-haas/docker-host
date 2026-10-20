@@ -1,0 +1,206 @@
+using System.Diagnostics;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
+using Haas.Hosty.Launch;
+
+namespace Haas.Hosty.Cli.Tests.Commands;
+
+public sealed class SharedReceiptSharingTests : IDisposable
+{
+    private readonly string root = Directory.CreateTempSubdirectory("hosty-receipt-sharing-").FullName;
+    private string PathForReceipt => Path.Combine(root, "receipt.json");
+    private static readonly CoreSourceSettings Previous = new(null, "previous");
+    private static readonly CoreSourceSettings Next = new(null, "next");
+    private void Write(CoreSourceSettings receipt) => CoreLaunchFiles.Write(PathForReceipt, receipt, CoreLaunchJson.Default.CoreSourceSettings);
+    private CoreSourceSettings? Read() => CoreLaunchFiles.Read(PathForReceipt, CoreLaunchJson.Default.CoreSourceSettings);
+    private void AssertNoTemporaryFiles() => Assert.Equal(new[] { PathForReceipt }, Directory.EnumerateFiles(root));
+
+    [Fact]
+    public async Task SharedReader_AllowsAtomicReplacementAndRetainsItsOriginalSnapshot()
+    {
+        Write(Previous);
+        var reading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        var type = JsonMetadataServices.CreateValueInfo<CoreSourceSettings>(
+            new JsonSerializerOptions { TypeInfoResolver = CoreLaunchJson.Default }, new PausedReader(reading, release));
+        var reader = Task.Run(() => CoreLaunchFiles.Read(PathForReceipt, type));
+        try
+        {
+            var started = await Task.WhenAny(reading.Task, reader).WaitAsync(TimeSpan.FromSeconds(10));
+            if (started == reader)
+            {
+                await reader; // Surface configuration/read failures before waiting for the converter.
+                Assert.Fail("The receipt reader completed without invoking its converter.");
+            }
+            await Task.Run(() => Write(Next)).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(Next, Read());
+        }
+        finally { release.Set(); }
+        Assert.Equal(Previous, await reader.WaitAsync(TimeSpan.FromSeconds(5)));
+        AssertNoTemporaryFiles();
+    }
+
+    [Fact]
+    public async Task WindowsLegacyReader_ReplacementRetriesUntilItsHandleCloses()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        Write(Previous);
+        using var legacy = new FileStream(PathForReceipt, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var writing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writer = Task.Run(() => { writing.SetResult(); Write(Next); });
+        try
+        {
+            await writing.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Task.Delay(150);
+            Assert.False(writer.IsCompleted, "Atomic replacement must wait for the non-delete-sharing reader.");
+        }
+        finally
+        {
+            legacy.Dispose();
+            await writer.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        Assert.Equal(Next, Read());
+        AssertNoTemporaryFiles();
+    }
+
+    [Fact]
+    public void WindowsPersistentLegacyReader_ReplacementFailsWithinBoundAndPreservesReceipt()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        Write(Previous);
+        var original = File.ReadAllBytes(PathForReceipt);
+        using var legacy = new FileStream(PathForReceipt, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var elapsed = Stopwatch.StartNew();
+
+        var error = Assert.Throws<IOException>(() => Write(Next));
+
+        Assert.Contains(error.HResult & 0xffff, new[] { 32, 33 });
+        Assert.InRange(elapsed.Elapsed.TotalSeconds, 1.5, 10);
+        Assert.Equal(original, File.ReadAllBytes(PathForReceipt));
+        Assert.Equal(Previous, Read());
+        AssertNoTemporaryFiles();
+    }
+
+    [Fact]
+    public void WindowsReadOnlyReceipt_AccessDenialIsNotRetriedAndPreservesReceipt()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        Write(Previous);
+        var original = File.ReadAllBytes(PathForReceipt);
+        File.SetAttributes(PathForReceipt, FileAttributes.ReadOnly);
+        try
+        {
+            var elapsed = Stopwatch.StartNew();
+            var error = Assert.Throws<UnauthorizedAccessException>(() => Write(Next));
+            Assert.Equal(5, error.HResult & 0xffff);
+            Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(1), "ACL/access errors must not enter the sharing retry window.");
+            Assert.Equal(original, File.ReadAllBytes(PathForReceipt));
+            AssertNoTemporaryFiles();
+        }
+        finally { File.SetAttributes(PathForReceipt, FileAttributes.Normal); }
+    }
+
+    [Theory]
+    [InlineData(1176)]
+    [InlineData(1177)]
+    public void PartialReplacement_RestoresBackupToMissingDestinationWithoutDiscardingCandidate(int code)
+    {
+        var candidate = Path.Combine(root, "candidate.tmp");
+        var backup = candidate + ".previous";
+        File.WriteAllText(candidate, "candidate receipt");
+        File.WriteAllText(backup, "original receipt");
+        var error = new IOException("Injected documented partial replacement state", unchecked((int)0x80070000) | code);
+
+        CoreLaunchFiles.RecoverPartialReplacement(PathForReceipt, candidate, backup, error);
+
+        Assert.Equal("original receipt", File.ReadAllText(PathForReceipt));
+        Assert.False(File.Exists(backup));
+        Assert.Equal("candidate receipt", File.ReadAllText(candidate));
+    }
+
+    [Fact]
+    public void PartialReplacement_NewerDestinationIsNotOverwrittenAndRecoveryFilesArePreserved()
+    {
+        var candidate = Path.Combine(root, "candidate.tmp");
+        var backup = candidate + ".previous";
+        File.WriteAllText(candidate, "candidate receipt");
+        File.WriteAllText(backup, "original receipt");
+        File.WriteAllText(PathForReceipt, "newer concurrent receipt");
+        var original = new IOException("Injected partial replacement", unchecked((int)0x80070499));
+
+        var error = Assert.Throws<IOException>(() => CoreLaunchFiles.RecoverPartialReplacement(PathForReceipt, candidate, backup, original));
+
+        Assert.Same(original, error.InnerException);
+        Assert.Contains(candidate, error.Message);
+        Assert.Contains(backup, error.Message);
+        Assert.Equal("newer concurrent receipt", File.ReadAllText(PathForReceipt));
+        Assert.Equal("original receipt", File.ReadAllText(backup));
+        Assert.Equal("candidate receipt", File.ReadAllText(candidate));
+    }
+
+    [Fact]
+    public void PartialReplacement_FailedBackupRestoreKeepsBothArtifactsAndOriginalError()
+    {
+        var candidate = Path.Combine(root, "candidate.tmp");
+        var backup = candidate + ".previous";
+        File.WriteAllText(candidate, "candidate receipt");
+        File.WriteAllText(backup, "original receipt");
+        Directory.CreateDirectory(PathForReceipt);
+        var original = new IOException("Injected partial replacement", unchecked((int)0x80070499));
+
+        var error = Assert.Throws<IOException>(() => CoreLaunchFiles.RecoverPartialReplacement(PathForReceipt, candidate, backup, original));
+
+        Assert.Contains(original, Assert.IsType<AggregateException>(error.InnerException).InnerExceptions);
+        Assert.Contains(candidate, error.Message);
+        Assert.Contains(backup, error.Message);
+        Assert.True(Directory.Exists(PathForReceipt));
+        Assert.Equal("original receipt", File.ReadAllText(backup));
+        Assert.Equal("candidate receipt", File.ReadAllText(candidate));
+    }
+
+    [Fact]
+    public void PartialReplacement_UnmovedOriginalNeedsNoRestore()
+    {
+        File.WriteAllText(PathForReceipt, "original receipt");
+        var candidate = Path.Combine(root, "candidate.tmp");
+        File.WriteAllText(candidate, "candidate receipt");
+
+        CoreLaunchFiles.RecoverPartialReplacement(PathForReceipt, candidate, candidate + ".previous",
+            new IOException("Injected unmoved replacement", unchecked((int)0x80070498)));
+
+        Assert.Equal("original receipt", File.ReadAllText(PathForReceipt));
+        Assert.Equal("candidate receipt", File.ReadAllText(candidate));
+    }
+
+    [Fact]
+    public async Task ConcurrentFirstWriters_PublishACompleteReceiptWithoutLeavingArtifacts()
+    {
+        for (var iteration = 0; iteration < 16; iteration++)
+        {
+            File.Delete(PathForReceipt);
+            var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var first = Task.Run(async () => { await start.Task; Write(Previous); });
+            var second = Task.Run(async () => { await start.Task; Write(Next); });
+            start.SetResult();
+
+            await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Contains(Read(), new[] { Previous, Next });
+            AssertNoTemporaryFiles();
+        }
+    }
+
+    private sealed class PausedReader(TaskCompletionSource reading, ManualResetEventSlim release) : JsonConverter<CoreSourceSettings>
+    {
+        public override CoreSourceSettings? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            reading.TrySetResult();
+            if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("The test did not release the receipt reader.");
+            return JsonSerializer.Deserialize(ref reader, CoreLaunchJson.Default.CoreSourceSettings);
+        }
+        public override void Write(Utf8JsonWriter writer, CoreSourceSettings value, JsonSerializerOptions options) => throw new NotSupportedException();
+    }
+
+    public void Dispose() => Directory.Delete(root, true);
+}

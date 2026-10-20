@@ -130,6 +130,18 @@ it("accepts an empty successful worker lease release but requires bindings for a
   } finally { globalThis.fetch = original; }
 });
 
+
+it("sends activation through its owned session with the original reviewed body", async () => {
+  const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ state: "accepted" })));
+  vi.stubGlobal("fetch", fetcher);
+  const client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
+  const input = { workspaceId: "a".repeat(64), requestId: "original", selection: { coreSelected: false }, planDigest: "review" };
+  await client.call("session", "user", "activation-apply", input);
+  expect(String(fetcher.mock.calls[0]![0])).toBe(`http://core.test/api/internal/apps/hosty.harness/sessions/session/workspace-activation/${input.workspaceId}/apply`);
+  expect(fetcher.mock.calls[0]![1]?.body).toBe(JSON.stringify(input));
+  expect(fetcher.mock.calls[0]![1]?.headers).toMatchObject({ "X-Hosty-User-Token": "user" });
+});
+
 it("streams inspection hints with current app identity and cancels with the browser", async () => {
   const controller = new AbortController();
   const response = new Response("event: stream.ready\ndata: {}\n\n", { headers: { "Content-Type": "text/event-stream" } });

@@ -19,10 +19,12 @@ import { InlineError } from "./ui";
 export type CoreLaunch = { mode: string; projectPath: string | null; generationPath: string | null; processId: number; startedAt: string };
 export type CoreDevelopment = {
   launch: CoreLaunch; instance: string; manageable: boolean;
-  source: { overridePath: string | null; revision: string }; managedPath: string; sourcePath: string; selectedProjectPath: string;
+  source: { overridePath: string | null; revision: string; repositoryUrl?: string | null; ref?: string | null; projectPath?: string; connectionId?: string | null };
+  build?: { repository?: string | null; commit?: string | null; dirty?: boolean | null }; updateRepository?: string; managedPath: string; sourcePath: string; selectedProjectPath: string;
   restartRequired: boolean; branch: string | null; commit: string | null;
   changedFiles: number | null; additions: number | null; deletions: number | null; gitError: string | null; gitTruncated?: boolean;
 };
+export type CoreSourceRepository = { repositoryUrl: string; ref: string | null; projectPath: string; connectionId: string | null };
 type Operation = { id: string; status: string; error?: string; logPath?: string };
 
 export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
@@ -107,9 +109,9 @@ export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
       toast.error("Core restart could not be confirmed", { description: error instanceof Error ? error.message : "Checking operation status…" });
     } finally { submitting.current = false; void pollNow.current?.(); }
   };
-  const save = async (overridePath: string | null) => {
+  const save = async (overridePath: string | null, repository?: CoreSourceRepository, expectedRevision?: string) => {
     if (!state) return;
-    await sendCsrfJson(`${coreOrigin}/api/core/source`, { overridePath, revision: state.source.revision }, "PUT");
+    await sendCsrfJson(`${coreOrigin}/api/core/source`, { overridePath, revision: expectedRevision ?? state.source.revision, repository }, "PUT");
     await refresh();
     toast.success("Core source saved");
   };
@@ -192,21 +194,27 @@ export function CoreGitCell({ state }: { state: CoreDevelopment | null }) {
   </div>;
 }
 
-export function CoreSourceDialog({ open, onOpenChange, state, disabled, onSave }: { open: boolean; onOpenChange: (open: boolean) => void; state: CoreDevelopment | null; disabled: boolean; onSave: (path: string | null) => Promise<void> }) {
+export function CoreSourceDialog({ open, onOpenChange, state, disabled, onSave }: { open: boolean; onOpenChange: (open: boolean) => void; state: CoreDevelopment | null; disabled: boolean; onSave: (path: string | null, repository?: CoreSourceRepository, expectedRevision?: string) => Promise<void> }) {
   const [override, setOverride] = useState(false);
   const [path, setPath] = useState("");
+  const [repository, setRepository] = useState("");
+  const [sourceRef, setSourceRef] = useState("");
+  const [project, setProject] = useState("");
+  const [connection, setConnection] = useState("");
+  const [draftRevision, setDraftRevision] = useState<string>();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Refresh the draft when the dialog opens or the saved source changes, in the same render.
-  const draftKey = open ? state?.source.overridePath ?? "" : null;
+  const draftKey = open && state ? "open" : null;
   const [seededKey, setSeededKey] = useState<string | null>(null);
   if (draftKey !== seededKey) {
     setSeededKey(draftKey);
-    if (draftKey !== null) { setOverride(!!state?.source.overridePath); setPath(state?.source.overridePath ?? ""); setError(null); }
+    if (draftKey !== null) { setOverride(!!state?.source.overridePath); setPath(state?.source.overridePath ?? ""); setRepository(state?.source.repositoryUrl ?? ""); setSourceRef(state?.source.ref ?? ""); setProject(state?.source.projectPath ?? "apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj"); setConnection(state?.source.connectionId ?? ""); setDraftRevision(state?.source.revision); setError(null); }
   }
   const unavailable = disabled || saving || !state;
   const trimmedPath = path.trim();
-  const dirty = override ? trimmedPath !== (state?.source.overridePath ?? "") : !!state?.source.overridePath;
+  const repositoryDirty = repository.trim() !== (state?.source.repositoryUrl ?? "") || sourceRef.trim() !== (state?.source.ref ?? "") || project.trim() !== (state?.source.projectPath ?? "apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj") || connection.trim() !== (state?.source.connectionId ?? "");
+  const dirty = repositoryDirty || (override ? trimmedPath !== (state?.source.overridePath ?? "") : !!state?.source.overridePath);
   const canSave = !unavailable && dirty && (!override || trimmedPath.length > 0);
 
   return (
@@ -226,7 +234,7 @@ export function CoreSourceDialog({ open, onOpenChange, state, disabled, onSave }
             setSaving(true);
             setError(null);
             try {
-              await onSave(override ? trimmedPath : null);
+              await onSave(override ? trimmedPath : null, repositoryDirty ? { repositoryUrl: repository.trim(), ref: sourceRef.trim() || null, projectPath: project.trim(), connectionId: connection.trim() || null } : undefined, draftRevision);
               onOpenChange(false);
             } catch (e) {
               setError(e instanceof Error ? e.message : "Could not save source.");
@@ -239,7 +247,13 @@ export function CoreSourceDialog({ open, onOpenChange, state, disabled, onSave }
               <div className="space-y-2">
                 <div className="text-sm font-medium">Development profiles</div>
                 <p className="text-sm text-muted-foreground">Select dev from the dashboard runtime menu to develop Core.</p>
-                <p className="text-xs text-muted-foreground">Repository: <a className="underline" href="https://github.com/alex-de-haas/docker-host" target="_blank" rel="noreferrer">alex-de-haas/docker-host</a></p>
+                <label className="block text-sm">Development repository URL<Input value={repository} disabled={unavailable} onChange={e => setRepository(e.target.value)} placeholder="https://github.com/owner/repository.git" /></label>
+                <label className="block text-sm">Tracked branch or ref<Input value={sourceRef} disabled={unavailable} onChange={e => setSourceRef(e.target.value)} placeholder="Repository default branch" /></label>
+                <label className="block text-sm">Project path relative to repository<Input value={project} disabled={unavailable} onChange={e => setProject(e.target.value)} /></label>
+                <label className="block text-sm">Private source connection ID (optional)<Input value={connection} disabled={unavailable} onChange={e => setConnection(e.target.value)} placeholder="Existing authorized connection" /></label>
+                <p className="break-all text-xs text-muted-foreground">Running build repository: {state?.build?.repository ?? "Unknown"} · commit {state?.build?.commit ?? "Unknown"}</p>
+                <p className="break-all text-xs text-muted-foreground">Release update origin: {state?.updateRepository ?? "Unknown"}. Development source does not change release downloads.</p>
+                {state?.source.repositoryUrl && state.updateRepository && state.source.repositoryUrl.replace(/\.git$/, "").replace(/\/$/, "") !== state.updateRepository.replace(/\/$/, "") && <p className="text-xs">Development and release repositories differ. Returning or updating retains the existing release distribution.</p>}
               </div>
               <div className="flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm">
                 <Radio className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
@@ -250,9 +264,9 @@ export function CoreSourceDialog({ open, onOpenChange, state, disabled, onSave }
                 <label className={cn("flex cursor-pointer items-start gap-3 rounded-md border p-3", !override && "border-foreground")}>
                   <input type="radio" name="core-source" className="mt-1" checked={!override} onChange={() => setOverride(false)} />
                   <div className="min-w-0 space-y-0.5">
-                    <div className="text-sm font-medium">Standard Hosty source</div>
+                    <div className="text-sm font-medium">Configured repository</div>
                     <div className="text-xs text-muted-foreground">
-                      Use Hosty&apos;s managed checkout. The default branch is cloned when dev mode is first started.
+                      Use the managed checkout of the configured repository/ref. Preparing source preserves existing work.
                       {state?.managedPath && <> · <code className="break-all font-mono">{state.managedPath}</code></>}
                     </div>
                   </div>

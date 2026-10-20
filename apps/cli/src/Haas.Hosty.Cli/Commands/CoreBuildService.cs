@@ -25,6 +25,8 @@ internal sealed class CoreBuildService(CommandContext context)
         };
         foreach (var arg in new[] { "build", projectPath, "--artifacts-path", Path.Combine(generation, "artifacts"),
                      "--configuration", "Debug", "-p:UseAppHost=true", "--nologo" }) start.ArgumentList.Add(arg);
+        if (await CoreBuildRepository.ReadAsync(projectPath) is { } repository)
+            start.Environment["HostyBuildRepository"] = repository;
         context.Console.WriteLine($"Building Core: {projectPath}");
         context.Console.WriteLine($"Build log: {logPath}");
         using var process = Process.Start(start) ?? throw new IOException("Unable to start dotnet build.");

@@ -37,7 +37,7 @@ public sealed class McpHttpTests
                 "get_app", "get_app_dev_mode", "get_app_development_guide", "get_core_development", "get_core_operation", "get_host_status", "get_workspace", "get_workspace_diff",
                 "list_apps", "list_workspaces", "merge_workspace_target", "plan_app_dev_mode", "plan_app_update", "prepare_workspace",
                 "record_workspace_pull_requests", "refresh_workspace", "release_workspace_lease", "restart_app", "restart_core",
-                "search_audit", "start_app", "stop_app", "tail_app_logs",
+                "search_audit", "start_app", "stop_app", "tail_app_logs", "workspace_activation",
             ],
             names);
 
@@ -161,7 +161,7 @@ public sealed class McpHttpTests
 
         // plan_app_update is here too: it changes nothing, but it reaches the app's source and reports
         // what is available, which is not the "safe to call unattended" promise readOnlyHint makes.
-        string[] mutations = ["apply_app_dev_mode", "start_app", "stop_app", "restart_app", "restart_core", "plan_app_update", "apply_app_update",
+        string[] mutations = ["workspace_activation", "apply_app_dev_mode", "start_app", "stop_app", "restart_app", "restart_core", "plan_app_update", "apply_app_update",
             "prepare_workspace", "refresh_workspace", "commit_workspace", "merge_workspace_target", "abort_workspace_merge",
             "acquire_workspace_lease", "release_workspace_lease", "record_workspace_pull_requests", "cleanup_workspace"];
         var tools = await CallAsync(client, admin, "tools/list", new { });

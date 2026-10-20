@@ -1,4 +1,5 @@
 "use client";
+import { WorkspaceRuntimePicker } from "../workspace-runtime-picker";
 
 import { CoreEnvironments } from "./core-environments";
 import { SandboxInstances } from "./sandbox-instances";
@@ -1680,6 +1681,7 @@ function RuntimeSwitcher({
 
   return (
     <div className="flex min-w-0 items-center gap-x-1">
+      {canSwitch && runtimeProfiles.some(p => p.development) && <WorkspaceRuntimePicker appId={app.id} />}
       <span className="min-w-0 truncate font-mono text-sm" title={currentRuntime}>{currentRuntime}</span>
       {development && (
         <TooltipProvider delayDuration={150}>

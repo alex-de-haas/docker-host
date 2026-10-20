@@ -4,7 +4,7 @@ namespace Haas.Hosty.Core;
 
 internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService workspaces, AppRegistryStore apps,
     IClock clock, PublicationService? publications = null, UserDirectoryStore? users = null,
-    UserConnectionService? connections = null, PrivateSourceService? privateSources = null,
+    UserConnectionService? connections = null, ISourceGitAccess? privateSources = null,
     LocalCommandProcessRegistry? processes = null, WorkspaceObservationState? observationState = null)
 {
     private readonly ConcurrentDictionary<string, (string Key, InspectionCommit[] Commits, bool Truncated, AppSourceFile[] Changes, string? Error)> details = new(StringComparer.Ordinal);
@@ -72,6 +72,7 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
 
     private async Task RequireSourceAsync(DevelopmentWorkspace tree, string userId, IReadOnlyList<AppRecord> installed, CancellationToken ct)
     {
+        await workspaces.RequireCoreSourceAsync(tree, userId, ct);
         var repository = workspaces.LogicalRepositoryIdentity(tree.Repository);
         if (tree.SourceGrant is not null)
         {
@@ -194,14 +195,14 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
             catch (InvalidOperationException) { /* A process may exit between observations. */ }
         }
         foreach (var appId in await workspaces.DevConsumerAppsAsync(tree, ct))
-            result.Add(new("dev-runtime", appId));
+            result.Add(new(appId == "hosty:core" ? "core-runtime" : "dev-runtime", appId));
         var shell = installed.FirstOrDefault(a => a.Id == "hosty.shell" && a.RuntimeState == "running");
         var endpoint = shell?.Endpoints.FirstOrDefault(e => e.Protocol is "http" or "https");
         var origin = shell is not null && endpoint is not null ? LocalBrowserOrigins.App(shell, endpoint) : null;
         return result.Select(c =>
         {
             var appId = c.Reference.Split('/')[0];
-            return c with { Name = installed.FirstOrDefault(a => a.Id == appId)?.DisplayName ?? appId,
+            return c with { Name = appId == "hosty:core" ? "Core" : installed.FirstOrDefault(a => a.Id == appId)?.DisplayName ?? appId,
                 ManagementUrl = origin is null ? null : new Uri(new Uri(origin), "/settings?tab=" + Uri.EscapeDataString(appId)).AbsoluteUri };
         }).ToArray();
     }
