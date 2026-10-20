@@ -232,7 +232,7 @@ worker API and canonical storage placement for Harness 0.62.0.
 - Assert global busy admission before transcript persistence, including approval/question waits.
 - Exercise Codex and Claude transport, provider revision/refresh/revocation, imported account binding,
   and preservation of native execution and durable conversation resume.
-- Verify canonical mounts, newly prepared worktrees, exact Git trust paths, Core-mediated mutations,
+- Verify canonical mounts (including paths containing `=`), newly prepared worktrees, exact Git trust paths, Core-mediated mutations,
   scoped MCP authority and route revocation without broadening host access.
 - Retain ownership/provider/source leases on unknown Stop; recover the same generation after restart.
   Cover abandoned sessions, retention, cancelled turns and detached processes with real Docker.

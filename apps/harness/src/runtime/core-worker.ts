@@ -45,7 +45,10 @@ export class CoreWorkerCommands implements DockerCommands {
       const mounts = args.flatMap((value, index) => {
         if (value !== "--mount") return [];
         const mount = args[index + 1]!;
-        const parts = Object.fromEntries(mount.split(",").map(part => part.split("=")));
+        const parts = Object.fromEntries(mount.split(",").map(part => {
+          const separator = part.indexOf("=");
+          return separator < 0 ? [part, ""] : [part.slice(0, separator), part.slice(separator + 1)];
+        }));
         if (parts.dst === "/worker/home" || parts.dst === "/worker/cache") return [];
         return [{ source: parts.src, readonly: mount.endsWith(",readonly") }];
       });
