@@ -36,6 +36,8 @@ export interface SessionRecord {
   autonomy?: SessionAutonomy;
   developmentWorkspaces?: import("./development.js").DevelopmentWorkspace[];
   developmentLease?: string;
+  /** Freeze omitted prepare names before dispatch so a mutable conversation title cannot change replay. */
+  developmentPreparationNames?: { requestId: string; name?: string }[];
   workspaceActivation?: { action: "execution-select" | "activation-apply" | "activation-return" | "activation-resume"; input: Record<string, unknown>; state: "queued" | "blocked" | "dispatched"; error?: string };
   workflowCompletion?: { requestId: string; expectedRevision: number; state: "queued" | "blocked"; error?: string };
   coreEnvironments?: import("@hosty-sdk/app/sandbox/server").CoreEnvironment[];

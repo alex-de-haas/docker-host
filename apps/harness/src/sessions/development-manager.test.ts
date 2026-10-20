@@ -285,6 +285,30 @@ describe("development session coordination", () => {
     expect(client.call).toHaveBeenCalledWith(record.id, "fresh-token", "list", {});
     expect(sent.at(-1)).toContain(tree.path);
   });
+  it.each(["Original workspace purpose", null])("keeps the prepare fallback name %s after a lost response, title change and restart", async title => {
+    const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"], title: title ?? undefined });
+    const input = { appId: "notes", requestId: "12345678-1234-4234-8234-123456789abc" };
+    const forwarded: Record<string, unknown>[] = [];
+    let fingerprint: string | undefined;
+    vi.mocked(client.call).mockImplementation(async (_id, _token, action, body) => {
+      if (action !== "prepare") return action === "list" ? { workspaces: [] } : tree;
+      forwarded.push(structuredClone(body));
+      const candidate = JSON.stringify(body);
+      if (fingerprint === undefined) { fingerprint = candidate; throw new Error("response lost after Core allocated the worktree"); }
+      if (candidate !== fingerprint) throw new AppContextError(409, "workspace_request_conflict", "The prepare request arguments changed.");
+      return tree;
+    });
+    await expect(manager.workspaceAction(record.id, "prepare", input, "token", "admin")).rejects.toThrow("response lost");
+    await manager.renameSession(record.id, "Expanded conversation scope");
+    await manager.shutdown(); manager = build();
+    await expect(manager.workspaceAction(record.id, "prepare", input, "fresh-token", "admin")).resolves.toEqual(tree);
+    expect(forwarded).toEqual([forwarded[0], forwarded[0]]);
+    expect(forwarded[0]!.name).toBe(title ?? undefined);
+    expect((await store.readRecord(record.id))!.title).toBe("Expanded conversation scope");
+    await expect(manager.workspaceAction(record.id, "prepare", { ...input, name: "Explicitly changed purpose" }, "fresh-token", "admin"))
+      .rejects.toMatchObject({ code: "workspace_request_conflict" });
+    expect(forwarded.at(-1)!.name).toBe("Explicitly changed purpose");
+  });
   it("recovers a lost prepare response before running and refuses execution when lease coordination fails", async () => {
     const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
     vi.mocked(client.call).mockRejectedValueOnce(new Error("response lost"));

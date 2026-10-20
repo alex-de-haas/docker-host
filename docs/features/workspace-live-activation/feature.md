@@ -61,7 +61,9 @@ There is no routine compatibility acknowledgement or separate per-app Return dia
 Workspace detail exposes **Use this workspace** and **Return to package** for its bound apps.
 Group requests use `POST /api/development/workspaces/{workspaceId}/execution-target` and retained
 `GET .../execution-target/{requestId}`; Harness uses the authorized workspace-inspection equivalents.
-The response names each app and its result. Retrying preserves the group ID and skips completed
+The response names each app and its result. Initial admission includes only currently installed apps
+whose installation identity matches the retained binding; removed or reinstalled app bindings do not
+create child requests. Retrying preserves the original participants and group ID and skips completed
 children. Group return only affects apps still using that workspace; it leaves an app moved to B or
 a package untouched. Package return authorizes the retained workspace owner and current app bindings
 without requiring workspace source to remain readable; revoked private-source access or a missing
@@ -531,6 +533,8 @@ used by Shell or another app in a shared worktree.
 
 - Version and execution edits admit ordinary/system workspace participants without replacing the
   installed package. Actual access expansion requires exact scoped approval before setup or Stop.
+- Verify workspace/package group admission omits removed or reinstalled bindings while current
+  participants complete, without creating stale child journals or changing admitted replay intent.
 - Verify workspace-wide package return after private-source revocation or source loss, retained
   request replay, and refusal of foreign users/credentials without app lifecycle effects.
 - Verify package -> A -> B -> package, changed release defaults, current-data preservation, invalid

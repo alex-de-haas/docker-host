@@ -42,6 +42,9 @@ conversation title, branch and stable identity. Creating agents supply a short t
 preparation and the direct Core MCP `prepare_workspace` catalog require it. Legacy service callers
 and records remain readable. Meaningful existing external labels remain usable as a fallback;
 generic agent labels fall back to "Workspace" without presenting an opaque ID as a task description.
+When the Harness worktree action derives a name from its conversation title, it retains that resolved
+name before contacting Core. Retrying the same request after a rename or restart keeps the original
+preparation arguments; an explicit changed name remains a conflicting request.
 
 Session agents rename their workspace through `POST .../workspaces/name` with `{ requestId, name }`.
 Inspection managers use `POST .../workspace-inspection/{workspaceId}/name`; browser administrators use
@@ -237,6 +240,8 @@ lease age and a stopped local Docker client do not prove termination.
 
 ## Testing Expectations
 
+- Harness preparation freezes a derived name before Core admission, then preserves it across lost
+  responses, conversation renames and process restart without accepting changed explicit arguments.
 - App creation accepts trailing title whitespace and a space at the generated-name truncation
   boundary; exact-request retries recover the same valid creation workspace.
 

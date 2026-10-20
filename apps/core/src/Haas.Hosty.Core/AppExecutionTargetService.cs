@@ -106,9 +106,9 @@ internal sealed class AppExecutionTargetService(CoreDataPaths paths, AppRegistry
                 throw new AppLifecycleException("execution_request_conflict", "Keep the original workspace selection and requestId.");
             if (prior?.State == "completed") return await WorkspaceStatusAsync(workspaceId, input.RequestId, actor.UserId, ct);
             var trees = recorded ?? (await workspaces.ListAsync(owner, false, ct)).Workspaces;
-            var installed = recorded is null ? null : await apps.ListAppRecordsAsync(ct);
+            var installed = await apps.ListAppRecordsAsync(ct);
             var bound = trees.SelectMany(t => t.Apps)
-                .Where(binding => installed is null || installed.Any(app => app.Id == binding.AppId && app.InstalledAt == binding.Installation))
+                .Where(binding => installed.Any(app => app.Id == binding.AppId && app.InstalledAt == binding.Installation))
                 .Select(a => a.AppId).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
             var operation = prior is null ? new(workspaceId, input, actor, bound, fingerprint) : prior with { State = "running" };
             if (operation.Apps.Length == 0) throw new AppLifecycleException("execution_empty", "No applications are bound to this workspace.");

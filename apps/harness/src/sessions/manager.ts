@@ -307,9 +307,18 @@ export class SessionManager {
       if (["cleanup", "workflow-complete", "workflow-defer", "workflow-delete"].includes(action) && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
       if (action === "prepare") {
         if (!(session.record.appIds ?? []).includes(String(input.appId))) throw new AppContextError(409, "workspace_app_required", "Attach the source app to this session first.");
+        let name = input.name;
+        if (name === null || name === undefined) {
+          const retained = session.record.developmentPreparationNames?.find(p => p.requestId === input.requestId);
+          const fallback = retained ? retained.name : session.record.title ?? undefined;
+          name = fallback;
+          if (!retained && typeof input.requestId === "string")
+            session.record.developmentPreparationNames = [...session.record.developmentPreparationNames ?? [],
+              { requestId: input.requestId, name: fallback }];
+        }
         session.record.developmentLease ??= randomUUID();
         await this.store.saveRecord(session.record);
-        input = { ...input, name: input.name ?? session.record.title ?? undefined, sessionPath: `/assistant?session=${encodeURIComponent(id)}`,
+        input = { ...input, name, sessionPath: `/assistant?session=${encodeURIComponent(id)}`,
           leaseId: ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status) ? session.record.developmentLease : undefined };
       }
       if (action === "pr-commit") {
