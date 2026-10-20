@@ -1,4 +1,7 @@
 using System.Globalization;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Haas.Hosty.Core;
 
 namespace Haas.Hosty.Core.Tests;
@@ -75,6 +78,89 @@ public sealed class JsonStorageTests
 
         Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
         Assert.Equal(File.GetUnixFileMode(reference), File.GetUnixFileMode(directory));
+    }
+
+    [Theory]
+    [InlineData("typed")]
+    [InlineData("owner-only")]
+    [InlineData("text")]
+    public async Task ConcurrentReader_AllowsReplacementAndKeepsItsOriginalSnapshot(string writer)
+    {
+        var root = Directory.CreateTempSubdirectory("hosty-json-sharing-").FullName;
+        var path = Path.Combine(root, "state.json");
+        var previous = CreateSampleRecord(1, "previous");
+        var next = CreateSampleRecord(2, "next");
+        var reading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        var type = JsonMetadataServices.CreateValueInfo<AuditRecord>(
+            new JsonSerializerOptions { TypeInfoResolver = CoreJsonSerializerContext.Default },
+            new PausedReader(reading, release));
+        await JsonStorage.WriteAsync(path, previous);
+        var reader = Task.Run(() => JsonStorage.ReadAsync(path, type));
+        try
+        {
+            var started = await Task.WhenAny(reading.Task, reader).WaitAsync(TimeSpan.FromSeconds(10));
+            if (started == reader)
+            {
+                await reader;
+                Assert.Fail("The reader completed before the converter held its file snapshot.");
+            }
+            await WriteUsingAsync(writer, path, next).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("next", (await JsonStorage.ReadAsync<AuditRecord>(path))!.Details["payload"]);
+            Assert.Equal(new[] { path }, Directory.EnumerateFiles(root));
+        }
+        finally
+        {
+            release.Set();
+            try
+            {
+                Assert.Equal("previous", (await reader.WaitAsync(TimeSpan.FromSeconds(5)))!.Details["payload"]);
+            }
+            finally { Directory.Delete(root, true); }
+        }
+    }
+
+    [Theory]
+    [InlineData("typed")]
+    [InlineData("owner-only")]
+    [InlineData("text")]
+    public async Task WindowsReadOnlyDestination_PreservesOriginalAndCleansTemporaryFile(string writer)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var root = Directory.CreateTempSubdirectory("hosty-json-readonly-").FullName;
+        var path = Path.Combine(root, "state.json");
+        try
+        {
+            await JsonStorage.WriteAsync(path, CreateSampleRecord(1, "previous"));
+            File.SetAttributes(path, FileAttributes.ReadOnly);
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => WriteUsingAsync(writer, path, CreateSampleRecord(2, "next")));
+            Assert.Equal("previous", (await JsonStorage.ReadAsync<AuditRecord>(path))!.Details["payload"]);
+            Assert.Equal(new[] { path }, Directory.EnumerateFiles(root));
+        }
+        finally
+        {
+            File.SetAttributes(path, FileAttributes.Normal);
+            Directory.Delete(root, true);
+        }
+    }
+
+    private static Task WriteUsingAsync(string writer, string path, AuditRecord record) => writer switch
+    {
+        "typed" => JsonStorage.WriteAsync(path, record),
+        "owner-only" => JsonStorage.WriteAsync(path, record, restrictToOwner: true),
+        "text" => JsonStorage.WriteTextAsync(path, JsonSerializer.Serialize(record, CoreJsonSerializerContext.Default.AuditRecord)),
+        _ => throw new ArgumentOutOfRangeException(nameof(writer)),
+    };
+
+    private sealed class PausedReader(TaskCompletionSource reading, ManualResetEventSlim release) : JsonConverter<AuditRecord>
+    {
+        public override AuditRecord? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            reading.TrySetResult();
+            if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("The test did not release the JSON reader.");
+            return JsonSerializer.Deserialize(ref reader, CoreJsonSerializerContext.Default.AuditRecord);
+        }
+        public override void Write(Utf8JsonWriter writer, AuditRecord value, JsonSerializerOptions options) => throw new NotSupportedException();
     }
 
     // Uses a production storage type registered in CoreJsonSerializerContext so the storage

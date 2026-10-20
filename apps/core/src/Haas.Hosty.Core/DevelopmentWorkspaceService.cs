@@ -39,7 +39,9 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
     }
     private async Task<DevelopmentWorkspace> Save(DevelopmentWorkspace value, bool baselineSource = false)
     {
+        value = value with { Name = null };
         var previous = await JsonStorage.ReadAsync<DevelopmentWorkspace>(RecordPath(value.Id));
+        previous = previous is null ? null : previous with { Name = null };
         var changed = previous is null || ActivityState(baselineSource ? previous with { SourceStamp = value.SourceStamp } : previous) != ActivityState(value);
         value = value with { UpdatedAt = changed ? clock.UtcNow : previous!.UpdatedAt ?? previous.Observation?.At };
         if (previous?.Observation is { } old && value.Observation is { } current)
@@ -48,15 +50,15 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 ? local with { ObservedAt = prior.ObservedAt } : current.Local };
             if (CoreJson.Text(comparable) == CoreJson.Text(old)) value = value with { Observation = old };
         }
-        if (previous is not null && CoreJson.Text(previous) == CoreJson.Text(value)) return previous;
+        if (previous is not null && CoreJson.Text(previous) == CoreJson.Text(value)) return await WithNameAsync(previous, default);
         await JsonStorage.WriteAsync(RecordPath(value.Id), value, restrictToOwner: true);
         observationState?.CatalogChanged(value.Id);
-        return value;
+        return await WithNameAsync(value, default);
     }
 
     // Observation timestamps/errors and remote probes describe reads, not operator activity.
     private static string ActivityState(DevelopmentWorkspace value)
-        => CoreJson.Text(value with { UpdatedAt = null, Observation = null, RemoteObservation = null });
+        => CoreJson.Text(value with { UpdatedAt = null, Observation = null, RemoteObservation = null, Name = null });
     private async Task<T> Locked<T>(string key, Func<Task<T>> action, CancellationToken ct)
     {
         var gate = gates.GetOrAdd(key, _ => new(1, 1));
@@ -85,7 +87,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         if (w.Path != WorkPath(id) || w.RepositoryId != Hash(w.Repository) || w.Branch != "hosty/session/" + id)
             throw Error("ownership_invalid", "Workspace ownership metadata is inconsistent.");
         if (owner?.IsExternal == true) await RequireExternalSourceAsync(w, ct);
-        return w;
+        return await WithNameAsync(w, ct);
     }
     public Task<WorkspaceList> ListAsync(WorkspaceOwner? owner, bool includeReleased, CancellationToken ct)
         => ListRecordsAsync(owner, includeReleased, ct);
@@ -127,6 +129,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         => Locked(Hash(OwnerIdentity(owner)), async () =>
         {
             RequestId(input.RequestId);
+            if (input.Name is not null) ValidateWorkspaceName(input.Name);
             await RequireOpenWorkflow(owner, ct);
             if (owner.SessionId != input.SessionId || string.IsNullOrWhiteSpace(input.SessionId) || input.SessionId.Length > 200)
                 throw Error("session_invalid", "A bounded nonempty session ID is required.");
@@ -183,6 +186,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                     var prior = existing.Operations.FirstOrDefault(o => o.Id == input.RequestId);
                     if (prior is not null && (prior.Kind != "prepare" || prior.Fingerprint != fingerprint))
                         throw Error("request_conflict", "This request ID was used with different preparation arguments.");
+                    await EnsureWorkspaceNameAsync(owner, input.Name, ct);
                     existing = existing with { SourceGrant = existing.SourceGrant ?? grant };
                     existing = await Materialize(existing, ct);
                     if (prior is not null) { await Save(existing); return await Observe(existing, ct); }
@@ -194,6 +198,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                     await Save(existing);
                     return await Observe(existing, ct);
                 }
+                await EnsureWorkspaceNameAsync(owner, input.Name, ct);
                 if (source?.Type == "local-git")
                 {
                     var local = await LocalBuildingSource.ReadAsync(paths, app!, ct);

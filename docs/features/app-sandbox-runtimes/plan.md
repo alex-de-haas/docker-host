@@ -2,7 +2,7 @@
 status: In Progress
 created: 2026-09-25
 updated: 2026-10-20
-summary: Remaining host and recipe acceptance plus optional remote preview after verified local release, cold-engine and agent workflows.
+summary: Remaining host and recipe acceptance and optional remote preview.
 components: [apps/core, apps/harness, apps/shell, packages/app-sdk]
 ---
 
@@ -251,6 +251,27 @@ that Core exclusively mediates their OS/Git actions. Existing D6/D9 acceptance r
 direct-client adapters and reconciliation. Current shipped child Core architecture, statuses and
 checked deliverables remain unchanged; the obsolete single-Core realm proposal is not restored.
 
+## Approved Dashboard Unification (2026-10-20)
+
+The owner approves one Dashboard Sandboxes section for both child Core environments and
+individual app sandboxes. A successfully empty inventory hides the section; read failures and
+unresolved operations remain visible. Each collapsed row names its sandbox and workspace.
+Expansion reveals applications, observed states and authorized preview links, plus existing
+lifecycle, authentication and diagnostic controls. Saved launch permissions move to Settings so
+revocation remains available after the last sandbox is deleted. Failed start and incomplete deletion remain
+visible until reconciled. Both backend isolation models and their authorities remain unchanged.
+
+## Approved Individual Offline Acceptance (2026-10-20)
+
+The owner authorizes preparing the primary Core's pinned offline relay/browser runtime and
+verifying one individual Demo App sandbox: observed startup, normal operator/persona browser
+preview and Finish with independent removal of all owned runtime resources. Existing installed
+app data, users and source remain separate. Any required resource-limit change to an unrelated
+running container needs specific owner authorization. The prepared shared runtime images and
+policy remain available after the disposable test instance is finished. The owner explicitly
+approves leaving the existing Workspaces container at 2 GiB RAM and 4 GiB RAM-plus-swap without
+restarting it, resolving Core's unknown-memory-reservation admission blocker.
+
 ## Deliverables
 
 Stable IDs are retained. D7 (production-derived snapshot import) remains retired.
@@ -271,6 +292,14 @@ The checked items below record the verified scope merged in #590; expanded requi
 - [x] D22. Verify a real model-driven Harness agent creating and setting up a child Core, changing Demo App in its reviewed worktree, installing and starting the Docker source runtime through ordinary Core approval, checking it in a browser, and finishing the environment with independently verified cleanup. Preserve sanitized evidence and fix regressions exposed by the run.
 - [x] D23. Verify a real Harness agent editing both Core and Demo App in its session worktree, building a source-mode child Core from that project, consuming the changed Core API in Demo through normal browser authentication, running affected checks, and finishing with independently verified complete cleanup. Preserve sanitized evidence and repair any regressions exposed by the run.
 - [x] D24. Integrate child Core environments into the operator UI: validate workspace/source inputs, ordinary test-account setup, observed app status, authenticated previews and replayable lifecycle/Finish controls; verify browser permissions, source retention and cleanup. The original Workspaces creation form and standalone app are retired on 2026-10-20; Harness agent tools retain creation/setup and Shell retains inspection and lifecycle controls. See the [retirement record](../workspaces-app/feature.md).
+
+### Unified Dashboard Presentation
+
+- [x] D29. Combine both sandbox types in one initially collapsed Dashboard list, hide only confirmed empty inventories, resolve human-readable workspace names, and show application states and safe preview links on expansion.
+- [x] D30. Preserve independent inventory failures, start/cleanup errors, existing lifecycle and normal child-account controls, and durable same-request recovery for both sandbox types; verify component regressions and Shell builds.
+- [x] D31. Verify the unified view through normal authenticated Core/Shell browser flows with isolated test data, confirm the primary empty state, and finish owned test environments with resource-removal checks.
+
+- [x] D32. Prepare the primary offline runtime and verify an individual artifact sandbox through actual readiness, authenticated application preview and Finish; independently confirm removal of owned processes, ports, Docker resources and mutable state.
 
 ### Current Recovery Delivery
 

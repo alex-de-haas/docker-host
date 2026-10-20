@@ -63,9 +63,14 @@ internal sealed partial class CoreLifecycleService
             if (git.Head is null || git.State is not ("clean" or "changes")) throw DevError("source_unavailable", "A readable Git working tree is required. Uncommitted changes are allowed.");
             head = git.Head;
             var live = await manifests.LoadAsync(CombineManifestSubpath(source, app.SourceState.ManifestSubpath), target, ct, forceRead: true);
-            // Only the installed recipe is executable. Code files are intentionally not frozen.
-            if (live.ManifestDigest != selection.ManifestDigest)
-                throw DevError("contract_changed", "Review and install the source manifest first. Dev entry does not adopt new services, permissions or runtime recipes.");
+            if (workspaceActivation)
+            {
+                var candidate = await PrepareExecutionCandidateAsync(app, source, target, actor, ct);
+                await EnsureExecutionCandidateApprovedAsync(candidate, app, ct);
+                selection = candidate.Selection;
+            }
+            else if (!AppDevelopmentManifest.HasSameContract(selection.ManifestJson, live.ManifestJson))
+                throw DevError("contract_changed", "Review and install the source manifest first. This legacy development operation retains the installed contract.");
             if (app.StorageMappings.Any(m => m.Key == "data") && selection.DataTarget is null)
                 throw DevError("data_incompatible", "The development profile has no compatible primary data directory.");
             changes.AddRange(BuildRuntimeSwitchChanges(app, installed, selection));
@@ -143,6 +148,9 @@ internal sealed partial class CoreLifecycleService
                     throw DevError("request_retired", "This requestId belongs to an earlier development operation; inspect it rather than applying it again.");
                 var plan = await PlanDevModeCoreAsync(appId, input, actor, ct);
                 if (plan.PlanDigest != input.PlanDigest) throw DevError("plan_changed", "The development plan changed. Prepare and review it again.");
+                // Legacy controls also supersede earlier execution selections. Claim before
+                // persisting their app pointer so recovery cannot return a newer workspace.
+                await ClaimExecutionTargetAsync(app, input.RequestId, ct);
                 if (input.Action == "enter")
                 {
                     var selection = await manifests.LoadAsync(app.ManifestPath!, plan.TargetRuntime, ct);
@@ -212,6 +220,16 @@ internal sealed partial class CoreLifecycleService
     {
         // Terminal phase and receipt share one atomic journal write. A lost response or a failure
         // updating the registry afterwards must not replay a completed runtime transition.
+        var current = await AppDevStore.ReadAsync(paths, op.AppId, op.Id, ct);
+        if (current is not null)
+            op = op with { ExecutionManifest = current.ExecutionManifest, ExecutionManifestDigest = current.ExecutionManifestDigest,
+                RunningManifest = current.RunningManifest, BaseGrantedPermissions = current.BaseGrantedPermissions,
+                ExecutionGrantedPermissions = current.ExecutionGrantedPermissions, BaseConfirmedRoles = current.BaseConfirmedRoles,
+                ExecutionConfirmedRoles = current.ExecutionConfirmedRoles,
+                ExecutionConfigurationHash = current.ExecutionConfigurationHash,
+                PriorExecutionConfigurationHash = current.PriorExecutionConfigurationHash,
+                ReturnConfigurationHash = current.ReturnConfigurationHash,
+                ExecutionProjectionPending = current.ExecutionProjectionPending };
         op = op with { Phase = phase, Error = completedRequestId is null ? op.Error : null,
             Receipts = completedRequestId is null ? op.Receipts : op.Receipts!.Select(r =>
                 r.RequestId == completedRequestId ? r with { State = "succeeded" } : r).ToArray() };
@@ -231,8 +249,12 @@ internal sealed partial class CoreLifecycleService
 
     private async Task<AppDevOperation> EnterDevAsync(AppDevOperation op, string requestId, CancellationToken ct, bool backupOnly = false)
     {
-        await ValidateLiveDevManifestAsync(op, ct);
         var app = await RequireAppAsync(op.AppId, ct);
+        if (op.Phase == "starting" && (op.ActivationId is not null || op.PackageReturn) &&
+            app.DevModeId == op.Id && app.SelectedRuntime == op.TargetRuntime && app.SourceState?.LocalOverridePath == op.SourcePath &&
+            app.RuntimeState == "running" && (await GetHealthAsync(op.AppId, ct)).Status == "healthy")
+            return await DevPhaseAsync(op, "active", ct, completedRequestId: requestId);
+        await ValidateLiveDevManifestAsync(op, ct);
         if (op.Phase == "prepared")
         {
             // A persisted pointer protects source cleanup even before the override is applied.
@@ -260,7 +282,7 @@ internal sealed partial class CoreLifecycleService
         if (op.Phase == "backed-up")
         {
             app = await RequireAppAsync(op.AppId, ct);
-            var selection = await manifests.LoadAsync(op.PreviousManifest, op.TargetRuntime, ct);
+            var selection = await LoadDevExecutionSelectionAsync(op, ct);
             await apps.HostPathMutationLock.WaitAsync(ct);
             try
             {
@@ -268,18 +290,16 @@ internal sealed partial class CoreLifecycleService
             }
             finally { apps.HostPathMutationLock.Release(); }
             app = await RequireAppAsync(op.AppId, ct);
-            var next = BuildAppRecord(selection, app.ManifestPath!, app.ManifestUrl, app.System, app) with
+            var next = (op.ExecutionManifest is null ? BuildAppRecord(selection, app.ManifestPath!, app.ManifestUrl, app.System, app)
+                : BuildDevelopmentRecord(app, selection, op)) with
             { InstallManifestPath = app.InstallManifestPath, SourceState = app.SourceState, ArtifactLocks = op.PreparedRuntime?.Artifacts ?? app.ArtifactLocks, DevModeId = op.Id, RuntimeState = "stopped", OperationStatus = "development", LastError = null };
             await PersistRuntimePortsAsync(next, selection, ct);
+            if (op.ExecutionManifest is not null)
+            {
+                op = op with { ExecutionProjectionPending = false };
+                await AppDevStore.SaveAsync(paths, op, ct);
+            }
             op = await DevPhaseAsync(op, "bound", ct);
-        }
-        if (op.Phase == "starting" && op.ActivationId is not null)
-        {
-            app = await RequireAppAsync(op.AppId, ct);
-            // StartCore persists its verified running projection before the child receipt. Recover
-            // that narrow lost-response window without stopping a fully ready candidate again.
-            if (app.RuntimeState == "running" && (await GetHealthAsync(op.AppId, ct)).Status == "healthy")
-                return await DevPhaseAsync(op, "active", ct, completedRequestId: requestId);
         }
         if (op.Phase is "bound" or "starting")
         {
@@ -300,22 +320,36 @@ internal sealed partial class CoreLifecycleService
             await StopDevRuntimeAsync(await RequireAppAsync(op.AppId, ct), ct);
             op = await DevPhaseAsync(op, "return-stopped", ct);
         }
-        if (op.DataHash is not null && op.DataHash != await DevDataHashAsync(GetAppDataPath(op.AppId), ct) && !acceptDataChanges)
+        if (!op.PackageReturn && op.DataHash is not null && op.DataHash != await DevDataHashAsync(GetAppDataPath(op.AppId), ct) && !acceptDataChanges)
             throw DevError("data_compatibility_required", "Data changed and Core cannot prove compatibility with the previous version. The app is stopped. Review recovery or explicitly accept the current data; no data was restored.");
         if (op.Phase == "return-stopped")
         {
             var app = await RequireAppAsync(op.AppId, ct);
-            var previous = await manifests.LoadAsync(op.PreviousManifest, op.PreviousRuntime, ct);
-            if (previous.ManifestDigest != op.ManifestDigest) throw DevError("previous_contract_changed", "The retained runtime contract changed; restore the operation record before returning.");
-            // Save the reviewed contract and restore only execution selection. User data/settings survive.
-            await manifests.SaveManifestCopyAsync(previous, GetAppRoot(op.AppId), ct);
+            var previous = await manifests.LoadAsync(op.PackageReturn ? app.ManifestPath! : op.PreviousManifest,
+                op.PackageReturn ? op.PackageRuntime ?? op.PreviousRuntime : op.PreviousRuntime, ct, forceRead: true);
+            if (!op.PackageReturn && previous.ManifestDigest != op.ManifestDigest)
+                throw DevError("previous_contract_changed", "The retained runtime contract changed; restore the operation record before returning.");
+            // Unified switching returns to the current installed package; captured bytes are only
+            // for legacy recovery. Current settings, source edits and permission revocations survive.
+            if (!op.PackageReturn) await manifests.SaveManifestCopyAsync(previous, GetAppRoot(op.AppId), ct);
             var restored = BuildAppRecord(previous, app.ManifestPath!, app.ManifestUrl, app.System, app) with
-            { InstallManifestPath = app.InstallManifestPath, SourceState = op.PreviousSource, ArtifactLocks = op.PreviousArtifacts, DevModeId = op.Id,
+            { InstallManifestPath = app.InstallManifestPath, SourceState = op.PreviousSource,
+                ArtifactLocks = op.PackageReturn ? null : op.PreviousArtifacts, DevModeId = op.Id,
+                GrantedCorePermissions = op.ExecutionManifest is null ? app.GrantedCorePermissions :
+                    DevelopmentBaseGrants(app, op).Intersect(previous.Manifest.CorePermissions.Concat(previous.Manifest.OptionalCorePermissions), StringComparer.Ordinal).ToArray(),
+                RequiredCorePermissions = op.ExecutionManifest is null ? app.RequiredCorePermissions : previous.Manifest.CorePermissions.ToArray(),
+                OptionalCorePermissions = op.ExecutionManifest is null ? app.OptionalCorePermissions : previous.Manifest.OptionalCorePermissions.ToArray(),
+                ConfirmedRoles = op.ExecutionManifest is null ? app.ConfirmedRoles : DevelopmentBaseRoles(app, op),
                 RuntimeState = "stopped", OperationStatus = "development-returning", ManifestError = null, LiveChanges = null };
+            if (op.ExecutionManifest is not null)
+            {
+                op = op with { ReturnConfigurationHash = await DevConfigurationHashAsync(restored, ct) };
+                await AppDevStore.SaveAsync(paths, op, ct);
+            }
             await PersistRuntimePortsAsync(restored, previous, ct);
             op = await DevPhaseAsync(op, "return-bound", ct);
         }
-        if (op.Phase == "return-starting" && op.ActivationId is not null && op.WasRunning)
+        if (op.Phase == "return-starting" && (op.ActivationId is not null || op.PackageReturn) && op.WasRunning)
         {
             var current = await RequireAppAsync(op.AppId, ct);
             if (current.RuntimeState == "running" && (await GetHealthAsync(op.AppId, ct)).Status == "healthy")
@@ -336,8 +370,13 @@ internal sealed partial class CoreLifecycleService
 
     private async Task StopDevRuntimeAsync(AppRecord app, CancellationToken ct)
     {
-        // Stop uses the installed contract, even if an edited live manifest is invalid.
-        var selection = await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct);
+        // Stop uses the last launched admitted contract, even when live source is invalid or
+        // an execution refresh changed its service topology before an interrupted restart.
+        var operation = await AppDevStore.ReadAsync(paths, app, ct);
+        var selection = operation is { Active: true, ExecutionManifest: not null } && app.SelectedRuntime == operation.TargetRuntime &&
+            !operation.Phase.StartsWith("return-", StringComparison.Ordinal)
+            ? await LoadDevExecutionSelectionAsync(operation, ct, running: true)
+            : await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct);
         var result = await ResolveAdapter(selection.RuntimeProfile.Type).StopAsync(await CreateRuntimeContextAsync(app, selection, ct), ct);
         if (result.RuntimeState != "stopped") throw DevError("stop_unverified", "The old runtime did not confirm a stop; no new writer was started.");
         await apps.UpdateAppAsync(app.Id, a => a with { RuntimeState = "stopped", ActiveSourcePaths = null,
@@ -356,21 +395,42 @@ internal sealed partial class CoreLifecycleService
 
     private async Task ValidateDevBindingAsync(AppRecord app, AppDevOperation op, CancellationToken ct)
     {
-        if (app.InstalledAt != op.Installation || app.DevModeId != op.Id ||
-            await DevConfigurationHashAsync(app, ct) != op.ConfigurationHash)
+        var configuration = await DevConfigurationHashAsync(app, ct);
+        // Candidate defaults and approved mount declarations are Core-owned projection changes,
+        // not operator drift. Retain the immediately preceding hash until a verified start so
+        // an interrupted snapshot/projection write can be recovered without accepting arbitrary edits.
+        var configurationMatches = configuration == op.ConfigurationHash || op.ExecutionManifest is not null &&
+            (configuration == op.ExecutionConfigurationHash || configuration == op.PriorExecutionConfigurationHash ||
+                configuration == op.ReturnConfigurationHash);
+        if (app.InstalledAt != op.Installation || app.DevModeId != op.Id || !configurationMatches)
             throw DevError("binding_changed", "Installation, settings or mounts changed. A stale return cannot overwrite a newer operator choice.");
-        var previous = app.SelectedRuntime == op.PreviousRuntime && app.SourceState?.LocalOverridePath == op.PreviousSource?.LocalOverridePath;
+        var previous = app.SelectedRuntime == (op.PackageReturn ? op.PackageRuntime ?? op.PreviousRuntime : op.PreviousRuntime) &&
+            app.SourceState?.LocalOverridePath == op.PreviousSource?.LocalOverridePath;
         var live = app.SelectedRuntime == op.TargetRuntime && app.SourceState?.LocalOverridePath == op.SourcePath;
         // A crash after source persistence but before the profile write is a known intermediate state.
         var binding = op.Phase == "backed-up" && app.SelectedRuntime == op.PreviousRuntime && app.SourceState?.LocalOverridePath == op.SourcePath;
         if (!previous && !live && !binding) throw DevError("binding_changed", "The runtime or source binding changed outside this operation. Retain the current selection and inspect it.");
     }
 
-    private async Task ValidateLiveDevManifestAsync(AppDevOperation op, CancellationToken ct)
+    private async Task<RuntimeAppManifestSelection> ValidateLiveDevManifestAsync(AppDevOperation op, CancellationToken ct)
     {
         var app = await RequireAppAsync(op.AppId, ct);
+        if (op.ExecutionManifest is not null)
+        {
+            var candidate = await PrepareExecutionCandidateAsync(app, op.SourcePath, op.TargetRuntime, op.Actor, ct);
+            await EnsureExecutionCandidateApprovedAsync(candidate, app, ct);
+            if (op.PreparedRuntime is not null && op.Phase is "prepared" or "stopped" or "backed-up" or "bound" or "starting" &&
+                candidate.Selection.ManifestDigest != op.ExecutionManifestDigest)
+                throw DevError("plan_changed", "The workspace manifest changed after preparation. Prepare the current candidate before replacing the running app.");
+            return candidate.Selection;
+        }
         var manifest = await manifests.LoadAsync(CombineManifestSubpath(op.SourcePath, app.SourceState?.ManifestSubpath), op.TargetRuntime, ct, forceRead: true);
-        if (manifest.ManifestDigest != op.ManifestDigest) throw DevError("contract_changed", "The source manifest changed. Return and review the new contract before entering again.");
+        var installed = await manifests.LoadAsync(op.PreviousManifest, op.TargetRuntime, ct, forceRead: true);
+        if (installed.ManifestDigest != op.ManifestDigest)
+            throw DevError("previous_contract_changed", "The retained runtime contract changed; restore the operation record before restarting.");
+        if (!AppDevelopmentManifest.HasSameContract(installed.ManifestJson, manifest.ManifestJson))
+            throw DevError("contract_changed", "The source manifest changed. Return and review the new contract before entering again.");
+        return manifest;
     }
 
     private async Task<string> DevConfigurationHashAsync(AppRecord app, CancellationToken ct)

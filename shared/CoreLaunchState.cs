@@ -33,6 +33,10 @@ internal sealed record CoreLaunchOperation(string Id, string Status, string Mode
 
 internal static class CoreLaunchFiles
 {
+    // Bound the lock table while serializing same-path publishers within this process. Windows
+    // ReplaceFile's backup/unlink sequence can fail when multiple replacements race each other.
+    private static readonly object[] PublicationGates = Enumerable.Range(0, 64).Select(_ => new object()).ToArray();
+
     public static string OperationPath(string root, string id)
     {
         if (!Guid.TryParseExact(id, "N", out _)) throw new ArgumentException("Operation id must be a UUID without hyphens.");
@@ -51,12 +55,34 @@ internal static class CoreLaunchFiles
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        var backup = OperatingSystem.IsWindows() ? temp + ".previous" : null;
-        var preserveRecovery = false;
         try
         {
             File.WriteAllText(temp, JsonSerializer.Serialize(value, type));
             if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(temp, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        catch
+        {
+            if (File.Exists(temp)) File.Delete(temp);
+            throw;
+        }
+        PublishTemporaryFile(temp, path);
+    }
+
+    // Takes ownership of the complete temporary file, including cleanup or retention after a
+    // partial Windows replacement. Callers finish serialization and set permissions beforehand.
+    internal static void PublishTemporaryFile(string temp, string path)
+    {
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var gate = PublicationGates[comparer.GetHashCode(Path.GetFullPath(path)) & (PublicationGates.Length - 1)];
+        lock (gate) PublishTemporaryFileCore(temp, path);
+    }
+
+    private static void PublishTemporaryFileCore(string temp, string path)
+    {
+        var backup = OperatingSystem.IsWindows() ? temp + ".previous" : null;
+        var preserveRecovery = false;
+        try
+        {
             try { ReplaceWithSharingRetry(temp, path, backup); }
             catch (IOException error) when (OperatingSystem.IsWindows() && (error.HResult & 0xffff) is 1176 or 1177)
             {

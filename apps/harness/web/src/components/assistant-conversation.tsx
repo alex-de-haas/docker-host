@@ -758,8 +758,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       </header>}
       {fullPage && inventory.error && <p role="alert" className="border-b px-4 py-2 text-sm text-destructive">{inventory.error}</p>}
       {fullPage && tab === "external" && <div className="grid min-h-0 flex-1 grid-cols-1 overflow-auto md:grid-cols-[260px_1fr]">
-        <nav aria-label="External workspaces" className="border-r p-2">{external.map(w => <button key={w.id} type="button" aria-current={selectedExternal?.id === w.id ? "page" : undefined} onClick={() => setExternalId(w.id)} className={`block w-full rounded p-3 text-left text-sm hover:bg-muted ${selectedExternal?.id === w.id ? "bg-muted" : ""}`}>{w.owner.label}<span className="block truncate text-xs text-muted-foreground">{w.owner.reference}</span></button>)}{!external.length && <p className="p-3 text-sm text-muted-foreground">No external workspaces available.</p>}</nav>
-        {selectedExternal && <WorkspaceDetails key={selectedExternal.id} workspace={selectedExternal} title={selectedExternal.owner.label} refresh={inventory.refresh} />}
+        <nav aria-label="External workspaces" className="border-r p-2">{external.map(w => <button key={w.id} type="button" aria-current={selectedExternal?.id === w.id ? "page" : undefined} onClick={() => setExternalId(w.id)} className={`block w-full rounded p-3 text-left text-sm hover:bg-muted ${selectedExternal?.id === w.id ? "bg-muted" : ""}`}>{w.name || w.owner.label}<span className="block truncate text-xs text-muted-foreground">{w.owner.reference}</span></button>)}{!external.length && <p className="p-3 text-sm text-muted-foreground">No external workspaces available.</p>}</nav>
+        {selectedExternal && <WorkspaceDetails key={selectedExternal.id} workspace={selectedExternal} title={selectedExternal.name || selectedExternal.owner.label} refresh={inventory.refresh} />}
       </div>}
       <div className={`${fullPage && tab !== "sessions" ? "hidden" : "flex"} min-h-0 flex-1`}>
       {fullPage && <div className={`${mobileSessions ? "block" : "hidden"} w-full shrink-0 border-r md:block md:w-52`}><DevelopmentNavigation sessions={listedSessions} activeId={session?.id} workspaces={inventory.workspaces}
@@ -1011,7 +1011,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       )}
       </main>
       {fullPage && workspace && <div className={`${mobileDetails ? "block flex-1" : "hidden"} min-h-0 min-w-0 border-l min-[900px]:block min-[900px]:w-72 min-[900px]:flex-none 2xl:w-96`}>
-        <WorkspaceDetails key={workspace.id} workspace={workspace} title={session?.title || "Workspace"} sessionId={session?.id} running={running} refresh={inventory.refresh} deleteConversation={session ? () => remove(session.id) : undefined} />
+        <WorkspaceDetails key={workspace.id} workspace={workspace} title={workspace.name || session?.title || "Workspace"} sessionId={session?.id} running={running} refresh={inventory.refresh} deleteConversation={session ? () => remove(session.id) : undefined} />
       </div>}
       </div>
     </div>

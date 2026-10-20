@@ -217,7 +217,7 @@ internal sealed class InstallationApprovalStore(IClock clock)
                     entry.AgentEnabled = agentEnabled;
                     entry.AgentSkills = selectedSkills.Distinct(StringComparer.Ordinal).ToArray();
                 }
-                var declared = entry.PermissionPlan?.Optional ?? entry.InstallPlan?.OptionalCorePermissions ?? entry.UpdatePlan?.TargetOptionalCorePermissions ?? [];
+                var declared = entry.WorkspaceManifest?.OptionalPermissions ?? entry.PermissionPlan?.Optional ?? entry.InstallPlan?.OptionalCorePermissions ?? entry.UpdatePlan?.TargetOptionalCorePermissions ?? [];
                 var selected = optionalPermissions ?? [];
                 _ = CoreAppPermissions.ResolveGrants([], declared, selected);
                 if (entry.InstallPlan is { RuntimeChoices.Count: > 0 } install &&
@@ -248,7 +248,7 @@ internal sealed class InstallationApprovalStore(IClock clock)
     {
         lock (gate)
             return new(entry.Id, entry.Status, entry.InstallPlan, entry.UpdatePlan,
-                $"{origin.TrimEnd('/')}/install/confirm/{entry.Id}", entry.ExpiresAt, entry.Error, entry.PermissionPlan, entry.RemovalPlan, entry.HostPathPlan, entry.EnvironmentPlan);
+                $"{origin.TrimEnd('/')}/install/confirm/{entry.Id}", entry.ExpiresAt, entry.Error, entry.PermissionPlan, entry.RemovalPlan, entry.HostPathPlan, entry.EnvironmentPlan, entry.WorkspaceManifest);
     }
 }
 
@@ -263,6 +263,7 @@ internal sealed class InstallationApproval
     public AppInstallPlan? InstallPlan { get; set; }
     public AppUpdatePlan? UpdatePlan { get; init; }
     public AppPermissionPlan? PermissionPlan { get; init; }
+    public AppDevelopmentAccessPlan? WorkspaceManifest { get; init; }
     public AssistantAccessPlan? AssistantAccessPlan { get; init; }
     public bool AgentEnabled { get; set; }
     public IReadOnlyList<string> AgentSkills { get; set; } = [];
@@ -280,15 +281,15 @@ internal sealed class InstallationApproval
     internal string? DecisionNonce { get; set; }
     internal string? DecisionSession { get; set; }
     public bool RequiresSources { get; init; }
-    public string? Permission => EnvironmentPlan is not null ? CoreAppPermissions.CoreEnvironmentsManage : PermissionPlan is not null || AssistantAccessPlan is not null ? null : HostPathPlan?.Change.Permission ?? CoreAppPermissions.Install;
+    public string? Permission => WorkspaceManifest is not null ? CoreAppPermissions.AppLifecycle : EnvironmentPlan is not null ? CoreAppPermissions.CoreEnvironmentsManage : PermissionPlan is not null || AssistantAccessPlan is not null ? null : HostPathPlan?.Change.Permission ?? CoreAppPermissions.Install;
 }
 
 internal sealed record InstallationPrepare(string? ManifestPath = null, string? FeedsUrl = null,
     string? FeedId = null, string? SelectedRuntime = null, string? UpdateAppId = null, string? PlanDigest = null, PrivateSourceChoice? SourceConnections = null, string? PermissionsAppId = null,
-    string? RemoveAppId = null, AppRemoveRequest? RemovalOptions = null, HostPathChange? HostPathChange = null);
+    string? RemoveAppId = null, AppRemoveRequest? RemovalOptions = null, HostPathChange? HostPathChange = null, AppDevelopmentAccessPlan? WorkspaceManifest = null);
 internal sealed record InstallationSubmit(IReadOnlyDictionary<string, string?>? Settings = null, bool? Autostart = null);
 internal sealed record InstallationRequestView(string Id, string Status, AppInstallPlan? Plan, AppUpdatePlan? UpdatePlan,
-    string ApprovalUrl, DateTimeOffset ExpiresAt, string? Error, AppPermissionPlan? PermissionPlan = null, AppRemovalPlan? RemovalPlan = null, HostPathApprovalPlan? HostPathPlan = null, CoreEnvironmentConsentPlan? EnvironmentPlan = null);
+    string ApprovalUrl, DateTimeOffset ExpiresAt, string? Error, AppPermissionPlan? PermissionPlan = null, AppRemovalPlan? RemovalPlan = null, HostPathApprovalPlan? HostPathPlan = null, CoreEnvironmentConsentPlan? EnvironmentPlan = null, AppDevelopmentAccessPlan? WorkspaceManifest = null);
 
 internal sealed record AppRemovalPlan(string AppId, string DisplayName, string Version,
     AppRemoveRequest Options, AppRemovalImpact Impact)

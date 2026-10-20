@@ -1,8 +1,8 @@
 "use client";
-import { WorkspaceRuntimePicker } from "../workspace-runtime-picker";
+import { useExecutionTargets } from "../execution-targets";
+import { coreWorkspaceSource, useWorkspaceSources, workspaceSource, type ActivationWorkspace, type WorkspaceSource } from "../workspace-sources";
 
-import { CoreEnvironments } from "./core-environments";
-import { SandboxInstances } from "./sandbox-instances";
+import { DashboardSandboxes } from "./dashboard-sandboxes";
 import { fetchCore } from "../core-transport.js";
 
 
@@ -30,13 +30,11 @@ import {
   ExternalLink,
   Hand,
   LoaderCircle,
-  Lock,
   MoreHorizontal,
   Package,
   PanelsTopLeft,
   Play,
   Plus,
-  Radio,
   RefreshCw,
   RotateCcw,
   Server,
@@ -66,8 +64,6 @@ import { cn } from "@/lib/utils";
 import {
   appSupportsReviewedUpdate,
   buildRuntimeServiceRows,
-  formatRuntimeProfileLabel,
-  formatUpdateChange,
   getEndpointPublicOrigin,
   isAppAutostartEnabled,
   resolveAssetSrc,
@@ -95,7 +91,9 @@ import type {
   AppUpdateCheckStatus,
   AppUpdateStatusResponse,
   CoreApp,
-  CoreRuntimeProfile,
+  AppExecutionTargets,
+  AppExecutionChoice,
+  AppExecutionSelection,
   CoreStatus,
   CoreUpdateStatus,
   OpenAppPanel,
@@ -156,12 +154,13 @@ export function DashboardPage({
   onRefresh: () => void;
   onInstall: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
-  onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
+  onSwitchRuntime: (app: CoreApp, targetRuntime: string | AppExecutionSelection) => void;
   onUpdateApp: (app: CoreApp) => void;
   onCheckUpdates: () => void;
   onUpdateAll: () => void;
   onOpenPanel: OpenAppPanel;
 }) {
+  const workspaces = useWorkspaceSources(coreOrigin, apps, canManageApps, status?.launch);
   const hasAnyApps = apps.length > 0;
   const [appFilter, setAppFilter] = useState<AppStateFilter>("all");
   const [appSearch, setAppSearch] = useState("");
@@ -312,6 +311,7 @@ export function DashboardPage({
     <div className="dashboard-layout space-y-6">
       <h1 className="sr-only">Dashboard</h1>
       <CoreSection
+        workspaces={workspaces}
         status={status}
         coreUpdate={coreUpdate}
         coreUpdating={coreUpdating}
@@ -410,6 +410,7 @@ export function DashboardPage({
             </div>
           ) : (
             <InstalledAppsTable
+              workspaces={workspaces}
               coreOrigin={coreOrigin}
               apps={visibleApps}
               shellAppId={shellAppId}
@@ -426,8 +427,7 @@ export function DashboardPage({
           )}
         </FramePanel>
       </Frame>
-      {canManageApps && <CoreEnvironments coreOrigin={coreOrigin} />}
-      {canManageApps && <SandboxInstances coreOrigin={coreOrigin} />}
+      {canManageApps && <DashboardSandboxes coreOrigin={coreOrigin} apps={apps} workspaces={workspaces} />}
     </div>
     </ResourceUsageProvider>
   );
@@ -493,6 +493,7 @@ function DashboardTableHeader() {
 // started from: it is where an administrator is already reading the host's version, and a fact that
 // cannot be acted on beside itself is an odd place to stop.
 function CoreSection({
+  workspaces,
   coreOrigin,
   status,
   coreUpdate,
@@ -500,6 +501,7 @@ function CoreSection({
   canManageApps,
   onUpdateCore,
 }: {
+  workspaces: ActivationWorkspace[];
   coreOrigin: string;
   status: CoreStatus | null;
   coreUpdate: CoreUpdateStatus | null;
@@ -511,7 +513,9 @@ function CoreSection({
   const [logsOpen, setLogsOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
   const development = useCoreDevelopment(coreOrigin, canManageApps);
-  const dev = (development.state?.launch.mode ?? status?.launch?.mode) === "dev";
+  const launch = development.state?.launch ?? status?.launch;
+  const dev = launch?.mode === "dev";
+  const workspace = coreWorkspaceSource(launch, workspaces);
   const showUpdate = !dev && canManageApps && (coreUpdate?.updateAvailable === true || coreUpdating);
 
   // Two URLs in the shape an app endpoint uses — the address it listens on, and the origin it is
@@ -559,10 +563,10 @@ function CoreSection({
                   </div>
                 </div>
               </TableCell>
-              <TableCell role="cell" className="dashboard-runtime"><CoreModeControl state={development.state} disabled={!canManageApps || development.busy || coreUpdating} onChange={mode => void development.restart(mode)} /></TableCell>
+              <TableCell role="cell" className="dashboard-runtime"><CoreModeControl state={development.state} workspace={workspace} disabled={!canManageApps || development.busy || coreUpdating} onChange={mode => void development.restart(mode)} /></TableCell>
               <TableCell role="cell" className="dashboard-version">
                 <div className="flex min-w-0 items-center gap-1.5">
-                  {dev ? <CoreGitCell state={development.state} /> : <><Package aria-hidden="true" className="size-3.5 shrink-0" /><CoreVersionBlock status={status} coreUpdate={coreUpdate} /></>}
+                  {dev ? <CoreGitCell state={development.state} workspace={workspace} /> : <><Package aria-hidden="true" className="size-3.5 shrink-0" /><CoreVersionBlock status={status} coreUpdate={coreUpdate} /></>}
                   {showUpdate && (
                     <Button
                       type="button"
@@ -959,6 +963,7 @@ function EndpointUrlBlock({
 }
 
 function InstalledAppsTable({
+  workspaces,
   coreOrigin,
   apps,
   shellAppId,
@@ -972,6 +977,7 @@ function InstalledAppsTable({
   onCheckUpdate,
   onOpenPanel,
 }: {
+  workspaces: ActivationWorkspace[];
   coreOrigin: string;
   apps: CoreApp[];
   shellAppId: string;
@@ -981,11 +987,13 @@ function InstalledAppsTable({
   // Per-service digest detail for expanded rows, owned by the page; the section only reads it.
   updateStatusByApp: Record<string, UpdateStatusState>;
   onAction: (app: CoreApp, action: AppAction) => void;
-  onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
+  onSwitchRuntime: (app: CoreApp, targetRuntime: string | AppExecutionSelection) => void;
   onUpdateApp: (app: CoreApp) => void;
   onCheckUpdate: (app: CoreApp) => void;
   onOpenPanel: OpenAppPanel;
 }) {
+  const targets = useExecutionTargets(coreOrigin, apps, canManageApps);
+  const targetsByApp = new Map(targets.map(target => [target.appId, target]));
   const [expandedAppIds, setExpandedAppIds] = useState<Set<string>>(() => new Set());
   const [healthByApp, setHealthByApp] = useState<Record<string, RuntimeHealthState>>({});
 
@@ -1068,6 +1076,7 @@ function InstalledAppsTable({
         <DashboardTableHeader />
         <TableBody role="rowgroup">
           {apps.map((app) => {
+            const execution = targetsByApp.get(app.id);
             const expanded = expandedAppIds.has(app.id);
             const healthState = healthByApp[app.id];
             const updateStatusState = updateStatusByApp[app.id];
@@ -1076,6 +1085,10 @@ function InstalledAppsTable({
               <Fragment key={app.id}>
                 <InstalledAppRow
                   app={app}
+                  workspace={execution?.current.kind === "workspace"
+                    ? { id: execution.current.workspaceId!, label: execution.current.name || "Workspace" }
+                    : workspaceSource(app, workspaces)}
+                  executionTargets={execution}
                   coreOrigin={coreOrigin}
                   isShell={app.id === shellAppId}
                   expanded={expanded}
@@ -1114,6 +1127,8 @@ function InstalledAppsTable({
 
 function InstalledAppRow({
   app,
+  workspace,
+  executionTargets,
   coreOrigin,
   isShell,
   expanded,
@@ -1130,6 +1145,8 @@ function InstalledAppRow({
   onOpenPanel,
 }: {
   app: CoreApp;
+  workspace?: WorkspaceSource;
+  executionTargets?: AppExecutionTargets;
   coreOrigin: string;
   isShell: boolean;
   expanded: boolean;
@@ -1140,7 +1157,7 @@ function InstalledAppRow({
   checkingUpdate: boolean;
   onToggleExpanded: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
-  onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
+  onSwitchRuntime: (app: CoreApp, targetRuntime: string | AppExecutionSelection) => void;
   onUpdateApp: (app: CoreApp) => void;
   onCheckUpdate: (app: CoreApp) => void;
   onOpenPanel: OpenAppPanel;
@@ -1170,8 +1187,7 @@ function InstalledAppRow({
   const canViewLogs = app.capabilities.includes("logs");
   const canConfigure = canManageApps;
   // Live source runtimes have no reviewed-update path (the manifest is adopted on restart), so the
-  // Update affordance is hidden and the live-source status icon is shown instead — that live check is
-  // all appSupportsReviewedUpdate does. System apps go through the same reviewed plan/apply flow as
+  // Update affordance is hidden — that live check is all appSupportsReviewedUpdate does. System apps go through the same reviewed plan/apply flow as
   // every other runtime app (docs/features/runtime-app-update/feature.md).
   const canUpdate = canManageApps && appSupportsReviewedUpdate(app);
   // The row's update affordance renders from the fleet-check verdict on the app summary (plan-first
@@ -1255,14 +1271,17 @@ function InstalledAppRow({
       <TableCell role="cell" className="dashboard-runtime">
         <RuntimeSwitcher
           app={app}
+          workspace={workspace}
           canSwitch={canSwitchRuntime}
           busyAction={busyAction}
           onSwitchRuntime={onSwitchRuntime}
+          targets={executionTargets}
         />
       </TableCell>
       <TableCell role="cell" className="dashboard-version">
         <AppVersionCell
           app={app}
+          workspace={workspace}
           verdict={verdict}
           updateVisible={updateVisible}
           needsReview={needsReview}
@@ -1444,6 +1463,7 @@ function CoreVersionBlock({ status, coreUpdate }: { status: CoreStatus | null; c
 // the same version, which is precisely what a source app tracking a branch ships.
 function AppVersionCell({
   app,
+  workspace,
   verdict,
   updateVisible,
   needsReview,
@@ -1453,6 +1473,7 @@ function AppVersionCell({
   onShowDetails,
 }: {
   app: CoreApp;
+  workspace?: WorkspaceSource;
   verdict: AppUpdateAvailability | null | undefined;
   updateVisible: boolean;
   needsReview: boolean;
@@ -1463,7 +1484,7 @@ function AppVersionCell({
 }) {
   const profile = (app.runtimeProfiles ?? []).find((profile) => profile.key === app.selectedRuntime);
   const development = profile?.development;
-  if (development) return <SourceVersionCell key={app.id} app={app} />;
+  if (development) return <SourceVersionCell key={`${app.id}:${app.sourceLivePath}:${app.sourceOverridePath}:${app.sourceManagedPath}`} app={app} workspace={workspace} />;
   const installedRevisions = collectInstalledRevisions(app);
   // Only ever read when an update is actually available, so a stale verdict's target never shows up
   // under a row that has nothing to apply.
@@ -1641,120 +1662,46 @@ function AppProblemIcon({ severity, problems }: { severity: AlertSeverity; probl
   );
 }
 
-// Display the target profile declaration before switching, independent of legacy overrides.
-function RuntimeModeBadge({ profile }: { profile: CoreRuntimeProfile }) {
-  const live = profile.development === true;
-  return (
-    <span
-      className={cn(
-        "ml-auto inline-flex shrink-0 items-center gap-1 text-[11px]",
-        live ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground",
-      )}
-      title={
-        live
-          ? "Development profile: runs from editable source. Reload behavior depends on its commands; permission changes are detected automatically and require approval; other manifest changes require restart."
-          : "Reviewed profile: uses a fixed image/build or pinned source, advanced by a reviewed update."
-      }
-    >
-      {live ? <Radio className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-      {live ? "Live" : "Locked"}
-    </span>
-  );
-}
-
-function RuntimeSwitcher({
-  app,
-  canSwitch,
-  busyAction,
-  onSwitchRuntime,
-}: {
+function RuntimeSwitcher({ app, workspace, canSwitch, busyAction, onSwitchRuntime, targets }: {
   app: CoreApp;
+  workspace?: WorkspaceSource;
   canSwitch: boolean;
   busyAction: string | null;
-  onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
+  targets?: AppExecutionTargets;
+  onSwitchRuntime: (app: CoreApp, target: string | AppExecutionSelection) => void;
 }) {
-  const runtimeProfiles = app.runtimeProfiles ?? [];
-  const currentRuntime = app.selectedRuntime || "none";
-  const switchable = canSwitch && (runtimeProfiles.length > 1 || !!app.devMode);
-  const development = runtimeProfiles.find((profile) => profile.key === app.selectedRuntime)?.development === true;
+  const choices: AppExecutionChoice[] = targets?.choices ?? (app.runtimeProfiles ?? []).filter(profile => !profile.development)
+    .map(profile => ({ kind: "package" as const, runtime: profile.key, name: profile.key, available: true }));
+  const current = targets?.current;
+  const profile = app.runtimeProfiles?.find(profile => profile.key === app.selectedRuntime);
+  const fromWorkspace = current?.kind === "workspace" || workspace !== undefined;
+  const development = profile?.development === true || fromWorkspace;
+  const currentLabel = fromWorkspace ? "workspace" : development ? "source" : app.selectedRuntime || "none";
   const switching = busyAction?.startsWith(`${app.id}:switch-runtime:`) ?? false;
-
-  return (
-    <div className="flex min-w-0 items-center gap-x-1">
-      {canSwitch && runtimeProfiles.some(p => p.development) && <WorkspaceRuntimePicker appId={app.id} />}
-      <span className="min-w-0 truncate font-mono text-sm" title={currentRuntime}>{currentRuntime}</span>
-      {development && (
-        <TooltipProvider delayDuration={150}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span tabIndex={0} className="inline-flex shrink-0 cursor-help text-emerald-600 dark:text-emerald-400" role="img" aria-label={app.devMode ? "Dev mode on ordinary data" : app.live ? "Live source runtime" : "Development runtime"}>
-                <Radio aria-hidden="true" className="size-3.5" />
-              </span>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-sm">
-              <div className="flex flex-col gap-2">
-                <p className="font-medium">{app.devMode ? "Dev mode on ordinary data" : app.live ? "Live source runtime" : "Development runtime"}</p>
-                {app.devMode ? <p>Live code uses this app’s ordinary data and users. The installed manifest contract stays fixed. Return restores execution selection and keeps current data and source edits.</p> : app.live
-                  ? <p>Core runs this app from your source folder and adopts manifest edits on restart — there is no reviewed update. Switch to a compiled runtime for locked, reviewed updates.</p>
-                  : <p>A development profile is selected, but live source is not active. Reviewed updates may still be available.</p>}
-                <p>Reload behavior depends on the runtime commands.</p>
-                {app.live && app.liveChanges && app.liveChanges.length > 0 && <div>
-                  <p className="font-medium">Adopted at last start</p>
-                  <ul className="mt-1 list-disc pl-4 [&>li+li]:mt-0.5">
-                    {app.liveChanges.map((change) => <li key={change}>{formatUpdateChange(change)}</li>)}
-                  </ul>
-                </div>}
-              </div>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      )}
-      {switchable && <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={`Switch runtime for ${app.displayName}`}
-            title="Switch runtime"
-            disabled={switching}
-          >
-            {switching ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ChevronDown className="h-4 w-4" />}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-56">
-          <DropdownMenuLabel>Runtime</DropdownMenuLabel>
-          {app.devMode && app.devMode.phase !== "active" && <DropdownMenuItem disabled={switching} onClick={() => onSwitchRuntime(app, "__dev_retry")}>
-            Retry interrupted dev operation
-          </DropdownMenuItem>}
-          {app.devMode && <DropdownMenuItem disabled={switching} onClick={() => onSwitchRuntime(app, "__dev_return")}>
-            Return to previous runtime ({app.devMode.previousRuntime})
-          </DropdownMenuItem>}
-          <DropdownMenuSeparator />
-          {runtimeProfiles.map((profile) => {
-            const selected = profile.key === app.selectedRuntime;
-            const targetBusy = busyAction === `${app.id}:switch-runtime:${profile.key}`;
-            return (
-              <DropdownMenuItem
-                key={profile.key}
-                disabled={switching || !!app.devMode}
-                onClick={() => onSwitchRuntime(app, profile.key)}
-              >
-                {targetBusy ? (
-                  <LoaderCircle className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Check className={cn("h-4 w-4", selected ? "opacity-100" : "opacity-0")} />
-                )}
-                <span className="min-w-0 flex-1 truncate">{formatRuntimeProfileLabel(profile)}</span>
-                <RuntimeModeBadge profile={profile} />
-              </DropdownMenuItem>
-            );
-          })}
-        </DropdownMenuContent>
-      </DropdownMenu>}
-
-    </div>
-  );
+  const selected = (choice: (typeof choices)[number]) => choice.kind === "workspace"
+    ? current?.kind === "workspace" && choice.workspaceId === current.workspaceId && choice.worktreeId === current.worktreeId
+    : !development && current?.kind !== "workspace" && choice.runtime === app.selectedRuntime;
+  const switchable = canSwitch && choices.some(choice => choice.available && !selected(choice));
+  return <div className="flex min-w-0 items-center gap-x-1">
+    <span className={cn("text-sm", development ? "shrink-0 whitespace-nowrap" : "min-w-0 truncate")} title={currentLabel}>{currentLabel}</span>
+    {switchable && <DropdownMenu><DropdownMenuTrigger asChild>
+      <Button type="button" variant="ghost" size="icon-sm" className="shrink-0" aria-label={`Switch runtime for ${app.displayName}`}
+        disabled={switching || isAppBusy(app.runtimeState) || app.operationStatus === "updating"}>
+        {switching ? <LoaderCircle className="size-4 animate-spin" /> : <ChevronDown className="size-4" />}
+      </Button>
+    </DropdownMenuTrigger><DropdownMenuContent align="start" className="w-72 max-w-[calc(100vw-2rem)]">
+      <DropdownMenuGroup>
+        {choices.map(choice => <DropdownMenuItem key={choice.kind === "workspace" ? `workspace:${choice.workspaceId}:${choice.worktreeId}` : `package:${choice.runtime}`}
+          disabled={switching || !choice.available} title={choice.unavailable}
+          onSelect={() => { if (!selected(choice)) onSwitchRuntime(app, { kind: choice.kind as "workspace" | "package", runtime: choice.runtime,
+            workspaceId: choice.workspaceId, worktreeId: choice.worktreeId }); }}>
+          <Check className={cn("size-4 shrink-0", selected(choice) ? "opacity-100" : "opacity-0")} />
+          {choice.kind === "workspace" ? <Boxes className="size-4 shrink-0" /> : <Package className="size-4 shrink-0" />}
+          <span className="min-w-0 flex-1 truncate">{choice.kind === "workspace" ? choice.name || "Workspace" : choice.runtime}</span>
+        </DropdownMenuItem>)}
+      </DropdownMenuGroup>
+    </DropdownMenuContent></DropdownMenu>}
+  </div>;
 }
 
 function InstalledAppActionsMenu({

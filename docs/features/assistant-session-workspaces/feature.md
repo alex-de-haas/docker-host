@@ -35,6 +35,32 @@ preparing or partially released group reports `attention`. There is no aggregate
 tracks explicit verified completion and cleanup across children. Child failures do not hide other
 authorized repositories.
 
+## Workspace Names
+
+Logical workspaces have a persisted purpose-based `name`, separate from the owner label, session
+conversation title, branch and stable identity. Creating agents supply a short task name; Harness
+preparation and the direct Core MCP `prepare_workspace` catalog require it. Legacy service callers
+and records remain readable. Meaningful existing external labels remain usable as a fallback;
+generic agent labels fall back to "Workspace" without presenting an opaque ID as a task description.
+When the Harness worktree action derives a name from its conversation title, it retains that resolved
+name before contacting Core. Retrying the same request after a rename or restart keeps the original
+preparation arguments; an explicit changed name remains a conflicting request.
+
+Session agents rename their workspace through `POST .../workspaces/name` with `{ requestId, name }`.
+Inspection managers use `POST .../workspace-inspection/{workspaceId}/name`; browser administrators use
+`POST /api/development/workspaces/{workspaceId}/name` with normal session and CSRF authority.
+Direct external agents use `rename_workspace` with their own worktree or aggregate workspace ID.
+The existing workspace management permission, current ownership and source authorization apply.
+Names accept at most 120 nonempty plain-text characters without control or surrounding whitespace.
+App creation derives a bounded name from the application title and removes trailing whitespace
+after truncation, so valid application names also produce valid workspace names.
+
+Core stores one atomic metadata record and replay receipt per logical workspace. Same-ID retries
+preserve the original name arguments and never roll back a later rename. Renaming changes no Git
+files, branch, source stamp, active consumer, lease, permission or runtime admission. The existing
+workspace observation stream invalidates readers after a rename; inventory exposes the latest name
+and metadata time across all of its repository bindings.
+
 ## Authorization And APIs
 
 Core uses the reviewed `apps.sources.full` permission for workspace and publication operations.
@@ -54,7 +80,7 @@ and session ownership. Existing read-only Core MCP credentials confer no workspa
 | Method / suffix | Operation |
 | --- | --- |
 | GET collection | List this session's bindings, including released records |
-| POST collection | Prepare with `requestId`, `sessionId`, `appId`, `sessionPath`, optional `targetBranch` / `leaseId` |
+| POST collection | Prepare with `requestId`, `sessionId`, `appId`, `sessionPath`, purpose `name`, optional `targetBranch` / `leaseId` |
 | GET `/{id}` | Observe current source state |
 | GET `/{id}/viewer` | Resolve the current owning assistant session, or an explicit unavailable reason |
 | POST `/{id}/diff` | Preview `{ path, view: "session" or "local" }` |
@@ -213,6 +239,11 @@ only after Docker confirms all writers stopped. An unknown worker outcome requir
 lease age and a stopped local Docker client do not prove termination.
 
 ## Testing Expectations
+
+- Harness preparation freezes a derived name before Core admission, then preserves it across lost
+  responses, conversation renames and process restart without accepting changed explicit arguments.
+- App creation accepts trailing title whitespace and a space at the generated-name truncation
+  boundary; exact-request retries recover the same valid creation workspace.
 
 - Aggregate identity survives serialization, restart and external label changes; two repositories
   join one owner while legacy worktree IDs, paths and operations remain unchanged.

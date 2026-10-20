@@ -21,6 +21,7 @@ import { isSameOriginRequest, resolveAdminActor } from "./auth.js";
 import { readAppCredential, resolveAppSession, exchangeLaunchCode, getAppRecoveryParams } from "./app-session.js";
 import { isValidCodeVerifier } from "@hosty-sdk/app/app-code";
 import { isSourceConnectionRoute, requestSourceConnection } from "./source-connections.js";
+import { isWorkspaceAccessReviewRoute, requestWorkspaceAccessReview } from "./workspace-access-reviews.js";
 import { serveStaticSite } from "./settings/static-site.js";
 
 // Upper bound for an event stream opened with an app session rather than a delegated token: the
@@ -297,6 +298,15 @@ async function route(
     }
     const result = await requestSourceConnection(method, url.pathname, readAppCredential(request),
       method === "POST" || method === "PUT" ? await readJson(request) : undefined);
+    sendJson(response, result.status, result.body); return;
+  }
+
+  if (isWorkspaceAccessReviewRoute(method, url.pathname)) {
+    response.setHeader("cache-control", "no-store");
+    if (actor.via !== "app-session") {
+      sendJson(response, 403, { code: "app_session_required", message: "Sign in to Harness through Core to review workspace access." }); return;
+    }
+    const result = await requestWorkspaceAccessReview(method, url.pathname, readAppCredential(request), method === "POST" ? await readJson(request) : undefined);
     sendJson(response, result.status, result.body); return;
   }
 
@@ -583,11 +593,11 @@ async function route(
     return;
   }
 
-  const inspection = url.pathname.match(/^\/api\/development-workspaces(\/local-apps|\/[a-f0-9]{64}(?:\/activation\/(?:plan|apply|list|status|cancel|resume|return)|\/(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|\/previews(?:\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))?|\/worktrees\/[a-f0-9]{64}(?:\/(?:diff|recover-lease))?|\/workflow(?:\/(?:complete|resume|pause|defer|delete|close))?)?)?$/);
+  const inspection = url.pathname.match(/^\/api\/development-workspaces(\/local-apps|\/[a-f0-9]{64}(?:\/name|\/execution-target(?:\/[a-f0-9-]{36})?|\/activation\/(?:plan|apply|list|status|cancel|resume|return)|\/(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|\/previews(?:\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))?|\/worktrees\/[a-f0-9]{64}(?:\/(?:diff|recover-lease))?|\/workflow(?:\/(?:complete|resume|pause|defer|delete|close))?)?)?$/);
   if (inspection && (method === "GET" || method === "POST")) {
     const credential = actor.via === "app-session" ? readAppCredential(request) : null;
     if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to inspect workspaces.");
-    if (method === "POST" && !/\/(?:activation\/(?:plan|apply|list|status|cancel|resume|return)|(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|worktrees\/[a-f0-9]{64}\/recover-lease|workflow\/(?:complete|resume|pause|defer|delete|close)|previews\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))$/.test(inspection[1] ?? ""))
+    if (method === "POST" && !/\/(?:name|execution-target|activation\/(?:plan|apply|list|status|cancel|resume|return)|(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|worktrees\/[a-f0-9]{64}\/recover-lease|workflow\/(?:complete|resume|pause|defer|delete|close)|previews\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))$/.test(inspection[1] ?? ""))
       throw new AppContextError(400, "workspace_action_invalid", "Choose a workspace lifecycle action.");
     sendJson(response, 200, await manager.inspectWorkspaces(credential, (inspection[1] ?? "") + url.search,
       method === "POST" ? await readJson(request) : undefined, actor.userId)); return;

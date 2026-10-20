@@ -5,7 +5,6 @@ import { fetchCore } from "./shell/core-transport.js";
 
 
 import { waitForShellUpdateToSettle } from "./shell/self-update";
-import { waitForShellRuntimeSwitch } from "./shell/self-runtime-switch";
 import { isAppBusy, isAppUp } from "./shell/runtime-states";
 import { isRoutineUpdate } from "./shell/update-feedback";
 import { useAppUpdateNotifications } from "./shell/update-notifications";
@@ -82,7 +81,8 @@ import type {
   CoreSettingsState,
   CoreGlobalMount,
   CoreRemovalImpact,
-  CoreRuntimeSwitchPlan,
+  AppExecutionSelection,
+  AppExecutionResult,
   CoreStatus,
   CoreUpdatePlan,
   CoreUpdateStatus,
@@ -862,121 +862,128 @@ export function ShellClient({
     [confirm, appEndpoint, refresh, refreshApps, sendCsrfJson, shellAppId, state.apps],
   );
 
+  const installationClient = useMemo(() => createInstallationClient({
+    baseUrl: `${coreOrigin}/api/installations`, request: sendCsrfJson,
+  }), [coreOrigin, sendCsrfJson]);
+
   const switchAppRuntime = useCallback(
-    async (app: CoreApp, targetRuntime: string) => {
+    async (app: CoreApp, target: string | AppExecutionSelection) => {
+      const selection: AppExecutionSelection = typeof target === "string" ? { kind: "package", runtime: target } : target;
       const currentApp = state.apps.find(candidate => candidate.id === app.id) ?? app;
-      if (!targetRuntime || targetRuntime === currentApp.selectedRuntime) {
-        return;
-      }
-
-      if (appActionActivations.current.has(app.id) || isAppBusy(currentApp.runtimeState) || currentApp.operationStatus === "updating") return;
-      appActionActivations.current.add(app.id);
-
-      const actionKey = `${app.id}:switch-runtime:${targetRuntime}`;
-      setBusyAction(actionKey);
-      setState((current) => ({ ...current, error: null }));
+      if (appActionActivations.current.has(app.id)) return;
+      const actionKey = `${app.id}:switch-runtime:${selection.kind === "package" ? selection.runtime : selection.workspaceId}`;
+      const storageKey = `hosty.execution-target:${coreOrigin}:${app.id}`;
+      type Request = AppExecutionSelection & { requestId: string };
+      let request: Request = { ...selection, requestId: crypto.randomUUID() };
+      let recovering = false;
       try {
-        const devProfile = currentApp.runtimeProfiles?.find(p => p.key === targetRuntime);
-        if (!currentApp.system && (targetRuntime === "__dev_return" || targetRuntime === "__dev_retry" || devProfile?.type === "docker" && devProfile.development)) {
-          const action = targetRuntime === "__dev_return" ? "return" : "enter";
-          const key = `hosty.dev-mode.${app.id}`;
-          let saved: { requestId: string; action: string; targetRuntime?: string; planDigest?: string; acceptDataChanges: boolean } | null = null;
-          try { saved = JSON.parse(localStorage.getItem(key) ?? "null"); } catch { /* Start a reviewed request. */ }
-          if (targetRuntime === "__dev_retry" && !saved?.planDigest)
-            throw new Error("The original request is not saved in this browser. Retry from its initiating client or Return to the previous runtime.");
-          const request = targetRuntime === "__dev_retry" ? saved! : saved?.action === action && (action === "return" || saved.targetRuntime === targetRuntime) ? saved :
-            { requestId: crypto.randomUUID(), action, targetRuntime: action === "enter" ? targetRuntime : undefined, acceptDataChanges: action === "return" };
-          if (!request.planDigest) {
-            let response: Response;
-            try { response = await sendCsrfJson(appEndpoint(app, "/dev-mode/plan"), request); }
-            catch (error) {
-              if (action !== "enter" || !(error instanceof CoreRequestError) ||
-                  !["dev_source_required", "dev_source_unavailable", "dev_manual_source_unsupported", "dev_profile_unsupported"].includes(error.code ?? "")) throw error;
-              if (!await confirm({ title: "Use the existing manual runtime switch?",
-                description: `${error.message} This source is outside managed dev mode. The existing manual switch has no durable Return operation; use Switch runtime to switch back.`,
-                action: "Switch manually" })) return;
-              const legacy = await sendCsrfJson(appEndpoint(app, "/switch-runtime/plan"), { targetRuntime });
-              const plan = await legacy.json() as CoreRuntimeSwitchPlan;
-              await sendCsrfJson(appEndpoint(app, "/switch-runtime"), { targetRuntime: plan.targetRuntime, planDigest: plan.planDigest });
-              await refresh(); invalidateUpdateStatus(app.id);
-              toast.success("Runtime switched", { description: "Existing manual workflow; managed dev mode was not entered." });
-              return;
+        const saved = JSON.parse(localStorage.getItem(storageKey) ?? "null") as Request | null;
+        if (saved?.requestId) {
+          const sameTarget = saved.kind === selection.kind && saved.runtime === selection.runtime &&
+            saved.workspaceId === selection.workspaceId && saved.worktreeId === selection.worktreeId;
+          const settled = ["failed", "review-required"].includes(localStorage.getItem(storageKey + ":state") || "");
+          if (!sameTarget && !settled) throw new Error("A runtime switch is still awaiting confirmation. Retry that selection before choosing another target.");
+          if (sameTarget) { request = saved; recovering = true; }
+        }
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("A runtime switch")) {
+          toast.error("Runtime switch pending", { description: error.message, appId: app.id }); return;
+        }
+      }
+      // A retained intent still needs its receipt even if its target already appears selected or
+      // its admitted operation is transitioning. These guards apply only to a new selection.
+      if (!recovering && (isAppBusy(currentApp.runtimeState) || currentApp.operationStatus === "updating" ||
+          selection.kind === "package" && !currentApp.devMode && !currentApp.live && selection.runtime === currentApp.selectedRuntime)) return;
+      appActionActivations.current.add(app.id);
+      setBusyAction(actionKey);
+      setState(current => ({ ...current, error: null }));
+      const statusUrl = appEndpoint(app, `/execution-target/${request.requestId}`);
+      try {
+        try { localStorage.setItem(storageKey, JSON.stringify(request)); localStorage.setItem(storageKey + ":state", "running"); } catch { /* In-memory identity remains available. */ }
+        const submit = async (): Promise<AppExecutionResult | null> => {
+          try {
+            return await (await sendCsrfJson(appEndpoint(app, "/execution-target"), request)).json() as AppExecutionResult;
+          } catch (error) {
+            const connectionLost = error instanceof TypeError || error instanceof CoreRequestError &&
+              ["core_unavailable", "core_request_timeout"].includes(error.code ?? "");
+            if (!connectionLost) {
+              try { localStorage.removeItem(storageKey); localStorage.removeItem(storageKey + ":state"); } catch { /* Core retains its receipt. */ }
+              throw error;
             }
-            const plan = await response.json() as { planDigest: string; changes: string[]; outsideBackup: string[] };
-            if (!await confirm({ title: action === "return" ? "Return and keep current data?" : "Enter dev mode on ordinary data?",
-              description: [...plan.changes, ...plan.outsideBackup, ...(action === "return" ? ["Confirm that current data is compatible with the previous runtime. No backup is restored."] : [])].join("\n"),
-              action: action === "return" ? "Return to previous runtime" : "Enter dev mode" })) return;
-            request.planDigest = plan.planDigest;
+            // Read the admitted request. Never invent a new mutation identity after response loss.
+            return null;
           }
-          localStorage.setItem(key, JSON.stringify(request));
-          try { await sendCsrfJson(appEndpoint(app, "/dev-mode/apply"), request); }
-          catch (error) {
-            if (error instanceof CoreRequestError && ["dev_plan_changed", "dev_request_invalid", "dev_action_invalid"].includes(error.code ?? "")) localStorage.removeItem(key);
-            throw error;
+        };
+        let result = await submit();
+        for (;;) {
+          const deadline = Date.now() + (app.id === shellAppId ? 10 * 60_000 : 2 * 60_000);
+          while ((!result || result.state === "running") && Date.now() < deadline) {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 5_000);
+            try {
+              const response = await fetchCore(statusUrl, { credentials: "include", cache: "no-store", signal: controller.signal });
+              redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+              if (response.ok) result = await response.json() as AppExecutionResult;
+              else if (response.status === 404) break;
+            } catch (error) { if (isAuthRequiredRedirectError(error)) throw error; }
+            finally { clearTimeout(timeout); }
+            if (!result || result.state === "running") await new Promise(resolve => setTimeout(resolve, 1_500));
           }
-          localStorage.removeItem(key);
-          await refresh(); invalidateUpdateStatus(app.id);
-          toast.success(action === "return" ? "Previous runtime restored" : "Development mode active", { description: "Current application data and source edits are retained." });
-          return;
+          if (!result || result.state === "running") {
+            toast.warning("Runtime switch is not confirmed yet", { description: "Core is still processing this selection. Retry keeps the original request." });
+            return;
+          }
+          if (result.state === "review-required") {
+            try { localStorage.setItem(storageKey + ":state", "review-required"); } catch { /* Optional local recovery journal. */ }
+            if (!result.review) throw new Error(result.error || "Open Dashboard in Core to review the requested access.");
+            const popup = openInstallationConfirmation();
+            const approval = await requestCoreApproval(installationClient, result.review,
+              pending => showCoreConfirmation(popup, pending), { retryInterruptedStatus: true });
+            if (approval.status === "denied") {
+              toast.info("Runtime switch cancelled", { description: "The additional access was not approved." }); return;
+            }
+            // Approval admits this exact candidate; resume the same retained execution intent.
+            try { localStorage.setItem(storageKey + ":state", "running"); } catch { /* Optional recovery journal. */ }
+            result = await submit();
+            continue;
+          }
+          break;
         }
-        // Plan routes are session-authenticated POSTs and now require the CSRF header like their apply
-        // twins (C-M9); sendCsrfJson attaches it and throws on !ok.
-        const planResponse = await sendCsrfJson(appEndpoint(app, "/switch-runtime/plan"), { targetRuntime });
-        const plan = (await planResponse.json()) as CoreRuntimeSwitchPlan;
-        try {
-          await sendCsrfJson(appEndpoint(app, "/switch-runtime"), {
-            targetRuntime: plan.targetRuntime,
-            planDigest: plan.planDigest,
-          });
-        } catch (error) {
-          const connectionLost = error instanceof TypeError || (error instanceof CoreRequestError &&
-            (error.code === "core_unavailable" || error.code === "core_request_timeout"));
-          if (app.id !== shellAppId || !connectionLost) throw error;
-          // Core owns completion once stopping begins. Never replay an uncertain mutation.
+        if (result.state === "failed") {
+          try {
+            if (["dev_selection_changed", "dev_installation_changed", "execution_request_conflict"].includes(result.code || "")) {
+              localStorage.removeItem(storageKey); localStorage.removeItem(storageKey + ":state");
+            } else localStorage.setItem(storageKey + ":state", "failed");
+          } catch { /* Optional local recovery journal. */ }
+          throw new Error(result.error || "The selected runtime could not start.");
         }
+        try { localStorage.removeItem(storageKey); localStorage.removeItem(storageKey + ":state"); } catch { /* Optional local recovery journal. */ }
+        // Apply the newer receipt before a stale list request can replace it.
+        if (result.app) {
+          const readId = ++appsReadSequence.current;
+          setState(current => ({ ...current, ...reconcileAppList(current, {
+            apps: current.apps.map(item => item.id === app.id ? result!.app! : item), updateCheck: current.updateCheck,
+          }, readId) }));
+        }
+        invalidateUpdateStatus(app.id);
         if (app.id === shellAppId) {
-          toast.info("Switching Shell runtime", { description: "Waiting for the selected runtime, then reloading this page…" });
-          const outcome = await waitForShellRuntimeSwitch({ coreOrigin, shellAppId, targetRuntime: plan.targetRuntime });
-          if (outcome.kind === "failed") throw new Error(outcome.message);
-          if (outcome.kind === "settled") {
-            // Confirmation is newer than any app-list read already in flight.
-            const appsReadId = ++appsReadSequence.current;
-            setState(current => ({ ...current, ...reconcileAppList(current, {
-              apps: current.apps.map(item => item.id === app.id
-                ? { ...item, selectedRuntime: plan.targetRuntime } : item),
-              updateCheck: current.updateCheck,
-            }, appsReadId) }));
-            invalidateUpdateStatus(app.id);
-            if (await waitForOwnOrigin()) window.location.reload();
-            else toast.warning("Runtime switched; Shell page is not answering yet", {
-              description: "Core confirmed the selected runtime is running. Reload this page once the Shell browser address is reachable again.",
-            });
-          } else {
-            toast.warning("Shell runtime switch is not confirmed yet", {
-              description: "Check Shell with `hosty apps list`. If it is stopped, start it with `hosty apps start hosty.shell`, then reload this page.",
-            });
-          }
+          if (await waitForOwnOrigin()) window.location.reload();
+          else toast.warning("Runtime switched; Shell page is not answering yet", {
+            description: "Core confirmed the switch. Reload this page once Shell is reachable again.",
+          });
           return;
         }
         await refresh();
-        invalidateUpdateStatus(app.id);
-        toast.success("Runtime switched", {
-          description: `${app.displayName}: ${plan.currentRuntime || "none"} to ${plan.targetRuntime}`,
-        });
+        toast.success("Runtime switched", { description: app.displayName });
       } catch (error) {
-        if (isAuthRequiredRedirectError(error)) {
-          return;
-        }
-
-        const message = error instanceof Error ? error.message : "Runtime switch failed.";
-        toast.error("Runtime switch failed", { description: message, appId: app.id });
+        if (isAuthRequiredRedirectError(error)) return;
+        toast.error("Runtime switch failed", { description: error instanceof Error ? error.message : "Runtime switch failed.", appId: app.id });
         void refreshApps();
       } finally {
         appActionActivations.current.delete(app.id);
-        setBusyAction((current) => (current === actionKey ? null : current));
+        setBusyAction(current => current === actionKey ? null : current);
       }
-    },
-    [confirm, appEndpoint, coreOrigin, invalidateUpdateStatus, refresh, refreshApps, sendCsrfJson, shellAppId, state.apps],
+    }, [appEndpoint, coreOrigin, installationClient, invalidateUpdateStatus, refresh, refreshApps, sendCsrfJson, shellAppId, state.apps],
   );
 
   const loadAppBackups = useCallback(
@@ -1010,9 +1017,21 @@ export function ShellClient({
     [appEndpoint, coreOrigin],
   );
 
-  const installationClient = useMemo(() => createInstallationClient({
-    baseUrl: `${coreOrigin}/api/installations`, request: sendCsrfJson,
-  }), [coreOrigin, sendCsrfJson]);
+  const recoveredExecution = useRef(new Set<string>());
+  useEffect(() => {
+    if (!state.session?.authenticated) return;
+    for (const app of state.apps) {
+      const key = `hosty.execution-target:${coreOrigin}:${app.id}`;
+      if (recoveredExecution.current.has(key)) continue;
+      try {
+        const saved = JSON.parse(localStorage.getItem(key) ?? "null") as (AppExecutionSelection & { requestId?: string }) | null;
+        if (!saved?.requestId || !["package", "workspace"].includes(saved.kind) ||
+            ["failed", "review-required"].includes(localStorage.getItem(key + ":state") || "")) continue;
+        recoveredExecution.current.add(key);
+        void switchAppRuntime(app, { kind: saved.kind, runtime: saved.runtime, workspaceId: saved.workspaceId, worktreeId: saved.worktreeId });
+      } catch { /* Ignore an invalid optional recovery journal. */ }
+    }
+  }, [coreOrigin, state.apps, state.session?.authenticated, switchAppRuntime]);
 
   const getUpdatePlan = useCallback(async (app: CoreApp, forceRefresh = false) => prepareAppUpdate(
     async () => {

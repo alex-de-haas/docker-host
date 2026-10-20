@@ -66,6 +66,57 @@ public sealed class AppCreationHttpTests
         Assert.True(guide.Text.Length < 20000);
     }
     [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task CreationWorkspaceName_TrimsTrailingAndTruncatedSpacesAndReplaysInstalledCreation(bool truncationBoundary, bool resumeInstalled)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var now = host.Services.GetRequiredService<IClock>().UtcNow;
+        await host.Services.GetRequiredService<UserDirectoryStore>().WriteAsync(new(1,
+            [new("admin", "admin@example.test", "Admin", "host.admin", false, now, now)], [], [], []));
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var caller = AssistantMcpAccessHttpTests.Record("hosty.harness", now) with
+        {
+            ConfirmedRoles = ["assistant"],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["assistant"] = [new("default", null, "/assistant")] },
+            GrantedCorePermissions = [CoreAppPermissions.Sources, CoreAppPermissions.Install],
+        };
+        await apps.UpsertAppAsync(caller);
+        using var client = host.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(caller.Id));
+        client.DefaultRequestHeaders.Add("X-Hosty-User-Token", (await BrowserAuthorityFixture.Grant(host, caller.Id, "admin")).AccessToken);
+        const string session = "creation-name";
+        const string root = "/api/internal/apps/hosty.harness/sessions/creation-name/app-creations";
+        var name = truncationBoundary ? new string('A', 112) + " " + new string('B', 7) : "Created app ";
+        var expectedName = truncationBoundary ? "Create " + new string('A', 112) : "Create Created app";
+        var input = new AppCreationRequest(Guid.NewGuid().ToString(), "test.creation-name", name, BootstrapCommit: true,
+            AuthorName: "Test", AuthorEmail: "test@example.test");
+        // Recover the original request after creation committed but workspace preparation did not.
+        var installed = resumeInstalled ? await host.Services.GetRequiredService<CoreLifecycleService>().CreateLocalAppAsync(
+            new(caller.Id, caller.InstalledAt, "admin", session), input, null, default) : null;
+        var response = await client.PostAsJsonAsync(root, input);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        var created = (await response.Content.ReadFromJsonAsync<AppCreationResult>())!;
+        Assert.Equal(expectedName, created.Workspace!.Name);
+        Assert.Equal(input.Name, created.Operation.Request.Name);
+        if (installed is not null) Assert.Equal(installed.Operation.Commit, created.Operation.Commit);
+        var pending = Path.Combine(created.Workspace.Path, "unfinished.txt");
+        await File.WriteAllTextAsync(pending, "preserve uncommitted work");
+        var replayResponse = await client.PostAsJsonAsync(root, input);
+        Assert.Equal(HttpStatusCode.OK, replayResponse.StatusCode);
+        var replay = (await replayResponse.Content.ReadFromJsonAsync<AppCreationResult>())!;
+        Assert.Equal(created.Workspace.Id, replay.Workspace!.Id);
+        Assert.Equal(expectedName, replay.Workspace.Name);
+        Assert.Equal(created.Operation.Commit, replay.Operation.Commit);
+        Assert.Equal(created.Operation.Commit, (await DevelopmentWorkspaceService.Git(created.Operation.SourcePath,
+            ["rev-parse", "HEAD"], default)).StandardOutput.Trim());
+        Assert.Equal("preserve uncommitted work", await File.ReadAllTextAsync(pending));
+        Assert.Single(await apps.ListAppRecordsAsync(), app => app.Id == input.AppId);
+    }
+
+    [Theory]
     [InlineData("install-permission")]
     [InlineData("source-permission")]
     [InlineData("member")]

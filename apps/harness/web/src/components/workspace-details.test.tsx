@@ -241,3 +241,23 @@ it("keeps one lease recovery panel across inventory refreshes", async () => {
     expect(container.textContent).not.toContain('External activity leases');
   }
 });
+
+it("uses the workspace name and renames it without running an app or altering source", async () => {
+  const w = { ...workspace(), name: "Small layout fix" }; replies(w); const refresh = vi.fn();
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Conversation title" refresh={refresh} />));
+  expect(container.querySelector("h2")?.textContent).toBe("Small layout fix");
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Rename workspace"]')!.click());
+  const input = container.querySelector<HTMLInputElement>('[id="workspace-name-workspace"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "Simplify runtime selection");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  vi.mocked(developmentRequest).mockResolvedValueOnce({ name: "Simplify runtime selection", revision: 2 });
+  await act(async () => [...container.querySelectorAll("button")].find(button => button.textContent === "Save name")!.click());
+  expect(container.querySelector("h2")?.textContent).toBe("Simplify runtime selection");
+  expect(developmentRequest).toHaveBeenCalledWith("/workspace/name", { requestId: expect.any(String), name: "Simplify runtime selection" });
+  expect(vi.mocked(developmentRequest).mock.calls.some(([path]) => path?.includes("execution-target"))).toBe(false);
+  expect(refresh).toHaveBeenCalledOnce();
+  await act(async () => root.render(<WorkspaceDetails workspace={{ ...w, name: "Runtime switch controls" }} title="Conversation title" refresh={refresh} />));
+  expect(container.querySelector("h2")?.textContent).toBe("Runtime switch controls");
+});

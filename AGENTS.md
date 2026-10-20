@@ -26,6 +26,11 @@ Where the version lives:
 
 - **Do not squash-merge PRs.** Parallel PRs are common here, and squash merges rewrite the merged branch's history — the other in-flight branches can no longer rebase cleanly onto main. Use a regular merge commit instead.
 - **One PR per feature, not per phase.** When a feature plan is split into phases, implement all phases on one branch and open a single PR. Individual phases rarely deliver complete functionality on their own, and under the versioning rules above each per-phase PR would pointlessly bump the version.
+- **Handle open review findings before waiting for CI.** Batch accepted review fixes and run
+  affected local checks before pushing; wait for the full CI only on the resulting candidate.
+  Do not restart review merely because CI needed a fix. Honor an explicit review cutoff from the
+  user; after that, address only critical findings and blocking CI failures, then merge once the
+  required checks pass when merge is authorized.
 - **PR descriptions track the plan.** When the work is driven by a `plan.md`, the
   description lists the deliverables this PR completes by ID (`D3`, `D5`) and
   links the feature folder. Always state the version outcome ("0.4.2 → 0.5.0" or "No version

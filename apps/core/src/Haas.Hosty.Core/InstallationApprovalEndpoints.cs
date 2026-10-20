@@ -46,6 +46,24 @@ internal sealed class InstallationApprovalService(
 
     public async Task<InstallationApproval> PrepareAsync(InstallationCaller caller, InstallationPrepare input, CancellationToken ct)
     {
+        if (input.WorkspaceManifest is { } workspace)
+        {
+            if (input.ManifestPath is not null || input.FeedsUrl is not null || input.FeedId is not null ||
+                input.SelectedRuntime is not null || input.UpdateAppId is not null || input.PlanDigest is not null ||
+                input.SourceConnections is not null || input.PermissionsAppId is not null || input.RemoveAppId is not null ||
+                input.RemovalOptions is not null || input.HostPathChange is not null)
+                throw new AppLifecycleException("dev_review_invalid", "Choose one workspace access review.");
+            await RequirePermissionAsync(caller, CoreAppPermissions.AppLifecycle, ct);
+            await RequirePermissionAsync(caller, CoreAppPermissions.Sources, ct);
+            var workspaceEntry = approvals.Add(new InstallationApproval
+            {
+                UserId = caller.UserId, CallerAppId = caller.AppId, IdentityToken = caller.Token,
+                CallerName = caller.Name, ExpiresAt = clock.UtcNow.Add(InstallationApprovalStore.Lifetime),
+                WorkspaceManifest = await lifecycle.PrepareWorkspaceManifestReviewAsync(workspace, caller.UserId, ct),
+            });
+            await RecordAsync(workspaceEntry, "requested", ct);
+            return workspaceEntry;
+        }
         if (input.HostPathChange is { } change)
         {
             if (input.RemoveAppId is not null || input.RemovalOptions is not null || input.PermissionsAppId is not null ||
@@ -171,16 +189,19 @@ internal sealed class InstallationApprovalService(
     public async Task RequireRequestPermissionsAsync(InstallationCaller caller, InstallationApproval entry, CancellationToken ct)
     {
         if (entry.Permission is { } permission) await RequirePermissionAsync(caller, permission, ct);
+        if (entry.WorkspaceManifest is not null) await RequirePermissionAsync(caller, CoreAppPermissions.Sources, ct);
         if (entry.RequiresSources) await RequireSourceConnectionsAsync(caller, ct);
     }
 
     public Task RecordAsync(InstallationApproval entry, string outcome, CancellationToken ct)
         => audit.AppendAsync(new AuditRecord($"audit_{Guid.NewGuid():N}", entry.EnvironmentPlan is not null ? "core.environment.approval" : entry.AssistantAccessPlan is not null ? "app.mcp.approval" : entry.PermissionPlan is null ? "app.installation.approval" : "app.permissions.approval", "app",
-            entry.EnvironmentPlan?.AppId ?? entry.AssistantAccessPlan?.AssistantId ?? entry.HostPathPlan?.Change.AppId ?? entry.PermissionPlan?.AppId ?? entry.RemovalPlan?.AppId ?? entry.InstallPlan?.AppId ?? entry.UpdatePlan?.AppId, outcome, entry.UserId, clock.UtcNow,
+            entry.WorkspaceManifest?.AppId ?? entry.EnvironmentPlan?.AppId ?? entry.AssistantAccessPlan?.AssistantId ?? entry.HostPathPlan?.Change.AppId ?? entry.PermissionPlan?.AppId ?? entry.RemovalPlan?.AppId ?? entry.InstallPlan?.AppId ?? entry.UpdatePlan?.AppId, outcome, entry.UserId, clock.UtcNow,
             new Dictionary<string, string> { ["requestId"] = entry.Id, ["caller"] = entry.CallerAppId ?? "operator",
                 ["hostPathChange"] = entry.HostPathPlan is { } path ? CoreJson.Text(path.Change) : "",
                 ["environmentConsentSaved"] = entry.SaveEnvironmentConsent.ToString(),
-                ["operation"] = entry.EnvironmentPlan is not null ? "core-environment" : entry.AssistantAccessPlan is not null ? "mcp-access" : entry.HostPathPlan?.Change.Kind ?? (entry.RemovalPlan is not null ? "remove" : entry.PermissionPlan is not null ? "permissions" : entry.UpdatePlan is not null ? "update" : "install"),
+                ["workspaceCandidate"] = entry.WorkspaceManifest?.CandidateDigest ?? "",
+                ["workspaceReview"] = entry.WorkspaceManifest?.PlanDigest ?? "",
+                ["operation"] = entry.WorkspaceManifest is not null ? "workspace-access" : entry.EnvironmentPlan is not null ? "core-environment" : entry.AssistantAccessPlan is not null ? "mcp-access" : entry.HostPathPlan?.Change.Kind ?? (entry.RemovalPlan is not null ? "remove" : entry.PermissionPlan is not null ? "permissions" : entry.UpdatePlan is not null ? "update" : "install"),
                 ["removalOptions"] = entry.RemovalPlan is { } removal ? CoreJson.Text(removal.Options) : "",
                 ["assistantTarget"] = entry.AssistantAccessPlan?.Target.Id ?? "",
                 ["assistantAccessEnabled"] = entry.AgentEnabled.ToString(),
@@ -219,7 +240,9 @@ internal sealed class InstallationApprovalService(
                     throw new AppIdentityException("admin_required", "The requesting administrator no longer has access.");
                 await RequireRequestPermissionsAsync(new(entry.UserId, appId, entry.IdentityToken, entry.CallerName), entry, ct);
             }
-            if (entry.EnvironmentPlan is { } environmentPlan)
+            if (entry.WorkspaceManifest is { } workspacePlan)
+                await lifecycle.ApproveWorkspaceManifestAsync(workspacePlan, entry.UserId, entry.SelectedOptionalPermissions ?? [], ct);
+            else if (entry.EnvironmentPlan is { } environmentPlan)
                 await (environments ?? throw new InvalidOperationException()).ApproveAsync(environmentPlan, entry.SaveEnvironmentConsent, ct);
             else if (entry.AssistantAccessPlan is { } agentPlan)
                 await (agents ?? throw new InvalidOperationException()).ApplyAssistantReviewAsync(agentPlan,
@@ -509,11 +532,11 @@ internal static class InstallationApprovalEndpoints
     {
         static string E(string? text) => WebUtility.HtmlEncode(text ?? "");
         var installing = entry.InstallPlan is not null;
-        var title = entry.EnvironmentPlan is not null ? "Approve trusted Core launch" : entry.AssistantAccessPlan is not null ? "Review assistant MCP access" : entry.HostPathPlan is not null ? "Confirm host path access" : entry.RemovalPlan is not null ? "Confirm app removal" : entry.PermissionPlan is not null ? "Review app permissions" : installing ? "Confirm app installation" : "Confirm app update";
-        var name = entry.EnvironmentPlan?.DisplayName ?? entry.AssistantAccessPlan?.DisplayName ?? entry.HostPathPlan?.DisplayName ?? entry.RemovalPlan?.DisplayName ?? entry.PermissionPlan?.DisplayName ?? entry.InstallPlan?.DisplayName ?? entry.UpdatePlan?.DisplayName ?? entry.UpdatePlan?.AppId;
-        var permissions = entry.PermissionPlan?.Required ?? entry.InstallPlan?.CorePermissions ?? entry.UpdatePlan?.TargetCorePermissions ?? [];
-        var before = entry.PermissionPlan?.Granted ?? entry.UpdatePlan?.CurrentCorePermissions ?? [];
-        var optional = entry.PermissionPlan?.Optional ?? entry.InstallPlan?.OptionalCorePermissions ?? entry.UpdatePlan?.TargetOptionalCorePermissions ?? [];
+        var title = entry.WorkspaceManifest is not null ? "Approve workspace access" : entry.EnvironmentPlan is not null ? "Approve trusted Core launch" : entry.AssistantAccessPlan is not null ? "Review assistant MCP access" : entry.HostPathPlan is not null ? "Confirm host path access" : entry.RemovalPlan is not null ? "Confirm app removal" : entry.PermissionPlan is not null ? "Review app permissions" : installing ? "Confirm app installation" : "Confirm app update";
+        var name = entry.WorkspaceManifest?.DisplayName ?? entry.EnvironmentPlan?.DisplayName ?? entry.AssistantAccessPlan?.DisplayName ?? entry.HostPathPlan?.DisplayName ?? entry.RemovalPlan?.DisplayName ?? entry.PermissionPlan?.DisplayName ?? entry.InstallPlan?.DisplayName ?? entry.UpdatePlan?.DisplayName ?? entry.UpdatePlan?.AppId;
+        var permissions = entry.WorkspaceManifest?.RequiredPermissions ?? entry.PermissionPlan?.Required ?? entry.InstallPlan?.CorePermissions ?? entry.UpdatePlan?.TargetCorePermissions ?? [];
+        var before = entry.WorkspaceManifest?.BaseGrantedPermissions ?? entry.PermissionPlan?.Granted ?? entry.UpdatePlan?.CurrentCorePermissions ?? [];
+        var optional = entry.WorkspaceManifest?.OptionalPermissions ?? entry.PermissionPlan?.Optional ?? entry.InstallPlan?.OptionalCorePermissions ?? entry.UpdatePlan?.TargetOptionalCorePermissions ?? [];
         string DeclarationChange(string permission, bool required)
         {
             var plan = entry.PermissionPlan;
@@ -543,7 +566,7 @@ internal static class InstallationApprovalEndpoints
         var roleItems = roles.Count == 0 ? "<li>No provider roles requested</li>" : string.Join("", roles.Select(role =>
             $"<li>{E(PlatformCapabilities.DescribeRole(role))}{(!installing && !previousRoles.Contains(role, StringComparer.Ordinal) ? " <strong>(new)</strong>" : "")}</li>"));
         roleItems += string.Join("", previousRoles.Except(roles, StringComparer.Ordinal).Select(role => $"<li>Removed: {E(PlatformCapabilities.DescribeRole(role))}</li>"));
-        var source = entry.FeedsUrl ?? entry.InstallPlan?.ManifestPath ?? entry.UpdatePlan?.ManifestPath;
+        var source = entry.WorkspaceManifest?.SourcePath ?? entry.FeedsUrl ?? entry.InstallPlan?.ManifestPath ?? entry.UpdatePlan?.ManifestPath;
         var warning = entry.InstallPlan?.TargetRuntimeType is "localCommand" or "mixed"
             ? "<p class=warning>This app runs commands directly on your host, outside a container. Only install code you trust.</p>" : "";
         if (entry.InstallPlan is { System: true })
@@ -564,7 +587,9 @@ internal static class InstallationApprovalEndpoints
                 + $"<p class=source>Manifest: {E(feedInstall.ManifestPath)}</p>";
         var sourceAndRoles = entry.PermissionPlan is not null ? "" : sourceReview
             + (roles.Count == 0 && previousRoles.Count == 0 ? "" : $"<h2>Provider roles</h2><ul>{roleItems}</ul>");
-        var review = entry.EnvironmentPlan is { } environment ? RenderEnvironmentConsent(environment) : entry.AssistantAccessPlan is not null ? "" : entry.HostPathPlan is { } pathPlan ? "<ul>" + string.Join("", pathPlan.Details.Select(d => $"<li>{E(d)}</li>")) + "</ul>" : entry.RemovalPlan is { } removal ? RenderRemoval(removal, entry.CallerAppId)
+        var review = entry.WorkspaceManifest is { } workspaceReview
+            ? sourceReview + "<ul>" + string.Join("", workspaceReview.Changes.Select(change => $"<li>{E(change)}</li>")) + "</ul><p>Allow this exact workspace manifest to use the listed additional access. The installed package stays unchanged.</p>"
+            : entry.EnvironmentPlan is { } environment ? RenderEnvironmentConsent(environment) : entry.AssistantAccessPlan is not null ? "" : entry.HostPathPlan is { } pathPlan ? "<ul>" + string.Join("", pathPlan.Details.Select(d => $"<li>{E(d)}</li>")) + "</ul>" : entry.RemovalPlan is { } removal ? RenderRemoval(removal, entry.CallerAppId)
             : $"{sourceAndRoles}{(permissions.Count == 0 && !removed.Any() ? "" : $"<h2>Core permissions</h2><ul>{rights}{string.Join("", removed)}</ul>")}{warning}{accessReview}";
         if (entry.UpdatePlan is { } updatePlan)
             review = RenderUpdateMetadata(updatePlan) + review;
@@ -575,7 +600,7 @@ internal static class InstallationApprovalEndpoints
         var unavailableRuntime = entry.InstallPlan is { RuntimeChoices.Count: > 0 } runtimePlan &&
             !runtimePlan.RuntimeChoices.Any(choice => choice.Key == runtimePlan.TargetRuntime && choice.Available);
         if (entry.AssistantAccessPlan is { } agentPlan) optionalReview = RenderAssistantAccess(agentPlan);
-        var action = entry.EnvironmentPlan is not null ? "Allow launch" : entry.AssistantAccessPlan is not null ? "Save MCP access" : entry.HostPathPlan is not null ? "Approve change" : entry.RemovalPlan is not null ? "Remove app" : entry.PermissionPlan is not null ? "Save permissions" : installing ? "Install app" : "Apply update";
+        var action = entry.WorkspaceManifest is not null ? "Allow workspace access" : entry.EnvironmentPlan is not null ? "Allow launch" : entry.AssistantAccessPlan is not null ? "Save MCP access" : entry.HostPathPlan is not null ? "Approve change" : entry.RemovalPlan is not null ? "Remove app" : entry.PermissionPlan is not null ? "Save permissions" : installing ? "Install app" : "Apply update";
         var body = entry.Status == "pending"
             ? $"{nameLine}<p class=muted>Requested by {E(entry.CallerName)}</p>{(notice is null ? "" : $"<p role=status>{E(notice)}</p>")}{review}<form method=post>{installChoices}{optionalReview}<div class=actions><input type=hidden name=nonce value=\"{E(nonce)}\"><button name=decision value=deny>Cancel</button><button class=primary name=decision value=approve{(unavailableRuntime ? " disabled" : "")}>{action}</button></div></form>"
             : $"<p role=status>{E(entry.Status switch { "succeeded" => "Completed. You can close this window.", "denied" => "Cancelled. Nothing was changed. You can close this window.", "failed" => entry.Error ?? "The operation failed.", "executing" => "Your request was accepted. Follow its progress in the app. You can close this window.", _ => "Finish preparing this request in the app first." })}</p>";

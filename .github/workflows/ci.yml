@@ -418,7 +418,7 @@ jobs:
         run: >-
           dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj
           --filter
-          "FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop|FullyQualifiedName~SourceDocuments_ReferenceMetadataSupportsLfAndCrLf|FullyQualifiedName~WorkspaceGit_"
+          "FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop|FullyQualifiedName~SourceDocuments_ReferenceMetadataSupportsLfAndCrLf|FullyQualifiedName~WorkspaceGit_|FullyQualifiedName~JsonStorageTests"
 
       - name: Verify Windows shared receipt replacement
         run: >-

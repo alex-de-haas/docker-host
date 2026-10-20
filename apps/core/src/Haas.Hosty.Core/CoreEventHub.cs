@@ -47,6 +47,11 @@ internal sealed class CoreEventHub
         foreach (var target in targets) target.TryWrite(new(WorkspaceChanged, id));
     }
 
+    internal bool HasWorkspaceSubscribers
+    {
+        get { lock (gate) return subscriptions.Any(s => s.Workspaces && s.IsActive); }
+    }
+
     public bool HasResourceSubscribers
     {
         get { lock (gate) return subscriptions.Any(s => s.Resources && s.IsActive); }

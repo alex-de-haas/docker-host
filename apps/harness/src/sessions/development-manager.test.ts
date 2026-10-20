@@ -285,6 +285,30 @@ describe("development session coordination", () => {
     expect(client.call).toHaveBeenCalledWith(record.id, "fresh-token", "list", {});
     expect(sent.at(-1)).toContain(tree.path);
   });
+  it.each(["Original workspace purpose", null])("keeps the prepare fallback name %s after a lost response, title change and restart", async title => {
+    const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"], title: title ?? undefined });
+    const input = { appId: "notes", requestId: "12345678-1234-4234-8234-123456789abc" };
+    const forwarded: Record<string, unknown>[] = [];
+    let fingerprint: string | undefined;
+    vi.mocked(client.call).mockImplementation(async (_id, _token, action, body) => {
+      if (action !== "prepare") return action === "list" ? { workspaces: [] } : tree;
+      forwarded.push(structuredClone(body));
+      const candidate = JSON.stringify(body);
+      if (fingerprint === undefined) { fingerprint = candidate; throw new Error("response lost after Core allocated the worktree"); }
+      if (candidate !== fingerprint) throw new AppContextError(409, "workspace_request_conflict", "The prepare request arguments changed.");
+      return tree;
+    });
+    await expect(manager.workspaceAction(record.id, "prepare", input, "token", "admin")).rejects.toThrow("response lost");
+    await manager.renameSession(record.id, "Expanded conversation scope");
+    await manager.shutdown(); manager = build();
+    await expect(manager.workspaceAction(record.id, "prepare", input, "fresh-token", "admin")).resolves.toEqual(tree);
+    expect(forwarded).toEqual([forwarded[0], forwarded[0]]);
+    expect(forwarded[0]!.name).toBe(title ?? undefined);
+    expect((await store.readRecord(record.id))!.title).toBe("Expanded conversation scope");
+    await expect(manager.workspaceAction(record.id, "prepare", { ...input, name: "Explicitly changed purpose" }, "fresh-token", "admin"))
+      .rejects.toMatchObject({ code: "workspace_request_conflict" });
+    expect(forwarded.at(-1)!.name).toBe("Explicitly changed purpose");
+  });
   it("recovers a lost prepare response before running and refuses execution when lease coordination fails", async () => {
     const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
     vi.mocked(client.call).mockRejectedValueOnce(new Error("response lost"));
@@ -513,19 +537,19 @@ it("coordinates a session Pause through admission, stopping and confirmation", a
 });
 
 
-it("queues reviewed activation until agent exit and rechecks its dispatch guard", async () => {
+it.each(["activation-apply", "execution-select"] as const)("queues reviewed %s until agent exit and rechecks its dispatch guard", async action => {
   const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
   await manager.postMessage(record.id, "work", "token");
   const input = { workspaceId: "a".repeat(64), requestId: "c0da75ef-bd6c-4b61-99ad-241a613aa2d7", selection: { coreSelected: false }, planDigest: "review" };
   const guard = vi.fn().mockResolvedValue(undefined);
   vi.mocked(client.call).mockClear();
-  await expect(manager.workspaceAction(record.id, "activation-apply", input, undefined, undefined, guard)).resolves.toMatchObject({ state: "queued" });
-  expect(client.call).not.toHaveBeenCalledWith(record.id, expect.anything(), "activation-apply", expect.anything());
+  await expect(manager.workspaceAction(record.id, action, input, undefined, undefined, guard)).resolves.toMatchObject({ state: "queued" });
+  expect(client.call).not.toHaveBeenCalledWith(record.id, expect.anything(), action, expect.anything());
   await finish(record.id);
-  await vi.waitFor(() => expect(client.call).toHaveBeenCalledWith(record.id, "token", "activation-apply", input));
+  await vi.waitFor(() => expect(client.call).toHaveBeenCalledWith(record.id, "token", action, input));
   expect(guard).toHaveBeenCalledOnce();
   const calls = vi.mocked(client.call).mock.calls.map(c => c[2]);
-  expect(calls.indexOf("release-lease")).toBeLessThan(calls.indexOf("activation-apply"));
+  expect(calls.indexOf("release-lease")).toBeLessThan(calls.indexOf(action));
 });
 it("does not dispatch queued activation after policy revocation", async () => {
   const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
