@@ -125,7 +125,7 @@ test('completed-CI publications bind every source consumer while SDKs preserve p
     assert.doesNotMatch(text, /\$\{?GITHUB_SHA\}?|github\.sha/);
     assert.match(text, /source-sha: \$\{\{ needs.validation.outputs.source-sha \}\}/);
     assert.doesNotMatch(text, /uses: actions\/attest-build-provenance/);
-    assert.match(text, /predicate-type: https:\/\/slsa.dev\/provenance\/v1\n          predicate-path: publication-provenance.json/);
+    assert.ok(text.includes('predicate-type: https://github.com/alex-de-haas/docker-host/blob/main/docs/features/ci-feedback-loop/feature.md#publication-provenance-v1\n          predicate-path: publication-provenance.json'), `${file} declares the supported custom predicate contract`);
     if (file.endsWith('-image.yml')) {
       assert.match(text, /context: git/);
       const attach = text.indexOf('run: git switch --create hosty-publish-source "$PUBLISH_SOURCE_SHA"');
