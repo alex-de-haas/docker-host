@@ -3,6 +3,7 @@ using System.Text;
 using Haas.Hosty.Initialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Haas.Hosty.Core.Tests.Http;
@@ -185,6 +186,75 @@ public sealed class HostInitializationTests
             finally { await service.StopAsync(default); }
         }
         finally { Directory.Delete(directory, true); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SubmitAsync_FailedWorkerStillReleasingGate_RejectsChangedReplayAndProcessesRetry(bool review)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "hosty-init-completion-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        using var logger = new CompletingWorkerLogger();
+        try
+        {
+            var catalog = Path.Combine(directory, "distribution.json");
+            await File.WriteAllTextAsync(catalog, """
+              {"schemaVersion":"distribution-apps.0.1","apps":[
+               {"id":"example.missing","title":"Missing","manifestRef":"missing.json","defaultEnabled":true}]}
+              """);
+            await using var host = await CoreHttpHarness.StartAsync(configure: services => {
+                services.AddSingleton(new DistributionAppsProvider(NullLogger<DistributionAppsProvider>.Instance, catalog, [directory]));
+                services.AddSingleton<ILogger<HostInitializationService>>(logger);
+            });
+            var service = host.Services.GetRequiredService<HostInitializationService>();
+            var input = new InitializationRequest(Guid.NewGuid().ToString(), ["example.missing"]);
+            await service.SubmitAsync(input, default);
+            await service.StartAsync(default);
+            try
+            {
+                await logger.FirstFailure.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                Assert.Equal("failed", (await service.GetAsync(default)).Phase);
+                var conflict = await Assert.ThrowsAsync<AppLifecycleException>(() => service.SubmitAsync(input with { Apps = [] }, default));
+                Assert.Equal("initialization_request_conflict", conflict.Code);
+
+                var retry = review ? input with { RequestId = Guid.NewGuid().ToString(), Apps = [] } : input;
+                var submission = service.SubmitAsync(retry, default);
+                logger.Release.Set();
+                await submission;
+                if (review)
+                {
+                    await WaitForAsync(service, "ready");
+                    var retired = await Assert.ThrowsAsync<AppLifecycleException>(() => service.SubmitAsync(input, default));
+                    Assert.Equal("initialization_request_superseded", retired.Code);
+                }
+                else
+                {
+                    await WaitUntilAsync(() => logger.FailureCount == 2);
+                    Assert.Equal("failed", (await service.GetAsync(default)).Phase);
+                }
+                Assert.Equal(HostInitializationService.Normalize(retry).RequestId, (await service.GetAsync(default)).RequestId);
+            }
+            finally { logger.Release.Set(); await service.StopAsync(default); }
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    private sealed class CompletingWorkerLogger : ILogger<HostInitializationService>, IDisposable
+    {
+        private int failureCount;
+        public int FailureCount => Volatile.Read(ref failureCount);
+        public TaskCompletionSource FirstFailure { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public ManualResetEventSlim Release { get; } = new(false);
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel level) => true;
+        public void Log<TState>(LogLevel level, EventId id, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (level != LogLevel.Warning || Interlocked.Increment(ref failureCount) != 1) return;
+            FirstFailure.TrySetResult();
+            if (!Release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("The test did not release the completed worker.");
+        }
+        public void Dispose() => Release.Dispose();
     }
 
     private static async Task<InitializationStatus> WaitForAsync(HostInitializationService service, string phase)

@@ -45,8 +45,10 @@ roots. Administrator existence is read from authoritative user state, independen
 
 A hosted Core worker owns accepted work, so losing the CLI or an HTTP response does not cancel an
 installation. Pending/preparing work resumes after Core restart. A retry inspects installed apps,
-keeps completed work and rechecks health. Mutable feeds or manifests cannot silently replace the
-accepted inputs. A completed initialization never reinstalls apps removed afterwards.
+keeps completed work and rechecks health. Request-identity conflicts are rejected even while the
+worker holds its execution lock. A retry or review submitted as terminal state becomes visible waits
+for that lock to be released, so completion cannot silently discard the submission.
+Mutable feeds or manifests cannot silently replace the accepted inputs. A completed initialization never reinstalls apps removed afterwards.
 
 Repeating init before registration issues a fresh ordinary setup link. Repeating it afterwards
 reports the existing destination and points to `hosty setup` for application management. Existing

@@ -418,6 +418,38 @@ the subsequent authorized system upgrade is recorded below. The operator's runni
   browser profiles, setup tokens or Core credentials before graceful VM shutdown. UTM subsequently
   reports both the QA VM and untouched clean baseline stopped.
 
+### Main integration revalidation — 2026-10-21
+
+- Merge current main at `540ce55a` into this feature with a regular merge commit. The only textual
+  conflicts are the platform and rolling-channel versions: retain 0.150.0 over main's 0.149.1.
+  Main's automatic workspace mount fix and design-plan updates are preserved.
+- The initial affected Core run reports 295 passed and one failure. It exposes a completion race:
+  a failed state is visible before the worker releases its execution gate, so changed replay can
+  return busy and an immediate valid retry can be treated as observation without restarting work.
+  Replay validation now applies under contention too; terminal-state submissions acquire the gate
+  before being processed. Two deterministic regression cases hold the worker at that boundary and
+  verify both ordinary retry and explicit review.
+- On SDK 10.0.402, the final affected Core run passes all 298 tests with zero failures/skips, including
+  initialization, environments/consent/resources, ports, registry, mounts and source-path authority.
+  The initialization-only run passes 12 tests. Core and CLI test commands rebuild their exact projects
+  successfully; the CLI suite passes all 300 tests with zero failures/skips.
+- Cold `npm run core:aot` and CLI `dotnet publish` for `osx-arm64` pass on the merged code.
+  Core reports no new trimming/AOT warnings; existing CS9113/CA1416 warnings remain. The native CLI
+  version probe returns 0.150.0.
+- CI policy passes 27 tests. Version consistency, regenerated documentation/index/link validation and
+  staged/unstaged whitespace checks pass.
+- The full Core suite, Shell/SDK suites, other architecture AOT builds and browser journeys are not
+  rerun for this merge: the focused checks cover the changed Core paths and the replay fix. Earlier
+  broad/native acceptance above belongs to the pre-merge candidate and is not relabeled as a new run.
+  No live Core restart, VM startup or sandbox allocation occurs. D10-D11 remain open as listed below.
+
+The final affected Core command uses the successfully rebuilt Debug output:
+
+```sh
+dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --no-build \
+  --filter 'FullyQualifiedName~HostInitializationTests|FullyQualifiedName~InitializationListenerTests|FullyQualifiedName~CoreEnvironment|FullyQualifiedName~RuntimePortAllocatorTests|FullyQualifiedName~ManagedCollection_|FullyQualifiedName~Mount|FullyQualifiedName~OperatorSourceSelection_|FullyQualifiedName~SourceAndMountWrites_|FullyQualifiedName~SourceSetAndClear_|FullyQualifiedName~SourceParentOfWritableMount_|FullyQualifiedName~CaseAliases_|FullyQualifiedName~RemovedDesiredMount_|FullyQualifiedName~AppRegistryStoreTests'
+```
+
 ### Outstanding verification owned by D10-D11
 
 D10 needs the coordinated published CLI/Core/Shell artifacts for the real CLI-only download

@@ -79,21 +79,27 @@ internal sealed class HostInitializationService(
         if (!await gate.WaitAsync(0, ct))
         {
             var running = await ReadAsync(ct);
-            if (running?.Fingerprint != fingerprint || running.Request.RequestId != input.RequestId)
-                throw new AppLifecycleException("initialization_busy", "Initialization is running. Observe or retry its original request ID and selection.");
-            return await GetAsync(ct);
+            ValidateReplay(running, input, fingerprint);
+            if (running?.Phase is "failed" or "ready")
+            {
+                // Terminal state is visible just before the worker releases the gate. Queue the
+                // submission so an immediate retry is not mistaken for observation and dropped.
+                await gate.WaitAsync(ct);
+            }
+            else
+            {
+                if (running?.Fingerprint != fingerprint || running.Request.RequestId != input.RequestId)
+                    throw new AppLifecycleException("initialization_busy", "Initialization is running. Observe or retry its original request ID and selection.");
+                return await GetAsync(ct);
+            }
         }
         try
         {
             var prior = await ReadAsync(ct);
-            if (prior?.PreviousRequests?.FirstOrDefault(r => r.RequestId == input.RequestId) is { } retired)
-                throw new AppLifecycleException(Fingerprint(retired) == fingerprint ? "initialization_request_superseded" : "initialization_request_conflict",
-                    "This request belongs to an earlier reviewed selection. Observe and resume the current initialization request.");
+            ValidateReplay(prior, input, fingerprint);
             var review = prior?.Phase == "failed" && prior.Request.RequestId != input.RequestId;
             if (prior is not null && !review)
             {
-                if (prior.Request.RequestId == input.RequestId && prior.Fingerprint != fingerprint)
-                    throw new AppLifecycleException("initialization_request_conflict", "This request ID already belongs to another app selection.");
                 if (prior.Phase == "ready") return await GetAsync(ct);
                 if (prior.Fingerprint != fingerprint)
                     throw new AppLifecycleException("initialization_selection_conflict", "Resume the accepted selection first; use hosty setup afterwards to change installed apps.");
@@ -120,6 +126,15 @@ internal sealed class HostInitializationService(
         }
         finally { gate.Release(); }
         return await GetAsync(ct);
+    }
+
+    private static void ValidateReplay(InitializationDocument? state, InitializationRequest input, string fingerprint)
+    {
+        if (state?.PreviousRequests?.FirstOrDefault(r => r.RequestId == input.RequestId) is { } retired)
+            throw new AppLifecycleException(Fingerprint(retired) == fingerprint ? "initialization_request_superseded" : "initialization_request_conflict",
+                "This request belongs to an earlier reviewed selection. Observe and resume the current initialization request.");
+        if (state?.Request.RequestId == input.RequestId && state.Fingerprint != fingerprint)
+            throw new AppLifecycleException("initialization_request_conflict", "This request ID already belongs to another app selection.");
     }
 
     public async Task<AuthBootstrapTokenResponse> SetupLinkAsync(CancellationToken ct)

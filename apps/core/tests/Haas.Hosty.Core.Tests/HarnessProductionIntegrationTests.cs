@@ -106,6 +106,8 @@ public sealed partial class CoreLifecycleServiceTests
                 var actual = (await childApps.GetAppAsync(harness.Id))!;
                 Assert.Equal(profile, actual.SelectedRuntime);
                 Assert.Equal("running", actual.RuntimeState);
+                Assert.Empty(AppSummary.From(actual).Mounts);
+                Assert.Empty(actual.ActiveMountPaths ?? []);
                 using var client = await AppClient();
                 using var response = await client.GetAsync("/api/runtime");
                 Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
