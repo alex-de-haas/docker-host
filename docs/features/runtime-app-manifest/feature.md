@@ -101,7 +101,7 @@ Use explicit `localPort` / `hostPort` only as an override. If an explicit local 
 
 A public endpoint's local browser address is a stable app hostname beneath `hosty.localhost` with the assigned port ([local browser origins](../local-browser-origins/feature.md)). Install review only asks for manifest-owned settings. After installation, each public endpoint gets a Hosty-managed optional setting named `HOSTY_PUBLIC_ORIGIN_{ENDPOINT_KEY}`, where the endpoint key is normalized to uppercase env style. For example, `http` becomes `HOSTY_PUBLIC_ORIGIN_HTTP` and `app.http` becomes `HOSTY_PUBLIC_ORIGIN_APP_HTTP`. The `HOSTY_PUBLIC_ORIGIN_` prefix is reserved for Hosty-managed settings; manifest-provided settings with that prefix are ignored and cannot pre-seed public origins. Leave the generated setting empty for local `localhost` URLs, or set it to an absolute `http`/`https` origin such as `https://project.example.com` when Shell and standalone links should use an externally exposed origin. The public origin setting must be an origin only, without a path, query, or fragment.
 
-### Service Injection, Storage And Resources
+### Service Injection And Storage
 
 Services can declare `injection: { appServiceToken: false, appIdentityToken: false, settings: [] }`
 to omit those credentials and settings. Omitted fields preserve the legacy defaults; settings can
@@ -113,10 +113,16 @@ multiple targets per service. Profile-specific targets override runtime-type def
 environment variable. Traversal, redirected paths, duplicate variables and overlapping container
 destinations are rejected. Local mode remains the host user's normal permission boundary.
 
-Docker service runtimes accept `resources: { memoryBytes, cpus, pids }`. Ordinary starts apply those
-limits; child Core admission retains its existing service allocation policy. Explicit service
-contracts participate in keep-apps adoption, including installation/configuration identity,
-credential exclusions, mounts and ordinary resource limits.
+The `app.0.1` manifest does not configure memory, CPU or PID limits. A service runtime's
+`resources` field is ignored as an unknown extension, including existing `memory: "1g"` and
+`memoryBytes` forms. It does not affect validation, Docker arguments or keep-apps adoption.
+Core preserves the original manifest JSON when saving an installed copy. No manifest migration
+or schema version change is required. Ordinary Docker starts add no manifest-derived limits;
+child Core admission continues to enforce its Core-owned environment allocation.
+
+Explicit service contracts participate in keep-apps adoption, including installation/configuration
+identity, credential exclusions and mounts. Existing containers keep their factual Docker limits
+when adopted; removing manifest interpretation does not silently update or restart containers.
 
 `externalMounts` also supports a Core-owned `managed-workspaces` collection with `scope: "instance"`,
 an explicit service and reviewed `apps.sources.full` permission. Trees are rw (or declared ro) and
@@ -323,3 +329,6 @@ for the endpoint and SDK contracts and [App installation](../app-installation-sd
 - Manifest projection tests keep install, update, and live reconciliation aligned across app contracts.
 - Normalize the legacy `apps.sources` alias in required and optional declarations, reject duplicate
   authority declared under both names, and keep all other retired permissions unsupported.
+- Accept and preserve legacy, newer and malformed `resources` extensions in `app.0.1` without
+  resource validation or Docker flags; cover install, selected/all-profile loading, start, update
+  planning/application and keep-apps adoption. Core-owned environment limits still apply.

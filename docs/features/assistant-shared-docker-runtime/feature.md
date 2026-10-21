@@ -18,15 +18,17 @@ Retired `agentWorker` manifests fail validation explicitly.
 
 The API image contains the web export and conversation/MCP coordinator. The Worker image contains
 the provider SDKs, Codex CLI 0.162.1, Claude SDK 0.3.296 and its packaged Claude CLI, Node 24, Git
-2.56.0, Python, ripgrep and .NET SDK 10. Images and Harness packages share version 0.65.0. Worker
+2.56.0, Python, ripgrep and .NET SDK 10. Images and Harness packages share version 0.65.2. Worker
 does not need host agent CLIs, a Docker socket or another Docker daemon. `tini` supplies ordinary
 container signal/reaping behavior; the application starts known child processes directly.
 
 Docker admits one execution at a time, including translation and waiting for input. Local admits
 up to 32, subject to provider connection claims. Worker refusal is an explicit error. Normal and
-Autonomous modes retain their approval meanings. Worker has ordinary 4 GiB/2 CPU/512 PID limits;
-API has 512 MiB/0.5 CPU/128 PID limits. Child Core admission supplies its existing service budgets
-instead, without a second agent reservation or credit.
+Autonomous modes retain their approval meanings. The manifest declares no memory, CPU or PID
+limits for either service. Ordinary Docker launches add no app-authored resource limits.
+Child Core admission supplies its existing Core-owned service budgets without a second agent
+reservation or credit. An adopted running container retains its existing Docker configuration
+until the operator recreates it through ordinary lifecycle.
 
 ## Direct HTTP And SSE
 

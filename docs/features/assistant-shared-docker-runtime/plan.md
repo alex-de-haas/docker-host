@@ -25,6 +25,15 @@ Planning baseline: `ad9368ecbd6d48c6bfb03a8a8dea05e0eabedd4f`, Core 0.146.0 / Ha
 Reconcile the implementation branch with the then-current code before making changes; these are
 baseline versions, not frozen release targets.
 
+## Resource Policy Scope Correction
+
+On 2026-10-21 the owner requested removal of manifest-authored memory, CPU and PID limits and
+restoration of `app.0.1` compatibility without a schema change. D18 retains ordinary service
+lifecycle and existing Core-owned environment admission. Operator-configured instance defaults
+and per-application limits are owned exclusively by the separate
+[Core application resource policy plan](../app-resource-policy/plan.md); they are not implemented
+or implied complete by this worker plan. Existing workload/concurrency controls remain unchanged.
+
 ## Required Change
 
 | Baseline | Target |
@@ -358,7 +367,7 @@ branch/PR. Checks record completed implementation and its verification; platform
 
 - [x] D16. Finalize typed HTTP/SSE API and manifest compatibility examples against this owner-approved plan before implementation; no unanswered product decision is delegated to Core agent-specific behavior.
 - [x] D17. Implement generic service injection filters, contained storage targets and managed collection mount/consumer semantics; verify a non-agent fixture, existing app compatibility and specific-worktree cleanup checks.
-- [x] D18. Package and declare api/worker for Docker, Local and development, with SDK/CLI dependencies, discovery, health, normal lifecycle/rollback and resource limits.
+- [x] D18. Package and declare api/worker for Docker, Local and development, with SDK/CLI dependencies, discovery, health, normal lifecycle/rollback and existing Core-owned environment resource admission.
 
 ### Phase 2: Execution And Source Access
 
