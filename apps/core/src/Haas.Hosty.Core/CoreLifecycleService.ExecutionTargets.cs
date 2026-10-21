@@ -6,8 +6,8 @@ internal sealed partial class CoreLifecycleService
 {
     internal async Task<string?> PackageRuntimeAsync(AppRecord app, CancellationToken ct)
     {
-        var installed = await manifests.LoadAsync(app.ManifestPath!, null, ct);
-        var releases = installed.Manifest.RuntimeProfiles.Where(p => !p.Development).ToArray();
+        var installed = await manifests.ReadRuntimeProfilesAsync(app.ManifestPath!, ct);
+        var releases = installed.Where(p => !p.Development).ToArray();
         if (releases.Any(p => p.Key == app.SelectedRuntime)) return app.SelectedRuntime;
         var saved = await JsonStorage.ReadAsync<AppPackageBaseline>(Path.Combine(AppExecutionStore.DirectoryFor(paths, app.Id), "package.json"), ct);
         if (saved?.Installation == app.InstalledAt && releases.Any(p => p.Key == saved.Runtime)) return saved.Runtime;
@@ -20,11 +20,11 @@ internal sealed partial class CoreLifecycleService
         IReadOnlySet<string>? selectableWorktrees = null)
     {
         var app = await RequireAppAsync(appId, ct);
-        var installed = await manifests.LoadAsync(app.ManifestPath!, null, ct);
-        var choices = installed.Manifest.RuntimeProfiles.Where(p => !p.Development)
+        var installed = await manifests.ReadRuntimeProfilesAsync(app.ManifestPath!, ct);
+        var choices = installed.Where(p => !p.Development)
             .Select(p => new AppExecutionChoice("package", p.Key, null, null, p.Key)).ToList();
         var operation = await AppDevStore.ReadAsync(paths, app, ct);
-        AppExecutionChoice current = new(installed.Manifest.RuntimeProfiles.Any(p => p.Key == app.SelectedRuntime && !p.Development)
+        AppExecutionChoice current = new(installed.Any(p => p.Key == app.SelectedRuntime && !p.Development)
             ? "package" : "legacy", app.SelectedRuntime, null, null, app.SelectedRuntime ?? "Unknown runtime");
         foreach (var workspace in inventory.Workspaces.Where(w => w.State != "released"))
         {
@@ -52,10 +52,10 @@ internal sealed partial class CoreLifecycleService
     private string WorkspaceRecipePath(string appId, string treeId) => Path.Combine(
         AppExecutionStore.DirectoryFor(paths, appId), "recipes", treeId + ".json");
 
-    private async Task<string?> ReadWorkspaceRecipeAsync(AppRecord app, RuntimeAppManifestSelection installed, string treeId, CancellationToken ct,
+    private async Task<string?> ReadWorkspaceRecipeAsync(AppRecord app, IReadOnlyList<RuntimeProfileManifest> installed, string treeId, CancellationToken ct,
         string? configured = null)
     {
-        var profiles = installed.Manifest.RuntimeProfiles.Where(p => p.Development).ToArray();
+        var profiles = installed.Where(p => p.Development).ToArray();
         if (configured is not null) return profiles.Any(p => p.Key == configured) ? configured : null;
         var recipe = await JsonStorage.ReadAsync<WorkspaceExecutionRecipe>(WorkspaceRecipePath(app.Id, treeId), ct);
         if (recipe?.Installation == app.InstalledAt && profiles.Any(p => p.Key == recipe.Runtime)) return recipe.Runtime;
@@ -169,10 +169,10 @@ internal sealed partial class CoreLifecycleService
             throw DevError("workspace_forbidden", "This direct credential does not own the workspace.");
         // The operator deliberately selects editable workspace source; an editing lease is not a lifecycle lock.
         await DevWorkspaces.CheckDevTreeAsync(candidateTree, app, candidateTree.Owner, ct);
-        var installedRecipe = await manifests.LoadAsync(app.ManifestPath!, null, ct);
+        var installedRecipe = await manifests.ReadRuntimeProfilesAsync(app.ManifestPath!, ct);
         var runtime = request.Runtime ?? await ReadWorkspaceRecipeAsync(app, installedRecipe, candidateTree.Id, ct, resolvedTree.Runtime)
             ?? throw DevError("recipe_required", "Configure a development runtime during workspace setup.");
-        if (!installedRecipe.Manifest.RuntimeProfiles.Any(p => p.Key == runtime && p.Development))
+        if (!installedRecipe.Any(p => p.Key == runtime && p.Development))
             throw DevError("profile_unsupported", "The workspace needs an installed development execution recipe.");
         if (active is { Phase: "active" } && active.WorktreeId == candidateTree.Id && active.TargetRuntime == runtime && journal.Phase == "pending")
         {

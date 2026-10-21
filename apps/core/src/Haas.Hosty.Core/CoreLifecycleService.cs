@@ -5119,13 +5119,16 @@ internal sealed partial class CoreLifecycleService(
             return new(candidate.Selection, development.ExecutionProjectionPending || candidate.Selection.ManifestDigest != admitted.ManifestDigest, null,
                 await LoadDevExecutionSelectionAsync(development, cancellationToken, running: true));
         }
+        if (!validateDevelopmentContract && development is { Active: true } &&
+            app.SelectedRuntime == development.TargetRuntime && !development.Phase.StartsWith("return-", StringComparison.Ordinal))
+            return new(await LoadDevExecutionSelectionAsync(development, cancellationToken, running: true), false, null);
         // The reviewed installed copy remains separate from admitted workspace snapshots.
         // Retired contracts remain readable for stop/remove/update; new candidates and execution stay strict.
         var lastGood = await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken, allowUnsupportedPermissions: true, allowRetiredContracts: true);
         if (development is { Active: true })
         {
             // Launching code requires the reviewed live contract. Stop, logs and health use the
-            // installed recipe even when a source edit is invalid or changes that contract.
+            // retained recipe even when a source edit is invalid or changes that contract.
             if (validateDevelopmentContract && app.SelectedRuntime == development.TargetRuntime &&
                 app.SourceState?.LocalOverridePath == development.SourcePath && !development.Phase.StartsWith("return-", StringComparison.Ordinal))
             {
