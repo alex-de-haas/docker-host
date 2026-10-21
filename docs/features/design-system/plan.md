@@ -134,9 +134,10 @@ Four meanings, never mixed: **info** tells, **needs you** asks, **failed** repor
 | Needs you | `#F59E0B` | `#FEF3DC` | `#8A5300` | A decision or a fix: approval, degraded app, missing configuration |
 | Failed | `#D93036` | `#FDECEC` | `#B4232A` | Error: crashed, unreachable, refused |
 
-Color never carries a state alone. The normal state — running and healthy — is the only one shown as
-a bare dot, with its name in the tooltip and accessible label. Every other state carries a text
-label, and where there is no room for one, its own shape: a diamond for "needs you", an alert icon
+Color never carries a state alone. Where a row has room, every state carries its name, running
+included, as the Dashboard does. Where it does not — compact rows, navigation, tool badges — the
+normal state, running and healthy, is a bare dot with its name in the tooltip and accessible label,
+and every other state keeps a text label or, failing that, its own shape: a diamond for "needs you", an alert icon
 for "failed", a hollow ring for "no connection", and for "working" a pulse that becomes a static outer
 ring when motion is reduced. No two states differ by color alone: working shares Info's blue and is
 told apart by its motion and label.
@@ -370,20 +371,45 @@ Radius: `--radius: 0.625rem` (sm 6, md 8, lg 10, xl 14). Spacing on a 4 px base:
 
 ### Dashboard
 
-- No visible column-header row. Each row: tile, name followed by its provider role icons, and
-  version · runtime on a second line; status; resources as one line (`7.8% · 412 MB`); actions.
-- An available update shows in the version, not as an icon: `0.6.1 → 0.7.0` with the new version in
-  Info blue. The Update action stays with the row's actions on the right.
-- Status shows only a dot while running; a label appears only off-normal (Updating 64%, Degraded,
-  Stopped), plus the hand icon for manual start.
-- Actions: More (⋯) always; one contextual action when needed (Start, Update, Logs, Configure);
-  Restart and Logs appear on hover or focus.
-- Core is the first row with the platform's ink tile; listen address, public origin, ingress, data root
-  and runtime host expand under it. App rows expand into per-service status, endpoint and resources.
-- Header: filters as text toggles with counts (All, Running, In progress, Attention, Updates), the
-  aggregate resources with a sparkline, search, Check updates and the single primary Install app.
-- Compact layout, selected by the page's own width: list rows, filters in a menu, icon-only Install,
-  resources hidden until a row expands.
+Owner direction, 2026-10-21, from the `Shell` artboard. The installed-apps table in
+[Core App Shell](../core-app-shell/feature.md) is the functional baseline (D20 applies).
+
+- No visible column-header row. Core's row and every app row use the same fixed columns — identity
+  (flexible), state (188 px), resources (144 px) and actions (136 px) — so values line up down the
+  page.
+- **Identity:** tile, name followed by its provider role icons, and version · runtime on a second
+  line. An available update shows in the version, not as an icon: `0.6.1 → 0.7.0` with the new
+  version in Info blue. An app that does not start with the host adds "Manual start" to that line,
+  with a tooltip saying where to turn autostart back on; automatic start, the usual case, is not
+  marked. This replaces the hand icon beside the status.
+- **State:** the state's name always shows in its status color — Running, Updating, Degraded,
+  Stopped — after its dot or shape. A second, muted line carries the detail when there is one —
+  "Pulling image · 64%", "Gateway health check failing since 10:42", "Stopped by you · 09:12" —
+  wrapping to at most two lines, with the full text in the tooltip. The detail composes lifecycle
+  and health as the feature's tooltip does today.
+- **Resources:** two lines, CPU and RAM, each with its value and a sparkline of the last 15 minutes,
+  CPU in `--chart-1` and RAM in `--chart-2`; a stopped app shows a dash. One accessible label reads
+  both values.
+- **Actions:** at most one contextual action (Start, Update, Logs, Configure), at most 104 px wide and
+  truncated with its full name in the tooltip, then More (⋯), which holds Restart, Logs and the rest.
+  Nothing appears on hover, so a long label never shifts the columns.
+- **All apps row:** the apps table starts with a row in the same columns. Search sits at its left
+  and opens into a field in place of the title, filtering the rows together with the state filters;
+  the count reads "8", or "3 of 8" while filtered; the aggregate CPU and RAM with their sparklines
+  sit directly above the rows' resources. Its state column stays empty, since the filters already
+  count the states.
+- **Core** is the first row of its own table with the platform's ink tile, its state ("Running ·
+  Healthy · up 3 days") and its resources in the same columns; listen address, public origin, ingress,
+  data root and runtime host expand under it. App rows expand into per-service status, endpoint and
+  resources.
+- **Header:** the Apps title, filters as text toggles with counts (All, Running, In progress,
+  Attention, Updates) and the single primary Install app. The artboard no longer shows Check updates
+  or Update all; both stay reachable with the feature's behavior — Update all (N) as the All apps
+  row's contextual action when routine updates are available, and Check updates in that row's More
+  menu.
+- **Compact layout,** selected by the page's own width: list rows, filters in a menu, icon-only
+  Install, resources hidden until a row expands. It takes over before the fixed columns would need
+  horizontal scrolling, so the table never scrolls sideways, as today.
 
 ### Data-grid pages
 
@@ -604,7 +630,11 @@ the deliverable that changes it.
   from Core facts for all installed apps. This plan supplies only the role icon set and the chip
   (D18); D8 decides where role data comes from and when it appears.
 - [Core App Shell](../core-app-shell/feature.md) documents the dashboard table and a sky-colored
-  spinner for transitions; D6 and D7 change both.
+  spinner for transitions; D6 and D7 change both. D7 also replaces its status-only indicator with the
+  state name and detail, the hand icon for manual start with "Manual start" text, the hover row
+  shortcuts with the More menu, and its header's Check updates and Update all with the All apps
+  row. [Shell Navigation](../shell-navigation/feature.md) documents those header icon buttons, the
+  actions column and their collapse below 1240 px; it follows D7.
 - [Core Event Bus](../core-event-bus/feature.md) gains a `tool.activity.changed` event; its
   hint-not-fact contract is unchanged.
 - [Notifications](../notifications/feature.md) remain the durable channel; a tool activity state is
@@ -642,7 +672,7 @@ the deliverable that changes it.
 
 ### Phase 2 — Shell pages
 
-- [ ] D7. Rework the Dashboard rows as described under Dashboard: no header row, role icons instead of the System badge, version and runtime under the name with an available update as `current → new`, status label only off-normal, single-line resources, hover actions plus one contextual action.
+- [ ] D7. Rework the Dashboard rows as described under Dashboard: no header row, the shared fixed columns for Core and app rows, role icons instead of the System badge, version and runtime under the name with an available update as `current → new` and Manual start for the exception, the state name with its detail line, two-line resources with sparklines, one contextual action and More instead of hover shortcuts, and the All apps row with its left search, aggregate resources and the relocated Update all and Check updates; update the Core App Shell and Shell Navigation features, with the Shell version bump.
 - [ ] D8. Add the Dashboard compact layout, selected by container width.
 - [ ] D9. Build the data-grid page pattern on ReUI Data Grid and apply it first to the current-user Tokens & devices view, coordinating navigation and authority with the Settings experience feature.
 - [ ] D10. Replace generic loaders and empty states with the grid-mark loader and cell empty states.
@@ -671,6 +701,9 @@ the deliverable that changes it.
 - [ ] D20. Inventory existing actions/states on each changed screen, preserve them where mockups are incomplete, and verify permissions, navigation, forms, drafts, panels and failure/recovery before accepting the visual replacement.
 
 ## Open Questions
+
+- Is the All apps row's More menu the right home for Check updates, or does a manual check belong in
+  Settings now that Core checks on a schedule?
 
 - The page minimums: are Dashboard 440 px and Settings 560 px right, and may an embedded app declare
   its own minimum in its manifest instead of the 560 px default?
@@ -714,6 +747,9 @@ Compare changed screens against D20's functional inventory through Core/Shell, i
   own files; a selection reaches the composer as a reference; a GitHub comment lands on the intended
   PR line through the selected connection and is refused for a line outside the PR head; the CI
   popover opens only by click.
+- Dashboard: a long state detail and a long contextual action never shift the columns, Core and app
+  values line up, search filters together with the state filters, and the table never scrolls
+  sideways at any width, switching to the compact layout first.
 - Phone checks on iOS Safari and Android Chrome: keyboard open with a long conversation, a pending
   decision while another tool works, 16 or more tools, rotation, and a hidden tool keeping its draft
   across dock, sheet and phone transitions.
