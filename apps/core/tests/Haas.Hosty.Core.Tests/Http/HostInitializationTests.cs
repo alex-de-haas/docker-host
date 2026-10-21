@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using Haas.Hosty.Initialization;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,6 +22,59 @@ public sealed class HostInitializationTests
         Assert.Empty(await host.Services.GetRequiredService<AppRegistryStore>().ListAppRecordsAsync());
         Assert.Equal("selection", (await host.Services.GetRequiredService<HostInitializationService>().GetAsync(default)).Phase);
         Assert.False(InitializationFiles.CanStart(paths.DataRoot));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExplicitInitialization_AppliesDevelopmentOverridesWithoutSeeding(bool completed)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "hosty-init-override-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var manifest = Path.Combine(directory, "manifest.json");
+            await File.WriteAllTextAsync(manifest, """
+              {"schemaVersion":"app.0.1","id":"hosty.shell","name":"Shell","version":"1.0.0",
+               "runtimeProfiles":[{"key":"local","type":"localCommand","default":true}],
+               "services":[{"key":"worker","runtimes":{"local":{"type":"localCommand","command":"echo fixture","workingDirectory":"."}}}]}
+              """);
+            var catalog = Path.Combine(directory, "distribution.json");
+            await File.WriteAllTextAsync(catalog, """
+              {"schemaVersion":"distribution-apps.0.1","apps":[
+               {"id":"hosty.shell","title":"Shell","manifestRef":"manifest.json","defaultEnabled":true},
+               {"id":"example.unselected","title":"Unselected","manifestRef":"missing.json","defaultEnabled":true}]}
+              """);
+            await using var host = await CoreHttpHarness.StartAsync();
+            var config = host.Services.GetRequiredService<HostyCoreRuntimeConfig>();
+            InitializationFiles.Request(config.DataRoot);
+            var service = host.Services.GetRequiredService<HostInitializationService>();
+            if (completed)
+            {
+                await service.SubmitAsync(new(Guid.NewGuid().ToString(), []), default);
+                await service.StartAsync(default);
+                try { await WaitForAsync(service, "ready"); }
+                finally { await service.StopAsync(default); }
+            }
+            var lifecycle = host.Services.GetRequiredService<CoreLifecycleService>();
+            await lifecycle.InstallAsync(new(manifest, Autostart: false, StartOnInstall: false));
+            var apps = host.Services.GetRequiredService<AppRegistryStore>();
+            var seed = host.Services.GetRequiredService<DistributionSeedStore>();
+            var bootstrap = new SystemAppBootstrapService(config with { ShellSourceOverridePath = directory }, apps,
+                lifecycle, host.Services.GetRequiredService<AppSourceService>(),
+                new DistributionAppsProvider(NullLogger<DistributionAppsProvider>.Instance, catalog, [directory]),
+                seed, NullLogger<SystemAppBootstrapService>.Instance);
+
+            await bootstrap.SeedBootAsync(default);
+
+            var installed = Assert.Single(await apps.ListAppRecordsAsync());
+            Assert.Equal("hosty.shell", installed.Id);
+            Assert.Equal(MountPathPolicy.ResolveRealPath(directory), installed.SourceState?.LocalOverridePath);
+            Assert.Equal(completed, seed.Exists);
+            if (completed) Assert.Empty((await seed.LoadAsync())!.Apps);
+            Assert.Equal(completed ? "ready" : "selection", (await service.GetAsync(default)).Phase);
+        }
+        finally { Directory.Delete(directory, true); }
     }
 
     [Fact]
@@ -154,6 +208,69 @@ public sealed class HostInitializationTests
         }
         finally { Directory.Delete(directory, true); }
     }
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExplicitReview_AllowsOnlyTheRetainedOperatorPort(bool retainAssignment)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "hosty-init-port-review-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            foreach (var id in new[] { "example.a", "example.b" })
+                await File.WriteAllTextAsync(Path.Combine(directory, id + ".json"), """
+                  {"schemaVersion":"app.0.1","id":"APP_ID","name":"APP_ID","version":"1.0.0",
+                   "runtimeProfiles":[{"key":"local","type":"localCommand","default":true}],
+                   "services":[{"key":"worker","runtimes":{"local":{"type":"localCommand","command":"echo fixture","workingDirectory":".",
+                     "ports":[{"key":"http","containerPort":8080}]}}}]}
+                  """.Replace("APP_ID", id));
+            var catalog = Path.Combine(directory, "distribution.json");
+            await File.WriteAllTextAsync(catalog, """
+              {"schemaVersion":"distribution-apps.0.1","apps":[
+               {"id":"example.a","title":"First","manifestRef":"example.a.json","defaultEnabled":true},
+               {"id":"example.b","title":"Second","manifestRef":"example.b.json","defaultEnabled":true}]}
+              """);
+            var adapter = new InitializationAdapter();
+            await using var host = await CoreHttpHarness.StartAsync(configure: services => {
+                services.RemoveAll<IAppRuntimeAdapter>(); services.AddSingleton<IAppRuntimeAdapter>(adapter);
+                services.AddSingleton(new DistributionAppsProvider(NullLogger<DistributionAppsProvider>.Instance, catalog, [directory]));
+            });
+            using var reservation = new TcpListener(IPAddress.Loopback, 0);
+            reservation.Start();
+            var port = ((IPEndPoint)reservation.LocalEndpoint).Port;
+            reservation.Stop();
+            var service = host.Services.GetRequiredService<HostInitializationService>();
+            var apps = host.Services.GetRequiredService<AppRegistryStore>();
+            var input = new InitializationRequest(Guid.NewGuid().ToString(), ["example.a", "example.b"], [new("example.a", "worker", "http", port)]);
+            await service.SubmitAsync(input, default); await service.StartAsync(default);
+            try
+            {
+                await WaitForAsync(service, "failed");
+                var installed = (await apps.GetAppAsync("example.a"))!;
+                var assignment = Assert.Single(installed.PortAssignments!);
+                Assert.Equal(port, assignment.HostPort);
+                Assert.Equal(AppPortSources.Operator, assignment.Source);
+                Assert.True(AppRuntimeStates.IsUp(installed.RuntimeState));
+                // Model the socket retained by a running app, or an unrelated occupied socket.
+                using var bound = new TcpListener(IPAddress.Loopback, retainAssignment ? port : 0);
+                bound.Start();
+                var requested = ((IPEndPoint)bound.LocalEndpoint).Port;
+                Assert.False(RuntimePortHelper.IsLoopbackTcpPortAvailable(requested));
+                adapter.FailSecond = false;
+                var review = input with { RequestId = Guid.NewGuid().ToString(), Ports = [new("example.a", "worker", "http", requested)] };
+                await service.SubmitAsync(review, default);
+                var result = await WaitForAsync(service, retainAssignment ? "ready" : "failed");
+                if (!retainAssignment) Assert.Contains("occupied", result.Error);
+                Assert.Equal(1, adapter.FirstStarts);
+                var retained = (await apps.GetAppAsync("example.a"))!;
+                Assert.Equal(installed.InstalledAt, retained.InstalledAt);
+                Assert.Equal(assignment, Assert.Single(retained.PortAssignments!));
+            }
+            finally { await service.StopAsync(default); }
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
     [Fact]
     public async Task ExplicitReview_AfterFailure_RetiresOriginalRequestWithoutResettingData()
     {

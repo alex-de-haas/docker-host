@@ -59,6 +59,27 @@ it("prevents three apps from exceeding the default reservation and allows Core-o
   expect(create.mock.calls[0][0].initialization.apps).toEqual([]);
 });
 
+it("keeps the per-app limit within a one GiB Core-only environment", async () => {
+  transport.read.mockResolvedValue(Response.json(catalog));
+  const create = vi.fn().mockResolvedValue(undefined);
+  await act(async () => root.render(<CreateEnvironmentDialog origin="https://core.test" disabled={false} onCreate={create} />));
+  await click("Create environment");
+  for (const choice of document.querySelectorAll<HTMLButtonElement>('[role="checkbox"][data-state="checked"]'))
+    await act(async () => choice.click());
+  const memory = document.querySelector<HTMLInputElement>('input[id$="-memory"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(memory, "1");
+    memory.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(button("Create and start").disabled).toBe(false);
+  await click("Create and start");
+  expect(create).toHaveBeenCalledOnce();
+  expect(create.mock.calls[0][0]).toMatchObject({
+    initialization: { apps: [] },
+    limits: { memoryBytes: 1073741824, applicationMemoryBytes: 1073741824 },
+  });
+});
+
 it("registers in the child browser and keeps setup credentials out of persistent browser storage", async () => {
   transport.read.mockResolvedValue(Response.json({ phase: "ready", apps: [], hasAdministrator: false, recoveryRequired: false }));
   const request = vi.fn().mockResolvedValue({ token: "one-time-test-token", setupUrl: "http://child.test/setup?setupToken=one-time-test-token", expiresAt: new Date(Date.now() + 60000).toISOString() });

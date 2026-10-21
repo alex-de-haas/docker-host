@@ -2,8 +2,8 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { McpToolPolicy } from "../mcp/policy.js";
 import { AppContextError } from "./app-context.js";
-import { CoreEnvironmentClient, coreEnvironmentActions, type CoreEnvironmentAction, SandboxError, SandboxClient, sandboxActions, type SandboxAction } from "@hosty-sdk/app/sandbox/server";
-import { coreEnvironmentTools } from "./environment-tools.js";
+import { CoreEnvironmentClient, type CoreEnvironmentAction, SandboxError, SandboxClient, sandboxActions, type SandboxAction } from "@hosty-sdk/app/sandbox/server";
+import { coreEnvironmentTools, harnessEnvironmentActions } from "./environment-tools.js";
 import { sandboxTools } from "./sandbox-tools.js";
 
 export interface DevelopmentWorkspace {
@@ -173,7 +173,7 @@ const devToolProperties = {
   appId: { type: "string" },
   requestId: { type: "string" },
 };
-const actions = ["execution-select", "execution-status", "rename", "activation-plan", "activation-apply", "activation-status", "activation-list", "activation-cancel", "activation-resume", "activation-return", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status","app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", ...coreEnvironmentActions, ...sandboxActions, "list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"] as const;
+const actions = ["execution-select", "execution-status", "rename", "activation-plan", "activation-apply", "activation-status", "activation-list", "activation-cancel", "activation-resume", "activation-return", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status","app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", ...harnessEnvironmentActions, ...sandboxActions, "list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"] as const;
 const descriptions: Partial<Record<(typeof actions)[number], string>> = {
   "execution-select": "Select the app execution target in one operation on this Core's ordinary users/data. Supply appId, UUID requestId and kind package or workspace. Package optionally selects a release runtime; workspace selects this session's aggregate workspaceId and optional worktreeId. Dev profiles are internal recipes. Switching workspaces preserves the Core-owned package baseline. Additional authority returns review-required with a concrete operator approval destination. Follow Ask/Run unprompted/Disabled policy. During an active turn, finish the turn after queueing so Harness releases writers before dispatch. Preserve exact request arguments after uncertainty; use execution_status to observe readiness.",
   "execution-status": "Observe an app target-selection operation with appId and its original UUID requestId. Reports running, succeeded, review-required or failed, including the additional-access approval destination when required. Does not retry, start or stop anything.",

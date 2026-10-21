@@ -450,6 +450,31 @@ dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj -
   --filter 'FullyQualifiedName~HostInitializationTests|FullyQualifiedName~InitializationListenerTests|FullyQualifiedName~CoreEnvironment|FullyQualifiedName~RuntimePortAllocatorTests|FullyQualifiedName~ManagedCollection_|FullyQualifiedName~Mount|FullyQualifiedName~OperatorSourceSelection_|FullyQualifiedName~SourceAndMountWrites_|FullyQualifiedName~SourceSetAndClear_|FullyQualifiedName~SourceParentOfWritableMount_|FullyQualifiedName~CaseAliases_|FullyQualifiedName~RemovedDesiredMount_|FullyQualifiedName~AppRegistryStoreTests'
 ```
 
+### Ready-for-review CI follow-up — 2026-10-21
+
+- The owner authorizes Ready for Review, review fixes and a regular merge after successful CI/review.
+  D10-D11 remain explicitly open; unavailable native/published-artifact acceptance is not waived or
+  reported as passed by the merge itself.
+- GitHub CI exposes a Harness TypeScript mismatch after the SDK adds Dashboard initialization actions.
+  Harness now enumerates only its supported environment tools and refuses unsupported operations
+  before transport or session persistence, preserving its existing agent setup flow. Three regression
+  cases ensure status/setup-link responses cannot be treated as persisted environment records.
+- Harness 0.65.0 → 0.65.1, including web/worker packages, lockfiles and runtime image tags.
+  `npm run harness:lint`, `npm run harness:build-web` and `npm run harness:test` pass; the full suite
+  has 940 passing tests across 103 files. The affected development-manager suite passes 41 tests.
+
+- Claude's completed automated review identifies three regressions, all addressed with regression
+  coverage: a 1 GiB Core-only Dashboard request caps its per-app memory limit; boot applies ambient
+  development overrides without legacy seeding for explicit initialization; review preserves a running
+  app's exact operator port while rejecting unrelated occupied ports.
+- `npm run core:test -- --filter FullyQualifiedName~HostInitializationTests` rebuilds Core and passes
+  all 16 cases, including pending/completed override coverage and retained/foreign occupied-port cases.
+- `npm run shell:test` passes 376 component and 193 server tests; the five initialization-dialog tests
+  include the 1 GiB Core-only payload. `npm run shell:build` and `npm run shell:lint` pass (three existing
+  lint warnings). Full Core and cold macOS ARM64 AOT revalidation run separately before merge.
+- Copilot cannot review because the requesting account's review quota is exhausted. Claude's review
+  completes successfully and provides the three actionable findings above.
+
 ### Outstanding verification owned by D10-D11
 
 D10 needs the coordinated published CLI/Core/Shell artifacts for the real CLI-only download

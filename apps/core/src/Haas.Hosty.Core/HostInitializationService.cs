@@ -186,7 +186,8 @@ internal sealed class HostInitializationService(
             // digest is durable, so a mutable feed cannot silently change a retry's reviewed inputs.
             for (index = 0; index < installs.Length; index++)
             {
-                if (installs[index].ManifestDigest is not null && await apps.GetAppAsync(installs[index].Descriptor.AppId, ct) is not null) continue;
+                var installed = await apps.GetAppAsync(installs[index].Descriptor.AppId, ct);
+                if (installs[index].ManifestDigest is not null && installed is not null) continue;
                 var (plan, feed) = await PlanAsync(installs[index], ct);
                 var item = installs[index];
                 var artifacts = CoreJson.Text(plan.ArtifactDigests ?? []);
@@ -210,7 +211,11 @@ internal sealed class HostInitializationService(
                     if (declaration is null || declaration.LocalPort is not null || declaration.Expose == "host" || service!.Runtime.IsHostNetwork
                         || declaration.Transport?.Contains("udp") == true)
                         throw new AppLifecycleException("initialization_port_unknown", $"Select an assignable loopback TCP service/port for '{port.AppId}'.");
-                    if (port.Port == config.CorePort || !RuntimePortHelper.IsLoopbackTcpPortAvailable(port.Port))
+                    // An explicit review retains running installations from the previous attempt.
+                    // Their own operator assignment may already hold the requested socket.
+                    var retained = installed?.PortAssignments?.Any(p => p.Service == port.Service && p.PortKey == port.PortKey
+                        && p.HostPort == port.Port && p.Source == AppPortSources.Operator) == true;
+                    if (port.Port == config.CorePort || (!retained && !RuntimePortHelper.IsLoopbackTcpPortAvailable(port.Port)))
                         throw new AppLifecycleException("initialization_port_occupied", $"Port {port.Port} is occupied; choose a free port before accepting this selection.");
                 }
                 installs[index] = item with { ManifestDigest = plan.TargetManifestDigest, Version = plan.TargetVersion,

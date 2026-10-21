@@ -396,7 +396,9 @@ policy tests pass all 13 cases; this follow-up changes configuration and documen
 supported lifecycle controls. Its agent tools create current/release/source child Core environments,
 attach authorized worktrees, start/restart them and perform ordinary child-account setup/password
 login. Without initialization options a fresh child starts empty; application installation uses the child's ordinary APIs and
-review flow. Attaching source does not silently install or start applications.
+review flow. Attaching source does not silently install or start applications. Harness exposes an
+explicit supported operation set; Dashboard-only SDK initialization and setup-link operations are
+refused before dispatch or session persistence.
 
 The standalone [Workspaces app and its operator creation form are retired](../workspaces-app/feature.md).
 The Core API remains: `POST /api/core-environments/from-workspace` validates one to sixteen active

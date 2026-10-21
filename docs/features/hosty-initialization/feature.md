@@ -27,6 +27,8 @@ supports `--yes`, `--apps <IDs>`, `--core-only`, `--no-open`, `--port <port>`, r
 Core starts in initialization mode without the legacy default seed pass. The selected applications
 are installed through ordinary lifecycle plans and started through their selected runtime profiles.
 Initialization checks Docker availability when needed and waits for actual service/readiness health.
+Boot continues to apply ambient development source overrides to installed apps without seeding
+unselected applications, both during explicit initialization and after it completes.
 Per-app progress and errors remain visible. Only after all selected applications are ready does the
 CLI print a full setup URL/token and attempt to open the browser.
 
@@ -59,7 +61,8 @@ Malformed initialization state produces a diagnostic rather than permission to o
 After a failed operation, `hosty init --review` explicitly accepts a new selection and new request
 UUID. It can change apps/ports or accept newly resolved distribution inputs while retaining installed
 apps and data. Previous request IDs remain retired and cannot replay over the new selection. Ordinary
-resume preserves the current accepted request. Ready installations use setup for app changes.
+resume preserves the current accepted request. A review can keep an installed app's existing operator
+port while it is still running; other occupied ports remain invalid. Ready installations use setup for app changes.
 
 ## Ports And Browser Origins
 
@@ -101,7 +104,8 @@ behavior; explicit empty selection is also supported.
 The parent retains ownership, consent, quota, Stop/Restart and Finish responsibilities. Creation
 validates selected app capacity against existing environment limits; it never silently drops a chosen
 app. Defaults allow two nominal application reservations per child. A larger selection requires an
-explicit adequate reservation within the shared tree pool. Finish removes owned child resources and
+explicit adequate reservation within the shared tree pool. A Core-only selection can reserve 1 GiB;
+its per-app memory ceiling is capped at that total. Finish removes owned child resources and
 keeps borrowed source; Stop retains the installation.
 
 ## Authority And Implementation

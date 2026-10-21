@@ -50,7 +50,7 @@ export function CreateEnvironmentDialog({ origin, disabled, onCreate }: {
         initialization: { schemaVersion: "hosty-initialization.0.1", requestId: crypto.randomUUID(), apps: selected, ports },
         ...(corePort ? { corePort: +corePort } : {}),
         limits: { memoryBytes: memory * 1073741824, cpus, pids, diskBytes: 10737418240,
-          applicationMemoryBytes: 2147483648, applicationCpus: 1, applicationPids: 256 } });
+          applicationMemoryBytes: Math.min(2147483648, memory * 1073741824), applicationCpus: 1, applicationPids: 256 } });
       setOpen(false);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Environment creation failed."); }
   };

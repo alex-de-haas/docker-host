@@ -31,7 +31,6 @@ internal sealed class SystemAppBootstrapService(
     // failed install must never take Core down, since Core is how the operator fixes it.
     public async Task SeedBootAsync(CancellationToken cancellationToken)
     {
-        if (Haas.Hosty.Initialization.InitializationFiles.Requested(config.DataRoot)) return;
         try
         {
             var list = await distribution.LoadAsync(cancellationToken);
@@ -48,22 +47,27 @@ internal sealed class SystemAppBootstrapService(
                 logger.LogWarning("Distribution: {Warning}", warning);
             }
 
-            if (seed.Exists)
+            // Explicit initialization owns app selection and retries, but installed apps still
+            // receive ambient development overrides on every boot, including after completion.
+            if (!Haas.Hosty.Initialization.InitializationFiles.Requested(config.DataRoot))
             {
-                // Already seeded. The only thing left to do is finish a seed pass that was cut short:
-                // the marker lists what it could not install, and those entries are retried here.
-                await RetryPendingAsync(plan, await seed.LoadAsync(cancellationToken), cancellationToken);
-            }
-            else if (await HasPreSeedingHistoryAsync(cancellationToken))
-            {
-                // Adopts pre-seeding hosts: the marker is written without installing anything, so the
-                // apps they already chose (and the ones they removed) are left exactly as they are.
-                await seed.SaveAsync(plan.Descriptors.Select(descriptor => descriptor.AppId).ToArray(), pending: [], cancellationToken: cancellationToken);
-                logger.LogInformation("Existing host adopted as seeded; the distribution list is a catalog from here on.");
-            }
-            else
-            {
-                await SeedFreshHostAsync(plan, cancellationToken);
+                if (seed.Exists)
+                {
+                    // Already seeded. The only thing left to do is finish a seed pass that was cut short:
+                    // the marker lists what it could not install, and those entries are retried here.
+                    await RetryPendingAsync(plan, await seed.LoadAsync(cancellationToken), cancellationToken);
+                }
+                else if (await HasPreSeedingHistoryAsync(cancellationToken))
+                {
+                    // Adopts pre-seeding hosts: the marker is written without installing anything, so the
+                    // apps they already chose (and the ones they removed) are left exactly as they are.
+                    await seed.SaveAsync(plan.Descriptors.Select(descriptor => descriptor.AppId).ToArray(), pending: [], cancellationToken: cancellationToken);
+                    logger.LogInformation("Existing host adopted as seeded; the distribution list is a catalog from here on.");
+                }
+                else
+                {
+                    await SeedFreshHostAsync(plan, cancellationToken);
+                }
             }
 
             await ApplyDevelopmentOverridesAsync(plan.Descriptors, cancellationToken);
