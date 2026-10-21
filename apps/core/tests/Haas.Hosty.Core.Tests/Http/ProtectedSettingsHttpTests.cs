@@ -3,6 +3,10 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Routing.Patterns;
+using System.Text;
 
 namespace Haas.Hosty.Core.Tests.Http;
 
@@ -35,6 +39,61 @@ public sealed class ProtectedSettingsHttpTests
         using var replay = await app.PutAsJsonAsync("/api/core/settings", Change("7171"));
         Assert.Equal(body, await replay.Content.ReadAsStringAsync());
         Assert.Equal("succeeded", (await app.GetFromJsonAsync<SettingsChangeView>("/api/settings/changes/" + review.Id))!.Status);
+    }
+
+    [Fact]
+    public async Task ResponseDisconnectPreservesSuccessfulStatusAndExactReplay()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        using var setup = await AppManagementHttpTests.CreateAppClient(host, "example.settings", []);
+        await NormalizeBrowser(host);
+        using var browser = Browser(host);
+        browser.DefaultRequestHeaders.Add("X-Hosty-CSRF", "csrf");
+        var body = JsonSerializer.Serialize(Change("7171"));
+        using var prepared = await browser.PutAsync("/api/core/settings", new StringContent(body, Encoding.UTF8, "application/json"));
+        Assert.Equal(428, (int)prepared.StatusCode);
+        var review = (await prepared.Content.ReadFromJsonAsync<SettingsChangeView>())!;
+        await Decide(browser, review.Id, await browser.GetStringAsync("/settings/confirm/" + review.Id), "approve");
+        DefaultHttpContext Context(Stream output)
+        {
+            var context = new DefaultHttpContext { RequestServices = host.Services };
+            context.Request.Method = "PUT"; context.Request.Scheme = "http";
+            context.Request.Host = new HostString("localhost"); context.Request.Path = "/api/core/settings";
+            context.Request.Headers.Cookie = "hosty_session=operator; hosty_csrf=csrf";
+            context.Request.Headers["X-Hosty-CSRF"] = "csrf";
+            context.Request.Headers[ProtectedSettingsChanges.Header] = review.Id;
+            context.Request.ContentType = "application/json";
+            context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(body));
+            context.Request.ContentLength = context.Request.Body.Length;
+            context.SetEndpoint(new RouteEndpoint(_ => Task.CompletedTask, RoutePatternFactory.Parse("/api/core/settings"),
+                0, EndpointMetadataCollection.Empty, "Settings"));
+            context.Response.Body = output;
+            return context;
+        }
+        var mutations = 0;
+        async Task Apply(HttpContext context)
+        {
+            mutations++;
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsync("{\"saved\":true}");
+        }
+        using var disconnected = new DisconnectedResponseStream();
+        await Assert.ThrowsAsync<IOException>(() => ProtectedSettingsChanges.InvokeAsync(Context(disconnected), Apply));
+        Assert.Equal("succeeded", (await browser.GetFromJsonAsync<SettingsChangeView>("/api/settings/changes/" + review.Id))!.Status);
+        using var response = new MemoryStream();
+        await ProtectedSettingsChanges.InvokeAsync(Context(response), Apply);
+        Assert.Equal(1, mutations);
+        Assert.Equal("{\"saved\":true}", Encoding.UTF8.GetString(response.ToArray()));
+    }
+
+    private sealed class DisconnectedResponseStream : MemoryStream
+    {
+        public override void Write(byte[] buffer, int offset, int count) => throw new IOException("Client disconnected after apply.");
+        public override void Write(ReadOnlySpan<byte> buffer) => throw new IOException("Client disconnected after apply.");
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            Task.FromException(new IOException("Client disconnected after apply."));
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) =>
+            ValueTask.FromException(new IOException("Client disconnected after apply."));
     }
 
     [Fact]

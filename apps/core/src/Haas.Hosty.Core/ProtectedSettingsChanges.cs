@@ -151,19 +151,21 @@ internal sealed class ProtectedSettingsChanges(IClock clock, CorePublicOriginRes
             context.Response.Body = captured;
             try
             {
-                await next(context);
+                try { await next(context); }
+                catch
+                {
+                    lock (sync) { entry.Status = "failed"; entry.Error = "The operation did not return a result. Inspect current settings before retrying."; }
+                    throw;
+                }
                 lock (sync)
                 {
                     entry.ResponseBody = captured.ToArray(); entry.ResponseStatus = context.Response.StatusCode;
                     entry.ResponseType = context.Response.ContentType;
                     entry.Status = context.Response.StatusCode < 400 ? "succeeded" : "failed";
                 }
+                // Delivery can fail after the operation completed. Keep its captured outcome so
+                // the same request can recover it without executing the mutation again.
                 captured.Position = 0; await captured.CopyToAsync(original, context.RequestAborted);
-            }
-            catch
-            {
-                lock (sync) { entry.Status = "failed"; entry.Error = "The operation did not return a result. Inspect current settings before retrying."; }
-                throw;
             }
             finally { context.Response.Body = original; }
             return Results.Empty;

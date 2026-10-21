@@ -42,6 +42,19 @@ function rebaseDraft(previous: Draft, draft: Draft, next: Draft): Draft {
   return { access: merge(previous.access, draft.access, next.access), defaults: merge(previous.defaults, draft.defaults, next.defaults),
     rules: merge(previous.rules, draft.rules, next.rules), skills: merge(previous.skills, draft.skills, next.skills), resetProviders: draft.resetProviders };
 }
+// Never attach a fresh concurrency token to an edit of the same field in another client.
+function hasDraftConflict(previous: Draft, draft: Draft, next: Draft): boolean {
+  function overlap<T>(before: Record<string, T>, edited: Record<string, T>, fresh: Record<string, T>) {
+    return [...new Set([...Object.keys(before), ...Object.keys(edited)])].some(key =>
+      !equal(before[key], edited[key]) && !equal(before[key], fresh[key]));
+  }
+  if (overlap(previous.access, draft.access, next.access) || overlap(previous.defaults, draft.defaults, next.defaults) ||
+    overlap(previous.rules, draft.rules, next.rules) || overlap(previous.skills, draft.skills, next.skills)) return true;
+  // A bulk preference change also removes tool exceptions that were added concurrently.
+  return draft.resetProviders.some(provider => !equal(previous.defaults[provider], next.defaults[provider]) ||
+    [...new Set([...Object.keys(previous.rules), ...Object.keys(next.rules)])].some(key =>
+      JSON.parse(key)[0] === provider && !equal(previous.rules[key], next.rules[key])));
+}
 function ModeSelect({ value, label, disabled, change }: { value: Mode | "mixed"; label: string; disabled?: boolean; change: (value: Mode) => void }) {
   return <Select value={value} disabled={disabled} onValueChange={v => change(v as Mode)}><SelectTrigger aria-label={label}><SelectValue /></SelectTrigger>
     <SelectContent><SelectGroup>{value === "mixed" && <SelectItem value="mixed" disabled>Mixed</SelectItem>}<SelectItem value="ask">Ask</SelectItem><SelectItem value="run">Do not ask</SelectItem></SelectGroup></SelectContent></Select>;
@@ -50,6 +63,7 @@ function ModeSelect({ value, label, disabled, change }: { value: Mode | "mixed";
 export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: boolean; error: string | null; status: string | null;
   feedbackAppId: string | null; onRefresh: () => Promise<void>; onSave: (patch: Partial<Settings>, appId: string) => Promise<void> }) {
   const [base, setBase] = useState(data);
+  const [latest, setLatest] = useState(data);
   const [draft, setDraft] = useState(() => initial(data));
   const [catalogs, setCatalogs] = useState<ToolCatalog[]>(data.toolCatalogs ?? []);
   const [dirty, setDirty] = useState(false), [busy, setBusy] = useState(false), [loading, setLoading] = useState(false);
@@ -69,7 +83,7 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
   }, []);
   const [previousData, setPreviousData] = useState(data);
   if (previousData !== data) {
-    setPreviousData(data);
+    setPreviousData(data); setLatest(data);
     if (!dirty && !busy) { setBase(data); setDraft(initial(data)); setCatalogs(data.toolCatalogs ?? []); }
   }
   useEffect(() => {
@@ -84,9 +98,13 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
       const result = await (await call("/settings/tools")).json() as { catalogs: ToolCatalog[]; unavailable?: string[] };
       setCatalogs(result.catalogs);
       if (result.unavailable?.length) setError(`Could not load tools for ${result.unavailable.join(", ")}. Existing choices are preserved.`);
-      const loaded = await loadSettings();
+      const loaded = await loadSettings(); setLatest(loaded);
       if (!pending.current) {
-        setBase(loaded); setDraft(dirty ? rebaseDraft(initial(base), draft, initial(loaded)) : initial(loaded));
+        if (dirty && hasDraftConflict(initial(base), draft, initial(loaded))) {
+          setError("These settings changed in another client. Your draft is preserved. Discard it to load current values before editing again.");
+        } else {
+          setBase(loaded); setDraft(dirty ? rebaseDraft(initial(base), draft, initial(loaded)) : initial(loaded));
+        }
       }
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setLoading(false); }
@@ -133,8 +151,9 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
         }
         if (current.status !== "succeeded") { pending.current = null; setReview(null); setStatus(""); throw new Error(current.error ?? "Access changes were cancelled. Your draft is preserved."); }
         // Record the actual saved access before saving Harness. A failed second step never repeats Core approval.
-        setBase(previous => ({ ...previous, providers: previous.providers.map(p => ({ ...p,
-          offered: draft.access[p.appId]?.enabled ?? p.offered, deniedTools: draft.access[p.appId]?.denied ?? p.deniedTools })) }));
+        const savedAccess = (previous: SettingsResponse) => ({ ...previous, providers: previous.providers.map(p => ({ ...p,
+          offered: draft.access[p.appId]?.enabled ?? p.offered, deniedTools: draft.access[p.appId]?.denied ?? p.deniedTools })) });
+        setBase(savedAccess); setLatest(savedAccess);
         pending.current = null; setReview(null); setStatus("Access saved. Saving Harness preferences…");
       }
       const defaults = Object.fromEntries(Object.entries(draft.defaults).filter(([id, value]) => !equal(value, base.settings.mcpDefaults?.[id]) || draft.resetProviders.includes(id)));
@@ -142,7 +161,7 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
         (!equal(value, base.settings.mcpToolRules?.[key]) || draft.resetProviders.includes(JSON.parse(key)[0]))));
       await call("/settings/mcp/preferences", { method: "PUT", body: JSON.stringify({ revision: base.mcpRevision, defaults, rules,
         resetProviders: draft.resetProviders, removeRules: Object.keys(base.settings.mcpToolRules ?? {}).filter(key => !Object.hasOwn(draft.rules, key) && (base.settings.mcpToolRules?.[key]?.mode !== "disabled" || JSON.parse(key)[0] === "hosty:development")), skills: draft.skills }) });
-      const loaded = await loadSettings(); setBase(loaded); setDraft(initial(loaded)); setDirty(false); setReview(null);
+      const loaded = await loadSettings(); setLatest(loaded); setBase(loaded); setDraft(initial(loaded)); setDirty(false); setReview(null);
       setStatus("Saved. Changes apply to subsequent tool calls."); await onRefresh();
     } catch (cause) {
       if (popup && !pending.current?.review) popup.close();
@@ -164,7 +183,7 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
       <Button variant="outline" disabled={busy || loading} onClick={() => void refresh()}><RefreshCw data-icon="inline-start" />{loading ? "Loading…" : "Refresh tools"}</Button></div>
     {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
     {base.discovery !== "ok" && <Alert><AlertDescription>Core is unavailable. Existing access choices are unchanged.</AlertDescription></Alert>}
-    <Field orientation="horizontal"><FieldLabel>All enabled applications</FieldLabel><ModeSelect label="Approval for all enabled applications" disabled={busy || !enabled.length}
+    <Field orientation="horizontal"><FieldLabel>All enabled applications</FieldLabel><ModeSelect label="Approval for all enabled applications" disabled={busy || loading || !enabled.length}
       value={new Set(allModes).size > 1 ? "mixed" : allModes[0] ?? "ask"} change={value => bulk(enabled.map(p => p.appId), value)} /></Field>
     <div className="flex flex-col divide-y rounded-lg border">{entries.map(provider => {
       const id = provider.appId, access = draft.access[id] ?? { enabled: true, denied: [] }, catalog = catalogs.find(c => c.provider === id);
@@ -172,13 +191,13 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
       const modes = catalog ? permitted.map(t => mode(catalog, t.name)) : [];
       const instruction = base.instructions?.find(i => i.appId === id), accepted = draft.skills[id];
       return <Collapsible key={id} className="p-4"><div className="flex flex-wrap items-center gap-3">
-        {id !== "hosty:development" && <Checkbox aria-label={`Allow ${provider.displayName}`} disabled={busy} checked={access.enabled && access.denied.length ? "indeterminate" : access.enabled}
+        {id !== "hosty:development" && <Checkbox aria-label={`Allow ${provider.displayName}`} disabled={busy || loading} checked={access.enabled && access.denied.length ? "indeterminate" : access.enabled}
           onCheckedChange={checked => change({ ...draft, access: { ...draft.access, [id]: { enabled: checked === true,
             denied: checked === true ? access.denied.filter(name => !tools.some(t => t.name === name)) : access.denied } } })} />}
         <CollapsibleTrigger asChild><Button variant="ghost" className="min-w-0 flex-1 justify-start"><ChevronDown data-icon="inline-start" /><span className="truncate">{provider.displayName}</span><span className="ml-auto">{catalog ? `${permitted.length}/${tools.length}` : "—"}</span></Button></CollapsibleTrigger>
-        <ModeSelect label={`Approval for ${provider.displayName}`} disabled={busy || !access.enabled || !catalog}
+        <ModeSelect label={`Approval for ${provider.displayName}`} disabled={busy || loading || !access.enabled || !catalog}
           value={new Set(modes).size > 1 ? "mixed" : modes[0] ?? draft.defaults[id]?.mode ?? "ask"} change={value => bulk([id], value)} />
-      </div><CollapsibleContent className="pt-4"><FieldSet disabled={busy}><FieldLegend className="sr-only">{provider.displayName} tools</FieldLegend><FieldGroup>
+      </div><CollapsibleContent className="pt-4"><FieldSet disabled={busy || loading}><FieldLegend className="sr-only">{provider.displayName} tools</FieldLegend><FieldGroup>
         {!catalog && <p className="text-sm text-muted-foreground">{provider.running ? "Refresh tools to load this application’s catalog." : "Start this application to preview its tools."}</p>}
         {catalog && tools.map(tool => <Field key={tool.name} orientation="responsive"><div className="flex min-w-0 flex-1 items-start gap-3">
           <Checkbox id={`tool-${id}-${tool.name}`} disabled={!access.enabled} checked={access.enabled && !access.denied.includes(tool.name) && !locallyDisabled(catalog, tool.name)}
@@ -199,7 +218,7 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
     })}</div>
     <div className="flex flex-wrap items-center justify-end gap-3"><p role="status" className="mr-auto text-sm text-muted-foreground">{status || (dirty ? "Unsaved changes" : "")}</p>
       {review && <Button variant="outline" asChild><a href={review.approvalUrl} target="_blank" rel="noopener noreferrer">Open Core confirmation</a></Button>}
-      <Button variant="outline" disabled={busy || !dirty} onClick={() => { setDraft(initial(base)); setDirty(false); pending.current = null; setReview(null); setError(""); }}>Discard</Button>
+      <Button variant="outline" disabled={busy || loading || !dirty} onClick={() => { setBase(latest); setDraft(initial(latest)); setDirty(false); pending.current = null; setReview(null); setError(""); }}>Discard</Button>
       <Button disabled={busy || loading || !dirty || base.discovery !== "ok"} onClick={() => void save()}>{busy ? "Saving…" : "Save"}</Button></div>
   </FieldGroup>;
 }

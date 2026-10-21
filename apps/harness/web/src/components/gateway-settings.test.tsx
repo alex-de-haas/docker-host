@@ -124,3 +124,64 @@ it("disables a built-in tool through the local preferences save", async () => {
     '["hosty:development","edit_file"]': { identity: "development-1", mode: "disabled" },
   });
 });
+
+
+it("keeps overlapping access edits on their reviewed base until explicitly discarded", async () => {
+  await render(); await click(container.querySelector('[aria-label="Allow Media"]')!);
+  data = { ...data, accessRevision: "access-two", providers: data.providers.map(p => p.appId === "media" ? { ...p, deniedTools: ["play"] } : p) };
+  await click(button("Refresh tools"));
+  expect(container.textContent).toContain("changed in another client");
+  expect(container.querySelector('[aria-label="Allow Media"]')?.getAttribute("data-state")).toBe("checked");
+  vi.mocked(call).mockImplementation(async () => { throw new ApiError(409, "agent_policy_changed", "Conflict"); });
+  await save();
+  const input = JSON.parse(vi.mocked(call).mock.calls.find(args => args[0] === "/settings/mcp/review")![1]!.body as string);
+  expect(input.revision).toBe("access-one");
+  await click(button("Discard"));
+  expect(container.querySelector('[aria-label="Allow Media"]')?.getAttribute("data-state")).toBe("unchecked");
+  await click(container.querySelector('[aria-label="Allow Media"]')!); await save();
+  const calls = vi.mocked(call).mock.calls.filter(args => args[0] === "/settings/mcp/review");
+  expect(JSON.parse(calls.at(-1)![1]!.body as string).revision).toBe("access-two");
+});
+
+it("keeps overlapping local tool edits on their original preference revision", async () => {
+  data.toolCatalogs!.push({ provider: "hosty:development", identity: "development-1", tools: [{ name: "edit_file" }] });
+  const key = JSON.stringify(["hosty:development", "edit_file"]);
+  await render(); await click(button("Development tools"));
+  await click(document.getElementById("tool-hosty:development-edit_file")!);
+  data = { ...data, mcpRevision: "local-two", settings: { ...data.settings, mcpToolRules: { [key]: { identity: "development-1", mode: "run" } } } };
+  await click(button("Refresh tools"));
+  expect(container.textContent).toContain("changed in another client");
+  await save();
+  const input = JSON.parse(vi.mocked(call).mock.calls.find(args => args[0] === "/settings/mcp/preferences")![1]!.body as string);
+  expect(input.revision).toBe("local-one");
+  expect(input.rules[key].mode).toBe("disabled");
+});
+
+
+it("detects new concurrent exceptions when applying a provider-wide preference", async () => {
+  await render();
+  const select = container.querySelector<HTMLElement>('[aria-label="Approval for Notes"]')!;
+  await act(async () => select.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(node => node.textContent === "Do not ask")!;
+  await click(option);
+  data = { ...data, mcpRevision: "local-two", settings: { ...data.settings, mcpToolRules: { '["notes","read"]': { identity: "notes-1", mode: "ask" } } } };
+  await click(button("Refresh tools"));
+  expect(container.textContent).toContain("changed in another client");
+  await save();
+  const input = JSON.parse(vi.mocked(call).mock.calls.find(args => args[0] === "/settings/mcp/preferences")![1]!.body as string);
+  expect(input.revision).toBe("local-one");
+  expect(input.resetProviders).toEqual(["notes"]);
+});
+
+
+it("discard after a local failure retains access already approved in Core", async () => {
+  vi.mocked(call).mockImplementation(async url => {
+    if (url === "/settings/tools") return Response.json({ catalogs: data.toolCatalogs });
+    if (url === "/settings/mcp/review") return Response.json({ id: "review", status: "succeeded" });
+    throw new Error("Local storage unavailable");
+  });
+  await render(); await click(container.querySelector('[aria-label="Allow Media"]')!); await save();
+  await click(button("Discard"));
+  expect(container.querySelector('[aria-label="Allow Media"]')?.getAttribute("data-state")).toBe("checked");
+  expect(button("Save").disabled).toBe(true);
+});

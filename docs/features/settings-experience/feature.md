@@ -87,8 +87,10 @@ The [Core confirmation design](../core-confirmation-design/feature.md) covers th
 Harness **MCP access** contains one expandable row per application and its individual tools.
 Catalogs load on entry and explicit refresh; settings do not poll in the background.
 All changes remain a draft until Save. Refresh preserves edited fields and incorporates concurrent
-changes to untouched fields. A definitive stale-review refusal permits a new revision after refresh;
-unknown transport outcomes retain the original request ID for recovery.
+changes to untouched fields. Overlapping edits keep their original revisions and report a conflict;
+Discard loads the refreshed values for an explicit new edit. A stale-review refusal permits a new
+revision after refresh only when edits do not overlap. Unknown transport outcomes retain the
+original request ID for recovery.
 
 Core stores enabled assistant/provider relationships plus explicit tool exclusions. Enabled
 providers include current and future tools. Missing tools keep their exclusions, including after
@@ -133,6 +135,9 @@ Legacy Harness tool exclusions migrate through Core review before the local disa
 Accepted instructions transfer only when the old approved digest, enabled assistant relationship and
 provider installation match. Existing Ask/Run rules and other consumers' approvals are preserved.
 Default-app resolution, object links and the shared skills library have their own plans.
+
+A completed operation retains its captured status and response even when delivery to the caller
+fails. Retrying the same reviewed request replays that result without executing the mutation again.
 
 ## Testing Expectations
 
