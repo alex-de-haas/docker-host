@@ -379,7 +379,7 @@ branch/PR. Checks record completed implementation and its verification; platform
 
 Implementation is in progress in the registered Core workspace. Verified local evidence:
 
-- `npm run harness:test`: 916 tests passed after review fixes; `npm run harness:lint` and the web production build passed.
+- `npm run harness:test`: 920 tests passed after review fixes; `npm run harness:lint` and the web production build passed.
 - Full Core regression: 3901 passed, five opt-in integration tests skipped. After the final generic
   storage/adoption changes, all 227 affected Core tests passed again in an isolated artifacts directory.
 - `npm run cli:build` and `npm run core:aot` passed. Native AOT targets macOS arm64 with no new
@@ -405,7 +405,10 @@ The 18 affected HTTP/client protocol tests pass, including this slow-start regre
 cancellation fix passed full CI. Two further review findings cover terminal delivery and native
 error text: confirmed terminal events now persist with a stable receipt revision, retry transient
 store failures, recover append-before-clear crashes without duplicates and detach on shutdown.
-All 24 affected HTTP/client protocol tests pass; the terminal-persistence commit requires its own CI.
+All 24 affected HTTP/client protocol tests and full CI pass for terminal persistence. A subsequent
+review identified replay-expiry notice collisions with terminal revisions. Resync notices now stay
+outside the durable sequence; all 28 affected tests pass, including successful/failed recovery with
+and without snapshot text. The replay-resync fix requires its own full CI.
 
 These checks use the implementation and review-fix batches; the full Core regression preceded the final
 affected-test rerun. AMD64 image execution on this machine uses emulation, not a native Linux host.

@@ -64,7 +64,8 @@ export class WorkerClient {
     if (value.protocol !== WORKER_PROTOCOL) throw new WorkerApiError(409, "protocol_mismatch", "Harness and Worker versions are incompatible.");
     return value;
   }
-  async events(id: string, onEvent: (event: WorkerEvent) => void | Promise<void>, signal: AbortSignal): Promise<WorkerReceipt> {
+  async events(id: string, onEvent: (event: WorkerEvent) => void | Promise<void>, signal: AbortSignal,
+    onNotice?: (message: string) => void | Promise<void>): Promise<WorkerReceipt> {
     let cursor = 0, generation: string | undefined;
     for (;;) {
       signal.throwIfAborted();
@@ -95,8 +96,8 @@ export class WorkerClient {
               if (!terminal(receipt.state)) throw new WorkerApiError(410, "replay_expired", "Active run replay is unavailable.");
               if (receipt.snapshot?.text) await deliverEvent(() => onEvent({ runId: id, generation: receipt.generation, sequence: receipt.revision - 1,
                 event: { type: "assistant_text", text: receipt.snapshot!.text! } }), signal);
-              await deliverEvent(() => onEvent({ runId: id, generation: receipt.generation, sequence: receipt.revision,
-                event: { type: "notice", message: "Detailed worker replay expired; the saved final snapshot is shown." } }), signal);
+              // Resync metadata has no durable run sequence; reserve the receipt revision for its terminal event.
+              await deliverEvent(() => onNotice?.("Detailed worker replay expired; the saved final snapshot is shown."), signal);
               return receipt;
             }
           }
@@ -165,7 +166,7 @@ class RemoteRun implements HarnessRun {
           if (event.type === "result" || event.type === "error") final = event;
           else if (this.options.onWorkerEvent) await this.options.onWorkerEvent(frame);
           else this.options.onEvent(event);
-        }, signal);
+        }, signal, message => this.options.onEvent({ type: "notice", message }));
         final ??= receipt.snapshot?.result;
         if (receipt.snapshot?.nativeSessionId) this.options.onEvent({ type: "harness_session", harnessSessionId: receipt.snapshot.nativeSessionId });
         this.confirmed = receipt.exitConfirmed ?? receipt.state !== "interrupted"; this.busy = false; this.pending.clear();

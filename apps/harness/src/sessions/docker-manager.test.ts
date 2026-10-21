@@ -247,3 +247,41 @@ it("detaches terminal persistence retries on coordinator shutdown", async () => 
   expect(failures).toBe(afterShutdown);
   expect((await store.readRecord(record.id))!.workerRun).toBeDefined();
 });
+
+
+it.each([
+  { type: "result", text: true }, { type: "result", text: false },
+  { type: "error", text: true }, { type: "error", text: false },
+] as const)("recovers expired $type replay with snapshot text=$text without consuming its terminal revision", async ({ type, text }) => {
+  const { SessionManager } = await import("./manager.js");
+  const { SessionStore } = await import("./store.js");
+  const { AuditReporter } = await import("../audit.js");
+  const f = await fixture();
+  const store = new SessionStore(path.join(f.root, "coordinator"), path.join(f.root, "cache"));
+  const make = () => new SessionManager(store, f.adapter, new AuditReporter(null, null, "hosty.harness"), f.root,
+    null, null, null, null, null, null, null, null, f.client, "docker");
+  const first = make(); cleanups.push(() => first.shutdown());
+  const record = await first.createSession({ createdBy: "owner" });
+  await first.postMessage(record.id, "work"); await expect.poll(f.starts).toBe(1);
+  const runId = (await store.readRecord(record.id))!.workerRun!.id;
+  await first.shutdown();
+  if (text) f.options()!.onEvent({ type: "assistant_text", text: "Retained final answer" });
+  f.options()!.onEvent(type === "result" ? { type, status: "success" } : { type, message: "Retained provider error" });
+  await expect.poll(async () => (await f.journal.load(runId)).receipt.state).toBe(type === "result" ? "completed" : "failed");
+  const expired = new WorkerJournal(path.join(f.root, "independent-provider-storage"), -1);
+  await expired.prune();
+  const receipt = (await f.journal.load(runId)).receipt;
+  expect((await f.journal.load(runId)).replayExpired).toBe(true);
+  const next = make(); cleanups.push(() => next.shutdown()); await next.recoverWorkerRuns();
+  await expect.poll(async () => {
+    const saved = (await store.readRecord(record.id))!;
+    return saved.status === (type === "result" ? "idle" : "failed") && !saved.workerRun;
+  }).toBe(true);
+  const events = await store.readEvents(record.id);
+  expect(events.filter(event => event.type === type)).toHaveLength(1);
+  expect(events.find(event => event.type === type)).toMatchObject({ workerRunId: runId, workerSequence: receipt.revision });
+  expect(events.find(event => event.type === "notice" && String(event.message).includes("replay expired"))).toMatchObject({ type: "notice" });
+  expect(events.filter(event => event.workerSequence === receipt.revision)).toHaveLength(1);
+  expect(events.filter(event => event.type === "assistant_text")).toHaveLength(text ? 1 : 0);
+  expect(f.starts()).toBe(1); expect(f.stopped()).toBe(1);
+});

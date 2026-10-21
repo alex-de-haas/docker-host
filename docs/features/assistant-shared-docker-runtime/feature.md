@@ -126,7 +126,8 @@ An idle native process may be replaced; neither service restarts. Provider/accou
 cross-provider history remain outside this selection feature.
 
 Confirmed terminal results use the same awaited coordinator persistence callback as other durable
-events, keyed by run ID and terminal receipt revision. This identity survives replay expiry.
+events, keyed by run ID and terminal receipt revision. This identity survives replay expiry. Snapshot resynchronization notices have no durable run
+sequence, leaving the receipt revision exclusively for terminal delivery.
 Temporary write failures retry without repeating execution or duplicating transcript entries;
 the run receipt stays recoverable until terminal status and cleanup are saved. New turns and model
 changes stay blocked while that receipt remains. Coordinator shutdown
