@@ -1,6 +1,6 @@
 ---
 created: 2026-10-14
-updated: 2026-10-20
+updated: 2026-10-21
 summary: Independent app sandboxes and parent-managed child Core environments with separate data, shared Docker, lifecycle recovery and Harness and Shell controls.
 components: [apps/core, apps/harness, apps/shell, apps/demo-app, packages/app-sdk]
 ---
@@ -231,8 +231,9 @@ retains its explicit host-path authority. Child generations use the existing Cor
 active processes and runners, the latest two ready outputs and latest failed diagnostic output
 are retained. Failed preparation no longer pins outputs to the long-lived parent. Unmarked legacy
 outputs are not guessed to be safe to delete; Finish removes them with their owned root.
-The empty distribution catalog suppresses automatic Shell installation and its fixed-port collision.
-Explicitly installed apps still follow their ordinary port and permission contracts.
+Requests that omit initialization retain the empty distribution catalog. An explicit initialization
+selection uses the selected child build's catalog and the [shared initialization service](../hosty-initialization/feature.md).
+Core-only selection is valid; selected applications follow ordinary reviewed lifecycle and resource limits.
 
 Operator inspection/control spans applications belonging to the same administrator, but never
 exposes or mutates another administrator's child Core. App callers additionally require their own
@@ -272,12 +273,15 @@ files. Borrowed mounts, shared images/BuildKit cache and native Core/source-buil
 are not hard-capped by these Docker limits. Native RSS is measured; this is not a total host-memory or
 hard filesystem quota. Selected child builds require Core 0.133.0 or newer for this resource contract.
 
-Setup uses ordinary Core bootstrap and password login with explicitly supplied test credentials.
+The existing agent setup endpoint uses ordinary Core bootstrap and password login with explicitly supplied test credentials.
 The resulting child session stays private in the parent-owned child root. The JSON API transport
 uses that child account, supports bounded relative `/api/` requests, and rejects redirects/streaming.
 Normal Core authorization and installation review remain in effect: an administrator API request
 does not bypass an app-install confirmation. API writes retain the called endpoint's replay rules.
 An operator signs into the child Core normally; Harness lists Core and running app preview links.
+Explicitly initialized children expose bounded initialization status, resume and setup-link operations.
+The parent reads these and app inventory through fixed local control operations; it needs no child
+password or parent-session file. Registration remains the child's ordinary browser setup flow.
 
 Stop preserves users and data. Normal parent shutdown stops owned children and their apps;
 `keep-apps` preserves them for adoption. Parent SIGKILL does not immediately stop children: the
@@ -339,13 +343,17 @@ workspace inventory updates names after a rename, including when all ordinary ap
 
 Expanding a child Core reads its application inventory and shows application/runtime health states
 and installation-bound preview links for running web apps. It retains Open Core, normal test-account
-setup/login, Start/Stop/Restart, confirmed deletion and resource/access details. Expanding an
+setup/login for legacy children, Start/Stop/Restart, confirmed deletion and resource/access details.
+Explicit initialization shows per-app progress, setup-link/token copying and registered state separately
+from the process state. Expanding an
 individual sandbox shows its application state, real-operator and test-persona preview links,
 logs, embedding, Start/Stop/Restart, confirmed Finish and resource details. Preview links accept
 only HTTP(S) destinations without embedded credentials. The shared SDK operator panel remains
 available to other consumers; the Dashboard owns this combined presentation.
 
-The section stays hidden after both inventories are successfully empty. Finished child records and
+The section stays visible when empty and offers Create environment with catalog choices and optional
+port/resource settings. Shell requires environment inspect/operate and sandbox inspection permissions
+for this surface; per-app sandbox mutation remains an optional permission. Finished child records and
 disposed app receipts are omitted; stopped, failed, unhealthy and incomplete-cleanup instances stay
 visible. A read failure remains visible and preserves the last successful inventory for each type.
 Closed rows still expose start and deletion errors. Polling while visible and refresh on visibility
@@ -387,8 +395,10 @@ policy tests pass all 13 cases; this follow-up changes configuration and documen
 [Harness](../harness-development-ui/feature.md) exposes child Core and app sandbox previews and
 supported lifecycle controls. Its agent tools create current/release/source child Core environments,
 attach authorized worktrees, start/restart them and perform ordinary child-account setup/password
-login. A fresh child starts empty; application installation uses the child's ordinary APIs and
-review flow. Attaching source does not silently install or start applications.
+login. Without initialization options a fresh child starts empty; application installation uses the child's ordinary APIs and
+review flow. Attaching source does not silently install or start applications. Harness exposes an
+explicit supported operation set; Dashboard-only SDK initialization and setup-link operations are
+refused before dispatch or session persistence.
 
 The standalone [Workspaces app and its operator creation form are retired](../workspaces-app/feature.md).
 The Core API remains: `POST /api/core-environments/from-workspace` validates one to sixteen active
@@ -549,7 +559,7 @@ build cache and credentials. The primary Core process and all 41 existing contai
 
 ## Testing Expectations
 
-- Dashboard component tests cover both inventories, confirmed-empty hiding, human workspace names,
+- Dashboard component tests cover both inventories, visible empty-state creation, human workspace names,
   lazy expansion, application states and safe links, partial read failures, retained start/cleanup
   errors, kind-specific row identity, rename continuity and exact legacy-operation replay.
 - Settings tests preserve launch-permission revocation with no remaining sandbox and visible read

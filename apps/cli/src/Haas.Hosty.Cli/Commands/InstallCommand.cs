@@ -29,7 +29,7 @@ internal sealed class InstallCommand(CommandContext context)
 
         context.Console.MarkupLine("[green]Hosty local directories are ready.[/]");
         context.Console.MarkupLine($"Data root: [grey]{Markup.Escape(context.Environment.RootDirectory)}[/]");
-        context.Console.MarkupLine("Next: run [grey]hosty start[/]");
+        context.Console.MarkupLine("Next: run [grey]hosty init[/]");
         return 0;
     }
 }

@@ -213,6 +213,8 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<DistributionAppsProvider>();
         builder.Services.AddSingleton<DistributionSeedStore>();
         builder.Services.AddSingleton<SystemAppBootstrapService>();
+        builder.Services.AddSingleton<HostInitializationService>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<HostInitializationService>());
         // Runs before the schedulers below so an upgraded installation's existing state/backups/logs
         // are tightened before anything starts appending to them.
         builder.Services.AddHostedService<CoreFilePermissionMigration>();
@@ -417,6 +419,7 @@ internal static class HostyCoreApplication
         LifecycleEndpoints.Map(app);
         GlobalMountEndpoints.Map(app);
         CoreBootstrapEndpoints.Map(app);
+        HostInitializationEndpoints.Map(app);
         CoreSettingsEndpoints.Map(app);
         CoreLogEndpoints.Map(app);
         RuntimeResourceEndpoints.Map(app);
@@ -716,10 +719,14 @@ internal static class HostyCoreApplication
                   message.textContent = error.message || 'Administrator setup could not be completed.';
                   return;
                 }
-                const shellOrigin = {{shellOriginLiteral}};
+                form.reset();
+                form.remove();
+                history.replaceState(null, '', '/setup');
+                const completed = await response.json();
+                const shellOrigin = completed.shellPublicOrigin || {{shellOriginLiteral}};
                 if (!shellOrigin) {
                   message.className = '';
-                  message.textContent = 'Done. This host has no web UI installed, so there is nowhere to send you.';
+                  message.textContent = 'Administrator created. Manage this host with the CLI/API, or run hosty setup to install Shell.';
                   return;
                 }
                 window.location.href = shellOrigin;
@@ -805,7 +812,7 @@ internal static class HostyCoreApplication
                 const shellOrigin = {{shellOriginLiteral}};
                 if (!shellOrigin) {
                   message.className = '';
-                  message.textContent = 'Done. This host has no web UI installed, so there is nowhere to send you.';
+                  message.textContent = 'Administrator recovered. Manage this host with the CLI/API, or run hosty setup to install Shell.';
                   return;
                 }
                 window.location.href = shellOrigin;
@@ -887,7 +894,7 @@ internal static class HostyCoreApplication
                 const shellOrigin = {{shellOriginLiteral}};
                 if (!shellOrigin) {
                   message.className = '';
-                  message.textContent = 'Done. This host has no web UI installed, so there is nowhere to send you.';
+                  message.textContent = 'Invitation accepted. Ask the host administrator to install Shell for browser access.';
                   return;
                 }
                 window.location.href = shellOrigin;
@@ -968,7 +975,8 @@ internal sealed record HostyCoreRuntimeConfig(
             ReadOptionalPort("HOSTY_CORE_PORT") ??
             TryGetUrlPort(explicitListenUrl) ??
             CoreSettingsStore.TryReadStoredPort(coreRoot) ??
-            ServerSettings.DefaultPort;
+            (Environment.GetEnvironmentVariable("HOSTY_INITIALIZING") == "1" && Haas.Hosty.Initialization.InitializationFiles.Requested(dataRoot)
+                ? RuntimePortHelper.AllocateLoopbackPort() : ServerSettings.DefaultPort);
         var listenUrl = explicitListenUrl ?? $"http://localhost:{corePort}";
         var corePublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_CORE_PUBLIC_ORIGIN"));
         // The host Core advertises (and dials) for an app's published loopback port. Must be the IPv4

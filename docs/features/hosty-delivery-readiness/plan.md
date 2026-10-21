@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-13
-updated: 2026-10-20
+updated: 2026-10-21
 summary: Local demo priorities through November 5 for host-contained agents, workspace Docker sandboxes, app creation, Git review, optional feedback and gradual redesign.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -44,6 +44,18 @@ These are planning decisions, not authorization to run experiments against live 
 commits or start every implementation. Open technical questions keep this and affected designs
 Draft. Containment remains Draft; the owner subsequently approved Sandbox and its independent
 Core API boundary, so its owning plan is Ready.
+
+## Public First-Install Journey (2026-10-21)
+
+The owner requested a short installation path for people trying Hosty after the demonstration:
+install CLI from the README script, run `hosty init` to install missing Core and select distribution
+apps, then register the administrator in the browser once the apps are ready. Fresh Core/Shell
+ports are automatic. Dashboard creation allocates a separate child environment and reuses the
+initialization services with its own application selection and identity.
+
+The [Hosty initialization plan](../hosty-initialization/plan.md) owns implementation and first-install
+acceptance. This readiness document consumes its result and keeps the existing demonstration
+scope separate; it adds no duplicate deliverables or claim that the new journey has shipped.
 
 ## Verified Sandbox Progress (2026-10-15)
 

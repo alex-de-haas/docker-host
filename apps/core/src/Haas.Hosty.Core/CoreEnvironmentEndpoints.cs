@@ -50,6 +50,15 @@ internal static class CoreEnvironmentEndpoints
                 if (record.Consent is { } consent) await grants.RevokeAsync(actor.UserId, consent.GrantId, ct);
                 return await service.ReadAsync(actor, id, ct);
             }, ct));
+        routes.MapGet(root + "/{id}/initialization", async (string id, HttpRequest request,
+            UserDirectoryStore users, IClock clock, CoreEnvironmentAccess access, CancellationToken ct) =>
+            await Admin(request, users, clock, true, actor => access.InitializationAsync<Haas.Hosty.Initialization.InitializationStatus>(actor, id, "status", ct), ct));
+        routes.MapPost(root + "/{id}/initialization/resume", async (string id, HttpRequest request,
+            UserDirectoryStore users, IClock clock, CoreEnvironmentAccess access, CancellationToken ct) =>
+            await Admin(request, users, clock, false, actor => access.InitializationAsync<Haas.Hosty.Initialization.InitializationStatus>(actor, id, "resume", ct), ct));
+        routes.MapPost(root + "/{id}/setup-link", async (string id, HttpRequest request,
+            UserDirectoryStore users, IClock clock, CoreEnvironmentAccess access, CancellationToken ct) =>
+            await Admin(request, users, clock, false, actor => access.InitializationAsync<AuthBootstrapTokenResponse>(actor, id, "setup-link", ct), ct));
         routes.MapGet(root + "/{id}/apps", async (string id, HttpRequest request,
             UserDirectoryStore users, IClock clock, CoreEnvironmentAccess access, CancellationToken ct) =>
             await Admin(request, users, clock, true, actor => access.ApplicationsAsync(actor, id, ct), ct));
@@ -112,6 +121,15 @@ internal static class CoreEnvironmentEndpoints
         routes.MapPost(internalRoot + "/{id}/operations/{kind}", async (string appId, string id, string kind, CoreEnvironmentCommand input,
             HttpRequest request, CoreEnvironmentAuthorization auth, CoreEnvironmentService service, CancellationToken ct) =>
             await SandboxEndpoints.Handle(async () => await service.CommandAsync(await auth.RequireAsync(request, appId, false, ct), id, kind, input, ct)));
+        routes.MapGet(internalRoot + "/{id}/initialization", async (string appId, string id, HttpRequest request,
+            CoreEnvironmentAuthorization auth, CoreEnvironmentAccess access, CancellationToken ct) =>
+            await SandboxEndpoints.Handle(async () => await access.InitializationAsync<Haas.Hosty.Initialization.InitializationStatus>(await auth.RequireAsync(request, appId, true, ct), id, "status", ct)));
+        routes.MapPost(internalRoot + "/{id}/initialization/resume", async (string appId, string id, HttpRequest request,
+            CoreEnvironmentAuthorization auth, CoreEnvironmentAccess access, CancellationToken ct) =>
+            await SandboxEndpoints.Handle(async () => await access.InitializationAsync<Haas.Hosty.Initialization.InitializationStatus>(await auth.RequireAsync(request, appId, false, ct), id, "resume", ct)));
+        routes.MapPost(internalRoot + "/{id}/setup-link", async (string appId, string id, HttpRequest request,
+            CoreEnvironmentAuthorization auth, CoreEnvironmentAccess access, CancellationToken ct) =>
+            await SandboxEndpoints.Handle(async () => await access.InitializationAsync<AuthBootstrapTokenResponse>(await auth.RequireAsync(request, appId, false, ct), id, "setup-link", ct)));
         routes.MapPost(internalRoot + "/{id}/setup", async (string appId, string id, CoreEnvironmentSetup input,
             HttpRequest request, CoreEnvironmentAuthorization auth, CoreEnvironmentAccess access, CancellationToken ct) =>
             await SandboxEndpoints.Handle(async () => await access.SetupAsync(await auth.RequireAsync(request, appId, false, ct), id, input, ct)));

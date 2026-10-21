@@ -83,11 +83,11 @@ export class SandboxClient {
 }
 
 export const coreEnvironmentActions = ["environment-consent", "environment-create", "environment-list", "environment-status", "environment-start",
-  "environment-stop", "environment-restart", "environment-finish", "environment-setup", "environment-api"] as const;
+  "environment-stop", "environment-restart", "environment-finish", "environment-setup", "environment-api", "environment-initialization", "environment-initialization-resume", "environment-setup-link"] as const;
 export type CoreEnvironmentAction = typeof coreEnvironmentActions[number];
 export interface CoreEnvironmentSavedConsent { id: string; appId: string; label: string; mode: string; target: string; state: string }
 export interface CoreEnvironment { id: string; label: string; mode: string; projectPath?: string; context?: SandboxContext;
-  state: string; revision: number; port: number; dataRoot?: string; previewUrl: string;
+  state: string; revision: number; port: number; dataRoot?: string; previewUrl: string; initializationRequested?: boolean;
   process?: { pid: number; startedAt: string }; error?: string; operations: SandboxOperation[];
   limits?: { memoryBytes: number; cpus: number; pids: number; diskBytes: number; applicationMemoryBytes: number; applicationCpus: number; applicationPids: number };
   access?: { state: string; grantId?: string; saved: boolean; description: string };
@@ -108,14 +108,15 @@ export class CoreEnvironmentClient {
   async call<T = unknown>(action: CoreEnvironmentAction, input: Record<string, unknown>): Promise<T> {
     if (!coreEnvironmentActions.includes(action)) throw new SandboxError("environment_operation_invalid", "Unknown environment operation.", 400);
     const { environmentId, ...body } = input;
-    const read = action === "environment-list" || action === "environment-status";
+    const read = action === "environment-list" || action === "environment-status" || action === "environment-initialization";
     let suffix = action === "environment-consent" ? "/consent" : "";
     if (action !== "environment-list" && action !== "environment-create" && action !== "environment-consent") {
       if (typeof environmentId !== "string" || !/^[a-f0-9]{32}$/.test(environmentId)) throw new SandboxError("environment_id_invalid", "Select a Core-issued environment ID.", 400);
       suffix = `/${environmentId}` + (action === "environment-status" ? "" : action === "environment-api" ? "/api"
-        : action === "environment-setup" ? "/setup" : `/operations/${action.slice("environment-".length)}`);
+        : action === "environment-initialization" ? "/initialization" : action === "environment-initialization-resume" ? "/initialization/resume"
+        : action === "environment-setup-link" ? "/setup-link" : action === "environment-setup" ? "/setup" : `/operations/${action.slice("environment-".length)}`);
     }
-    const replayable = !read && action !== "environment-api" && action !== "environment-setup";
+    const replayable = !read && action !== "environment-api" && action !== "environment-setup" && action !== "environment-setup-link" && action !== "environment-initialization-resume";
     if (replayable && (typeof body.requestId !== "string" || !/^[a-f0-9-]{32,36}$/i.test(body.requestId)))
       throw new SandboxError("environment_request_required", "Persist a request UUID before sending lifecycle operations.", 400);
     let response: Response;

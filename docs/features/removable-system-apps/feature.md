@@ -1,17 +1,17 @@
 ---
 created: 2026-07-12
-updated: 2026-10-01
-summary: First-party apps are ordinary runtime apps, seeded once from a distribution catalog and removable like any other.
+updated: 2026-10-21
+summary: First-party apps are ordinary runtime apps selected from a distribution catalog during initialization and removable like any other.
 components: [apps/core, apps/cli, apps/shell]
 ---
 
 # Removable System Apps — Distribution Catalog and One Lifecycle
 
-Hosty ships first-party apps (Shell, Marketplace, Telemetry) as ordinary runtime apps. They are
+Hosty ships first-party apps (Shell, Marketplace, Harness, Telemetry) as ordinary runtime apps. They are
 installed and uninstalled through the same lifecycle as any other app, from any surface: the Shell's
 Installed Apps list, `hosty setup`, or `hosty apps remove`. The release's list of first-party apps is
-a **catalog**, not a policy — Core seeds a brand-new host from it once and never installs anything at
-boot again.
+a **catalog**, not a policy. [Hosty initialization](../hosty-initialization/feature.md) installs the first
+explicit selection; completed initialization does not reconcile removed apps back into existence.
 
 ## What "system" means
 
@@ -44,8 +44,14 @@ from its first install: it updates through the normal reviewed plan/apply flow a
 from the same feed later. `manifestRef` remains the direct fallback. Each first-party app publishes
 its own `feeds.json` (`app-feeds.0.1`) next to its manifest.
 
-## Seeding happens once
+## First selection and legacy seeding
 
+An initialization intent or state file suppresses the legacy seed pass before any application is
+selected. Core owns resumable installation, readiness and completion for the explicit selection.
+The distribution seed marker is recorded after the selection is ready. `hosty setup` remains the
+ordinary catalog management surface after initialization.
+
+Without initialization intent, the legacy source/installed-host path retains its seed behavior.
 On start, Core checks whether this host has been seeded. A host counts as seeded when it carries the
 seed marker `{dataRoot}/core/distribution-seed.json` (`distribution-seed.0.1`), the pre-seeding
 `bootstrap-choices.json`, or **any** installed app at all — the last check is what adopts hosts that

@@ -1,10 +1,11 @@
+import { coreEnvironmentTools } from "./environment-tools.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm, readFile, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { SessionStore } from "./store.js";
 import { SessionManager } from "./manager.js";
-import { DevelopmentClient } from "./development.js";
+import { DevelopmentClient, type DevelopmentAction } from "./development.js";
 import { ProviderDirectory } from "../settings/providers.js";
 import { AuditReporter } from "../audit.js";
 import { AppContextError } from "./app-context.js";
@@ -159,6 +160,22 @@ describe("development session coordination", () => {
     });
     await finish(record.id);
   });
+
+  it.each(["environment-initialization", "environment-initialization-resume", "environment-setup-link"])(
+    "rejects unsupported SDK operation %s without persisting its response", async action => {
+      const record = await manager.createSession({ createdBy: "admin" });
+      const environment = { id: "b".repeat(32), state: "running", context: { sessionId: record.id } };
+      const call = vi.spyOn(client, "environment").mockResolvedValue({ environments: [environment] });
+      await manager.workspaceAction(record.id, "environment-list", {}, "token", "admin");
+      const before = await store.readRecord(record.id);
+      call.mockClear().mockResolvedValue({ token: "private-setup-token", setupUrl: "http://child.test/setup?setupToken=private-setup-token" });
+      expect(coreEnvironmentTools().some(tool => tool.name === action.replaceAll("-", "_"))).toBe(false);
+      await expect(manager.workspaceAction(record.id, action as DevelopmentAction,
+        { environmentId: environment.id, requestId: "a".repeat(32) }, "token", "admin"))
+        .rejects.toMatchObject({ code: "environment_operation_invalid" });
+      expect(call).not.toHaveBeenCalled();
+      expect(await store.readRecord(record.id)).toEqual(before);
+    });
 
   it("keeps consent review separate from the creation journal with the same request ID", async () => {
     const record = await manager.createSession({ createdBy: "admin" });

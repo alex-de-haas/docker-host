@@ -37,6 +37,11 @@ internal static class CoreJson
 // by each options object, so the same context serves both indented and compact callers.
 // One-click Cloudflare ingress (phase 1): API response envelopes, the at-rest credential, and its masked
 // summary projection.
+[JsonSerializable(typeof(Haas.Hosty.Initialization.InitializationRequest))]
+[JsonSerializable(typeof(Haas.Hosty.Initialization.InitializationStatus))]
+[JsonSerializable(typeof(InitializationDocument))]
+[JsonSerializable(typeof(InitializationListenerState))]
+[JsonSerializable(typeof(IReadOnlyList<AppServiceArtifactProbe>))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(System.Text.Json.Nodes.JsonObject))]
 [JsonSerializable(typeof(AppDevelopmentGuide))]

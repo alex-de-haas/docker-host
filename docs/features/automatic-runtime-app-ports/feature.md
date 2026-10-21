@@ -1,6 +1,6 @@
 ---
 created: 2026-06-05
-updated: 2026-09-30
+updated: 2026-10-21
 summary: Core reserves host ports at install, injects them into the environment and lets operators reassign or pin them.
 components: [apps/core, apps/shell]
 ---
@@ -104,11 +104,10 @@ visited could hand an early service the number a later one pins, and the record 
 same host port twice. Both the install-time allocator and the localCommand adapter's start-time
 resolution work this way.
 
-Shell is not special-cased: it pins its port in its own manifest like any app, and once installed its
-reservation is in the set. Before Shell installs, nothing holds its pinned port — but that is exactly
-the position every other app is already in, and the band is deliberately clear of the ports apps pin
-by hand. An app that pins inside the band can still collide, and it then fails start with the same
-reassignable `runtime_port_unavailable` any app gets.
+Fresh Shell manifests omit the fixed host port and use this same allocator in Docker and local
+runtime profiles. Existing installations retain their persisted reservation when the manifest pin
+is removed. Fresh Core listener allocation belongs to [Hosty initialization](../hosty-initialization/feature.md):
+automatic candidates can change before first readiness, while established or explicit bindings remain stable.
 
 ## Environment
 

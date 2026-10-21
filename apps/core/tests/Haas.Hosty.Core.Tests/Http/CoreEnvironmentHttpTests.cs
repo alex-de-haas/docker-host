@@ -56,16 +56,21 @@ public sealed class CoreEnvironmentHttpTests
         Assert.Equal(child.Id, Assert.Single(visible!.Environments).Id);
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/core-environments/" + foreign.Id)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/core-environments/" + foreign.Id + "/apps")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/core-environments/" + foreign.Id + "/initialization")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/core-environments/" + child.Id + "/setup-link", new { })).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/core-environments/" + child.Id)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/core-environments/" + child.Id + "/apps")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/core-environments/" + child.Id + "/operations/finish",
             new CoreEnvironmentCommand(Guid.NewGuid().ToString(), child.Revision))).StatusCode);
         await apps.UpsertAppAsync(record with { GrantedCorePermissions = [CoreAppPermissions.CoreEnvironmentsInspect, CoreAppPermissions.CoreEnvironmentsOperate] });
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/core-environments/" + foreign.Id + "/setup-link", new { })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/core-environments/" + foreign.Id + "/initialization/resume", new { })).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/core-environments/from-workspace",
             new CoreEnvironmentWorkspaceCreate(Guid.NewGuid().ToString(), "Denied", "missing", ["missing"]))).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/core-environments/" + child.Id + "/api",
             new CoreEnvironmentApiRequest("GET", "/api/apps"))).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/core-environments", new CoreEnvironmentCreate(Guid.NewGuid().ToString(), "Denied"))).StatusCode);
+        // Direct create is authorized by operate; the two existing children exhaust the pool.
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/core-environments", new CoreEnvironmentCreate(Guid.NewGuid().ToString(), "Capacity check"))).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/core-environments/" + foreign.Id + "/operations/finish",
             new CoreEnvironmentCommand(Guid.NewGuid().ToString(), foreign.Revision))).StatusCode);
         var finished = await client.PostAsJsonAsync("/api/core-environments/" + child.Id + "/operations/finish",
