@@ -66,7 +66,8 @@ credentials must be refreshed through normal Hosty authentication.
 Worker restart marks unfinished runs interrupted without replaying their side effects. A fresh
 Docker service process can confirm the previous container execution boundary ended. Local recovery
 does not assume that an old native child exited. Source leases and occupied claims remain when
-termination cannot be confirmed. Ordinary cancellation waits for the known CLI and its process
+termination cannot be confirmed. Cancellation during startup waits for the terminal receipt within a bounded deadline; timeout
+retains the specific source lease. Ordinary cancellation waits for the known CLI and its process
 group; no UID-wide process scan or per-turn container restart is involved.
 
 Commands are limited to 1 MiB, attachments to 20 MiB, individual events/final text to 1 MiB and

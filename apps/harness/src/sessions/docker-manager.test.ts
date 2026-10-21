@@ -11,13 +11,13 @@ import type { HarnessEvent, HarnessStartOptions } from "../harness/adapter.js";
 
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
-async function fixture() {
+async function fixture(reserve: () => Promise<() => void> = async () => () => {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "hosty-remote-")); cleanups.push(() => rm(root, { recursive: true, force: true }));
   const identity = await ensureServiceIdentity(path.join(root, "auth"));
   const journal = new WorkerJournal(path.join(root, "independent-provider-storage")); await journal.initialize();
   let options: HarnessStartOptions | undefined, stopped = 0, starts = 0;
   const capabilities = { questions: true, appMcp: true, autoAllow: true, denyReason: true, liveReconfigure: true };
-  const engine = new WorkerEngine(journal, { validateSelection: async () => {}, cwd: async () => root, reserve: async () => () => {},
+  const engine = new WorkerEngine(journal, { validateSelection: async () => {}, cwd: async () => root, reserve,
     adapter: async () => ({ name: "fixture", capabilities, probe: async () => ({ available: true }), start: input => {
       options = input; starts++;
       return { send() {}, resolveApproval: () => true, resolveQuestion: () => true, setMcpServers: async () => true,
@@ -132,4 +132,22 @@ it.each(["stop", "detach"] as const)("%s does not wait on an event callback queu
     await expect.poll(() => finished, { timeout: 1500 }).toBe(true);
     expect(f.stopped()).toBe(operation === "stop" ? 1 : 0);
   } finally { releaseCallback(); await cleanup; }
+});
+
+it("waits for an admitted run to finish cancellation during slow startup", async () => {
+  let releaseReservation!: () => void, entered = false, finished = false, released = 0;
+  const reservation = new Promise<void>(resolve => { releaseReservation = resolve; });
+  const f = await fixture(async () => { entered = true; await reservation; return () => { released++; }; });
+  const run = f.adapter.start({ sessionId: "conversation", workerRunId: "slow-run", cwd: "/unused", onEvent: () => {} });
+  cleanups.push(() => run.stop());
+  run.send("cancel before native startup"); await expect.poll(() => entered).toBe(true);
+  const stopping = run.stopAndWait!().then(() => { finished = true; });
+  try {
+    await expect.poll(async () => (await f.journal.load("slow-run")).receipt.state).toBe("cancelling");
+    expect(finished).toBe(false);
+  } finally { releaseReservation(); }
+  await stopping;
+  expect((await f.journal.load("slow-run")).receipt).toMatchObject({ state: "cancelled", exitConfirmed: true });
+  expect(f.starts()).toBe(0); expect(released).toBe(1);
+  expect(await f.client.capabilities()).toMatchObject({ capacity: 1 });
 });

@@ -36,11 +36,11 @@ export class WorkerClient {
   }
   headers(): Record<string, string> { return { authorization: `Bearer ${this.identity.secret}`,
     "x-hosty-worker-installation": this.identity.installation, "content-type": "application/json" }; }
-  async request<T>(route: string, method = "GET", body?: unknown, retry = false): Promise<T> {
+  async request<T>(route: string, method = "GET", body?: unknown, retry = false, signal?: AbortSignal): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       try {
         const response = await fetch(`${this.origin.replace(/\/$/, "")}${route}`, { method, headers: this.headers(),
-          ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(35000), redirect: "error" });
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(35000)]) : AbortSignal.timeout(35000), redirect: "error" });
         const value = await response.json() as { code?: string; message?: string };
         if (!response.ok) throw new WorkerApiError(response.status, value.code ?? "worker_error", value.message ?? "Worker request failed.");
         return value as T;
@@ -195,8 +195,18 @@ class RemoteRun implements HarnessRun {
   async interrupt(): Promise<void> {
     if (!this.id || this.confirmed) return;
     if (this.submitted) await this.client.request(`/v1/runs/${this.id}`, "PUT", this.submitted, true);
-    const receipt = await this.client.request<WorkerReceipt>(`/v1/runs/${this.id}/cancel`, "POST", { controlId: randomUUID() }, true);
-    if (!terminal(receipt.state) || receipt.state === "interrupted" && !receipt.exitConfirmed) throw new WorkerApiError(503, "exit_unconfirmed", "Worker execution exit is not confirmed; keep source leases.");
+    let receipt = await this.client.request<WorkerReceipt>(`/v1/runs/${this.id}/cancel`, "POST", { controlId: randomUUID() }, true);
+    const unconfirmed = () => new WorkerApiError(503, "exit_unconfirmed", "Worker execution exit is not confirmed; keep source leases.");
+    // Startup/reservation can still be unwinding after the cancellation command is acknowledged.
+    // Observe its receipt without resubmitting work; a bounded failure still retains source leases.
+    const signal = AbortSignal.timeout(35000);
+    try {
+      while (!terminal(receipt.state)) {
+        await pause(signal);
+        receipt = await this.client.request<WorkerReceipt>(`/v1/runs/${this.id}`, "GET", undefined, false, signal);
+      }
+    } catch { throw unconfirmed(); }
+    if (receipt.state === "interrupted" && !receipt.exitConfirmed) throw unconfirmed();
     this.confirmed = true;
   }
   async stop(): Promise<void> { await this.interrupt(); this.stopped = true; this.controller?.abort(); await this.finished; }
