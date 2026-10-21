@@ -99,6 +99,50 @@ public sealed class ProtectedSettingsHttpTests
         Assert.Contains("font-src 'self'", string.Join(";", (await browser.GetAsync("/account/tokens")).Headers.GetValues("Content-Security-Policy")));
     }
 
+    [Theory]
+    [InlineData("{\"settings\":{\"HOSTY_UPDATE_CHECK_INTERVAL_MINUTES\":\"60\"},\"Settings\":{\"HOSTY_CORE_PORT\":\"7171\"}}")]
+    [InlineData("{\"Settings\":{\"HOSTY_CORE_PORT\":\"7171\"},\"settings\":{\"HOSTY_UPDATE_CHECK_INTERVAL_MINUTES\":\"60\"}}")]
+    [InlineData("{\"settings\":{\"HOSTY_UPDATE_CHECK_INTERVAL_MINUTES\":\"60\"},\"settings\":{\"HOSTY_CORE_PORT\":\"7171\"}}")]
+    [InlineData("{\"settings\":{\"HOSTY_CORE_PORT\":\"7171\",\"HOSTY_CORE_PORT\":\"7272\"}}")]
+    [InlineData("{\"settings\":{\"HOSTY_CORE_PORT\":\"7171\",\"hosty_core_port\":\"7272\"}}")]
+    public async Task AmbiguousJsonCannotBypassOrMisrepresentReview(string json)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        using var app = await AppManagementHttpTests.CreateAppClient(host, "example.settings", [CoreAppPermissions.ConfigureCore]);
+        var settings = host.Services.GetRequiredService<CoreSettingsService>();
+        var before = settings.GetServerRow().StoredOrDefaultPort;
+        using var response = await app.PutAsync("/api/core/settings", new StringContent(json, System.Text.Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("settings_change_invalid", (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+        Assert.Equal(before, settings.GetServerRow().StoredOrDefaultPort);
+    }
+
+    [Theory]
+    [InlineData("settings")]
+    [InlineData("Settings")]
+    [InlineData("SETTINGS")]
+    public async Task ReviewAndRoutineDetectionMatchEndpointPropertyCasing(string property)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        using var app = await AppManagementHttpTests.CreateAppClient(host, "example.settings", [CoreAppPermissions.ConfigureCore]);
+        await NormalizeBrowser(host);
+        var change = new Dictionary<string, object> { [property] = new Dictionary<string, string> { ["HOSTY_CORE_PORT"] = "7171" } };
+        using var prepared = await app.PutAsJsonAsync("/api/core/settings", change);
+        Assert.Equal(428, (int)prepared.StatusCode);
+        var review = (await prepared.Content.ReadFromJsonAsync<SettingsChangeView>())!;
+        using var browser = Browser(host);
+        var html = await browser.GetStringAsync("/settings/confirm/" + review.Id);
+        Assert.Contains("7070", html); Assert.Contains("7171", html);
+        await Decide(browser, review.Id, html, "approve");
+        app.DefaultRequestHeaders.Add(ProtectedSettingsChanges.Header, review.Id);
+        (await app.PutAsJsonAsync("/api/core/settings", change)).EnsureSuccessStatusCode();
+        Assert.Equal(7171, host.Services.GetRequiredService<CoreSettingsService>().GetServerRow().StoredOrDefaultPort);
+        app.DefaultRequestHeaders.Remove(ProtectedSettingsChanges.Header);
+        using var routine = await app.PutAsJsonAsync("/api/core/settings", new Dictionary<string, object> {
+            [property] = new Dictionary<string, string> { [UpdateCheckSettings.IntervalKey] = "60" } });
+        routine.EnsureSuccessStatusCode();
+    }
+
     internal static async Task NormalizeBrowser(CoreHttpHarness host) =>
         await host.Services.GetRequiredService<UserDirectoryStore>().UpdateAsync(state => state with {
             Sessions = state.Sessions.Select(session => session with { BrowserOrigin = "http://localhost" }).ToArray(),

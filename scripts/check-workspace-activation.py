@@ -342,7 +342,9 @@ try:
         helper=read_receipt(helper_path)
         if helper['state']=='failed': raise helper_failure('Recovery failed', a, helper)
         return a if a['phase']=='active' and helper['state']=='completed' else None
-    final=wait_for(completed,180)
+    # Recovery includes supervisor delay, a cold SDK build and process handover. Shared runners
+    # can spend almost three minutes building alone; keep a bounded budget for the full scenario.
+    final=wait_for(completed,600)
     status=request('/control/v1/core/status',control=True)
     owned_pids.add(status['launch']['processId'])
     assert status['launch']==final['activatedCore']

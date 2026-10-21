@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 summary: Shell unifies personal, host and application settings; Core confirms protected changes while Harness owns invocation preferences and instruction acceptance.
 components: [apps/core, apps/shell, apps/harness, apps/marketplace]
 ---
@@ -46,7 +46,9 @@ Core revalidates current user and caller authority, installation identity, paylo
 before dispatching through the existing domain endpoint. Replays return the recorded result;
 changed payloads and stale state fail. In-memory requests expire after fifteen minutes and are
 bounded to 128 entries and 128 KiB bodies. A Core restart expires outstanding reviews; it does
-not convert them into a grant. Domain validation and audit still apply.
+not convert them into a grant. Domain validation and audit still apply. Property lookup follows the
+endpoint's case-insensitive Web binding. Duplicate or case-ambiguous keys at any depth are rejected
+before routine-change detection or review, so displayed and applied values cannot diverge.
 
 | Operation | Review path |
 | --- | --- |
@@ -61,6 +63,10 @@ Shell opens a confirmation window and offers a visible fallback link. It polls o
 review is pending. Cancellation preserves the draft; failed or stale requests report their cause.
 Unknown apply results retain the operation identity. Trusted local control/recovery remains a
 separate authority and does not depend on Shell being available.
+
+The inline Core source form keeps the revision of its displayed draft, including after saving.
+Background refresh adopts new source values only when there are no unsaved edits. A concurrent
+change cannot silently replace the revision used to save an older draft.
 
 ## Credentials
 
@@ -129,7 +135,9 @@ Default-app resolution, object links and the shared skills library have their ow
 ## Testing Expectations
 
 - Exercise exact-payload review, replay, stale revisions, cancellation, revoked callers/users,
-  CSRF/origin/nonce boundaries and absence of legacy mutation bypasses over real Core HTTP routes.
+  CSRF/origin/nonce boundaries, duplicate/case-ambiguous JSON rejection and absence of legacy
+  mutation bypasses over real Core HTTP routes.
+- Verify pristine Core source refresh, unsaved drafts and revision preservation after successive saves.
 - Verify own versus selected-user credential metadata, secret-free lists, label preservation,
   trusted issuance, revocation and current-session effects.
 - Cover independent assistant grants, both installation identities, discovery-only credentials,

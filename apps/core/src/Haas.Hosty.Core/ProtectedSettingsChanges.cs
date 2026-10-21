@@ -94,7 +94,7 @@ internal sealed class ProtectedSettingsChanges(IClock clock, CorePublicOriginRes
         catch (IOException) { return Error(413, "settings_change_too_large", "The proposed change is too large."); }
         finally { request.Body.Position = 0; }
         JsonNode? proposed;
-        try { proposed = string.IsNullOrWhiteSpace(body) ? null : JsonNode.Parse(body); }
+        try { proposed = ParseProposal(body); }
         catch (JsonException) { return Error(400, "settings_change_invalid", "The proposed settings are invalid."); }
         if (proposed is not null and not JsonObject) return Error(400, "settings_change_invalid", "The proposed change must be an object.");
         if (request.Path == "/api/core/settings" && proposed?["settings"] is JsonObject routine && routine.Count > 0 &&
@@ -163,6 +163,31 @@ internal sealed class ProtectedSettingsChanges(IClock clock, CorePublicOriginRes
             return Results.Empty;
         }
         finally { applyGate.Release(); }
+    }
+
+    private static JsonNode? ParseProposal(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        using var document = JsonDocument.Parse(body);
+        RejectAmbiguousProperties(document.RootElement);
+        // Match the endpoint's Web property binding for both routine-change detection and review
+        // summaries. Reject duplicates first instead of choosing a different value than the binder.
+        return JsonNode.Parse(body, new JsonNodeOptions { PropertyNameCaseInsensitive = true });
+    }
+
+    private static void RejectAmbiguousProperties(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in element.EnumerateObject())
+            {
+                if (!names.Add(property.Name)) throw new JsonException("Duplicate or ambiguous property name.");
+                RejectAmbiguousProperties(property.Value);
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+            foreach (var item in element.EnumerateArray()) RejectAmbiguousProperties(item);
     }
 
     private static string Hash(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
