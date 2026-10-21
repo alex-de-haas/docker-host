@@ -135,8 +135,12 @@ settings with `injection: { "appServiceToken": false, "appIdentityToken": false,
 omitted fields preserve defaults, and `settings` can contain an explicit allowlist. Data/cache
 targets accept contained relative `subPath` and `mode` (`ro` or default `rw`). Multiple targets
 must use unique environment variables and non-overlapping container destinations. Profile targets
-override runtime-type defaults for the same environment key. Docker service runtimes also accept
-`resources: { "memoryBytes": 268435456, "cpus": 0.5, "pids": 64 }`.
+override runtime-type defaults for the same environment key.
+
+Do not declare memory, CPU or PID limits in the app manifest. `app.0.1` ignores the runtime
+`resources` field, including existing legacy and newer shapes, without rejecting the app.
+Resource enforcement belongs to Core's operator/environment policy. Child Core environment
+budgets remain effective independently of manifest content.
 
 Apps with reviewed full-source permission can declare an automatic Core collection:
 `externalMounts.development: { "kind": "managed-workspaces", "scope": "instance", "service": "worker", "mode": "rw", "required": true }`.

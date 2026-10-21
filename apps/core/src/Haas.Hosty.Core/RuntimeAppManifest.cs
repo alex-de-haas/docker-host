@@ -1974,7 +1974,7 @@ internal sealed partial class DockerRuntimeAdapter(
             // through to the normal recreate path below. Adopted
             // containers are intentionally NOT added to startedContainers: this start did not create
             // them, so a later sibling's failure must not tear a healthy running service down.
-            if (service.Runtime.SourceMount is null && (admission is null || await admission.MatchesAsync(runner, containerName, cancellationToken)) && await TryAdoptRunningContainerAsync(context.App.Id, containerName, service.Image, existingLock, cancellationToken, context, service, admission is null))
+            if (service.Runtime.SourceMount is null && (admission is null || await admission.MatchesAsync(runner, containerName, cancellationToken)) && await TryAdoptRunningContainerAsync(context.App.Id, containerName, service.Image, existingLock, cancellationToken, context, service))
             {
                 resolvedLocks[service.Key] = existingLock!;
                 AppendServiceEndpoints(endpoints, service, AssignServicePorts(context, service, hostNetwork), config);
@@ -2057,11 +2057,6 @@ internal sealed partial class DockerRuntimeAdapter(
             // Privileged extras (validated + install-review gated): Linux capabilities and host
             // device nodes, e.g. NET_ADMIN + /dev/net/tun for an in-container VPN.
             if (admission is not null) runArgs.AddRange(admission.Arguments);
-            else if (service.Runtime.Resources is { } resources) runArgs.AddRange([
-                "--memory", resources.MemoryBytes.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                "--memory-swap", resources.MemoryBytes.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                "--cpus", resources.Cpus.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                "--pids-limit", resources.Pids.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
             runArgs.AddRange(BuildPrivilegedArguments(service.Runtime));
             runArgs.AddRange(BuildHealthcheckArguments(service.Runtime));
 
@@ -2622,7 +2617,7 @@ internal sealed partial class DockerRuntimeAdapter(
         string containerName,
         RuntimeDockerImage image,
         ArtifactLock? existingLock,
-        CancellationToken cancellationToken, RuntimeLifecycleContext context, RuntimeSelectedService service, bool ordinaryResources)
+        CancellationToken cancellationToken, RuntimeLifecycleContext context, RuntimeSelectedService service)
     {
         if (string.IsNullOrWhiteSpace(existingLock?.ImageDigest))
         {
@@ -2656,11 +2651,11 @@ internal sealed partial class DockerRuntimeAdapter(
             string.Equals(parts[2].Trim(), config.InstanceId, StringComparison.Ordinal) &&
             string.Equals(parts[3].Trim(), pinnedReference, StringComparison.Ordinal) &&
             (service.Injection?.AppServiceToken == false ? !parts[4].Split('\n').Any(line => line.StartsWith("HOSTY_APP_SERVICE_TOKEN=", StringComparison.Ordinal)) : HasValidServiceToken(appId, parts[4]))
-            && await MatchesServiceConfigurationAsync(context, service, containerName, ordinaryResources, cancellationToken);
+            && await MatchesServiceConfigurationAsync(context, service, containerName, cancellationToken);
     }
 
     private static bool HasExplicitServiceContract(RuntimeLifecycleContext context, RuntimeSelectedService service)
-        => service.Injection is not null || service.Runtime.Resources is not null || RuntimeServiceStorage.Resolve(context.Manifest, service).Any(b => b.Target.SubPath is not null || b.Target.Mode == "ro")
+        => service.Injection is not null || RuntimeServiceStorage.Resolve(context.Manifest, service).Any(b => b.Target.SubPath is not null || b.Target.Mode == "ro")
             || context.Mounts.Any(m => m.ManagedCollection && (m.Service is null || m.Service == service.Key));
 
     private static string ServiceConfigurationFingerprint(RuntimeLifecycleContext context, RuntimeSelectedService service)
@@ -2673,7 +2668,7 @@ internal sealed partial class DockerRuntimeAdapter(
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', values)))).ToLowerInvariant();
     }
 
-    private async Task<bool> MatchesServiceConfigurationAsync(RuntimeLifecycleContext context, RuntimeSelectedService service, string name, bool ordinaryResources, CancellationToken ct)
+    private async Task<bool> MatchesServiceConfigurationAsync(RuntimeLifecycleContext context, RuntimeSelectedService service, string name, CancellationToken ct)
     {
         if (!HasExplicitServiceContract(context, service)) return true; // Existing default-token applications retain their adoption contract.
         var inspected = await RunRawAsync(["inspect", name], ct);
@@ -2685,12 +2680,6 @@ internal sealed partial class DockerRuntimeAdapter(
             var labels = container.GetProperty("Config").GetProperty("Labels");
             if (!labels.TryGetProperty("hosty.app.service", out var key) || key.GetString() != service.Key
                 || !labels.TryGetProperty("hosty.service.configuration", out var fingerprint) || fingerprint.GetString() != ServiceConfigurationFingerprint(context, service)) return false;
-            if (ordinaryResources && service.Runtime.Resources is { } resources)
-            {
-                var limits = container.GetProperty("HostConfig");
-                if (limits.GetProperty("Memory").GetInt64() != resources.MemoryBytes || limits.GetProperty("MemorySwap").GetInt64() != resources.MemoryBytes
-                    || limits.GetProperty("NanoCpus").GetInt64() != (long)(resources.Cpus * 1_000_000_000) || limits.GetProperty("PidsLimit").GetInt64() != resources.Pids) return false;
-            }
             var environment = container.GetProperty("Config").GetProperty("Env").EnumerateArray().Select(e => e.GetString() ?? "").ToArray();
             if (service.Injection?.AppIdentityToken == false && environment.Any(e => e.StartsWith("HOSTY_APP_IDENTITY_TOKEN=", StringComparison.Ordinal))) return false;
             if (service.Injection?.Settings is { } allowed && context.App.Settings.Keys.Any(k => !allowed.Contains(k) && environment.Any(e => e.StartsWith(k + "=", StringComparison.Ordinal)))) return false;
@@ -3797,11 +3786,8 @@ internal sealed record RuntimeServiceHealthcheckManifest
     public int? GracePeriodSeconds { get; init; }
 }
 
-internal sealed record RuntimeServiceResources(long MemoryBytes, double Cpus, int Pids);
-
 internal sealed record RuntimeServiceProfileManifest
 {
-    public RuntimeServiceResources? Resources { get; init; }
     public string? Type { get; init; }
 
     // How the running code is delivered for this runtime (A1). `image` is a compiled, lockable
