@@ -2,7 +2,7 @@
 status: Draft
 created: 2026-10-12
 updated: 2026-10-21
-summary: Hosty's visual language — ink acts, lime answers — with its color, type, mark and ReUI token rules, the Shell layouts built from it, and the Harness development and review pages.
+summary: Hosty's visual language — ink acts, lime answers — with color, type, mark and ReUI token rules, the Shell pages built from it, and the Harness development and review pages.
 components: [apps/shell, apps/shell-swift, packages/app-sdk, apps/core, apps/harness, assets/hosty-brand, apps/plans, apps/telemetry, apps/telemetry-ui, apps/demo-app, apps/marketplace, apps/whisper]
 ---
 
@@ -67,6 +67,8 @@ until shared from its page. This document carries every value and rule needed to
 | `PhonePeek`, `PhoneSheet`, `PhoneTools`, `PhoneKeyboard`, `PhoneManyTools` | Phone: tab bar, open tool, tool list, keyboard and long dialog, many tools |
 | `HarnessPage`, `HarnessReview` | Harness development page; its review page for session changes and open pull requests |
 | `HarnessPhoneList`, `HarnessPhoneChat` | Harness on a phone: sessions, and the conversation with the workspace sheet |
+| `EnvSetup` | Core first-run page: choose apps, install with retry, create the administrator, open Hosty |
+| `Marketplace`, `Settings`, `AppManage` | Marketplace catalog and installed apps; Shell settings; managing one app |
 
 ## Principles
 
@@ -607,6 +609,91 @@ Review actions:
   the sheet with a back button, each file opens as its own page, and the CI bar expands its check
   list in place on a tap.
 
+## Environment, Marketplace, settings and app management
+
+Owner direction, 2026-10-21, from the `EnvSetup`, `Marketplace`, `Settings` and `AppManage`
+artboards. The owning features stay the functional baseline (D20 applies); the artboards show less
+than those features do, and where they differ the feature wins unless a deliverable below changes it.
+
+### Creating the environment
+
+A Core page — Core's own stylesheet, no component library — for a brand-new data root, in four steps
+shown as a progress strip:
+
+1. **Choose apps.** The distribution catalog's entries, each with its mark, name and one-line
+   description and a lime checkbox. Entries start checked as the catalog's `defaultEnabled` says;
+   Shell carries "Recommended" because without a UI client the host is managed only from the CLI.
+   Nothing checked is allowed: Core keeps working. The primary action names the count ("Install 4
+   apps").
+2. **Install.** A lime progress bar with "3 of 4 ready · 1 failed" and one row per app with its state
+   and detail — Ready with its time, Starting with its step, Queued, Failed. A failed row shows the
+   cause in the danger soft panel with Retry and Show log; Continue without it skips that app.
+   The next step waits until every remaining app is ready. Leaving the page does not stop the
+   installation.
+3. **Administrator.** The existing first-administrator form: email, display name, password, confirm.
+4. **Open.** The installed apps as chips, a note for any skipped app saying where to install it
+   later, the host's address and Open Hosty.
+
+The page is part of first setup: it uses the setup authority `/setup` uses today, it is unavailable
+once an enabled administrator exists, and later changes go through Marketplace or `hosty setup`.
+
+### Marketplace
+
+Inside Shell's frame with Marketplace's accent strip:
+
+- A header with the catalog source and a search field over names, publishers, summaries and
+  categories; Discover and Installed tabs with counts.
+- **Discover:** category chips (All, Productivity, Media, Monitoring, Home) and a grid of cards —
+  the app's own icon, name, publisher, summary, category, and Installed or the available update.
+- **App card:** beside the grid, the selected app's icon, name and signer, its category, version and
+  footprint, Install (or Update and Manage when installed), screenshots, description, and the
+  permissions it will ask for in plain words, ending with the note that Core confirms runtime,
+  startup and permissions on its own page.
+- **Install** opens the shared SDK install dialog: feed and manifest checked, defaults prepared,
+  waiting for confirmation, and Continue in Core to the existing confirmation page.
+- **Installed:** every app on the host, wherever it came from — version, source (catalog or Hosty
+  distribution), an available update, Open and Manage.
+
+### Settings
+
+Settings keeps its own navigation inside the page, so Shell's sidebar holds a single Settings entry:
+
+- **You:** My profile — Profile, Connections, Tokens & devices.
+- **Host:** Host — Updates, Network, Shared folders, Core source; Users & security — Users, App
+  permissions, Policies; Shell — preferences such as theme, the Assistant button and the start page.
+- **Apps:** one **App settings** entry with the count of installed apps. It lists every app with
+  Settings, for the app's own `ui.settings` page, and Manage. Individual apps no longer appear in the
+  settings navigation, which kept growing with every install. The Dashboard row menu still opens an
+  app's settings and Manage directly.
+
+Each destination has a title, a one-line description and line tabs (lime strong underline). Rows
+use the field pattern — label column, value with a muted note, one action — and lists use bordered
+row groups. Protected changes keep the feature's Core confirmation and say so in place.
+
+### Managing an app
+
+Addressed from App settings, with a breadcrumb back to Settings and App settings. The header holds
+the mark, name, version and runtime, the state name with its detail, and Open app, Restart, Stop and
+More. Tabs:
+
+- **Launch:** Start with host (the same setting as the Dashboard menu), the runtime with a link to
+  the Dashboard where it is switched, what the app starts after, and its services with state and
+  resources.
+- **Parameters:** the manifest's typed parameters with units and notes, secrets as masked values
+  with Replace, and Save with the note that saving restarts the services.
+- **Folders:** the data folder with its size and backup inclusion, and the folders the app asks for —
+  attached with path and access, or optional and unattached with Choose folder — noting that attached
+  folders are never backed up or deleted.
+- **Network:** each endpoint with its protocol, local address and public address, internal endpoints
+  with Add public address, pinned ports with Reassign, and the app origin.
+- **Permissions:** granted Core permissions in plain words, confirmed provider roles, and Review
+  permissions, which opens Core's review page.
+- **Updates:** an available update as an Info panel with its class, permission change and size, and
+  Update; what changed; the installed version and feed with Check now; the update policy; and the
+  source with Use a source checkout.
+- **Backups:** what backups cover, Create backup, the list with Restore, Download and More, and the
+  retention period.
+
 ## Interactions With Existing Features
 
 Implementing this plan changes documented behavior; each owning `feature.md` follows in the same PR as
@@ -656,6 +743,25 @@ the deliverable that changes it.
   through the PR's selected GitHub connection, which that feature documents when it ships.
 - [Delivery Readiness](../hosty-delivery-readiness/plan.md) keeps its priorities: D21–D26 follow its
   incremental-redesign rule and are not demo gates unless the owner promotes them there.
+- [Removable System Apps](../removable-system-apps/feature.md) seeds a brand-new host once from the
+  catalog's `defaultEnabled` entries with no page, and retries owed entries silently on a later boot;
+  [CLI Bootstrap](../cli-bootstrap/feature.md) offers the same choice as `hosty setup`. D27 adds the
+  first-run page: the choice replaces automatic seeding for a host set up in the browser, and Retry
+  makes the existing owed-entry retry visible. The seed marker and its `pending` list keep their
+  meaning. [Local Password Login](../local-password-login/feature.md) supplies the setup authority.
+- [Runtime App Marketplace](../runtime-app-marketplace/feature.md) shows installed badges from
+  Core's installed-state API; D28 adds the Installed tab from the same API.
+  [App Installation SDK](../app-installation-sdk/feature.md) keeps its dialog and Core confirmation.
+- [Settings Experience](../settings-experience/feature.md) gives every installed application its own
+  settings destination and groups Manage application into Launch (autostart and typed parameters),
+  Permissions, Network, Folders, Source & updates and Backups. D29 collapses the applications into the
+  single App settings entry; D30 splits Parameters out of Launch and folds the source into Updates.
+  Its protected-change reviews, ownership and addressable `manage:<app-id>` route are unchanged.
+- [External Mounts](../external-mounts/feature.md), [Automatic Runtime App Ports](../automatic-runtime-app-ports/feature.md),
+  [App Permission Management](../app-permission-management/feature.md),
+  [Runtime App Update](../runtime-app-update/feature.md) and
+  [App Data Backup Retention](../app-data-backup-retention/feature.md) own the behavior behind
+  D30's Folders, Network, Permissions, Updates and Backups tabs; D30 changes only their presentation.
 
 ## Deliverables
 
@@ -696,11 +802,22 @@ the deliverable that changes it.
 - [ ] D25. Post PR review comments and replies from the review page through a new Core publication operation that uses the PR's selected GitHub connection, the operator's own authority and CSRF protection, refuses lines outside the PR head, and optionally asks Harness to address the comment; document it in the Assistant PR Lifecycle feature, with Core and Harness version bumps.
 - [ ] D26. Add the Harness phone layout on top of D13's tab bar: the full-screen sessions list, the conversation with its pinned decision and composer above the tab bar, the workspace as a bottom sheet without tabs, session changes as a list with each file on its own page, and the CI bar expanding its checks in place, with Harness version bumps.
 
+### Phase 5 — Environment, Marketplace, settings and app management
+
+- [ ] D27. Add the first-run environment page to Core as described under Creating the environment: the four-step strip, the catalog checklist with `defaultEnabled` preselection, install rows with Ready, Starting, Queued and Failed, Retry and Continue without it, the existing administrator form and the Open step — guarded by the first-setup authority and unavailable once an administrator exists, replacing automatic seeding for a browser setup while keeping the seed marker's `pending` semantics; update the Removable System Apps feature, with the platform version bump.
+- [ ] D28. Restyle Marketplace as described under Marketplace: search, Discover with category chips and cards, the app card with signer, footprint, screenshots and the permissions it asks for, the shared install dialog leading to Core confirmation, and the Installed tab from Core's installed-state API with Open and Manage; update the Runtime App Marketplace feature, with the Marketplace version bump.
+- [ ] D29. Restyle Shell's settings as described under Settings: in-page navigation with My profile, Host, Users & security and Shell, a single App settings entry listing every app with Settings and Manage instead of one destination per app, a lone Settings entry in Shell's sidebar, destination titles, line tabs and the field and row patterns, with the Dashboard menu still opening an app's settings and Manage; update the Settings Experience feature, with the Shell version bump.
+- [ ] D30. Restyle Manage application as described under Managing an app: the header with state and Open app, Restart, Stop and More, and the Launch, Parameters, Folders, Network, Permissions, Updates and Backups tabs, splitting typed parameters out of Launch and folding the source into Updates without changing any owning feature's behavior; update the Settings Experience feature, with the Shell version bump.
+
 ### Functional Parity
 
 - [ ] D20. Inventory existing actions/states on each changed screen, preserve them where mockups are incomplete, and verify permissions, navigation, forms, drafts, panels and failure/recovery before accepting the visual replacement.
 
 ## Open Questions
+
+- Should the environment page create the administrator before installing apps, so every install has
+  an actor, or keep the artboard's order with installs running under the setup authority?
+- Does App settings keep that name, or read Applications, now that it holds both app pages and Manage?
 
 - Is the All apps row's More menu the right home for Check updates, or does a manual check belong in
   Settings now that Core checks on a schedule?
@@ -750,6 +867,12 @@ Compare changed screens against D20's functional inventory through Core/Shell, i
 - Dashboard: a long state detail and a long contextual action never shift the columns, Core and app
   values line up, search filters together with the state filters, and the table never scrolls
   sideways at any width, switching to the compact layout first.
+- Environment page on a fresh data root: no choice is possible without the setup authority; a failed
+  image pull shows its cause and Retry installs it; Continue without it leaves that entry owed; the
+  page is gone once the administrator exists.
+- Marketplace, Settings and Manage application through Core-managed Shell in light and dark: every
+  action of the owning features is reachable, including those absent from the artboards; App settings
+  lists every installed app; the `manage:<app-id>` route opens the right tab.
 - Phone checks on iOS Safari and Android Chrome: keyboard open with a long conversation, a pending
   decision while another tool works, 16 or more tools, rotation, and a hidden tool keeping its draft
   across dock, sheet and phone transitions.
