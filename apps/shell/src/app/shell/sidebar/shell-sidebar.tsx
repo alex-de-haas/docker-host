@@ -46,6 +46,7 @@ export function ShellSidebar({
   busyAction,
   onNavigate,
   settingsPages,
+  managementApps = [],
   selectedSettings,
   onOpenSettings,
   onOpenApps,
@@ -67,6 +68,7 @@ export function ShellSidebar({
   busyAction: string | null;
   onNavigate: (view: ShellView) => void;
   settingsPages: AppSurfaceTab[];
+  managementApps?: CoreApp[];
   selectedSettings: string;
   onOpenSettings(key: string): void;
   onOpenApps: () => void;
@@ -87,7 +89,7 @@ export function ShellSidebar({
         <div className={cn(compact ? "space-y-4" : "space-y-6")}>
           <NavigationSection title="Host" compact={compact}>
             {canManageApps && <SidebarButton compact={compact} active={activeView === "dashboard" && !workspace} icon={Gauge} label="Dashboard" onClick={() => onNavigate("dashboard")} />}
-            <SettingsNavigation compact={compact} active={activeView === "settings" && !workspace} selected={selectedSettings} pages={settingsPages} canManageApps={canManageApps} onSelect={onOpenSettings} />
+            <SettingsNavigation compact={compact} active={activeView === "settings" && !workspace} selected={selectedSettings} pages={settingsPages} apps={managementApps} canManageApps={canManageApps} onSelect={onOpenSettings} />
           </NavigationSection>
 
           {/* The heading is the overview and the rows are the shortcuts — the same pair the native

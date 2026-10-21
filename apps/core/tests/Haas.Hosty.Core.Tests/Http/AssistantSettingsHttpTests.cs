@@ -13,7 +13,7 @@ public sealed class AssistantSettingsHttpTests
         var now = DateTimeOffset.UtcNow;
         var apps = host.Services.GetRequiredService<AppRegistryStore>();
         var assistant = AssistantMcpAccessHttpTests.Record("example.assistant", now) with {
-            ConfirmedRoles = ["assistant"], GrantedCorePermissions = [CoreAppPermissions.ReadApps],
+            ConfirmedRoles = ["assistant"], GrantedCorePermissions = [CoreAppPermissions.ReadApps, CoreAppPermissions.RequestMcpAccess],
             Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["assistant"] = [new("default", null, "/assistant")] } };
         var target = AssistantMcpAccessHttpTests.Record("example.target", now) with { AgentSkillFile = "agent.md",
             Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["mcp"] = [new("default", null, "/mcp")] } };
@@ -95,6 +95,50 @@ public sealed class AssistantSettingsHttpTests
         Assert.False((await host.Services.GetRequiredService<AgentPolicyStore>().ReadAsync()).Targets.ContainsKey(target.Id));
     }
 
+    [Theory]
+    [InlineData("approve")]
+    [InlineData("deny")]
+    [InlineData("revoke")]
+    public async Task BatchApiBindsPayloadAndRequiresUserDecision(string decision)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var (assistant, target, grant) = await Seed(host);
+        var directory = host.Services.GetRequiredService<AgentMcpDirectory>();
+        var revision = (await directory.ReadAsync()).Revision;
+        using var app = host.CreateClient();
+        app.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(assistant.Id));
+        app.DefaultRequestHeaders.Add("X-Hosty-App-Identity", grant.AccessToken);
+        var requestId = Guid.NewGuid().ToString();
+        object Input(string tool) => new { assistantAccess = new { requestId, assistantId = assistant.Id, revision,
+            targets = new[] { new { targetId = target.Id, enabled = true, deniedTools = new[] { tool } } } } };
+        var route = $"/api/internal/apps/{assistant.Id}/installations";
+        using var prepared = await app.PostAsJsonAsync(route, Input("delete"));
+        prepared.EnsureSuccessStatusCode();
+        var id = (await prepared.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        using var duplicate = await app.PostAsJsonAsync(route, Input("delete"));
+        Assert.Equal(id, (await duplicate.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString());
+        Assert.Equal(HttpStatusCode.Conflict, (await app.PostAsJsonAsync(route, Input("changed"))).StatusCode);
+        (await app.PostAsJsonAsync(route + $"/{id}/submit", new { })).EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.Forbidden, (await app.GetAsync("/install/confirm/" + id)).StatusCode);
+        await host.Services.GetRequiredService<UserDirectoryStore>().UpdateAsync(s => s with {
+            Sessions = s.Sessions.Select(v => v with { BrowserOrigin = "http://localhost" }).ToArray() });
+        using var browser = host.CreateClient(); browser.DefaultRequestHeaders.Add("Cookie", "hosty_session=browser-session");
+        var html = await browser.GetStringAsync("/install/confirm/" + id);
+        Assert.Contains("delete", html); Assert.Contains("Confirm MCP access", html);
+        var nonce = Regex.Match(html, "name=nonce value=\"([^\"]+)\"").Groups[1].Value;
+        Assert.NotEmpty(nonce);
+        if (decision == "revoke") await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(assistant with { GrantedCorePermissions = [] });
+        using var post = new HttpRequestMessage(HttpMethod.Post, "/install/confirm/" + id) { Content = new FormUrlEncodedContent(new Dictionary<string, string> {
+            ["nonce"] = nonce, ["decision"] = decision == "deny" ? "deny" : "approve" }) };
+        post.Headers.Add("Origin", "http://localhost"); (await browser.SendAsync(post)).EnsureSuccessStatusCode();
+        var entry = host.Services.GetRequiredService<InstallationApprovalStore>().Get(id);
+        for (var i = 0; entry.Status == "executing" && i < 100; i++) await Task.Delay(10);
+        Assert.Equal(decision == "approve" ? "succeeded" : decision == "deny" ? "denied" : "failed", entry.Status);
+        var updated = (await directory.ReadForAssistantAsync(assistant.Id, default)).Targets.Single(t => t.Id == target.Id);
+        Assert.Equal(decision == "approve", updated.Offered);
+        Assert.Equal(decision == "approve" ? new[] { "delete" } : [], updated.DeniedTools);
+    }
+
     private sealed class TestClock : IClock { public DateTimeOffset UtcNow { get; set; } = DateTimeOffset.UtcNow; }
 
     [Fact]
@@ -149,12 +193,14 @@ public sealed class AssistantSettingsHttpTests
         issue.Headers.Authorization = new("Bearer", service); issue.Headers.Add("X-Hosty-User-Token", grant.AccessToken);
         Assert.False((await client.SendAsync(issue)).IsSuccessStatusCode);
         await policy.ChangeAsync(target.Id, Link(target.InstalledAt) with { Assistants = null });
-        Assert.False((await Inspect(null)).GetProperty("active").GetBoolean());
+        Assert.True((await Inspect(null)).GetProperty("active").GetBoolean()); // Preview does not grant invocation.
+        Assert.False((await Inspect("read_only_tool")).GetProperty("active").GetBoolean());
+        await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(assistant with { GrantedCorePermissions = [] });
         await Assert.ThrowsAsync<AppIdentityException>(() => access.IssueAsync(assistant.Id, target.Id, service, grant.AccessToken, default, discoveryOnly: true));
     }
 
     [Fact]
-    public async Task CatalogEndpoint_RequiresCurrentAdministratorActivityAndTargetAssignment()
+    public async Task CatalogEndpoint_RequiresRequestPermissionAndCurrentAdministratorActivity()
     {
         await using var host = await CoreHttpHarness.StartAsync();
         var (assistant, _, grant) = await Seed(host);
@@ -166,7 +212,9 @@ public sealed class AssistantSettingsHttpTests
             request.Headers.Add("X-Hosty-User-Token", grant.AccessToken);
             return await client.SendAsync(request);
         }
+        await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(assistant with { GrantedCorePermissions = [] });
         Assert.Equal(HttpStatusCode.Forbidden, (await Request()).StatusCode);
+        await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(assistant);
         await host.Services.GetRequiredService<AgentPolicyStore>().ChangeAsync("hosty:core", new(null, true,
             new Dictionary<string, string>(), new Dictionary<string, AssistantTargetGrant> { [assistant.Id] = new(assistant.InstalledAt, "grant") }));
         await host.Services.GetRequiredService<UserDirectoryStore>().UpdateAsync(state => state with {

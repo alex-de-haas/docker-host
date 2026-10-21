@@ -653,6 +653,8 @@ internal sealed partial class CoreLifecycleService(
 
     private async Task<AppLifecycleResponse> ConfigureCoreAsync(string appId, AppConfigureRequest request, CancellationToken cancellationToken)
     {
+        if (request.Settings?.Keys.Any(key => IsRetiredNativePreference(appId, key)) == true)
+            throw new AppLifecycleException("app_owned_setting", "Change this preference in the application settings.");
         var registry = await globalMounts.ReadAsync(cancellationToken);
         var policy = NormalizeConfiguredUpdatePolicy(request.UpdatePolicy);
         // Resolved before the record mutation because it reads the publication store; the comparison
@@ -3772,6 +3774,12 @@ internal sealed partial class CoreLifecycleService(
     private static bool IsPreservedCoreSetting(string key)
         => key.StartsWith("HOSTY_PORT_", StringComparison.Ordinal) || LocalBrowserOrigins.IsNameKey(key);
 
+    // Preserve the last launch value for the app's one-time migration. It is not a declared
+    // setting anymore, so clients cannot edit it alongside the app-owned preference.
+    internal static bool IsRetiredNativePreference(string? appId, string key) =>
+        (appId, key) is ("hosty.harness", "HOSTY_HARNESS_RETENTION_DAYS")
+            or ("hosty.marketplace", "HOSTY_MARKETPLACE_SOURCE_URL");
+
     private AppRecord BuildAppRecord(
         RuntimeAppManifestSelection selection,
         string manifestPath,
@@ -3798,9 +3806,9 @@ internal sealed partial class CoreLifecycleService(
         {
             foreach (var (key, value) in existing.Settings)
             {
-                if (IsPreservedCoreSetting(key) && !settings.ContainsKey(key))
+                if ((IsPreservedCoreSetting(key) || IsRetiredNativePreference(manifest.Id, key)) && !settings.ContainsKey(key))
                 {
-                    settings[key] = value;
+                    settings[key] = IsRetiredNativePreference(manifest.Id, key) ? value with { Required = false } : value;
                 }
             }
         }

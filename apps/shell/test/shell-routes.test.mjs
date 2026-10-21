@@ -31,7 +31,7 @@ test("the parser is total — every path yields a route state", () => {
     const route = readShellRoute(path, params());
     assert.equal(route.view, "dashboard", `readShellRoute(${path})`);
     assert.equal(route.workspace, null);
-    assert.equal(route.settingsTab, "users");
+    assert.equal(route.settingsTab, "profile");
   }
 });
 
@@ -47,7 +47,7 @@ test("readHostSettingsTab still collapses anything unknown to Users", () => {
   assert.equal(readHostSettingsTab("mounts"), "mounts");
   assert.equal(readHostSettingsTab(" users "), "users");
   for (const value of ["nonsense", "", "   ", null, undefined]) {
-    assert.equal(readHostSettingsTab(value), "users", `readHostSettingsTab(${value})`);
+    assert.equal(readHostSettingsTab(value), "profile", `readHostSettingsTab(${value})`);
   }
 });
 
@@ -57,8 +57,8 @@ test("the route keeps a settings tab raw, because it may be an app id", () => {
   // the two a value is gets decided against the installed apps, at render, where that list exists.
   assert.equal(readShellRoute("/settings", params("tab=core")).settingsTab, "general");
   assert.equal(readShellRoute("/settings", params("tab=com.haas.demo-app")).settingsTab, "com.haas.demo-app");
-  assert.equal(readShellRoute("/settings", params()).settingsTab, "users");
-  assert.equal(readShellRoute("/settings", params("tab=   ")).settingsTab, "users");
+  assert.equal(readShellRoute("/settings", params()).settingsTab, "profile");
+  assert.equal(readShellRoute("/settings", params("tab=   ")).settingsTab, "profile");
   assert.equal(isHostSettingsTab("core"), true);
   assert.equal(isHostSettingsTab("com.haas.demo-app"), false);
 });
@@ -118,7 +118,7 @@ test("percent-encoded app ids survive the deep link", () => {
 test("builders and the parser agree", () => {
   assert.equal(readShellRoute(new URL(getShellViewHref("settings"), "http://x").pathname, params()).view, "settings");
 
-  for (const tab of ["profile", "users", "tokens", "general", "agents", "shell", "connections", "policies", "ingress", "mounts"]) {
+  for (const tab of ["profile", "users", "tokens", "general", "hosty.harness", "shell", "connections", "policies", "ingress", "mounts"]) {
     const settingsUrl = new URL(getSettingsHref(tab), "http://x");
     assert.equal(readShellRoute(settingsUrl.pathname, settingsUrl.searchParams).settingsTab, tab);
   }
@@ -163,15 +163,15 @@ test("authorization redirects preserve personal tokens and react to settings tab
 
 
 test("grouped settings links preserve inner tabs and old bookmarks", () => {
-  for (const [group, child] of [["security", "users"], ["security", "tokens"], ["security", "connections"], ["security", "policies"], ["harness", "agents"], ["harness", "shell"]]) {
+  for (const [group, child] of [["security", "users"], ["profile", "tokens"], ["profile", "connections"], ["security", "policies"], ["host", "general"], ["host", "source"]]) {
     assert.equal(getSettingsHref(child), `/settings?tab=${group}&section=${child}`);
     assert.equal(readShellRoute("/settings", params(`tab=${group}&section=${child}`)).settingsTab, child);
-    assert.equal(readShellRoute("/settings", params(`tab=${child}`)).settingsTab, child);
   }
-  assert.equal(getSettingsHref("core"), "/settings?tab=general");
+  assert.equal(getSettingsHref("core"), "/settings?tab=host&section=general");
   assert.equal(readShellRoute("/settings", params("tab=security&section=unknown")).settingsTab, "users");
-  assert.equal(readShellRoute("/settings", params("tab=harness&section=tokens")).settingsTab, "agents");
-  assert.equal(readShellRoute("/settings", params("tab=hosty.harness&section=tokens")).settingsTab, "hosty.harness");
+  assert.equal(readShellRoute("/settings", params("tab=security&section=tokens")).settingsTab, "tokens");
+  assert.equal(readShellRoute("/settings", params("tab=harness&section=agents")).settingsTab, "hosty.harness");
+  assert.equal(readShellRoute("/settings", params("tab=harness&section=shell")).settingsTab, "shell");
 });
 
 test("grouped settings URLs keep personal credentials accessible without opening host controls", () => {

@@ -140,6 +140,8 @@ override runtime-type defaults for the same environment key. Docker service runt
 
 Apps with reviewed full-source permission can declare an automatic Core collection:
 `externalMounts.development: { "kind": "managed-workspaces", "scope": "instance", "service": "worker", "mode": "rw", "required": true }`.
+For this collection kind, `HOSTY_MOUNT_DEVELOPMENT` is a JSON object with `trees` and `repositories`
+path values (container paths in Docker, host paths in Local), not the operator-bound comma format.
 Core exposes development trees and read-only repository metadata; no operator path or global-mount
 assignment is accepted. It exposes all managed trees, not a session sandbox. Use ordinary specific
 workspace activity leases while processes use a tree. `agentWorker` is retired and rejected.

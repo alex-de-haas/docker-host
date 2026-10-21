@@ -1,5 +1,9 @@
 "use client";
 
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { getManageAppHref } from "../shell-routes";
+import { CoreSourceSettings } from "../core-development";
 import { useRouter } from "next/navigation";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { findAssistantGateways } from "../assistant/assistant-client";
@@ -23,7 +27,7 @@ import { resolveSettingsSurface, type AppSurfaceTab } from "../surfaces/app-surf
 import { SettingsCoreSection } from "./settings-core-section";
 import { SettingsIngressSection } from "./settings-ingress-section";
 import { SettingsMountsSection } from "./settings-mounts-section";
-import { SettingsAgentsSection } from "./settings-agents-section";
+import { SettingsAccessList } from "./settings-access-lists";
 import { SettingsTokensSection } from "./settings-tokens-section";
 import { SettingsPermissionsSection } from "./settings-permissions-section";
 import { SandboxLaunchPermissions } from "./settings-sandbox-permissions";
@@ -85,7 +89,7 @@ export function SettingsPage({
   // Each app has one sidebar entry; this component resolves its settings surface.
   const visibleAppTabs = canManageApps ? appTabs : [];
   const activeAppTab = resolveSettingsSurface(visibleAppTabs, activeTab);
-  if (activeAppTab) return <AppSettingsTabPanel key={activeAppTab.key} tab={activeAppTab} {...appTabProps} />;
+  if (activeAppTab) return <div className="flex h-full min-h-0 flex-col"><header className="flex items-center justify-between gap-3 border-b px-4 py-3"><h1 className="font-medium">{activeAppTab.label}</h1><Button asChild variant="outline" size="sm"><Link href={getManageAppHref(activeAppTab.appId)}>Manage application</Link></Button></header><div className="min-h-0 flex-1"><AppSettingsTabPanel key={activeAppTab.key} tab={activeAppTab} {...appTabProps} /></div></div>;
 
   // The URL may name a tab that is neither a host one nor an installed app — a stale link, or an app
   // since removed. Resolution lives here rather than in the parser, which has no app list to check
@@ -114,9 +118,10 @@ export function SettingsPage({
         {!assistants.length && <p className="text-sm text-muted-foreground">Install and confirm an assistant to use these features.</p>}
       </section>}
 
+      {canManageApps && resolvedTab === "source" && <CoreSourceSettings coreOrigin={coreOrigin} />}
+
       {canManageApps && resolvedTab === "connections" && <SourceProviders coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />}
 
-      {canManageApps && resolvedTab === "agents" && <SettingsAgentsSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />}
 
       {canManageApps && resolvedTab === "permissions" && <div className="flex flex-col gap-8">
         <SettingsPermissionsSection coreOrigin={coreOrigin} apps={apps} />
@@ -124,7 +129,7 @@ export function SettingsPage({
       </div>}
 
       {resolvedTab === "tokens" && (
-        <SettingsTokensSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />
+        <div className="flex flex-col gap-8"><SettingsTokensSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />{canManageApps && <SettingsAccessList kind="background" coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />}</div>
       )}
 
       {/* Every remaining tab administers the host. Gating them here as well as in the sidebar keeps
@@ -132,7 +137,6 @@ export function SettingsPage({
       {canManageApps && resolvedTab === "users" && (
         <div className="flex flex-col gap-6">
           <UserManagementPanel coreOrigin={coreOrigin} activeUser={activeUser} sendCsrfJson={sendCsrfJson} />
-          <SettingsCoreSection section="users" settings={coreSettings} settingsError={coreSettingsError} onSaveSettings={onSaveCoreSettings} />
         </div>
       )}
 
@@ -144,6 +148,8 @@ export function SettingsPage({
           onSaveSettings={onSaveCoreSettings}
         />
       )}
+
+      {canManageApps && resolvedTab === "policies" && <SettingsAccessList kind="oauth" coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />}
 
       {canManageApps && resolvedTab === "ingress" && (
         <SettingsIngressSection

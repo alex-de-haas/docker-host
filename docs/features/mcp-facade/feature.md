@@ -1,6 +1,6 @@
 ---
 created: 2026-08-24
-updated: 2026-09-27
+updated: 2026-10-20
 summary: A Harness MCP endpoint that exposes Core and every enabled app's tools through one remote entry.
 components: [apps/harness]
 ---
@@ -65,9 +65,10 @@ a host without it must not lose agent access to Core; the facade is convenience,
 
 ## The Catalog
 
-Assembled per acting user, in parallel across sources, from the providers the operator enabled — the
-same [Core directory policy](../agent-mcp-directory/feature.md) used by sessions and `hosty mcp`,
-including the `hosty:core` switch.
+Assembled per acting user, in parallel across installed providers available to the user and reviewed
+external credential. The former Offered flag and internal assistant assignment do not gate this
+OAuth/facade path. [Core directory policy](../agent-mcp-directory/feature.md) still supplies current
+interfaces, installation identity and readiness.
 
 - **Read-only, fail-closed.** Only a tool declaring `annotations.readOnlyHint: true` is exported.
   Anything else — `false`, absent, a string, the hint at the wrong nesting — means "we do not know
@@ -80,8 +81,7 @@ including the `hosty:core` switch.
 - **One source per declaration, not per app.** An app may declare several `mcp` interfaces, and the
   interface key is part of the exported name for anything but `default`. Discovery originally kept
   only the first URL and dropped the key, which renamed every tool of a non-default interface and
-  made the extra declarations unreachable — the divergence the port exists to prevent. Policy stays
-  per app: one toggle covers everything an app declares.
+  made the extra declarations unreachable — the divergence the port exists to prevent. Interface identity remains separate from the current user and credential authorization.
 - **One budget per source**, spent across the handshake and every page rather than refreshed per
   page. This is the connector's own rule, and it has one because an app answering each page just
   inside a per-page ceiling would otherwise hold the fan-out for twenty times as long — and the
@@ -99,7 +99,7 @@ including the `hosty:core` switch.
 ### The cache, and why it cannot grant anything
 
 Each catalog access revalidates the Core directory revision. A per-user catalog is reused for up to
-30 seconds only while its revision is unchanged. Each call checks the exact currently offered
+30 seconds only while its revision is unchanged. Each call checks the exact currently available
 interface, introspects the client credential and obtains a fresh delegated token. An outage retains
 the cache but cannot authorize a call or bypass external credential introspection.
 

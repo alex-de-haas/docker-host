@@ -18,7 +18,7 @@ Retired `agentWorker` manifests fail validation explicitly.
 
 The API image contains the web export and conversation/MCP coordinator. The Worker image contains
 the provider SDKs, Codex CLI 0.162.1, Claude SDK 0.3.296 and its packaged Claude CLI, Node 24, Git
-2.56.0, Python, ripgrep and .NET SDK 10. Images and Harness packages share version 0.64.0. Worker
+2.56.0, Python, ripgrep and .NET SDK 10. Images and Harness packages share version 0.65.0. Worker
 does not need host agent CLIs, a Docker socket or another Docker daemon. `tini` supplies ordinary
 container signal/reaping behavior; the application starts known child processes directly.
 

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { WorkerApiError } from "./worker/contracts.js";
 import type { ConnectionService } from "./connections/service.js";
 import { WorkerError } from "./runtime/errors.js";
@@ -33,7 +34,7 @@ const APP_SESSION_STREAM_SECONDS = 3600;
 import { SessionBusyError, SessionNotFoundError, type SessionManager } from "./sessions/manager.js";
 import type { HarnessAdapter } from "./harness/adapter.js";
 import { MAX_SYSTEM_PROMPT_CHARS, type SettingsStore } from "./settings/store.js";
-import { validRetention } from "./settings/store.js";
+import { validRetention, validSkillAcceptances } from "./settings/store.js";
 import { DEFAULT_WORKFLOW_PROMPT } from "./settings/workflow.js";
 import type { PendingSkill } from "./mcp/skills.js";
 import type { ProviderDirectory } from "./settings/providers.js";
@@ -408,15 +409,46 @@ async function route(
     if (!action && method === "DELETE") { await connections.remove(id); sendJson(response, 200, { removed: true }); return; }
   }
 
-  // Approving one app's changed skill.
-  //
-  // Takes the digest the operator was shown, not just the app id: between the page rendering the text
-  // and the click, another update could land, and "approve whatever is current" would then approve
-  // words nobody read — which is the failure this whole mechanism exists to prevent, arriving through
-  // its own approval path.
-  if (url.pathname === "/api/settings/skills/approve" && settings && method === "POST") {
-    sendJson(response, 409, { code: "agent_policy_moved", message: "Review application instructions through Core from MCP access settings." });
-    return;
+  if (url.pathname === "/api/settings/mcp/review" && providers && method === "POST") {
+    const credential = await delegationCredential(request);
+    if (!credential) throw new AppContextError(401, "credentials_required", "Refresh your Hosty session.");
+    const body = await readJson(request);
+    if (typeof body.requestId !== "string" || typeof body.revision !== "string" || !Array.isArray(body.targets))
+      throw new AppContextError(400, "mcp_change_invalid", "Invalid MCP access changes.");
+    sendJson(response, 200, await providers.accessReview(credential, { requestId: body.requestId, revision: body.revision, targets: body.targets })); return;
+  }
+  const accessStatus = url.pathname.match(/^\/api\/settings\/mcp\/review\/([a-f0-9]{48})$/);
+  if (accessStatus && providers && method === "GET") {
+    const credential = await delegationCredential(request);
+    if (!credential) throw new AppContextError(401, "credentials_required", "Refresh your Hosty session.");
+    sendJson(response, 200, await providers.reviewRequest(credential, `/${accessStatus[1]}`)); return;
+  }
+
+  if (url.pathname === "/api/settings/mcp/preferences" && settings && providers && method === "PUT") {
+    const body = await readJson(request);
+    const current = await settings.read();
+    if (body.revision !== mcpPreferencesRevision(current)) throw new AppContextError(409, "settings_changed", "Invocation preferences changed. Reload before saving.");
+    if (!validSkillAcceptances(body.skills) || !Array.isArray(body.resetProviders) || body.resetProviders.some(p => typeof p !== "string"))
+      throw new AppContextError(400, "mcp_preferences_invalid", "Invalid MCP preferences.");
+    const removeRules = body.removeRules ?? [];
+    if (!Array.isArray(removeRules) || removeRules.length > 2000 || removeRules.some(key => typeof key !== "string" || !Object.hasOwn(current.mcpToolRules ?? {}, key)))
+      throw new AppContextError(400, "mcp_preferences_invalid", "Invalid tool exceptions.");
+    const directory = await providers.read();
+    const migratedDenials = new Set([providers.core(), ...(directory?.providers ?? [])].filter(p => p != null)
+      .flatMap(p => (p.deniedTools ?? []).map(tool => JSON.stringify([p.appId, tool]))));
+    const prepared = manager.mcpPolicy.preparePreferences(body.defaults as never, body.rules as never);
+    if (body.resetProviders.some(p => !Object.hasOwn(prepared.defaults, p)))
+      throw new AppContextError(400, "mcp_preferences_invalid", "A provider reset needs its reviewed default.");
+    const skills = body.skills, resetProviders = body.resetProviders as string[];
+    await providers.validateInstructions(skills, current.mcpSkillApprovals);
+    await settings.transform(latest => {
+      if (body.revision !== mcpPreferencesRevision(latest)) throw new AppContextError(409, "settings_changed", "Invocation preferences changed. Reload before saving.");
+      const rules = { ...latest.mcpToolRules };
+      for (const key of Object.keys(rules)) if (rules[key]?.mode === "disabled" ? migratedDenials.has(key) || JSON.parse(key)[0] === "hosty:development" && removeRules.includes(key) : resetProviders.includes(JSON.parse(key)[0]) || removeRules.includes(key)) delete rules[key];
+      return { mcpDefaults: { ...latest.mcpDefaults, ...prepared.defaults }, mcpToolRules: { ...rules, ...prepared.rules },
+        mcpSkillApprovals: skills, mcpSkillsMigrated: true };
+    });
+    sendJson(response, 200, { revision: mcpPreferencesRevision(await settings.read()) }); return;
   }
 
   if (url.pathname === "/api/settings/tools" && settings && method === "GET") {
@@ -493,6 +525,7 @@ async function route(
     const discovered = providers ? await providers.read() : null;
     if (discovered) {
       await settings.prune(discovered.installedAppIds);
+      await providers?.migrateInstructions(settings);
     }
     // Core is governed by the same host offer policy as app targets.
     const core = providers?.core() ?? null;
@@ -503,11 +536,13 @@ async function route(
     // Capabilities ride along so the page can say what a change actually does on this harness
     // instead of one wording that is false on one of them.
     sendJson(response, 200, {
-      settings: { ...current, mcpProviders: Object.fromEntries([...(core ? [core] : []), ...(discovered?.providers ?? [])].map(provider => [provider.appId, provider.offered === true])), mcpSkillDigests: providers?.approvedSkills() ?? {} },
+      settings: { ...current, mcpProviders: Object.fromEntries([...(core ? [core] : []), ...(discovered?.providers ?? [])].map(provider => [provider.appId, provider.offered === true])) },
+      mcpRevision: mcpPreferencesRevision(current),
+      accessRevision: discovered?.revision,
       toolCatalogs: manager.mcpPolicy.snapshot(),
       mcpReviewBaseUrl: process.env.HOSTY_CORE_PUBLIC_ORIGIN
         ? `${process.env.HOSTY_CORE_PUBLIC_ORIGIN.replace(/\/$/, "")}/install/agents/${encodeURIComponent(process.env.HOSTY_APP_ID ?? "hosty.harness")}` : null,
-      instructions: await providers?.instructions() ?? [],
+      instructions: await providers?.instructions(current) ?? [],
       pendingSkills,
       providers: [...(core ? [core] : []), ...(discovered?.providers ?? [])],
       discovery: discovered ? "ok" : "unavailable",
@@ -1068,4 +1103,8 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
     "content-length": Buffer.byteLength(payload),
   });
   response.end(payload);
+}
+
+function mcpPreferencesRevision(settings: import("./settings/store.js").AssistantSettings): string {
+  return createHash("sha256").update(JSON.stringify([settings.mcpDefaults ?? {}, settings.mcpToolRules ?? {}, settings.mcpSkillApprovals ?? {}])).digest("hex");
 }

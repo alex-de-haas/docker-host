@@ -2,7 +2,7 @@
 
 import { appFetch } from "@hosty-sdk/app/browser-auth";
 
-export type Provider = { appId: string; displayName: string; url: string | null; running: boolean };
+export type Provider = { appId: string; displayName: string; url: string | null; running: boolean; offered?: boolean; policyIdentity?: string; installationIdentity?: string; deniedTools?: string[] };
 
 /** The provider id Core's own tools are offered under — the gateway's constant, mirrored here. */
 export const CORE_PROVIDER_ID = "hosty:core";
@@ -14,6 +14,8 @@ export type Settings = {
   retention?: { ordinaryDays: number | null; completedWorkspaceDays: number | null };
   executionMode?: "native" | "docker";
   mcpToolRules?: Record<string, ToolRule>;
+  mcpDefaults?: Record<string, { identity: string; mode: "ask" | "run" }>;
+  mcpSkillApprovals?: Record<string, { identity: string; digest: string }>;
   immediateHandoffs?: boolean;
   systemPrompt: string;
   mcpProviders: Record<string, boolean>;
@@ -30,10 +32,12 @@ export type PendingSkill = {
 };
 
 export type SettingsResponse = {
+  accessRevision?: string;
+  mcpRevision?: string;
   defaults?: { workflowPrompt: string };
   toolCatalogs?: ToolCatalog[];
   mcpReviewBaseUrl?: string | null;
-  instructions?: { appId: string; markdown: string | null; approved: boolean }[];
+  instructions?: { appId: string; identity: string; digest: string | null; markdown: string | null; approved: boolean }[];
   settings: Settings;
   agentConnections?: boolean;
   providers: Provider[];
@@ -53,6 +57,10 @@ export type SettingsResponse = {
  * `credentials: "include"` because the Hosty app session is a cookie the gateway set: the page
  * authenticates as the operator who opened it, exactly as every other embedded Hosty page does.
  */
+export class ApiError extends Error {
+  constructor(public readonly status: number, public readonly code: string | undefined, message: string) { super(message); }
+}
+
 export async function call(path: string, init?: RequestInit): Promise<Response> {
   const response = await appFetch(`/api${path}`, {
     ...init,
@@ -60,8 +68,8 @@ export async function call(path: string, init?: RequestInit): Promise<Response> 
     headers: { ...(init?.body ? { "content-type": "application/json" } : {}), ...init?.headers },
   });
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(body?.message || `Request failed (${response.status}).`);
+    const body = (await response.json().catch(() => null)) as { message?: string; code?: string } | null;
+    throw new ApiError(response.status, body?.code, body?.message || `Request failed (${response.status}).`);
   }
   return response;
 }

@@ -250,7 +250,7 @@ public sealed class CorePublicOriginHttpTests
             "Cookie",
             $"{CoreSessionAuthorization.SessionCookieName}={session}; {CoreSessionAuthorization.CsrfCookieName}={csrf}");
         request.Headers.Add(CoreSessionAuthorization.CsrfHeaderName, csrf);
-        return client.SendAsync(request);
+        return CoreReviewFixture.SendAsync(client, request);
     }
 
     private static async Task<(string Value, string Default, bool Overridden)> ReadSettingAsync(HttpClient client, string secret)

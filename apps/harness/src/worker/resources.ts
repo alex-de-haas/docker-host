@@ -5,6 +5,15 @@ import { mkdir, readFile, link, realpath, writeFile, unlink, open } from "node:f
 import type { IncomingMessage } from "node:http";
 import { safeIdentity, WorkerApiError } from "./contracts.js";
 
+/** Core's managed collection binding uses JSON; paths may contain commas, equals signs or backslashes. */
+export function managedWorkspacePaths(value: string | undefined): Record<string, string> {
+  const paths: unknown = JSON.parse(value ?? "{}");
+  if (!paths || typeof paths !== "object" || Array.isArray(paths)
+    || Object.values(paths).some(entry => typeof entry !== "string" || !entry))
+    throw new Error("Managed workspace bindings must be a JSON object of paths.");
+  return paths as Record<string, string>;
+}
+
 export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 export async function conversationDirectory(cache: string, id: string): Promise<string> {
   if (!safeIdentity(id)) throw new WorkerApiError(400, "invalid_conversation", "Invalid conversation identity.");

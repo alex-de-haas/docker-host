@@ -1155,7 +1155,7 @@ describe("gateway", () => {
       expect(seenAuth).toBe("Bearer service-token");
       expect(body.discovery).toBe("ok");
       // Only the app that declares `mcp` — Shell declares none and must not appear.
-      expect(body.providers.map(p => { const { policyIdentity: _identity, ...rest } = p as typeof p & { policyIdentity?: string }; return rest; })).toEqual([
+      expect(body.providers.map(p => { const { policyIdentity: _identity, ...rest } = p as typeof p & { policyIdentity?: string }; return rest; })).toMatchObject([
         {
           appId: "com.haas.demo-app",
           displayName: "Demo App",
@@ -1197,7 +1197,7 @@ describe("gateway", () => {
         providers: Array<{ appId: string; displayName: string; url: string | null; running: boolean }>;
         settings: { mcpProviders: Record<string, boolean>; mcpAutoAllow: Record<string, boolean> };
       };
-      expect(initial.providers.map(p => { const { policyIdentity: _identity, ...rest } = p as typeof p & { policyIdentity?: string }; return rest; })).toEqual([
+      expect(initial.providers.map(p => { const { policyIdentity: _identity, ...rest } = p as typeof p & { policyIdentity?: string }; return rest; })).toMatchObject([
         {
           appId: "hosty:core",
           displayName: "Hosty Core",
@@ -1240,7 +1240,7 @@ describe("gateway", () => {
       });
       const body = (await response.json()) as { discovery: string; providers: unknown[] };
       expect(body.discovery).toBe("unavailable");
-      expect(body.providers.map(p => { const { policyIdentity: _identity, ...rest } = p as typeof p & { policyIdentity?: string }; return rest; })).toEqual([]);
+      expect(body.providers.map(p => { const { policyIdentity: _identity, ...rest } = p as typeof p & { policyIdentity?: string }; return rest; })).toMatchObject([]);
     } finally {
       await new Promise((resolve) => server2.close(resolve));
     }

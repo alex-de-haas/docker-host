@@ -273,7 +273,7 @@ public sealed class ContinuousAccessHttpTests
         using var manualStream = events.Subscribe(parent.UserId, true, "manual");
         using var oauthStream = events.Subscribe(parent.UserId, true, "oauth");
         using var otherStream = events.Subscribe("other", true, "other-session");
-        (await browser.PostAsJsonAsync("/api/auth/background-grants/revoke-all-authorizations", new { })).EnsureSuccessStatusCode();
+        (await CoreReviewFixture.PostAsync(browser, "/api/auth/background-grants/revoke-all-authorizations", new { })).EnsureSuccessStatusCode();
         var identity = host.Services.GetRequiredService<AppIdentityService>();
         await Assert.ThrowsAsync<AppIdentityException>(() => identity.RevalidateAsync(original, "console"));
         await Assert.ThrowsAsync<AppIdentityException>(() => identity.RequireOperationHashAsync(AppIdentityService.HashToken(source.AccessToken), "console", _ => true, default));
@@ -304,7 +304,7 @@ public sealed class ContinuousAccessHttpTests
         browser.DefaultRequestHeaders.Add("Cookie", "hosty_session=operator; hosty_csrf=proof");
         browser.DefaultRequestHeaders.Add("Origin", "http://localhost:7070");
         browser.DefaultRequestHeaders.Add("X-Hosty-CSRF", "proof");
-        using var revoked = await browser.PostAsJsonAsync("/api/auth/background-grants/revoke-all-authorizations", new { });
+        using var revoked = await CoreReviewFixture.PostAsync(browser, "/api/auth/background-grants/revoke-all-authorizations", new { });
         revoked.EnsureSuccessStatusCode();
         var grants = host.Services.GetRequiredService<BackgroundGrantService>();
         var request = new BackgroundGrantRequest("console", "Read health", [new("health", "core", "console", ["health"])]);

@@ -98,7 +98,7 @@ public sealed class ScopedAccessTokenHttpTests
         var scoped = await CreateCredentialAsync(client, owner, "agent client", "com.example.notes", ["mcp:read"]);
         Assert.True((await IntrospectAsync(client, harness, "com.example.notes", scoped.Token)).GetProperty("active").GetBoolean());
 
-        using var revoked = await SendAsync(client, HttpMethod.Delete, $"/api/auth/credentials/{scoped.Fingerprint}", owner);
+        using var revoked = await CoreReviewFixture.AsUserAsync(client, HttpMethod.Delete, $"/api/auth/credentials/{scoped.Fingerprint}", owner);
         Assert.Equal(HttpStatusCode.OK, revoked.StatusCode);
 
         Assert.False((await IntrospectAsync(client, harness, "com.example.notes", scoped.Token)).GetProperty("active").GetBoolean());
@@ -409,7 +409,7 @@ public sealed class ScopedAccessTokenHttpTests
         var users = harness.Services.GetRequiredService<UserDirectoryStore>();
         var now = harness.Services.GetRequiredService<IClock>().UtcNow;
         var user = new HostUserRecord(userId, $"{userId}@example.test", userId, role, false, now, now);
-        var session = new AuthSessionRecord($"session_{userId}", userId, now, now.AddHours(1), null, now);
+        var session = new AuthSessionRecord($"session_{userId}", userId, now, now.AddHours(1), null, now, BrowserOrigin: "http://localhost");
 
         if (append)
         {

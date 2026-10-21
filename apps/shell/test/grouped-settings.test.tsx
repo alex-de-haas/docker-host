@@ -9,7 +9,8 @@ const { push } = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 vi.mock("../src/app/shell/pages/user-management-page", () => ({ UserManagementPanel: () => <p>User management</p> }));
 vi.mock("../src/app/shell/pages/user-profile-page", () => ({ UserProfilePage: () => <p>Personal profile</p> }));
-vi.mock("../src/app/shell/pages/settings-agents-section", () => ({ SettingsAgentsSection: () => <p>Agent directory</p> }));
+vi.mock("../src/app/shell/pages/settings-access-lists", () => ({ SettingsAccessList: () => null }));
+vi.mock("../src/app/shell/pages/settings-tokens-section", () => ({ SettingsTokensSection: () => <p>Token metadata</p> }));
 vi.mock("../src/app/shell/pages/settings-permissions-section", () => ({ SettingsPermissionsSection: () => <p>Permission catalogue</p> }));
 vi.mock("../src/app/shell/pages/source-providers", () => ({ SourceProviders: () => <p>Source accounts</p> }));
 vi.mock("../src/app/shell/pages/settings-app-section", () => ({ AppSettingsTabPanel: () => <p>App settings</p> }));
@@ -58,27 +59,26 @@ it("moves maintenance and user retention into separate forms that save only thei
   expect(keys()).toEqual(["HOSTY_UPDATE_CHECK_INTERVAL_MINUTES", "FUTURE_SETTING"]);
   await edit("HOSTY_UPDATE_CHECK_INTERVAL_MINUTES", "120"); await save();
   expect(props.onSaveCoreSettings).toHaveBeenLastCalledWith({ HOSTY_UPDATE_CHECK_INTERVAL_MINUTES: "120" });
-  await render("users");
-  expect(keys()).toEqual(["HOSTY_USERS_DISABLED_RETENTION_DAYS"]);
-  expect(container.textContent).toContain("User management");
+  await render("policies");
+  expect(keys()).toContain("HOSTY_USERS_DISABLED_RETENTION_DAYS");
   await edit("HOSTY_USERS_DISABLED_RETENTION_DAYS", "20"); await save();
   expect(props.onSaveCoreSettings).toHaveBeenLastCalledWith({ HOSTY_USERS_DISABLED_RETENTION_DAYS: "20" });
 });
 
 it("groups session, access and privileged-activity settings under Security policies", async () => {
   await render("policies");
-  expect(keys().sort()).toEqual(Object.keys(values).filter(key => key.startsWith("HOSTY_AUTH_") || key.startsWith("HOSTY_OAUTH_")).sort());
-  expect(container.querySelector('[role="tablist"]')?.getAttribute("aria-label")).toBe("Security settings");
+  expect(keys().sort()).toEqual(Object.keys(values).filter(key => key.startsWith("HOSTY_AUTH_") || key.startsWith("HOSTY_OAUTH_") || key.startsWith("HOSTY_USERS_")).sort());
+  expect(container.querySelector('[role="tablist"]')?.getAttribute("aria-label")).toBe("Users & security settings");
   expect(container.querySelector('[role="tab"][data-state="active"]')?.textContent).toBe("Policies");
 });
 
 it("places app permissions under Security and refuses direct non-admin navigation", async () => {
   await render("permissions");
-  expect(container.querySelector('[role="tablist"]')?.getAttribute("aria-label")).toBe("Security settings");
+  expect(container.querySelector('[role="tablist"]')?.getAttribute("aria-label")).toBe("Users & security settings");
   expect(container.textContent).toContain("Permission catalogue");
   await render("permissions", false);
   expect(container.textContent).not.toContain("Permission catalogue");
-  expect([...container.querySelectorAll('[role="tab"]')].map(tab => tab.textContent)).toEqual(["Access tokens"]);
+  expect([...container.querySelectorAll('[role="tab"]')].map(tab => tab.textContent)).toEqual(["Profile", "Tokens & devices"]);
 });
 
 it("saves Core connection and provider edits together, retains the origin warning and hides inactive provider fields", async () => {
@@ -94,27 +94,25 @@ it("saves Core connection and provider edits together, retains the origin warnin
 
 it("keeps ordinary users on personal profile and credentials without exposing administrator tabs", async () => {
   await render("tokens", false);
-  expect([...container.querySelectorAll('[role="tab"]')].map(tab => tab.textContent)).toEqual(["Access tokens"]);
-  expect(container.textContent).toContain("Open tokens in Core");
+  expect([...container.querySelectorAll('[role="tab"]')].map(tab => tab.textContent)).toEqual(["Profile", "Tokens & devices"]);
+  expect(container.textContent).toContain("Token metadata");
   expect(keys()).toEqual([]);
   await render("profile", false);
   expect(container.textContent).toContain("Personal profile");
 });
 
-it("navigates between Harness tabs with a shareable URL", async () => {
+it("does not create a global assistant-access tab", async () => {
   await render("agents");
-  expect(container.textContent).toContain("Agent directory");
-  const tab = [...container.querySelectorAll('[role="tab"]')].find(tab => tab.textContent === "Shell")!;
-  await act(async () => tab.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 })));
-  expect(push).toHaveBeenCalledWith("/settings?tab=harness&section=shell", { scroll: false });
+  expect(container.textContent).not.toContain("Agent directory");
+  expect([...container.querySelectorAll('[role="tab"]')].map(tab => tab.textContent)).not.toContain("Assistant access");
 });
 
 it("shows one Security sidebar destination for non-admin users and opens their credentials", async () => {
   const onSelect = vi.fn();
   await act(async () => root.render(<SettingsNavigation compact={false} active selected="tokens" pages={[]} canManageApps={false} onSelect={onSelect} />));
-  expect([...container.querySelectorAll("#settings-navigation button")].map(button => button.textContent)).toEqual(["Your profile", "Security"]);
-  const security = [...container.querySelectorAll("button")].find(button => button.textContent === "Security")!;
+  expect([...container.querySelectorAll("#settings-navigation button")].map(button => button.textContent)).toEqual(["My profile"]);
+  const security = [...container.querySelectorAll("button")].find(button => button.textContent === "My profile")!;
   expect(security.getAttribute("aria-current")).toBe("page");
   await act(async () => security.click());
-  expect(onSelect).toHaveBeenCalledWith("tokens");
+  expect(onSelect).toHaveBeenCalledWith("profile");
 });

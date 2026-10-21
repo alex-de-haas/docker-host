@@ -727,13 +727,13 @@ export type CoreError = {
   message?: string;
 };
 
-export type AppAction = "start" | "stop" | "restart" | "backup";
+export type AppAction = "start" | "stop" | "restart" | "backup" | "autostart";
 // "logs" is the per-app console-logs (docker logs) dialog, opened from the Installed Apps actions menu
 // — distinct from the structured OTLP-logs stream in the Observability section.
 export type DetailView = "backups" | "settings" | "update" | "remove" | "logs";
 
 // Tabs inside the consolidated Settings dialog. Hidden when the app has no matching data.
-export type SettingsTab = "app" | "permissions" | "publicOrigins" | "mounts" | "source";
+export type SettingsTab = "app" | "permissions" | "publicOrigins" | "mounts" | "source" | "backups";
 // Three top-level destinations: the host you manage, the host you configure, and the apps you use.
 // `installed-apps` and `users` were folded into `dashboard` and `settings`; their URLs still resolve
 // and are canonicalized by the client.
@@ -744,7 +744,7 @@ export type ShellView =
 
 // Host-level configuration surfaces, resolved from the settings group and section URL parameters. Distinct from the per-app
 // `SettingsTab` above, which describes one app rather than the host.
-export type HostSettingsTab = "profile" | "general" | "agents" | "connections" | "shell" | "users" | "tokens" | "permissions" | "policies" | "core" | "mounts" | "ingress";
+export type HostSettingsTab = "source" | "profile" | "general" | "agents" | "connections" | "shell" | "users" | "tokens" | "permissions" | "policies" | "core" | "mounts" | "ingress";
 
 // A device waiting for someone to approve the code it is showing. Held in memory by Core and gone ten
 // minutes later, so this is never a durable record of anything.

@@ -25,7 +25,7 @@ public sealed class CoreSourceWorkspaceHttpTests
             browser.DefaultRequestHeaders.Add("Cookie", "hosty_session=operator; hosty_csrf=csrf");
             browser.DefaultRequestHeaders.Add("X-Hosty-CSRF", "csrf");
             var before = (await browser.GetFromJsonAsync<CoreDevelopmentState>("/api/core/development"))!;
-            using var saved = await browser.PutAsJsonAsync("/api/core/source", new CoreSourceRequest(null,
+            using var saved = await CoreReviewFixture.PutAsync(browser, "/api/core/source", new CoreSourceRequest(null,
                 before.Source.Revision, new(CoreLifecycleServiceTests.RemoteGitFixture.Url, "main", "Engine.csproj", "connection")));
             Assert.True(saved.IsSuccessStatusCode, await saved.Content.ReadAsStringAsync());
             var settings = (await saved.Content.ReadFromJsonAsync<CoreSourceSettings>())!;
@@ -88,7 +88,7 @@ public sealed class CoreSourceWorkspaceHttpTests
         var before = (await browser.GetFromJsonAsync<CoreDevelopmentState>("/api/core/development"))!;
         var request = new CoreSourceRequest(null, before.Source.Revision,
             new("https://github.com/EXAMPLE/fork", "feature/test", "src/Engine.csproj"));
-        var response = await browser.PutAsJsonAsync("/api/core/source", request);
+        var response = await CoreReviewFixture.PutAsync(browser, "/api/core/source", request);
         Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
         var source = (await response.Content.ReadFromJsonAsync<CoreSourceSettings>())!;
         var after = (await browser.GetFromJsonAsync<CoreDevelopmentState>("/api/core/development"))!;
@@ -98,7 +98,7 @@ public sealed class CoreSourceWorkspaceHttpTests
         Assert.Equal(before.Launch, after.Launch);
         Assert.Equal(CoreSourceDefaults.UpdateRepository, after.UpdateRepository);
         Assert.False(Directory.Exists(after.SourcePath));
-        Assert.Equal(HttpStatusCode.Conflict, (await browser.PutAsJsonAsync("/api/core/source", request)).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await CoreReviewFixture.PutAsync(browser, "/api/core/source", request)).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await browser.PostAsJsonAsync("/api/core/source/prepare",
             new CoreSourcePrepare("stale"))).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await browser.PostAsJsonAsync("/api/core/source/workspaces",

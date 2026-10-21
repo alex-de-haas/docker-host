@@ -232,6 +232,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<ProviderAccessService>();
         builder.Services.AddSingleton<UiPanelService>();
         builder.Services.AddSingleton<InstallationApprovalStore>();
+        builder.Services.AddSingleton<ProtectedSettingsChanges>();
         builder.Services.AddSingleton<HostPathApprovalService>();
         builder.Services.AddSingleton<InstallationApprovalService>();
         builder.Services.AddCors();
@@ -254,6 +255,8 @@ internal static class HostyCoreApplication
         app.UseCors();
         app.Use(LifecycleAuditFilter.RecordEarlyRefusalAsync);
         app.Use(AppManagementAuthorization.InvokeAsync);
+        app.Use(ProtectedSettingsChanges.InvokeAsync);
+        ProtectedSettingsChanges.Map(app);
         InstallationApprovalEndpoints.Map(app);
         ProviderEndpoints.Map(app);
         CoreEnvironmentEndpoints.Map(app);
@@ -409,6 +412,7 @@ internal static class HostyCoreApplication
         AuthBootstrapEndpoints.Map(app);
         UserManagementEndpoints.Map(app);
         UserProfileEndpoints.Map(app);
+        CoreBrowserPages.MapAssets(app);
         CoreAccountEndpoints.Map(app);
         LifecycleEndpoints.Map(app);
         GlobalMountEndpoints.Map(app);
@@ -522,34 +526,7 @@ internal static class HostyCoreApplication
     private static string CreateControlSecret()
         => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
 
-    // One stylesheet for every page Core serves itself: login, setup, recovery, invitation, and the plain
-    // status pages. They are the only UI Core has, and they are read in a phone browser and inside the
-    // native client's sign-in sheet as often as in a desktop window.
-    //
-    // `border-box` is the load-bearing line. Under the default `content-box` the card's padding and border
-    // are added to its declared width, so a card sized `100vw - 2rem` rendered 50px wider than the viewport
-    // and every narrow window got a horizontal scrollbar over a clipped form.
-    private const string PageStyles = """
-      :root { color-scheme: light dark; }
-      *, *::before, *::after { box-sizing: border-box; }
-      body { margin: 0; min-height: 100vh; padding: 2rem 1rem; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: system-ui, -apple-system, sans-serif; line-height: 1.5; background: Canvas; color: CanvasText; }
-      main { width: min(30rem, 100%); padding: 1.75rem; border: 1px solid color-mix(in srgb, CanvasText 14%, transparent); border-radius: 12px; background: color-mix(in srgb, CanvasText 3%, Canvas); box-shadow: 0 1px 2px color-mix(in srgb, CanvasText 8%, transparent); }
-      h1 { margin: 0 0 1.25rem; font-size: 1.3125rem; letter-spacing: -.01em; }
-      p { margin: .5rem 0; }
-      form { display: grid; gap: 1rem; margin: 0 0 1.25rem; }
-      .field { display: grid; gap: .375rem; }
-      label { font-size: .8125rem; font-weight: 600; color: color-mix(in srgb, CanvasText 72%, transparent); }
-      input, select, button { width: 100%; font: inherit; padding: .55rem .7rem; border: 1px solid color-mix(in srgb, CanvasText 22%, transparent); border-radius: 8px; background: Canvas; color: CanvasText; }
-      input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid AccentColor; outline-offset: 1px; border-color: AccentColor; }
-      button { cursor: pointer; font-weight: 600; margin-top: .25rem; border-color: transparent; background: CanvasText; color: Canvas; }
-      button { background: AccentColor; color: AccentColorText; }
-      button:hover { filter: brightness(1.1); }
-      button:active { filter: brightness(.94); }
-      code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
-      .meta { margin: 1.25rem 0 0; padding-top: 1rem; border-top: 1px solid color-mix(in srgb, CanvasText 12%, transparent); display: grid; gap: .375rem; font-size: .8125rem; color: color-mix(in srgb, CanvasText 65%, transparent); }
-      .meta p { margin: 0; }
-      .error { margin: 0 0 1.25rem; padding: .625rem .75rem; border: 1px solid color-mix(in srgb, #e5484d 45%, transparent); border-radius: 8px; background: color-mix(in srgb, #e5484d 12%, Canvas); font-weight: 600; }
-      """;
+    private const string PageStyles = CoreBrowserPages.AuthenticationStyles;
 
     private static string RenderCorePage(string title, string message, string coreOrigin, string? shellOrigin)
     {
@@ -568,6 +545,7 @@ internal static class HostyCoreApplication
             </style>
           </head>
           <body>
+            {{CoreBrowserPages.Brand}}
             <main>
               <h1>{{encodedTitle}}</h1>
               <p>{{encodedMessage}}</p>
@@ -621,8 +599,9 @@ internal static class HostyCoreApplication
             </style>
           </head>
           <body>
+            {{CoreBrowserPages.Brand}}
             <main>
-              <h1>Hosty Login</h1>
+              <h1>Sign in to Hosty</h1>
               {{encodedError}}
               <form method="post" action="/login">
                 {{returnToField}}
@@ -682,8 +661,9 @@ internal static class HostyCoreApplication
             </style>
           </head>
           <body>
+            {{CoreBrowserPages.Brand}}
             <main>
-              <h1>Hosty Core Setup</h1>
+              <h1>Set up Hosty</h1>
               <p id="message"></p>
               <form id="setup-form">
                 <input type="hidden" id="setup-token" value="{{encodedToken}}">
@@ -767,8 +747,9 @@ internal static class HostyCoreApplication
             </style>
           </head>
           <body>
+            {{CoreBrowserPages.Brand}}
             <main>
-              <h1>Hosty Core Recovery</h1>
+              <h1>Recover your account</h1>
               <p id="message"></p>
               <form id="recovery-form">
                 <input type="hidden" id="recovery-token" value="{{encodedToken}}">
@@ -852,9 +833,10 @@ internal static class HostyCoreApplication
             </style>
           </head>
           <body>
+            {{CoreBrowserPages.Brand}}
             <main>
-              <h1>Hosty Core Invitation</h1>
-              <p>Core owns invitation acceptance and session creation.</p>
+              <h1>Join this Hosty</h1>
+              <p>Choose your name and password to accept the invitation.</p>
               <p id="message"></p>
               <form id="invite-form">
                 <input type="hidden" id="setup-token" value="{{encodedToken}}">

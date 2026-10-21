@@ -163,6 +163,12 @@ export class SessionManager {
     };
     if (proxy) {
       proxy.policy = this.mcpPolicy;
+      proxy.deniedTools = async appId => {
+        const snapshot = await providers?.read();
+        const provider = [providers?.core(), ...(snapshot?.providers ?? [])].find(p => p?.appId === appId);
+        if (!provider?.offered) throw new Error("Core has disabled access to this application.");
+        return provider.deniedTools ?? [];
+      };
       proxy.identity = async appId => {
         const snapshot = await providers?.read();
         const p = [providers?.core(), ...(snapshot?.providers ?? [])].find(p => p?.appId === appId);
@@ -216,7 +222,7 @@ export class SessionManager {
     const snapshot = await this.providers?.read();
     if (!snapshot) return unavailable;
     for (const p of [this.providers?.core(), ...snapshot.providers]) {
-      if (!p?.offered || !p.url || !p.policyIdentity) continue;
+      if (!p?.url || !p.policyIdentity) continue;
       try {
         const tools = await this.exchange?.catalog(credential, p.appId);
         if (!tools) throw new Error("Provider catalog unavailable");
@@ -1374,7 +1380,8 @@ export class SessionManager {
       return skills;
     }
 
-    return partitionSkills(skills, this.providers?.approvedSkills() ?? {}).deliver;
+    await this.providers?.migrateInstructions(this.settings);
+    return partitionSkills(skills, this.providers?.localApprovedSkills(await this.settings.read()) ?? {}).deliver;
   }
 
   /** Re-reads the fleet and the policy, then rebuilds this session's grants from both. */

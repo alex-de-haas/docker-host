@@ -17,6 +17,8 @@ internal static class CoreAppPermissions
     public const string CoreLifecycle = "core.lifecycle";
     public const string ConfigureCore = "core.configure";
     public const string CoreLogs = "core.logs";
+    public const string ReadCredentials = "credentials.read";
+    public const string RevokeCredentials = "credentials.revoke";
     public const string ReadUsers = "users.read";
     public const string ManageUsers = "users.manage";
     public const string Sources = "apps.sources.full";
@@ -33,11 +35,12 @@ internal static class CoreAppPermissions
     public const string SourcesRead = "apps.sources.read";
     public const string LegacySources = "apps.sources";
     public const string SourceConnections = "sources.connections";
+    public const string RequestMcpAccess = "apps.mcp.access.request";
     public const string ReadSkills = "apps.skills.read";
     public const string SpeechProviders = "providers.speech-to-text";
     public const string TranslationProviders = "providers.translation";
     public const string AssistantProviders = "providers.assistant";
-    public static readonly string[] Known = [WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, SandboxesRead, SandboxesManage, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SandboxesInspect, SandboxesOperate, SourceConnections, ReadSkills, SpeechProviders, TranslationProviders, AssistantProviders];
+    public static readonly string[] Known = [ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, SandboxesRead, SandboxesManage, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SandboxesInspect, SandboxesOperate, SourceConnections, ReadSkills, SpeechProviders, TranslationProviders, AssistantProviders];
 
     // The old name grants exactly the same authority. Other retired permissions remain unsupported.
     public static string Normalize(string permission) => permission == LegacySources ? Sources : permission;
@@ -88,11 +91,14 @@ internal static class CoreAppPermissions
         CoreLifecycle => "Restart Core",
         ConfigureCore => "Read and change Core settings, shared mounts and ingress",
         CoreLogs => "Read Core logs",
+        ReadCredentials => "Read authorized token and device metadata without their secrets",
+        RevokeCredentials => "Request user-confirmed token and device revocation",
         ReadUsers => "Read user-management information",
         ManageUsers => "Manage users and their access",
         SpeechProviders => "List and use all current and future speech-to-text providers",
         TranslationProviders => "Send text to all current and future translation providers, using their configured accounts",
         AssistantProviders => "Create draft assistant conversations on your behalf",
+        RequestMcpAccess => "Request user-reviewed changes to this assistant installation’s MCP access; cannot approve changes",
         ReadSkills => "Read agent skills published by installed apps",
         Install => "Install, update and remove applications; routine updates need no confirmation, other changes require Core review",
         _ => permission,
@@ -114,9 +120,23 @@ internal sealed class InstallationApprovalStore(IClock clock)
         {
             foreach (var id in entries.Where(pair => pair.Value.ExpiresAt <= clock.UtcNow && pair.Value.Status != "executing").Select(pair => pair.Key).ToArray())
                 entries.Remove(id);
+            if (entry.AssistantAccessBatch is { } batch && FindMcpRequest(entry.UserId, entry.CallerAppId, batch.RequestId, entry.McpRequestDigest!) is { } previous)
+                return previous;
             if (entries.Count >= Capacity)
                 throw new AppLifecycleException("approval_limit", "Too many pending requests. Try again later.");
             entries.Add(entry.Id, entry);
+            return entry;
+        }
+    }
+
+    internal InstallationApproval? FindMcpRequest(string userId, string? callerAppId, string requestId, string digest)
+    {
+        lock (gate)
+        {
+            var entry = entries.Values.FirstOrDefault(e => e.UserId == userId && e.CallerAppId == callerAppId &&
+                e.AssistantAccessBatch?.RequestId == requestId && (e.ExpiresAt > clock.UtcNow || e.Status == "executing"));
+            if (entry is not null && entry.McpRequestDigest != digest)
+                throw new AppLifecycleException("mcp_replay_conflict", "Reuse the request ID only with the original changes.");
             return entry;
         }
     }
@@ -265,6 +285,8 @@ internal sealed class InstallationApproval
     public AppPermissionPlan? PermissionPlan { get; init; }
     public AppDevelopmentAccessPlan? WorkspaceManifest { get; init; }
     public AssistantAccessPlan? AssistantAccessPlan { get; init; }
+    public AssistantAccessBatchPlan? AssistantAccessBatch { get; init; }
+    public string? McpRequestDigest { get; init; }
     public bool AgentEnabled { get; set; }
     public IReadOnlyList<string> AgentSkills { get; set; } = [];
     public AppRemovalPlan? RemovalPlan { get; init; }
@@ -281,12 +303,12 @@ internal sealed class InstallationApproval
     internal string? DecisionNonce { get; set; }
     internal string? DecisionSession { get; set; }
     public bool RequiresSources { get; init; }
-    public string? Permission => WorkspaceManifest is not null ? CoreAppPermissions.AppLifecycle : EnvironmentPlan is not null ? CoreAppPermissions.CoreEnvironmentsManage : PermissionPlan is not null || AssistantAccessPlan is not null ? null : HostPathPlan?.Change.Permission ?? CoreAppPermissions.Install;
+    public string? Permission => AssistantAccessBatch is { } batch ? (CallerAppId == batch.AssistantId ? CoreAppPermissions.RequestMcpAccess : CoreAppPermissions.ConfigureCore) : WorkspaceManifest is not null ? CoreAppPermissions.AppLifecycle : EnvironmentPlan is not null ? CoreAppPermissions.CoreEnvironmentsManage : PermissionPlan is not null || AssistantAccessPlan is not null ? null : HostPathPlan?.Change.Permission ?? CoreAppPermissions.Install;
 }
 
 internal sealed record InstallationPrepare(string? ManifestPath = null, string? FeedsUrl = null,
     string? FeedId = null, string? SelectedRuntime = null, string? UpdateAppId = null, string? PlanDigest = null, PrivateSourceChoice? SourceConnections = null, string? PermissionsAppId = null,
-    string? RemoveAppId = null, AppRemoveRequest? RemovalOptions = null, HostPathChange? HostPathChange = null, AppDevelopmentAccessPlan? WorkspaceManifest = null);
+    string? RemoveAppId = null, AppRemoveRequest? RemovalOptions = null, HostPathChange? HostPathChange = null, AppDevelopmentAccessPlan? WorkspaceManifest = null, AssistantAccessChange? AssistantAccess = null);
 internal sealed record InstallationSubmit(IReadOnlyDictionary<string, string?>? Settings = null, bool? Autostart = null);
 internal sealed record InstallationRequestView(string Id, string Status, AppInstallPlan? Plan, AppUpdatePlan? UpdatePlan,
     string ApprovalUrl, DateTimeOffset ExpiresAt, string? Error, AppPermissionPlan? PermissionPlan = null, AppRemovalPlan? RemovalPlan = null, HostPathApprovalPlan? HostPathPlan = null, CoreEnvironmentConsentPlan? EnvironmentPlan = null, AppDevelopmentAccessPlan? WorkspaceManifest = null);

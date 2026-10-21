@@ -379,7 +379,7 @@ branch/PR. Checks record completed implementation and its verification; platform
 
 Implementation is in progress in the registered Core workspace. Verified local evidence:
 
-- `npm run harness:test`: 920 tests passed after review fixes; `npm run harness:lint` and the web production build passed.
+- `npm run harness:test`: 937 tests passed after review fixes; `npm run harness:lint` and the web production build passed.
 - Full Core regression: 3901 passed, five opt-in integration tests skipped. After the final generic
   storage/adoption changes, all 227 affected Core tests passed again in an isolated artifacts directory.
 - `npm run cli:build` and `npm run core:aot` passed. Native AOT targets macOS arm64 with no new
@@ -408,7 +408,13 @@ store failures, recover append-before-clear crashes without duplicates and detac
 All 24 affected HTTP/client protocol tests and full CI pass for terminal persistence. A subsequent
 review identified replay-expiry notice collisions with terminal revisions. Resync notices now stay
 outside the durable sequence; all 28 affected tests pass, including successful/failed recovery with
-and without snapshot text. The replay-resync fix requires its own full CI.
+and without snapshot text. The replay-resync fix passed local checks. Before its CI could start, main advanced through
+PR #634; a regular merge preserves those settings changes and removes the obsolete retention
+injection from the new service manifest. The combined Harness tests, web build and Shell tests
+pass; 200 affected Core tests pass against the final combined source. Managed collection paths use JSON to preserve commas and other valid host-path characters;
+operator-bound mount slots retain their existing format. The provider-state migration review
+request is intentionally declined under the Clean Harness Update decision above. The combined
+candidate requires full CI before merge.
 
 These checks use the implementation and review-fix batches; the full Core regression preceded the final
 affected-test rerun. AMD64 image execution on this machine uses emulation, not a native Linux host.
@@ -445,7 +451,7 @@ Sandbox success does not authorize live-data trial or production cutover.
 Implementation changes platform contracts and Harness behavior: apply minor versions to the
 then-current Core/CLI and Harness artifacts, keeping related images/package versions in step.
 Bump other artifacts only when their code changes. One PR lists D16-D27, this folder and version
-outcome. Current release versions are Core/CLI 0.147.8 → 0.148.0, Harness 0.63.3 → 0.64.0 and Shell 0.108.0 → 0.108.1.
+outcome. Current release versions are Core/CLI 0.148.4 → 0.149.0, Harness 0.64.1 → 0.65.0 and Shell 0.109.1 → 0.109.2.
 
 ## Related Scope
 

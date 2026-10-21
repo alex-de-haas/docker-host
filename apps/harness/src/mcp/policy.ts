@@ -3,6 +3,11 @@ import type { SettingsStore } from "../settings/store.js";
 import { openSession, listTools, type UpstreamTool } from "./upstream.js";
 
 export type ToolMode = "ask" | "run" | "disabled";
+export interface ProviderDefault { identity: string; mode: "ask" | "run" }
+export function validDefaults(value: unknown): value is Record<string, ProviderDefault> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length <= 1000 &&
+    Object.values(value).every(v => v && typeof v === "object" && typeof v.identity === "string" && v.identity.length < 3000 && ["ask", "run"].includes(v.mode)));
+}
 export interface ToolRule { identity: string; mode: ToolMode; definition?: string }
 export interface ToolCatalog { provider: string; identity: string; tools: UpstreamTool[] }
 const definition = (tool: UpstreamTool) => createHash("sha256").update(JSON.stringify(tool)).digest("hex");
@@ -35,15 +40,15 @@ export class McpToolPolicy {
       throw new Error("Tool discovery is invalid; existing policy was preserved.");
     const change = (current: Awaited<ReturnType<SettingsStore["read"]>>) => {
       const rules = { ...current.mcpToolRules };
-      // A complete first snapshot migrates only known read-only tools. New tools subsequently ask.
+      // Preserve exceptions for temporarily missing tools. A changed definition asks again;
+      // genuinely new tools inherit the operator's provider default.
       const first = !current.mcpPolicyMigrated?.includes(`provider:${provider}`);
-      for (const key of Object.keys(rules)) {
-        let pair: string[]; try { if (!validKey(key)) throw new Error(); pair = JSON.parse(key); } catch { delete rules[key]; continue; }
-        if (pair[0] === provider && (!tools.some(t => t.name === pair[1]) || rules[key]?.identity !== identity || rules[key]?.definition !== definition(tools.find(t => t.name === pair[1]) ?? { name: "" }))) delete rules[key];
-      }
       for (const tool of tools) {
-        const key = ruleKey(provider, tool.name);
-        if (!rules[key]) rules[key] = { identity, definition: definition(tool), mode: first && current?.mcpAutoAllow[provider] && tool.annotations?.readOnlyHint === true ? "run" : "ask" };
+        const key = ruleKey(provider, tool.name), rule = rules[key];
+        if (rule && (rule.identity !== identity || rule.definition !== definition(tool)))
+          rules[key] = { identity, definition: definition(tool), mode: rule.mode === "disabled" ? "disabled" : "ask" };
+        else if (!rule && first && current.mcpAutoAllow[provider] && tool.annotations?.readOnlyHint === true)
+          rules[key] = { identity, definition: definition(tool), mode: "run" };
       }
       return { mcpToolRules: rules, mcpPolicyMigrated: [...new Set([...(current.mcpPolicyMigrated ?? []), `provider:${provider}`])].slice(-2000) };
     };
@@ -78,11 +83,32 @@ export class McpToolPolicy {
     throw new Error("Tool catalog pagination is incomplete.");
   }
   async mode(provider: string, identity: string, tool: string): Promise<ToolMode> {
-    const rule = (await this.settings?.read())?.mcpToolRules?.[ruleKey(provider, tool)];
-    const catalog = this.catalogs.get(provider);
-    const current = catalog?.tools.find(t => t.name === tool);
-    return catalog?.identity === identity && current && rule?.identity === identity && rule.definition === definition(current) ? rule.mode : "ask";
+    const settings = await this.settings?.read();
+    const rule = settings?.mcpToolRules?.[ruleKey(provider, tool)];
+    const catalog = this.catalogs.get(provider), current = catalog?.tools.find(t => t.name === tool);
+    if (catalog?.identity !== identity || !current) return "ask";
+    if (rule?.identity === identity && rule.definition === definition(current)) return rule.mode;
+    const fallback = settings?.mcpDefaults?.[provider];
+    return fallback?.identity === identity ? fallback.mode : "ask";
   }
+
+  /** Validate the whole editor before its single settings-file write. */
+  preparePreferences(defaults: Record<string, ProviderDefault>, rules: Record<string, ToolRule>) {
+    if (!validDefaults(defaults) || !validRules(rules) || Object.entries(rules).some(([key, r]) => r.mode === "disabled" && JSON.parse(key)[0] !== "hosty:development"))
+      throw new Error("Invalid invocation preferences. Disable tools through Core access review.");
+    for (const [provider, rule] of Object.entries(defaults)) {
+      if (this.catalogs.get(provider)?.identity !== rule.identity) throw new Error("Refresh the changed tool catalog before saving.");
+    }
+    const prepared: Record<string, ToolRule> = {};
+    for (const [key, rule] of Object.entries(rules)) {
+      const [provider, name] = JSON.parse(key) as string[];
+      const catalog = this.catalogs.get(provider!), tool = catalog?.tools.find(t => t.name === name);
+      if (!tool || catalog?.identity !== rule.identity) throw new Error("Refresh the changed tool catalog before saving.");
+      prepared[key] = { ...rule, definition: definition(tool) };
+    }
+    return { defaults, rules: prepared };
+  }
+
   async authorize(session: string, provider: string, identity: string, requestId: string, tool: string, input: unknown, signal: AbortSignal): Promise<() => Promise<void>> {
     const scope = JSON.stringify([session, provider]);
     const generation = this.generations.get(scope) ?? Symbol();

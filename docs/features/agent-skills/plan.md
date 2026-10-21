@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-15
-updated: 2026-10-18
+updated: 2026-10-20
 summary: Draft bind-mount delivery decision, native-client evidence and remaining choices for shared skills selected per assistant.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -36,6 +36,20 @@ An instruction-only skill should remain possible; a fuller skill might contain e
 documents, templates, scripts and nested directories. Multi-file packaging and layered selection
 are separate questions: supporting nested files does not decide an inheritance model for settings.
 
+## Settings Coordination (2026-10-20)
+
+The owner clarified that choosing whether Harness uses an app instruction file
+belongs to that Harness, without an additional Core approval. The
+[settings experience](../settings-experience/feature.md) implements this change for the
+existing single-file contract, including local content-digest review, authorized
+reads and migration from the shared approval gate. It also separates Core-enforced
+MCP application/tool access from Harness-owned per-call Ask/Run preferences.
+
+Harness uses local digest acceptance; CLI/facade retain the global digest gate.
+This shared-skills plan owns full packages and delivery,
+and should reuse that assistant settings entry rather than create a second editor.
+It does not duplicate the shipped settings work or authorize implementation.
+
 ## Current Baseline
 
 The starting point is partial support, rather than an absence of instructions:
@@ -44,7 +58,7 @@ The starting point is partial support, rather than an absence of instructions:
 | --- | --- |
 | Harness instructions | A built-in host prompt and a configurable operator system prompt are composed with app instructions when starting the native agent. Harness settings expose the operator prompt; there is no shared user-managed skill-package library described by that feature. See [Harness](../ai-gateway/feature.md). |
 | App instructions | [App-provided skills](../app-provided-skills/feature.md) use one `agent.skillFile` Markdown file per app. Delivered text is attributed, approved by digest and capped at 8,000 characters per app. Supporting directories are not delivered as a general skill package. |
-| Access and review | The [Agent MCP Directory](../agent-mcp-directory/feature.md) already assigns MCP targets to individual assistants. Skill approvals are shared across Hosty consumers; they are not independent skill selections for each assistant. Tools and instruction approval are separate decisions. |
+| Access and review | The [Agent MCP Directory](../agent-mcp-directory/feature.md) already assigns MCP targets to individual assistants. Harness accepts app-file digests locally; CLI/facade retain shared approvals. This is not a general skill-package selection library. Tools and instruction approval are separate decisions. |
 | Workspaces | [Session workspaces](../assistant-session-workspaces/feature.md) and [external development workspaces](../external-development-workspaces/feature.md) provide registered source worktrees and observation. Local external agents can prepare them through separately authorized direct Core MCP. |
 | Sandboxes | [Sandbox instances and child Core environments](../app-sandbox-runtimes/feature.md) are shipped capabilities. Their API is independent of a workspace or Harness session; the remaining plan tracks broader acceptance. |
 | Plans | [Hosty Plans](../plan-tracking/feature.md) displays repository and workspace documents. The separate [plan-provider Draft](../plan-provider-interface/plan.md) explores other plan sources, optional associations and possible MCP tools. |

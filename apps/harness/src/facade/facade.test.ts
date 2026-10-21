@@ -214,7 +214,7 @@ describe("MCP facade", () => {
     expect(appCalls).toHaveLength(callsBefore);
     directoryAvailable = true;
     const recovered = await (await rpc("tools/list")).json() as Listing;
-    expect(recovered.result.tools).toEqual([]);
+    expect(recovered.result.tools.length).toBeGreaterThan(0);
   });
 
   it("offers only the tools an app declares read-only, named as the connector names them", async () => {
@@ -315,7 +315,7 @@ describe("MCP facade", () => {
   it("invalidates a fresh catalog when Core disables the target and refuses a stale call", async () => {
     const initial = await (await rpc("tools/list")).json() as { result: { tools: unknown[] } };
     expect(initial.result.tools.length).toBeGreaterThan(0);
-    offered = false;
+    offered = false; mintAllowed = false;
     const next = await (await rpc("tools/list")).json() as { result: { tools: unknown[] } };
     expect(next.result.tools).toEqual([]);
     const before = appCalls.length;
@@ -408,7 +408,7 @@ describe("MCP facade", () => {
     }
   });
 
-  it("offers nothing from a provider the operator has not enabled", async () => {
+  it("offers user-authorized tools without the internal assistant offer toggle", async () => {
     offered = false;
     await settings.update({ mcpProviders: { [APP]: true } });
     // A fresh facade, because the catalog is cached per user for a few seconds by design.
@@ -428,7 +428,7 @@ describe("MCP facade", () => {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
     });
     const body = (await response.json()) as { result: { tools: unknown[] } };
-    expect(body.result.tools).toEqual([]);
+    expect(body.result.tools).toHaveLength(1);
 
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });

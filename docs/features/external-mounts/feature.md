@@ -20,6 +20,9 @@ An app with reviewed `apps.sources.full` permission can instead declare `kind: "
 `scope: "instance"` and an explicit service. Core automatically mounts its development trees and
 repository metadata at `/mnt/<key>/managed/trees` and `/mnt/<key>/managed/repositories`. Trees use
 the declared access mode; repository metadata is read-only. Local receives the canonical host paths.
+Managed collections encode `HOSTY_MOUNT_{KEY}` as a JSON object mapping `trees` and `repositories`
+to paths, preserving commas, equals signs, backslashes and Unicode. Operator-bound slots retain
+the comma-joined format described below.
 The collection roots cannot redirect through symlinks/junctions. Shell displays automatic exposure
 instead of path editors, and global mounts cannot be assigned to these slots.
 

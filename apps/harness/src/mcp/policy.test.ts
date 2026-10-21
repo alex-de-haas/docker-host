@@ -28,7 +28,8 @@ it("migrates only read-only tools once and does not grant new tools or reinstall
 });
 it("does not lose rules when different provider catalogs arrive concurrently", async () => {
   await Promise.all(Array.from({ length: 20 }, (_, n) => policy.catalog(`app-${n}`, `install-${n}`, [write])));
-  expect(Object.keys((await settings.read()).mcpToolRules!)).toHaveLength(21);
+  expect(policy.snapshot()).toHaveLength(21);
+  expect((await settings.read()).mcpPolicyMigrated).toHaveLength(21);
 });
 it("runs a write unprompted, audits it and refuses replay with the same RPC identity", async () => {
   await policy.catalog("app", "install-1", [write]);
@@ -136,4 +137,27 @@ it("revokes an app without cancelling development approval or clearing its repla
   policy.cancel("session", "app"); await guard();
   await expect(policy.authorize("session", "development", "v1", "1", "merge", {}, new AbortController().signal)).rejects.toThrow("already received");
   policy.cancel("session"); await expect(guard()).rejects.toThrow("canceled");
+});
+
+it("applies a provider default to new tools while preserving explicit exceptions and missing tools", async () => {
+  await settings.update({ mcpDefaults: { app: { identity: "install-1", mode: "run" } } });
+  await policy.update({ [ruleKey("app", "merge")]: { identity: "install-1", mode: "ask" } });
+  await policy.catalog("app", "install-1", [write, { name: "new_tool" }]);
+  expect(await policy.mode("app", "install-1", "new_tool")).toBe("run");
+  expect(await policy.mode("app", "install-1", "merge")).toBe("ask");
+  await policy.catalog("app", "install-1", [{ name: "new_tool" }]);
+  expect((await settings.read()).mcpToolRules![ruleKey("app", "merge")]).toBeDefined();
+  await policy.catalog("app", "install-1", [write, { name: "new_tool" }]);
+  expect(await policy.mode("app", "install-1", "merge")).toBe("ask");
+});
+
+it("enforces local development exclusions while refusing local app-access exclusions", async () => {
+  await policy.catalog("hosty:development", "development-1", [write]);
+  const key = ruleKey("hosty:development", "merge");
+  const prepared = policy.preparePreferences({ "hosty:development": { identity: "development-1", mode: "run" } },
+    { [key]: { identity: "development-1", mode: "disabled" } });
+  await settings.update({ mcpDefaults: prepared.defaults, mcpToolRules: prepared.rules });
+  await expect(policy.authorize("session", "hosty:development", "development-1", "local-1", "merge", {}, new AbortController().signal)).rejects.toThrow("disabled");
+  expect(notify).not.toHaveBeenCalled();
+  expect(() => policy.preparePreferences({}, { [ruleKey("app", "merge")]: { identity: "install-1", mode: "disabled" } })).toThrow("Core access review");
 });

@@ -1,4 +1,5 @@
 "use client";
+import { useRouter } from "next/navigation";
 import { useExecutionTargets } from "../execution-targets";
 import { coreWorkspaceSource, useWorkspaceSources, workspaceSource, type ActivationWorkspace, type WorkspaceSource } from "../workspace-sources";
 
@@ -9,7 +10,7 @@ import { fetchCore } from "../core-transport.js";
 import { ResourceUsageProvider, ResourceUsage } from "../resources/resource-usage";
 import { Frame, FrameHeader, FramePanel } from "@/components/reui/frame";
 import { Separator } from "@/components/ui/separator";
-import { CoreGitCell, CoreModeControl, CoreSourceDialog, useCoreDevelopment } from "../core-development";
+import { CoreGitCell, CoreModeControl, useCoreDevelopment } from "../core-development";
 import { SourceVersionCell } from "../source/source-changes";
 import { AppSessionMenuItem } from "../assistant/app-session-action";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
@@ -52,6 +53,7 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuCheckboxItem,
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -511,7 +513,8 @@ function CoreSection({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
-  const [sourceOpen, setSourceOpen] = useState(false);
+
+  const router = useRouter();
   const development = useCoreDevelopment(coreOrigin, canManageApps);
   const launch = development.state?.launch ?? status?.launch;
   const dev = launch?.mode === "dev";
@@ -602,7 +605,7 @@ function CoreSection({
                         <IconButton title="Core console logs" onClick={() => setLogsOpen(true)}>
                           <Terminal className="h-4 w-4" />
                         </IconButton>
-                        <IconButton title="Core source settings" onClick={() => setSourceOpen(true)}><Settings className="h-4 w-4" /></IconButton>
+                        <IconButton title="Core source settings" onClick={() => router.push("/settings?tab=host&section=source")}><Settings className="h-4 w-4" /></IconButton>
                       </div>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -614,7 +617,7 @@ function CoreSection({
                             <DropdownMenuItem disabled={development.busy || coreUpdating || !development.state?.manageable} onClick={() => void development.restart()}><RotateCcw />Restart Core</DropdownMenuItem>
                             {showUpdate && <DropdownMenuItem disabled={coreUpdating || development.busy} onClick={onUpdateCore}><ArrowUpCircle />Update Core</DropdownMenuItem>}
                             <DropdownMenuItem onClick={() => setLogsOpen(true)}><Terminal />Console logs</DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => setSourceOpen(true)}><Settings />Source settings</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => router.push("/settings?tab=host&section=source")}><Settings />Source settings</DropdownMenuItem>
                           </DropdownMenuGroup>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -659,7 +662,6 @@ function CoreSection({
           </div>
         )}
 
-        <CoreSourceDialog open={sourceOpen} onOpenChange={setSourceOpen} state={development.state} disabled={development.busy || coreUpdating} onSave={development.save} />
         <CoreLogsDialog open={logsOpen} coreOrigin={coreOrigin} onOpenChange={setLogsOpen} />
       </FramePanel>
     </Frame>
@@ -1365,6 +1367,7 @@ function InstalledAppRow({
             startBusy={isBusy("start")}
             stopBusy={isBusy("stop")}
             restartBusy={isBusy("restart")}
+            autostartBusy={isBusy("autostart")}
             canViewLogs={canViewLogs}
             canBackup={canBackup}
             canConfigure={canConfigure}
@@ -1712,6 +1715,7 @@ function InstalledAppActionsMenu({
   startBusy,
   stopBusy,
   restartBusy,
+  autostartBusy,
   canViewLogs,
   canBackup,
   canConfigure,
@@ -1733,6 +1737,7 @@ function InstalledAppActionsMenu({
   startBusy: boolean;
   stopBusy: boolean;
   restartBusy: boolean;
+  autostartBusy: boolean;
   onLifecycleAction: (action: AppAction) => void;
   canViewLogs: boolean;
   canBackup: boolean;
@@ -1827,10 +1832,11 @@ function InstalledAppActionsMenu({
         )}
         {canConfigure && (
           <>
+            <DropdownMenuCheckboxItem checked={isAppAutostartEnabled(app)} disabled={autostartBusy || transitioning || startBusy || stopBusy || restartBusy} onCheckedChange={() => onLifecycleAction("autostart")}>Autostart</DropdownMenuCheckboxItem>
             {canBackup && <DropdownMenuSeparator />}
             <DropdownMenuItem onClick={() => onOpenPanel(app, "settings")}>
               <Settings className="h-4 w-4" />
-              Settings
+              Manage application
             </DropdownMenuItem>
           </>
         )}

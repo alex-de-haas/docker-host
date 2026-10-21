@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace Haas.Hosty.Core;
 
-internal sealed record AssistantTargetGrant(DateTimeOffset InstalledAt, string Revision);
+internal sealed record AssistantTargetGrant(DateTimeOffset InstalledAt, string Revision, IReadOnlyList<string>? DeniedTools = null, bool? Enabled = null);
 internal sealed record AgentAssistant(string Id, string DisplayName);
 internal sealed record AgentTargetPolicy(DateTimeOffset? InstalledAt, bool Offered, IReadOnlyDictionary<string, string> ApprovedSkills,
     IReadOnlyDictionary<string, AssistantTargetGrant>? Assistants = null);
@@ -12,7 +12,7 @@ internal sealed record AgentPolicyDocument(IReadOnlyDictionary<string, AgentTarg
 internal sealed record AgentSkillStatus(string Key, string? Digest, string? ApprovedDigest, string? Markdown);
 internal sealed record AgentMcpInterface(string Key, string? Url, string? Service, string Readiness);
 internal sealed record AgentMcpTarget(string Id, string DisplayName, bool Offered, string RuntimeState,
-    IReadOnlyList<AgentMcpInterface> Interfaces, IReadOnlyList<AgentSkillStatus> Skills, DateTimeOffset? InstalledAt = null, IReadOnlyList<string>? AssistantIds = null);
+    IReadOnlyList<AgentMcpInterface> Interfaces, IReadOnlyList<AgentSkillStatus> Skills, DateTimeOffset? InstalledAt = null, IReadOnlyList<string>? AssistantIds = null, IReadOnlyList<string>? DeniedTools = null);
 internal sealed record AgentDirectoryResponse(string Revision, IReadOnlyList<AgentMcpTarget> Targets, string? SettingsUrl = null, IReadOnlyList<AgentAssistant>? Assistants = null);
 internal sealed record AgentPolicyUpdate(string Revision, bool Offered, IReadOnlyDictionary<string, string>? ApproveSkills = null, IReadOnlyList<string>? AssistantIds = null);
 
@@ -27,6 +27,19 @@ internal sealed class AgentPolicyStore(CoreDataPaths paths)
     {
         await gate.WaitAsync(cancellationToken);
         try { return await JsonStorage.ReadAsync<AgentPolicyDocument>(FilePath, cancellationToken) ?? new(new Dictionary<string, AgentTargetPolicy>()); }
+        finally { gate.Release(); }
+    }
+
+    public async Task ChangeManyAsync(IReadOnlyDictionary<string, AgentTargetPolicy> changes, CancellationToken ct)
+    {
+        await gate.WaitAsync(ct);
+        try
+        {
+            var current = await JsonStorage.ReadAsync<AgentPolicyDocument>(FilePath, ct);
+            var targets = new Dictionary<string, AgentTargetPolicy>(current?.Targets ?? new Dictionary<string, AgentTargetPolicy>(), StringComparer.Ordinal);
+            foreach (var (id, policy) in changes) targets[id] = policy;
+            await JsonStorage.WriteOwnerFileAsync(FilePath, new AgentPolicyDocument(targets), ct);
+        }
         finally { gate.Release(); }
     }
 
@@ -58,7 +71,7 @@ internal sealed class AgentMcpDirectory(
         var installed = await lifecycle.ListAppsAsync(cancellationToken);
         var records = (await apps.ListAppRecordsAsync(cancellationToken)).ToDictionary(app => app.Id, StringComparer.Ordinal);
         var assistants = records.Values.Where(IsAssistant).OrderBy(a => a.Id, StringComparer.Ordinal).ToArray();
-        string[] Granted(AgentTargetPolicy? entry) => assistants.Where(a => entry?.Assistants?.GetValueOrDefault(a.Id)?.InstalledAt == a.InstalledAt).Select(a => a.Id).ToArray();
+        string[] Granted(AgentTargetPolicy? entry) => assistants.Where(a => entry?.Assistants?.GetValueOrDefault(a.Id) is { } grant && grant.InstalledAt == a.InstalledAt && (grant.Enabled ?? entry.Offered)).Select(a => a.Id).ToArray();
         var targets = new List<AgentMcpTarget>();
         policy.Targets.TryGetValue(CoreId, out var corePolicy);
         targets.Add(new(CoreId, "Hosty Core", corePolicy?.Offered ?? true, "running",
@@ -96,7 +109,7 @@ internal sealed class AgentMcpDirectory(
         var grantsRevision = string.Join("\n", policy.Targets.OrderBy(p => p.Key, StringComparer.Ordinal)
             .SelectMany(p => (p.Value.Assistants ?? new Dictionary<string, AssistantTargetGrant>()).OrderBy(a => a.Key, StringComparer.Ordinal)
                 .Select(a => $"{p.Key}:{a.Key}:{a.Value.InstalledAt:O}:{a.Value.Revision}")));
-        return new(Digest(json + fleet + shell + grantsRevision), targets, shell is null ? null : shell.TrimEnd('/') + "/settings?tab=agents",
+        return new(Digest(json + fleet + shell + grantsRevision), targets, shell is null ? null : shell.TrimEnd('/') + "/settings",
             assistants.Select(a => new AgentAssistant(a.Id, a.DisplayName)).ToArray());
     }
 
@@ -124,14 +137,16 @@ internal sealed class AgentMcpDirectory(
             var bindings = new Dictionary<string, AssistantTargetGrant>(oldPolicy?.Assistants ?? new Dictionary<string, AssistantTargetGrant>(), StringComparer.Ordinal);
             if (input.AssistantIds is not null)
             {
-                bindings.Clear();
+                foreach (var key in bindings.Keys.Where(key => !input.AssistantIds.Contains(key, StringComparer.Ordinal)).ToArray())
+                    bindings[key] = bindings[key] with { Enabled = false, Revision = Guid.NewGuid().ToString("N") };
                 foreach (var assistantId in input.AssistantIds.Distinct(StringComparer.Ordinal))
                 {
                     var assistant = await apps.GetAppAsync(assistantId, cancellationToken);
                     if (assistant is null || !IsAssistant(assistant))
                         return CoreJson.Json(new ErrorResponse("assistant_not_found", "Select an installed, confirmed assistant."), 400);
                     var previous = oldPolicy?.Assistants?.GetValueOrDefault(assistantId);
-                    bindings[assistantId] = previous?.InstalledAt == assistant.InstalledAt ? previous
+                    bindings[assistantId] = previous?.InstalledAt == assistant.InstalledAt
+                        ? previous.Enabled == false ? previous with { Enabled = input.Offered, Revision = Guid.NewGuid().ToString("N") } : previous
                         : new(assistant.InstalledAt, Guid.NewGuid().ToString("N"));
                 }
             }
@@ -188,8 +203,71 @@ internal sealed class AgentMcpDirectory(
     internal async Task<AgentDirectoryResponse> ReadForAssistantAsync(string appId, CancellationToken ct)
     {
         var snapshot = await ReadAsync(false, ct);
-        return snapshot with { Targets = snapshot.Targets.Select(t => t with
-            { Offered = t.Offered && t.AssistantIds?.Contains(appId, StringComparer.Ordinal) == true, AssistantIds = null }).ToArray(), Assistants = null };
+        var policy = await policies.ReadAsync(ct);
+        var assistant = await apps.GetAppAsync(appId, ct);
+        return snapshot with { Targets = snapshot.Targets.Select(t => {
+            var entry = policy.Targets.GetValueOrDefault(t.Id);
+            var grant = entry is not null && entry.InstalledAt == t.InstalledAt ? entry.Assistants?.GetValueOrDefault(appId) : null;
+            var current = grant?.InstalledAt == assistant?.InstalledAt && grant is not null;
+            return t with { Offered = current && (grant!.Enabled ?? entry!.Offered),
+                DeniedTools = current ? grant!.DeniedTools ?? [] : [], AssistantIds = null };
+        }).ToArray(), Assistants = null };
+    }
+
+    internal async Task<AssistantAccessBatchPlan> ReviewBatchAsync(AssistantAccessChange input, CancellationToken ct)
+    {
+        if (!Guid.TryParse(input.RequestId, out _) || input.Targets.Count is 0 or > 200 ||
+            input.Targets.Select(t => t.TargetId).Distinct(StringComparer.Ordinal).Count() != input.Targets.Count)
+            throw new AppLifecycleException("mcp_change_invalid", "Choose distinct applications and a valid request ID.");
+        var assistant = await apps.GetAppAsync(input.AssistantId, ct);
+        if (assistant is null || !IsAssistant(assistant))
+            throw new AppLifecycleException("mcp_assistant_required", "Select an installed, confirmed assistant.");
+        var snapshot = await ReadForAssistantAsync(input.AssistantId, ct);
+        if (snapshot.Revision != input.Revision)
+            throw new AppLifecycleException("agent_policy_changed", "The directory changed. Reload and review again.");
+        var changes = input.Targets.Select(change => {
+            var target = snapshot.Targets.FirstOrDefault(t => t.Id == change.TargetId)
+                ?? throw new AppLifecycleException("agent_target_not_found", "The MCP target is no longer installed.");
+            if (change.DeniedTools.Count > 1000 || change.DeniedTools.Any(t => string.IsNullOrWhiteSpace(t) || t.Length > 256 || t.Any(char.IsControl)))
+                throw new AppLifecycleException("mcp_change_invalid", "Tool names must be nonempty and at most 256 characters.");
+            return new AssistantTargetChangePlan(target.Id, target.DisplayName, target.InstalledAt,
+                target.Offered, target.DeniedTools ?? [], change.Enabled,
+                change.DeniedTools.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray());
+        }).ToArray();
+        return new(input.RequestId, assistant.Id, assistant.DisplayName, assistant.InstalledAt, snapshot.Revision, changes);
+    }
+
+    internal async Task ApplyBatchAsync(AssistantAccessBatchPlan plan, string actor, CancellationToken ct, Func<Task>? revalidate = null)
+    {
+        var locks = plan.Targets.Select(t => t.TargetId).Append(plan.AssistantId).Where(id => id != CoreId)
+            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).Select(apps.OperationLock).ToArray();
+        var acquired = 0;
+        var updating = false;
+        try
+        {
+            foreach (var mutex in locks) { await mutex.WaitAsync(ct); acquired++; }
+            await updateGate.WaitAsync(ct); updating = true;
+            if (revalidate is not null) await revalidate();
+            var assistant = await apps.GetAppAsync(plan.AssistantId, ct);
+            if (assistant is null || !IsAssistant(assistant) || assistant.InstalledAt != plan.InstalledAt ||
+                (await ReadAsync(false, ct)).Revision != plan.Revision)
+                throw new AppLifecycleException("agent_policy_changed", "The directory changed. Reload and review again.");
+            var policy = await policies.ReadAsync(ct);
+            var changes = new Dictionary<string, AgentTargetPolicy>(StringComparer.Ordinal);
+            foreach (var change in plan.Targets)
+            {
+                var old = policy.Targets.GetValueOrDefault(change.TargetId);
+                if (old?.InstalledAt != change.InstalledAt) old = null;
+                var bindings = new Dictionary<string, AssistantTargetGrant>(old?.Assistants ?? new Dictionary<string, AssistantTargetGrant>(), StringComparer.Ordinal);
+                bindings[plan.AssistantId] = new(plan.InstalledAt, Guid.NewGuid().ToString("N"), change.DeniedTools, change.Enabled);
+                changes[change.TargetId] = new(change.InstalledAt, old?.Offered ?? (change.TargetId == CoreId), old?.ApprovedSkills ?? new Dictionary<string, string>(), bindings);
+            }
+            await policies.ChangeManyAsync(changes, ct);
+            await audit.AppendAsync(new AuditRecord($"audit_{Guid.NewGuid():N}", "app.mcp.access.changed", "app",
+                plan.AssistantId, "succeeded", actor, clock.UtcNow,
+                new Dictionary<string, string> { ["requestId"] = plan.RequestId, ["targets"] = string.Join(",", changes.Keys) }), ct);
+        }
+        finally { if (updating) updateGate.Release(); for (var i = acquired - 1; i >= 0; i--) locks[i].Release(); }
     }
 
     private async Task<string?> ReadSkillAsync(string id, string file, CancellationToken cancellationToken)
@@ -212,12 +290,9 @@ internal static class AgentMcpEndpoints
             AgentMcpDirectory directory, CancellationToken cancellationToken) =>
             await CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,
                 async () => CoreJson.Json(await directory.ReadAsync(true, cancellationToken)), cancellationToken: cancellationToken));
-        app.MapPut("/api/core/agents/{targetId}", async (string targetId, AgentPolicyUpdate input, HttpRequest request,
-            UserDirectoryStore users, IClock clock, AgentMcpDirectory directory, CancellationToken cancellationToken) =>
-            await CoreSessionAuthorization.RequireSessionAsync(request, users, clock, user =>
-                AppAccessPolicy.IsAdmin(user) ? directory.UpdateAsync(targetId, input, user.Id, cancellationToken)
-                    : Task.FromResult(CoreJson.Json(new ErrorResponse("admin_required", "A Host administrator is required."), statusCode: 403)),
-                requireCsrf: true, cancellationToken: cancellationToken));
+        app.MapPut("/api/core/agents/{targetId}", async (HttpRequest request, UserDirectoryStore users, IClock clock, CancellationToken ct) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock, () => Task.FromResult(CoreJson.Json(
+                new ErrorResponse("mcp_review_required", "Save MCP access through the assistant's Core confirmation flow."), 409)), requireCsrf: true, cancellationToken: ct));
         app.MapGet("/control/v1/agents/directory", async (HttpRequest request, ControlSecret secret,
             AgentMcpDirectory directory, CancellationToken cancellationToken) =>
             await HostyCoreApplication.RequireControlSecret(request, secret,
@@ -227,3 +302,10 @@ internal static class AgentMcpEndpoints
 
 internal sealed record AssistantAccessPlan(string AssistantId, string DisplayName, DateTimeOffset InstalledAt,
     string Revision, AgentMcpTarget Target);
+
+internal sealed record AssistantTargetChange(string TargetId, bool Enabled, IReadOnlyList<string> DeniedTools);
+internal sealed record AssistantAccessChange(string RequestId, string AssistantId, string Revision, IReadOnlyList<AssistantTargetChange> Targets);
+internal sealed record AssistantTargetChangePlan(string TargetId, string DisplayName, DateTimeOffset? InstalledAt,
+    bool PreviouslyEnabled, IReadOnlyList<string> PreviousDeniedTools, bool Enabled, IReadOnlyList<string> DeniedTools);
+internal sealed record AssistantAccessBatchPlan(string RequestId, string AssistantId, string DisplayName,
+    DateTimeOffset InstalledAt, string Revision, IReadOnlyList<AssistantTargetChangePlan> Targets);

@@ -1,5 +1,9 @@
 "use client";
 
+import { isAppAutostartEnabled } from "./shell/app-helpers";
+import { InlineError } from "./shell/ui";
+import { getManageAppHref } from "./shell/shell-routes";
+
 
 import { fetchCore } from "./shell/core-transport.js";
 
@@ -27,6 +31,7 @@ import { enqueueRoutineUpdate, isStaleUpdatePreparation, prepareAppUpdate, reque
 import { requestAppRemoval, requestCoreApproval } from "./shell/app-removal";
 import { readCoreStatus, reconcileCoreUpdate } from "./shell/core-status";
 import { reconcileAppList } from "./shell/app-list-snapshot";
+import { SettingsConfirmationDialog } from "./shell/dialogs/settings-confirmation-dialog";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { SourceInstallDialog } from "./shell/dialogs/private-source-connections";
 import { createInstallationClient, openInstallationConfirmation, type InstallationSource } from "@hosty-sdk/app/install";
@@ -196,7 +201,10 @@ export function ShellClient({
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [pendingAppActions, setPendingAppActions] = useState<Record<string, AppAction>>({});
   const appActionActivations = useRef(new Set<string>());
-  const [activePanel, setActivePanel] = useState<ActivePanel | null>(null);
+  const [dialogPanel, setActivePanel] = useState<ActivePanel | null>(null);
+  const managementAppId = shellRoute.view === "settings" && shellRoute.settingsTab.startsWith("manage:") && state.session?.user?.role === "host.admin" ? shellRoute.settingsTab.slice(7) : null;
+  const managementTab = (["app", "permissions", "publicOrigins", "mounts", "source", "backups"].includes(searchParams?.get("section") ?? "") ? searchParams?.get("section") : "app") as NonNullable<ActivePanel["settingsTab"]>;
+  const activePanel = useMemo<ActivePanel | null>(() => dialogPanel ?? (managementAppId ? { appId: managementAppId, view: managementTab === "backups" ? "backups" : "settings", settingsTab: managementTab } : null), [dialogPanel, managementAppId, managementTab]);
   const openUpdateLogs = useCallback((app: CoreApp) => setActivePanel({ appId: app.id, view: "logs" }), []);
   useAppUpdateNotifications(state.apps, openUpdateLogs);
   const [detailPanel, setDetailPanel] = useState<DetailPanelState>(emptyDetailPanelState);
@@ -814,7 +822,7 @@ export function ShellClient({
         const endpoint = action === "backup" ? appEndpoint(app, "/backups") : appEndpoint(app, `/${action}`);
         let restartResponseLost = false;
         try {
-          await sendCsrfJson(endpoint, action === "backup" ? { reason: "manual" } : {});
+          await sendCsrfJson(endpoint, action === "backup" ? { reason: "manual" } : action === "autostart" ? { autostart: !isAppAutostartEnabled(currentApp) } : {});
         } catch (error) {
           // Core finishes an admitted restart even when stopping Shell kills this request's proxy.
           // Recover the page after transport loss; explicit Core refusals still surface normally.
@@ -1214,8 +1222,10 @@ export function ShellClient({
 
   const openAppPanel = useCallback(
     (app: CoreApp, view: DetailView, options?: OpenPanelOptions) => {
-      if (view === "backups") {
-        void loadAppBackups(app);
+      if (view === "settings" || view === "backups") {
+        setActivePanel(null);
+        setDetailPanel(emptyDetailPanelState());
+        router.push(getManageAppHref(app.id, view === "backups" ? "backups" : options?.settingsTab), { scroll: false });
         return;
       }
       if (view === "update") {
@@ -1226,8 +1236,17 @@ export function ShellClient({
       setActivePanel({ appId: app.id, view, settingsTab: options?.settingsTab });
       setDetailPanel(emptyDetailPanelState());
     },
-    [applyUpdateFromRow, loadAppBackups],
+    [applyUpdateFromRow, router],
   );
+
+  const loadedBackups = useRef<string | null>(null);
+  useEffect(() => {
+    if (!managementAppId || managementTab !== "backups") { loadedBackups.current = null; return; }
+    if (loadedBackups.current !== managementAppId) {
+      const app = state.apps.find(item => item.id === managementAppId);
+      if (app?.capabilities.includes("backup")) { loadedBackups.current = managementAppId; void loadAppBackups(app, false); }
+    }
+  }, [managementAppId, managementTab, loadAppBackups, state.apps]);
 
   const closeAppPanel = useCallback(() => {
     detailRequestRef.current += 1;
@@ -2066,8 +2085,9 @@ export function ShellClient({
   const stripTitle = workspace?.title ?? SHELL_VIEW_LABELS[effectiveView] ?? "Hosty";
   const selectedSettingsPage = resolveSettingsSurface(appSettingsTabs, shellRoute.settingsTab);
   const stripSubtitle = workspace?.pageLabel ?? (effectiveView === "settings"
-    ? selectedSettingsPage ? selectedSettingsPage.label
-      : getHostSettingsSection(shellRoute.settingsTab)?.label ?? "Security"
+    ? managementAppId ? `Manage ${state.apps.find(app => app.id === managementAppId)?.displayName ?? managementAppId}`
+      : selectedSettingsPage ? selectedSettingsPage.label
+      : getHostSettingsSection(shellRoute.settingsTab)?.label ?? null
     : null);
 
   const requestDelegatedTokenFor = useCallback((_appId: string) => {
@@ -2210,6 +2230,40 @@ export function ShellClient({
     ],
   );
 
+  const appDetails = selectedApp && activePanel ? (
+          <AppDetailsDialog
+            page={!!managementAppId && !dialogPanel}
+            onTabChange={tab => router.push(getManageAppHref(selectedApp.id, tab), { scroll: false })}
+            app={selectedApp}
+            view={activePanel.view}
+            settingsTab={activePanel.settingsTab}
+            coreOrigin={coreOrigin}
+            globalMounts={globalMounts}
+            canManageApps={Boolean(canManageApps)}
+            isShell={selectedApp.id === shellAppId}
+            busyAction={busyAction}
+            detail={detailPanel}
+            onClose={managementAppId && !dialogPanel ? () => router.push("/dashboard") : closeAppPanel}
+            onRefreshBackups={(app) => loadAppBackups(app, false)}
+            onCreateBackup={createManualBackup}
+            onRestoreBackup={restoreBackup}
+            onDeleteBackup={deleteBackup}
+            onPreviewBackupCleanup={previewBackupCleanup}
+            onApplyBackupCleanup={applyBackupCleanup}
+            onConfigure={configureApp}
+            onConfigureMounts={configureMounts}
+            onConfigureSource={configureAppSource}
+            onClearSource={clearAppSource}
+            onSetFeed={setAppFeed}
+            onRemove={removeApp}
+            onLoadRemovalImpact={loadRemovalImpact}
+            onRevealSetting={revealAppSetting}
+            onAskAssistant={assistantAvailable
+              ? () => askAssistant(`About the ${selectedApp.displayName || selectedApp.id} app (${activePanel.view} page): `, shellAppId)
+              : undefined}
+          />
+        ) : null;
+
   return (
     <ShellActionsContext.Provider value={shellActionsContextValue}>
       <ShellStateContext.Provider value={shellStateContextValue}>
@@ -2263,6 +2317,7 @@ export function ShellClient({
             activeUser={activeUser}
             canManageApps={Boolean(canManageApps)}
             settingsPages={appSettingsTabs}
+            managementApps={state.apps}
             selectedSettings={shellRoute.settingsTab}
             onOpenSettings={(key) => {
               setMobileSidebarOpen(false);
@@ -2326,7 +2381,7 @@ export function ShellClient({
                   {state.loading && !state.status ? (
                     <EmptyState icon={LoaderCircle} title="Loading Core state" description="Waiting for Core status and current session." iconClassName="animate-spin" />
                   ) : (
-                    children
+                    managementAppId ? (dialogPanel ? children : appDetails ?? <InlineError message="This application is no longer installed." />) : children
                   )}
                 </>
               )}
@@ -2351,42 +2406,13 @@ export function ShellClient({
           }}
         />}
 
-        {selectedApp && activePanel && (
-          <AppDetailsDialog
-            app={selectedApp}
-            view={activePanel.view}
-            settingsTab={activePanel.settingsTab}
-            coreOrigin={coreOrigin}
-            globalMounts={globalMounts}
-            canManageApps={Boolean(canManageApps)}
-            isShell={selectedApp.id === shellAppId}
-            busyAction={busyAction}
-            detail={detailPanel}
-            onClose={closeAppPanel}
-            onRefreshBackups={loadAppBackups}
-            onCreateBackup={createManualBackup}
-            onRestoreBackup={restoreBackup}
-            onDeleteBackup={deleteBackup}
-            onPreviewBackupCleanup={previewBackupCleanup}
-            onApplyBackupCleanup={applyBackupCleanup}
-            onConfigure={configureApp}
-            onConfigureMounts={configureMounts}
-            onConfigureSource={configureAppSource}
-            onClearSource={clearAppSource}
-            onSetFeed={setAppFeed}
-            onRemove={removeApp}
-            onLoadRemovalImpact={loadRemovalImpact}
-            onRevealSetting={revealAppSetting}
-            onAskAssistant={assistantAvailable
-              ? () => askAssistant(`About the ${selectedApp.displayName || selectedApp.id} app (${activePanel.view} page): `, shellAppId)
-              : undefined}
-          />
-        )}
+        {(!managementAppId || dialogPanel) && appDetails}
 
 
       </div>
       {assistantPicker}
       {confirmationDialog}
+      <SettingsConfirmationDialog />
       <AssistantFeedbackContext.Provider value={{
         installed: assistants.length > 0,
         unavailableReason: !canManageApps ? "Host administrator access is required."

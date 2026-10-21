@@ -88,6 +88,8 @@ internal static class McpEndpoints
                             if (body.RootElement.TryGetProperty("method", out var method) && method.GetString() == "tools/call")
                             {
                                 var name = body.RootElement.GetProperty("params").GetProperty("name").GetString();
+                                if (actor.DeniedTools?.Contains(name ?? "", StringComparer.Ordinal) == true)
+                                    return CoreJson.Json(new ErrorResponse("mcp_tool_denied", "This tool is disabled for this assistant."), 403);
                                 if (actor.AllowedTools is { } allowed && !allowed.Contains(name ?? "", StringComparer.Ordinal))
                                     return CoreJson.Json(new ErrorResponse("background_scope_denied", "This tool exceeds the background grant."), 403);
                                 var permission = ToolPermission(name ?? "");

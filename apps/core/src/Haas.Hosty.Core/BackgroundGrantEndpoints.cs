@@ -7,19 +7,19 @@ internal static class BackgroundGrantEndpoints
     internal static void Map(WebApplication app)
     {
         const string route = "/api/auth/background-grants";
-        app.MapGet(route, (HttpContext ctx, BackgroundGrantService grants) => BrowserAsync(ctx, async user =>
+        app.MapGet(route, (HttpContext ctx, BackgroundGrantService grants) => SessionAsync(ctx, async user =>
             CoreJson.Json((await grants.ReadAsync(ctx.RequestAborted))?.Grants.Where(g => g.UserId == user.Id).ToArray() ?? [])))
             .WithMetadata(new DisableCorsAttribute());
         app.MapPost(route, (HttpContext ctx, BackgroundGrantRequest input, BackgroundGrantService grants) => BrowserAsync(ctx,
             async user => CoreJson.Json(await grants.CreateAsync(user, input, ctx.RequestAborted))))
             .WithMetadata(new DisableCorsAttribute());
-        app.MapDelete(route + "/{id}", (string id, HttpContext ctx, BackgroundGrantService grants) => BrowserAsync(ctx, async user =>
+        app.MapDelete(route + "/{id}", (string id, HttpContext ctx, BackgroundGrantService grants) => SessionAsync(ctx, async user =>
         {
             await grants.RevokeAsync(user.Id, id, ctx.RequestAborted);
             return Results.NoContent();
         })).WithMetadata(new DisableCorsAttribute());
         app.MapPost(route + "/revoke-all-authorizations", (HttpContext ctx, BackgroundGrantService grants,
-            UserDirectoryStore users, OAuthStore oauth, CoreEventHub events, IClock clock) => BrowserAsync(ctx, async user =>
+            UserDirectoryStore users, OAuthStore oauth, CoreEventHub events, IClock clock) => SessionAsync(ctx, async user =>
         {
             // AuthRevision ends every issued child credential as well as devices/OAuth and browser authority.
             var sessionIds = await users.UpdateAsync(state => (state with
@@ -52,6 +52,12 @@ internal static class BackgroundGrantEndpoints
                 ? CoreJson.Json(await grants.IssueAsync(appId, input, ct))
                 : CoreJson.Json(new ErrorResponse("token_invalid", "An app service credential is required."), 401)));
     }
+
+    private static Task<IResult> SessionAsync(HttpContext ctx, Func<HostUserRecord, Task<IResult>> action) =>
+        CoreSessionAuthorization.RequireSessionAsync(ctx.Request, ctx.RequestServices.GetRequiredService<UserDirectoryStore>(),
+            ctx.RequestServices.GetRequiredService<IClock>(), user => AppAccessPolicy.IsAdmin(user)
+                ? HandleAsync(() => action(user)) : Task.FromResult<IResult>(Results.StatusCode(403)),
+            requireCsrf: ctx.Request.Method != "GET", cancellationToken: ctx.RequestAborted);
 
     private static async Task<IResult> BrowserAsync(HttpContext ctx, Func<HostUserRecord, Task<IResult>> action)
     {
