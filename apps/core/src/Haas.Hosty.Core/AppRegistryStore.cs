@@ -1294,7 +1294,10 @@ internal sealed record AppSummary(
             return [];
         }
 
+        // This is the operator-configurable folders contract. Core-owned collections are
+        // resolved from the manifest internally and must not become path editors in clients.
         return slots
+            .Where(slot => slot.Kind == "host-path")
             .OrderBy(slot => slot.Key, StringComparer.Ordinal)
             .Select(slot => new AppMountSummary(
                 slot.Key,

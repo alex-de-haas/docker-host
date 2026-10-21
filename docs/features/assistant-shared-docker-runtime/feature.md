@@ -79,8 +79,10 @@ Excessive output fails explicitly. Provider credentials and MCP configuration ar
 
 Core's generic `managed-workspaces` mount exposes its development `trees` read/write and
 `repositories` read-only under `/mnt/development/managed`. It requires reviewed full-source
-authority. It does not expose Core's registry/settings or other app data. The collection is mounted
-once; creating/deleting eligible child worktrees requires no Harness or Worker restart. Normal
+authority. It does not expose Core's registry/settings or other app data. The manifest declares access;
+Core supplies the instance-specific paths without user mount configuration. Automatic roots are not
+operator active-path reservations and do not block workspace source selection. The collection is
+mounted once; creating/deleting eligible child worktrees requires no Harness or Worker restart. Normal
 specific-worktree leases, direct mounts, sandboxes and external consumers still prevent unsafe
 cleanup. Collection exposure itself is not a lease on every child.
 

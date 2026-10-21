@@ -23,8 +23,10 @@ the declared access mode; repository metadata is read-only. Local receives the c
 Managed collections encode `HOSTY_MOUNT_{KEY}` as a JSON object mapping `trees` and `repositories`
 to paths, preserving commas, equals signs, backslashes and Unicode. Operator-bound slots retain
 the comma-joined format described below.
-The collection roots cannot redirect through symlinks/junctions. Shell displays automatic exposure
-instead of path editors, and global mounts cannot be assigned to these slots.
+The collection roots cannot redirect through symlinks/junctions. These declarations are internal
+service access, omitted from `AppSummary.mounts` and user folder configuration. Global mounts cannot be assigned to these slots. Automatic roots never become
+operator active-path reservations; recognized roots left by earlier starts do not block workspace
+source selection. Individual external mounts retain their source-overlap protections.
 
 The collection is persistent across child creation/removal and does not reserve every child tree.
 Core cleanup still refuses specific activity leases, direct overlapping mounts, sandboxes and
