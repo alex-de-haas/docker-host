@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-07-14
-updated: 2026-09-09
+updated: 2026-10-21
 summary: Remaining port reservation work, covering lifecycle paths, honest endpoint state, UDP and bind-scope collisions.
 components: [apps/core, apps/shell]
 ---
@@ -18,6 +18,14 @@ The original plan was approved on 2026-07-14 and its checkboxes were never maint
 unchecked while most of the work had merged. The deliverables below are the audited remainder, so the
 count is real. Status stays `Draft` because this is a re-scoping the owner has not yet approved in
 this form; promote it to `Ready` to start.
+
+## First-Install Integration (2026-10-21)
+
+The [Hosty initialization plan](../hosty-initialization/plan.md) owns automatic fresh Core/Shell
+ports, existing-installation compatibility and Dashboard child-environment initialization. It
+reuses the shipped allocator. This plan retains the general lifecycle reservation, UDP,
+bind-scope and reassignment deliverables below; the new onboarding work does not duplicate,
+complete or approve them.
 
 ## Goal
 

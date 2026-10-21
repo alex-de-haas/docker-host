@@ -20,7 +20,7 @@ Environment overrides:
   HOSTY_INSTALL_DIR          Directory for the hosty executable, default ~/.hosty/bin
   HOSTY_INSTALL_PROFILE      Shell profile to update for PATH, default auto-detect
   HOSTY_INSTALL_SKIP_PATH_UPDATE Set to 1 to skip shell profile updates
-  HOSTY_INSTALL_START        Set to 1 to run hosty start and open after install
+  HOSTY_INSTALL_START        Set to 1 to run hosty init after install (recommended apps, noninteractive)
 USAGE
 }
 
@@ -250,10 +250,8 @@ printf '%s\n' "Installed hosty to $TARGET"
 ensure_path_profile
 
 if [ "$START_AFTER_INSTALL" = "1" ]; then
-  "$TARGET" start
-  "$TARGET" open
+  "$TARGET" init --yes
 else
-  printf '\n%s\n' "Next commands:"
-  printf '  %s start\n' "$TARGET"
-  printf '  %s open\n' "$TARGET"
+  printf '\n%s\n' "Next command:"
+  printf '  %s init\n' "$TARGET"
 fi

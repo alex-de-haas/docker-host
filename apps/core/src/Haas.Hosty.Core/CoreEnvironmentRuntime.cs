@@ -162,6 +162,8 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
         if (Alive(record.Process)) throw new SandboxException("environment_process_unready", "The recorded process is alive but not ready. Stop it before starting another.", 409);
         Directory.CreateDirectory(Path.Combine(root, "core", "logs"));
         var log = Path.Combine(root, "core", "logs", "environment-" + Guid.NewGuid().ToString("N") + ".log");
+        if (record.Request.Initialization is not null)
+            await Haas.Hosty.Initialization.InitializationCapability.RequireAsync(record.Executable!, ct);
         var start = new ProcessStartInfo { UseShellExecute = false, WorkingDirectory = root, CreateNoWindow = true };
         // Core code is trusted, but ambient app/provider secrets and Git credentials are not copied.
         var inherited = start.Environment.ToDictionary(p => p.Key, p => p.Value);
@@ -192,7 +194,8 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
         start.Environment["HOSTY_DATA_ROOT"] = root;
         start.Environment["HOSTY_CORE_PORT"] = record.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);
         start.Environment["HOSTY_CORE_URL"] = $"http://localhost:{record.Port}";
-        start.Environment["HOSTY_DISTRIBUTION_APPS_PATH"] = Path.Combine(root, "core", "distribution-apps.json");
+        if (record.Request.Initialization is null)
+            start.Environment["HOSTY_DISTRIBUTION_APPS_PATH"] = Path.Combine(root, "core", "distribution-apps.json");
         start.Environment["HOSTY_CORE_LAUNCH_MODE"] = record.Request.Mode == "source" ? "dev" : record.Request.Mode;
         start.Environment["HOSTY_CORE_PROJECT"] = record.Request.ProjectPath ?? "";
         var generation = Generation(root, record.Executable);
@@ -231,7 +234,11 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
                 if (generation is not null) CoreBuildRetention.Mark(generation, "ready", record.Request.ProjectPath, process.Pid, process.StartedAt);
                 await saveProcess(process); return;
             }
-            if (launched.HasExited) throw new SandboxException("environment_launch_failed", "Child Core exited before readiness. See " + log, 409);
+            if (launched.HasExited)
+            {
+                var collision = File.Exists(log) && (await File.ReadAllTextAsync(log, ct)).Contains("Hosty Core cannot bind ", StringComparison.Ordinal);
+                throw new SandboxException(collision ? "environment_port_collision" : "environment_launch_failed", "Child Core exited before readiness. See " + log, 409);
+            }
             await Task.Delay(100, deadline.Token);
         }
         throw new SandboxException("environment_start_timeout", "Child Core readiness timed out. See " + log, 409);

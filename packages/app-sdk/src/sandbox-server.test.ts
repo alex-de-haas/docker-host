@@ -62,3 +62,17 @@ describe("child Core environment client", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("child initialization transport", () => {
+  it("uses scoped bounded routes without inventing credentials or replay IDs", async () => {
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(Response.json({ phase: "ready" }))); vi.stubGlobal("fetch", fetch);
+    const client = new CoreEnvironmentClient(async () => "granted-authority", options);
+    const environmentId = "a".repeat(32);
+    await client.call("environment-initialization", { environmentId });
+    await client.call("environment-initialization-resume", { environmentId });
+    await client.call("environment-setup-link", { environmentId });
+    expect(fetch.mock.calls.map(([url, init]) => [url.pathname.split(environmentId)[1], init.method]))
+      .toEqual([["/initialization", "GET"], ["/initialization/resume", "POST"], ["/setup-link", "POST"]]);
+    expect(fetch.mock.calls.every(([, init]) => init.cache === "no-store" && init.headers["X-Hosty-User-Token"] === "granted-authority")).toBe(true);
+  });
+});

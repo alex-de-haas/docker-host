@@ -77,9 +77,10 @@ afterEach(async () => {
   await act(async () => root.unmount()); container.remove(); sessionStorage.clear(); vi.unstubAllGlobals();
 });
 
-it("hides the entire section after both inventories successfully report no sandboxes", async () => {
+it("keeps creation visible when both inventories successfully report no sandboxes", async () => {
   await render();
-  expect(container.textContent).toBe("");
+  expect(button("Create environment").disabled).toBe(false);
+  expect(container.textContent).toContain("No sandboxes yet");
   expect(transport.read.mock.calls.map(([url]) => new URL(String(url)).pathname).sort())
     .toEqual(["/api/core-environments", "/api/sandbox-instances"]);
 });

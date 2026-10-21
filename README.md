@@ -6,7 +6,7 @@ See the [project documentation](docs/root.md) for the runtime app model, feature
 
 ## Install
 
-The installer downloads the rolling `cli-dev` build, verifies `SHA256SUMS` when available, installs `hosty` under the local bin directory, and adds it to PATH. The first `hosty start` downloads the matching Core executable into `~/.hosty/core/bin`.
+The installer downloads the rolling `cli-dev` build, requires and verifies `SHA256SUMS`, installs `hosty` under the local bin directory, and adds it to PATH. `hosty init` downloads Core into `~/.hosty/core/bin` if it is missing, then configures this installation. Existing Core binaries are reused; `hosty update` upgrades them explicitly.
 
 **macOS / Linux**
 
@@ -20,20 +20,29 @@ curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scrip
 irm https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.ps1 | iex
 ```
 
-Open a new terminal, then start Core and create the first administrator:
+Open a new terminal and initialize Hosty:
 
 ```bash
-hosty start
-hosty auth setup-token
+hosty init
 ```
 
-Open the printed Setup URL, set the admin email and password, then open Shell:
+Choose the applications you want. Shell and Marketplace are recommended and preselected; Core is
+always included. Ports are assigned automatically and retained across restarts. Once the selected
+apps are ready, init prints a setup link and opens the browser. Enter your administrator email,
+name and password there; Shell opens after registration when installed. Docker must be running
+for the standard application profiles.
 
-```bash
-hosty open
-```
+Repeat `hosty init` to resume an interrupted installation or request a fresh registration link.
+It keeps the same data root, users and completed work. Use `hosty init --review` only to explicitly
+review changed choices or distribution inputs after a failed initialization. Once initialized, use `hosty start` to start
+Core and `hosty setup` to add or remove distribution apps. Core-only installations are supported:
+use `hosty init --core-only` and manage the host with CLI/API. For scripts, use `--yes` for the
+recommended selection, `--apps <ID>[,..]` for an explicit selection, and `--no-open` to print the link
+without opening a browser. See `hosty init --help` for advanced port and source-project options.
 
-The installed CLI bootstraps the first-party apps enabled by the release distribution list and your `hosty setup` choices (Shell and Marketplace by default; Telemetry opt-in). Marketplace owns its catalog URL as a normal app setting; Core does not expose catalog APIs.
+Dashboard's **Sandboxes → Create environment** starts a separate fresh Core with its own selected
+apps and normal administrator registration. It shares the initialization mechanism with init;
+repeating init itself never creates another environment.
 
 Install the repository Demo App from a local checkout:
 
@@ -41,7 +50,7 @@ Install the repository Demo App from a local checkout:
 hosty apps install apps/demo-app
 ```
 
-### One-command install and start
+### One-command install and initialize
 
 **macOS / Linux**
 
@@ -55,7 +64,7 @@ curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scrip
 $env:HOSTY_INSTALL_START = "1"; irm https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.ps1 | iex
 ```
 
-Then run `hosty auth setup-token` and open the printed Setup URL to create the first administrator.
+These forms initialize with the recommended apps without a terminal checklist, then open/print the administrator registration link. Omit the start option to choose apps interactively with `hosty init` afterwards.
 
 ### Manage local state
 
@@ -101,6 +110,9 @@ Use $hosty-app-skill to wrap this app as a Hosty runtime app.
 ```
 
 ## Local development
+
+Install .NET SDK 10.0.401 or a later .NET 10 SDK, as required by `global.json`. This includes
+the Native AOT fix needed for current macOS linkers; older SDKs can fail during native linking.
 
 See [Local development and testing](docs/features/local-development/feature.md) for detailed guidance.
 
@@ -162,12 +174,14 @@ The installed CLI runs Core from this checkout only when a project is passed exp
 hosty core start --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj
 ```
 
-**Default ports**
+**Ports**
 
 | Process            | Core   | Shell  |
 | ------------------ | ------ | ------ |
-| Installed CLI      | `7070` | `7171` |
+| Fresh `hosty init` | Automatic, persisted | Automatic, persisted |
 | Source dev scripts | `3001` | `3000` |
+
+Existing installations retain their assigned ports. Init prints the actual Core/Shell URLs.
 
 The demo app's `dev` runtime profile starts local command services on ports `3100` and `3101`.
 

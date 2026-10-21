@@ -1,6 +1,6 @@
 ---
 created: 2026-05-12
-updated: 2026-10-20
+updated: 2026-10-21
 summary: The repository layout, release artifacts and versioning rules for every component.
 ---
 
@@ -50,6 +50,20 @@ app. It is ESP-IDF firmware installed on an M5Stack Cardputer ADV, consumes a
 bounded administrative subset of the Core API, and has no runtime-app manifest.
 Its version lives only in `apps/shell-cardputer/version.txt` and moves
 independently of the platform, browser Shell, and Apple client.
+
+### .NET build toolchain
+
+`global.json` requires .NET SDK 10.0.401 or a later .NET 10 feature band/patch through
+`rollForward: latestFeature`. Core and CLI retain `net10.0` and Native AOT publication.
+The SDK floor includes runtime/Native AOT compiler 10.0.12, which first shipped the
+[Mach-O relocation fix](https://github.com/dotnet/runtime/pull/132171) for Apple's
+`too many large addends` linker assertion; the older 10.0.11 compiler can fail on Xcode 27.1.
+No classic-linker override or separate LLVM linker is required.
+
+Validate macOS Core publication with `npm run core:aot` and CLI with
+`dotnet publish apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj -c Release -r osx-arm64 --self-contained true`.
+The Core gate cold-builds the native artifact and rejects new trimming/AOT warnings. Native
+publication and execution on one architecture do not establish other release targets' readiness.
 
 ### The shared root lockfile
 
@@ -385,6 +399,7 @@ During early development, `cli-dev` is the main platform distribution channel. I
 
 ## Testing Expectations
 
+- A .NET SDK floor change preserves supported build environments and passes Core/CLI Native AOT publication on the affected native target, plus affected .NET suites.
 - `scripts/check-versions.mjs` fails when any two copies of one component's version disagree.
 - `ci.yml` gates each component job on its own paths filter, and a skipped job still reports a status.
 - Workflows pass `actionlint`, which type-checks expressions, `needs`/`outputs` references, and every `run:` block.

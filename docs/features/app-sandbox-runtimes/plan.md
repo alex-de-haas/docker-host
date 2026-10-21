@@ -1,12 +1,21 @@
 ---
 status: In Progress
 created: 2026-09-25
-updated: 2026-10-20
+updated: 2026-10-21
 summary: Remaining host and recipe acceptance and optional remote preview.
 components: [apps/core, apps/harness, apps/shell, packages/app-sdk]
 ---
 
 # Independent Sandbox Instances In Core
+
+## Manual Environment Initialization (2026-10-21)
+
+The [Hosty initialization plan](../hosty-initialization/plan.md) owns the new Dashboard creation
+entry point, explicit distribution-app selection and ordinary child administrator setup link.
+It reuses this feature's child manager and preserves existing clients' empty-child behavior when
+new initialization options are omitted. Manual registration needs no parent-held child login;
+the parent retains ownership, lifecycle and quota controls. Existing host/recipe and remote-preview
+deliverables below keep their IDs, scope and status.
 
 ## Current Baseline And Approved Next Step
 

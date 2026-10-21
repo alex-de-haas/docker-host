@@ -28,6 +28,7 @@ internal static class CliJson
             UpdateCommand.UpdateJsonContext.Default,
             UsersCommand.UsersJsonContext.Default,
             SetupCommand.SetupJsonContext.Default,
+            Haas.Hosty.Initialization.InitializationJson.Default,
             McpCommand.McpJsonContext.Default,
             CoreSettingsCommand.SettingsJsonContext.Default,
             CoreControlClient.ControlJsonContext.Default),

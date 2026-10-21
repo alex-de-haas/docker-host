@@ -8,7 +8,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Spectre.Console;
 
-internal sealed partial class CoreCommand(CommandContext context)
+internal sealed partial class CoreCommand(CommandContext context, bool initializing = false)
 {
     [JsonSourceGenerationOptions(
         PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
@@ -100,6 +100,11 @@ internal sealed partial class CoreCommand(CommandContext context)
     {
         var options = ParseStartOptions(args);
         Directory.CreateDirectory(context.Environment.RootDirectory);
+        if (!initializing && options.ProjectPath is null && Haas.Hosty.Initialization.InitializationFiles.Requested(context.Environment.RootDirectory) && !Haas.Hosty.Initialization.InitializationFiles.CanStart(context.Environment.RootDirectory))
+        {
+            context.Error.WriteLine("This installation needs initial configuration. Run hosty init first.");
+            return 1;
+        }
 
         // One Core process per data root. The root's control.json names the live instance (a stale
         // file pointing at a dead PID is cleaned inside TryCreateAsync), so a live discovery makes
@@ -121,10 +126,17 @@ internal sealed partial class CoreCommand(CommandContext context)
             return ReportAlreadyRunning(probeUrl, await ReadCoreStatusAsync(suppressErrors: true));
         }
 
+        if (!initializing && options.ProjectPath is null && !Haas.Hosty.Initialization.InitializationFiles.CanStart(context.Environment.RootDirectory))
+        {
+            context.Error.WriteLine("This installation needs initial configuration. Run hosty init first.");
+            return 1;
+        }
+
         CoreStartTarget target;
         try
         {
             target = prepared ?? await ResolveStartTargetAsync(options);
+            if (initializing) await Haas.Hosty.Initialization.InitializationCapability.RequireAsync(target.FileName);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or PlatformNotSupportedException or OperationCanceledException)
         {
@@ -407,6 +419,7 @@ internal sealed partial class CoreCommand(CommandContext context)
             // Core resolves the same default on its own, but pinning it here guarantees the spawned
             // Core lands on exactly the root this CLI will discover and control.
             ["HOSTY_DATA_ROOT"] = context.Environment.RootDirectory,
+            ["HOSTY_INITIALIZING"] = initializing ? "1" : "0",
             ["HOSTY_CORE_LAUNCH_MODE"] = target?.ProjectPath is null ? "release" : "dev",
             ["HOSTY_CORE_PROJECT"] = target?.ProjectPath ?? "",
             ["HOSTY_CORE_GENERATION"] = target?.GenerationPath ?? "",

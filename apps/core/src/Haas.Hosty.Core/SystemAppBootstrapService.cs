@@ -31,6 +31,7 @@ internal sealed class SystemAppBootstrapService(
     // failed install must never take Core down, since Core is how the operator fixes it.
     public async Task SeedBootAsync(CancellationToken cancellationToken)
     {
+        if (Haas.Hosty.Initialization.InitializationFiles.Requested(config.DataRoot)) return;
         try
         {
             var list = await distribution.LoadAsync(cancellationToken);

@@ -1,6 +1,6 @@
 ---
 created: 2026-05-13
-updated: 2026-10-17
+updated: 2026-10-21
 summary: The hosty CLI installs itself and Core, discovers the Core control API and manages runtime apps.
 components: [apps/cli]
 ---
@@ -15,6 +15,8 @@ The Hosty CLI is exposed as `hosty`. It installs and updates the local CLI execu
 
 ```bash
 hosty install
+hosty init
+hosty init --core-only
 hosty update
 hosty uninstall
 hosty core start
@@ -109,7 +111,7 @@ non-default `HOSTY_CORE_PORT` is folded into the target root's settings store, a
 live inside the root it points to), a set `HOSTY_CORE_PUBLIC_ORIGIN` is echoed as a notice pointing at
 `hosty core settings set HOSTY_CORE_PUBLIC_ORIGIN`, and the file is deleted.
 
-Which first-party apps a brand-new host is seeded with — and where their manifests and feeds live — comes from the release-owned distribution catalog (`distribution-apps.0.1`, embedded in the Core binary; a source tree's repo-root `distribution-apps.json` wins). Seeding happens once; afterwards `hosty setup` installs and uninstalls catalog entries as ordinary lifecycle operations against a running Core. See [removable-system-apps](../removable-system-apps/feature.md).
+Initial application choices and their manifests/feeds come from the release-owned distribution catalog (`distribution-apps.0.1`, embedded in Core; a source tree's repo-root `distribution-apps.json` wins). `hosty init` collects the first selection before installation. Afterwards `hosty setup` installs and uninstalls catalog entries through ordinary lifecycle operations against a running Core. See [removable-system-apps](../removable-system-apps/feature.md).
 
 The per-app manifest-path overrides `HOSTY_SHELL_MANIFEST_PATH`, `HOSTY_COLLECTOR_MANIFEST_PATH`, and `HOSTY_MARKETPLACE_MANIFEST_PATH` are not CLI concerns: manifest locations come from the distribution catalog, and `hosty setup` decides which apps are installed. Core still honors these as raw ambient environment variables during its own deprecation window, so an air-gapped fork can still export one directly for the Core process, but the CLI neither persists nor injects them.
 
@@ -121,13 +123,13 @@ Legacy `HOST_DATA_ROOT_HOST`, `HOSTY_CORE_DATA_ROOT`, `HOST_CORE_PUBLIC_ORIGIN`,
 
 ## Core Bootstrap
 
-`hosty start` and `hosty core start` start the installed Core executable by default. If `~/.hosty/core/bin/hosty-core` is missing, the CLI downloads the platform Core artifact from the rolling release, verifies `SHA256SUMS` when available, installs it into `core/bin`, and starts it.
+`hosty init` downloads Core into `core/bin` when it is missing, using the verified platform artifact installer. It reuses an existing binary and requires explicit `hosty update` when that binary lacks the initialization contract. `hosty start` and `hosty core start` refuse a fresh uninitialized installed root with an instruction to run init. Established roots retain ordinary Start behavior, including restoring a missing Core binary.
 
 One Core process runs per data root. `core start` preflights the root's `control.json`: a live Core with no conflicting intent is reported as already running; a conflicting `--port`/`--url` is refused by naming the live instance (root, PID, endpoint). Core enforces the same rule itself with a per-root file lock, so a direct `dotnet run` second start is refused identically.
 
 Start does not check for newer Core builds when Core is already installed. Freshness checks and replacement are owned by `hosty update`.
 
-On a brand-new host, Core seeds the distribution catalog's default entries once (Shell and Marketplace by default; Telemetry opt-in) and records that it did. Later starts install nothing at all, so an app the operator removed stays removed. Installation uses the manifest's default runtime; the installed runtime and autostart choices are the operator's from then on. Marketplace catalog configuration remains an ordinary app setting; Core has no catalog-source setting or Marketplace proxy.
+Init selects catalog entries (Shell and Marketplace recommended; Harness and Telemetry optional), waits for actual readiness, then prints a complete setup URL and opens the browser. Fresh Core and Shell host ports are automatic and persisted. Repeated init resumes accepted choices or reports the existing installation; `--review` explicitly replaces a failed selection while retaining installed apps. Later starts and repeated init do not reinstall removed apps. See [Hosty initialization](../hosty-initialization/feature.md). Marketplace catalog configuration remains an ordinary app setting; Core has no catalog-source setting or Marketplace proxy.
 
 ## Installing and removing first-party apps
 
@@ -143,11 +145,7 @@ The checkboxes are the host's actual installed state: ticking an entry installs 
 
 `hosty open` asks the running Core for Shell's origin (resolved from Shell's own app record) and opens it; a host without Shell installed has nothing to open and the command says so.
 
-For a fresh installed data root, create the first administrator through Core-owned local setup:
-
-```bash
-hosty auth setup-token
-```
+For a fresh installed data root, `hosty init` offers ordinary administrator setup after selected apps are ready. `hosty auth setup-token` remains the explicit local setup-token helper.
 
 Open the printed Setup URL, enter the first administrator email and password, and then use `/login` for later browser sessions. If an older local administrator does not have a password credential, use `hosty auth recovery-token` once to set a replacement password.
 
@@ -167,7 +165,7 @@ The CLI ships as a single Native AOT executable, so the running process holds no
 
 On Windows, if the installed Core executable already exists, `hosty update` first makes a best-effort Core stop request before replacing the executable because a running `.exe` is normally locked by the process.
 
-Shell remains a Core-managed runtime app. Core startup reconciles `hosty.shell` against the configured Shell manifest, preserving the installed runtime profile (the manifest default on first install, or whatever the operator later switched to with `hosty apps switch-runtime`). `hosty update` still asks the running Core for Shell update planning when Core is reachable so operators can inspect pending Shell changes explicitly.
+Shell remains a Core-managed runtime app. Core startup preserves the installed manifest, runtime profile and assigned ports; first-run initialization uses the selected catalog entry. `hosty update` still asks the running Core for Shell update planning when Core is reachable so operators can inspect pending Shell changes explicitly.
 
 ## Control Discovery
 

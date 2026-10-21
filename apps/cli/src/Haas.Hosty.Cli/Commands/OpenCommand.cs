@@ -58,7 +58,7 @@ internal sealed partial class OpenCommand(CommandContext context)
     // assigned it. No local fallback of our own: Core knowing of no Shell means there is none to open.
     private static string? ResolveShellOpenUrl(CoreStatusDocument? status) => status?.ShellPublicOrigin;
 
-    private static bool TryOpen(string url)
+    internal static bool TryOpen(string url)
     {
         try
         {

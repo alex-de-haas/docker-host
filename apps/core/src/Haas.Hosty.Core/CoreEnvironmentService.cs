@@ -17,7 +17,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
     internal CoreEnvironmentView View(CoreEnvironmentRecord record) => new(record.Id, record.Request.Label,
         record.Request.Mode, record.Request.ProjectPath, record.Request.Context, record.State, record.Revision, record.Port,
         record.State == "finished" ? null : store.Root(record.Id), $"http://core.i-{record.Id}.hosty.localhost:{record.Port}",
-        record.Process, record.Error, record.Operations ?? [], CoreEnvironmentResources.Limits(record), record.State == "finished" ? null : record.Usage);
+        record.Process, record.Error, record.Operations ?? [], CoreEnvironmentResources.Limits(record), record.State == "finished" ? null : record.Usage, InitializationRequested: record.Request.Initialization is not null);
     private async Task<CoreEnvironmentView> ViewAsync(CoreEnvironmentRecord record, CancellationToken ct, Dictionary<string, Task<string>>? digests = null)
         => View(record) with { Access = consent is null ? null : await consent.AccessAsync(record, ct, digests) };
     internal Task RequireConsentAsync(SandboxActor actor, CoreEnvironmentRecord record, bool launch, CancellationToken ct)
@@ -120,6 +120,20 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             throw new SandboxException("environment_worktrees_invalid", "Select at most sixteen distinct worktrees.", 400);
         if (input.ProjectPath is not null) input = input with { ProjectPath = Path.GetFullPath(input.ProjectPath) };
         CoreEnvironmentResources.Validate(input.Limits ?? new());
+        if (input.CorePort is { } requestedPort && requestedPort is < 1024 or > 65535)
+            throw new SandboxException("environment_port_invalid", "Choose a Core port from 1024 to 65535.", 400);
+        if (input.Initialization is { } initialization)
+        {
+            try { input = input with { Initialization = HostInitializationService.Normalize(initialization) }; }
+            catch (AppLifecycleException ex) { throw new SandboxException(ex.Code, ex.Message, 400); }
+            if (input.CorePort is { } explicitPort && initialization.Ports?.Any(p => p.Port == explicitPort) == true)
+                throw new SandboxException("environment_port_invalid", "Core and application ports must be distinct.", 400);
+            var limits = input.Limits ?? new();
+            var count = initialization.Apps.Length;
+            if (count * limits.ApplicationMemoryBytes > limits.MemoryBytes || count * limits.ApplicationCpus > limits.Cpus
+                || count * limits.ApplicationPids > limits.Pids)
+                throw new SandboxException("environment_initialization_capacity", "The selected apps exceed this environment's resource allocation. Select fewer apps or explicitly increase the environment limits.", 409);
+        }
         await ValidateWorktreesAsync(actor, input, ct);
         return input;
     }
@@ -180,7 +194,13 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                 throw new SandboxException("environment_capacity", "Finish an existing environment before creating another (root environment tree limit: two).", 409);
             CoreEnvironmentResources.Reserve(descendants, input.Limits ?? new());
             var id = Guid.NewGuid().ToString("N");
-            var port = RuntimePortHelper.AllocateLoopbackPort(descendants.Select(r => r.Port).ToHashSet());
+            var reserved = descendants.Select(r => r.Port).ToHashSet();
+            foreach (var assignment in input.Initialization?.Ports ?? []) reserved.Add(assignment.Port);
+            var port = input.CorePort ?? RuntimePortHelper.AllocateLoopbackPort(reserved);
+            // The automatic allocator already probes its candidate. A second transient bind probe
+            // races concurrent allocators; revalidate automatic ports at the actual first launch.
+            if (input.CorePort is not null && (reserved.Contains(port) || !RuntimePortHelper.IsLoopbackTcpPortAvailable(port)))
+                throw new SandboxException("environment_port_occupied", "The requested Core port is already occupied or reserved.", 409);
             var record = new CoreEnvironmentRecord(id, actor with { GrantId = null, ScopeId = null }, input, fingerprint, port, 1, "stopped", clock.UtcNow, Consent: approved, OperatorApproved: operatorApproved || actor.AppId is null);
             // Persist ownership before creating any root or process so an interrupted allocation is visible.
             await store.WriteAsync(record, ct);
@@ -218,8 +238,10 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             await JsonStorage.WriteTextAsync(CoreInstanceId.BuildPath(root), record.Id, ct);
         }
         store.VerifyRoot(record);
-        await JsonStorage.WriteTextAsync(Path.Combine(root, "core", "distribution-apps.json"),
-            "{\"schemaVersion\":\"distribution-apps.0.1\",\"apps\":[]}", ct);
+        if (record.Request.Initialization is null)
+            await JsonStorage.WriteTextAsync(Path.Combine(root, "core", "distribution-apps.json"),
+                "{\"schemaVersion\":\"distribution-apps.0.1\",\"apps\":[]}", ct);
+        else Haas.Hosty.Initialization.InitializationFiles.Request(root);
         foreach (var treeId in record.Request.WorktreeIds ?? [])
             await workspaces!.SetSandboxConsumerAsync(treeId, record.Id, true, ct);
     }
@@ -317,12 +339,28 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                 {
                     record = record with { State = "starting" };
                     await store.WriteAsync(record, deadline.Token);
-                    await runtime.StartAsync(record, root, async process =>
+                    for (var attempt = 0; ; attempt++)
                     {
-                        record = record with { Process = process };
-                        await store.WriteAsync(record, deadline.Token);
-                    }, deadline.Token);
-                    record = record with { State = "running" };
+                        record = await RevalidateInitialPortAsync(record, root, deadline.Token);
+                        try
+                        {
+                            await runtime.StartAsync(record, root, async process =>
+                            {
+                                record = record with { Process = process };
+                                await store.WriteAsync(record, deadline.Token);
+                            }, deadline.Token);
+                            break;
+                        }
+                        catch (SandboxException ex) when (ex.Code == "environment_port_collision" && attempt < 2
+                            && CanMoveInitialPort(record) && !CoreEnvironmentRuntime.Alive(record.Process))
+                        {
+                            record = record with { Process = null };
+                            record = await RevalidateInitialPortAsync(record, root, deadline.Token, force: true);
+                        }
+                    }
+                    record = record with { State = "running", HasStarted = true };
+                    await store.WriteAsync(record, deadline.Token);
+                    await CoreEnvironmentInitialization.ResumeAsync(record, root, deadline.Token);
                 }
                 if (kind == "finish")
                 {
@@ -350,6 +388,33 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
         }
         finally { gate.Release(); }
     }
+    private static bool CanMoveInitialPort(CoreEnvironmentRecord record)
+        => record.Request.CorePort is null && !record.HasStarted
+            && !(record.Operations ?? []).Any(o => o.Kind is "start" or "restart" && o.State == "succeeded");
+
+    private async Task<CoreEnvironmentRecord> RevalidateInitialPortAsync(CoreEnvironmentRecord record, string root,
+        CancellationToken ct, bool force = false)
+    {
+        if (!CanMoveInitialPort(record) || CoreEnvironmentRuntime.Alive(record.Process)
+            || await runtime.ObserveAsync(record, root, ct) is not null) return record;
+        var listener = await JsonStorage.ReadAsync<InitializationListenerState>(InitializationListener.PathFor(root), ct);
+        // Core may have reached readiness before the parent saved the successful operation.
+        if (listener?.Ready == true) return record;
+        if (listener is not null && listener.Port != record.Port)
+            await JsonStorage.WriteAsync(InitializationListener.PathFor(root), listener with { Port = record.Port }, restrictToOwner: true, ct);
+        if (!force && RuntimePortHelper.IsLoopbackTcpPortAvailable(record.Port)) return record;
+        var budget = await store.BudgetStoreAsync(ct);
+        using var reservation = await budget.LockAllocationAsync(ct);
+        var reserved = (await budget.ListUnfinishedTreeAsync(ct)).Select(r => r.Port).ToHashSet();
+        foreach (var port in record.Request.Initialization?.Ports ?? []) reserved.Add(port.Port);
+        record = record with { Port = RuntimePortHelper.AllocateLoopbackPort(reserved) };
+        await store.WriteAsync(record, ct);
+        // The parent owns the child's explicit launch binding; update its unready checkpoint only.
+        if (listener is not null)
+            await JsonStorage.WriteAsync(InitializationListener.PathFor(root), listener with { Port = record.Port }, restrictToOwner: true, ct);
+        return record;
+    }
+
     internal async Task ReconcileAsync(CancellationToken ct)
     {
         foreach (var snapshot in await store.ListAsync(ct))

@@ -407,6 +407,37 @@ public sealed class CoreEnvironmentTests
         Assert.Equal(child.Id, replay.Id); Assert.Equal(child.Id, File.ReadAllText(identity));
         Assert.Single(await f.Store.ListAsync(default));
     }
+    [Fact]
+    public async Task InitialAutomaticPort_RevalidatesAfterCreate_ThenRemainsStableAfterStart()
+    {
+        using var f = new Fixture(); var item = await f.Create();
+        using var occupied = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, item.Port); occupied.Start();
+        var original = item.Port;
+        item = await f.Command(item, "start");
+        Assert.Equal("running", item.State); Assert.NotEqual(original, item.Port);
+        Assert.True((await f.Store.ReadAsync(item.Id, default))!.HasStarted);
+        item = await f.Command(item, "stop");
+        var stable = item.Port;
+        using var occupiedAgain = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, stable); occupiedAgain.Start();
+        item = await f.Command(item, "start");
+        Assert.Equal(stable, item.Port);
+    }
+    [Fact]
+    public async Task ExplicitInitialization_UsesFreshCatalogIntent_AndRejectsExcessAppCapacity()
+    {
+        using var f = new Fixture();
+        var selection = new Haas.Hosty.Initialization.InitializationRequest(Guid.NewGuid().ToString(), []);
+        var item = await f.Service.CreateAsync(f.Actor, new(Guid.NewGuid().ToString(), "Fresh", Initialization: selection), default);
+        Assert.True(item.InitializationRequested);
+        Assert.True(Haas.Hosty.Initialization.InitializationFiles.Requested(item.DataRoot!));
+        Assert.False(File.Exists(Path.Combine(item.DataRoot!, "core/distribution-apps.json")));
+        var tooLarge = new CoreEnvironmentCreate(Guid.NewGuid().ToString(), "Too large",
+            Initialization: selection with { Apps = ["hosty.shell", "hosty.marketplace", "hosty.harness"] });
+        var error = await Assert.ThrowsAsync<SandboxException>(() => f.Service.CreateAsync(f.Actor, tooLarge, default));
+        Assert.Equal("environment_initialization_capacity", error.Code);
+        Assert.Single(await f.Store.ListAsync(default));
+    }
+
     private sealed class Clock : IClock { public DateTimeOffset UtcNow => DateTimeOffset.UtcNow; }
     private sealed class Fixture : IDisposable
     {

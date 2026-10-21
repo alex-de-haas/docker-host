@@ -2,6 +2,12 @@ using System.Net.Sockets;
 using Haas.Hosty.Core;
 using Haas.Hosty.Launch;
 
+if (args is ["--initialization-contract"])
+{
+    Console.WriteLine(Haas.Hosty.Initialization.InitializationFiles.Schema);
+    return 0;
+}
+
 if (args.Length >= 1 && args[0] == LocalCommandRunner.Verb)
 {
     return await LocalCommandRunner.RunAsync(args);
@@ -44,7 +50,12 @@ catch (CoreRootLockedException ex)
     return 1;
 }
 
-config = config with { InstanceId = CoreInstanceId.LoadOrCreate(config.DataRoot) };
+var explicitBinding = CoreStartArguments.Parse(args).Port is not null
+    || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HOSTY_CORE_PORT"))
+    || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HOSTY_CORE_URL"))
+    || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS"));
+var preparedListener = await InitializationListener.PrepareAsync(config, explicitBinding);
+config = preparedListener.Config with { InstanceId = CoreInstanceId.LoadOrCreate(config.DataRoot) };
 // Claim a prepared generation before startup can time out at the caller. Retention must preserve
 // even a slow-starting process after the launcher has exited.
 var launch = CoreLaunchIdentity.Current();
@@ -61,6 +72,13 @@ DockerCoreListener.Configure(builder, config);
 builder.Services.AddSingleton(_ => rootLock);
 
 var app = builder.Build();
+// Persist a new installation's assigned listener before publishing discovery. Existing roots keep
+// their stored binding; one-run port overrides retain their ordinary semantics after initialization.
+if (preparedListener.State is { Ready: false })
+    await app.Services.GetRequiredService<CoreSettingsService>().UpdateAsync(
+        new Dictionary<string, string?> { [ServerSettings.PortKey] = config.CorePort.ToString(System.Globalization.CultureInfo.InvariantCulture) });
+if (preparedListener.State is { Ready: false } listenerState)
+    app.Lifetime.ApplicationStarted.Register(() => InitializationListener.MarkReadyAsync(config.DataRoot, listenerState).GetAwaiter().GetResult());
 if (generation is not null)
     app.Lifetime.ApplicationStarted.Register(() => CoreBuildRetention.Mark(generation, "ready", launch.ProjectPath));
 // Materialize the lock registration so the container tracks it for disposal — nothing else ever
