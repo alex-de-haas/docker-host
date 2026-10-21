@@ -39,31 +39,31 @@ test("ordinary Core production changes add AOT without every native scenario", (
   assertSelection([cli("Commands/UsersCommand.cs")], ["cli"]);
 });
 
-test("lifecycle, serializer and launch changes select their native acceptance", () => {
-  assertSelection([core("WorkspaceActivationService.Return.cs")], ["core"], ["core-aot", "workspace-native-activation"]);
-  assertSelection([core("CoreJsonSerializerContext.cs")], ["core"], ["core-aot", "workspace-native-activation"]);
-  assertSelection([cli("Commands/CoreBuildService.cs")], ["cli"], ["workspace-native-activation"]);
-  assertSelection([core("LocalCommandRuntimeAdapter.cs")], ["core"], ["core-aot", "core-windows-process-control", "workspace-native-activation"]);
-  assertSelection(["apps/cli/tests/Haas.Hosty.Cli.Tests/Commands/SharedReceiptSharingTests.cs"], ["cli"], ["core-windows-process-control", "workspace-native-activation"]);
-  assertSelection(["shared/CoreLaunchState.cs"], ["core", "cli"], ["core-aot", "core-windows-process-control", "workspace-native-activation", "core-transport"]);
+test("lifecycle, serializer and launch changes retain component and AOT checks", () => {
+  assertSelection([core("WorkspaceActivationService.Return.cs")], ["core"], ["core-aot"]);
+  assertSelection([core("CoreJsonSerializerContext.cs")], ["core"], ["core-aot"]);
+  assertSelection([cli("Commands/CoreBuildService.cs")], ["cli"], []);
+  assertSelection([core("LocalCommandRuntimeAdapter.cs")], ["core"], ["core-aot"]);
+  assertSelection(["apps/cli/tests/Haas.Hosty.Cli.Tests/Commands/SharedReceiptSharingTests.cs"], ["cli"], []);
+  assertSelection(["shared/CoreLaunchState.cs"], ["core", "cli"], ["core-aot"]);
 });
 
-test("transport and fixture changes select the profile they exercise", () => {
-  assertSelection([core("DockerCoreListener.cs")], ["core"], ["core-aot", "core-transport"]);
-  assertSelection(["scripts/check-docker-core-transport.py"], ["core"], ["core-transport"]);
+test("local integration fixtures select their bounded component checks", () => {
+  assertSelection([core("DockerCoreListener.cs")], ["core"], ["core-aot"]);
+  assertSelection(["scripts/check-docker-core-transport.py"], ["core"], []);
   assertSelection(["scripts/check-core-aot.mjs"], ["core"], ["core-aot"]);
-  assertSelection(["scripts/check-workspace-activation.py"], ["core", "cli"], ["core-windows-process-control", "workspace-native-activation"]);
+  assertSelection(["scripts/check-workspace-activation.py"], ["core", "cli"], []);
 });
 
-test("worker and speech inference profiles follow actual native inputs", () => {
-  assertSelection(["apps/harness/src/runtime/worker.ts"], ["harness"], ["harness-worker"]);
-  assertSelection(["apps/harness/src/sessions/manager.ts"], ["harness"], ["harness-worker"]);
-  assertSelection(["scripts/check-harness-worker.mjs"], ["harness"], ["harness-worker"]);
-  assertSelection(["apps/harness/src/worker/engine.ts"], ["harness"], ["harness-worker"]);
-  assertSelection(["apps/harness/test/worker-native-controls.mjs"], ["harness"], ["harness-worker"]);
-  assertSelection(["apps/harness/worker/Dockerfile"], ["harness"], ["harness-worker"]);
-  assertSelection(["apps/whisper/Hosty.Whisper/SpeechEngine.cs"], ["whisper"], ["whisper-native"]);
-  assertSelection(["apps/whisper/Hosty.Whisper.Tests/Fixtures/russian.wav"], ["whisper"], ["whisper-native"]);
+test("worker and speech inputs retain component tests without native acceptance", () => {
+  assertSelection(["apps/harness/src/runtime/worker.ts"], ["harness"], []);
+  assertSelection(["apps/harness/src/sessions/manager.ts"], ["harness"], []);
+  assertSelection(["scripts/check-harness-worker.mjs"], ["harness"], []);
+  assertSelection(["apps/harness/src/worker/engine.ts"], ["harness"], []);
+  assertSelection(["apps/harness/test/worker-native-controls.mjs"], ["harness"], []);
+  assertSelection(["apps/harness/worker/Dockerfile"], ["harness"], []);
+  assertSelection(["apps/whisper/Hosty.Whisper/SpeechEngine.cs"], ["whisper"], []);
+  assertSelection(["apps/whisper/Hosty.Whisper.Tests/Fixtures/russian.wav"], ["whisper"], []);
   assertSelection(["apps/whisper/Hosty.Whisper.Tests/WaveAudioTests.cs"], ["whisper"]);
 });
 
@@ -74,11 +74,11 @@ test("Node dependency changes fan out only to Node consumers", () => {
   assertSelection([".npmrc"], node);
 });
 
-test(".NET toolchain changes conservatively exercise all .NET runtimes", () => {
+test(".NET toolchain changes retain every .NET component and NativeAOT build", () => {
   for (const path of ["global.json", "Directory.Build.props", "Directory.Build.targets", "scripts/HostyBuildIdentity.cs"]) {
-    assertSelection([path], ["app-sdk-dotnet", "whisper", "core", "cli", "telemetry-backend"], ["core-aot", "core-windows-process-control", "workspace-native-activation", "core-transport", "whisper-native"]);
+    assertSelection([path], ["app-sdk-dotnet", "whisper", "core", "cli", "telemetry-backend"], ["core-aot"]);
   }
-  assertSelection(["packages/app-sdk-dotnet/HostySdk.App/Session.cs"], ["app-sdk-dotnet", "whisper"], ["whisper-native"]);
+  assertSelection(["packages/app-sdk-dotnet/HostySdk.App/Session.cs"], ["app-sdk-dotnet", "whisper"], []);
 });
 
 test("workflow scheduling edits do not rebuild unrelated clients, artifact workflows retain their gate", () => {
@@ -86,7 +86,7 @@ test("workflow scheduling edits do not rebuild unrelated clients, artifact workf
   assertSelection([".github/workflows/claude-code-review.yml"], [], [], ["actionlint"]);
   assert.deepEqual(classifyPaths([".github/workflows/new-qualification.yml"]).required, ALL_JOBS);
   assertSelection([".github/workflows/cardputer-release.yml"], ["cardputer-shell"], [], ["actionlint"]);
-  assertSelection([".github/workflows/harness-worker-image.yml"], ["harness"], ["harness-worker"], ["actionlint"]);
+  assertSelection([".github/workflows/harness-worker-image.yml"], ["harness"], [], ["actionlint"]);
   assertSelection([".github/workflows/cli-release.yml"], ["core", "cli"], ["core-aot"], ["actionlint"]);
   assertSelection([".github/actions/publish-guard/guard.sh"], [], [], ["actionlint"]);
 });
@@ -119,8 +119,8 @@ test("aggregate accepts successful required and intentionally skipped unaffected
   assert.deepEqual(evaluateGate(plan, results(plan)), []);
   const onlyRequired = Object.fromEntries(plan.required.map(job => [job, { result: "success" }]));
   assert.deepEqual(evaluateGate(plan, onlyRequired), []);
-  const risk = { version: 1, components: [], profiles: ["harness-worker"], required: [...BASE_JOBS, "harness-worker"], reasons: {} };
-  assert.deepEqual(evaluateGate(risk, results(risk)), []);
+  const build = { version: 1, components: [], profiles: ["core-aot"], required: [...BASE_JOBS, "core-aot"], reasons: {} };
+  assert.deepEqual(evaluateGate(build, results(build)), []);
 });
 
 for (const result of ["failure", "cancelled", "skipped", "neutral", undefined]) {
@@ -209,7 +209,7 @@ test("CLI uses actual Git deleted and renamed paths, and safely writes GitHub ou
   const plan = JSON.parse(run.stdout);
   assert.ok(plan.components.includes("core"), "removed source must still select its original component");
   assert.ok(plan.components.includes("plans"), "rename destination must select its new consumer");
-  assert.ok(plan.profiles.includes("workspace-native-activation"));
+  assert.deepEqual(plan.profiles, ["core-aot"]);
   const lines = readFileSync(output, "utf8").trimEnd().split("\n");
   assert.equal(lines.length, Object.keys(planOutputs(plan)).length);
   assert.ok(!lines.some(line => line === "forged_output=true"));
@@ -257,7 +257,7 @@ test("platform version-only metadata does not trigger unrelated .NET runtimes", 
   assert.deepEqual(plan.components, ["core", "cli"]);
   assert.deepEqual(plan.profiles, ["core-aot"]);
   const lifecycle = classifyPaths(["Directory.Build.props", core("WindowsProcessControl.cs")], { versionOnlyPaths: ["Directory.Build.props"] });
-  assert.ok(lifecycle.profiles.includes("core-windows-process-control"), "metadata exemption cannot suppress source risk");
+  assert.deepEqual(lifecycle.profiles, ["core-aot"]);
   assert.throws(() => classifyPaths(["global.json"], { versionOnlyPaths: ["global.json"] }), /Only validated/);
 });
 
@@ -276,7 +276,23 @@ test("CLI inspects actual props contents before applying the metadata exemption"
   assert.deepEqual(classify(versionHead).profiles, ["core-aot"]);
   writeFileSync(path, "<Project><PropertyGroup><Version>0.1.2</Version><Nullable>enable</Nullable></PropertyGroup></Project>\n");
   const config = classify(f.commit());
-  assert.ok(config.profiles.includes("workspace-native-activation"));
-  assert.ok(config.profiles.includes("whisper-native"));
+  assert.deepEqual(config.profiles, ["core-aot"]);
+  assert.ok(config.components.includes("whisper"));
   assert.ok(config.components.includes("app-sdk-dotnet"));
+});
+
+test("runtime acceptance cannot be selected even for unknown or shared toolchain changes", () => {
+  const retired = ["workspace-native-activation", "core-windows-process-control", "core-transport", "harness-worker", "whisper-native"];
+  for (const paths of [["global.json"], ["unknown-input"], ["scripts/check-workspace-activation.py"]]) {
+    const plan = classifyPaths(paths);
+    for (const job of retired) {
+      assert.ok(!plan.required.includes(job));
+      assert.ok(!(job.replaceAll("-", "_") in planOutputs(plan)));
+    }
+  }
+  for (const job of retired) {
+    const plan = { ...classifyPaths([]), profiles: [job], required: [...BASE_JOBS, job] };
+    assert.ok(evaluateGate(plan, results(plan)).some(error => error.includes("Unknown")));
+  }
+  assertSelection(["scripts/test-integration.mjs", "scripts/test-integration.test.mjs"], []);
 });

@@ -67,3 +67,19 @@ test('composite downloads actual selection evidence only after exact CI validati
   assert.match(action, /if: github.event_name == 'workflow_run'/);
   assert.doesNotMatch(action, /continue-on-error:/);
 });
+
+test('retained pre-migration selection can still publish its verified component', () => {
+  const legacy = ['core-windows-process-control', 'workspace-native-activation', 'core-transport', 'harness-worker', 'whisper-native'];
+  const current = evidence(['apps/core/src/Haas.Hosty.Core/RuntimeApp.cs']);
+  const historical = { ...current, profiles: [...current.profiles, ...legacy], required: [...current.required, ...legacy] };
+  assert.equal(publicationSelected('workflow_run', ['core'], historical, source), true);
+  assert.equal(publicationSelected('workflow_run', ['shell'], historical, source), false);
+  for (const mismatch of [
+    { profiles: [...historical.profiles, legacy[0]] },
+    { required: [...historical.required, legacy[0]] },
+    { profiles: current.profiles }, { required: current.required },
+    { profiles: [...historical.profiles, 'unknown'], required: [...historical.required, 'unknown'] },
+    { required: historical.required.filter(job => job !== 'core') },
+    { sourceSha: 'c'.repeat(40) },
+  ]) assert.throws(() => validateSelection({ ...historical, ...mismatch }, source), /manifest/);
+});

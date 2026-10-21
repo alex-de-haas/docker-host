@@ -1,6 +1,6 @@
 name: CI
 
-# Automatic affected checks and selected risk suites. The final ci-required job is the stable gate.
+# Automatic affected component tests and builds. The final ci-required job is the stable gate.
 # No workflow-level path filter: documentation-only PRs must still report a result.
 on:
   pull_request:
@@ -14,13 +14,6 @@ on:
         description: Exact source revision to qualify (resolved and recorded as a full commit SHA)
         default: main
         type: string
-      scope:
-        description: Additional qualification (normal PR selection is automatic)
-        default: all
-        type: choice
-        options: [all, lifecycle, windows, docker, whisper]
-  schedule:
-    - cron: '19 2 * * *'
 
 permissions:
   contents: read
@@ -29,7 +22,7 @@ concurrency:
   # Collapse superseded runs of the same pull request — every push to a branch used to start a full
   # matrix without cancelling the one before it. Pushes to main are keyed by commit instead, so no
   # main commit loses its validation to the commit merged a few seconds later.
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.revision || github.sha }}-${{ inputs.scope || 'affected' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.revision || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
 
 jobs:
@@ -37,7 +30,6 @@ jobs:
     name: Detect changes
     permissions:
       contents: read
-      actions: read
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -48,11 +40,6 @@ jobs:
       demo_app: ${{ steps.filter.outputs.demo_app }}
       core: ${{ steps.filter.outputs.core }}
       core_aot: ${{ steps.filter.outputs.core_aot }}
-      core_transport: ${{ steps.filter.outputs.core_transport }}
-      core_windows_process_control: ${{ steps.filter.outputs.core_windows_process_control }}
-      workspace_native_activation: ${{ steps.filter.outputs.workspace_native_activation }}
-      harness_worker: ${{ steps.filter.outputs.harness_worker }}
-      whisper_native: ${{ steps.filter.outputs.whisper_native }}
       cli: ${{ steps.filter.outputs.cli }}
       telemetry_backend: ${{ steps.filter.outputs.telemetry_backend }}
       marketplace: ${{ steps.filter.outputs.marketplace }}
@@ -74,8 +61,6 @@ jobs:
           node-version: 24
       - name: Select affected checks and record exact source
         id: filter
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci-select.mjs
       - name: Preserve exact push selection for publication
         if: github.event_name == 'push'
@@ -100,7 +85,7 @@ jobs:
         with:
           node-version: 24
       - name: Test selection, required gate and publication denial
-        run: node --test scripts/ci*.test.mjs .github/actions/ci-validation-gate/*.test.mjs
+        run: node --test scripts/ci*.test.mjs scripts/test-integration.test.mjs .github/actions/ci-validation-gate/*.test.mjs
 
   # Ungated on purpose: it reads version fields out of every manifest and package.json in the repo, so
   # any filter narrow enough to be useful would also be wrong. It needs no `npm ci` and finishes in
@@ -280,28 +265,6 @@ jobs:
       - name: Test Whisper provider (bounded unit suite)
         run: dotnet test apps/whisper/Hosty.Whisper.Tests/Hosty.Whisper.Tests.csproj
 
-  whisper-native:
-    name: Whisper native (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    needs: changes
-    if: needs.changes.outputs.whisper_native == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.changes.outputs.sha }}
-      - uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
-      - name: Test real native CPU inference
-        env:
-          HOSTY_WHISPER_INTEGRATION: '1'
-        run: dotnet test apps/whisper/Hosty.Whisper.Tests/Hosty.Whisper.Tests.csproj
-
   demo-app:
     name: Demo App
     runs-on: ubuntu-latest
@@ -376,97 +339,6 @@ jobs:
           fi
       - name: Publish Core and reject new trim/AOT warnings
         run: npm run core:aot
-
-  core-transport:
-    name: Core Docker transport
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: changes
-    if: needs.changes.outputs.core_transport == 'true'
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.changes.outputs.sha }}
-      - uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
-      - run: npm run core:build
-      - name: Check Core transport from real Docker networks
-        run: python3 scripts/check-docker-core-transport.py apps/core/src/Haas.Hosty.Core/bin/Debug/net10.0/hosty-core.dll
-
-  core-windows-process-control:
-    name: Core (Windows process control)
-    runs-on: windows-latest
-    timeout-minutes: 20
-    needs: changes
-    if: needs.changes.outputs.core_windows_process_control == 'true'
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.changes.outputs.sha }}
-
-      - name: Set up .NET
-        uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
-
-      # The main Core gate runs on Linux. Keep this Windows lane narrow: it exists for the native
-      # handle/job-object behaviors that a Linux run necessarily skips, including the harness
-      # cmd -> npm -> tsx -> node shutdown regression, and platform-dependent document newlines.
-      - name: Test Windows process control and document references
-        run: >-
-          dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj
-          --filter
-          "FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop|FullyQualifiedName~SourceDocuments_ReferenceMetadataSupportsLfAndCrLf|FullyQualifiedName~WorkspaceGit_|FullyQualifiedName~JsonStorageTests"
-
-      - name: Verify Windows shared receipt replacement
-        run: >-
-          dotnet test apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj
-          --filter FullyQualifiedName~SharedReceiptSharingTests
-
-  workspace-native-activation:
-    name: Workspace activation (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    needs: changes
-    if: needs.changes.outputs.workspace_native_activation == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.changes.outputs.sha }}
-      - uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
-      - name: Build native process fixtures
-        run: |
-          dotnet build apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj
-          dotnet build apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj
-      - name: Verify shared receipt replacement on Windows
-        if: runner.os == 'Windows'
-        run: >-
-          dotnet test apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj
-          --filter FullyQualifiedName~SharedReceiptSharingTests
-      - name: Verify activation and Return through real processes
-        env:
-          HOSTY_ACTIVATION_DIAGNOSTICS: ${{ runner.temp }}/hosty-workspace-activation-diagnostics
-        run: python scripts/check-workspace-activation.py . return
-      - name: Verify detached helper recovery
-        env:
-          HOSTY_ACTIVATION_DIAGNOSTICS: ${{ runner.temp }}/hosty-workspace-activation-diagnostics
-        run: python scripts/check-workspace-activation.py . auto
-      - name: Upload sanitized activation failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: workspace-activation-${{ matrix.os }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/hosty-workspace-activation-diagnostics/**/*.log
-          if-no-files-found: warn
-          retention-days: 7
 
   cli:
     name: CLI
@@ -611,26 +483,6 @@ jobs:
       - name: Test Hosty Harness
         run: npm run harness:test
 
-  harness-worker:
-    name: Harness Docker worker
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: changes
-    if: needs.changes.outputs.harness_worker == 'true'
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.changes.outputs.sha }}
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - name: Build declared worker service
-        run: docker build -f apps/harness/worker/Dockerfile -t "ghcr.io/alex-de-haas/hosty-harness-worker:$(node -p 'require("./apps/harness/manifest.json").version')" .
-      - name: Verify worker process and mount lifecycle
-        run: node --import tsx scripts/check-harness-worker.mjs
-
   telemetry-ui:
     name: Telemetry UI
     runs-on: ubuntu-latest
@@ -767,7 +619,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always()
-    needs: [changes, versions, docs, ci-policy, actionlint, shell, app-sdk, app-sdk-dotnet, whisper, whisper-native, demo-app, core, core-aot, core-transport, core-windows-process-control, workspace-native-activation, cli, telemetry-backend, marketplace, plans, harness, harness-worker, telemetry-ui, swift-shell, cardputer-shell]
+    needs: [changes, versions, docs, ci-policy, actionlint, shell, app-sdk, app-sdk-dotnet, whisper, demo-app, core, core-aot, cli, telemetry-backend, marketplace, plans, harness, telemetry-ui, swift-shell, cardputer-shell]
     steps:
       - uses: actions/checkout@v7
         with:

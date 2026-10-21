@@ -1,6 +1,6 @@
 ---
 created: 2026-09-18
-updated: 2026-10-20
+updated: 2026-10-21
 summary: Run Core from source in Debug, restart into isolated build generations and switch back to the installed release.
 components: [apps/core, apps/cli, apps/shell]
 ---
@@ -203,7 +203,7 @@ The fake harness is an in-process fixture and is not evidence of a provider subp
 
 PR review regression checks cover unavailable CLI paths for both managed modes, HTTP 400 versus
 409, and explicit recovery of adoption conflicts without killing reused PIDs. The complete local
-Core suite passes 1976 tests with the same four opt-in skips. The Windows process-control CI lane
+Core suite passes 1976 tests with the same four opt-in skips. The explicit local `npm run test:integration -- windows` suite
 also covers runner log survival and explicit recovery, including adoption and Stop after the command
 shell exits while its detached descendant remains alive.
 

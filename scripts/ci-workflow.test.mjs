@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { ALL_JOBS, BASE_JOBS, fullPlan, evaluateGate } from './ci-policy.mjs';
 
 const workflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
@@ -39,4 +39,15 @@ test('qualification checks selected source and cannot cancel main push validatio
   assert.match(jobs['core-aot'], /needs: changes/);
   assert.doesNotMatch(jobs['core-aot'], /needs: (?:\[.*core|core\s)/);
   assert.doesNotMatch(workflow, /^  workspaces:/m);
+});
+
+test('GitHub workflows cannot schedule the removed local integration suites', () => {
+  assert.doesNotMatch(workflow, /^  schedule:/m);
+  assert.doesNotMatch(workflow, /inputs\.scope|^      scope:/m);
+  const directory = new URL('../.github/workflows/', import.meta.url);
+  for (const name of readdirSync(directory).filter(name => /\.ya?ml$/.test(name))) {
+    const text = readFileSync(new URL(name, directory), 'utf8');
+    assert.doesNotMatch(text, /check-workspace-activation\.py|check-docker-core-transport\.py|check-harness-worker\.mjs|HOSTY_WHISPER_INTEGRATION|npm run test:integration/, name);
+  }
+  assert.match(jobs['ci-policy'], /scripts\/test-integration\.test\.mjs/);
 });
