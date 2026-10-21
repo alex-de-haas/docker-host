@@ -500,10 +500,13 @@ column; the header's workspace toggle hides and shows it.
   elapsed time and Stop.
 - The transcript groups tool activity: reads collapse into one expandable line ("Read 3 files and 2
   review threads · 6 s"), edits list each file with its additions and deletions and open the review
-  page at that file, and commands show their result in place.
+  page at that file, and commands show their result in place: exit status, duration and at most
+  one summary line ("14 passed · 4 s"), never the raw output.
 - The approval card has an amber header, the exact command on an ink block, its repository, branch
-  and effect, then Allow once (the view's primary action), Allow for this session and Deny…, which
-  reveals an optional reason that is sent with the denial.
+  and effect, then Allow once (the view's primary action) and Deny…, which reveals an optional
+  reason that is sent with the denial. The canvas also shows Allow for this session; that would be a
+  new standing grant beyond today's one-time allow or deny, so it stays out until the open question
+  below is settled.
 - The composer keeps attachments, app mentions and Whisper dictation; its bottom row holds the
   provider and model and the Normal / Autonomous switch with a one-line explanation of the mode.
 
@@ -656,7 +659,7 @@ the deliverable that changes it.
 
 ### Phase 4 — Harness development page
 
-- [ ] D21. Restyle Harness's development page as described under Harness development page: the three-column layout in the app frame, the sessions column with search, filter chips, app-mark groups, state lines and shapes and the External workspaces row, the conversation header with the pinned decision and working bar, the grouped transcript, the approval card and the composer row, and the workspace column without tabs, with its header, repository card, preview card and Used by — keeping every action and state of the Harness development UI feature, with Harness version bumps.
+- [ ] D21. Restyle Harness's development page as described under Harness development page: the three-column layout in the app frame, the sessions column with search, filter chips, app-mark groups, state lines and shapes and the External workspaces row, the conversation header with the pinned decision and working bar, the grouped transcript, the approval card with Allow once and Deny and the composer row, and the workspace column without tabs, with its header, repository card, preview card and Used by — keeping every action and state of the Harness development UI feature. Command results are not persisted today — `HarnessEvent` keeps only the `tool_use` input and the turn result, Claude's `tool_result` handler drops the body and Codex reports a completed command by its text — so D21 also records a bounded, redacted command result event (exit status, duration, at most one summary line) from both adapters, persists it with the transcript and replays it for restored sessions, with adapter tests. Harness ships with its version bumps.
 - [ ] D22. Rework the pull request presentation: collapsible PR cards with the two-line summary, the icon rule (shape for the PR state, color for CI on open PRs, Info blue for checks in progress, muted drafts, violet merged, neutral closed, unknown and stale), the segmented CI bar whose check list opens by click beside the workspace column, and Review changes for open and draft PRs; update the Harness development UI feature, with Harness version bumps. `WorkspaceInspectionService.PullRequestsAsync` projects every `PublicationRecord.History` entry today with a null observation and a "Historical reference" error, so D22 also has Core retain each earlier PR's last observation — title, state, merge time, CI summary and thread count — when it leaves the active publication, and project it with its observation time, with Core tests and the platform version bump. A historical PR without a retained observation shows its number and link with the neutral unknown icon.
 - [ ] D23. Replace the diff dialog with the review page: entries from Session changes, transcript edits and Review changes, the narrowed session conversation with its pinned decision and composer, the picker for Session changes, Since main and each open or draft PR, the file list with totals, viewed state and thread counts, the diff with the existing renderer, Unified / Split and wrapping, markers for lines not in the PR head, and Back to session that restores the conversation, its draft and its scroll. `DevelopmentWorkspaceService.DiffAsync` offers only the `local` and `session` views today, so D23 also adds a Core diff scope from a PR's merge base to its published head, and the per-line evidence of which rendered lines are absent from that head, to the workspace diff API and its model, with Core tests and the platform version bump; Harness ships with its version bumps.
 - [ ] D24. Add line selection and threads to the review page: line-number selection with the lime fill, Ask Harness placing a structured reference (file, line range, source, revision) in the composer, and the PR's review threads under their lines, with author kind, state chip, Reply, Resolve through the existing resolution operation, and Ask Harness. Core's observation carries only each thread's ID, path, line, resolved flag and comment bodies today, so D24 also extends `GitHubPublicationProvider`'s review-thread query, `PublicationReview` and the publication inspection API with each comment's author login, whether the author is a bot or a user, and its creation time, and with each thread's full coordinates — `originalLine`, `startLine`, `originalStartLine`, the diff side, the outdated flag and the subject type (line or file) — with Core tests and the platform version bump. Harness derives "Addressed but not pushed" from the workspace's unpushed diff touching the thread's lines; it never resolves the thread. A file-level thread sits at the top of its file, a multi-line thread under the last line of its range, and an outdated or unplaceable thread in an "Outdated comments" group at the top of its file rather than disappearing. Harness ships with its version bumps.
@@ -679,6 +682,10 @@ the deliverable that changes it.
   changes, or everything the session has not pushed yet? Since main maps to the all-workspace scope.
 - Does Comment on #N post single comments only, or collect a pending review that the operator submits
   at once?
+- Should the approval card offer Allow for this session? It needs a new approval contract — which
+  later actions it covers, how it is shown, revoked, audited and persisted, and the same behavior for
+  Claude and Codex — with its own deliverable and an update to the approval features; today an
+  Autonomous chat is the session-wide alternative.
 - May an administrator comment through a PR whose publication uses another user's GitHub
   connection, or only that connection's owner?
 
