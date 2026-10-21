@@ -475,6 +475,18 @@ dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj -
 - Copilot cannot review because the requesting account's review quota is exhausted. Claude's review
   completes successfully and provides the three actionable findings above.
 
+- Codex review additionally identifies running apps keeping their old process port after a reviewed
+  port change. Initialization now compares the persisted desired configuration with the applied
+  snapshot and restarts before readiness, including recovery after an interrupted reassignment.
+  Three regressions cover ordinary change, an already-persisted change and retry after failed restart.
+- The final affected Core command passes 62 tests (including 19 initialization cases), with a
+  successful rebuild:
+  `npm run core:test -- --filter 'FullyQualifiedName~HostInitializationTests|FullyQualifiedName~SystemAppBootstrapsTests|FullyQualifiedName~RuntimePortAllocatorTests|FullyQualifiedName~ReassignPort'`.
+- GitHub's full Core run on the preceding review-fix commit `470ab1a2` passes 3,994 tests with five
+  opt-in skips; its Linux AOT gate and local macOS ARM64 AOT pass. The duplicate local full-suite run
+  is cancelled before rebuilding for the additional Codex finding; no local full-suite pass is claimed.
+  Final-head CI and macOS AOT must pass again before merge.
+
 ### Outstanding verification owned by D10-D11
 
 D10 needs the coordinated published CLI/Core/Shell artifacts for the real CLI-only download

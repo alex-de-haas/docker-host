@@ -240,7 +240,12 @@ internal sealed class HostInitializationService(
                 }
                 installs[index] = item with { State = "starting" };
                 await SaveAsync(state with { Installs = installs }, ct);
+                app = (await apps.GetAppAsync(app.Id, ct))!;
                 if (!AppRuntimeStates.IsUp(app.RuntimeState)) await lifecycle.StartAsync(app.Id, ct);
+                // Reassignment persists configuration without restarting the process. Compare with
+                // the applied snapshot so a retry after reassignment also completes the restart.
+                else if (AppConfigurationFingerprint.RequiresRestart(app, await new GlobalMountStore(paths).ReadAsync(ct)))
+                    await lifecycle.RestartAsync(app.Id, ct);
                 using var readiness = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 readiness.CancelAfter(TimeSpan.FromMinutes(3));
                 try

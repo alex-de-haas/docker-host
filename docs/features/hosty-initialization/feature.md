@@ -62,7 +62,9 @@ After a failed operation, `hosty init --review` explicitly accepts a new selecti
 UUID. It can change apps/ports or accept newly resolved distribution inputs while retaining installed
 apps and data. Previous request IDs remain retired and cannot replay over the new selection. Ordinary
 resume preserves the current accepted request. A review can keep an installed app's existing operator
-port while it is still running; other occupied ports remain invalid. Ready installations use setup for app changes.
+port while it is still running; other occupied ports remain invalid. Changing a running app's port
+restarts it before readiness checks. The applied configuration snapshot also detects a restart still
+pending after an interrupted reassignment. Ready installations use setup for app changes.
 
 ## Ports And Browser Origins
 

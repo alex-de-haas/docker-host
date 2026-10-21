@@ -271,6 +271,79 @@ public sealed class HostInitializationTests
         finally { Directory.Delete(directory, true); }
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task ExplicitReview_ChangedPortRestartsRunningApp_AndRecoversPersistedChanges(bool alreadyReassigned, bool failRestart)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "hosty-init-port-restart-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            foreach (var id in new[] { "example.a", "example.b" })
+                await File.WriteAllTextAsync(Path.Combine(directory, id + ".json"), """
+                  {"schemaVersion":"app.0.1","id":"APP_ID","name":"APP_ID","version":"1.0.0",
+                   "runtimeProfiles":[{"key":"local","type":"localCommand","default":true}],
+                   "services":[{"key":"worker","runtimes":{"local":{"type":"localCommand","command":"echo fixture","workingDirectory":".",
+                     "ports":[{"key":"http","containerPort":8080}]}}}]}
+                  """.Replace("APP_ID", id));
+            var catalog = Path.Combine(directory, "distribution.json");
+            await File.WriteAllTextAsync(catalog, """
+              {"schemaVersion":"distribution-apps.0.1","apps":[
+               {"id":"example.a","title":"First","manifestRef":"example.a.json","defaultEnabled":true},
+               {"id":"example.b","title":"Second","manifestRef":"example.b.json","defaultEnabled":true}]}
+              """);
+            var adapter = new InitializationAdapter();
+            await using var host = await CoreHttpHarness.StartAsync(configure: services => {
+                services.RemoveAll<IAppRuntimeAdapter>(); services.AddSingleton<IAppRuntimeAdapter>(adapter);
+                services.AddSingleton(new DistributionAppsProvider(NullLogger<DistributionAppsProvider>.Instance, catalog, [directory]));
+            });
+            var service = host.Services.GetRequiredService<HostInitializationService>();
+            var lifecycle = host.Services.GetRequiredService<CoreLifecycleService>();
+            var apps = host.Services.GetRequiredService<AppRegistryStore>();
+            var input = new InitializationRequest(Guid.NewGuid().ToString(), ["example.a", "example.b"]);
+            await service.SubmitAsync(input, default); await service.StartAsync(default);
+            try
+            {
+                await WaitForAsync(service, "failed");
+                var installed = (await apps.GetAppAsync("example.a"))!;
+                using var reservation = new TcpListener(IPAddress.Loopback, 0);
+                reservation.Start();
+                var port = ((IPEndPoint)reservation.LocalEndpoint).Port;
+                reservation.Stop();
+                Assert.NotEqual(Assert.Single(installed.PortAssignments!).HostPort, port);
+                if (alreadyReassigned)
+                {
+                    // Model recovery after configuration was persisted but before process restart.
+                    var plan = await lifecycle.ReassignPortPlanAsync(installed.Id, "worker", "http");
+                    await lifecycle.ReassignPortAsync(installed.Id, new("worker", "http", plan.Digest, "manual", port));
+                    Assert.Equal(1, adapter.FirstStarts);
+                    Assert.Equal(0, adapter.FirstStops);
+                }
+                adapter.FailSecond = false; adapter.FailFirstRestart = failRestart;
+                var review = input with { RequestId = Guid.NewGuid().ToString(), Ports = [new("example.a", "worker", "http", port)] };
+                await service.SubmitAsync(review, default);
+                if (failRestart)
+                {
+                    var failed = await WaitForAsync(service, "failed");
+                    Assert.Contains("Synthetic restart failure", failed.Error);
+                    adapter.FailFirstRestart = false;
+                    await service.SubmitAsync(review, default);
+                }
+                await WaitForAsync(service, "ready");
+                Assert.Equal(2, adapter.FirstStarts);
+                Assert.Equal(1, adapter.FirstStops);
+                Assert.Equal(port, adapter.FirstActivePort);
+                Assert.Equal(installed.InstalledAt, (await apps.GetAppAsync(installed.Id))!.InstalledAt);
+                await service.SubmitAsync(review, default);
+                Assert.Equal(2, adapter.FirstStarts);
+            }
+            finally { await service.StopAsync(default); }
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
     [Fact]
     public async Task ExplicitReview_AfterFailure_RetiresOriginalRequestWithoutResettingData()
     {
@@ -394,19 +467,32 @@ public sealed class HostInitializationTests
     {
         public string Type => "localCommand";
         public bool FailSecond = true, HealthySecond = true;
-        public int FirstStarts;
+        public int FirstStarts, FirstStops;
+        public int? FirstActivePort;
+        public bool FailFirstRestart;
         public TaskCompletionSource SecondHealthChecked = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
         {
             if (context.App.Id == "example.b" && FailSecond) throw new AppLifecycleException("fixture_start_failed", "Synthetic start failure.");
-            if (context.App.Id == "example.a") FirstStarts++;
+            if (context.App.Id == "example.a")
+            {
+                if (FirstStarts > 0 && FailFirstRestart) throw new AppLifecycleException("fixture_restart_failed", "Synthetic restart failure.");
+                FirstStarts++;
+                FirstActivePort = context.App.PortAssignments?.FirstOrDefault()?.HostPort;
+            }
             return Task.FromResult(new AppRuntimeStartResult("running", []));
         }
-        public Task<AppRuntimeOperationResult> StopAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default) => Task.FromResult(new AppRuntimeOperationResult("stopped"));
+        public Task<AppRuntimeOperationResult> StopAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
+        {
+            if (context.App.Id == "example.a") FirstStops++;
+            return Task.FromResult(new AppRuntimeOperationResult("stopped"));
+        }
         public Task<AppRuntimeOperationResult> RemoveAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default) => Task.FromResult(new AppRuntimeOperationResult("removed"));
         public Task<AppRuntimeLogsResult> GetLogsAsync(RuntimeLifecycleContext context, int tail, CancellationToken cancellationToken = default) => Task.FromResult(new AppRuntimeLogsResult(""));
         public Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
         {
+            if (context.App.Id == "example.a" && context.App.PortAssignments?.FirstOrDefault()?.HostPort != FirstActivePort)
+                throw new AppLifecycleException("fixture_port_not_restarted", "The running service still uses its previous port.");
             if (context.App.Id == "example.b") SecondHealthChecked.TrySetResult();
             var health = context.App.Id != "example.b" || HealthySecond ? "healthy" : "starting";
             return Task.FromResult(new AppRuntimeHealthResult(health, [new("worker", "running", null, null, null, null, null, Health: health)]));
