@@ -1,6 +1,6 @@
 ---
 created: 2026-09-26
-updated: 2026-10-20
+updated: 2026-10-21
 summary: Core enforces installation-bound assistant MCP access and tool exclusions; Harness owns invocation preferences and app instruction acceptance.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -30,7 +30,9 @@ unchanged. Same-ID retries require identical inputs and recover the retained req
 The former direct `PUT /api/core/agents/{targetId}` cannot bypass review. Trusted legacy Core
 `/install/agents` review remains for compatible consumers and global instruction acceptance.
 Legacy relationships without an explicit enabled value use their old Offered bound. New reviewed
-relationships use their own enabled value; the extra host-wide offer is not their gate.
+relationships use their own enabled value; the extra host-wide offer is not their gate. Batch changes
+preserve the global offer: without a stored policy, Core defaults to offered and other providers to
+not offered. Existing global values and other assistants' legacy grants remain unchanged.
 
 Core filters the assistant-facing directory and checks live relationships at token issuance,
 Core MCP invocation and app MCP introspection. Per-tool exclusions apply even when a caller uses
@@ -91,7 +93,7 @@ a user or revoking a grant still blocks subsequent calls. Already dispatched wor
 ## Testing Expectations
 
 - Check batch identity/revision/nonce/Origin authority, same-ID recovery, disabled direct mutation,
-  cancellation and preservation of other assistants' bindings.
+  cancellation, global offer defaults and preservation of other assistants' legacy bindings.
 - Check installation replacement, parent logout, per-tool denial on direct calls/introspection and
   rejection of discovery credentials for calls or chat authority.
 - Cover future tools, absent-tool exclusions, default inheritance, local-only saves, bulk controls,

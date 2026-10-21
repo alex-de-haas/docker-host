@@ -168,7 +168,7 @@ origin = f'http://127.0.0.1:{port}'
 jar = http.cookiejar.CookieJar()
 browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
 csrf = None
-def request(path, body=None, method=None, control=False):
+def request(path, body=None, method=None, control=False, confirm_settings=False):
     headers = {'Content-Type':'application/json','Origin':origin}
     if csrf: headers['X-Hosty-CSRF'] = csrf
     if control:
@@ -177,10 +177,32 @@ def request(path, body=None, method=None, control=False):
         headers.update(discovery['requiredHeaders'])
     req = urllib.request.Request(origin+path, data=json.dumps(body).encode() if body is not None else None,
                                  method=method, headers=headers)
-    try:
+    def send():
         with browser.open(req, timeout=180) as res:
             raw = res.read()
             return json.loads(raw) if raw else None
+    try:
+        return send()
+    except urllib.error.HTTPError as error:
+        raw = error.read().decode()
+        if error.code != 428 or not confirm_settings:
+            raise RuntimeError(f'{path}: {error.code} {raw[:1500]}') from None
+        review = json.loads(raw)
+    # Only the explicitly reviewed fixture setup opts in. Keep its normal browser session and
+    # exact request bytes; never bypass the review boundary or auto-approve arbitrary API calls.
+    review_path = '/settings/confirm/' + review['id']
+    with browser.open(origin + review_path, timeout=20) as page:
+        html = page.read().decode()
+    nonce = re.search(r'name=nonce value="([^"]+)"', html)
+    assert nonce, 'Core confirmation did not contain a decision form'
+    diagnostic_secrets.add(nonce.group(1))
+    decision = urllib.parse.urlencode({'nonce':nonce.group(1), 'decision':'approve'}).encode()
+    with browser.open(urllib.request.Request(origin + review_path, data=decision,
+            headers={'Content-Type':'application/x-www-form-urlencoded', 'Origin':origin}), timeout=20) as response:
+        response.read()
+    req.add_header('X-Hosty-Settings-Change', review['id'])
+    try:
+        return send()
     except urllib.error.HTTPError as error:
         raise RuntimeError(f'{path}: {error.code} {error.read().decode()[:1500]}') from None
 def wait_for(fn, seconds=90):
@@ -261,7 +283,7 @@ try:
         say('Started a parent-managed child Core and logged in with its separate test account')
     development=request('/api/core/development')
     source=request('/api/core/source',{'revision':development['source']['revision'],'overridePath':None,
-        'repository':{'repositoryUrl':repository,'ref':'main','projectPath':project,'connectionId':None}},method='PUT')
+        'repository':{'repositoryUrl':repository,'ref':'main','projectPath':project,'connectionId':None}},method='PUT',confirm_settings=True)
     lease=str(uuid.uuid4())
     tree=request('/api/core/source/workspaces',{'requestId':str(uuid.uuid4()),'taskId':'native-workspace-activation','leaseId':lease,
         'sourceRevision':source['revision'],'targetBranch':'main','label':'Disposable native activation verification'})

@@ -38,6 +38,42 @@ public sealed class AssistantAccessBatchTests
         Assert.False(disabled.Enabled); Assert.Contains("removed_tool", disabled.DeniedTools!);
     }
 
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public async Task BatchPreservesGlobalOfferDefaultsAndExistingLegacyGrants(bool? storedOffer, bool expectedOffer)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var now = DateTimeOffset.UtcNow;
+        var assistant = AssistantMcpAccessHttpTests.Record("assistant", now) with { ConfirmedRoles = ["assistant"],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["assistant"] = [new("default", null, "/assistant")] } };
+        var target = AssistantMcpAccessHttpTests.Record("target", now) with {
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["mcp"] = [new("default", null, "/mcp")] } };
+        await apps.UpsertAppAsync(assistant); await apps.UpsertAppAsync(assistant with { Id = "legacy" }); await apps.UpsertAppAsync(target);
+        var policies = host.Services.GetRequiredService<AgentPolicyStore>();
+        if (storedOffer is { } offered)
+            await policies.ChangeAsync(AgentMcpDirectory.CoreId, new(null, offered, new Dictionary<string, string>(),
+                new Dictionary<string, AssistantTargetGrant> { ["legacy"] = new(now, "legacy-revision") }));
+        var directory = host.Services.GetRequiredService<AgentMcpDirectory>();
+        var before = await directory.ReadAsync();
+        var legacyBefore = (await directory.ReadForAssistantAsync("legacy", default)).Targets.Single(t => t.Id == AgentMcpDirectory.CoreId);
+        Assert.Equal(expectedOffer, before.Targets.Single(t => t.Id == AgentMcpDirectory.CoreId).Offered);
+        var plan = await directory.ReviewBatchAsync(new(Guid.NewGuid().ToString(), assistant.Id, before.Revision,
+            [new(AgentMcpDirectory.CoreId, true, []), new(target.Id, true, [])]), default);
+
+        await directory.ApplyBatchAsync(plan, "actor", default);
+
+        var saved = (await policies.ReadAsync()).Targets;
+        Assert.Equal(expectedOffer, saved[AgentMcpDirectory.CoreId].Offered);
+        Assert.False(saved[target.Id].Offered);
+        Assert.True(saved[AgentMcpDirectory.CoreId].Assistants![assistant.Id].Enabled);
+        Assert.Equal(legacyBefore.Offered, (await directory.ReadForAssistantAsync("legacy", default)).Targets.Single(t => t.Id == AgentMcpDirectory.CoreId).Offered);
+        if (storedOffer is not null)
+            Assert.Equal(new AssistantTargetGrant(now, "legacy-revision"), saved[AgentMcpDirectory.CoreId].Assistants!["legacy"]);
+    }
+
     [Fact]
     public async Task ReviewRejectsUnknownTargetWithoutChangingAnyGrant()
     {

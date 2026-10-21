@@ -1,6 +1,6 @@
 ---
 created: 2026-10-19
-updated: 2026-10-20
+updated: 2026-10-21
 summary: Select named app workspaces or installed package runtimes with scoped access review, retained package choices and recoverable Core-owned transitions.
 components: [apps/core, apps/cli, apps/shell, apps/harness, shared]
 ---
@@ -238,7 +238,9 @@ apply receipt. App data, source files, selected runtimes and process state remai
 ## Authority
 
 Source configuration and Core-only workspace preparation require administrator authority and browser
-CSRF protection; app-mediated configuration additionally requires `core.configure`. The activation
+CSRF protection; app-mediated configuration additionally requires `core.configure`. Source changes
+also require an exact [Core settings confirmation](../settings-experience/feature.md); native acceptance
+fixtures confirm this change through their isolated administrator browser before preparing a workspace. The activation
 surface checks workspace ownership, current administrator status, source access and lifecycle authority
 for its selected participants. App callers require `apps.sources.full` and `apps.lifecycle`; selecting
 Core additionally requires the separately reviewed optional `core.workspace.activate` permission.

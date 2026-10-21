@@ -260,7 +260,7 @@ internal sealed class AgentMcpDirectory(
                 if (old?.InstalledAt != change.InstalledAt) old = null;
                 var bindings = new Dictionary<string, AssistantTargetGrant>(old?.Assistants ?? new Dictionary<string, AssistantTargetGrant>(), StringComparer.Ordinal);
                 bindings[plan.AssistantId] = new(plan.InstalledAt, Guid.NewGuid().ToString("N"), change.DeniedTools, change.Enabled);
-                changes[change.TargetId] = new(change.InstalledAt, old?.Offered ?? false, old?.ApprovedSkills ?? new Dictionary<string, string>(), bindings);
+                changes[change.TargetId] = new(change.InstalledAt, old?.Offered ?? (change.TargetId == CoreId), old?.ApprovedSkills ?? new Dictionary<string, string>(), bindings);
             }
             await policies.ChangeManyAsync(changes, ct);
             await audit.AppendAsync(new AuditRecord($"audit_{Guid.NewGuid():N}", "app.mcp.access.changed", "app",
