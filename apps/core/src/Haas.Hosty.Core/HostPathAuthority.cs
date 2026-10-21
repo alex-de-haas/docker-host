@@ -28,7 +28,8 @@ internal sealed class HostPathAuthority(CoreDataPaths paths, AppRegistryStore ap
         if (Directory.Exists(manifest)) manifest = Path.Combine(manifest, "manifest.json");
         var realManifest = MountPathPolicy.ResolveRealPath(manifest);
         if (!Within(real, realManifest)) throw Forbidden();
-        var mountRoots = (await apps.ListAppRecordsAsync(ct)).SelectMany(a => (a.Mounts ?? []).Select(m => m.HostPath).Concat(a.ActiveMountPaths ?? []))
+        var mountRoots = (await apps.ListAppRecordsAsync(ct)).SelectMany(a => (a.Mounts ?? []).Select(m => m.HostPath)
+            .Concat((a.ActiveMountPaths ?? []).Where(path => !ManagedWorkspaceMounts.IsOwnedRoot(paths, a, path))))
             .Concat((await globals.ReadAsync(ct)).Mounts.Select(m => m.HostPath));
         // Any mounted descendant can contain executable code, even if the manifest is outside it.
         foreach (var root in mountRoots)

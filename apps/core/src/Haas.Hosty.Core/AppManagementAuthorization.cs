@@ -125,8 +125,8 @@ internal static class AppManagementAuthorization
         result["POST /api/development/workspaces/{workspaceId}/activation/{kind}"] = [CoreAppPermissions.WorkspacesRead];
         result["GET /api/apps/{appId}/dev-mode"] = [CoreAppPermissions.AppLifecycle];
         result["POST /api/apps/{appId}/dev-mode/{kind}"] = [CoreAppPermissions.AppLifecycle];
-        Add(CoreAppPermissions.CoreEnvironmentsInspect, "GET /api/core-environments", "GET /api/core-environments/{id}", "GET /api/core-environments/{id}/apps");
-        Add(CoreAppPermissions.CoreEnvironmentsOperate, "POST /api/core-environments/{id}/operations/{kind}", "POST /api/core-environments/{id}/setup", "POST /api/core-environments/{id}/consent/revoke", "POST /api/core-environments/consents/{id}/revoke");
+        Add(CoreAppPermissions.CoreEnvironmentsInspect, "GET /api/core-environments", "GET /api/core-environments/{id}", "GET /api/core-environments/{id}/apps", "GET /api/core-environments/{id}/initialization");
+        Add(CoreAppPermissions.CoreEnvironmentsOperate, "POST /api/core-environments", "POST /api/core-environments/{id}/setup-link", "POST /api/core-environments/{id}/initialization/resume", "POST /api/core-environments/{id}/operations/{kind}", "POST /api/core-environments/{id}/setup", "POST /api/core-environments/{id}/consent/revoke", "POST /api/core-environments/consents/{id}/revoke");
         result["POST /api/core-environments/from-workspace"] = [CoreAppPermissions.CoreEnvironmentsOperate, CoreAppPermissions.WorkspacesRead];
         Add(CoreAppPermissions.SandboxesInspect, "GET /api/sandbox-instances", "GET /api/sandbox-instances/{id}",
             "GET /api/sandbox-instances/{id}/browser-runs/{jobId}", "GET /api/sandbox-instances/{id}/preview", "GET /api/sandbox-instances/{id}/diagnostics");

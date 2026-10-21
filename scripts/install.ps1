@@ -32,7 +32,7 @@ Environment overrides:
   HOSTY_INSTALL_TAG               GitHub Release tag, default cli-dev
   HOSTY_INSTALL_DIR               Directory for hosty.exe, default %USERPROFILE%\.hosty\bin
   HOSTY_INSTALL_SKIP_PATH_UPDATE  Set to 1 to skip user PATH updates
-  HOSTY_INSTALL_START             Set to 1 to run hosty start and open after install
+  HOSTY_INSTALL_START             Set to 1 to run hosty init after install (recommended apps, noninteractive)
 "@ | Write-Host
 }
 
@@ -308,14 +308,12 @@ try {
     Ensure-UserPath -InstallDirectory $installDirectory
 
     if ($startAfterInstall) {
-        Invoke-Hosty -HostyPath $target -Arguments @("start")
-        Invoke-Hosty -HostyPath $target -Arguments @("open")
+        Invoke-Hosty -HostyPath $target -Arguments @("init", "--yes")
     }
     else {
         Write-Host ""
-        Write-Host "Next commands:"
-        Write-Host "  $target start"
-        Write-Host "  $target open"
+        Write-Host "Next command:"
+        Write-Host "  $target init"
     }
 }
 finally {

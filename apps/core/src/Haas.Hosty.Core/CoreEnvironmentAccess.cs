@@ -12,6 +12,23 @@ internal sealed class CoreEnvironmentAccess(CoreEnvironmentStore store, CoreEnvi
         { Timeout = TimeSpan.FromMinutes(previewCheck ? 6 : 3) };
     private static Uri Origin(CoreEnvironmentRecord record) => new($"http://localhost:{record.Port}");
     private string SessionPath(string id) => Path.Combine(store.Root(id), "core", "parent-session.json");
+    public async Task<T> InitializationAsync<T>(SandboxActor actor, string id, string operation, CancellationToken ct)
+    {
+        var record = await service.RequireAsync(actor, id, ct);
+        await service.RequireConsentAsync(actor, record, false, ct);
+        RequireRunning(record); store.VerifyRoot(record);
+        if (record.Request.Initialization is null)
+            throw new SandboxException("environment_initialization_unavailable", "This environment uses the existing manual setup flow.", 409);
+        var path = operation == "setup-link" ? "core/initialization/setup-link" : "core/initialization";
+        string? body = null;
+        if (operation == "resume")
+        {
+            var current = await CoreEnvironmentInitialization.SendAsync<Haas.Hosty.Initialization.InitializationStatus>(
+                record, store.Root(id), "core/initialization", false, null, ct);
+            body = CoreJson.Text(current.Request ?? record.Request.Initialization);
+        }
+        return await CoreEnvironmentInitialization.SendAsync<T>(record, store.Root(id), path, operation != "status", body, ct);
+    }
     public async Task<CoreEnvironmentApiResponse> SetupAsync(SandboxActor actor, string id, CoreEnvironmentSetup input, CancellationToken ct)
     {
         using var stopping = CancellationTokenSource.CreateLinkedTokenSource(ct, service.Stopping);
@@ -106,7 +123,16 @@ internal sealed class CoreEnvironmentAccess(CoreEnvironmentStore store, CoreEnvi
             // This fixed read-only projection must remain observable while an app start/build
             // holds the mutation gate. Authorization, consent, ownership and process checks
             // still run; concurrent stop/finish is reported as unavailable.
-            var response = await SendCoreAsync(actor, id, new("GET", "/api/apps"), serialize: false, timeout.Token);
+            CoreEnvironmentApiResponse response;
+            if (view.InitializationRequested)
+            {
+                var record = await service.RequireAsync(actor, id, timeout.Token);
+                await service.RequireConsentAsync(actor, record, false, timeout.Token);
+                RequireRunning(record); store.VerifyRoot(record);
+                var inventoryBody = await CoreEnvironmentInitialization.SendAsync<JsonElement>(record, store.Root(id), "apps", false, null, timeout.Token);
+                response = new(200, inventoryBody);
+            }
+            else response = await SendCoreAsync(actor, id, new("GET", "/api/apps"), serialize: false, timeout.Token);
             if (response.Status is 401 or 403) return new("sign-in-required", [], "Sign in with a sandbox administrator to inspect its apps.");
             if (response.Status != 200 || response.Body is not { } body || !body.TryGetProperty("apps", out var apps)
                 || apps.ValueKind != JsonValueKind.Array) return new("unavailable", [], "The child Core did not return its application inventory.");

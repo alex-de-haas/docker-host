@@ -62,6 +62,18 @@ public sealed class RuntimePortAllocatorTests
     }
 
     [Fact]
+    public async Task AssignAsync_RemovingShellManifestPin_PreservesEstablishedAddress()
+    {
+        var allocator = new RuntimePortAllocator(CreateConfig());
+        var original = await allocator.AssignAsync(CreateApp("hosty.shell", [Endpoint("web", "http")]),
+            Selection(Service("web", Port("http", containerPort: 3000, localPort: 7171))), []);
+        var updated = await allocator.AssignAsync(original,
+            Selection(Service("web", Port("http", containerPort: 3000))), []);
+        Assert.Equal(7171, Assert.Single(updated.PortAssignments!).HostPort);
+        Assert.Equal(Assert.Single(original.Endpoints).Url, Assert.Single(updated.Endpoints).Url);
+    }
+
+    [Fact]
     public async Task AssignAsync_ServiceScopedOverride_DisambiguatesSharedKeyAndClassifiesOperator()
     {
         var allocator = new RuntimePortAllocator(CreateConfig());

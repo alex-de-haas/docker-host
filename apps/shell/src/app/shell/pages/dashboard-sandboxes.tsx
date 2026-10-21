@@ -17,6 +17,8 @@ import { fetchCore } from "../core-transport.js";
 import { CoreRequestError, readCoreErrorDetail } from "../core-api";
 import { useShellActions } from "../shell-context";
 import type { CoreApp } from "../types";
+import { EnvironmentInitialization } from "./environment-initialization";
+import { CreateEnvironmentDialog } from "./create-environment-dialog";
 import type { ActivationWorkspace } from "../workspace-sources";
 
 type CorePending = { path: string; body: Record<string, unknown>; id?: string; kind: string };
@@ -149,7 +151,7 @@ function SandboxInventory({ coreOrigin, apps, workspaces }: { coreOrigin: string
       if (!current()) return;
       try {
         const saved = JSON.parse(sessionStorage.getItem(coreKey) ?? "null") as CorePending | null;
-        if (saved && /^\/(?:from-workspace|[a-f0-9]{32}\/operations\/(?:start|stop|restart|finish))$/.test(saved.path)
+        if (saved && (saved.path === "" || /^\/(?:from-workspace|[a-f0-9]{32}\/operations\/(?:start|stop|restart|finish))$/.test(saved.path))
           && typeof saved.body?.requestId === "string") {
           corePendingRef.current = saved; setCorePending(saved);
         }
@@ -181,12 +183,18 @@ function SandboxInventory({ coreOrigin, apps, workspaces }: { coreOrigin: string
     coreBusyRef.current = true; setCoreBusy(true); setCoreFeedback(null); readEpoch.current++;
     try {
       saveCorePending(value);
-      const result = await coreRequest<CoreEnvironment>(value.path, value.body);
+      let result = await coreRequest<CoreEnvironment>(value.path, value.body);
+      if (value.path === "" && result.state === "stopped" && result.initializationRequested) {
+        const start = { path: `/${result.id}/operations/start`, body: { requestId: crypto.randomUUID(), expectedRevision: result.revision }, id: result.id, kind: "start" };
+        saveCorePending(start);
+        result = await coreRequest<CoreEnvironment>(start.path, start.body);
+      }
       if (!alive.current) return;
       setCores(previous => ({ ...previous, loaded: true, items: [...previous.items.filter(item => item.id !== result.id), result] }));
       observeCore(result);
       if (!value.id || result.state === "finished") saveCorePending(null);
       if (result.error) setCoreFeedback({ id: result.id, message: result.error, failed: true });
+      return result;
     } catch (cause) {
       if (!alive.current) return;
       if (cause instanceof CoreRequestError && cause.status >= 400 && cause.status < 500) saveCorePending(null);
@@ -239,15 +247,17 @@ function SandboxInventory({ coreOrigin, apps, workspaces }: { coreOrigin: string
   const survivingApps = individual.items.filter(item => item.state !== "disposed");
   const workspaceById = new Map(workspaces.map(workspace => [workspace.id, workspace]));
   const appById = new Map(apps.map(app => [app.id, app]));
-  const hasFeedback = !!(cores.error || individual.error || corePending || appPending || coreFeedback?.failed || appFeedback?.failed);
-  if (!survivingCores.length && !survivingApps.length && !hasFeedback) return null;
   const coreDisabled = coreBusy || corePending !== null, appDisabled = appBusy || appPending !== null;
   return <Frame role="region" aria-label="Sandboxes">
     <FrameHeader className="flex-row items-center justify-between gap-3 p-3">
       <h2 className="font-medium">Sandboxes</h2>
-      <Button type="button" variant="ghost" size="sm" onClick={() => void refresh()}><RefreshCw data-icon="inline-start" />Refresh sandboxes</Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <CreateEnvironmentDialog origin={coreOrigin} disabled={coreDisabled} onCreate={async body => { if (!await runCore({ path: "", body, kind: "create" })) throw new Error("Creation could not be confirmed. Check the sandbox message and retry its saved request before creating another."); }} />
+        <Button type="button" variant="ghost" size="sm" onClick={() => void refresh()}><RefreshCw data-icon="inline-start" />Refresh sandboxes</Button>
+      </div>
     </FrameHeader>
     <FramePanel className="flex flex-col gap-2 p-0">
+      {!survivingCores.length && !survivingApps.length && cores.loaded && individual.loaded && !cores.error && !individual.error && <p className="p-3 text-sm text-muted-foreground">No sandboxes yet. Create an environment to try a fresh Hosty installation.</p>}
       {cores.error && <ErrorNotice>Core sandbox inventory: {cores.error}</ErrorNotice>}
       {individual.error && <ErrorNotice>App sandbox inventory: {individual.error}</ErrorNotice>}
       {coreFeedback && <FeedbackNotice value={coreFeedback} />}
@@ -336,6 +346,7 @@ function CoreSandboxDetails({ item, origin, pollVersion, disabled, request, onRe
         : ["stopped", "failed", "quota-exceeded"].includes(item.state) ? <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onCommand("start")}>Start</Button> : null}
       <Button type="button" variant="ghost" size="sm" disabled={disabled || transitional} onClick={onFinish}>{item.state === "cleanup-failed" ? "Retry deletion" : "Delete sandbox"}</Button>
     </div>
+    {item.state === "running" && item.initializationRequested && <EnvironmentInitialization item={item} origin={origin} pollVersion={pollVersion} request={request} />}
     {item.state === "running" ? <>
       {error && <ErrorNotice>Application status: {error}</ErrorNotice>}
       {!inventory ? <p role="status" className="text-sm text-muted-foreground">Reading application status…</p>
@@ -344,7 +355,7 @@ function CoreSandboxDetails({ item, origin, pollVersion, disabled, request, onRe
           {app.runtimeState === "running" && <PreviewLink href={app.previewUrl}>Open preview<span className="sr-only"> for {app.displayName}</span></PreviewLink>}
         </li>)}{!inventory.apps.length && <li className="py-2 text-sm text-muted-foreground">No apps installed in this sandbox yet.</li>}</ul>
           : <p role="status" className="text-sm text-muted-foreground">{inventory.error || (inventory.state === "setup-required" ? "Set up a test administrator for this Core." : "Connect the sandbox's test account to read its apps.")}</p>}
-      {inventory && ["setup-required", "sign-in-required"].includes(inventory.state) && <SandboxAccount request={request} id={item.id} disabled={disabled} onDone={onRefresh} />}
+      {!item.initializationRequested && inventory && ["setup-required", "sign-in-required"].includes(inventory.state) && <SandboxAccount request={request} id={item.id} disabled={disabled} onDone={onRefresh} />}
     </> : <p className="text-sm text-muted-foreground">Application links are available while this sandbox is running.</p>}
     <details className="text-sm"><summary className="cursor-pointer">Resources and access</summary><div className="mt-3 flex flex-col gap-3">
       <p className="text-muted-foreground">{item.mode === "source" ? "Core built from workspace source" : item.mode === "release" ? "Installed Core release" : "Current Core build"}</p>

@@ -1,3 +1,4 @@
+import { harnessEnvironmentActions } from "./environment-tools.js";
 import { projectWorktreePaths } from "../worker/resources.js";
 import type { ConnectionService } from "../connections/service.js";
 import { hasResourceHistory, reconcileRetentionSnapshot, retentionBusy, retentionStatus, type RetentionStatus } from "./retention.js";
@@ -6,7 +7,7 @@ import { DEFAULT_WORKFLOW_PROMPT } from "../settings/workflow.js";
 import { WorkerError } from "../runtime/errors.js";
 import type { WorkerClient } from "../worker/client.js";
 import { McpToolPolicy } from "../mcp/policy.js";
-import { coreEnvironmentActions, type CoreEnvironmentAction, type CoreEnvironment, sandboxActions, type SandboxAction, type SandboxInstance, type SandboxPlan } from "@hosty-sdk/app/sandbox/server";
+import { type CoreEnvironmentAction, type CoreEnvironment, sandboxActions, type SandboxAction, type SandboxInstance, type SandboxPlan } from "@hosty-sdk/app/sandbox/server";
 import { DevelopmentClient, DevelopmentMcp, DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, developmentTools, workspaceInstructions, type DevelopmentAction, type DevelopmentWorkspace } from "./development.js";
 import { ConnectionError } from "../connections/errors.js";
 import type { AgentConnections, ConnectionBinding } from "../connections/registry.js";
@@ -415,7 +416,9 @@ export class SessionManager {
     const prepared = await this.serialize(id, async () => {
       const session = await this.requireLive(id);
       if (userId && session.record.createdBy !== userId) throw new AppContextError(403, "environment_forbidden", "This session belongs to another user.");
-      if (!coreEnvironmentActions.includes(action) || !this.development?.available) throw new AppContextError(503, "environments_unavailable", "Child Core environments require a Core-managed assistant.");
+      if (!harnessEnvironmentActions.some(supported => supported === action))
+        throw new AppContextError(400, "environment_operation_invalid", "This environment operation is not supported by Harness.");
+      if (!this.development?.available) throw new AppContextError(503, "environments_unavailable", "Child Core environments require a Core-managed assistant.");
       const token = credential ?? session.workspaceCredential ?? session.credential;
       if (!token) throw new AppContextError(401, "environment_credentials_required", "Refresh Hosty credentials before managing child Core environments.");
       const { action: _action, workspaceId, ...input } = raw;

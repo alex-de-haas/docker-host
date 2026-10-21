@@ -1,7 +1,9 @@
 namespace Haas.Hosty.Core;
 
 internal sealed record CoreEnvironmentCreate(string RequestId, string Label, string Mode = "current",
-    string? ProjectPath = null, SandboxContext? Context = null, string[]? WorktreeIds = null, [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] CoreEnvironmentLimits? Limits = null);
+    string? ProjectPath = null, SandboxContext? Context = null, string[]? WorktreeIds = null, [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] CoreEnvironmentLimits? Limits = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Haas.Hosty.Initialization.InitializationRequest? Initialization = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? CorePort = null);
 internal sealed record CoreEnvironmentCommand(string RequestId, long ExpectedRevision);
 internal sealed record CoreEnvironmentProcess(int Pid, DateTimeOffset StartedAt);
 internal sealed record CoreEnvironmentOperation(string Id, string Kind, string Fingerprint, string State, string? Error = null);
@@ -9,11 +11,11 @@ internal sealed record CoreEnvironmentRecord(string Id, SandboxActor Owner, Core
     string Fingerprint, int Port, long Revision, string State, DateTimeOffset CreatedAt,
     CoreEnvironmentProcess? Process = null, string? Executable = null, string? Error = null,
     IReadOnlyList<CoreEnvironmentOperation>? Operations = null, bool RootDeletionStarted = false,
-    string[]? CleanupOwners = null, CoreEnvironmentUsage? Usage = null, CoreEnvironmentConsent? Consent = null, bool OperatorApproved = false);
+    string[]? CleanupOwners = null, CoreEnvironmentUsage? Usage = null, CoreEnvironmentConsent? Consent = null, bool OperatorApproved = false, bool HasStarted = false);
 internal sealed record CoreEnvironmentView(string Id, string Label, string Mode, string? ProjectPath,
     SandboxContext? Context, string State, long Revision, int Port, string? DataRoot, string PreviewUrl,
     CoreEnvironmentProcess? Process, string? Error, IReadOnlyList<CoreEnvironmentOperation> Operations,
-    CoreEnvironmentLimits? Limits = null, CoreEnvironmentUsage? Usage = null, CoreEnvironmentEffectiveAccess? Access = null);
+    CoreEnvironmentLimits? Limits = null, CoreEnvironmentUsage? Usage = null, CoreEnvironmentEffectiveAccess? Access = null, bool InitializationRequested = false);
 internal sealed record CoreEnvironmentList(IReadOnlyList<CoreEnvironmentView> Environments, IReadOnlyList<CoreEnvironmentSavedConsent>? Consents = null);
 internal sealed record CoreEnvironmentSetup(string Email, string DisplayName, string Password);
 internal sealed record CoreEnvironmentApiRequest(string Method, string Path, System.Text.Json.JsonElement? Body = null);

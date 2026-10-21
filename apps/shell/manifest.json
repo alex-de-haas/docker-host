@@ -3,7 +3,7 @@
   "id": "hosty.shell",
   "name": "Hosty Shell",
   "description": "Hosty browser management shell.",
-  "version": "0.109.2",
+  "version": "0.110.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -41,7 +41,6 @@
             {
               "key": "http",
               "containerPort": 3000,
-              "localPort": 7171,
               "protocol": "http",
               "public": true
             }
@@ -59,7 +58,6 @@
             {
               "key": "http",
               "containerPort": 3000,
-              "localPort": 7171,
               "protocol": "http",
               "public": true
             }
@@ -117,15 +115,15 @@
     "users.read",
     "users.manage",
     "credentials.read",
-    "credentials.revoke"
+    "credentials.revoke",
+    "apps.sandboxes.inspect",
+    "core.environments.inspect",
+    "core.environments.operate"
   ],
   "optionalCorePermissions": [
     "providers.assistant",
     "sources.connections",
-    "apps.sandboxes.inspect",
     "apps.sandboxes.operate",
-    "core.environments.inspect",
-    "core.environments.operate",
     "core.workspace.activate",
     "apps.workspaces.read",
     "apps.sources.full"
