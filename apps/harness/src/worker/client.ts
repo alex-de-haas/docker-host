@@ -12,6 +12,19 @@ const pause = (signal: AbortSignal) => new Promise<void>((resolve, reject) => {
   const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, 500);
   signal.addEventListener("abort", abort, { once: true });
 });
+// A coordinator callback may be queued behind the operation stopping this observer.
+// Abort the wait, not the callback's persistence work; the coordinator guards late work by epoch.
+async function deliverEvent(action: () => void | Promise<void>, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  let abort!: () => void;
+  const aborted = new Promise<never>((_, reject) => {
+    abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  try {
+    await Promise.race([Promise.resolve().then(() => { signal.throwIfAborted(); return action(); }), aborted]);
+  } finally { signal.removeEventListener("abort", abort); }
+}
 export class WorkerClient {
   constructor(readonly origin: string, private readonly identity: ServiceIdentity) {
     const url = new URL(origin);
@@ -73,17 +86,17 @@ export class WorkerClient {
               if (frame.runId !== id || generation && frame.generation !== generation)
                 throw new WorkerApiError(409, "generation_mismatch", "Worker run generation changed.");
               generation = frame.generation;
-              if (frame.sequence > cursor) { await onEvent(frame); cursor = frame.sequence; }
+              if (frame.sequence > cursor) { await deliverEvent(() => onEvent(frame), signal); cursor = frame.sequence; }
             } else if (type === "state" || type === "resync") {
               const receipt = JSON.parse(data) as WorkerReceipt;
               if (receipt.runId !== id || generation && receipt.generation !== generation)
                 throw new WorkerApiError(409, "generation_mismatch", "Worker run generation changed.");
               if (type === "state") return receipt;
               if (!terminal(receipt.state)) throw new WorkerApiError(410, "replay_expired", "Active run replay is unavailable.");
-              if (receipt.snapshot?.text) await onEvent({ runId: id, generation: receipt.generation, sequence: receipt.revision - 1,
-                event: { type: "assistant_text", text: receipt.snapshot.text } });
-              await onEvent({ runId: id, generation: receipt.generation, sequence: receipt.revision,
-                event: { type: "notice", message: "Detailed worker replay expired; the saved final snapshot is shown." } });
+              if (receipt.snapshot?.text) await deliverEvent(() => onEvent({ runId: id, generation: receipt.generation, sequence: receipt.revision - 1,
+                event: { type: "assistant_text", text: receipt.snapshot!.text! } }), signal);
+              await deliverEvent(() => onEvent({ runId: id, generation: receipt.generation, sequence: receipt.revision,
+                event: { type: "notice", message: "Detailed worker replay expired; the saved final snapshot is shown." } }), signal);
               return receipt;
             }
           }

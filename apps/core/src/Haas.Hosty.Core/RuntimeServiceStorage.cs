@@ -15,7 +15,14 @@ internal static class RuntimeServiceStorage
         var result = new List<Binding>();
         foreach (var (storage, cache) in new[] { (manifest.Data, false), (manifest.Cache, true) })
         {
-            if (storage?.Enabled != true) continue;
+            if (storage?.Enabled != true)
+            {
+                // Local commands historically receive app data even without a data declaration.
+                // Enabled storage still follows explicit service targets, including exclusions.
+                if (!cache && service.Runtime.Type == "localCommand")
+                    result.Add(new(new RuntimeAppDataTarget(), false, "HOSTY_APP_DATA_DIR", "/app/data"));
+                continue;
+            }
             var name = cache ? "cache" : "data";
             string EnvironmentName(RuntimeAppDataTarget t) => string.IsNullOrWhiteSpace(t.Environment) ? $"HOSTY_APP_{name.ToUpperInvariant()}_DIR" : t.Environment;
             var applicable = storage.Targets.Where(t => string.IsNullOrEmpty(t.Service) || t.Service == service.Key).ToArray();

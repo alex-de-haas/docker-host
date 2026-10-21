@@ -131,7 +131,11 @@ execution stopped before installing the compatible Core/Harness artifacts. Use n
 install/update and reviewed permissions. Fresh Harness state and provider login are supported;
 there is no old conversation/history importer. Leaving old Harness files unused is sufficient when
 deletion is unnecessary. Never include Core workspaces or external agent leases in a Harness reset.
-New Core rejects the retired manifest, and older Core rejects the new unsupported mount kind.
+New Core rejects retired manifests as install/update candidates and refuses their start/restart.
+It can still read an already-installed retired baseline for inspection, stop, remove and updating
+to ordinary services, so upgrading Core first does not strand the installed app. This compatibility
+read does not restore the legacy worker executor or manage undeclared legacy containers.
+Older Core rejects the new unsupported mount kind.
 
 The architecture uses normal Docker connections, including Windows named pipes, with a Linux
 engine. Docker Desktop path comparison covers drive letters, mapped drive roots, spaces and Unicode;

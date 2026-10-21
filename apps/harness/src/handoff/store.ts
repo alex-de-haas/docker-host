@@ -163,7 +163,7 @@ export class HandoffStore {
       const current = await this.manager.getSession(record.conversationId);
       if (current?.handoffDispatch?.state === "queued") {
         try { await this.manager.postMessage(record.conversationId, current.handoffDraft?.text ?? "", credential,
-          current.handoffDraft?.attachments.map(a => a.name) ?? [], { expectedRevision: current.appContextRevision, dispatchId: record.result.dispatchId, workspaceCredential }); }
+          current.handoffDraft?.attachments.map(a => a.name) ?? [], { expectedRevision: current.appContextRevision, selectionRevision: current.selectionRevision, dispatchId: record.result.dispatchId, workspaceCredential }); }
         catch (error) {
           await this.manager.recordHandoffFailure(record.conversationId,
             error instanceof AppContextError || error instanceof ConnectionError ? error.message : "Execution could not be confirmed. Inspect this conversation before retrying.");

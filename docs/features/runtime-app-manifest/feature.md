@@ -74,6 +74,8 @@ Core reacts to a provided slot it has a handler for by running Core-owned provis
 
 ## Runtime Profiles
 
+Local commands retain implicit `HOSTY_APP_DATA_DIR` and directory creation when app data is omitted or disabled. Enabled data with explicit targets follows service scoping; unselected services do not receive a fallback data root. Cache remains opt-in.
+
 Each `runtimeProfiles[]` entry has `key`, `type` (`docker` or `localCommand`), an optional `default: true` (at most one), and an optional `development: true`.
 
 `development: true` marks a runtime meant for local development. It is only valid for a `localCommand` profile (rejected on `docker` with `app_manifest_development_requires_local_command`), and multiple profiles may declare it. A development profile cannot contain `artifact: prebuilt` services (`app_manifest_development_requires_source`); those immutable builds require a reviewed profile. A development runtime has two coupled effects: the operator may point it at their own source folder (source override), and it runs **live** from that folder — the manifest is adopted on restart, so there is no reviewed-update path (clients show a "Live" badge and hide Update). A `localCommand` runtime **without** `development` runs from source too, but is treated as a locked, reviewed-update artifact (e.g. it builds a production bundle via `setup`), not as live. See [Runtime artifact & storage model](../runtime-artifact-model/feature.md).
@@ -122,7 +124,8 @@ repository metadata is always ro. It requires no operator path binding. See
 [external mounts](../external-mounts/feature.md) and
 [Harness services](../assistant-shared-docker-runtime/feature.md).
 
-The retired `agentWorker` field is rejected. Agents use ordinary application services and their
+The retired `agentWorker` field is rejected for new candidates and execution. An already-installed
+baseline remains readable for inspection, stop/remove and update to a supported manifest. Agents use ordinary application services and their
 own direct protocol; Core has no provider execution proxy.
 
 ### Port fields

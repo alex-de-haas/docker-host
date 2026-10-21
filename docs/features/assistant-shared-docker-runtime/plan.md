@@ -328,7 +328,8 @@ Workspace data is not in this reset scope: it remains Core-owned throughout.
 
 Remove `AgentWorkerService`, execution endpoints/DI/serialization, provider-specific Core logic,
 special `agentWorker` startup, `core-exec.ts`/`core-worker.ts` and replaced Docker plumbing. Preserve
-generic workspace/Git, Docker, identity and lifecycle APIs. Reject retired manifests explicitly;
+generic workspace/Git, Docker, identity and lifecycle APIs. Reject retired candidates and execution;
+keep installed legacy baselines readable for normal stop/remove/update without restoring the executor;
 old Core must reject the new unsupported mount kind before startup. No permanent legacy transport
 or agent cleanup controller remains in new Core. Test incompatible-version startup refusal.
 
@@ -378,7 +379,7 @@ branch/PR. Checks record completed implementation and its verification; platform
 
 Implementation is in progress in the registered Core workspace. Verified local evidence:
 
-- `npm run harness:test`: 907 tests passed; `npm run harness:lint` and the web production build passed.
+- `npm run harness:test`: 909 tests passed after review fixes; `npm run harness:lint` and the web production build passed.
 - Full Core regression: 3901 passed, five opt-in integration tests skipped. After the final generic
   storage/adoption changes, all 227 affected Core tests passed again in an isolated artifacts directory.
 - `npm run cli:build` and `npm run core:aot` passed. Native AOT targets macOS arm64 with no new
@@ -392,7 +393,13 @@ Implementation is in progress in the registered Core workspace. Verified local e
 - Isolated child Core passed normal setup/login/app authorization, declared Docker services,
   Docker/Local/Docker switching, stop/start, state preservation and sandbox Finish/resource removal.
 
-These checks use the final implementation batch; the full Core regression preceded the final
+Review verification on 2026-10-21 adds 211 passing affected Core tests and covers all four findings:
+cancellation/detach cannot wait on a coordinator callback queued behind cleanup; implicit Local data
+remains available; installed retired baselines can stop/remove/update while new candidates and
+execution are rejected; internal app-creation/handoff dispatches carry the model selection revision.
+The initial PR CI completed successfully; the review-fix commit requires its own full CI result.
+
+These checks use the implementation and review-fix batches; the full Core regression preceded the final
 affected-test rerun. AMD64 image execution on this machine uses emulation, not a native Linux host.
 
 D25 remains open for actual native Windows Core + Docker Desktop, native Linux host acceptance

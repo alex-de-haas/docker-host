@@ -23,6 +23,17 @@ public sealed class RuntimeServiceStorageTests
         Assert.Empty(RuntimeServiceStorage.Resolve(selection, Service("processor")));
     }
 
+    [Fact]
+    public void ExplicitLocalStorageDoesNotExposeDataToUnselectedServices()
+    {
+        var selection = Selection(new RuntimeAppDataManifest { Enabled = true, Targets = [
+            new() { Runtime = "localCommand", Service = "api", SubPath = "private" },
+        ] }) with { RuntimeProfile = new() { Key = "local", Type = "localCommand" } };
+        var service = Service("processor") with { Runtime = new() { Type = "localCommand" } };
+        Assert.Empty(RuntimeServiceStorage.Resolve(selection, service));
+        Assert.Equal("private", Assert.Single(RuntimeServiceStorage.Resolve(selection, service with { Key = "api" })).Target.SubPath);
+    }
+
     [Theory]
     [InlineData(@"C:\Projects\Space ü\trees", "/run/desktop/mnt/host/c/Projects/Space ü/trees", true)]
     [InlineData(@"D:\Projects\trees", "/host_mnt/d/Projects/trees", true)]

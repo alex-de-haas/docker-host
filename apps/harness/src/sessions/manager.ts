@@ -688,7 +688,7 @@ export class SessionManager {
         prompt,
       ].join("\n\n");
       try {
-        await this.postMessage(id, text, credential, [], { expectedRevision: record.appContextRevision, dispatchId: requestId, workspaceCredential });
+        await this.postMessage(id, text, credential, [], { expectedRevision: record.appContextRevision, selectionRevision: record.selectionRevision, dispatchId: requestId, workspaceCredential });
       } catch (error) {
         await this.recordHandoffFailure(id, error instanceof Error ? error.message : String(error));
         throw error;

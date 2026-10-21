@@ -62,7 +62,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         string? legacyManifestDigest = null,
         SourceReadGrant? manifestGrant = null,
         bool forceRead = false,
-        bool allowUnsupportedPermissions = false)
+        bool allowUnsupportedPermissions = false,
+        bool allowRetiredContracts = false)
     {
         if (string.IsNullOrWhiteSpace(manifestPath))
         {
@@ -78,7 +79,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             localManifestCache.TryGetValue(localPath, out var cached) &&
             cached.Stamp == stamp)
         {
-            return Select(cached.Manifest, localPath, cached.Digest, selectedRuntime, cached.Json, manifestUrl: null, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && cached.Digest != legacyManifestDigest, allowUnsupportedPermissions: allowUnsupportedPermissions);
+            return Select(cached.Manifest, localPath, cached.Digest, selectedRuntime, cached.Json, manifestUrl: null, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && cached.Digest != legacyManifestDigest, allowUnsupportedPermissions: allowUnsupportedPermissions, allowRetiredContracts: allowRetiredContracts);
         }
 
         var source = manifestGrant is null
@@ -106,7 +107,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             localManifestCache[localPath] = new CachedLocalManifest(manifest, source.Json, digest, stamp);
         }
 
-        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && digest != legacyManifestDigest, allowUnsupportedPermissions: allowUnsupportedPermissions);
+        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && digest != legacyManifestDigest, allowUnsupportedPermissions: allowUnsupportedPermissions, allowRetiredContracts: allowRetiredContracts);
     }
 
     // Mirrors ReadManifestSourceAsync/ReadLocalManifestAsync resolution for the cache key: null for a
@@ -492,7 +493,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         string? manifestUrl = null,
         bool validateAllProfiles = true,
         bool requirePanelIcons = false,
-        bool allowUnsupportedPermissions = false)
+        bool allowUnsupportedPermissions = false,
+        bool allowRetiredContracts = false)
     {
         var errors = new List<AppManifestValidationError>();
         ValidateRequired(manifest.SchemaVersion, "$.schemaVersion", errors);
@@ -533,7 +535,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
                     errors.Add(new("app_manifest_ui_panel_id_duplicate", "Panel IDs must be unique within the app.", $"$.ui.panels[{index}].id"));
             }
         }
-        if (manifest.AgentWorker is not null)
+        if (!allowRetiredContracts && manifest.AgentWorker is not null)
             errors.Add(new("app_manifest_agent_worker_retired", "The agentWorker contract is retired. Install an application that declares ordinary services.", "$.agentWorker"));
         foreach (var permission in manifest.CorePermissions.Concat(manifest.OptionalCorePermissions))
         {
@@ -906,7 +908,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         if (validateAllProfiles)
         {
             foreach (var other in manifest.RuntimeProfiles.Where(profile => profile.Key != selectedProfile!.Key))
-                Select(manifest, manifestPath, manifestDigest, other.Key, manifestJson, manifestUrl, validateAllProfiles: false, requirePanelIcons: requirePanelIcons, allowUnsupportedPermissions: allowUnsupportedPermissions);
+                Select(manifest, manifestPath, manifestDigest, other.Key, manifestJson, manifestUrl, validateAllProfiles: false, requirePanelIcons: requirePanelIcons, allowUnsupportedPermissions: allowUnsupportedPermissions, allowRetiredContracts: allowRetiredContracts);
         }
         _ = DockerRuntimeAdapter.OrderServices(selectedServices);
 

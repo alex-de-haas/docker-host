@@ -38,7 +38,11 @@ public sealed class RuntimeAppManifestRepositoryTests
         {
             var file = Path.Combine(root, "manifest.json");
             await File.WriteAllTextAsync(file, document.ToJsonString());
-            Assert.Contains((await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(file))).Errors,
+            var manifests = new AppManifestService();
+            var baseline = await manifests.LoadAsync(file, validateAllProfiles: true, allowRetiredContracts: true);
+            Assert.NotNull(baseline.Manifest.AgentWorker);
+            // A cached parse admitted as installed evidence must not admit a new candidate.
+            Assert.Contains((await Assert.ThrowsAsync<AppManifestException>(() => manifests.LoadAsync(file))).Errors,
                 error => error.Code == "app_manifest_agent_worker_retired");
         }
         finally { Directory.Delete(root, recursive: true); }

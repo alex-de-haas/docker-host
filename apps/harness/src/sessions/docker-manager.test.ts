@@ -114,3 +114,22 @@ it("reconnects after temporary SSE unavailability without starting another execu
   expect(interrupted).toBe(true); expect(f.starts()).toBe(1);
   expect(f.events.filter(e=>e.type === "assistant_text")).toHaveLength(1);
 });
+
+it.each(["stop", "detach"] as const)("%s does not wait on an event callback queued behind coordinator cleanup", async operation => {
+  const f = await fixture();
+  let releaseCallback!: () => void, entered = false;
+  const blocked = new Promise<void>(resolve => { releaseCallback = resolve; });
+  const run = f.adapter.start({ sessionId: "conversation", cwd: "/unused", onEvent: () => {},
+    onWorkerEvent: async () => { entered = true; await blocked; } });
+  cleanups.push(() => run.stop());
+  run.send("work"); await expect.poll(f.starts).toBe(1);
+  f.options()!.onEvent({ type: "assistant_text", text: "queued behind cleanup" });
+  await expect.poll(() => entered).toBe(true);
+  let finished = false;
+  const cleanup = run[operation]!().then(() => { finished = true; });
+  try {
+    // The coordinator releases its session queue only after stop/detach returns.
+    await expect.poll(() => finished, { timeout: 1500 }).toBe(true);
+    expect(f.stopped()).toBe(operation === "stop" ? 1 : 0);
+  } finally { releaseCallback(); await cleanup; }
+});
