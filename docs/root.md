@@ -90,7 +90,7 @@ Plans: 13 In Progress · 1 Blocked · 40 Draft · 7 On Hold.
 - [Auth Session Lifecycle And Recovery](features/auth-session-lifecycle/feature.md) — The identity error contract, opaque app session grants, sliding lifetimes and session recovery through Core login.
 - [Feature: Automatic Runtime App Ports](features/automatic-runtime-app-ports/feature.md) — Core reserves host ports at install, injects them into the environment and lets operators reassign or pin them. · [plan](features/automatic-runtime-app-ports/plan.md): Draft, 0/10, updated 2026-10-21
 - [Cardputer Operator Shell](features/cardputer-shell/plan.md) — Firmware that turns an M5Stack Cardputer ADV into a pocket Hosty operator console. · In Progress, 26/33, updated 2026-08-23
-- [CI Feedback Loop](features/ci-feedback-loop/feature.md) — Automatic affected PR validation, selected native qualification and publication of verified main revisions.
+- [CI Feedback Loop](features/ci-feedback-loop/feature.md) — Affected component CI, explicit local integration checks and publication of verified main revisions.
 - [CLI Bootstrap](features/cli-bootstrap/feature.md) — The hosty CLI installs itself and Core, discovers the Core control API and manages runtime apps.
 - [Feature: Cloudflare Ingress](features/cloudflare-ingress/feature.md) — An opt-in Cloudflare Tunnel provider that publishes app endpoints and derives their public origins.
 - [Container Capabilities And Devices](features/container-capabilities/feature.md) — A docker service can add named Linux capabilities and device nodes under /dev, opt-in per service and never as --privileged.

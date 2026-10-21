@@ -2,6 +2,11 @@ import { appendFileSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { ALL_JOBS, COMPONENTS, evaluateGate } from '../../../scripts/ci-policy.mjs';
 
+// Retained format-1 evidence can describe checks removed from today's workflow.
+// Exact-SHA and successful-attempt validation still happens before this schema check.
+const historicalProfiles = new Set(['core-windows-process-control', 'workspace-native-activation',
+  'core-transport', 'harness-worker', 'whisper-native']);
+
 export function validateSelection(manifest, sourceSha) {
   if (!/^[a-f0-9]{40}$/.test(sourceSha ?? '')) throw new Error('Publication selection requires a full source SHA.');
   const keys = ['format', 'sourceSha', 'baseSha', 'components', 'profiles', 'required'];
@@ -13,11 +18,25 @@ export function validateSelection(manifest, sourceSha) {
   }
   const plan = { version: 1, components: manifest.components, profiles: manifest.profiles,
     required: manifest.required, reasons: {} };
+  for (const field of ['components', 'profiles', 'required']) {
+    if (!Array.isArray(plan[field]) || new Set(plan[field]).size !== plan[field].length) {
+      throw new Error('Invalid CI selection manifest: missing or duplicate ' + field);
+    }
+  }
+  for (const job of historicalProfiles) {
+    if (plan.profiles.includes(job) !== plan.required.includes(job)) {
+      throw new Error('Invalid CI selection manifest: inconsistent historical profile ' + job);
+    }
+  }
+  const current = { ...plan,
+    profiles: plan.profiles.filter(job => !historicalProfiles.has(job)),
+    required: plan.required.filter(job => !historicalProfiles.has(job)),
+  };
   // Reuse the CI gate's own component/profile/required consistency rules. These synthetic results
   // only validate schema: the preceding gate already verifies the real successful CI attempt.
   const needs = Object.fromEntries(ALL_JOBS.map(job => [job,
     { result: Array.isArray(plan.required) && plan.required.includes(job) ? 'success' : 'skipped' }]));
-  const errors = evaluateGate(plan, needs);
+  const errors = evaluateGate(current, needs);
   if (errors.length) throw new Error(`Invalid CI selection manifest: ${errors.join('; ')}`);
   return plan;
 }

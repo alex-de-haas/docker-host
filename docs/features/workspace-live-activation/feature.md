@@ -501,13 +501,13 @@ used by Shell or another app in a shared worktree.
 - Run `python3 scripts/check-workspace-activation.py . return --managed` on a host with Docker after
   Debug Core/CLI builds. The fixture performs normal setup/password login, reviewed HTTP activation,
   exact-target Return and replay, and verifies parent-owned Finish and process/port cleanup.
-- Run the native `return` and `auto` scenarios on macOS, Windows and Linux; CI defines that matrix.
+- Run `npm run test:integration -- activation` for managed `return` and `auto` scenarios on the local host. The direct Python entry point retains focused native scenarios on macOS, Windows and Linux; these are explicit local checks outside GitHub CI.
   Windows receipt observers allow delete sharing, retry transient access denial within the existing
   deadline and preserve the final I/O cause. Verify atomic replacement with a concurrent reader,
   temporary and persistent legacy-reader conflicts, immediate access-denial refusal, concurrent
   creation and preservation after partial replacement failure. Core JSON storage tests hold a reader
   open across typed, owner-only and text writes and verify old/new snapshots and temporary-file cleanup.
-  Failed CI fixtures export bounded, sanitized owned log tails and selected recovery state; they do
+  Failed fixtures export bounded, sanitized owned log tails and selected recovery state; they do
   not upload raw journals, authentication files, snapshots or app data.
 - Exercise managed Git checkout, inspection and removal with paths longer than 260 characters, including Windows with global/system Git configuration disabled.
   Passing on one operating system does not establish another platform's process-control result.

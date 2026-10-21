@@ -1,6 +1,6 @@
 ---
 created: 2026-09-29
-updated: 2026-10-15
+updated: 2026-10-21
 summary: Apps discover and call confirmed speech, translation and assistant providers with short-lived Core credentials.
 components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/whisper, apps/harness]
 ---
@@ -184,7 +184,7 @@ and workspace/publication calls; conversations require no additional consent.
   CPU inference. `HOSTY_WHISPER_INTEGRATION=1 dotnet test apps/whisper/Hosty.Whisper.Tests` downloads the
   pinned tiny model; `HOSTY_WHISPER_TEST_CACHE` optionally reuses a verified cache. The fixture is locally
   synthesized Russian speech: “Привет. Это проверка голосового ввода. Открой настройки приложения.”
-  CI enables this test on Windows, Linux and macOS. The ordinary test run explicitly skips native inference.
+  Run `npm run test:integration -- whisper` explicitly on the target Windows, Linux or macOS host. GitHub CI and ordinary test runs do not enable native inference.
 - Harness/Shell: optional permission UI, iframe policy, editable insertion, cancelled/late results,
   conversation switching, existing composer actions and attachments.
 - Integration uses Core-managed apps and real Core identity. Local macOS verification exercised Russian
