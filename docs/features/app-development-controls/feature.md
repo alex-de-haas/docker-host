@@ -1,6 +1,6 @@
 ---
 created: 2026-10-18
-updated: 2026-10-20
+updated: 2026-10-21
 summary: Core-owned execution selection runs installed packages or registered workspace manifests on ordinary app data, with scoped access review and recoverable lifecycle operations.
 components: [apps/core, apps/cli, apps/harness, apps/shell]
 ---
@@ -80,6 +80,11 @@ restore an old manifest, data archive, settings snapshot or revoked grants. Curr
 worktrees, caches and ordinary app data survive. There is no mandatory generic data-compatibility
 acknowledgement in the unified switching contract.
 
+Runtime discovery reads profile declarations without admitting the default recipe. Selecting a
+package validates the chosen destination before stopping the current runtime; unrelated runtime
+recipe errors do not block recovery. Shared manifest requirements still apply. Installation and
+update retain all-profile validation.
+
 ## Durable Operations And Authority
 
 Each execution intent has a stable UUID `requestId`, a durable target journal and child development
@@ -142,6 +147,12 @@ not leave a permanent restart requirement against the installed package. Adopted
 their previous applied digest; later source changes still require a fresh start. The installed
 package manifest and version remain unchanged.
 
+Legacy Return validates the captured destination rather than the active installed recipe. Stop,
+logs and health read the retained execution contract, including older operations with only a
+captured installed manifest. Retired declarations remain readable for stopping an already admitted
+runtime, while destination admission stays strict. Broken installed or live development recipes do not prevent Return;
+the destination contract and retained manifest digest still have to be valid.
+
 ## Audit
 
 Core records requested selection, additional-access review, progress, refusal and outcome with the
@@ -159,6 +170,9 @@ record substitutes for observed runtime readiness and browser verification.
   manifest/version unchanged and report simulated-adapter coverage separately from real runtime QA.
 - Refresh a workspace command across service recreation; retain last-launched topology for Stop/logs,
   and return from invalid live JSON without losing current source/data or restoring revoked rights.
+- Break the installed default development recipe and live source JSON, then list runtime choices
+  and return to a valid package with current data and source edits intact. Reject an invalid
+  destination before Stop. Cover explicit and inferred destinations and legacy Return with Stop.
 - Verify package Docker -> workspace A -> workspace B -> package Docker, explicit package baseline
   changes, healthy interruption recovery and ownership-aware group Return.
 - Retain legacy version-only compatibility, strict raw recipe checks and correct applied workspace
