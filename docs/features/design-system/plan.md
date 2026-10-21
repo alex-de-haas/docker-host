@@ -1,8 +1,8 @@
 ---
 status: Draft
 created: 2026-10-12
-updated: 2026-10-20
-summary: Hosty's visual language — ink acts, lime answers — with its color, type, mark and ReUI token rules, and the Shell layouts built from it, including tools at narrow widths and on phones.
+updated: 2026-10-21
+summary: Hosty's visual language — ink acts, lime answers — with its color, type, mark and ReUI token rules, the Shell layouts built from it, and the Harness development and review pages.
 components: [apps/shell, apps/shell-swift, packages/app-sdk, apps/core, apps/harness, assets/hosty-brand, apps/plans, apps/telemetry, apps/telemetry-ui, apps/demo-app, apps/marketplace, apps/whisper]
 ---
 
@@ -65,6 +65,8 @@ until shared from its page. This document carries every value and rule needed to
 | `Shell`, `AppDetail`, `DataGrid` | Dashboard with tools, dark app detail, table page |
 | `PanelOptions`, `ShellNarrow` | The fit rule for tools, Shell in a 900 px window |
 | `PhonePeek`, `PhoneSheet`, `PhoneTools`, `PhoneKeyboard`, `PhoneManyTools` | Phone: tab bar, open tool, tool list, keyboard and long dialog, many tools |
+| `HarnessPage`, `HarnessReview` | Harness development page; its review page for session changes and open pull requests |
+| `HarnessPhoneList`, `HarnessPhoneChat` | Harness on a phone: sessions, and the conversation with the workspace sheet |
 
 ## Principles
 
@@ -458,6 +460,124 @@ never opened on this device, and a phone, still see them:
   conversation, and keeps its composer at the bottom of the frame. Shell owns only the sheet, its
   header, its heights and Hide.
 
+## Harness development page
+
+Owner direction, 2026-10-20, from the `HarnessPage` and `HarnessReview` artboards. The
+[Harness development UI](../harness-development-ui/feature.md) is the functional baseline: its
+actions, states, ordering, recovery and authorization stay, and this section only changes how they
+are presented (D20 applies). Where an artboard shows less than the feature does, the feature wins.
+
+### Layout
+
+The page fills Shell's main area inside the app frame, with Harness's 3 px accent strip. It needs
+more width than an ordinary embedded app, so Shell's navigation folds to its icon rail first under
+the fit rule. Three columns sit side by side and wrap into one column on narrow widths: sessions
+(about 264 px), the conversation (takes the remaining width, its transcript and composer capped at
+760 px) and the workspace (about 344 px). A conversation without a Core workspace has no workspace
+column; the header's workspace toggle hides and shows it.
+
+### Sessions
+
+- A header with the count, **New session** and a search field.
+- Filter chips — All, Needs you, Working, Failed — each with its count and the state's shape. They
+  only filter; rows keep the feature's order by most recent activity, and a waiting session is not
+  pinned above newer work.
+- App groups carry the app's cell mark; Unassigned chats follow them. A row shows the title and one
+  line of state: the state word in its status color and weight (needs you amber, working Info blue,
+  failed red, idle and completed muted) followed by context such as the PR number or time. The
+  state's shape sits at the row's end: a diamond, a pulse, the alert icon, or a muted check for
+  completed. The selected row uses the lime soft fill.
+- **External workspaces** becomes one row at the foot of the column, with its count, and opens the
+  existing external view; its separation from synchronized conversations is unchanged.
+
+### Conversation
+
+- The header holds the session title with Rename, the context apps as mark chips with Add app, the
+  workspace toggle and the session menu.
+- A pending decision is pinned under the header — "Needs you · Allow `git push` to update #612" —
+  with a Review action that scrolls to the card, however long the conversation, as D17 does for the
+  panel. While the agent works the same place shows an Info-blue bar with the current step, the
+  elapsed time and Stop.
+- The transcript groups tool activity: reads collapse into one expandable line ("Read 3 files and 2
+  review threads · 6 s"), edits list each file with its additions and deletions and open the review
+  page at that file, and commands show their result in place.
+- The approval card has an amber header, the exact command on an ink block, its repository, branch
+  and effect, then Allow once (the view's primary action), Allow for this session and Deny…, which
+  reveals an optional reason that is sent with the denial.
+- The composer keeps attachments, app mentions and Whisper dictation; its bottom row holds the
+  provider and model and the Normal / Autonomous switch with a one-line explanation of the mode.
+
+### Workspace
+
+One column without tabs, top to bottom:
+
+- **Header:** "Workspace", a neutral state chip (In progress, Paused, Completed), the observation
+  line ("1 repository · watching · observed 12 s ago"), Refresh, and the menu with Complete, Pause,
+  Resume and Delete as the feature defines them.
+- **Repository card:** name and bound apps, the branch against its base, Ahead / Behind / Not pushed
+  counts, **Session changes** with its additions, deletions and file count, which opens the review
+  page, and Commit…, Push branch and Update PR with the remaining Git actions in a menu.
+- **Pull requests:** described below.
+- **Preview card:** the sandbox, its running dot and start time, the sandbox address, and a line —
+  environment reused, time to ready, its own test users and data — that expands into the launch steps
+  with their times. Open preview and Open test Core stay visible; Restart app, Service logs, Run a
+  reviewed check and Stop sandbox move to its menu. Per-service rows, restart requirements and
+  failures from the feature remain.
+- **Used by:** the apps that run from this workspace, with Use on this Core.
+
+### Pull requests
+
+- Every PR of the workspace is a card that collapses on its header. Collapsed, it takes two lines:
+  the status icon, the title and the number; then the state word for a draft or merged PR, the CI
+  result in its color, and the threads — "Draft · CI passed · not ready for review", "CI 4 of 5 · 1
+  running · 2 unresolved threads". Expanded, it adds the state and review chips, a segmented CI bar
+  with the passed / in progress / skipped summary, notes such as an unpushed head, and Review changes
+  for a PR that is still open or draft.
+- The icon's shape names the PR state and its color names CI: an open PR's icon is green when every
+  check passed, Info blue while checks run and red when one failed; a draft keeps the muted draft
+  icon whatever its CI, and a merged PR the violet merge icon. Closed, unknown and stale states keep
+  the feature's icons and neutral color. Green and red describe CI only; review decisions stay in the
+  chips. Every icon has its accessible label, and the summary line repeats the state in words.
+- The CI bar opens the check list by click only, never on hover, as a popover beside the workspace
+  column so it covers neither the cards nor the preview; it closes on a second click or its close
+  button and refreshes with new observations.
+
+### Review page
+
+The diff dialog becomes a page of its own. Session changes, an edited file in the transcript and
+Review changes on a PR open it; the header's breadcrumb and **Back to session** return to the page
+with the conversation, its draft and its scroll intact. It has three columns:
+
+- **The session's conversation, narrowed:** the pinned decision, the latest messages and the
+  composer, so the operator can answer the agent without leaving the review.
+- **What to review:** a picker for Session changes, Since main and each open or draft PR of the
+  workspace, the PRs with their status icon and summary line; merged and closed PRs open on GitHub.
+  A PR shows its chips and a GitHub link. Below the picker are the totals, the viewed count and the
+  file list with additions, deletions, comment threads and a viewed check.
+- **The diff:** the file path, its counts, Viewed, previous and next file. The feature's renderer,
+  Unified / Split and wrapping stay. Lines that are not yet in the PR head carry a muted stripe.
+
+Review actions:
+
+- **Threads in place.** For a PR, its review threads appear under their lines — from agents such as
+  Codex and from people — with the author, whether the author is an agent or a reviewer, the time and
+  the replies, a state chip (Unresolved in amber, Addressed but not pushed in Info blue) and Reply,
+  Resolve and Ask Harness.
+- **Select lines.** A click on a line number selects it and a second click or Shift+click extends the
+  selection; the numbers fill lime. The selection offers **Ask Harness**, which places a reference to
+  those lines — file, line range, source and revision — in the narrow composer, and **Comment on
+  #N**, which opens a comment box with "Also ask Harness to address it" and posts the comment to the
+  PR on GitHub. Lines not in the PR head cannot take a GitHub comment; the bar says to push first or
+  to ask Harness.
+
+### Harness on a phone
+
+- The sessions list fills the screen with the same filters and groups, above the bottom tab bar.
+- A conversation keeps its pinned decision and its composer above the tab bar; Workspace opens the
+  workspace as a bottom sheet over it. The sheet has no tabs: Session changes lists the files inside
+  the sheet with a back button, each file opens as its own page, and the CI bar expands its check
+  list in place on a tap.
+
 ## Interactions With Existing Features
 
 Implementing this plan changes documented behavior; each owning `feature.md` follows in the same PR as
@@ -491,6 +611,18 @@ the deliverable that changes it.
   [Assistant Approval Rules](../assistant-approval-rules/feature.md) stay owned by Harness; D17 adds
   the pinned pending decision inside Harness's own panel UI and makes Harness the first activity
   provider.
+- [Harness Development UI](../harness-development-ui/feature.md) documents the page D21–D26 restyle.
+  Three of its documented behaviors change: an open PR's CI shows as a colored dot on the icon with
+  amber for pending checks, where D22 colors the icon itself and uses Info blue for checks in
+  progress, since amber means needs you; diffs open in a dialog, which D23 replaces with the review
+  page; and external workspaces have their own tab, which D21 turns into a row in the sessions
+  column. Its session order by most recent activity, with waiting sessions not pinned, is kept.
+- [Assistant PR Lifecycle](../assistant-pr-lifecycle/feature.md) already observes review threads
+  with their IDs, paths, lines and bounded comment text, and owns thread resolution. D24 shows those
+  threads in the review page; D25 adds a new Core operation for posting a review comment or reply
+  through the PR's selected GitHub connection, which that feature documents when it ships.
+- [Delivery Readiness](../hosty-delivery-readiness/plan.md) keeps its priorities: D21–D26 follow its
+  incremental-redesign rule and are not demo gates unless the owner promotes them there.
 
 ## Deliverables
 
@@ -522,6 +654,15 @@ the deliverable that changes it.
 - [ ] D15. Build the tool activity contract through Core as described under Activity: per-user reports keyed by the panel reference, an app-authenticated internal endpoint with an SDK server helper, time-to-live for working, re-reporting after a Core restart, a `tool.activity.changed` bus hint, "no connection" from Core readiness, and Shell's priority aggregation.
 - [ ] D17. In Harness, pin a pending approval under its panel header with a Review action, keep its composer at the bottom of its frame on phones, and report its activity through D15 as the first provider.
 
+### Phase 4 — Harness development page
+
+- [ ] D21. Restyle Harness's development page as described under Harness development page: the three-column layout in the app frame, the sessions column with search, filter chips, app-mark groups, state lines and shapes and the External workspaces row, the conversation header with the pinned decision and working bar, the grouped transcript, the approval card and the composer row, and the workspace column without tabs, with its header, repository card, preview card and Used by — keeping every action and state of the Harness development UI feature, with Harness version bumps.
+- [ ] D22. Rework the pull request presentation: collapsible PR cards with the two-line summary, the icon rule (shape for the PR state, color for CI on open PRs, Info blue for checks in progress, muted drafts, violet merged, neutral closed, unknown and stale), the segmented CI bar whose check list opens by click beside the workspace column, and Review changes for open and draft PRs; update the Harness development UI feature, with Harness version bumps.
+- [ ] D23. Replace the diff dialog with the review page: entries from Session changes, transcript edits and Review changes, the narrowed session conversation with its pinned decision and composer, the picker for Session changes, Since main and each open or draft PR, the file list with totals, viewed state and thread counts, the diff with the existing renderer, Unified / Split and wrapping, markers for lines not in the PR head, and Back to session that restores the conversation, its draft and its scroll, with Harness version bumps.
+- [ ] D24. Add line selection and threads to the review page: line-number selection with the lime fill, Ask Harness placing a structured reference (file, line range, source, revision) in the composer, and the PR's review threads under their lines from Core's existing observations, with author kind, state chip, Reply, Resolve through the existing resolution operation, and Ask Harness, with Harness version bumps.
+- [ ] D25. Post PR review comments and replies from the review page through a new Core publication operation that uses the PR's selected GitHub connection, the operator's own authority and CSRF protection, refuses lines outside the PR head, and optionally asks Harness to address the comment; document it in the Assistant PR Lifecycle feature, with Core and Harness version bumps.
+- [ ] D26. Add the Harness phone layout on top of D13's tab bar: the full-screen sessions list, the conversation with its pinned decision and composer above the tab bar, the workspace as a bottom sheet without tabs, session changes as a list with each file on its own page, and the CI bar expanding its checks in place, with Harness version bumps.
+
 ### Functional Parity
 
 - [ ] D20. Inventory existing actions/states on each changed screen, preserve them where mockups are incomplete, and verify permissions, navigation, forms, drafts, panels and failure/recovery before accepting the visual replacement.
@@ -534,6 +675,12 @@ the deliverable that changes it.
 - May a user pin one tool as a fifth phone tab?
 - Where does Shell read an app's accent for the frame strip and tool badges — a manifest field
   limited to the fixed palette, or a table Shell keeps for first-party apps?
+- Which existing diff scope does the review page's **Session changes** mean — the uncommitted
+  changes, or everything the session has not pushed yet? Since main maps to the all-workspace scope.
+- Does Comment on #N post single comments only, or collect a pending review that the operator submits
+  at once?
+- May an administrator comment through a PR whose publication uses another user's GitHub
+  connection, or only that connection's owner?
 
 ## Verification
 
@@ -554,6 +701,12 @@ Compare changed screens against D20's functional inventory through Core/Shell, i
   599/600 px, and the widths where each page's minimum plus the tool minimum stops fitting with the
   full sidebar and with the rail (for the Dashboard and Settings). No overlap between navigation, page
   and tool at any width.
+- Harness development page through Core-managed Shell and a normal password login, in light and dark:
+  every action and state from the Harness development UI feature is reachable; the review page opens
+  from all three entries and returns with the draft and scroll intact; each picker source shows its
+  own files; a selection reaches the composer as a reference; a GitHub comment lands on the intended
+  PR line through the selected connection and is refused for a line outside the PR head; the CI
+  popover opens only by click.
 - Phone checks on iOS Safari and Android Chrome: keyboard open with a long conversation, a pending
   decision while another tool works, 16 or more tools, rotation, and a hidden tool keeping its draft
   across dock, sheet and phone transitions.
