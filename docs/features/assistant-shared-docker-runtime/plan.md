@@ -379,7 +379,7 @@ branch/PR. Checks record completed implementation and its verification; platform
 
 Implementation is in progress in the registered Core workspace. Verified local evidence:
 
-- `npm run harness:test`: 910 tests passed after review fixes; `npm run harness:lint` and the web production build passed.
+- `npm run harness:test`: 916 tests passed after review fixes; `npm run harness:lint` and the web production build passed.
 - Full Core regression: 3901 passed, five opt-in integration tests skipped. After the final generic
   storage/adoption changes, all 227 affected Core tests passed again in an isolated artifacts directory.
 - `npm run cli:build` and `npm run core:aot` passed. Native AOT targets macOS arm64 with no new
@@ -402,7 +402,10 @@ Windows detached-helper recovery after an unavailable test Core; the unchanged c
 A subsequent review identified cancellation during slow reservation/startup: the client now waits
 for a terminal receipt with a bounded deadline and retains leases on timeout or interrupted exit.
 The 18 affected HTTP/client protocol tests pass, including this slow-start regression. This final
-cancellation fix requires its own full CI result.
+cancellation fix passed full CI. Two further review findings cover terminal delivery and native
+error text: confirmed terminal events now persist with a stable receipt revision, retry transient
+store failures, recover append-before-clear crashes without duplicates and detach on shutdown.
+All 24 affected HTTP/client protocol tests pass; the terminal-persistence commit requires its own CI.
 
 These checks use the implementation and review-fix batches; the full Core regression preceded the final
 affected-test rerun. AMD64 image execution on this machine uses emulation, not a native Linux host.

@@ -151,3 +151,99 @@ it("waits for an admitted run to finish cancellation during slow startup", async
   expect(f.starts()).toBe(0); expect(released).toBe(1);
   expect(await f.client.capabilities()).toMatchObject({ capacity: 1 });
 });
+
+it("preserves a failed provider's actionable terminal error", async () => {
+  const f = await fixture(); f.run.send("work"); await expect.poll(f.starts).toBe(1);
+  f.options()!.onEvent({ type: "error", message: "Provider quota exceeded; renew this account." });
+  await expect.poll(() => f.events.find(event => event.type === "error")).toMatchObject({
+    type: "error", message: "Provider quota exceeded; renew this account.",
+  });
+  expect(f.stopped()).toBe(1);
+});
+
+it.each(["result", "error"] as const)("retries durable %s persistence without duplicating its terminal transcript", async type => {
+  const { SessionManager } = await import("./manager.js");
+  const { SessionStore } = await import("./store.js");
+  const { AuditReporter } = await import("../audit.js");
+  const f = await fixture();
+  const store = new SessionStore(path.join(f.root, "coordinator"), path.join(f.root, "cache"));
+  const manager = new SessionManager(store, f.adapter, new AuditReporter(null, null, "hosty.harness"), f.root,
+    null, null, null, null, null, null, null, null, f.client, "docker");
+  cleanups.push(() => manager.shutdown());
+  const record = await manager.createSession({ createdBy: "owner" });
+  await manager.postMessage(record.id, "work"); await expect.poll(f.starts).toBe(1);
+  let appendFailed = false, clearFailed = false;
+  const append = store.appendEvent.bind(store), save = store.saveRecord.bind(store);
+  vi.spyOn(store, "appendEvent").mockImplementation(async (id, event) => {
+    if (event.type === type && !appendFailed) { appendFailed = true; throw new Error("temporary append failure"); }
+    return append(id, event);
+  });
+  vi.spyOn(store, "saveRecord").mockImplementation(async value => {
+    if (value.id === record.id && !value.workerRun && !clearFailed) { clearFailed = true; throw new Error("temporary receipt-clear failure"); }
+    return save(value);
+  });
+  f.options()!.onEvent(type === "result" ? { type, status: "success" } : { type, message: "Native provider error" });
+  await expect.poll(async () => {
+    const saved = (await store.readRecord(record.id))!;
+    return saved.status === (type === "result" ? "idle" : "failed") && !saved.workerRun;
+  }, { timeout: 5000 }).toBe(true);
+  const terminals = (await store.readEvents(record.id)).filter(event => event.type === type);
+  expect(terminals).toHaveLength(1);
+  expect(terminals[0]).toMatchObject({ workerRunId: expect.any(String), workerSequence: expect.any(Number) });
+  expect(appendFailed).toBe(true); expect(clearFailed).toBe(true);
+  expect(f.starts()).toBe(1); expect(f.stopped()).toBe(1);
+});
+
+it.each(["result", "error"] as const)("recovers a persisted %s after a crash before clearing the run receipt", async type => {
+  const { SessionManager } = await import("./manager.js");
+  const { SessionStore } = await import("./store.js");
+  const { AuditReporter } = await import("../audit.js");
+  const f = await fixture();
+  const store = new SessionStore(path.join(f.root, "coordinator"), path.join(f.root, "cache"));
+  const make = () => new SessionManager(store, f.adapter, new AuditReporter(null, null, "hosty.harness"), f.root,
+    null, null, null, null, null, null, null, null, f.client, "docker");
+  const first = make(); cleanups.push(() => first.shutdown());
+  const record = await first.createSession({ createdBy: "owner" });
+  await first.postMessage(record.id, "work"); await expect.poll(f.starts).toBe(1);
+  const active = (await store.readRecord(record.id))!;
+  f.options()!.onEvent(type === "result" ? { type, status: "success" } : { type, message: "Native provider error" });
+  await expect.poll(async () => (await store.readRecord(record.id))!.workerRun).toBeUndefined();
+  await first.shutdown();
+  // Transcript append survived, but the coordinator record still points at the original run.
+  await store.saveRecord({ ...(await store.readRecord(record.id))!, status: "running", workerRun: active.workerRun });
+  const next = make(); cleanups.push(() => next.shutdown()); await next.recoverWorkerRuns();
+  await expect.poll(async () => {
+    const saved = (await store.readRecord(record.id))!;
+    return saved.status === (type === "result" ? "idle" : "failed") && !saved.workerRun;
+  }, { timeout: 5000 }).toBe(true);
+  expect((await store.readEvents(record.id)).filter(event => event.type === type)).toHaveLength(1);
+  expect(f.starts()).toBe(1); expect(f.stopped()).toBe(1);
+});
+
+it("detaches terminal persistence retries on coordinator shutdown", async () => {
+  const { SessionManager } = await import("./manager.js");
+  const { SessionStore } = await import("./store.js");
+  const { AuditReporter } = await import("../audit.js");
+  const f = await fixture();
+  const store = new SessionStore(path.join(f.root, "coordinator"), path.join(f.root, "cache"));
+  const manager = new SessionManager(store, f.adapter, new AuditReporter(null, null, "hosty.harness"), f.root,
+    null, null, null, null, null, null, null, null, f.client, "docker");
+  cleanups.push(() => manager.shutdown());
+  const record = await manager.createSession({ createdBy: "owner" });
+  await manager.postMessage(record.id, "work"); await expect.poll(f.starts).toBe(1);
+  const save = store.saveRecord.bind(store); let failures = 0;
+  vi.spyOn(store, "saveRecord").mockImplementation(async value => {
+    if (value.id === record.id && !value.workerRun) { failures++; throw new Error("receipt storage unavailable"); }
+    return save(value);
+  });
+  f.options()!.onEvent({ type: "result", status: "success" });
+  await expect.poll(() => failures, { timeout: 3000 }).toBeGreaterThanOrEqual(2);
+  await expect(manager.postMessage(record.id, "must wait for persistence")).rejects.toThrow();
+  await expect(manager.setModel(record.id, { expectedRevision: 0, selection: { model: null } })).rejects.toThrow();
+  expect(f.starts()).toBe(1);
+  await manager.shutdown();
+  const afterShutdown = failures;
+  await new Promise(resolve => setTimeout(resolve, 700));
+  expect(failures).toBe(afterShutdown);
+  expect((await store.readRecord(record.id))!.workerRun).toBeDefined();
+});

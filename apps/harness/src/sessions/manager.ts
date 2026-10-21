@@ -762,7 +762,7 @@ export class SessionManager {
   async setModel(id: string, input: Record<string, unknown>): Promise<SessionRecord> {
     return this.serialize(id, async () => {
       const session = await this.requireLive(id);
-      if (["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
+      if (session.record.workerRun || ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
       if (input.expectedRevision !== (session.record.selectionRevision ?? 0)) throw new AppContextError(409, "selection_conflict", "Model selection changed. Refresh this chat before retrying.");
       const proposed = input.selection;
       if (!proposed || typeof proposed !== "object" || Array.isArray(proposed) || Object.keys(proposed).some(key => !["model", "reasoningEffort"].includes(key)))
@@ -1048,15 +1048,18 @@ export class SessionManager {
     throw new WorkerError("runtime_selected_by_core", "Select Docker or Local through Core's application runtime controls.", 409);
   }
 
-  private async finishExecution(session: LiveSession, retainActivationReview = false): Promise<void> {
+  private async finishExecution(session: LiveSession, retainActivationReview = false, preserveWorkerRun = false): Promise<void> {
     if (!this.worker) return;
     if (session.run) {
       if (!session.run.stopAndWait) throw new WorkerError("exit_unconfirmed", "Execution exit cannot be confirmed. Source leases remain held.", 503);
-      await session.run.stopAndWait(); session.run = null;
+      await session.run.stopAndWait();
+      if (!preserveWorkerRun) session.run = null;
     }
-    session.runEpoch = undefined;
-    delete session.record.workerRun;
-    await this.store.saveRecord(session.record);
+    if (!preserveWorkerRun) {
+      session.runEpoch = undefined;
+      delete session.record.workerRun;
+      await this.store.saveRecord(session.record);
+    }
     this.clearRefresh(session);
     this.proxy?.unregister(session.record.id);
     if (retainActivationReview) this.developmentMcp.disconnect(session.record.id);
@@ -1075,7 +1078,7 @@ export class SessionManager {
       } else if (session.record.handoffDispatch?.state === "queued") {
         throw new AppContextError(409, "handoff_queued", "The accepted handoff is still queued. Retry its finalization.");
       }
-      if (["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
+      if (session.record.workerRun || ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
         throw new SessionBusyError();
       }
       const workspaceCredential = context.workspaceCredential ?? credential ?? session.workspaceCredential ?? session.credential;
@@ -1846,20 +1849,39 @@ export class SessionManager {
   }
 
   private receiveWorkerEvent(session: LiveSession, frame: import("../worker/contracts.js").WorkerEvent, epoch: string): Promise<void> {
-    return this.serialize(session.record.id, async () => {
+    const handled = this.serialize(session.record.id, async () => {
       const run = session.record.workerRun;
       if (this.stopping || session.runEpoch !== epoch || !run || run.id !== frame.runId || frame.sequence <= run.sequence) return;
       if (run.generation && run.generation !== frame.generation) throw new Error("Worker generation changed.");
-      // Transcript IDs also recover the crash window between appending an event and saving its cursor.
-      session.persistedWorkerSequences ??= new Set((await this.store.readEvents(session.record.id))
-        .filter(event => event.workerRunId === run.id && typeof event.workerSequence === "number")
-        .map(event => event.workerSequence as number));
-      const persisted = session.persistedWorkerSequences.has(frame.sequence);
-      if (!persisted) await this.applyHarnessEvent(session.record.id, { ...frame.event, workerRunId: run.id, workerSequence: frame.sequence });
-      session.persistedWorkerSequences.add(frame.sequence);
-      run.sequence = frame.sequence; run.generation = frame.generation;
-      await this.store.saveRecord(session.record);
+      const terminal = frame.event.type === "result" || frame.event.type === "error";
+      try {
+        // Transcript IDs recover append-before-cursor crashes, including terminal events.
+        session.persistedWorkerSequences ??= new Set((await this.store.readEvents(session.record.id))
+          .filter(event => event.workerRunId === run.id && typeof event.workerSequence === "number")
+          .map(event => event.workerSequence as number));
+        const persisted = session.persistedWorkerSequences.has(frame.sequence);
+        if (!persisted || terminal) await this.applyHarnessEvent(session.record.id,
+          { ...frame.event, workerRunId: run.id, workerSequence: frame.sequence }, persisted);
+        if (terminal) {
+          // Publish terminal status and receipt removal together, after exit/lease cleanup.
+          // Keep the in-memory receipt/epoch until the write succeeds so delivery can retry.
+          await this.store.saveRecord({ ...session.record, workerRun: undefined });
+          delete session.record.workerRun; session.runEpoch = undefined; session.run = null;
+        } else {
+          const next = { ...run, sequence: frame.sequence, generation: frame.generation };
+          await this.store.saveRecord({ ...session.record, workerRun: next });
+          session.record.workerRun = next;
+        }
+        session.persistedWorkerSequences.add(frame.sequence);
+      } catch (error) {
+        // An append can have succeeded before a subsequent record write failed.
+        session.persistedWorkerSequences = undefined;
+        throw error;
+      }
     });
+    this.inFlightEvents.add(handled);
+    void handled.then(() => this.inFlightEvents.delete(handled), () => this.inFlightEvents.delete(handled));
+    return handled;
   }
 
   /** Starts an event handler and keeps it, so `shutdown` can wait for it. */
@@ -1888,7 +1910,7 @@ export class SessionManager {
     }
   }
 
-  private async applyHarnessEvent(id: string, event: HarnessEvent & { workerRunId?: string; workerSequence?: number }): Promise<void> {
+  private async applyHarnessEvent(id: string, event: HarnessEvent & { workerRunId?: string; workerSequence?: number }, persisted = false): Promise<void> {
     const session = this.live.get(id);
     if (!session) {
       return;
@@ -1924,26 +1946,26 @@ export class SessionManager {
         await this.setStatus(id, "awaiting_question");
         return;
       case "result":
-        await this.append(id, { ...event });
-        await this.setStatus(id, "idle");
+        if (!persisted) await this.append(id, { ...event });
+        await this.setStatus(id, "idle", event.workerRunId !== undefined);
         return;
       case "error": {
+        if (!persisted) await this.append(id, { ...event });
         // The run is dead: drop it so the next message starts a fresh harness (resuming the
         // captured harness session when possible) instead of feeding a terminated input stream.
-        if (this.worker) await this.finishExecution(session);
+        if (this.worker) await this.finishExecution(session, false, event.workerRunId !== undefined);
         const failedRun = session.run;
-        session.run = null;
+        if (event.workerRunId === undefined) session.run = null;
         session.pendingApprovals.clear();
         session.pendingQuestions.clear();
         // Only the dead harness held this session's proxy key, so the route has no legitimate user
         // left; the next message rebuilds it along with the run.
         this.proxy?.unregister(id);
         this.developmentMcp.unregister(id);
-        if (failedRun) {
+        if (failedRun && event.workerRunId === undefined) {
           void failedRun.stop().catch(() => undefined);
         }
-        await this.append(id, { ...event });
-        await this.setStatus(id, "failed");
+        await this.setStatus(id, "failed", event.workerRunId !== undefined);
         return;
       }
       default:
@@ -2071,14 +2093,14 @@ export class SessionManager {
     return abandoned;
   }
 
-  private async setStatus(id: string, status: SessionStatus): Promise<void> {
+  private async setStatus(id: string, status: SessionStatus, preserveWorkerRun = false): Promise<void> {
     const session = this.live.get(id);
-    if (!session || session.record.status === status) {
+    if (!session || session.record.status === status && !preserveWorkerRun) {
       return;
     }
 
     if (this.worker && !["running", "awaiting_approval", "awaiting_question"].includes(status)) {
-      try { await this.finishExecution(session, status === "idle" && session.record.workspaceActivation?.state === "queued"); }
+      try { await this.finishExecution(session, status === "idle" && session.record.workspaceActivation?.state === "queued", preserveWorkerRun); }
       catch (error) {
         await this.append(id, { type: "notice", message: "Execution exit or worktree lease release is unconfirmed. Keep source leases and retry Stop after checking the worker service." });
         throw error;

@@ -125,6 +125,13 @@ prompt, including null resets. Both retain the native session ID and refuse a mi
 An idle native process may be replaced; neither service restarts. Provider/account switching and
 cross-provider history remain outside this selection feature.
 
+Confirmed terminal results use the same awaited coordinator persistence callback as other durable
+events, keyed by run ID and terminal receipt revision. This identity survives replay expiry.
+Temporary write failures retry without repeating execution or duplicating transcript entries;
+the run receipt stays recoverable until terminal status and cleanup are saved. New turns and model
+changes stay blocked while that receipt remains. Coordinator shutdown
+detaches retrying observers. Failed provider runs retain their original error message.
+
 ## Clean Update And Compatibility
 
 Stop the old Harness through the old Core while its legacy cleanup is available; verify its owned

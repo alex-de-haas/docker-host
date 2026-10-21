@@ -124,6 +124,7 @@ class RemoteRun implements HarnessRun {
   private busy = false;
   private submitted?: WorkerRunRequest;
   private confirmed = true;
+  private deliveringTerminal = false;
   constructor(private readonly client: WorkerClient, private readonly binding: ConnectionBinding | null, private readonly options: HarnessStartOptions) {
     this.resume = options.resumeHarnessSessionId;
   }
@@ -168,8 +169,21 @@ class RemoteRun implements HarnessRun {
         final ??= receipt.snapshot?.result;
         if (receipt.snapshot?.nativeSessionId) this.options.onEvent({ type: "harness_session", harnessSessionId: receipt.snapshot.nativeSessionId });
         this.confirmed = receipt.exitConfirmed ?? receipt.state !== "interrupted"; this.busy = false; this.pending.clear();
-        if (!this.stopped) this.options.onEvent(receipt.state === "completed" && final ? final
-          : { type: "error", message: receipt.error ?? `Worker run ${receipt.state}.` });
+        if (!this.stopped) {
+          const event: HarnessEvent = final && (receipt.state === "completed" || receipt.state === "failed" && final.type === "error") ? final
+            : { type: "error", message: receipt.error ?? `Worker run ${receipt.state}.` };
+          if (this.options.onWorkerEvent && this.confirmed) {
+            // The terminal receipt revision is stable even after detailed event replay expires.
+            const frame: WorkerEvent = { runId: id, generation: receipt.generation, sequence: receipt.revision, event };
+            this.deliveringTerminal = true;
+            try {
+              for (;;) {
+                try { await deliverEvent(() => this.options.onWorkerEvent!(frame), signal); break; }
+                catch (error) { if (signal.aborted) throw error; await pause(signal); }
+              }
+            } finally { this.deliveringTerminal = false; }
+          } else this.options.onEvent(event);
+        }
       } catch (error) {
         if (request && !accepted && error instanceof WorkerApiError && error.status < 500 && error.code !== "run_conflict") this.confirmed = true;
         this.busy = false;
@@ -209,7 +223,13 @@ class RemoteRun implements HarnessRun {
     if (receipt.state === "interrupted" && !receipt.exitConfirmed) throw unconfirmed();
     this.confirmed = true;
   }
-  async stop(): Promise<void> { await this.interrupt(); this.stopped = true; this.controller?.abort(); await this.finished; }
+  async stop(): Promise<void> {
+    await this.interrupt(); this.stopped = true;
+    // Native exit is already confirmed here. Terminal persistence can itself call stop while
+    // holding the coordinator queue; it must finish (and retry writes) without waiting on itself.
+    if (this.deliveringTerminal) return;
+    this.controller?.abort(); await this.finished;
+  }
   stopAndWait(): Promise<void> { return this.stop(); }
   async detach(): Promise<void> { this.stopped = true; this.controller?.abort(); await this.finished; }
 }
