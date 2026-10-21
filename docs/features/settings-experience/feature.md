@@ -47,7 +47,8 @@ before dispatching through the existing domain endpoint. Replays return the reco
 changed payloads and stale state fail. In-memory requests expire after fifteen minutes and are
 bounded to 128 entries and 128 KiB bodies. A Core restart expires outstanding reviews; it does
 not convert them into a grant. Domain validation and audit still apply. Property lookup follows the
-endpoint's case-insensitive Web binding. Duplicate or case-ambiguous keys at any depth are rejected
+endpoint's case-insensitive Web binding. Protection and summary selection use the matched endpoint
+route and bound parameters, including requests with different path casing or a trailing slash. Duplicate or case-ambiguous keys at any depth are rejected
 before routine-change detection or review, so displayed and applied values cannot diverge.
 
 | Operation | Review path |
@@ -75,7 +76,8 @@ it never receives token values from a listing. Owners can rename their credentia
 administrators can inspect and revoke credentials in a selected user's detail, with the additional
 user-management permission for cross-user changes. There is no global token table.
 
-Core `/account/tokens` contains manual token creation and its one-time result, `/account/device`
+Core login preserves the account action or exact settings-confirmation continuation on Core
+without requiring Shell. Core `/account/tokens` contains manual token creation and its one-time result, `/account/device`
 contains device-code approval, and `/account/background` contains the background-grant action.
 Metadata tables live in Shell. OAuth consent and authorization remain Core-owned.
 The [Core confirmation design](../core-confirmation-design/feature.md) covers the shared forms.
@@ -136,7 +138,8 @@ Default-app resolution, object links and the shared skills library have their ow
 
 - Exercise exact-payload review, replay, stale revisions, cancellation, revoked callers/users,
   CSRF/origin/nonce boundaries, duplicate/case-ambiguous JSON rejection and absence of legacy
-  mutation bypasses over real Core HTTP routes.
+  mutation bypasses over real Core HTTP routes, including casing/trailing-slash variants and
+  personal credential revocation with bound fingerprints.
 - Verify pristine Core source refresh, unsaved drafts and revision preservation after successive saves.
 - Verify own versus selected-user credential metadata, secret-free lists, label preservation,
   trusted issuance, revocation and current-session effects.

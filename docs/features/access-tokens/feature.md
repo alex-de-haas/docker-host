@@ -1,6 +1,6 @@
 ---
 created: 2026-07-31
-updated: 2026-10-20
+updated: 2026-10-21
 summary: Device-flow access tokens that let clients without a browser engine sign in to Core, with Shell metadata management and compact trusted Core credential actions.
 components: [apps/core, apps/shell, apps/shell-swift]
 ---
@@ -64,7 +64,8 @@ the only two public routes here; approval and credential management are session-
 ([AccessTokenEndpoints.cs](../../../apps/core/src/Haas.Hosty.Core/AccessTokenEndpoints.cs)).
 
 `verificationUri` points at Core `/account/device`. Core's password login preserves this
-allowlisted continuation. Core renders only the device-code action there and manual issuance at
+allowlisted continuation, including its query, and `/account/background` remains on Core after
+password login as well. Core renders only the device-code action there and manual issuance at
 `/account/tokens`. Shell lists metadata under My profile → Tokens & devices and opens these actions.
 
 Pending requests live in memory only

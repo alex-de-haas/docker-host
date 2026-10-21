@@ -185,6 +185,9 @@ public sealed class PasswordLoginHttpTests
 
     [Theory]
     [InlineData("/account/tokens")]
+    [InlineData("/account/device")]
+    [InlineData("/account/device?user_code=ABCD-EFGH")]
+    [InlineData("/account/background")]
     [InlineData("/oauth/consent?request=example")]
     public async Task CoreAccountPages_UsePasswordLoginWithoutShell_AndRejectCrossOriginReads(string path)
     {

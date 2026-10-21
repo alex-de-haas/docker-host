@@ -143,6 +143,53 @@ public sealed class ProtectedSettingsHttpTests
         routine.EnsureSuccessStatusCode();
     }
 
+    [Theory]
+    [InlineData("/API/core/settings")]
+    [InlineData("/api/core/settings/")]
+    [InlineData("/API/CORE/SETTINGS/")]
+    public async Task MatchedSettingsRouteAlwaysRequiresReview(string path)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        using var app = await AppManagementHttpTests.CreateAppClient(host, "example.settings", [CoreAppPermissions.ConfigureCore]);
+        await NormalizeBrowser(host);
+        using var prepared = await app.PutAsJsonAsync(path, Change("7171"));
+        Assert.Equal(428, (int)prepared.StatusCode);
+        var review = (await prepared.Content.ReadFromJsonAsync<SettingsChangeView>())!;
+        using var browser = Browser(host);
+        var html = await browser.GetStringAsync("/settings/confirm/" + review.Id);
+        Assert.Contains("7070", html); Assert.Contains("7171", html);
+        await Decide(browser, review.Id, html, "approve");
+        app.DefaultRequestHeaders.Add(ProtectedSettingsChanges.Header, review.Id);
+        (await app.PutAsJsonAsync(path, Change("7171"))).EnsureSuccessStatusCode();
+    }
+
+    [Theory]
+    [InlineData("/api/auth/credentials/")]
+    [InlineData("/API/Auth/Credentials/")]
+    public async Task PersonalRevokeUsesMatchedRouteAndBoundFingerprint(string prefix)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        using var setup = await AppManagementHttpTests.CreateAppClient(host, "example.settings", []);
+        await NormalizeBrowser(host);
+        await host.Services.GetRequiredService<UserDirectoryStore>().UpdateAsync(state => state with {
+            Users = state.Users.Select(user => user with { Role = "host.user" }).ToArray(),
+        });
+        using var browser = Browser(host);
+        browser.DefaultRequestHeaders.Add("X-Hosty-CSRF", "csrf");
+        using var issued = await browser.PostAsJsonAsync("/api/auth/credentials", new { label = "Personal route test" });
+        issued.EnsureSuccessStatusCode();
+        var fingerprint = (await issued.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        var path = prefix + fingerprint.ToUpperInvariant() + "/";
+        using var prepared = await browser.DeleteAsync(path);
+        Assert.Equal(428, (int)prepared.StatusCode);
+        var review = (await prepared.Content.ReadFromJsonAsync<SettingsChangeView>())!;
+        var html = await browser.GetStringAsync("/settings/confirm/" + review.Id);
+        Assert.Contains("Personal route test", html);
+        await Decide(browser, review.Id, html, "approve");
+        browser.DefaultRequestHeaders.Add(ProtectedSettingsChanges.Header, review.Id);
+        (await browser.DeleteAsync(path)).EnsureSuccessStatusCode();
+    }
+
     internal static async Task NormalizeBrowser(CoreHttpHarness host) =>
         await host.Services.GetRequiredService<UserDirectoryStore>().UpdateAsync(state => state with {
             Sessions = state.Sessions.Select(session => session with { BrowserOrigin = "http://localhost" }).ToArray(),

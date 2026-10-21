@@ -39,9 +39,15 @@ internal sealed class ProtectedSettingsChanges(IClock clock, CorePublicOriginRes
     private const int Capacity = 128;
     private const int MaxBody = 128 * 1024;
 
+    // Endpoint routing already resolved casing, trailing slashes and parameter decoding. Use the
+    // same route identity for protection and summaries as app authorization and the actual handler.
+    private static string Route(HttpRequest request) =>
+        (request.HttpContext.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "";
+    private static string? Parameter(HttpRequest request, string name) => request.RouteValues[name]?.ToString();
+
     private static bool Protected(HttpRequest request)
     {
-        var path = request.Path.Value ?? "";
+        var path = Route(request);
         if (path == "/api/auth/invitations/accept") return false;
         if (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method) || HttpMethods.IsOptions(request.Method)) return false;
         return path is "/api/core/settings" or "/api/core/source" or "/api/core/cloudflare/connect" or "/api/core/cloudflare/disconnect"
@@ -71,11 +77,11 @@ internal sealed class ProtectedSettingsChanges(IClock clock, CorePublicOriginRes
     private async Task<IResult> HandleAsync(HttpContext context, RequestDelegate next, HostUserRecord user)
     {
         var request = context.Request;
-        var personal = request.Path.StartsWithSegments("/api/auth/credentials");
+        var personal = Route(request).StartsWith("/api/auth/credentials/", StringComparison.Ordinal);
         if (!personal && !AppAccessPolicy.IsAdmin(user)) return Error(403, "admin_required", "A Host administrator is required.");
         if (personal)
         {
-            var fingerprint = request.Path.Value!.Split('/').Last();
+            var fingerprint = Parameter(request, "fingerprint");
             var users = await context.RequestServices.GetRequiredService<UserDirectoryStore>().ReadAsync(context.RequestAborted);
             var oauth = await context.RequestServices.GetRequiredService<OAuthStore>().ReadAsync(context.RequestAborted);
             var owner = users.Sessions.FirstOrDefault(s => s.RevokedAt is null && CoreSessionAuthorization.FingerprintSessionId(s.Id).Equals(fingerprint, StringComparison.OrdinalIgnoreCase))?.UserId
@@ -97,7 +103,7 @@ internal sealed class ProtectedSettingsChanges(IClock clock, CorePublicOriginRes
         try { proposed = ParseProposal(body); }
         catch (JsonException) { return Error(400, "settings_change_invalid", "The proposed settings are invalid."); }
         if (proposed is not null and not JsonObject) return Error(400, "settings_change_invalid", "The proposed change must be an object.");
-        if (request.Path == "/api/core/settings" && proposed?["settings"] is JsonObject routine && routine.Count > 0 &&
+        if (Route(request) == "/api/core/settings" && proposed?["settings"] is JsonObject routine && routine.Count > 0 &&
             routine.All(p => p.Key == UpdateCheckSettings.IntervalKey)) { await next(context); return Results.Empty; }
         var caller = Caller(request);
         var requestHash = Hash(request.Method + "\n" + request.Path + request.QueryString + "\n" + body);
@@ -197,7 +203,7 @@ internal sealed class ProtectedSettingsChanges(IClock clock, CorePublicOriginRes
 
     private static async Task<(string Revision, JsonObject Before)> SnapshotAsync(HttpContext context, HostUserRecord actor)
     {
-        var services = context.RequestServices; var ct = context.RequestAborted; var path = context.Request.Path.Value!;
+        var services = context.RequestServices; var ct = context.RequestAborted; var path = Route(context.Request);
         var before = new JsonObject(); var version = new List<string>();
         if (path.StartsWith("/api/core/", StringComparison.Ordinal))
         {
@@ -226,22 +232,22 @@ internal sealed class ProtectedSettingsChanges(IClock clock, CorePublicOriginRes
             if (path.StartsWith("/api/auth/background-grants/", StringComparison.Ordinal))
             {
                 var state = await services.GetRequiredService<BackgroundGrantService>().ReadAsync(ct);
-                var id = path.Split('/').Last();
+                var id = Parameter(context.Request, "id") ?? path.Split('/').Last();
                 foreach (var grant in (state?.Grants ?? []).Where(g => g.UserId == actor.Id && (id == "revoke-all-authorizations" || g.Id == id)))
                 { version.Add(CoreJson.Text(grant)); before[grant.Label] = grant.AppId + " · " + string.Join(", ", grant.Scopes.SelectMany(s => s.Actions)); }
                 if (id == "revoke-all-authorizations") before["effect"] = "End all your browser sessions, tokens, OAuth authorizations and background grants";
             }
             else if (path.StartsWith("/api/auth/oauth/clients/", StringComparison.Ordinal))
             {
-                var client = (await services.GetRequiredService<OAuthStore>().ReadAsync(ct)).Clients.FirstOrDefault(c => c.ClientId == path.Split('/').Last());
+                var client = (await services.GetRequiredService<OAuthStore>().ReadAsync(ct)).Clients.FirstOrDefault(c => c.ClientId == Parameter(context.Request, "clientId"));
                 if (client is not null) { version.Add(client.ClientId); version.Add(client.DeletedAt?.ToString() ?? ""); before["client"] = client.Name; before["effect"] = "Remove this OAuth client and revoke all its authorizations"; }
             }
             else if (path.StartsWith("/api/auth/credentials/", StringComparison.Ordinal))
             {
-                var fingerprint = path.Split('/')[4];
-                var session = users.Sessions.FirstOrDefault(s => CoreSessionAuthorization.FingerprintSessionId(s.Id) == fingerprint);
+                var fingerprint = Parameter(context.Request, "fingerprint");
+                var session = users.Sessions.FirstOrDefault(s => CoreSessionAuthorization.FingerprintSessionId(s.Id).Equals(fingerprint, StringComparison.OrdinalIgnoreCase));
                 var oauth = await services.GetRequiredService<OAuthStore>().ReadAsync(ct);
-                var grant = oauth.Grants.FirstOrDefault(g => CoreSessionAuthorization.FingerprintSessionId(g.Id) == fingerprint);
+                var grant = oauth.Grants.FirstOrDefault(g => CoreSessionAuthorization.FingerprintSessionId(g.Id).Equals(fingerprint, StringComparison.OrdinalIgnoreCase));
                 var owner = session?.UserId ?? grant?.UserId;
                 // Do not leak another user's credential metadata while preparing an unauthorized request.
                 if (owner is not null && (owner == actor.Id || AppAccessPolicy.IsAdmin(actor)))
@@ -263,7 +269,7 @@ internal sealed class ProtectedSettingsChanges(IClock clock, CorePublicOriginRes
                     version.Add(new JsonArray(invite.Id, invite.Status, invite.Role, invite.Email).ToJsonString());
                 foreach (var assignment in users.Assignments.OrderBy(a => a.AppId, StringComparer.Ordinal).ThenBy(a => a.UserId, StringComparer.Ordinal))
                     version.Add(new JsonArray(assignment.AppId, assignment.UserId).ToJsonString());
-                var targetId = path.Split('/').ElementAtOrDefault(4);
+                var targetId = Parameter(context.Request, "userId");
                 var target = users.Users.FirstOrDefault(u => u.Id == targetId);
                 if (target is not null) { before["user"] = target.DisplayName ?? target.Email ?? target.Id; before["role"] = target.Role; before["disabled"] = target.Disabled; }
             }
@@ -271,8 +277,8 @@ internal sealed class ProtectedSettingsChanges(IClock clock, CorePublicOriginRes
         return (Hash(string.Join("\n", version)), before);
     }
 
-    private static string Title(HttpRequest request) => request.Path.StartsWithSegments("/api/auth/credentials") ? "Revoke access"
-        : request.Path.StartsWithSegments("/api/auth") ? "Confirm user access change" : "Confirm host settings";
+    private static string Title(HttpRequest request) => Route(request).StartsWith("/api/auth/credentials/", StringComparison.Ordinal) ? "Revoke access"
+        : Route(request).StartsWith("/api/auth/", StringComparison.Ordinal) ? "Confirm user access change" : "Confirm host settings";
     private static string Summary(HttpContext context, JsonNode? proposed, JsonObject before)
     {
         var labels = CoreSettingsEndpoints.Build(context.RequestServices.GetRequiredService<CoreSettingsService>(),

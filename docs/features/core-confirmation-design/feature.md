@@ -56,7 +56,7 @@ autocomplete attributes. Untrusted caller/app names, versions and errors are enc
 ## Verification Evidence
 
 Baseline: main `751a7e72ddca17ebeaeda400e01ce6c3b4df70c7`.
-Platform version for the combined settings and confirmation feature: `0.147.8` to `0.148.2`.
+Platform version for the combined settings and confirmation feature: `0.147.8` to `0.148.3`.
 
 - `dotnet build apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj --nologo -v:minimal`
   succeeds. Four existing warnings remain in unread configuration parameters and
