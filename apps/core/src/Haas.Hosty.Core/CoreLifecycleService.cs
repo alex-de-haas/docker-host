@@ -1085,7 +1085,7 @@ internal sealed partial class CoreLifecycleService(
             {
                 RuntimeState = result.RuntimeState,
                 AppliedConfigurationHash = configurationApplied ? appliedConfigurationHash : current.AppliedConfigurationHash,
-                ActiveMountPaths = configurationApplied ? context.Mounts.Select(m => m.HostPath).Distinct().ToArray() : current.ActiveMountPaths,
+                ActiveMountPaths = configurationApplied ? context.Mounts.Where(m => !m.ManagedCollection).Select(m => m.HostPath).Distinct().ToArray() : current.ActiveMountPaths,
                 ActiveSourcePaths = configurationApplied ? HostPathAuthority.CodePaths(context.App with { ActiveSourcePaths = null }).Select(MountPathPolicy.ResolveRealPath).Distinct().ToArray() : current.ActiveSourcePaths,
                 AppliedBrowserOrigin = configurationApplied ? coreOrigins?.Effective ?? runtimeConfig?.EffectiveCorePublicOrigin : current.AppliedBrowserOrigin,
                 Health = readiness,
@@ -1527,7 +1527,7 @@ internal sealed partial class CoreLifecycleService(
             {
                 RuntimeState = start.RuntimeState,
                 AppliedConfigurationHash = configurationApplied ? appliedConfigurationHash : current.AppliedConfigurationHash,
-                ActiveMountPaths = configurationApplied ? context.Mounts.Select(m => m.HostPath).Distinct().ToArray() : current.ActiveMountPaths,
+                ActiveMountPaths = configurationApplied ? context.Mounts.Where(m => !m.ManagedCollection).Select(m => m.HostPath).Distinct().ToArray() : current.ActiveMountPaths,
                 ActiveSourcePaths = configurationApplied ? HostPathAuthority.CodePaths(context.App with { ActiveSourcePaths = null }).Select(MountPathPolicy.ResolveRealPath).Distinct().ToArray() : current.ActiveSourcePaths,
                 AppliedBrowserOrigin = configurationApplied ? coreOrigins?.Effective ?? runtimeConfig?.EffectiveCorePublicOrigin : current.AppliedBrowserOrigin,
                 Health = readiness,
@@ -4793,7 +4793,7 @@ internal sealed partial class CoreLifecycleService(
             var sourcePaths = HostPathAuthority.CodePaths(context.App).Select(MountPathPolicy.ResolveRealPath).ToArray();
             await apps.UpdateAppAsync(context.App.Id, current => current with
             {
-                ActiveMountPaths = (current.ActiveMountPaths ?? []).Concat(context.Mounts.Where(m => !m.ManagedCollection).Select(m => m.HostPath)).Distinct().ToArray(),
+                ActiveMountPaths = (current.ActiveMountPaths ?? []).Where(path => !ManagedWorkspaceMounts.IsOwnedRoot(paths, current, path)).Concat(context.Mounts.Where(m => !m.ManagedCollection).Select(m => m.HostPath)).Distinct().ToArray(),
                 ActiveSourcePaths = (current.ActiveSourcePaths ?? []).Concat(sourcePaths).Distinct().ToArray(),
             }, ct);
             return context;

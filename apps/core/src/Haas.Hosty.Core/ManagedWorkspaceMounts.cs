@@ -3,6 +3,24 @@ namespace Haas.Hosty.Core;
 /// <summary>Reviewed access to a Core-owned source collection; not a lease on every child tree.</summary>
 internal static class ManagedWorkspaceMounts
 {
+    // Older starts recorded these automatic roots as operator mounts. Recognize only exact,
+    // canonical collection roots on an installation that declares and is authorized for them.
+    internal static bool IsOwnedRoot(CoreDataPaths paths, AppRecord app, string path)
+    {
+        if (app.MountSlots?.Any(slot => slot.Kind == "managed-workspaces") != true
+            || !(app.GrantedCorePermissions ?? []).Contains(CoreAppPermissions.Sources)) return false;
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var full = Path.GetFullPath(path);
+        foreach (var name in new[] { "trees", "repositories" })
+        {
+            var expected = Path.Combine(paths.CoreRoot, "development", name);
+            var canonical = Path.Combine(MountPathPolicy.ResolveRealPath(paths.CoreRoot), "development", name);
+            if ((string.Equals(full, Path.GetFullPath(expected), comparison) || string.Equals(full, canonical, comparison))
+                && string.Equals(MountPathPolicy.ResolveRealPath(full), canonical, comparison)) return true;
+        }
+        return false;
+    }
+
     internal static IReadOnlyList<RuntimeMount> Resolve(CoreDataPaths paths, AppRecord app, RuntimeAppManifest manifest)
     {
         var mounts = new List<RuntimeMount>();
