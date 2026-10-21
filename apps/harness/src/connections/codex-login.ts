@@ -5,7 +5,7 @@ export function cleanAgentEnvironment(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
     if (
-      /^(ANTHROPIC_|CLAUDE_CODE_OAUTH_TOKEN$|CLAUDE_CODE_USE_|CODEX_API_KEY$|OPENAI_API_KEY$|OPENAI_AUTH_TOKEN$|CODEX_HOME$|CLAUDE_CONFIG_DIR$|HOSTY_APP_SERVICE_TOKEN$)/.test(
+      /^(ANTHROPIC_|CLAUDE_CODE_OAUTH_TOKEN$|CLAUDE_CODE_USE_|CODEX_API_KEY$|OPENAI_API_KEY$|OPENAI_AUTH_TOKEN$|CODEX_HOME$|CLAUDE_CONFIG_DIR$|HOSTY_)/.test(
         key,
       )
     )

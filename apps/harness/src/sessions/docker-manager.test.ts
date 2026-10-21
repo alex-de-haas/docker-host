@@ -1,335 +1,287 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { createServer } from "node:http";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { SessionManager } from "./manager.js";
-import { SessionStore } from "./store.js";
-import { SettingsStore } from "../settings/store.js";
-import { AgentConnections } from "../connections/registry.js";
-import { DevelopmentClient, DEVELOPMENT_IDENTITY, DEVELOPMENT_PROVIDER, developmentTools } from "./development.js";
-import { ruleKey } from "../mcp/policy.js";
-import { AuditReporter } from "../audit.js";
-import { SharedDockerWorker, type WorkerState } from "../runtime/worker.js";
-import type { HarnessAdapter, HarnessStartOptions } from "../harness/adapter.js";
-const cleanups: (() => Promise<void>)[] = [];
+import { WorkerClient } from "../worker/client.js";
+import { WorkerEngine } from "../worker/engine.js";
+import { WorkerJournal } from "../worker/journal.js";
+import { createWorkerServer } from "../worker/http.js";
+import { ensureServiceIdentity } from "../worker/auth.js";
+import type { HarnessEvent, HarnessStartOptions } from "../harness/adapter.js";
+
+const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
-
-it("rejects a second Docker turn before recording it, holds admission during approval and releases only after verified stop", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "hosty-docker-manager-"));
-  cleanups.push(() => rm(root, { recursive: true, force: true }));
-  const settings = new SettingsStore(root); await settings.update({ executionMode: "docker" });
-  const secrets = new Map<string, string>();
-  const connections = new AgentConnections(root, path.join(root, "cache"), { get: async key => secrets.get(key) ?? null,
-    set: async (key, value) => { secrets.set(key, value); }, delete: async key => { secrets.delete(key); } });
-  cleanups.push(() => connections.shutdown());
-  await connections.update({ name: "Test", kind: "claude", auth: "api-key", secret: "synthetic" });
-  const starts: HarnessStartOptions[] = [];
-  const runStop = vi.fn(async () => {});
-  const adapter: HarnessAdapter = { name: "test", capabilities: { questions: true, appMcp: true, liveReconfigure: true, autoAllow: true, denyReason: true },
-    probe: async () => ({ available: true }), start: options => { starts.push(options); return { send() {}, stop: runStop, interrupt: async () => {},
-      setMcpServers: async () => true, resolveApproval: () => true, resolveQuestion: () => true }; } };
-  vi.spyOn(connections, "adapter").mockResolvedValue(adapter); vi.spyOn(connections, "workerMounts").mockResolvedValue([]);
-  const client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
-  const bindings = { instanceId: "a".repeat(64), installationId: "b".repeat(64), treesRoot: "/trees", repositoriesRoot: "/repos", worktreePaths: [] };
-  const lease = vi.spyOn(client, "workerBindings").mockResolvedValue(bindings);
-  let releaseFails = false;
-  const workspaceCalls = vi.spyOn(client, "call").mockImplementation(async (_id, _token, action) => {
-    if (action === "release-lease" && releaseFails) throw new Error("workspace release unavailable");
-    return { workspaces: [{ id: "existing-workspace", state: "active" }] };
-  });
-  const worker = new SharedDockerWorker(root, path.join(root, "cache"));
-  let state: WorkerState | null = null, stopFails = false;
-  vi.spyOn(worker, "current", "get").mockImplementation(() => state);
-  vi.spyOn(worker, "prepare").mockImplementation(async (sessionId, leaseId, _bindings, _cwd, _mounts, acquire) => {
-    await acquire(); state = { version: 1, phase: "running", sessionId, leaseId, generation: leaseId, name: "test", instanceId: bindings.instanceId, installationId: bindings.installationId, imageId: "test" };
-    return { spawn: vi.fn() };
-  });
-  const stop = vi.spyOn(worker, "stop").mockImplementation(async () => { if (stopFails) throw new Error("daemon lost"); if (state) state.phase = "stopped"; });
-  vi.spyOn(worker, "sample").mockResolvedValue({ memoryBytes: 10, peakMemoryBytes: 15, pids: 3 });
-  vi.spyOn(worker, "finish").mockImplementation(async () => { expect(state?.phase).toBe("stopped"); state = null; });
-  const store = new SessionStore(root, path.join(root, "cache"));
-  const manager = new SessionManager(store, adapter, new AuditReporter(null, null, "hosty.harness"), root, settings, null, null, null, "http://127.0.0.1:1", null, connections, client, worker);
-  cleanups.push(async () => { stopFails = false; releaseFails = false; await manager.shutdown(); });
-  const first = await manager.createSession({ createdBy: "admin" }), second = await manager.createSession({ createdBy: "admin" });
-  first.developmentLease = "11111111-1111-4111-8111-111111111111";
-  await store.saveRecord(first);
-  await manager.postMessage(first.id, "start", undefined, [], { workspaceCredential: "hostyg_test" });
-  expect(starts[0]?.processTransport).toBeDefined();
-  starts[0]!.onEvent({ type: "approval_request", approvalId: "approval", toolName: "Bash", input: {} });
-  await vi.waitFor(async () => expect((await manager.getSession(first.id))?.status).toBe("awaiting_approval"));
-  await expect(manager.postMessage(second.id, "must not persist")).rejects.toMatchObject({ code: "worker_busy" });
-  expect((await store.readEvents(second.id)).some(event => event.type === "user_message")).toBe(false);
-  stopFails = true;
-  starts[0]!.onEvent({ type: "result", status: "success" });
-  await vi.waitFor(() => expect(stop).toHaveBeenCalled());
-  expect(worker.busy).toBe(true);
-  expect(lease.mock.calls.some(call => call[2]?.acquire === false)).toBe(false);
-  stopFails = false; releaseFails = true;
-  await expect(manager.recoverDocker("admin", "hostyg_fresh")).rejects.toThrow("workspace release unavailable");
-  expect(worker.current?.phase).toBe("stopped");
-  expect(worker.finish).not.toHaveBeenCalled();
-  expect(worker.busy).toBe(true);
-  releaseFails = false;
-  await manager.recoverDocker("admin", "hostyg_fresh");
-  expect(worker.busy).toBe(false);
-  expect(lease.mock.calls.some(call => call[1] === "hostyg_fresh" && call[2]?.acquire === false)).toBe(true);
-  await manager.postMessage(second.id, "next", undefined, [], { workspaceCredential: "hostyg_fresh" });
-  expect(starts).toHaveLength(2);
-  starts[1]!.onEvent({ type: "approval_request", approvalId: "second-approval", toolName: "Bash", input: {} });
-  await vi.waitFor(async () => expect((await manager.getSession(second.id))?.status).toBe("awaiting_approval"));
-  const stopsBeforeSweep = runStop.mock.calls.length;
-  stopFails = true;
-  expect(await manager.sweepAbandoned(1, Date.now() + 100)).toEqual([]);
-  expect(runStop).toHaveBeenCalledTimes(stopsBeforeSweep);
-  expect(worker.busy).toBe(true);
-  expect((await manager.getSession(second.id))?.status).toBe("awaiting_approval");
-  stopFails = false;
-  expect(await manager.sweepAbandoned(1, Date.now() + 100)).toEqual([second.id]);
-  expect(runStop).toHaveBeenCalledTimes(stopsBeforeSweep + 1);
-  expect(worker.busy).toBe(false);
-  const releasesBeforePreparation = workspaceCalls.mock.calls.filter(call => call[2] === "release-lease").length;
-  releaseFails = true;
-  vi.mocked(connections.adapter).mockRejectedValueOnce(new Error("provider unavailable before launch"));
-  await expect(manager.postMessage(first.id, "retry")).rejects.toThrow("provider unavailable before launch");
-  expect(worker.busy).toBe(false);
-  expect(workspaceCalls.mock.calls.filter(call => call[2] === "release-lease")).toHaveLength(releasesBeforePreparation);
-  releaseFails = false;
-  vi.spyOn(worker, "health").mockResolvedValue({ available: false, reason: "Docker daemon unavailable", image: "test", state: null });
-  const providerHealth = vi.spyOn(connections, "health").mockResolvedValue({ name: "test", available: true, capabilities: { ...adapter.capabilities, appContext: true } });
-  expect(await manager.sessionHealth(second.id)).toMatchObject({ executionMode: "docker", available: false, reason: "Docker daemon unavailable" });
-  expect(providerHealth).toHaveBeenLastCalledWith(expect.any(Object), true);
-});
-
-it.each(["pause", "close"])("%s stops only its own workspace, recovers failures and preserves completed replay", async action => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "hosty-close-manager-"));
-  cleanups.push(() => rm(root, { recursive: true, force: true }));
-  const store = new SessionStore(root, path.join(root, "cache"));
-  const adapter: HarnessAdapter = { name: "test", capabilities: { questions: false, appMcp: true, liveReconfigure: true, autoAllow: false, denyReason: false },
-    probe: async () => ({ available: true }), start: vi.fn() as never };
-  const client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
-  const worker = new SharedDockerWorker(root, path.join(root, "cache"));
-  const manager = new SessionManager(store, adapter, new AuditReporter(null, null, "hosty.harness"), root, null, null, null, null, "http://127.0.0.1:1", null, null, client, worker);
-  const session = await manager.createSession({ createdBy: "admin" });
-  session.executionMode = "docker"; session.developmentLease = "d2200000-0000-4000-8000-000000000000";
-  await store.saveRecord(session);
-  const workspaceId = "b".repeat(64), tree = { id: "a".repeat(64), workspaceId, state: "active" };
-  let ownerKind = "assistant", admitted = false, succeeded = false, stopFails = true;
-  let state: WorkerState | null = { version: 1, phase: "running", sessionId: session.id, leaseId: session.developmentLease,
-    generation: session.developmentLease, name: "owned", instanceId: "c".repeat(64), installationId: "d".repeat(64), imageId: "test" };
-  vi.spyOn(worker, "load").mockResolvedValue();
-  vi.spyOn(worker, "activeSession", "get").mockImplementation(() => state?.sessionId ?? null);
-  vi.spyOn(worker, "current", "get").mockImplementation(() => state);
-  const stop = vi.spyOn(worker, "stop").mockImplementation(async () => { expect(admitted).toBe(true); if (stopFails) throw new Error("Docker unavailable"); if (state) state.phase = "stopped"; });
-  vi.spyOn(worker, "sample").mockResolvedValue({ memoryBytes: 1, peakMemoryBytes: 1, pids: 1 });
-  vi.spyOn(worker, "finish").mockImplementation(async () => { expect(state?.phase).toBe("stopped"); state = null; });
-  const release = vi.spyOn(client, "workerBindings").mockResolvedValue(null);
-  vi.spyOn(client, "call").mockImplementation(async (_id, _token, action) => action === "list" ? { workspaces: [tree] } : { closure: admitted ? "closing" : null });
-  const input = { requestId: "818b936d-cdcc-42f4-a449-9feb559cfc40", expectedRevision: 0 }, route = `/${workspaceId}/workflow/${action}`;
-  const inspection = vi.spyOn(client, "inspection").mockImplementation(async (_token, path, body) => {
-    if (!path) return { workspaces: [{ id: workspaceId, owner: { kind: ownerKind, appId: "hosty.harness", reference: session.id } }] };
-    expect(body).toEqual(input);
-    if (path.endsWith(`${action}-confirm`)) {
-      expect(state).toBeNull(); succeeded = true;
-      return { state: "in-progress", closure: "closed", revision: 1 };
-    }
-    admitted = true;
-    return { state: "in-progress", closure: "closing", operations: [{ id: input.requestId, state: succeeded ? "succeeded" : "pending" }] };
-  });
-  await expect(manager.inspectWorkspaces("fresh", route, input, "admin")).rejects.toMatchObject({ code: "workspace_stop_unconfirmed" });
-  expect(release).not.toHaveBeenCalled();
-  await expect(manager.postMessage(session.id, "new work", "fresh")).rejects.toMatchObject({ code: "workspace_closed" });
-  expect(adapter.start).not.toHaveBeenCalled();
-  stopFails = false;
-  expect(await manager.inspectWorkspaces("fresh", route, input, "admin")).toMatchObject({ closure: "closed", state: "in-progress" });
-  expect(release).toHaveBeenCalledWith(session.id, "fresh", { leaseId: session.developmentLease, acquire: false });
-  expect(await store.readRecord(session.id)).not.toBeNull();
-  const stopped = stop.mock.calls.length;
-  await manager.inspectWorkspaces("fresh", route, input, "admin");
-  expect(stop).toHaveBeenCalledTimes(stopped);
-  // An external owner's reference may collide with a local chat ID; it never grants stop authority.
-  succeeded = false; ownerKind = "external";
-  await manager.inspectWorkspaces("fresh", route, input, "admin");
-  expect(stop).toHaveBeenCalledTimes(stopped);
-  expect(inspection).toHaveBeenCalledWith("fresh", route + "-confirm", input);
-  await manager.shutdown();
-});
-
-
-it("recovers a persisted worker close after the second repository lease release fails", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "hosty-close-cold-manager-"));
-  cleanups.push(() => rm(root, { recursive: true, force: true }));
-  const store = new SessionStore(root, path.join(root, "cache"));
-  const adapter: HarnessAdapter = { name: "test", capabilities: { questions: false, appMcp: true, liveReconfigure: false, autoAllow: false, denyReason: false },
-    probe: async () => ({ available: true }), start: vi.fn() as never };
-  const client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
-  let present = true, running = true;
-  const instanceId = "c".repeat(64), installationId = "d".repeat(64), leaseId = "0d97e8d0-1841-416e-9c4a-b303d6a06fe8";
-  const commands = vi.fn(async (args: string[]) => {
-    if (args[0] === "ps") return present ? "e".repeat(12) : "";
-    if (args[0] === "inspect") return JSON.stringify([{ State: { Running: running }, Config: { Labels: {
-      "hosty.agent-worker": "1", "hosty.agent-worker.instance": instanceId,
-      "hosty.agent-worker.installation": installationId, "hosty.agent-worker.generation": leaseId } } }]);
-    if (args[0] === "stop") { running = false; return ""; }
-    if (args[0] === "rm") { present = false; return ""; }
-    throw new Error("Unexpected Docker command");
-  });
-  const worker = new SharedDockerWorker(root, path.join(root, "cache"), { run: commands, spawn: vi.fn() as never });
-  const health = vi.spyOn(worker, "health");
-  vi.spyOn(worker, "sample").mockResolvedValue({ memoryBytes: 1, peakMemoryBytes: 1, pids: 1 });
-  const manager = new SessionManager(store, adapter, new AuditReporter(null, null, "hosty.harness"), root, null, null, null, null, "http://127.0.0.1:1", null, null, client, worker);
-  cleanups.push(() => manager.shutdown());
-  const session = await manager.createSession({ createdBy: "admin" });
-  session.executionMode = "docker"; session.developmentLease = leaseId; await store.saveRecord(session);
-  const persisted: WorkerState = { version: 1, phase: "running", sessionId: session.id, leaseId, generation: leaseId,
-    name: `hosty-agent-${instanceId.slice(0, 12)}-${installationId.slice(0, 12)}-${leaseId}`, instanceId, installationId, imageId: "sha256:" + "f".repeat(64) };
-  await mkdir(path.join(root, "worker"), { recursive: true });
-  await writeFile(path.join(root, "worker", "state.json"), JSON.stringify(persisted));
-  const workspaceId = "b".repeat(64), tree = { id: "a".repeat(64), workspaceId, state: "active" };
-  const release = vi.spyOn(client, "workerBindings").mockImplementation(async () => { expect(present).toBe(false); return null; });
-  const second = { ...tree, id: "f".repeat(64) };
-  let refuseSecondRelease = true;
-  const released = new Set<string>();
-  const calls = vi.spyOn(client, "call").mockImplementation(async (_id, _credential, action, input) => {
-    if (action === "list") return { workspaces: [tree, second] };
-    if (action === "release-lease") {
-      expect(present).toBe(false);
-      if (input.workspaceId === second.id && refuseSecondRelease) throw new Error("second repository unavailable");
-      released.add(String(input.workspaceId));
-    }
-    return {};
-  });
-  const input = { requestId: "03b309cb-b6f1-4db2-a0c2-80bb53847e55", expectedRevision: 0 };
-  vi.spyOn(client, "inspection").mockImplementation(async (_credential, route) => {
-    if (!route) return { workspaces: [{ id: workspaceId, owner: { kind: "assistant", appId: "hosty.harness", reference: session.id } }] };
-    if (route.endsWith("close-confirm")) {
-      expect(present).toBe(false); expect(released).toEqual(new Set([tree.id, second.id]));
-      return { closure: "closed" };
-    }
-    return { closure: "closing", operations: [{ id: input.requestId, state: "pending" }] };
-  });
-  expect(worker.activeSession).toBeNull();
-  await expect(manager.inspectWorkspaces("fresh", `/${workspaceId}/workflow/close`, input, "admin"))
-    .rejects.toMatchObject({ code: "workspace_stop_unconfirmed" });
-  expect(worker.current?.phase).toBe("stopped");
-  expect(released).toEqual(new Set([tree.id]));
-  refuseSecondRelease = false;
-  expect(await manager.inspectWorkspaces("fresh", `/${workspaceId}/workflow/close`, input, "admin")).toMatchObject({ closure: "closed" });
-  expect(health).not.toHaveBeenCalled();
-  expect(commands).toHaveBeenCalledWith(["stop", "--time", "10", persisted.name]);
-  expect(commands).toHaveBeenCalledWith(["rm", persisted.name]);
-  expect(release).toHaveBeenCalledWith(session.id, "fresh", { leaseId, acquire: false });
-  expect(calls.mock.calls.some(call => call[2] === "release-lease")).toBe(true);
-  expect(worker.current).toBeNull();
-});
-
-
-async function deferredDockerActivation(beforeStop: () => Promise<void> = async () => {}) {
-  const root = await mkdtemp(path.join(os.tmpdir(), "hosty-docker-activation-"));
-  cleanups.push(() => rm(root, { recursive: true, force: true }));
-  const settings = new SettingsStore(root); await settings.update({ executionMode: "docker" });
-  const secrets = new Map<string, string>();
-  const connections = new AgentConnections(root, path.join(root, "cache"), { get: async key => secrets.get(key) ?? null,
-    set: async (key, value) => { secrets.set(key, value); }, delete: async key => { secrets.delete(key); } });
-  cleanups.push(() => connections.shutdown());
-  await connections.update({ name: "Test", kind: "claude", auth: "api-key", secret: "synthetic" });
-  const starts: HarnessStartOptions[] = [], order: string[] = [];
-  const adapter: HarnessAdapter = { name: "test", capabilities: { questions: true, appMcp: true, liveReconfigure: true, autoAllow: true, denyReason: true },
-    probe: async () => ({ available: true }), start: options => { starts.push(options); return { send() {}, stop: async () => { order.push("run-stopped"); }, interrupt: async () => {},
-      setMcpServers: async () => true, resolveApproval: () => true, resolveQuestion: () => true }; } };
-  vi.spyOn(connections, "adapter").mockResolvedValue(adapter); vi.spyOn(connections, "workerMounts").mockResolvedValue([]);
-  const client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
-  const bindings = { instanceId: "a".repeat(64), installationId: "b".repeat(64), treesRoot: "/trees", repositoriesRoot: "/repos", worktreePaths: [] };
-  vi.spyOn(client, "workerBindings").mockImplementation(async (_id, _credential, input) => {
-    if (input?.acquire === false) order.push("worker-lease-released");
-    return bindings;
-  });
-  const calls = vi.spyOn(client, "call").mockImplementation(async (_id, _credential, action) => {
-    order.push(action);
-    return { workspaces: [{ id: "existing-workspace", state: "active" }] };
-  });
-  const worker = new SharedDockerWorker(root, path.join(root, "cache"));
-  let state: WorkerState | null = null;
-  vi.spyOn(worker, "current", "get").mockImplementation(() => state);
-  vi.spyOn(worker, "prepare").mockImplementation(async (sessionId, leaseId, _bindings, _cwd, _mounts, acquire) => {
-    await acquire(); state = { version: 1, phase: "running", sessionId, leaseId, generation: leaseId, name: "test", instanceId: bindings.instanceId, installationId: bindings.installationId, imageId: "test" };
-    return { spawn: vi.fn() };
-  });
-  const stop = vi.spyOn(worker, "stop").mockImplementation(async () => {
-    order.push("worker-stopping"); await beforeStop();
-    if (state) { state.phase = "stopped"; order.push("worker-stopped"); }
-  });
-  vi.spyOn(worker, "sample").mockResolvedValue({ memoryBytes: 1, peakMemoryBytes: 1, pids: 1 });
-  vi.spyOn(worker, "finish").mockImplementation(async () => { expect(state?.phase).toBe("stopped"); state = null; order.push("worker-finished"); });
-  const store = new SessionStore(root, path.join(root, "cache"));
-  const manager = new SessionManager(store, adapter, new AuditReporter(null, null, "hosty.harness"), root, settings, null, null, null, "http://127.0.0.1:1", null, connections, client, worker);
-  cleanups.push(() => manager.shutdown());
-  const record = await manager.createSession({ createdBy: "admin" });
-  record.developmentLease = "11111111-1111-4111-8111-111111111111"; await store.saveRecord(record);
-  await manager.postMessage(record.id, "work", undefined, [], { workspaceCredential: "hostyg_test" });
-  const server = createServer((request, response) => { void manager.developmentMcp.handle(request, response, new URL(request.url!, "http://localhost").pathname); });
+async function fixture(reserve: () => Promise<() => void> = async () => () => {}) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hosty-remote-")); cleanups.push(() => rm(root, { recursive: true, force: true }));
+  const identity = await ensureServiceIdentity(path.join(root, "auth"));
+  const journal = new WorkerJournal(path.join(root, "independent-provider-storage")); await journal.initialize();
+  let options: HarnessStartOptions | undefined, stopped = 0, starts = 0;
+  const capabilities = { questions: true, appMcp: true, autoAllow: true, denyReason: true, liveReconfigure: true };
+  const engine = new WorkerEngine(journal, { validateSelection: async () => {}, cwd: async () => root, reserve,
+    adapter: async () => ({ name: "fixture", capabilities, probe: async () => ({ available: true }), start: input => {
+      options = input; starts++;
+      return { send() {}, resolveApproval: () => true, resolveQuestion: () => true, setMcpServers: async () => true,
+        interrupt: async () => {}, stop: async () => { stopped++; }, stopAndWait: async () => { stopped++; } };
+    } }),
+  }, 1);
+  const server = createWorkerServer(engine, async () => identity, { capabilities: async () => ({ capacity: 1 }), configure: async () => ({}), models: async () => ({}), connection: async () => ({}) });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  cleanups.push(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
-  const config = manager.developmentMcp.config(record.id, `http://127.0.0.1:${(server.address() as { port: number }).port}`)["hosty-workspaces"] as { url: string; headers: Record<string, string> };
-  const rpc = (body: unknown) => fetch(config.url, { method: "POST", headers: config.headers, body: JSON.stringify(body) });
-  const queue = async (action: "activation-apply" | "activation-return" | "activation-resume", mode: "run" | "ask" = "run") => {
-    const tool = action.replaceAll("-", "_");
-    await manager.mcpPolicy.catalog(DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, developmentTools());
-    await manager.mcpPolicy.update({ [ruleKey(DEVELOPMENT_PROVIDER, tool)]: { identity: DEVELOPMENT_IDENTITY, mode } });
-    const input = { requestId: "c0da75ef-bd6c-4b61-99ad-241a613aa2d7", activationId: "retained-activation" };
-    const pending = rpc({ id: 1, method: "tools/call", params: { name: tool, arguments: input } });
-    if (mode === "ask") {
-      await vi.waitFor(async () => expect((await store.readRecord(record.id))?.mcpPendingApprovals).toHaveLength(1));
-      const approval = (await store.readRecord(record.id))!.mcpPendingApprovals![0]!;
-      expect(await manager.resolveApproval(record.id, approval.id, "allow", undefined, "admin")).toBe(true);
-    }
-    const response = await pending;
-    const result = (await response.json()) as { result: { isError?: boolean; content: { text: string }[] } };
-    expect(result.result.isError).toBeUndefined();
-    expect(JSON.parse(result.result.content[0]!.text)).toMatchObject({ state: "queued" });
-    expect(calls.mock.calls.some(call => call[2] === action)).toBe(false);
-    return { input, tool };
-  };
-  return { manager, store, record, starts, order, stop, calls, queue, rpc };
+  cleanups.push(async () => { await engine.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
+  const client = new WorkerClient(`http://127.0.0.1:${(server.address() as { port: number }).port}`, identity);
+  const adapter = client.adapter({ connectionId: "account", connectionRevision: 1, harnessKind: "codex" }, capabilities, "fixture");
+  const events: HarnessEvent[] = [];
+  const run = adapter.start({ sessionId: "conversation", cwd: "/coordinator-only-path", model: "model-a", reasoningEffort: "high", onEvent: event => events.push(event) });
+  cleanups.push(() => run.stop());
+  return { root, adapter, client, run, events, journal, starts: () => starts, options: () => options, stopped: () => stopped };
 }
-
-it.each([["activation-apply", "run"], ["activation-return", "run"], ["activation-resume", "run"], ["activation-apply", "ask"]] as const)("dispatches reviewed Docker %s (%s) after worker exit and all lease acknowledgements", async (action, mode) => {
-  const fixture = await deferredDockerActivation();
-  const { input } = await fixture.queue(action, mode);
-  fixture.starts[0]!.onEvent({ type: "result", status: "success" });
-  await vi.waitFor(async () => expect((await fixture.store.readRecord(fixture.record.id))?.workspaceActivation?.state).toBe("dispatched"));
-  expect(fixture.calls).toHaveBeenCalledWith(fixture.record.id, "hostyg_test", action, input);
-  expect(fixture.order.filter(item => item === action)).toHaveLength(1);
-  for (const prerequisite of ["worker-stopped", "run-stopped", "worker-lease-released", "release-lease", "worker-finished"]) {
-    expect(fixture.order).toContain(prerequisite);
-    expect(fixture.order.indexOf(prerequisite)).toBeLessThan(fixture.order.indexOf(action));
-  }
-  expect((await fixture.rpc({ id: 2, method: "ping" })).status).toBe(403);
+it("executes through an independent endpoint, applies selection and reports completion after native exit", async () => {
+  const f = await fixture(); f.run.send("first turn");
+  await expect.poll(f.options).toBeDefined();
+  expect(f.options()).toMatchObject({ model: "model-a", reasoningEffort: "high" });
+  expect(f.options()!.cwd).not.toBe("/coordinator-only-path");
+  f.options()!.onEvent({ type: "harness_session", harnessSessionId: "native-context" });
+  f.options()!.onEvent({ type: "assistant_text", text: "done" });
+  f.options()!.onEvent({ type: "result", status: "success" });
+  await expect.poll(() => f.events.some(e => e.type === "result")).toBe(true);
+  expect(f.stopped()).toBe(1);
+  f.run.send("next turn");
+  await expect.poll(() => f.options()?.resumeHarnessSessionId).toBe("native-context");
+});
+it("cancels only the run and keeps the provider endpoint available", async () => {
+  const f = await fixture(); f.run.send("work"); await expect.poll(f.options).toBeDefined();
+  await f.run.stopAndWait!();
+  expect(f.stopped()).toBe(1);
+  expect(await f.client.capabilities()).toMatchObject({ capacity: 1 });
 });
 
-it.each(["disabled", "revoked"] as const)("blocks reviewed Docker dispatch when policy is %s during worker shutdown", async change => {
-  let stopped!: () => void;
-  const pendingStop = new Promise<void>(resolve => { stopped = resolve; });
-  const fixture = await deferredDockerActivation(() => pendingStop);
+it("reattaches after coordinator shutdown without cancel, resubmit or lost approval", async () => {
+  const f = await fixture();
+  const received: HarnessEvent[] = [];
+  const run = f.client.adapter({ connectionId: "account", connectionRevision: 1, harnessKind: "codex" },
+    { questions: true, appMcp: true, autoAllow: true, denyReason: true, liveReconfigure: true }, "fixture")
+    .start({ sessionId: "conversation", workerRunId: "durable-run", cwd: "/unused", onEvent: () => {} });
+  run.send("only once"); await expect.poll(f.starts).toBe(1);
+  f.options()!.onEvent({ type: "approval_request", approvalId: "approval", toolName: "write", input: {} });
+  await expect.poll(async () => (await f.journal.load("durable-run")).receipt.state).toBe("awaiting_input");
+  await run.detach!(); expect(f.stopped()).toBe(0);
+  const attached = f.client.attach("durable-run", { sessionId: "conversation", cwd: "/unused", onEvent: e => received.push(e) });
+  cleanups.push(() => attached.stop());
+  await expect.poll(() => received.some(e => e.type === "approval_request")).toBe(true);
+  expect(await attached.resolveApproval("approval", "allow")).toBe(true);
+  f.options()!.onEvent({ type: "assistant_text", text: "continued" });
+  f.options()!.onEvent({ type: "result", status: "success" });
+  await expect.poll(() => received.some(e => e.type === "result")).toBe(true);
+  expect(f.starts()).toBe(1); expect(f.stopped()).toBe(1);
+});
+
+it("restores the real coordinator cursor without duplicating transcript events or resubmitting", async () => {
+  const { SessionManager } = await import("./manager.js");
+  const { SessionStore } = await import("./store.js");
+  const { AuditReporter } = await import("../audit.js");
+  const f = await fixture();
+  const store = new SessionStore(path.join(f.root, "coordinator"), path.join(f.root, "cache"));
+  const make = () => new SessionManager(store, f.adapter, new AuditReporter(null, null, "hosty.harness"), f.root,
+    null, null, null, null, null, null, null, null, f.client, "docker");
+  const first = make(); cleanups.push(() => first.shutdown());
+  const record = await first.createSession({ createdBy: "owner" });
+  await first.postMessage(record.id, "run only once"); await expect.poll(f.starts).toBe(1);
+  f.options()!.onEvent({ type: "assistant_text", text: "before restart" });
+  await expect.poll(async () => (await store.readEvents(record.id)).filter(e=>e.type === "assistant_text").length).toBe(1);
+  await first.shutdown(); expect(f.stopped()).toBe(0);
+  const saved = (await store.readRecord(record.id))!;
+  saved.workerRun!.sequence = 0; await store.saveRecord(saved); // Simulate append persisted before cursor save.
+  const next = make(); cleanups.push(() => next.shutdown());
+  await next.recoverWorkerRuns();
+  await next.getSession(record.id);
+  f.options()!.onEvent({ type: "assistant_text", text: "after restart" });
+  f.options()!.onEvent({ type: "result", status: "success" });
+  await expect.poll(async () => (await store.readRecord(record.id))!.status).toBe("idle");
+  expect((await store.readEvents(record.id)).filter(e=>e.type === "assistant_text").map(e=>e.text)).toEqual(["before restart", "after restart"]);
+  expect(f.starts()).toBe(1); expect(f.stopped()).toBe(1);
+  expect((await store.readRecord(record.id))!.workerRun).toBeUndefined();
+});
+
+it("reconnects after temporary SSE unavailability without starting another execution", async () => {
+  const f = await fixture(); const fetch = globalThis.fetch; let interrupted = false;
+  vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    if (String(input).includes("/events") && !interrupted) { interrupted = true; return Promise.resolve(new Response("unavailable", {status:503})); }
+    return fetch(input, init);
+  });
+  f.run.send("one execution"); await expect.poll(f.starts).toBe(1);
+  f.options()!.onEvent({ type: "assistant_text", text: "replayed" });
+  f.options()!.onEvent({ type: "result", status: "success" });
+  await expect.poll(() => f.events.some(e=>e.type === "result")).toBe(true);
+  expect(interrupted).toBe(true); expect(f.starts()).toBe(1);
+  expect(f.events.filter(e=>e.type === "assistant_text")).toHaveLength(1);
+});
+
+it.each(["stop", "detach"] as const)("%s does not wait on an event callback queued behind coordinator cleanup", async operation => {
+  const f = await fixture();
+  let releaseCallback!: () => void, entered = false;
+  const blocked = new Promise<void>(resolve => { releaseCallback = resolve; });
+  const run = f.adapter.start({ sessionId: "conversation", cwd: "/unused", onEvent: () => {},
+    onWorkerEvent: async () => { entered = true; await blocked; } });
+  cleanups.push(() => run.stop());
+  run.send("work"); await expect.poll(f.starts).toBe(1);
+  f.options()!.onEvent({ type: "assistant_text", text: "queued behind cleanup" });
+  await expect.poll(() => entered).toBe(true);
+  let finished = false;
+  const cleanup = run[operation]!().then(() => { finished = true; });
   try {
-    const { tool } = await fixture.queue("activation-apply");
-    fixture.starts[0]!.onEvent({ type: "result", status: "success" });
-    await vi.waitFor(() => expect(fixture.stop).toHaveBeenCalled());
-    // Transport access is gone before waiting for the worker; its retained review is separate.
-    expect((await fixture.rpc({ id: 2, method: "ping" })).status).toBe(403);
-    if (change === "disabled") await fixture.manager.mcpPolicy.update({ [ruleKey(DEVELOPMENT_PROVIDER, tool)]: { identity: DEVELOPMENT_IDENTITY, mode: "disabled" } });
-    else fixture.manager.developmentMcp.unregister(fixture.record.id);
-  } finally { stopped(); }
-  await vi.waitFor(async () => expect((await fixture.store.readRecord(fixture.record.id))?.workspaceActivation).toMatchObject({ state: "blocked", error: expect.stringContaining("canceled") }));
-  expect(fixture.calls.mock.calls.some(call => call[2] === "activation-apply")).toBe(false);
-  expect(fixture.order).toContain("release-lease");
+    // The coordinator releases its session queue only after stop/detach returns.
+    await expect.poll(() => finished, { timeout: 1500 }).toBe(true);
+    expect(f.stopped()).toBe(operation === "stop" ? 1 : 0);
+  } finally { releaseCallback(); await cleanup; }
 });
 
-it("cancels a reviewed Docker activation on explicit session teardown", async () => {
-  const fixture = await deferredDockerActivation();
-  await fixture.queue("activation-apply");
-  await fixture.manager.cancelSession(fixture.record.id);
-  expect((await fixture.store.readRecord(fixture.record.id))?.workspaceActivation?.state).toBe("blocked");
-  expect(fixture.calls.mock.calls.some(call => call[2] === "activation-apply")).toBe(false);
-  expect((await fixture.rpc({ id: 2, method: "ping" })).status).toBe(403);
+it("waits for an admitted run to finish cancellation during slow startup", async () => {
+  let releaseReservation!: () => void, entered = false, finished = false, released = 0;
+  const reservation = new Promise<void>(resolve => { releaseReservation = resolve; });
+  const f = await fixture(async () => { entered = true; await reservation; return () => { released++; }; });
+  const run = f.adapter.start({ sessionId: "conversation", workerRunId: "slow-run", cwd: "/unused", onEvent: () => {} });
+  cleanups.push(() => run.stop());
+  run.send("cancel before native startup"); await expect.poll(() => entered).toBe(true);
+  const stopping = run.stopAndWait!().then(() => { finished = true; });
+  try {
+    await expect.poll(async () => (await f.journal.load("slow-run")).receipt.state).toBe("cancelling");
+    expect(finished).toBe(false);
+  } finally { releaseReservation(); }
+  await stopping;
+  expect((await f.journal.load("slow-run")).receipt).toMatchObject({ state: "cancelled", exitConfirmed: true });
+  expect(f.starts()).toBe(0); expect(released).toBe(1);
+  expect(await f.client.capabilities()).toMatchObject({ capacity: 1 });
+});
+
+it("preserves a failed provider's actionable terminal error", async () => {
+  const f = await fixture(); f.run.send("work"); await expect.poll(f.starts).toBe(1);
+  f.options()!.onEvent({ type: "error", message: "Provider quota exceeded; renew this account." });
+  await expect.poll(() => f.events.find(event => event.type === "error")).toMatchObject({
+    type: "error", message: "Provider quota exceeded; renew this account.",
+  });
+  expect(f.stopped()).toBe(1);
+});
+
+it.each(["result", "error"] as const)("retries durable %s persistence without duplicating its terminal transcript", async type => {
+  const { SessionManager } = await import("./manager.js");
+  const { SessionStore } = await import("./store.js");
+  const { AuditReporter } = await import("../audit.js");
+  const f = await fixture();
+  const store = new SessionStore(path.join(f.root, "coordinator"), path.join(f.root, "cache"));
+  const manager = new SessionManager(store, f.adapter, new AuditReporter(null, null, "hosty.harness"), f.root,
+    null, null, null, null, null, null, null, null, f.client, "docker");
+  cleanups.push(() => manager.shutdown());
+  const record = await manager.createSession({ createdBy: "owner" });
+  await manager.postMessage(record.id, "work"); await expect.poll(f.starts).toBe(1);
+  let appendFailed = false, clearFailed = false;
+  const append = store.appendEvent.bind(store), save = store.saveRecord.bind(store);
+  vi.spyOn(store, "appendEvent").mockImplementation(async (id, event) => {
+    if (event.type === type && !appendFailed) { appendFailed = true; throw new Error("temporary append failure"); }
+    return append(id, event);
+  });
+  vi.spyOn(store, "saveRecord").mockImplementation(async value => {
+    if (value.id === record.id && !value.workerRun && !clearFailed) { clearFailed = true; throw new Error("temporary receipt-clear failure"); }
+    return save(value);
+  });
+  f.options()!.onEvent(type === "result" ? { type, status: "success" } : { type, message: "Native provider error" });
+  await expect.poll(async () => {
+    const saved = (await store.readRecord(record.id))!;
+    return saved.status === (type === "result" ? "idle" : "failed") && !saved.workerRun;
+  }, { timeout: 5000 }).toBe(true);
+  const terminals = (await store.readEvents(record.id)).filter(event => event.type === type);
+  expect(terminals).toHaveLength(1);
+  expect(terminals[0]).toMatchObject({ workerRunId: expect.any(String), workerSequence: expect.any(Number) });
+  expect(appendFailed).toBe(true); expect(clearFailed).toBe(true);
+  expect(f.starts()).toBe(1); expect(f.stopped()).toBe(1);
+});
+
+it.each(["result", "error"] as const)("recovers a persisted %s after a crash before clearing the run receipt", async type => {
+  const { SessionManager } = await import("./manager.js");
+  const { SessionStore } = await import("./store.js");
+  const { AuditReporter } = await import("../audit.js");
+  const f = await fixture();
+  const store = new SessionStore(path.join(f.root, "coordinator"), path.join(f.root, "cache"));
+  const make = () => new SessionManager(store, f.adapter, new AuditReporter(null, null, "hosty.harness"), f.root,
+    null, null, null, null, null, null, null, null, f.client, "docker");
+  const first = make(); cleanups.push(() => first.shutdown());
+  const record = await first.createSession({ createdBy: "owner" });
+  await first.postMessage(record.id, "work"); await expect.poll(f.starts).toBe(1);
+  const active = (await store.readRecord(record.id))!;
+  f.options()!.onEvent(type === "result" ? { type, status: "success" } : { type, message: "Native provider error" });
+  await expect.poll(async () => (await store.readRecord(record.id))!.workerRun).toBeUndefined();
+  await first.shutdown();
+  // Transcript append survived, but the coordinator record still points at the original run.
+  await store.saveRecord({ ...(await store.readRecord(record.id))!, status: "running", workerRun: active.workerRun });
+  const next = make(); cleanups.push(() => next.shutdown()); await next.recoverWorkerRuns();
+  await expect.poll(async () => {
+    const saved = (await store.readRecord(record.id))!;
+    return saved.status === (type === "result" ? "idle" : "failed") && !saved.workerRun;
+  }, { timeout: 5000 }).toBe(true);
+  expect((await store.readEvents(record.id)).filter(event => event.type === type)).toHaveLength(1);
+  expect(f.starts()).toBe(1); expect(f.stopped()).toBe(1);
+});
+
+it("detaches terminal persistence retries on coordinator shutdown", async () => {
+  const { SessionManager } = await import("./manager.js");
+  const { SessionStore } = await import("./store.js");
+  const { AuditReporter } = await import("../audit.js");
+  const f = await fixture();
+  const store = new SessionStore(path.join(f.root, "coordinator"), path.join(f.root, "cache"));
+  const manager = new SessionManager(store, f.adapter, new AuditReporter(null, null, "hosty.harness"), f.root,
+    null, null, null, null, null, null, null, null, f.client, "docker");
+  cleanups.push(() => manager.shutdown());
+  const record = await manager.createSession({ createdBy: "owner" });
+  await manager.postMessage(record.id, "work"); await expect.poll(f.starts).toBe(1);
+  const save = store.saveRecord.bind(store); let failures = 0;
+  vi.spyOn(store, "saveRecord").mockImplementation(async value => {
+    if (value.id === record.id && !value.workerRun) { failures++; throw new Error("receipt storage unavailable"); }
+    return save(value);
+  });
+  f.options()!.onEvent({ type: "result", status: "success" });
+  await expect.poll(() => failures, { timeout: 3000 }).toBeGreaterThanOrEqual(2);
+  await expect(manager.postMessage(record.id, "must wait for persistence")).rejects.toThrow();
+  await expect(manager.setModel(record.id, { expectedRevision: 0, selection: { model: null } })).rejects.toThrow();
+  expect(f.starts()).toBe(1);
+  await manager.shutdown();
+  const afterShutdown = failures;
+  await new Promise(resolve => setTimeout(resolve, 700));
+  expect(failures).toBe(afterShutdown);
+  expect((await store.readRecord(record.id))!.workerRun).toBeDefined();
+});
+
+
+it.each([
+  { type: "result", text: true }, { type: "result", text: false },
+  { type: "error", text: true }, { type: "error", text: false },
+] as const)("recovers expired $type replay with snapshot text=$text without consuming its terminal revision", async ({ type, text }) => {
+  const { SessionManager } = await import("./manager.js");
+  const { SessionStore } = await import("./store.js");
+  const { AuditReporter } = await import("../audit.js");
+  const f = await fixture();
+  const store = new SessionStore(path.join(f.root, "coordinator"), path.join(f.root, "cache"));
+  const make = () => new SessionManager(store, f.adapter, new AuditReporter(null, null, "hosty.harness"), f.root,
+    null, null, null, null, null, null, null, null, f.client, "docker");
+  const first = make(); cleanups.push(() => first.shutdown());
+  const record = await first.createSession({ createdBy: "owner" });
+  await first.postMessage(record.id, "work"); await expect.poll(f.starts).toBe(1);
+  const runId = (await store.readRecord(record.id))!.workerRun!.id;
+  await first.shutdown();
+  if (text) f.options()!.onEvent({ type: "assistant_text", text: "Retained final answer" });
+  f.options()!.onEvent(type === "result" ? { type, status: "success" } : { type, message: "Retained provider error" });
+  await expect.poll(async () => (await f.journal.load(runId)).receipt.state).toBe(type === "result" ? "completed" : "failed");
+  const expired = new WorkerJournal(path.join(f.root, "independent-provider-storage"), -1);
+  await expired.prune();
+  const receipt = (await f.journal.load(runId)).receipt;
+  expect((await f.journal.load(runId)).replayExpired).toBe(true);
+  const next = make(); cleanups.push(() => next.shutdown()); await next.recoverWorkerRuns();
+  await expect.poll(async () => {
+    const saved = (await store.readRecord(record.id))!;
+    return saved.status === (type === "result" ? "idle" : "failed") && !saved.workerRun;
+  }).toBe(true);
+  const events = await store.readEvents(record.id);
+  expect(events.filter(event => event.type === type)).toHaveLength(1);
+  expect(events.find(event => event.type === type)).toMatchObject({ workerRunId: runId, workerSequence: receipt.revision });
+  expect(events.find(event => event.type === "notice" && String(event.message).includes("replay expired"))).toMatchObject({ type: "notice" });
+  expect(events.filter(event => event.workerSequence === receipt.revision)).toHaveLength(1);
+  expect(events.filter(event => event.type === "assistant_text")).toHaveLength(text ? 1 : 0);
+  expect(f.starts()).toBe(1); expect(f.stopped()).toBe(1);
 });

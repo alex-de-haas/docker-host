@@ -80,6 +80,25 @@ public sealed class RuntimeMountPlannerTests
         Assert.Equal("anime=/srv/anime,movies=/srv/movies", local["HOSTY_MOUNT_CATALOGROOTS"]);
     }
 
+    [Theory]
+    [InlineData("/srv/Hosty, data=primary/Юникод")]
+    [InlineData(@"C:\Hosty, data=primary\Юникод")]
+    public void BuildMountEnvironment_ManagedCollectionsRoundTripHostPaths(string root)
+    {
+        RuntimeMount[] mounts =
+        [
+            new("development", "trees", root + "/trees", "/mnt/development/managed/trees", false, "worker", ManagedCollection: true),
+            new("development", "repositories", root + "/repositories", "/mnt/development/managed/repositories", true, "worker", ManagedCollection: true),
+        ];
+        foreach (var docker in new[] { false, true })
+        {
+            var environment = RuntimeMountPlanner.BuildMountEnvironment(mounts, docker);
+            using var value = System.Text.Json.JsonDocument.Parse(environment["HOSTY_MOUNT_DEVELOPMENT"]);
+            foreach (var mount in mounts)
+                Assert.Equal(docker ? mount.ContainerPath : mount.HostPath, value.RootElement.GetProperty(mount.Label).GetString());
+        }
+    }
+
     [Fact]
     public void BuildDockerVolumeArguments_EmitsReadOnlySuffixOnlyForReadOnlyMounts()
     {

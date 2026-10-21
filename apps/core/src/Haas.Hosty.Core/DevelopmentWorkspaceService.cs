@@ -212,7 +212,12 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                     throw Error("local_source_required", "This app no longer has its registered local Git source.");
                 var repo = RepoPath(repositoryId);
                 Directory.CreateDirectory(System.IO.Path.GetDirectoryName(repo)!);
-                await Fetches.EnsureRepositoryAsync(repo, async () => { await Git(Root, await RepositoryInitArgumentsAsync(repository, repo, ct), ct); }, ct);
+                await Fetches.EnsureRepositoryAsync(repo, async () => { await Git(Root, await RepositoryInitArgumentsAsync(repository, repo, ct), ct);
+                    // Existing shared repositories never enter this initialization callback.
+                    var gitVersion = (await Git(Root, ["--version"], ct)).StandardOutput;
+                    var match = System.Text.RegularExpressions.Regex.Match(gitVersion, @"git version (\d+)\.(\d+)");
+                    if (match.Success && (int.Parse(match.Groups[1].Value) > 2 || int.Parse(match.Groups[1].Value) == 2 && int.Parse(match.Groups[2].Value) >= 48))
+                        await Git(repo, ["config", "worktree.useRelativePaths", "true"], ct); }, ct);
                 var target = input.TargetBranch;
                 if (string.IsNullOrWhiteSpace(target) && core?.Ref is { } reference)
                 {
@@ -640,7 +645,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
     private async Task CheckConsumers(DevelopmentWorkspace w, CancellationToken ct)
     {
         await RequireDevConsumerIdleAsync(w, ct);
-        await CheckSharedWorkersAsync(ct);
+
         if (w.Leases.Length > 0 || w.SandboxConsumers.Length > 0) throw Error("in_use", "An activity lease or a persistent sandbox consumer still references this worktree.");
         foreach (var process in processes?.Snapshot() ?? [])
         {
@@ -656,41 +661,50 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             {
                 var manifest = await JsonStorage.ReadAsync<RuntimeAppManifest>(app.ManifestPath, ct);
                 if (manifest?.Services.Any(s => s.Runtimes.TryGetValue(app.SelectedRuntime ?? "", out var runtime) && runtime.Type == "docker") == true)
-                    await CheckDockerConsumers(w, app.Id, ct);
+                    await CheckDockerConsumers(w, app, manifest, ct);
             }
         }
     }
-    private async Task CheckDockerConsumers(DevelopmentWorkspace w, string appId, CancellationToken ct)
+    private async Task CheckDockerConsumers(DevelopmentWorkspace w, AppRecord app, RuntimeAppManifest manifest, CancellationToken ct)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(10));
         try
         {
-            var list = await docker!.RunAsync(["ps", "--filter", "label=hosty.app.id=" + appId, "--format", "{{.ID}}"], cancellationToken: deadline.Token);
+            var list = await docker!.RunAsync(["ps", "--filter", "label=hosty.app.id=" + app.Id, "--format", "{{.ID}}"], cancellationToken: deadline.Token);
             if (list.ExitCode != 0) throw Error("consumer_unavailable", "Cannot verify running Docker source consumers.");
             var ids = list.StandardOutput.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
             if (ids.Length == 0) return;
             if (ids.Length > 256 || ids.Any(id => id.Length > 64 || !id.All(char.IsAsciiHexDigit))) throw Error("consumer_unavailable", "Docker returned invalid container identities.");
-            var mounts = await docker.RunAsync(["inspect", "--format", "{{json .Mounts}}", .. ids], cancellationToken: deadline.Token);
+            var hasCollection = manifest.ExternalMounts.Values.Any(mount => mount.Kind == "managed-workspaces");
+            var mounts = await docker.RunAsync(["inspect", "--format", hasCollection ? "{{json .}}" : "{{json .Mounts}}", .. ids], cancellationToken: deadline.Token);
             if (mounts.ExitCode != 0) throw Error("consumer_unavailable", "Cannot verify running Docker mounts.");
             foreach (var line in mounts.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
                 using var json = JsonDocument.Parse(line);
-                foreach (var mount in json.RootElement.EnumerateArray())
+                string? service = null;
+                var bindings = json.RootElement;
+                if (hasCollection)
                 {
+                    service = json.RootElement.GetProperty("Config").GetProperty("Labels").GetProperty("hosty.app.service").GetString();
+                    bindings = json.RootElement.GetProperty("Mounts");
+                }
+                foreach (var mount in bindings.EnumerateArray())
+                {
+                    if (hasCollection && ManagedWorkspaceMounts.IsCollectionAccess(paths, app, manifest, mount, service)) continue;
                     if (mount.TryGetProperty("Source", out var property) && property.GetString() is { Length: > 0 } source &&
-                        (IsUnder(w.Path, source) || IsUnder(source, w.Path)))
+                        DockerMountPaths.Overlaps(source, w.Path))
                         throw Error("in_use", "A running Docker service mounts this workspace.");
                 }
             }
         }
-        catch (Exception ex) when (ex is DockerUnavailableException or JsonException || ex is OperationCanceledException && !ct.IsCancellationRequested)
+        catch (Exception ex) when (ex is DockerUnavailableException or JsonException or KeyNotFoundException or InvalidOperationException || ex is OperationCanceledException && !ct.IsCancellationRequested)
         {
             throw Error("consumer_unavailable", "Cannot verify running Docker source consumers; cleanup was refused.");
         }
     }
     private Task<DevelopmentWorkspace> FinishCleanup(DevelopmentWorkspace w, WorkspaceOperation op, CancellationToken ct, bool published = false)
-        => Locked("shared-worker-bindings", async () =>
+        => Locked("workspace-consumers", async () =>
     {
         await CheckConsumers(w, ct);
         if (Directory.Exists(w.Path))

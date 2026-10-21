@@ -18,7 +18,7 @@ export async function startDockerFaultProxy(socketPath, upstreamPath, imageIds =
     if (mode === 'offline') { hits.push({ mode, method: request.method, path: '/' }); request.socket.destroy(); return; }
     const url = new URL(request.url, 'http://docker');
     const pathname = decodeURIComponent(url.pathname);
-    const image = mode === 'worker-image' ? 'hosty-agent-worker' : mode === 'coordinator-image' ? 'hosty-harness' : null;
+    const image = mode === 'worker-image' ? 'hosty-harness-worker' : mode === 'coordinator-image' ? 'hosty-harness' : null;
     if (image && pathname.includes('/images/') && (pathname.includes(image) || pathname.includes(imageIds[mode] ?? 'not-an-image-id') || url.searchParams.get('fromImage')?.includes(image))) {
       hits.push({ mode, method: request.method, path: pathname });
       reject(response, request.method === 'GET' ? 404 : 500, 'Acceptance fault: image unavailable / pull refused'); return;

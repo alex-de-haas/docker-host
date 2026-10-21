@@ -1,6 +1,6 @@
 ---
 created: 2026-06-04
-updated: 2026-10-20
+updated: 2026-10-21
 summary: The app.0.1 manifest contract for installing and running runtime apps.
 components: [apps/core]
 ---
@@ -74,6 +74,8 @@ Core reacts to a provided slot it has a handler for by running Core-owned provis
 
 ## Runtime Profiles
 
+Local commands retain implicit `HOSTY_APP_DATA_DIR` and directory creation when app data is omitted or disabled. Enabled data with explicit targets follows service scoping; unselected services do not receive a fallback data root. Cache remains opt-in.
+
 Each `runtimeProfiles[]` entry has `key`, `type` (`docker` or `localCommand`), an optional `default: true` (at most one), and an optional `development: true`.
 
 `development: true` marks a runtime meant for local development. It is only valid for a `localCommand` profile (rejected on `docker` with `app_manifest_development_requires_local_command`), and multiple profiles may declare it. A development profile cannot contain `artifact: prebuilt` services (`app_manifest_development_requires_source`); those immutable builds require a reviewed profile. A development runtime has two coupled effects: the operator may point it at their own source folder (source override), and it runs **live** from that folder — the manifest is adopted on restart, so there is no reviewed-update path (clients show a "Live" badge and hide Update). A `localCommand` runtime **without** `development` runs from source too, but is treated as a locked, reviewed-update artifact (e.g. it builds a production bundle via `setup`), not as live. See [Runtime artifact & storage model](../runtime-artifact-model/feature.md).
@@ -99,23 +101,32 @@ Use explicit `localPort` / `hostPort` only as an override. If an explicit local 
 
 A public endpoint's local browser address is a stable app hostname beneath `hosty.localhost` with the assigned port ([local browser origins](../local-browser-origins/feature.md)). Install review only asks for manifest-owned settings. After installation, each public endpoint gets a Hosty-managed optional setting named `HOSTY_PUBLIC_ORIGIN_{ENDPOINT_KEY}`, where the endpoint key is normalized to uppercase env style. For example, `http` becomes `HOSTY_PUBLIC_ORIGIN_HTTP` and `app.http` becomes `HOSTY_PUBLIC_ORIGIN_APP_HTTP`. The `HOSTY_PUBLIC_ORIGIN_` prefix is reserved for Hosty-managed settings; manifest-provided settings with that prefix are ignored and cannot pre-seed public origins. Leave the generated setting empty for local `localhost` URLs, or set it to an absolute `http`/`https` origin such as `https://project.example.com` when Shell and standalone links should use an externally exposed origin. The public origin setting must be an origin only, without a path, query, or fragment.
 
-### Agent Worker Coordinator
+### Service Injection, Storage And Resources
 
-An administrator assistant can declare `agentWorker: { service, image }` for a production Docker
-coordinator. The service must exist, `provides` must include `assistant`, managed data/cache must
-be enabled, and `apps.sources.full` must be a required reviewed permission. The image is an explicit
-versioned worker reference. This contract requires Core's agent-worker support.
+Services can declare `injection: { appServiceToken: false, appIdentityToken: false, settings: [] }`
+to omit those credentials and settings. Omitted fields preserve the legacy defaults; settings can
+be an explicit key allowlist. Local services with explicit injection do not inherit arbitrary Core
+environment values. Declared environment overrides cannot reintroduce excluded credentials.
 
-Core prepares the worker image, runs the coordinator with its host execution UID/GID, and mounts
-only that service's own data/cache at their canonical host paths. Local execution of the same
-declared service receives those canonical paths too. Shared worktrees and Git metadata are mounted
-into the worker by Core, not into the coordinator. The worker API accepts typed lifecycle,
-accounting and provider-exec requests; it exposes neither a Docker socket nor arbitrary Docker
-arguments. Worker creation requires an active installation-owned source lease. App Stop/Remove
-verifies owned worker removal while retaining leases for conversation recovery.
+Data/cache targets support contained relative `subPath` and `mode: "ro" | "rw"` (default rw), with
+multiple targets per service. Profile-specific targets override runtime-type defaults for the same
+environment variable. Traversal, redirected paths, duplicate variables and overlapping container
+destinations are rejected. Local mode remains the host user's normal permission boundary.
 
-See [Shared Docker Agent Runtime](../assistant-shared-docker-runtime/feature.md) for the transport,
-storage, ownership and resource contracts.
+Docker service runtimes accept `resources: { memoryBytes, cpus, pids }`. Ordinary starts apply those
+limits; child Core admission retains its existing service allocation policy. Explicit service
+contracts participate in keep-apps adoption, including installation/configuration identity,
+credential exclusions, mounts and ordinary resource limits.
+
+`externalMounts` also supports a Core-owned `managed-workspaces` collection with `scope: "instance"`,
+an explicit service and reviewed `apps.sources.full` permission. Trees are rw (or declared ro) and
+repository metadata is always ro. It requires no operator path binding. See
+[external mounts](../external-mounts/feature.md) and
+[Harness services](../assistant-shared-docker-runtime/feature.md).
+
+The retired `agentWorker` field is rejected for new candidates and execution. An already-installed
+baseline remains readable for inspection, stop/remove and update to a supported manifest. Agents use ordinary application services and their
+own direct protocol; Core has no provider execution proxy.
 
 ### Port fields
 

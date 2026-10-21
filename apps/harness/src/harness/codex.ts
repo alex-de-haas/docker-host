@@ -95,6 +95,32 @@ export class CodexHarnessAdapter implements HarnessAdapter {
     return { available: true };
   }
 
+  async models(): Promise<import("../worker/contracts.js").ModelCatalog> {
+    const { CodexLogin } = await import("../connections/codex-login.js");
+    const { catalog, effortLabel } = await import("../worker/models.js");
+    const health = await this.probe();
+    if (!health.available) throw new Error(health.reason);
+    const client = new CodexLogin(this.auth.managedHome ?? this.auth.codexHome ?? path.join(this.auth.dataDir, "codex-home"));
+    try {
+      await client.initialize();
+      const models: import("../worker/contracts.js").ModelChoice[] = [];
+      let cursor: string | undefined, defaultModel: string | undefined;
+      do {
+        const page = await client.request("model/list", { cursor, limit: 100, includeHidden: false });
+        if (!Array.isArray(page.data)) throw new Error("Codex returned an invalid model catalog.");
+        for (const m of page.data) {
+          if (typeof m.model !== "string" || !Array.isArray(m.supportedReasoningEfforts)) continue;
+          models.push({ id: m.model, label: m.displayName ?? m.model, defaultEffort: m.defaultReasoningEffort,
+            efforts: m.supportedReasoningEfforts.map((e: { reasoningEffort: string }) => ({ id: e.reasoningEffort, label: effortLabel(e.reasoningEffort) })) });
+          if (m.isDefault) defaultModel = m.model;
+        }
+        cursor = typeof page.nextCursor === "string" ? page.nextCursor : undefined;
+        if (models.length > 1000) throw new Error("Model catalog exceeds its limit.");
+      } while (cursor);
+      return catalog(models, defaultModel);
+    } finally { client.close(); }
+  }
+
   start(options: HarnessStartOptions): HarnessRun {
     return new ReconfigurableCodexRun(options, this.auth);
   }
@@ -312,22 +338,46 @@ class CodexRun implements HarnessRun {
     this.child.kill("SIGTERM");
   }
 
+  private selectedModel: string | null = null;
+  private selectedEffort: string | null = null;
   private async handshake(): Promise<void> {
     await this.request(CODEX_METHODS.initialize, {
       clientInfo: { name: "hosty-harness", version: "1" },
       capabilities: null,
     });
     this.notify(CODEX_METHODS.initialized, {});
+    this.selectedModel = this.options.model ?? null;
+    this.selectedEffort = this.options.reasoningEffort ?? null;
+    // Null turn overrides keep a resumed thread's old values. Resolve native defaults explicitly
+    // before resume so selecting Default really clears the preceding turn's explicit selection.
+    if (this.options.model === null || this.options.reasoningEffort === null) {
+      const configured = await this.request("config/read", { includeLayers: false }) as { config: { model?: string; model_reasoning_effort?: string } };
+      const available: Array<{ model: string; isDefault: boolean; defaultReasoningEffort?: string }> = [];
+      let cursor: string | null = null;
+      do {
+        const page = await this.request("model/list", { cursor, limit: 100, includeHidden: false }) as { data: typeof available; nextCursor?: string };
+        if (!Array.isArray(page.data) || available.length + page.data.length > 1000) throw new Error("Invalid native model catalog.");
+        available.push(...page.data); cursor = page.nextCursor ?? null;
+      } while (cursor);
+      this.selectedModel ??= configured.config?.model ?? available.find(model => model.isDefault)?.model ?? null;
+      const model = available.find(model => model.model === this.selectedModel);
+      this.selectedEffort ??= (this.options.model === null ? configured.config?.model_reasoning_effort : null) ?? model?.defaultReasoningEffort ?? null;
+      if (!this.selectedModel) throw new Error("Codex did not report its default model; select a model explicitly.");
+    }
 
     if (this.options.resumeHarnessSessionId) {
       const resumed = (await this.request(CODEX_METHODS.threadResume, {
         threadId: this.options.resumeHarnessSessionId,
+        cwd: this.options.cwd,
+        model: this.selectedModel,
+        ...(this.selectedEffort ? { config: { model_reasoning_effort: this.selectedEffort } } : {}),
         sandbox: this.options.autonomy === "autonomous" ? "danger-full-access" : "read-only",
         approvalPolicy: this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
       }).catch((error) => { if (this.auth.isolated || this.strictResume) throw new Error("The native session could not be resumed. Start a new chat; existing history is preserved."); return null; })) as { thread?: { id?: string } } | null;
-      if (this.strictResume && resumed?.thread?.id !== this.options.resumeHarnessSessionId)
+      if (resumed && resumed.thread?.id !== this.options.resumeHarnessSessionId)
         throw new Error("Codex did not resume the requested thread.");
       if (resumed) {
+        this.reportSelection(resumed);
         this.threadId = resumed.thread?.id ?? this.options.resumeHarnessSessionId;
       }
     }
@@ -335,16 +385,28 @@ class CodexRun implements HarnessRun {
     if (!this.threadId) {
       const started = (await this.request(CODEX_METHODS.threadStart, {
         cwd: this.options.cwd,
+        model: this.selectedModel,
+        ...(this.selectedEffort ? { config: { model_reasoning_effort: this.selectedEffort } } : {}),
         // Apply explicit chat policy on both initial start and every turn, including resumed threads.
         sandbox: this.options.autonomy === "autonomous" ? "danger-full-access" : "read-only",
         approvalPolicy: this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
       })) as { threadId?: string; thread?: { id?: string } };
+      this.reportSelection(started);
       this.threadId = started.threadId ?? started.thread?.id ?? null;
     }
 
     if (this.threadId) {
       this.emit({ type: "harness_session", harnessSessionId: this.threadId });
     }
+  }
+
+  private reportSelection(value: object): void {
+    const reported = value as { model?: string; reasoningEffort?: string };
+    if (typeof reported.model !== "string") return;
+    this.emit({ type: "execution_model", requested: { model: this.options.model ?? null, reasoningEffort: this.options.reasoningEffort ?? null },
+      reported: { model: reported.model, reasoningEffort: reported.reasoningEffort ?? null } });
+    if (this.options.model && reported.model !== this.options.model)
+      this.emit({ type: "notice", message: `Codex selected ${reported.model} instead of requested ${this.options.model}.` });
   }
 
   /** One turn at a time: Codex rejects a second turn/start while one is running. */
@@ -368,6 +430,8 @@ class CodexRun implements HarnessRun {
       const started = await this.request(CODEX_METHODS.turnStart, {
         threadId: this.threadId,
         input: [{ type: "text", text }],
+        model: this.selectedModel,
+        effort: this.selectedEffort,
         approvalPolicy: this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
         // The managed transport already isolates the process in Docker. Starting another Linux
         // namespace sandbox there fails under Docker's restricted capabilities. Keep the chat's
@@ -453,6 +517,10 @@ class CodexRun implements HarnessRun {
 
     const params = message.params ?? {};
     if (typeof params.threadId === "string" && this.threadId && params.threadId !== this.threadId) return;
+    if (message.method === "model/rerouted") {
+      this.emit({ type: "notice", message: `Codex reported a model change: ${String(params.fromModel ?? "unknown")} → ${String(params.toModel ?? "unknown")}.` });
+      return;
+    }
     if (message.method === "turn/started") {
       const turn = params.turn as { id?: string } | undefined;
       if (this.turnActive) this.activityTurnId = turn?.id ?? null;

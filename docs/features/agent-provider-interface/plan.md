@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-10
-updated: 2026-10-10
+updated: 2026-10-21
 summary: Explore a shared app-facing interface for independently provided agents and models, including multi-model providers and structured results.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -18,6 +18,26 @@ available local models is a concrete example to evaluate. See [vision decision 2
 Prefer an established API shape where it fits. An Ollama-style or compatible model API is a candidate,
 not a selected protocol. This Draft owns the interface investigation and agent-provider extraction;
 it does not authorize implementation or preserve the old `/api/ai/generate` design as a requirement.
+
+## Harness Worker Service Precursor
+
+Owner direction, 2026-10-20: the
+[Harness worker-service implementation](../assistant-shared-docker-runtime/feature.md) replaces Core's
+special agent execution proxy with an ordinary Harness service and a direct application API.
+Its remaining acceptance plan owns Windows verification and live provider coverage. The implementation owns its concrete HTTP/SSE run/event/cancellation contract and clean Harness
+update and an independently hosted endpoint fixture. Core-owned workspaces require no migration. It does not implement `providers.agent`, choose a
+public model API or ship an independently installable provider. The owner selected simple HTTP JSON
+and SSE for that refactor on 2026-10-20; ACP/A2A/OpenAI-compatible protocol adoption is deferred to
+this investigation, while AHP remains in its external-client plan. Worker model/effort selectors
+are connection-scoped execution options, not a new Core provider discovery or routing mechanism.
+
+D1-D3 here must consume that concrete contract and its evidence when comparing standards and
+designing extraction. Keep provider invocation independent of Harness's private database,
+container names and host paths. Specify discovery, cross-app caller/user authority and resource
+binding/transfer for a separately deployed provider; sibling networking alone supplies none of
+those guarantees. A compatible model-generation API must be evaluated against stateful agent
+runs, approvals, tool events, cancellation, resume and artifacts. The worker-service work does
+not complete any deliverable in this plan or change its Draft status.
 
 ## Current Baseline And Intended Change
 

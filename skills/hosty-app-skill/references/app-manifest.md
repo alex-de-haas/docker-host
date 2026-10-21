@@ -128,18 +128,24 @@ Use `cache.enabled: true` for **derived, rebuildable data** — media indexes, t
 - **The app must treat cache content as absent-at-any-time**: a restore can make the database older than the cache, a runtime switch to a profile without a cache target runs without the variable entirely (that is not an error, unlike a missing `data` target), and the operator may delete the directory between runs. Key cache entries so stale ones invalidate themselves — for example by stamping them with the source file's size and mtime.
 - Additive under `app.0.1`; a Core that predates the contract simply never sets the variable, so apps should fall back (typically to a subdirectory of `HOSTY_APP_DATA_DIR`).
 
-## Assistant Agent Worker
+## Scoped Service Inputs
 
-Harness declares `agentWorker: { "service": "api", "image": "ghcr.io/alex-de-haas/hosty-agent-worker:<version>" }`.
-This optional Core-managed contract requires the assistant role, required `apps.sources.full`
-permission, enabled data/cache and an existing coordinator service. Use a versioned worker image.
-Only a selected Docker coordinator receives the constrained worker API. Core verifies the reviewed
-installation, active source lease, paths and container ownership; the app receives no Docker socket.
-Core uses the host's numeric UID/GID and canonical app data/cache paths for that coordinator so
-provider-history paths remain valid across Local/Docker switches. Its Docker listener still uses
-the declared container port; `HOSTY_PORT_HTTP` contains the published host port.
-See [Harness shared runtime](../../../docs/features/assistant-shared-docker-runtime/feature.md)
-for supported hosts, storage, lifecycle and credential boundaries.
+Use ordinary declared services for background workers. Services can exclude Core credentials and
+settings with `injection: { "appServiceToken": false, "appIdentityToken": false, "settings": [] }`;
+omitted fields preserve defaults, and `settings` can contain an explicit allowlist. Data/cache
+targets accept contained relative `subPath` and `mode` (`ro` or default `rw`). Multiple targets
+must use unique environment variables and non-overlapping container destinations. Profile targets
+override runtime-type defaults for the same environment key. Docker service runtimes also accept
+`resources: { "memoryBytes": 268435456, "cpus": 0.5, "pids": 64 }`.
+
+Apps with reviewed full-source permission can declare an automatic Core collection:
+`externalMounts.development: { "kind": "managed-workspaces", "scope": "instance", "service": "worker", "mode": "rw", "required": true }`.
+For this collection kind, `HOSTY_MOUNT_DEVELOPMENT` is a JSON object with `trees` and `repositories`
+path values (container paths in Docker, host paths in Local), not the operator-bound comma format.
+Core exposes development trees and read-only repository metadata; no operator path or global-mount
+assignment is accepted. It exposes all managed trees, not a session sandbox. Use ordinary specific
+workspace activity leases while processes use a tree. `agentWorker` is retired and rejected.
+See [Harness services](../../../docs/features/assistant-shared-docker-runtime/feature.md).
 
 ## External Mounts
 
@@ -150,7 +156,7 @@ Declare slots in the manifest. The manifest declares *what the app can accept*; 
 ```jsonc
 "externalMounts": {
   "catalogRoots": {
-    "kind": "host-path",   // only "host-path" is supported
+    "kind": "host-path",   // operator-owned path slot
     "multiple": true,       // allow more than one host path in this slot
     "mode": "rw",           // "rw" (default) or "ro" — authoritative, the operator cannot change it
     "service": "api",       // optional: bind only into this service (omit = all services)

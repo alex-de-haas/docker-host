@@ -74,6 +74,7 @@ interface Registration {
 }
 
 export class McpProxy {
+  allowRemoteWorker = false;
   policy?: McpToolPolicy;
   identity?: (appId: string) => Promise<string>;
   deniedTools?: (appId: string) => Promise<readonly string[]>;
@@ -93,10 +94,10 @@ export class McpProxy {
    * re-keying there would break every MCP connection the harness already holds for providers that
    * were not touched. Each request still needs a fresh Core token.
    */
-  register(sessionId: string, targets: readonly ProxyTarget[]): string {
+  register(sessionId: string, targets: readonly ProxyTarget[], recoveredKey?: string): string {
     const existing = this.sessions.get(sessionId);
     const registration: Registration = existing ?? {
-      key: randomBytes(32).toString("base64url"),
+      key: recoveredKey ?? randomBytes(32).toString("base64url"),
       targets: new Map(),
     };
 
@@ -130,7 +131,7 @@ export class McpProxy {
     // is a request arriving through the Cloudflare tunnel: `cloudflared` runs on the host and routes a
     // public hostname straight at this port, so such a request presents as loopback. The per-session
     // key is therefore the gate; this check narrows the direct-network path, and nothing more.
-    if (!isLoopback(request.socket.remoteAddress)) {
+    if (!this.allowRemoteWorker && !isLoopback(request.socket.remoteAddress)) {
       sendJson(response, 403, { code: "proxy_forbidden", message: "The MCP proxy is reachable from loopback only." });
       return true;
     }

@@ -152,16 +152,7 @@ it("resolves the viewer through the owning session without making a workspace mu
   expect(init.method).toBe("GET"); expect(init.body).toBeUndefined();
 });
 
-// Core serializes a null lease-release result as an empty successful response.
-it("accepts an empty successful worker lease release but requires bindings for acquisition", async () => {
-  const original = globalThis.fetch;
-  globalThis.fetch = async () => new Response(null, { status: 204 });
-  try {
-    const client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
-    await expect(client.workerBindings("session", "hostyg_test", { leaseId: "id", acquire: false })).resolves.toBeNull();
-    await expect(client.workerBindings("session", "hostyg_test", { leaseId: "id", acquire: true })).rejects.toThrow();
-  } finally { globalThis.fetch = original; }
-});
+
 
 
 it("sends activation through its owned session with the original reviewed body", async () => {

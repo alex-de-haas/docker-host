@@ -712,6 +712,46 @@ Decisions 1–5: 2026-08-19.
     Core diagnostics. This clarifies decisions 35/46/47 while retaining the separate per-session
     isolation and application-sandbox work. The feature records the shipped production profiles and their acceptance limits.
 
+50. **Declare agent execution as an ordinary service; keep its traffic out of Core (2026-10-20).**
+    The owner requests a redesign plan for the worker as a normal Harness service in `services[]`,
+    with its own lifecycle, private endpoint, health, logs and resource visibility. Harness calls
+    that service directly; Core retains ordinary runtime, identity, discovery and workspace
+    responsibilities without a provider-specific exec/stdio proxy. This revises the transport and
+    special-container integration of the shared-runtime implementation, while retaining decision
+    49's Docker/Local profiles and decision 35's separation of broad coordinator authority from
+    agent execution.
+
+    Native Windows Core with Linux Docker containers is a first-release acceptance target, alongside
+    macOS/Linux verification; running Core inside WSL does not substitute for the Windows target.
+    Keep the application API independent of Harness's UI/storage so an agent can later become a
+    separately installed provider. The [worker-service redesign](features/assistant-shared-docker-runtime/plan.md)
+    owns the concrete service/API replacement and clean Harness update. The
+    [agent-provider plan](features/agent-provider-interface/plan.md) retains public protocol selection,
+    provider discovery/authority and independent application extraction. No provider protocol is
+    selected by this direction. This request authorizes a Draft plan, not implementation, production
+    lifecycle changes or removal of existing data.
+
+51. **Keep the Harness worker cooperative and preserve external workspaces (2026-10-20).**
+    The owner clarifies decision 50: mount the entire managed worktree parent once, allow sibling
+    access within that shared directory, and avoid per-session containers or custom containment
+    machinery. Creating or deleting an eligible child worktree must not require restarting worker
+    or Harness. Track specific active work/consumers; parent-mount visibility alone must not become
+    a global cleanup lock. Existing external-agent activity leases and normal dirty/unmerged/source
+    checks remain authoritative. This deliberately accepts cooperative access, not exclusive use
+    or detection of every undeclared background process.
+
+    The production Harness can start with clean app state; old conversations and native provider
+    sessions need no migration. Local external workspaces and their Core registry, Git metadata,
+    paths and active consumers must remain intact, including old trees kept for later cleanup/UI
+    testing. Core already owns these workspace records and files independently of Harness;
+    changing Harness requires no workspace migration, import, restore or preservation job. Treat
+    their unchanged state as an update regression check. Do not add bulk Git conversion or a
+    history migration framework to preserve them.
+    The [worker-service plan](features/assistant-shared-docker-runtime/plan.md) owns this revised
+    scope; stricter isolation stays in [containment](features/assistant-runtime-containment/plan.md).
+    This records a planning decision, not a request to perform resets, remove current workspaces
+    or interrupt parallel external agents in this session.
+
 ## Expectations And Later Directions
 
 - **Apps ship with source.** The default is open source; a company's internal apps are closed by

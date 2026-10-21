@@ -12,6 +12,11 @@ public sealed class RuntimePreparationTests : IDisposable
     {
         var source = Path.Combine(root, "source");
         Directory.CreateDirectory(source);
+        RuntimeAppDataTarget Target(RuntimeAppDataTarget target) => new()
+        {
+            Runtime = "dev", Service = target.Service, ContainerPath = target.ContainerPath, Environment = target.Environment,
+        };
+        data = data is null ? null : Target(data); cache = cache is null ? null : Target(cache);
         var baseline = MixedRuntimeTests.Context();
         var service = new RuntimeSelectedService("engine", [], new RuntimeServiceProfileManifest
         {
@@ -31,6 +36,11 @@ public sealed class RuntimePreparationTests : IDisposable
             {
                 RuntimeProfile = new() { Key = "dev", Type = "docker", Development = true }, Services = [service],
                 DataTarget = data, CacheTarget = cache,
+                Manifest = new RuntimeAppManifest
+                {
+                    Data = data is null ? null : new() { Enabled = true, Targets = [data] },
+                    Cache = cache is null ? null : new() { Enabled = true, Targets = [cache] },
+                },
             },
             DependencyUrls = new Dictionary<string, string> { ["database"] = "http://ordinary-database:5432" },
             Mounts = [new("library", "media", Path.Combine(root, "external-data"), "/mnt/library/media", true, "engine")],
@@ -57,7 +67,7 @@ public sealed class RuntimePreparationTests : IDisposable
         var runner = new RecordingRunner();
         var prepared = await Adapter(runner).PrepareAsync(context, default);
         var command = Assert.Single(runner.Commands, args => args[0] == "run");
-        Assert.Equal(new[] { context.AppDataPath + ":/var/prepare-data", context.AppCachePath + ":/var/prepare-cache" }, Values(command, "-v"));
+        Assert.Equal(new[] { MountPathPolicy.ResolveRealPath(context.AppDataPath) + ":/var/prepare-data:rw", MountPathPolicy.ResolveRealPath(context.AppCachePath!) + ":/var/prepare-cache:rw" }, Values(command, "-v"));
         Assert.Equal(new[] { "CUSTOM_DATA=/manifest-value", "STATIC_VALUE=static", "CUSTOM_DATA=/var/prepare-data", "CUSTOM_CACHE=/var/prepare-cache" },
             Values(command, "--env"));
         Assert.Contains($"type=bind,source={MountPathPolicy.ResolveRealPath(context.SourceRoot!)},target=/workspace,readonly", command);
@@ -103,7 +113,7 @@ public sealed class RuntimePreparationTests : IDisposable
         var runner = new RecordingRunner();
         await Adapter(runner).PrepareAsync(context, default);
         var command = Assert.Single(runner.Commands, args => args[0] == "run");
-        Assert.Equal(new[] { context.AppDataPath + ":/app/data", context.AppCachePath + ":/app/cache" }, Values(command, "-v"));
+        Assert.Equal(new[] { MountPathPolicy.ResolveRealPath(context.AppDataPath) + ":/app/data:rw", MountPathPolicy.ResolveRealPath(context.AppCachePath!) + ":/app/cache:rw" }, Values(command, "-v"));
         Assert.Contains("HOSTY_APP_DATA_DIR=/app/data", Values(command, "--env"));
         Assert.Contains("HOSTY_APP_CACHE_DIR=/app/cache", Values(command, "--env"));
     }
@@ -141,7 +151,7 @@ public sealed class RuntimePreparationTests : IDisposable
         var runner = new RecordingRunner();
         await Adapter(runner).PrepareAsync(context, default);
         var command = Assert.Single(runner.Commands, args => args[0] == "run");
-        Assert.Equal(new[] { context.AppDataPath + ":/app/data" }, Values(command, "-v"));
+        Assert.Equal(new[] { MountPathPolicy.ResolveRealPath(context.AppDataPath) + ":/app/data:rw" }, Values(command, "-v"));
         Assert.DoesNotContain(Values(command, "--env"), value => value.StartsWith("HOSTY_APP_CACHE_DIR=", StringComparison.Ordinal));
         Assert.False(Directory.Exists(Path.Combine(context.AppRoot, "cache")));
     }

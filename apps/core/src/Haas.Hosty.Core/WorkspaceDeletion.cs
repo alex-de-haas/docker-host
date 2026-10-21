@@ -113,7 +113,7 @@ internal sealed partial class DevelopmentWorkspaceService
     }
 
     internal Task FinalizeDeletionAsync(WorkspaceOwner owner, CancellationToken ct)
-        => Locked(Hash(OwnerIdentity(owner)), () => Locked("shared-worker-bindings", async () =>
+        => Locked(Hash(OwnerIdentity(owner)), () => Locked("workspace-consumers", async () =>
         {
             var id = WorkspaceIdFor(owner);
             var journal = await ReadDeletionAsync(id, ct);

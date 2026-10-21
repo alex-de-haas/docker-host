@@ -62,7 +62,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         string? legacyManifestDigest = null,
         SourceReadGrant? manifestGrant = null,
         bool forceRead = false,
-        bool allowUnsupportedPermissions = false)
+        bool allowUnsupportedPermissions = false,
+        bool allowRetiredContracts = false)
     {
         if (string.IsNullOrWhiteSpace(manifestPath))
         {
@@ -78,7 +79,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             localManifestCache.TryGetValue(localPath, out var cached) &&
             cached.Stamp == stamp)
         {
-            return Select(cached.Manifest, localPath, cached.Digest, selectedRuntime, cached.Json, manifestUrl: null, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && cached.Digest != legacyManifestDigest, allowUnsupportedPermissions: allowUnsupportedPermissions);
+            return Select(cached.Manifest, localPath, cached.Digest, selectedRuntime, cached.Json, manifestUrl: null, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && cached.Digest != legacyManifestDigest, allowUnsupportedPermissions: allowUnsupportedPermissions, allowRetiredContracts: allowRetiredContracts);
         }
 
         var source = manifestGrant is null
@@ -106,7 +107,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             localManifestCache[localPath] = new CachedLocalManifest(manifest, source.Json, digest, stamp);
         }
 
-        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && digest != legacyManifestDigest, allowUnsupportedPermissions: allowUnsupportedPermissions);
+        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && digest != legacyManifestDigest, allowUnsupportedPermissions: allowUnsupportedPermissions, allowRetiredContracts: allowRetiredContracts);
     }
 
     // Mirrors ReadManifestSourceAsync/ReadLocalManifestAsync resolution for the cache key: null for a
@@ -492,7 +493,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         string? manifestUrl = null,
         bool validateAllProfiles = true,
         bool requirePanelIcons = false,
-        bool allowUnsupportedPermissions = false)
+        bool allowUnsupportedPermissions = false,
+        bool allowRetiredContracts = false)
     {
         var errors = new List<AppManifestValidationError>();
         ValidateRequired(manifest.SchemaVersion, "$.schemaVersion", errors);
@@ -533,15 +535,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
                     errors.Add(new("app_manifest_ui_panel_id_duplicate", "Panel IDs must be unique within the app.", $"$.ui.panels[{index}].id"));
             }
         }
-        if (manifest.AgentWorker is { } worker && (
-            string.IsNullOrWhiteSpace(worker.Service) || string.IsNullOrWhiteSpace(worker.Image)
-            || worker.Image.StartsWith('-') || worker.Image.Any(char.IsWhiteSpace)
-            || worker.Image.LastIndexOf(':') <= worker.Image.LastIndexOf('/') || worker.Image.EndsWith(':') || worker.Image.EndsWith(":latest", StringComparison.Ordinal)
-            || !manifest.Services.Any(s => s.Key == worker.Service)
-            || !manifest.Provides.Contains("assistant", StringComparer.Ordinal)
-            || !manifest.CorePermissions.Contains(CoreAppPermissions.Sources, StringComparer.Ordinal)
-            || manifest.Data?.Enabled != true || manifest.Cache?.Enabled != true))
-            errors.Add(new("app_manifest_agent_worker_invalid", "Agent workers require a versioned image, an existing coordinator service, assistant role, source authority and managed data/cache.", "$.agentWorker"));
+        if (!allowRetiredContracts && manifest.AgentWorker is not null)
+            errors.Add(new("app_manifest_agent_worker_retired", "The agentWorker contract is retired. Install an application that declares ordinary services.", "$.agentWorker"));
         foreach (var permission in manifest.CorePermissions.Concat(manifest.OptionalCorePermissions))
         {
             if (!allowUnsupportedPermissions && !CoreAppPermissions.Known.Contains(permission, StringComparer.Ordinal))
@@ -752,7 +747,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
                 continue;
             }
 
-            selectedServices.Add(new RuntimeSelectedService(service.Key, service.DependsOn, runtime with { Type = runtimeType }, image, artifact));
+            selectedServices.Add(new RuntimeSelectedService(service.Key, service.DependsOn, runtime with { Type = runtimeType }, image, artifact, service.Injection));
         }
 
         if (selectedProfile is not null && selectedServices.Count == 0)
@@ -813,10 +808,16 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
                 errors.Add(new("app_manifest_external_mount_key_collision", $"externalMounts key '{mountKey}' normalizes to the same HOSTY_MOUNT_ environment name as another slot.", "$.externalMounts"));
             }
 
-            if (!string.Equals(mount.Kind, "host-path", StringComparison.Ordinal))
+            if (mount.Kind is not ("host-path" or "managed-workspaces"))
             {
-                errors.Add(new("app_manifest_external_mount_kind_unsupported", $"externalMounts['{mountKey}'].kind '{mount.Kind}' is not supported; only 'host-path' is allowed.", "$.externalMounts"));
+                errors.Add(new("app_manifest_external_mount_kind_unsupported", $"externalMounts['{mountKey}'].kind '{mount.Kind}' is not supported.", "$.externalMounts"));
             }
+
+            if (mount.Kind == "managed-workspaces" && (mount.Scope != "instance" || mount.Multiple
+                || string.IsNullOrWhiteSpace(mount.Service) || !manifest.CorePermissions.Contains(CoreAppPermissions.Sources)))
+                errors.Add(new("app_manifest_collection_invalid", "Managed workspaces require instance scope, a service and required full-source authority; operator bindings are not supported.", "$.externalMounts"));
+            if (mount.Kind == "host-path" && mount.Scope is not null)
+                errors.Add(new("app_manifest_collection_invalid", "Host-path mounts do not declare a collection scope.", "$.externalMounts"));
 
             if (mount.Mode is not "ro" and not "rw")
             {
@@ -896,15 +897,18 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             }
         }
 
+        if (selectedProfile is not null)
+            RuntimeServiceStorage.Validate(manifest, selectedProfile, selectedServices, errors);
+
         if (errors.Count > 0)
         {
-            throw new AppManifestException("manifest_validation_failed", "Runtime app manifest failed validation.", errors);
+            throw new AppManifestException("manifest_validation_failed", "Runtime app manifest failed validation: " + string.Join("; ", errors.Select(e => e.Code + ": " + e.Message)), errors);
         }
 
         if (validateAllProfiles)
         {
             foreach (var other in manifest.RuntimeProfiles.Where(profile => profile.Key != selectedProfile!.Key))
-                Select(manifest, manifestPath, manifestDigest, other.Key, manifestJson, manifestUrl, validateAllProfiles: false, requirePanelIcons: requirePanelIcons, allowUnsupportedPermissions: allowUnsupportedPermissions);
+                Select(manifest, manifestPath, manifestDigest, other.Key, manifestJson, manifestUrl, validateAllProfiles: false, requirePanelIcons: requirePanelIcons, allowUnsupportedPermissions: allowUnsupportedPermissions, allowRetiredContracts: allowRetiredContracts);
         }
         _ = DockerRuntimeAdapter.OrderServices(selectedServices);
 
@@ -1851,8 +1855,7 @@ internal sealed partial class DockerRuntimeAdapter(
     // Optional so existing direct constructions stay valid; DI supplies it, and without it the startup
     // env baseline stands in.
     CorePublicOriginResolver? corePublicOrigin = null,
-    DockerCoreListener? dockerCoreListener = null,
-    AgentWorkerService? agentWorkers = null) : IAppRuntimeAdapter, IRuntimePreparation, IImageDigestResolver, IRunningContainerProbe
+    DockerCoreListener? dockerCoreListener = null) : IAppRuntimeAdapter, IRuntimePreparation, IImageDigestResolver, IRunningContainerProbe
 {
     // Resolved per container create rather than once: a saved origin must reach the next app that starts,
     // not only the apps started after the next Core restart.
@@ -1890,11 +1893,6 @@ internal sealed partial class DockerRuntimeAdapter(
     public async Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
     {
         if (dockerCoreListener is not null) await dockerCoreListener.EnsureReadyAsync(cancellationToken);
-        if (context.Manifest.Manifest.AgentWorker is { } workerDeclaration)
-        {
-            if (agentWorkers is null) throw new AppLifecycleException("agent_worker_unavailable", "Core agent worker support is unavailable.");
-            await agentWorkers.PrepareImageAsync(workerDeclaration, cancellationToken);
-        }
         var endpoints = new List<AppEndpointContract>();
         var services = OrderServices(context.Manifest.Services);
         await RemoveObsoleteServicesAsync(context, cancellationToken);
@@ -1953,7 +1951,7 @@ internal sealed partial class DockerRuntimeAdapter(
             // through to the normal recreate path below. Adopted
             // containers are intentionally NOT added to startedContainers: this start did not create
             // them, so a later sibling's failure must not tear a healthy running service down.
-            if (service.Runtime.SourceMount is null && (admission is null || await admission.MatchesAsync(runner, containerName, cancellationToken)) && await TryAdoptRunningContainerAsync(context.App.Id, containerName, service.Image, existingLock, cancellationToken))
+            if (service.Runtime.SourceMount is null && (admission is null || await admission.MatchesAsync(runner, containerName, cancellationToken)) && await TryAdoptRunningContainerAsync(context.App.Id, containerName, service.Image, existingLock, cancellationToken, context, service, admission is null))
             {
                 resolvedLocks[service.Key] = existingLock!;
                 AppendServiceEndpoints(endpoints, service, AssignServicePorts(context, service, hostNetwork), config);
@@ -1999,6 +1997,8 @@ internal sealed partial class DockerRuntimeAdapter(
                 $"hosty.app.id={context.App.Id}",
                 "--label",
                 $"hosty.app.service={service.Key}",
+                "--label",
+                "hosty.service.configuration=" + ServiceConfigurationFingerprint(context, service),
                 "-e",
                 $"HOSTY_APP_ID={context.App.Id}",
                 "-e",
@@ -2034,6 +2034,11 @@ internal sealed partial class DockerRuntimeAdapter(
             // Privileged extras (validated + install-review gated): Linux capabilities and host
             // device nodes, e.g. NET_ADMIN + /dev/net/tun for an in-container VPN.
             if (admission is not null) runArgs.AddRange(admission.Arguments);
+            else if (service.Runtime.Resources is { } resources) runArgs.AddRange([
+                "--memory", resources.MemoryBytes.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                "--memory-swap", resources.MemoryBytes.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                "--cpus", resources.Cpus.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                "--pids-limit", resources.Pids.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
             runArgs.AddRange(BuildPrivilegedArguments(service.Runtime));
             runArgs.AddRange(BuildHealthcheckArguments(service.Runtime));
 
@@ -2043,7 +2048,8 @@ internal sealed partial class DockerRuntimeAdapter(
                 runArgs.Add(environment);
             }
 
-            foreach (var setting in context.App.Settings.Values)
+            foreach (var setting in context.App.Settings.Values.Where(setting =>
+                service.Injection?.Settings is not { } allowed || allowed.Contains(setting.Key, StringComparer.Ordinal)))
             {
                 if (!string.IsNullOrWhiteSpace(setting.Value))
                 {
@@ -2059,11 +2065,12 @@ internal sealed partial class DockerRuntimeAdapter(
                 runArgs.Add($"{environment.Key}={environment.Value}");
             }
 
-            runArgs.Add("-e");
-            runArgs.Add("HOSTY_APP_SERVICE_TOKEN");
-            if (context.Manifest.Manifest.AgentWorker?.Service == service.Key)
-                runArgs.AddRange(["--user", await AgentWorkerService.HostUser(cancellationToken)]);
-            containerEnvironment["HOSTY_APP_SERVICE_TOKEN"] = serviceTokens.CreateToken(context.App.Id);
+            if (service.Injection?.AppServiceToken != false)
+            {
+                runArgs.Add("-e");
+                runArgs.Add("HOSTY_APP_SERVICE_TOKEN");
+                containerEnvironment["HOSTY_APP_SERVICE_TOKEN"] = serviceTokens.CreateToken(context.App.Id);
+            }
 
             if (delegatedTokenKey is not null)
             {
@@ -2072,7 +2079,7 @@ internal sealed partial class DockerRuntimeAdapter(
                 containerEnvironment["HOSTY_DELEGATED_TOKEN_PUBLIC_KEY"] = delegatedTokenKey.PublicKeySpkiBase64;
             }
 
-            if (appIdentityTokens is not null)
+            if (appIdentityTokens is not null && service.Injection?.AppIdentityToken != false)
             {
                 runArgs.Add("-e");
                 runArgs.Add("HOSTY_APP_IDENTITY_TOKEN");
@@ -2123,41 +2130,12 @@ internal sealed partial class DockerRuntimeAdapter(
                 runArgs.AddRange(BuildPortArguments(port, assignedPorts[key], port.ContainerPort.Value, hostNetwork));
             }
 
-            if (context.Manifest.DataTarget is not null &&
-                (string.IsNullOrWhiteSpace(context.Manifest.DataTarget.Service) ||
-                    string.Equals(context.Manifest.DataTarget.Service, service.Key, StringComparison.Ordinal)))
+            foreach (var storage in RuntimeServiceStorage.Resolve(context.Manifest, service))
             {
-                var containerPath = context.Manifest.Manifest.AgentWorker?.Service == service.Key ? MountPathPolicy.ResolveRealPath(context.AppDataPath) : string.IsNullOrWhiteSpace(context.Manifest.DataTarget.ContainerPath)
-                    ? "/app/data"
-                    : context.Manifest.DataTarget.ContainerPath;
-                var environmentName = string.IsNullOrWhiteSpace(context.Manifest.DataTarget.Environment)
-                    ? "HOSTY_APP_DATA_DIR"
-                    : context.Manifest.DataTarget.Environment;
-
-                Directory.CreateDirectory(context.AppDataPath);
-                runArgs.Add("-v");
-                runArgs.Add($"{context.AppDataPath}:{containerPath}");
-                runArgs.Add("-e");
-                runArgs.Add($"{environmentName}={containerPath}");
-            }
-
-            if (context.Manifest.CacheTarget is not null &&
-                (string.IsNullOrWhiteSpace(context.Manifest.CacheTarget.Service) ||
-                    string.Equals(context.Manifest.CacheTarget.Service, service.Key, StringComparison.Ordinal)))
-            {
-                var appCachePath = context.AppCachePath ?? Path.Combine(context.AppRoot, "cache");
-                var cacheContainerPath = context.Manifest.Manifest.AgentWorker?.Service == service.Key ? MountPathPolicy.ResolveRealPath(appCachePath) : string.IsNullOrWhiteSpace(context.Manifest.CacheTarget.ContainerPath)
-                    ? "/app/cache"
-                    : context.Manifest.CacheTarget.ContainerPath;
-                var cacheEnvironmentName = string.IsNullOrWhiteSpace(context.Manifest.CacheTarget.Environment)
-                    ? "HOSTY_APP_CACHE_DIR"
-                    : context.Manifest.CacheTarget.Environment;
-
-                Directory.CreateDirectory(appCachePath);
-                runArgs.Add("-v");
-                runArgs.Add($"{appCachePath}:{cacheContainerPath}");
-                runArgs.Add("-e");
-                runArgs.Add($"{cacheEnvironmentName}={cacheContainerPath}");
+                var root = storage.Cache ? context.AppCachePath ?? Path.Combine(context.AppRoot, "cache") : context.AppDataPath;
+                var hostPath = RuntimeServiceStorage.PreparePath(root, storage.Target.SubPath);
+                runArgs.AddRange(["-v", $"{hostPath}:{storage.ContainerPath}:{storage.Target.Mode}",
+                    "-e", $"{storage.Environment}={storage.ContainerPath}"]);
             }
 
             var serviceMounts = RuntimeMountPlanner.ForService(context.Mounts, service.Key);
@@ -2221,17 +2199,11 @@ internal sealed partial class DockerRuntimeAdapter(
                 $"docker stop did not stop container(s): {string.Join(", ", stillRunning)}.");
         }
 
-        if (context.Manifest.Manifest.AgentWorker is not null)
-        {
-            if (agentWorkers is null) throw new AppLifecycleException("agent_worker_unavailable", "Worker shutdown support is unavailable.");
-            await agentWorkers.StopInstallationAsync(context.App, cancellationToken);
-        }
         return new AppRuntimeOperationResult("stopped");
     }
 
     public async Task<AppRuntimeOperationResult> RemoveAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
     {
-        if (context.Manifest.Manifest.AgentWorker is not null) await StopAsync(context, cancellationToken);
         foreach (var service in context.Manifest.Services)
         {
             await RemoveContainerIfOwnedAsync(context.App.Id, BuildContainerName(config.InstanceId, context.App.Id, service.Key), cancellationToken);
@@ -2627,7 +2599,7 @@ internal sealed partial class DockerRuntimeAdapter(
         string containerName,
         RuntimeDockerImage image,
         ArtifactLock? existingLock,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RuntimeLifecycleContext context, RuntimeSelectedService service, bool ordinaryResources)
     {
         if (string.IsNullOrWhiteSpace(existingLock?.ImageDigest))
         {
@@ -2660,7 +2632,53 @@ internal sealed partial class DockerRuntimeAdapter(
             string.Equals(parts[1].Trim(), appId, StringComparison.Ordinal) &&
             string.Equals(parts[2].Trim(), config.InstanceId, StringComparison.Ordinal) &&
             string.Equals(parts[3].Trim(), pinnedReference, StringComparison.Ordinal) &&
-            HasValidServiceToken(appId, parts[4]);
+            (service.Injection?.AppServiceToken == false ? !parts[4].Split('\n').Any(line => line.StartsWith("HOSTY_APP_SERVICE_TOKEN=", StringComparison.Ordinal)) : HasValidServiceToken(appId, parts[4]))
+            && await MatchesServiceConfigurationAsync(context, service, containerName, ordinaryResources, cancellationToken);
+    }
+
+    private static bool HasExplicitServiceContract(RuntimeLifecycleContext context, RuntimeSelectedService service)
+        => service.Injection is not null || service.Runtime.Resources is not null || RuntimeServiceStorage.Resolve(context.Manifest, service).Any(b => b.Target.SubPath is not null || b.Target.Mode == "ro")
+            || context.Mounts.Any(m => m.ManagedCollection && (m.Service is null || m.Service == service.Key));
+
+    private static string ServiceConfigurationFingerprint(RuntimeLifecycleContext context, RuntimeSelectedService service)
+    {
+        var values = new List<string> { context.Manifest.ManifestDigest, context.App.InstalledAt.ToString("O"), service.Key };
+        values.AddRange(RuntimeServiceStorage.Resolve(context.Manifest, service).Select(b => string.Join('|', b.Environment,
+            RuntimeServiceStorage.PreparePath(b.Cache ? context.AppCachePath! : context.AppDataPath, b.Target.SubPath), b.ContainerPath, b.Target.Mode)));
+        values.AddRange(context.Mounts.Where(m => m.Service is null || m.Service == service.Key).Select(m => string.Join('|', m.HostPath, m.ContainerPath, m.ReadOnly)));
+        values.AddRange(context.App.Settings.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => p.Key + "=" + p.Value));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', values)))).ToLowerInvariant();
+    }
+
+    private async Task<bool> MatchesServiceConfigurationAsync(RuntimeLifecycleContext context, RuntimeSelectedService service, string name, bool ordinaryResources, CancellationToken ct)
+    {
+        if (!HasExplicitServiceContract(context, service)) return true; // Existing default-token applications retain their adoption contract.
+        var inspected = await RunRawAsync(["inspect", name], ct);
+        if (inspected.ExitCode != 0) return false;
+        try
+        {
+            using var json = JsonDocument.Parse(inspected.StandardOutput);
+            var container = json.RootElement[0];
+            var labels = container.GetProperty("Config").GetProperty("Labels");
+            if (!labels.TryGetProperty("hosty.app.service", out var key) || key.GetString() != service.Key
+                || !labels.TryGetProperty("hosty.service.configuration", out var fingerprint) || fingerprint.GetString() != ServiceConfigurationFingerprint(context, service)) return false;
+            if (ordinaryResources && service.Runtime.Resources is { } resources)
+            {
+                var limits = container.GetProperty("HostConfig");
+                if (limits.GetProperty("Memory").GetInt64() != resources.MemoryBytes || limits.GetProperty("MemorySwap").GetInt64() != resources.MemoryBytes
+                    || limits.GetProperty("NanoCpus").GetInt64() != (long)(resources.Cpus * 1_000_000_000) || limits.GetProperty("PidsLimit").GetInt64() != resources.Pids) return false;
+            }
+            var environment = container.GetProperty("Config").GetProperty("Env").EnumerateArray().Select(e => e.GetString() ?? "").ToArray();
+            if (service.Injection?.AppIdentityToken == false && environment.Any(e => e.StartsWith("HOSTY_APP_IDENTITY_TOKEN=", StringComparison.Ordinal))) return false;
+            if (service.Injection?.Settings is { } allowed && context.App.Settings.Keys.Any(k => !allowed.Contains(k) && environment.Any(e => e.StartsWith(k + "=", StringComparison.Ordinal)))) return false;
+            var expected = RuntimeServiceStorage.Resolve(context.Manifest, service).Select(b => (
+                Source: RuntimeServiceStorage.PreparePath(b.Cache ? context.AppCachePath! : context.AppDataPath, b.Target.SubPath), Target: b.ContainerPath, ReadOnly: b.Target.Mode == "ro"))
+                .Concat(context.Mounts.Where(m => m.Service is null || m.Service == service.Key).Select(m => (Source: m.HostPath, Target: m.ContainerPath, m.ReadOnly))).ToArray();
+            var actual = container.GetProperty("Mounts").EnumerateArray().Where(m => m.GetProperty("Type").GetString() == "bind").ToArray();
+            return actual.Length == expected.Length && expected.All(binding => actual.Any(m => DockerMountPaths.Equivalent(m.GetProperty("Source").GetString() ?? "", binding.Source)
+                && m.GetProperty("Destination").GetString() == binding.Target && m.GetProperty("RW").GetBoolean() != binding.ReadOnly));
+        }
+        catch (Exception error) when (error is JsonException or InvalidOperationException or KeyNotFoundException) { return false; }
     }
 
     private bool HasValidServiceToken(string appId, string environmentBlock)
@@ -3459,7 +3477,8 @@ internal sealed record RuntimeSelectedService(
     RuntimeDockerImage? Image,
     // Resolved artifact kind for the selected runtime (A1): "image" (compiled, lockable) or
     // "source" (live operator folder). Drives the update model and the liveness marker (R15).
-    string Artifact);
+    string Artifact,
+    RuntimeServiceInjection? Injection = null);
 
 // A `services[].dependsOn` entry. Accepts either a bare service-key string (`"api"`) or an
 // object that names a specific port (`{ "service": "api", "port": "internal" }`). One
@@ -3489,7 +3508,7 @@ internal sealed class RuntimeAppManifest
 {
     // Explicit opt-in: older SDKs cannot safely interpret instance-scoped test administrators.
     public SandboxManifest? Sandbox { get; init; }
-    public AgentWorkerManifest? AgentWorker { get; init; }
+    public System.Text.Json.JsonElement? AgentWorker { get; init; }
     // Collection properties coalesce null to empty in the getter so that members absent
     // from the JSON behave the same under the source generator (used for Native AOT) as
     // under the reflection serializer, which preserved the `= []` initializer.
@@ -3582,6 +3601,7 @@ internal sealed record RuntimeAppInterfaceManifest
 internal sealed record RuntimeAppExternalMountManifest
 {
     public string Kind { get => field ?? "host-path"; init; } = "host-path";
+    public string? Scope { get; init; }
     public bool Multiple { get; init; }
     public string Mode { get => field ?? "rw"; init; } = "rw";
     public string? Service { get; init; }
@@ -3710,8 +3730,16 @@ internal sealed class RuntimeProfileManifest
     public int? ReadinessTimeoutSeconds { get; init; }
 }
 
+internal sealed record RuntimeServiceInjection
+{
+    public bool? AppServiceToken { get; init; }
+    public bool? AppIdentityToken { get; init; }
+    public IReadOnlyList<string>? Settings { get; init; }
+}
+
 internal sealed class RuntimeAppServiceManifest
 {
+    public RuntimeServiceInjection? Injection { get; init; }
     public string Key { get => field ?? ""; init; } = "";
     public IReadOnlyList<RuntimeServiceDependency> DependsOn { get => field ?? []; init; } = [];
     public IReadOnlyDictionary<string, RuntimeServiceProfileManifest> Runtimes { get => field ??= new Dictionary<string, RuntimeServiceProfileManifest>(); init; } = new Dictionary<string, RuntimeServiceProfileManifest>();
@@ -3746,8 +3774,11 @@ internal sealed record RuntimeServiceHealthcheckManifest
     public int? GracePeriodSeconds { get; init; }
 }
 
+internal sealed record RuntimeServiceResources(long MemoryBytes, double Cpus, int Pids);
+
 internal sealed record RuntimeServiceProfileManifest
 {
+    public RuntimeServiceResources? Resources { get; init; }
     public string? Type { get; init; }
 
     // How the running code is delivered for this runtime (A1). `image` is a compiled, lockable
@@ -3855,6 +3886,8 @@ internal sealed class RuntimeAppDataManifest
 
 internal sealed class RuntimeAppDataTarget
 {
+    public string? SubPath { get; init; }
+    public string Mode { get => field ?? "rw"; init; } = "rw";
     public string? Runtime { get; init; }
     public string? Service { get; init; }
     public string? ContainerPath { get; init; }

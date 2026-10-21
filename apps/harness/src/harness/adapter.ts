@@ -53,6 +53,7 @@ export interface HarnessQuestion {
 }
 
 export type HarnessEvent =
+  | { type: "execution_model"; requested: { model: string | null; reasoningEffort: string | null }; reported: { model: string | null; reasoningEffort: string | null } }
   | { type: "activity"; activity: import("./activity.js").HarnessActivity }
   /** The harness-native session id became known; persisted for resume-after-restart. */
   | { type: "harness_session"; harnessSessionId: string }
@@ -97,6 +98,12 @@ export type HarnessEvent =
   | { type: "error"; message: string };
 
 export interface HarnessStartOptions {
+  workerRunId?: string;
+  onWorkerEvent?: (frame: import("../worker/contracts.js").WorkerEvent) => Promise<void>;
+  onWorkerPending?: (events: import("../worker/contracts.js").WorkerEvent[]) => Promise<void>;
+  model?: string | null;
+  reasoningEffort?: string | null;
+  resource?: import("../worker/contracts.js").ResourceReference;
   processTransport?: import("../runtime/transport.js").AgentProcessTransport;
   autonomy?: "normal" | "autonomous";
   sessionId: string;
@@ -120,12 +127,12 @@ export interface HarnessStartOptions {
 export interface HarnessRun {
   send(text: string): void;
   /** Returns false when the approval id is unknown (already resolved or never issued). */
-  resolveApproval(approvalId: string, decision: "allow" | "deny", message?: string): boolean;
+  resolveApproval(approvalId: string, decision: "allow" | "deny", message?: string): boolean | Promise<boolean>;
   /**
    * Answers a pending question, keyed by question text (the SDK's own keying). Returns false when
    * the id is unknown — already answered, or never asked.
    */
-  resolveQuestion(questionId: string, answers: Record<string, string>): boolean;
+  resolveQuestion(questionId: string, answers: Record<string, string>): boolean | Promise<boolean>;
   /**
    * Replaces the MCP servers of a running session. Returns false when the harness cannot be
    * reconfigured at this point, in which case the manager reports a fallback to the next
@@ -136,11 +143,15 @@ export interface HarnessRun {
   stop(): Promise<void>;
   /** Confirm native execution exit before a queued ordinary-runtime transition releases source. */
   stopAndWait?(): Promise<void>;
+  /** Stop observing a remote run without cancelling it. */
+  detach?(): Promise<void>;
 }
 
 export interface HarnessAdapter {
   readonly name: string;
   readonly capabilities: HarnessCapabilities;
   probe(): Promise<HarnessAvailability>;
+  dispose?(): Promise<void>;
+  models?(): Promise<import("../worker/contracts.js").ModelCatalog>;
   start(options: HarnessStartOptions): HarnessRun;
 }

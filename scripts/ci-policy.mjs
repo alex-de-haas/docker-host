@@ -22,7 +22,7 @@ const COMPONENT_PATHS = [
 ];
 const NATIVE_INPUT = /(?:WorkspaceActivation|WorkspaceRuntimeActivation|WorkspaceReturn|CoreDevelopment|CoreBuild|CoreCommand|CoreLaunch|CoreStateSnapshot|CoreLifecycle|DevelopmentWorkspace|MountPathPolicy|WorkspaceDirectoryIdentity|RuntimePreparation|LocalCommand|DetachedCli|ProcessLiveness|ProcessRunner|WindowsProcessControl|SharedReceiptSharing)/;
 const WINDOWS_INPUT = /(?:WindowsProcessControl|LocalCommand|ProcessRunner|ProcessLiveness|CoreDevelopment|CoreLaunch|CoreStateSnapshot|MountPathPolicy|WorkspaceDirectoryIdentity|WorkspaceGit|SourceDocument|SharedReceiptSharing|DetachedCli)/;
-const WORKER_INPUT = /^apps\/harness\/(?:worker\/|src\/runtime\/|src\/harness\/|src\/sessions\/(?:manager|docker-manager|shutdown|development|core-recovery|workspace)(?:\.|\/))/;
+const WORKER_INPUT = /^apps\/harness\/(?:worker\/|src\/worker\/|test\/worker-native|src\/runtime\/|src\/harness\/|src\/sessions\/(?:manager|docker-manager|shutdown|development|core-recovery|workspace)(?:\.|\/))/;
 const BUILD_CONFIG = /(?:^|\/)(?:[^/]+\.csproj|global\.json|[Nn]u[Gg]et\.[Cc]onfig|appsettings[^/]*\.json)$/;
 const WORKFLOW_COMPONENTS = {
   "shell-image.yml": ["shell"], "demo-app-image.yml": ["demo-app"], "marketplace-image.yml": ["marketplace"],

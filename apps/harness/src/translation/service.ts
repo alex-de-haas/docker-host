@@ -1,5 +1,7 @@
+import type { ConnectionService } from "../connections/service.js";
 import { ProviderError, type TranslationCapabilities, type TranslationRequest, type TranslationResult } from "@hosty-sdk/app/providers";
-import { ConnectionError, type AgentConnections, type AgentKind } from "../connections/registry.js";
+import { ConnectionError } from "../connections/errors.js";
+import type { AgentConnections, AgentKind } from "../connections/registry.js";
 import type { SettingsStore } from "../settings/store.js";
 import { MAX_OUTPUT_BYTES, runTranslation } from "./native.js";
 import { markdownParts, validateMarkdownTranslation } from "./markdown.js";
@@ -33,7 +35,7 @@ export function parseTranslation(value: unknown): Required<TranslationRequest> {
 
 export class TranslationService {
   private active = new Set<AgentKind>();
-  constructor(private readonly connections: AgentConnections, private readonly settings: SettingsStore,
+  constructor(private readonly connections: ConnectionService, private readonly settings: SettingsStore,
     private readonly run = runTranslation) {}
 
   async configure(kind: AgentKind, connectionId: unknown, model?: unknown) {

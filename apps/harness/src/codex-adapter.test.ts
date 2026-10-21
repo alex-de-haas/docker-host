@@ -58,6 +58,19 @@ describe("codex harness adapter", () => {
     return run;
   }
 
+  it("applies model and effort on resumed native context and resets both to runtime defaults", async () => {
+    for (const selection of [{ model: "fixture-other", reasoningEffort: "xhigh" }, { model: null, reasoningEffort: null }]) {
+      events = [];
+      run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(),
+        resumeHarnessSessionId: "existing-native-thread", ...selection, onEvent: event => events.push(event) });
+      run.send("model-selection");
+      await waitFor(() => events.find(event => event.type === "result"), "selected model turn");
+      const reply = events.find(event => event.type === "assistant_text");
+      expect(reply?.type === "assistant_text" && JSON.parse(reply.text)).toEqual({ model: selection.model ?? "fixture-default", effort: selection.reasoningEffort ?? "medium", thread: "existing-native-thread" });
+      await run.stop(); run = null;
+    }
+  });
+
   it("reports native live activity, concurrent calls and completion without retaining arguments or stale items", async () => {
     start().send("activity");
     await waitFor(() => events.find(e => e.type === "result"), "activity turn");

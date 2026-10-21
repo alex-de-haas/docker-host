@@ -27,12 +27,14 @@ export type SessionStatus =
 export type SessionAutonomy = "normal" | "autonomous";
 
 export interface SessionRecord {
+  executionSelection?: import("../worker/contracts.js").ExecutionSelection;
+  selectionRevision?: number;
+  workerRun?: { id: string; sequence: number; generation?: string };
   retentionVersion?: 1;
   retention?: import("./retention.js").RetentionStatus;
   retentionCleanup?: { requestId: string; expectedRevision: number };
   /** Recorded execution mode for legacy data and recovery; the selected application profile governs idle sessions. */
   executionMode?: "native" | "docker";
-  workerUsage?: { memoryBytes: number; peakMemoryBytes: number; pids: number; observedAt: string; diskBytes?: number; diskObservedAt?: string };
   autonomy?: SessionAutonomy;
   developmentWorkspaces?: import("./development.js").DevelopmentWorkspace[];
   developmentLease?: string;

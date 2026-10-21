@@ -88,7 +88,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - image: hosty-agent-worker
+          - image: hosty-harness-worker
             dockerfile: apps/harness/worker/Dockerfile
           - image: hosty-harness
             dockerfile: apps/harness/Dockerfile
@@ -121,8 +121,8 @@ jobs:
       - name: Resolve app version
         id: version
         shell: bash
-        # Match the Harness manifest, worker package and runtime/image.ts pin.
-        # The coordinator resolves this release tag to an immutable local image ID per generation.
+        # Match the Harness manifest and worker package version.
+        # Core manages both images through the ordinary service lifecycle.
         run: |
           version=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]+"' apps/harness/manifest.json | head -n1 | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
           if [[ -z "$version" ]]; then

@@ -146,7 +146,7 @@ expectEqual("harness version", {
   packageJson: json("apps/harness/package.json").version,
   webPackage: json("apps/harness/web/package.json").version,
   coordinatorImage: json("apps/harness/manifest.json").services[0].runtimes.docker.image.split(":").at(-1),
-  workerDeclaration: json("apps/harness/manifest.json").agentWorker.image.split(":").at(-1),
+  workerDeclaration: json("apps/harness/manifest.json").services.find(service => service.key === "worker").runtimes.docker.image.split(":").at(-1),
 });
 
 // channels: the rolling channel (releaseTag cli-dev tracks main HEAD) must advertise the platform version.
@@ -165,7 +165,6 @@ expectEqual("Harness worker version", { harness: json("apps/harness/manifest.jso
 for (const provider of ["@openai/codex", "@anthropic-ai/claude-agent-sdk"]) {
   expectEqual(`worker ${provider}`, { harness: json("apps/harness/package.json").dependencies[provider], worker: json("apps/harness/worker/package.json").dependencies[provider] });
 }
-expectEqual("worker image release", { harness: json("apps/harness/manifest.json").version, image: read("apps/harness/src/runtime/image.ts").match(/hosty-agent-worker:([^"\s]+)/)?.[1] });
 
 if (problems.length > 0) {
   console.error("Version drift detected:");

@@ -26,6 +26,18 @@ Core controls. This does not wait for this plan's per-session isolation or chang
 The existing shared worker's administrator-wide visibility remains distinct from restricted-user
 isolation.
 
+Owner follow-up, 2026-10-20: the
+[worker-service redesign](../assistant-shared-docker-runtime/plan.md) plans an ordinary declared
+Harness worker service with direct application communication and no Core agent execution proxy.
+It owns replacement of the shipped transport/lifecycle, native Windows acceptance and preservation
+of the host/coordinator boundary. The subsequent owner clarification explicitly selects a
+cooperative shared worktree mount, ordinary SDK/process handling and per-worktree activity checks.
+It removes the proposed global cleanup lock, bespoke supervisor and per-turn container-destruction
+guarantee. Unregistered sibling access/detached work is not fully contained in that first version.
+D1-D10 here retain stricter process/session guarantees and the ordinary-user isolation gate; they
+are neither completed nor duplicated by that refactor. Existing external workspaces/consumers
+remain intact. Both plans remain Draft; see [vision decision 51](../../vision.md).
+
 Owner revision, 2026-10-13: protect the host first and prefer one shared administrator agent
 container for the [November demonstration](../hosty-delivery-readiness/plan.md). Return this plan
 to Draft for active design; implementation is not approved. Compare performance/resource cost

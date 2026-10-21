@@ -18,13 +18,13 @@ internal sealed partial class DevelopmentWorkspaceService
         {
             // The shared worker exposes the whole source area. Never stop another session here;
             // retain a blocker until its owner has acknowledged removal and lease release.
-            return await Locked("shared-worker-bindings", async () =>
+            return await Locked("workspace-consumers", async () =>
             {
                 if (trees.Any(w => w.Operations.Any(o => o.State is "pending" or "unknown")))
                     throw Error("operation_pending", "Resolve outstanding source operations before confirming closure.");
                 if (trees.Any(w => w.Leases.Length > 0))
                     throw Error("in_use", "Execution stop is unconfirmed. Activity leases and all source files are preserved. Stop the owning execution, then retry this pause request.");
-                await CheckSharedWorkersAsync(ct);
+
                 state = state with { Closure = "closed", Revision = state.Revision + 1,
                     Operations = [.. state.Operations!.Where(o => o.Id != input.RequestId), operation with { State = "succeeded" }] };
                 await SaveWorkflow(owner, state);

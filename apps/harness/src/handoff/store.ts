@@ -8,7 +8,7 @@ import type { AssistantHandoff } from "@hosty-sdk/app/assistant";
 import type { SessionManager } from "../sessions/manager.js";
 import type { SettingsStore } from "../settings/store.js";
 import type { ProviderDirectory } from "../settings/providers.js";
-import { ConnectionError } from "../connections/registry.js";
+import { ConnectionError } from "../connections/errors.js";
 import { AppContextError, parseAppIds, validateSelection } from "../sessions/app-context.js";
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_SESSION, MAX_SESSION_ATTACHMENT_BYTES, sanitizeAttachmentName, fitToBytes } from "../sessions/attachments.js";
 
@@ -163,7 +163,7 @@ export class HandoffStore {
       const current = await this.manager.getSession(record.conversationId);
       if (current?.handoffDispatch?.state === "queued") {
         try { await this.manager.postMessage(record.conversationId, current.handoffDraft?.text ?? "", credential,
-          current.handoffDraft?.attachments.map(a => a.name) ?? [], { expectedRevision: current.appContextRevision, dispatchId: record.result.dispatchId, workspaceCredential }); }
+          current.handoffDraft?.attachments.map(a => a.name) ?? [], { expectedRevision: current.appContextRevision, selectionRevision: current.selectionRevision, dispatchId: record.result.dispatchId, workspaceCredential }); }
         catch (error) {
           await this.manager.recordHandoffFailure(record.conversationId,
             error instanceof AppContextError || error instanceof ConnectionError ? error.message : "Execution could not be confirmed. Inspect this conversation before retrying.");

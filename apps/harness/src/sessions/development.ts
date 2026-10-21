@@ -35,20 +35,7 @@ export class DevelopmentClient {
     if (!response.ok) throw new AppContextError(response.status, "retention_blocked", result.message ?? "Core could not verify cleanup.");
     return result;
   }
-  async workerBindings(sessionId: string, credential: string, lease?: { leaseId: string; acquire: boolean }): Promise<import("../runtime/worker.js").WorkerBindings | null> {
-    if (!this.available) throw new AppContextError(503, "worker_core_required", "Docker agents require Core-managed source bindings.");
-    const route = `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/workspaces/worker-bindings${lease ? "/lease" : ""}`;
-    let response: Response;
-    try { response = await fetch(new URL(route, this.origin!), { method: lease ? "POST" : "GET",
-      headers: { authorization: `Bearer ${this.token}`, "X-Hosty-User-Token": credential, "content-type": "application/json" },
-      body: lease ? JSON.stringify(lease) : undefined, signal: AbortSignal.timeout(120_000) }); }
-    catch { throw new AppContextError(503, "worker_lease_unknown", "Core worker lease outcome is unknown. Keep the same generation and lease ID for recovery."); }
-    const body = await response.text();
-    if (response.ok && !body && lease?.acquire === false) return null;
-    const result = JSON.parse(body) as (import("../runtime/worker.js").WorkerBindings & { code?: string; message?: string }) | null;
-    if (!response.ok) throw new AppContextError(response.status, result?.code ?? "worker_binding_failed", result?.message ?? "Core worker binding failed.");
-    return result;
-  }
+
   async environment(credential: string, action: CoreEnvironmentAction, input: Record<string, unknown>): Promise<unknown> {
     if (!this.available) throw new AppContextError(503, "environments_unavailable", "Child Core environments require a Core-managed app identity.");
     try { return await new CoreEnvironmentClient(async () => credential, { coreOrigin: this.origin!, appId: this.appId, serviceToken: this.token! }).call(action, input); }
@@ -264,10 +251,12 @@ export const developmentTools = () => [...coreEnvironmentTools(), ...sandboxTool
 /** Session-key authenticated local MCP surface; Core credentials never enter the agent config. */
 export class DevelopmentMcp {
   policy?: McpToolPolicy;
+  allowRemoteWorker = false;
+  project: (value: unknown) => Promise<unknown> = async value => value;
   private readonly keys = new Map<string, string>();
   constructor(private readonly invoke: (sessionId: string, action: DevelopmentAction, input: Record<string, unknown>, dispatchGuard?: () => Promise<void>) => Promise<unknown>) {}
-  config(sessionId: string, origin: string): Record<string, unknown> {
-    const key = this.keys.get(sessionId) ?? randomBytes(32).toString("base64url"); this.keys.set(sessionId, key);
+  config(sessionId: string, origin: string, recoveredKey?: string): Record<string, unknown> {
+    const key = this.keys.get(sessionId) ?? recoveredKey ?? randomBytes(32).toString("base64url"); this.keys.set(sessionId, key);
     return { "hosty-workspaces": { type: "http", hostyPolicy: true, url: `${origin}/internal/workspaces/${encodeURIComponent(sessionId)}`,
       headers: { authorization: `Bearer ${key}` } } };
   }
@@ -282,7 +271,7 @@ export class DevelopmentMcp {
     const expected = this.keys.get(sessionId);
     const actual = request.headers.authorization?.replace(/^Bearer /, "") ?? "";
     const loopback = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(request.socket.remoteAddress ?? "");
-    if (!loopback || !expected || Buffer.byteLength(actual) !== Buffer.byteLength(expected) || !timingSafeEqual(Buffer.from(actual), Buffer.from(expected))) { send(403); return true; }
+    if ((!loopback && !this.allowRemoteWorker) || !expected || Buffer.byteLength(actual) !== Buffer.byteLength(expected) || !timingSafeEqual(Buffer.from(actual), Buffer.from(expected))) { send(403); return true; }
     if (request.method !== "POST") { send(405); return true; }
     const chunks: Buffer[] = []; let size = 0;
     for await (const chunk of request) {
@@ -315,7 +304,7 @@ export class DevelopmentMcp {
           await dispatchGuard?.();
           result = (action.startsWith("activation-") || action === "execution-select") ? await this.invoke(sessionId, action, input, dispatchGuard) : await this.invoke(sessionId, action, input);
         } finally { response.off("close", cancel); }
-        answer({ content: [{ type: "text", text: JSON.stringify(result) }] });
+        answer({ content: [{ type: "text", text: JSON.stringify(await this.project(result)) }] });
       } catch (error) { answer({ isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : "Workspace operation failed." }] }); }
     } else send(200, { jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: "Method not found" } });
     return true;

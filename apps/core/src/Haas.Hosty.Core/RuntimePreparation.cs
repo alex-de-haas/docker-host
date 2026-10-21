@@ -68,22 +68,16 @@ internal sealed partial class DockerRuntimeAdapter
 
     private static void AppendPreparationStorageArguments(RuntimeLifecycleContext context, string service, List<string> args)
     {
-        static bool Applies(RuntimeAppDataTarget? target, string service) => target is not null &&
-            (string.IsNullOrWhiteSpace(target.Service) || string.Equals(target.Service, service, StringComparison.Ordinal));
-        var data = context.Manifest.DataTarget;
-        var cache = context.Manifest.CacheTarget;
-        if (Applies(cache, service) && string.IsNullOrWhiteSpace(context.AppCachePath))
-            throw new AppLifecycleException("activation_cache_path_missing", "Preparation requires an explicit scratch cache directory. Ordinary app cache was not mounted.");
-        void Add(RuntimeAppDataTarget target, string host, string area, string defaultEnvironment)
+        var selected = context.Manifest.Services.Single(s => s.Key == service);
+        var bindings = RuntimeServiceStorage.Resolve(context.Manifest, selected);
+        if (bindings.Any(binding => binding.Cache) && string.IsNullOrWhiteSpace(context.AppCachePath))
+            throw new AppLifecycleException("activation_cache_path_missing", "Preparation requires an explicit scratch cache directory.");
+        foreach (var binding in bindings)
         {
-            var path = string.IsNullOrWhiteSpace(target.ContainerPath) ? "/app/" + area : target.ContainerPath;
-            var environment = string.IsNullOrWhiteSpace(target.Environment) ? defaultEnvironment : target.Environment;
-            Directory.CreateDirectory(host);
-            args.AddRange(["-v", host + ":" + path, "--env", environment + "=" + path]);
+            if (binding.Cache && string.IsNullOrWhiteSpace(context.AppCachePath))
+                throw new AppLifecycleException("activation_cache_path_missing", "Preparation requires an explicit scratch cache directory.");
+            var host = RuntimeServiceStorage.PreparePath(binding.Cache ? context.AppCachePath! : context.AppDataPath, binding.Target.SubPath);
+            args.AddRange(["-v", host + ":" + binding.ContainerPath + ":" + binding.Target.Mode, "--env", binding.Environment + "=" + binding.ContainerPath]);
         }
-        // Match startup's service scoping, container defaults and target-env precedence, but use
-        // only the explicit preparation scratch paths. Settings, identity and external mounts stay out.
-        if (Applies(data, service)) Add(data!, context.AppDataPath, "data", "HOSTY_APP_DATA_DIR");
-        if (Applies(cache, service)) Add(cache!, context.AppCachePath!, "cache", "HOSTY_APP_CACHE_DIR");
     }
 }

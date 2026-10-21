@@ -36,7 +36,7 @@ internal sealed record SandboxResource(string Kind, string Id, string Generation
 internal sealed record SandboxStorageObservation(DateTimeOffset At, long DataBytes, long SeedBytes, long CacheBytes, long EvidenceBytes, long TotalBytes, bool Warning, string? ErrorCode = null);
 internal sealed record SandboxServiceMetrics(string Service, double? MemoryBytes, double? CpuPercent);
 internal sealed record SandboxMetrics(DateTimeOffset At, SandboxServiceMetrics[] Services, double? MemoryBytes, double? SampledPeakMemoryBytes);
-internal sealed record SandboxRuntimePolicy(string RelayImage, int MaxRunningInstances = 1, long ReservedAgentBytes = 0, string? BrowserImage = null);
+internal sealed record SandboxRuntimePolicy(string RelayImage, int MaxRunningInstances = 1, string? BrowserImage = null);
 internal sealed record SandboxRelayEndpoint(string Host, string Service, int Port);
 internal sealed record SandboxRelayConfig(string InstanceId, string Generation, string DataRevision, string CoreOrigin,
     string AuthHost, SandboxRelayEndpoint[] Endpoints, string? BrowserAddress = null);

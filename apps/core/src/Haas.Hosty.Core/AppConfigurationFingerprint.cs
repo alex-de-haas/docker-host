@@ -45,8 +45,9 @@ internal static class AppConfigurationFingerprint
                 writer.Write(setting.Value is not null);
                 if (setting.Value is not null) writer.Write(setting.Value);
             }
-            writer.Write(mounts.Count);
-            foreach (var mount in mounts.OrderBy(mount => mount.Key, StringComparer.Ordinal).ThenBy(mount => mount.Label, StringComparer.Ordinal))
+            var configuredMounts = mounts.Where(mount => !mount.ManagedCollection).ToArray();
+            writer.Write(configuredMounts.Length);
+            foreach (var mount in configuredMounts.OrderBy(mount => mount.Key, StringComparer.Ordinal).ThenBy(mount => mount.Label, StringComparer.Ordinal))
             {
                 writer.Write(mount.Key);
                 writer.Write(mount.Label);

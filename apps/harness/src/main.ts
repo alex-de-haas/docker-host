@@ -1,7 +1,9 @@
-import { CoreWorkerCommands } from "./runtime/core-worker.js";
-import { SharedDockerWorker } from "./runtime/worker.js";
+import path from "node:path";
+import { WorkerClient } from "./worker/client.js";
+import { RemoteConnections } from "./worker/connections.js";
+import { ensureServiceIdentity } from "./worker/auth.js";
+import { workerCallbacks } from "./worker/callback.js";
 import { DevelopmentClient } from "./sessions/development.js";
-import { AgentConnections } from "./connections/registry.js";
 import { CoreConnectionSecrets } from "./connections/secrets.js";
 import { WaitingNotifier } from "./notifications.js";
 import { mkdir } from "node:fs/promises";
@@ -15,26 +17,23 @@ import { TokenExchange } from "./mcp/exchange.js";
 import { McpProxy } from "./mcp/proxy.js";
 import { McpFacade } from "./facade/facade.js";
 import { ProviderDirectory } from "./settings/providers.js";
-import { ClaudeHarnessAdapter } from "./harness/claude.js";
-import { CodexHarnessAdapter } from "./harness/codex.js";
 import { FakeHarnessAdapter } from "./harness/fake.js";
 import type { HarnessAdapter } from "./harness/adapter.js";
 
 const config = loadConfig();
 await mkdir(config.dataDir, { recursive: true });
 
-const adapter: HarnessAdapter =
-  config.harness === "fake"
-    ? new FakeHarnessAdapter()
-    : config.harness === "codex"
-      ? new CodexHarnessAdapter({
-          apiKey: config.codexApiKey,
-          codexHome: config.codexHome,
-          dataDir: config.dataDir,
-        })
-      : new ClaudeHarnessAdapter();
-const connections = config.harness === "fake" ? null : new AgentConnections(config.dataDir, config.cacheDir,
-  new CoreConnectionSecrets(config.coreOrigin, config.appId, config.serviceToken), config.executionMode);
+const serviceIdentity = await ensureServiceIdentity(path.join(config.dataDir, "service-auth"));
+const workerUrl = process.env.HOSTY_SERVICE_WORKER_URL;
+if (config.harness !== "fake" && !workerUrl) throw new Error("Harness requires its declared worker service URL.");
+const worker = workerUrl ? new WorkerClient(workerUrl, serviceIdentity) : null;
+const connections = worker ? new RemoteConnections(worker) : null;
+const adapter: HarnessAdapter = config.harness === "fake" ? new FakeHarnessAdapter() : {
+  name: "worker", capabilities: { questions: false, appMcp: true, liveReconfigure: true, autoAllow: true, denyReason: false },
+  probe: async () => connections!.summary(),
+  start: () => { throw new Error("Choose a provider connection before starting a chat."); },
+};
+const secrets = new CoreConnectionSecrets(config.coreOrigin, config.appId, config.serviceToken);
 const store = new SessionStore(config.dataDir, config.cacheDir);
 const audit = new AuditReporter(config.coreOrigin, config.serviceToken, config.appId);
 const notifier = new WaitingNotifier(config.coreOrigin, config.serviceToken, config.appId);
@@ -53,11 +52,8 @@ const exchange = new TokenExchange(config.coreOrigin, config.appId, config.servi
 const proxy: McpProxy = new McpProxy((sessionId, appId) => manager.mintAppToken(sessionId, appId), undefined, appId => providers.resolveOffered(appId));
 // Literal IPv4 on purpose: the harness is a child process on this host, and a `localhost` that
 // resolves to ::1 first has cost this project a hang before (docs/features/observability).
-const proxyBaseUrl = `http://127.0.0.1:${config.port}`;
-const worker = config.cacheDir ? new SharedDockerWorker(config.dataDir, config.cacheDir,
-  config.executionMode === "docker" ? new CoreWorkerCommands(config.coreOrigin!, config.appId, config.serviceToken!) : undefined) : null;
-await worker?.load();
-await worker?.stop().catch(() => console.warn("[worker] Previous generation requires Docker recovery; its source lease was retained."));
+proxy.allowRemoteWorker = Boolean(worker);
+const proxyBaseUrl = config.executionMode === "docker" ? "http://api:3400" : `http://127.0.0.1:${config.port}`;
 const manager: SessionManager = new SessionManager(
   store,
   adapter,
@@ -122,9 +118,19 @@ const facade = new McpFacade(
   settings,
 );
 
-const workerMonitor = setInterval(() => { void manager.observeWorker().catch(() => console.warn("[worker] Observation/recovery is pending; source leases remain held.")); }, 5000);
-const server = createGatewayServer(manager, adapter, settings, providers, proxy, facade, connections);
+const server = createGatewayServer(manager, adapter, settings, providers, proxy, facade, connections, workerCallbacks(serviceIdentity, secrets));
+let connecting = false;
+const connect = async () => {
+  if (!worker || connecting) return;
+  connecting = true;
+  try { await worker.request("/v1/coordinator", "PUT", { callbackUrl: proxyBaseUrl }, true); }
+  catch { console.warn("[worker] Service handshake pending."); }
+  finally { connecting = false; }
+};
+const workerMonitor = setInterval(() => { void connect(); }, 10000);
+workerMonitor.unref();
 server.listen(config.port, () => {
+  void connect();
   console.log(
     `hosty.harness listening on :${config.port} (harness=${adapter.name}, data=${config.dataDir})`,
   );

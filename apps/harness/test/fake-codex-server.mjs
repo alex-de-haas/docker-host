@@ -130,6 +130,12 @@ function handle(msg) {
   }
   if (msg.method === "initialized") return;
 
+  if (msg.method === "config/read") { send({ id: msg.id, result: { config: {} } }); return; }
+  if (msg.method === "model/list") { send({ id: msg.id, result: { data: [
+    { model: "fixture-default", displayName: "Default model", isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium" }, { reasoningEffort: "high" }] },
+    { model: "fixture-other", displayName: "Other model", isDefault: false, defaultReasoningEffort: "low", supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "xhigh" }] },
+  ], nextCursor: null } }); return; }
+
   if (msg.method === "thread/start") {
     if (typeof msg.params?.sandbox !== "string") {
       fail("thread/start sandbox must be a plain string");
@@ -146,9 +152,9 @@ function handle(msg) {
   if (msg.method === "account/login/start") {
     if (msg.params?.type !== "chatgptDeviceCode" || !authFile) fail("expected isolated device login");
     send({ id: msg.id, result: { type: "chatgptDeviceCode", loginId: "native-login", verificationUrl: "https://auth.openai.com/codex/device", userCode: "FAKE-CODE" } });
-    if (process.env.HOSTY_TEST_LOGIN_MODE !== "pending") setTimeout(() => {
+    if (process.env.TEST_LOGIN_MODE !== "pending") setTimeout(() => {
       writeFileSync(authFile, JSON.stringify({ tokens: { access_token: "synthetic-access", refresh_token: "synthetic-refresh", account_id: "synthetic-account" } }), { mode: 0o600 });
-      send({ method: "account/login/completed", params: { loginId: "native-login", success: process.env.HOSTY_TEST_LOGIN_MODE !== "fail" } });
+      send({ method: "account/login/completed", params: { loginId: "native-login", success: process.env.TEST_LOGIN_MODE !== "fail" } });
     }, 50);
     return;
   }
@@ -170,6 +176,10 @@ function handle(msg) {
     if (currentTurnText.startsWith("[Hosty operator instructions]")) currentTurnText = currentTurnText.slice(currentTurnText.lastIndexOf("\n\n") + 2);
     send({ jsonrpc: "2.0", id: msg.id, result: {} });
 
+    if (currentTurnText === "model-selection") {
+      send({ method: "item/completed", params: { item: { type: "agentMessage", id: "selection", text: JSON.stringify({ model: msg.params.model, effort: msg.params.effort, thread: msg.params.threadId }) } } });
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "selected", status: "completed" } } }); return;
+    }
     if (currentTurnText === "activity") {
       send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "current" } } });
       const itemEvent = (method, item, turnId = "current") => send({ method, params: { threadId: activeThreadId, turnId, item } });

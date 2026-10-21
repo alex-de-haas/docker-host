@@ -164,6 +164,29 @@ public sealed class LocalCommandRuntimeAdapterTests
         }
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void InjectEnvironment_PreservesImplicitLocalDataWithoutEnablingCache(bool? dataEnabled)
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var (adapter, _, context) = CreateSetupScenario(root, null, "unused");
+            context = context with { Manifest = context.Manifest with { Manifest = new RuntimeAppManifest
+                { Data = dataEnabled is null ? null : new RuntimeAppDataManifest { Enabled = dataEnabled.Value } } } };
+            var start = new System.Diagnostics.ProcessStartInfo();
+            start.Environment.Clear();
+            adapter.InjectEnvironment(start, context, context.Manifest.Services.Single(), [],
+                new Dictionary<string, IReadOnlyDictionary<string, int>> { ["app"] = new Dictionary<string, int>() });
+            Assert.Equal(MountPathPolicy.ResolveRealPath(context.AppDataPath), start.Environment["HOSTY_APP_DATA_DIR"]);
+            Assert.True(Directory.Exists(context.AppDataPath));
+            Assert.False(start.Environment.ContainsKey("HOSTY_APP_CACHE_DIR"));
+        }
+        finally { TryDeleteDirectory(root); }
+    }
+
     [Fact]
     public void MixedDiscovery_InjectsLoopbackEvenWithPublicLanHost()
     {
@@ -269,7 +292,7 @@ public sealed class LocalCommandRuntimeAdapterTests
             await adapter.StopAsync(context);
 
             var cachePath = Path.Combine(declaredRoot, "cache");
-            Assert.Equal(cachePath, await File.ReadAllTextAsync(Path.Combine(declaredRoot, "cache-env.txt")));
+            Assert.Equal(MountPathPolicy.ResolveRealPath(cachePath), await File.ReadAllTextAsync(Path.Combine(declaredRoot, "cache-env.txt")));
             Assert.True(Directory.Exists(cachePath));
 
             var (undeclaredAdapter, _, undeclaredContext) = CreateSetupScenario(

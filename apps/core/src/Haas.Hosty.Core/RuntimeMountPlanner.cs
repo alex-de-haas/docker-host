@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Haas.Hosty.Core;
 
 // Pure resolution + formatting of external host-path mounts. Takes the manifest-declared
@@ -22,7 +24,7 @@ internal static class RuntimeMountPlanner
             return [];
         }
 
-        var slotsByKey = slots.ToDictionary(slot => slot.Key, StringComparer.Ordinal);
+        var slotsByKey = slots.Where(slot => slot.Kind == "host-path").ToDictionary(slot => slot.Key, StringComparer.Ordinal);
         return bindings
             .Where(binding => slotsByKey.ContainsKey(binding.Key))
             .OrderBy(binding => binding.Key, StringComparer.Ordinal)
@@ -100,7 +102,7 @@ internal static class RuntimeMountPlanner
 
         foreach (var slot in slots)
         {
-            if (slot.Required && !configuredKeys.Contains(slot.Key))
+            if (slot.Kind == "host-path" && slot.Required && !configuredKeys.Contains(slot.Key))
             {
                 throw new AppLifecycleException(
                     "app_mount_required_unconfigured",
@@ -110,7 +112,8 @@ internal static class RuntimeMountPlanner
     }
 
     // Builds the `HOSTY_MOUNT_{KEY}` environment variables, one per slot key that has bindings,
-    // value = comma-joined `label=path` entries. The operator-chosen label is the stable per-bind
+    // Managed collections use a JSON label/path object so arbitrary host paths round-trip.
+    // Operator-bound slots retain comma-joined `label=path` entries. The operator-chosen label is the stable per-bind
     // key a consumer addresses a mount by — e.g. to pair a catalog root with a sibling app's
     // downloads mount that shares the same host path. Under docker the path is the container path;
     // under localCommand the host path. A host path may itself contain '=', so consumers must split
@@ -124,8 +127,11 @@ internal static class RuntimeMountPlanner
         foreach (var group in mounts.GroupBy(mount => mount.Key, StringComparer.Ordinal))
         {
             var name = $"HOSTY_MOUNT_{RuntimePortHelper.NormalizeEnvironmentKey(group.Key)}";
-            environment[name] = string.Join(',', group.Select(mount =>
-                $"{mount.Label}={(useContainerPath ? mount.ContainerPath : mount.HostPath)}"));
+            environment[name] = group.Any(mount => mount.ManagedCollection)
+                ? JsonSerializer.Serialize(group.ToDictionary(mount => mount.Label,
+                    mount => useContainerPath ? mount.ContainerPath : mount.HostPath), CoreJsonSerializerContext.Default.DictionaryStringString)
+                : string.Join(',', group.Select(mount =>
+                    $"{mount.Label}={(useContainerPath ? mount.ContainerPath : mount.HostPath)}"));
         }
 
         return environment;
@@ -153,4 +159,5 @@ internal sealed record RuntimeMount(
     string HostPath,
     string ContainerPath,
     bool ReadOnly,
-    string? Service);
+    string? Service,
+    bool ManagedCollection = false);

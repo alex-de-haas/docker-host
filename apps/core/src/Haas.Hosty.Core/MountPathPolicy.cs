@@ -197,7 +197,7 @@ internal sealed class MountPathPolicy(CoreDataPaths paths)
     private static bool IsFileSystemRoot(string fullPath)
         => string.Equals(Path.GetFullPath(fullPath), Path.GetPathRoot(fullPath), PathComparison);
 
-    private static bool PathEqualsOrWithin(string root, string candidate)
+    internal static bool PathEqualsOrWithin(string root, string candidate)
     {
         var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar);
         var fullCandidate = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar);

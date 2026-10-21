@@ -59,6 +59,8 @@ test("worker and speech inference profiles follow actual native inputs", () => {
   assertSelection(["apps/harness/src/runtime/worker.ts"], ["harness"], ["harness-worker"]);
   assertSelection(["apps/harness/src/sessions/manager.ts"], ["harness"], ["harness-worker"]);
   assertSelection(["scripts/check-harness-worker.mjs"], ["harness"], ["harness-worker"]);
+  assertSelection(["apps/harness/src/worker/engine.ts"], ["harness"], ["harness-worker"]);
+  assertSelection(["apps/harness/test/worker-native-controls.mjs"], ["harness"], ["harness-worker"]);
   assertSelection(["apps/harness/worker/Dockerfile"], ["harness"], ["harness-worker"]);
   assertSelection(["apps/whisper/Hosty.Whisper/SpeechEngine.cs"], ["whisper"], ["whisper-native"]);
   assertSelection(["apps/whisper/Hosty.Whisper.Tests/Fixtures/russian.wav"], ["whisper"], ["whisper-native"]);

@@ -50,12 +50,6 @@ internal static class DevelopmentWorkspaceEndpoints
                 var heads = kind is "complete" or "delete" ? await publications.MergedWorkspaceHeadsAsync(owner, ct) : new Dictionary<string, string>();
                 return await workspaces.ChangeWorkflowAsync(owner, owner.UserId, kind is "pause-confirm" or "close-confirm" or "defer-confirm" ? kind[..^8] : kind, input, heads, ct, prepareOnly: kind is "pause" or "close");
             }));
-        routes.MapGet(internalRoot + "/worker-bindings", async (string appId, string sessionId, HttpRequest request,
-            WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
-            await Handle(async () => await workspaces.WorkerBindingsAsync(await auth.RequireAsync(request, appId, sessionId, ct), ct)));
-        routes.MapPost(internalRoot + "/worker-bindings/lease", async (string appId, string sessionId, HttpRequest request,
-            DevelopmentWorkerLeaseRequest input, WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
-            await Handle(async () => await workspaces.WorkerLeaseAsync(await auth.RequireAsync(request, appId, sessionId, ct), input, ct)));
         routes.MapPost(internalRoot, async (string appId, string sessionId, HttpRequest request, WorkspacePrepare input,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, AuditStore audit, IClock clock, CancellationToken ct) =>
             await Handle(async () =>

@@ -96,6 +96,8 @@ describe("development session coordination", () => {
     await manager.workspaceAction(record.id, "app-create", input, "token", "admin");
     await manager.workspaceAction(record.id, "app-create", input, "token", "admin");
     expect((await manager.getSession(record.id))?.appContextRevision).toBe(1);
+    await manager.setModel(record.id, { expectedRevision: 0, selection: { model: null, reasoningEffort: null } });
+    expect((await manager.getSession(record.id))?.selectionRevision).toBe(1);
     await manager.dispatchAppCreation(record.id, input.requestId, "Build a notes app", "admin", "token", "token");
     await manager.dispatchAppCreation(record.id, input.requestId, "Build a notes app", "admin", "token", "token");
     expect(sent).toHaveLength(1);

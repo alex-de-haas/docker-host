@@ -22,6 +22,8 @@ export type AssistantQuestion = {
 };
 
 export type AssistantSession = {
+  executionSelection?: { model: string | null; reasoningEffort: string | null };
+  selectionRevision?: number;
   appCreations?: { input: Record<string, unknown>; state: "pending" | "observed" | "rejected"; prompt?: string }[];
   executionMode?: "native" | "docker";
   autonomy?: "normal" | "autonomous";
@@ -126,10 +128,10 @@ export async function getSession(sessionId: string): Promise<AssistantSession> {
   return (await call(`/sessions/${encodeURIComponent(sessionId)}`)).json() as Promise<AssistantSession>;
 }
 
-export async function postMessage(sessionId: string, text: string, attachments: string[] = [], appContextRevision = 0, withoutAppDetails = false): Promise<void> {
+export async function postMessage(sessionId: string, text: string, attachments: string[] = [], appContextRevision = 0, withoutAppDetails = false, selectionRevision = 0): Promise<void> {
   await call(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: "POST",
-    body: JSON.stringify({ text, attachments, appContextRevision, withoutAppDetails }),
+    body: JSON.stringify({ text, attachments, appContextRevision, withoutAppDetails, selectionRevision }),
   });
 }
 
@@ -339,4 +341,12 @@ export async function dispatchAppCreation(sessionId: string, requestId: string, 
   return (await call("/sessions/" + encodeURIComponent(sessionId) + "/app-creations/dispatch", {
     method: "POST", body: JSON.stringify({ requestId, prompt }),
   })).json() as Promise<AssistantSession>;
+}
+
+export type ModelCatalog = { revision: string; defaultModel?: string; models: { id: string; label: string; efforts: { id: string; label: string }[] }[] };
+export async function getSessionModels(id: string): Promise<ModelCatalog> {
+  return (await call(`/sessions/${encodeURIComponent(id)}/models`)).json() as Promise<ModelCatalog>;
+}
+export async function setSessionModel(id: string, selection: NonNullable<AssistantSession["executionSelection"]>, expectedRevision: number): Promise<AssistantSession> {
+  return (await call(`/sessions/${encodeURIComponent(id)}/model`, { method: "PUT", body: JSON.stringify({ selection, expectedRevision }) })).json() as Promise<AssistantSession>;
 }

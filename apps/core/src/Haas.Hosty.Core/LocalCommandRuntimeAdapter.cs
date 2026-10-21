@@ -531,6 +531,13 @@ internal sealed partial class LocalCommandRuntimeAdapter(
             startInfo.Environment["HOSTY_APP_CACHE_DIR"] = context.AppCachePath;
             return;
         }
+        if (service.Injection is not null)
+        {
+            // Opted-in filtering starts with OS essentials, not the Core process's credentials.
+            startInfo.Environment.Clear();
+            foreach (var key in new[] { "PATH", "HOME", "USERPROFILE", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL" })
+                if (Environment.GetEnvironmentVariable(key) is { } value) startInfo.Environment[key] = value;
+        }
         startInfo.Environment["HOSTY_APP_ID"] = context.App.Id;
         startInfo.Environment["HOSTY_APP_SERVICE_KEY"] = service.Key;
         foreach (var environment in BuildCoreEnvironment(config, CorePublicOrigin))
@@ -538,19 +545,10 @@ internal sealed partial class LocalCommandRuntimeAdapter(
             startInfo.Environment[environment.Key] = environment.Value;
         }
 
-        Directory.CreateDirectory(context.AppDataPath);
-        startInfo.Environment["HOSTY_APP_DATA_DIR"] = context.Manifest.Manifest.AgentWorker?.Service == service.Key
-            ? MountPathPolicy.ResolveRealPath(context.AppDataPath) : context.AppDataPath;
-
-        // Unlike data (unconditional above), the cache directory exists only for apps that declared
-        // it — no target lookup: localCommand has no container, so there is nothing to bind and the
-        // variable always carries the host path.
-        if (context.Manifest.Manifest.Cache?.Enabled == true)
+        foreach (var storage in RuntimeServiceStorage.Resolve(context.Manifest, service))
         {
-            var appCachePath = context.AppCachePath ?? Path.Combine(context.AppRoot, "cache");
-            Directory.CreateDirectory(appCachePath);
-            startInfo.Environment["HOSTY_APP_CACHE_DIR"] = context.Manifest.Manifest.AgentWorker?.Service == service.Key
-                ? MountPathPolicy.ResolveRealPath(appCachePath) : appCachePath;
+            var root = storage.Cache ? context.AppCachePath ?? Path.Combine(context.AppRoot, "cache") : context.AppDataPath;
+            startInfo.Environment[storage.Environment] = RuntimeServiceStorage.PreparePath(root, storage.Target.SubPath);
         }
 
         // External mounts: localCommand has no container, so the app reads the operator host
@@ -566,7 +564,8 @@ internal sealed partial class LocalCommandRuntimeAdapter(
             startInfo.Environment[environment.Key] = environment.Value;
         }
 
-        foreach (var setting in context.App.Settings.Values)
+        foreach (var setting in context.App.Settings.Values.Where(setting =>
+            service.Injection?.Settings is not { } allowed || allowed.Contains(setting.Key, StringComparer.Ordinal)))
         {
             if (!string.IsNullOrWhiteSpace(setting.Value))
             {
@@ -574,14 +573,16 @@ internal sealed partial class LocalCommandRuntimeAdapter(
             }
         }
 
-        startInfo.Environment["HOSTY_APP_SERVICE_TOKEN"] = serviceTokens.CreateToken(context.App.Id);
+        if (service.Injection?.AppServiceToken != false)
+            startInfo.Environment["HOSTY_APP_SERVICE_TOKEN"] = serviceTokens.CreateToken(context.App.Id);
+        else startInfo.Environment.Remove("HOSTY_APP_SERVICE_TOKEN");
 
         if (delegatedTokenKey is not null)
         {
             startInfo.Environment["HOSTY_DELEGATED_TOKEN_PUBLIC_KEY"] = delegatedTokenKey.PublicKeySpkiBase64;
         }
 
-        if (appIdentityTokens is not null)
+        if (appIdentityTokens is not null && service.Injection?.AppIdentityToken != false)
         {
             startInfo.Environment["HOSTY_APP_IDENTITY_TOKEN"] = appIdentityTokens.CreateToken(context.App.Id);
         }

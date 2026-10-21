@@ -197,9 +197,11 @@ describe("durable assistant handoffs", () => {
     expect(outcomes[0].status).toBe("fulfilled"); expect(outcomes[1].status).toBe("fulfilled");
     expect(outcomes[2]).toMatchObject({ status: "rejected", reason: { status: 409 } });
   });
-  it("records one immediate dispatch across retries and settings changes", async () => {
+  it("records one immediate dispatch after model selection changes, across retries and settings changes", async () => {
     await settings.update({ immediateHandoffs: true });
     const { value } = await handoffs.prepare("alice", input());
+    await manager.setModel(value.conversationId, { expectedRevision: 0, selection: { model: null, reasoningEffort: null } });
+    expect((await manager.getSession(value.conversationId))?.selectionRevision).toBe(1);
     const first = await handoffs.finalize("alice", value.handoffId, []);
     expect(first.result).toMatchObject({ disposition: "accepted" });
     await settings.update({ immediateHandoffs: false });
