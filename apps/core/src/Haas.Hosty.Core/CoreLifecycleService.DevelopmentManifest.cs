@@ -121,7 +121,9 @@ internal sealed partial class CoreLifecycleService
     {
         var path = running ? operation.RunningManifest ?? operation.ExecutionManifest : operation.ExecutionManifest;
         var selection = await manifests.LoadAsync(path ?? operation.PreviousManifest, operation.TargetRuntime, ct,
-            forceRead: true, allowUnsupportedPermissions: true);
+            forceRead: true, allowUnsupportedPermissions: true, allowRetiredContracts: running);
+        if (path is null && selection.ManifestDigest != operation.ManifestDigest)
+            throw DevError("previous_contract_changed", "The retained runtime contract changed; restore the operation record before returning.");
         if (!running && path is not null && selection.ManifestDigest != operation.ExecutionManifestDigest)
             throw DevError("execution_contract_changed", "The admitted workspace execution snapshot is unreadable or changed. Restore it or return to the installed package.");
         return selection;

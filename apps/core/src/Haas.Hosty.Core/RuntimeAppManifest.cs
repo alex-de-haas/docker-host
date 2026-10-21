@@ -65,6 +65,24 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         bool allowUnsupportedPermissions = false,
         bool allowRetiredContracts = false)
     {
+        var (manifest, source, digest) = await ReadDocumentAsync(manifestPath, manifestGrant, forceRead, cancellationToken);
+        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl,
+            validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && digest != legacyManifestDigest,
+            allowUnsupportedPermissions: allowUnsupportedPermissions, allowRetiredContracts: allowRetiredContracts);
+    }
+
+    // Discovery reads declarations, not an execution contract. Admission still goes through LoadAsync
+    // for the selected destination; an unrelated broken default recipe must not hide recovery choices.
+    internal async Task<IReadOnlyList<RuntimeProfileManifest>> ReadRuntimeProfilesAsync(
+        string manifestPath, CancellationToken cancellationToken)
+    {
+        var (manifest, _, _) = await ReadDocumentAsync(manifestPath, null, false, cancellationToken);
+        return manifest.RuntimeProfiles;
+    }
+
+    private async Task<(RuntimeAppManifest Manifest, AppManifestSource Source, string Digest)> ReadDocumentAsync(
+        string manifestPath, SourceReadGrant? manifestGrant, bool forceRead, CancellationToken cancellationToken)
+    {
         if (string.IsNullOrWhiteSpace(manifestPath))
         {
             throw new AppManifestException("manifest_path_required", "A runtime app manifest path is required.");
@@ -79,7 +97,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             localManifestCache.TryGetValue(localPath, out var cached) &&
             cached.Stamp == stamp)
         {
-            return Select(cached.Manifest, localPath, cached.Digest, selectedRuntime, cached.Json, manifestUrl: null, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && cached.Digest != legacyManifestDigest, allowUnsupportedPermissions: allowUnsupportedPermissions, allowRetiredContracts: allowRetiredContracts);
+            return (cached.Manifest, new AppManifestSource(localPath, cached.Json, null), cached.Digest);
         }
 
         var source = manifestGrant is null
@@ -107,7 +125,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             localManifestCache[localPath] = new CachedLocalManifest(manifest, source.Json, digest, stamp);
         }
 
-        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && digest != legacyManifestDigest, allowUnsupportedPermissions: allowUnsupportedPermissions, allowRetiredContracts: allowRetiredContracts);
+        return (manifest, source, digest);
     }
 
     // Mirrors ReadManifestSourceAsync/ReadLocalManifestAsync resolution for the cache key: null for a
@@ -604,36 +622,6 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
                 errors.Add(new("app_manifest_runtime_profile_duplicate", $"Runtime profile '{profile.Key}' is declared more than once.", "$.runtimeProfiles[].key"));
             }
 
-            if (profile.ReadinessTimeoutSeconds is <= 0)
-            {
-                errors.Add(new("app_manifest_runtime_profile_readiness_timeout_invalid", $"Runtime profile '{profile.Key}' readinessTimeoutSeconds must be greater than zero.", "$.runtimeProfiles[].readinessTimeoutSeconds"));
-            }
-
-            if (profile.Type is not "docker" and not "localCommand" and not "mixed")
-            {
-                errors.Add(new("app_manifest_runtime_type_unsupported", $"Runtime profile type '{profile.Type}' is not supported by this Hosty Core build.", "$.runtimeProfiles[].type"));
-            }
-
-            if (profile.Type == "mixed" && !profile.Development)
-            {
-                errors.Add(new("app_manifest_mixed_requires_development", "Mixed profiles must declare development: true.", "$.runtimeProfiles[].development"));
-            }
-
-            if (profile.Development && !manifest.Services.Any(service =>
-                service.Runtimes.TryGetValue(profile.Key, out var runtime) &&
-                (runtime.SourceMount is not null ||
-                 ((runtime.Type ?? profile.Type) == "localCommand" && runtime.Artifact is null or "source"))))
-            {
-                errors.Add(new("app_manifest_development_requires_source", $"Development profile '{profile.Key}' must contain an editable source service.", "$.runtimeProfiles[].development"));
-            }
-
-            if (profile.Development && manifest.Services.Any(service =>
-                service.Runtimes.TryGetValue(profile.Key, out var runtime)
-                && string.Equals(runtime.Artifact?.Trim(), "prebuilt", StringComparison.OrdinalIgnoreCase)))
-            {
-                errors.Add(new("app_manifest_development_requires_source", $"Development profile '{profile.Key}' cannot contain prebuilt services. Use a reviewed profile for immutable builds.", "$.runtimeProfiles[].development"));
-            }
-
             if (profile.Default)
             {
                 defaultProfileCount++;
@@ -661,6 +649,41 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         if (selectedProfile is null)
         {
             errors.Add(new("app_manifest_selected_runtime_missing", $"Selected runtime '{resolvedRuntime}' does not reference a runtime profile.", "$.defaultRuntime"));
+        }
+
+        // Recipe rules belong to the selected runtime. Install/update can request all-profile
+        // validation below, but recovery to a valid profile must not re-admit unrelated recipes.
+        if (selectedProfile is { } selectedRecipe)
+        {
+            if (selectedRecipe.ReadinessTimeoutSeconds is <= 0)
+            {
+                errors.Add(new("app_manifest_runtime_profile_readiness_timeout_invalid", $"Runtime profile '{selectedRecipe.Key}' readinessTimeoutSeconds must be greater than zero.", "$.runtimeProfiles[].readinessTimeoutSeconds"));
+            }
+
+            if (selectedRecipe.Type is not "docker" and not "localCommand" and not "mixed")
+            {
+                errors.Add(new("app_manifest_runtime_type_unsupported", $"Runtime profile type '{selectedRecipe.Type}' is not supported by this Hosty Core build.", "$.runtimeProfiles[].type"));
+            }
+
+            if (selectedRecipe.Type == "mixed" && !selectedRecipe.Development)
+            {
+                errors.Add(new("app_manifest_mixed_requires_development", "Mixed profiles must declare development: true.", "$.runtimeProfiles[].development"));
+            }
+
+            if (selectedRecipe.Development && !manifest.Services.Any(service =>
+                service.Runtimes.TryGetValue(selectedRecipe.Key, out var runtime) &&
+                (runtime.SourceMount is not null ||
+                 ((runtime.Type ?? selectedRecipe.Type) == "localCommand" && runtime.Artifact is null or "source"))))
+            {
+                errors.Add(new("app_manifest_development_requires_source", $"Development profile '{selectedRecipe.Key}' must contain an editable source service.", "$.runtimeProfiles[].development"));
+            }
+
+            if (selectedRecipe.Development && manifest.Services.Any(service =>
+                service.Runtimes.TryGetValue(selectedRecipe.Key, out var runtime)
+                && string.Equals(runtime.Artifact?.Trim(), "prebuilt", StringComparison.OrdinalIgnoreCase)))
+            {
+                errors.Add(new("app_manifest_development_requires_source", $"Development profile '{selectedRecipe.Key}' cannot contain prebuilt services. Use a reviewed profile for immutable builds.", "$.runtimeProfiles[].development"));
+            }
         }
 
         if (manifest.Services.Count == 0)

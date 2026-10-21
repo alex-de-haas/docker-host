@@ -1035,9 +1035,12 @@ public sealed class AppManifestServiceTests
     }
 
     [Theory]
-    [InlineData("dev")]
-    [InlineData("release")]
-    public async Task LoadAsync_RejectsDevelopmentProfileContainingPrebuiltService(string selectedRuntime)
+    [InlineData("dev", false, true)]
+    [InlineData("dev", true, true)]
+    [InlineData("release", false, false)]
+    [InlineData("release", true, true)]
+    public async Task LoadAsync_ValidatesDevelopmentRecipeOnlyWhenSelectedOrCheckingAllProfiles(
+        string selectedRuntime, bool validateAllProfiles, bool invalid)
     {
         var manifestPath = await WriteRawManifestAsync("""
             {
@@ -1061,7 +1064,15 @@ public sealed class AppManifestServiceTests
             }
             """);
 
-        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath, selectedRuntime));
+        var service = new AppManifestService();
+        if (!invalid)
+        {
+            var selection = await service.LoadAsync(manifestPath, selectedRuntime, validateAllProfiles: validateAllProfiles);
+            Assert.Equal(selectedRuntime, selection.RuntimeProfile.Key);
+            return;
+        }
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => service.LoadAsync(
+            manifestPath, selectedRuntime, validateAllProfiles: validateAllProfiles));
         Assert.Contains(error.Errors, item => item.Code == "app_manifest_development_requires_source");
     }
 
