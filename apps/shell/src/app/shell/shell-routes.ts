@@ -50,16 +50,10 @@ export const HOST_SETTINGS_SECTIONS: {
   label: string;
   tabs: { id: HostSettingsTab; label: string }[];
 }[] = [
-  { id: "profile", label: "Your profile", tabs: [{ id: "profile", label: "Your profile" }] },
-  { id: "general", label: "General", tabs: [{ id: "general", label: "General" }] },
-  { id: "harness", label: "Harness", tabs: [{ id: "agents", label: "Agents" }, { id: "shell", label: "Shell" }] },
-  { id: "security", label: "Security", tabs: [
-    { id: "users", label: "Users" }, { id: "tokens", label: "Access tokens" },
-    { id: "permissions", label: "App permissions" },
-    { id: "connections", label: "Source connections" }, { id: "policies", label: "Policies" },
-  ] },
-  { id: "ingress", label: "Ingress", tabs: [{ id: "ingress", label: "Ingress" }] },
-  { id: "mounts", label: "Shared mounts", tabs: [{ id: "mounts", label: "Shared mounts" }] },
+  { id: "profile", label: "My profile", tabs: [{ id: "profile", label: "Profile" }, { id: "connections", label: "Connections" }, { id: "tokens", label: "Tokens & devices" }] },
+  { id: "host", label: "Host", tabs: [{ id: "general", label: "Updates" }, { id: "ingress", label: "Network" }, { id: "mounts", label: "Shared folders" }, { id: "source", label: "Core source" }] },
+  { id: "security", label: "Users & security", tabs: [{ id: "users", label: "Users" }, { id: "permissions", label: "App permissions" }, { id: "policies", label: "Policies" }] },
+  { id: "shell", label: "Shell", tabs: [{ id: "shell", label: "Shell" }] },
 ];
 const HOST_SETTINGS_TABS = new Set<string>(["core", ...HOST_SETTINGS_SECTIONS.flatMap(section => section.tabs.map(tab => tab.id))]);
 
@@ -68,10 +62,10 @@ export function getHostSettingsSection(tab: string) {
   return HOST_SETTINGS_SECTIONS.find(section => section.tabs.some(item => item.id === resolved));
 }
 
-// A settings surface the URL does not name resolves to Users rather than erroring — the same
+// A settings surface the URL does not name resolves to My profile rather than erroring — the same
 // principle that makes an unrecognized route fall through instead of blanking the screen. Every
 // link Shell builds names its tab explicitly, so nothing depends on which one this is.
-export const DEFAULT_HOST_SETTINGS_TAB: HostSettingsTab = "users";
+export const DEFAULT_HOST_SETTINGS_TAB: HostSettingsTab = "profile";
 
 // Paths that were their own view before Dashboard absorbed Installed Apps and Settings absorbed
 // User Management. They still parse, so a bookmark or a documented link keeps working; the client
@@ -278,6 +272,9 @@ export function getAppSettingsHref(appId: string) {
 export function readSettingsTabParam(value: string | null | undefined, child?: string | null): string {
   const tab = value?.trim() || DEFAULT_HOST_SETTINGS_TAB;
   if (tab === "core") return "general";
+  if (tab === "security" && (child === "tokens" || child === "connections")) return child;
+  if (tab === "harness" && child === "shell") return "shell";
+  if (tab === "agents" || tab === "harness") return "hosty.harness";
   const section = HOST_SETTINGS_SECTIONS.find(section => section.id === tab);
   return section ? section.tabs.find(item => item.id === child)?.id ?? section.tabs[0].id : tab;
 }
@@ -295,4 +292,8 @@ export function getWorkspaceHref(appId: string, appPath: string) {
 
 export function getWorkspaceRouteKey(route: WorkspaceRoute | null) {
   return route ? `${route.appId}:${route.path}` : "none";
+}
+
+export function getManageAppHref(appId: string, section = "app") {
+  return `/settings?tab=${encodeURIComponent(`manage:${appId}`)}&section=${encodeURIComponent(section)}`;
 }

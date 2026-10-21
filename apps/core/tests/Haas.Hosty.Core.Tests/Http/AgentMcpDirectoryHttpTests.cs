@@ -32,19 +32,19 @@ public sealed class AgentMcpDirectoryHttpTests
         Assert.False(target.Offered);
         Assert.Equal("Reviewed instructions", Assert.Single(target.Skills).Markdown);
         var digest = target.Skills[0].Digest!;
-        using var enable = await client.PutAsJsonAsync("/api/core/agents/" + app.Id, new { revision = first.Revision, offered = true });
+        using var enable = await ApplyLegacyPolicyInProcess(host, app.Id, new { revision = first.Revision, offered = true });
         Assert.Equal(HttpStatusCode.OK, enable.StatusCode);
         var enabled = await directory.ReadAsync();
         Assert.True(enabled.Targets.Single(t => t.Id == app.Id).Offered);
         Assert.Null(enabled.Targets.Single(t => t.Id == app.Id).Skills[0].ApprovedDigest);
-        using var approve = await client.PutAsJsonAsync("/api/core/agents/" + app.Id,
+        using var approve = await ApplyLegacyPolicyInProcess(host, app.Id,
             new { revision = enabled.Revision, offered = true, approveSkills = new Dictionary<string, string> { ["agent"] = digest } });
         Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
         var approved = await directory.ReadAsync();
         Assert.Equal(digest, approved.Targets.Single(t => t.Id == app.Id).Skills[0].ApprovedDigest);
         Assert.Null(approved.Targets.Single(t => t.Id == app.Id).Skills[0].Markdown);
         await File.WriteAllTextAsync(skillPath, "Changed instructions");
-        using var stale = await client.PutAsJsonAsync("/api/core/agents/" + app.Id,
+        using var stale = await ApplyLegacyPolicyInProcess(host, app.Id,
             new { revision = approved.Revision, offered = true, approveSkills = new Dictionary<string, string> { ["agent"] = digest } });
         Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
         var changed = await directory.ReadAsync();
@@ -159,13 +159,18 @@ public sealed class AgentMcpDirectoryHttpTests
         Assert.Contains(snapshot.Assistants!, a => a.Id == assistant.Id);
         Assert.False((await directory.ReadForAssistantAsync(assistant.Id, default)).Targets.Single(t => t.Id == "hosty:core").Offered);
         using var client = host.CreateClient();
-        async Task<HttpResponseMessage> Grant(string revision, string[] ids) => await client.PutAsJsonAsync("/api/core/agents/hosty:core", new { revision, offered = true, assistantIds = ids });
+        var trustedLegacySetup = false;
+        async Task<HttpResponseMessage> Grant(string revision, string[] ids) => trustedLegacySetup
+            ? await ApplyLegacyPolicyInProcess(host, "hosty:core", new { revision, offered = true, assistantIds = ids })
+            : await client.PutAsJsonAsync("/api/core/agents/hosty:core", new { revision, offered = true, assistantIds = ids });
         client.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(assistant.Id));
         Assert.False((await Grant(snapshot.Revision, [assistant.Id])).IsSuccessStatusCode);
         client.DefaultRequestHeaders.Authorization = null;
         await SignInAsync(host, "host.admin");
         client.DefaultRequestHeaders.Add("Cookie", "hosty_session=agent-session; hosty_csrf=csrf");
         client.DefaultRequestHeaders.Add("X-Hosty-CSRF", "csrf");
+        Assert.Equal(HttpStatusCode.Conflict, (await Grant(snapshot.Revision, [assistant.Id])).StatusCode);
+        trustedLegacySetup = true;
         Assert.Equal(HttpStatusCode.BadRequest, (await Grant(snapshot.Revision, ["not-installed"])).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await Grant(snapshot.Revision, [assistant.Id])).StatusCode);
         var first = (await policies.ReadAsync()).Targets["hosty:core"].Assistants![assistant.Id];
@@ -181,6 +186,15 @@ public sealed class AgentMcpDirectoryHttpTests
         Assert.NotEqual(grantedRevision, (await directory.ReadAsync()).Revision);
         await apps.UpsertAppAsync(assistant with { InstalledAt = assistant.InstalledAt.AddMinutes(1) });
         Assert.False((await directory.ReadForAssistantAsync(assistant.Id, default)).Targets.Single(t => t.Id == "hosty:core").Offered);
+    }
+
+    // Exercises the retained legacy policy service used by explicit Core recovery reviews.
+    // The public mutation route is separately asserted to refuse unreviewed changes above.
+    private static async Task<HttpResponseMessage> ApplyLegacyPolicyInProcess(CoreHttpHarness host, string target, object input)
+    {
+        var change = JsonSerializer.Deserialize<AgentPolicyUpdate>(JsonSerializer.Serialize(input), new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        var result = await host.Services.GetRequiredService<AgentMcpDirectory>().UpdateAsync(target, change, "agent-user", default);
+        return new HttpResponseMessage((HttpStatusCode)(((Microsoft.AspNetCore.Http.IStatusCodeHttpResult)result).StatusCode ?? 200));
     }
 
     private static async Task SignInAsync(CoreHttpHarness host, string role)

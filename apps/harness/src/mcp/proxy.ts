@@ -76,6 +76,7 @@ interface Registration {
 export class McpProxy {
   policy?: McpToolPolicy;
   identity?: (appId: string) => Promise<string>;
+  deniedTools?: (appId: string) => Promise<readonly string[]>;
   private readonly sessions = new Map<string, Registration>();
 
   constructor(
@@ -202,9 +203,11 @@ export class McpProxy {
           const identity = await this.identity?.(appId) ?? target.url;
           if (rpc.method === "tools/list") {
             const tools = await this.policy.discover(appId, identity, target.url, token.token);
-            sendJson(response, 200, { jsonrpc: "2.0", id: rpc.id, result: { tools } });
+            const denied = await this.deniedTools?.(appId) ?? [];
+            sendJson(response, 200, { jsonrpc: "2.0", id: rpc.id, result: { tools: tools.filter(tool => !denied.includes(tool.name)) } });
           } else {
             if (typeof rpc.params?.name !== "string") throw new Error("A tool name is required.");
+            if ((await this.deniedTools?.(appId) ?? []).includes(rpc.params.name)) throw new Error("Core has disabled this tool.");
             await this.policy.discover(appId, identity, target.url, token.token);
             const dispatchGuard = await this.policy.authorize(sessionId, appId, identity, JSON.stringify([request.headers["mcp-session-id"] ?? "", rpc.id]),
               rpc.params.name, rpc.params.arguments ?? {}, abort.signal);
@@ -213,6 +216,7 @@ export class McpProxy {
             token = await this.mint(sessionId, appId);
             if (!token) throw new Error("Session delegation expired before dispatch.");
             if (!this.sessions.has(sessionId) || abort.signal.aborted) throw new Error("Session ended before dispatch.");
+            if ((await this.deniedTools?.(appId) ?? []).includes(rpc.params.name)) throw new Error("Core has disabled this tool.");
             await dispatchGuard();
             await this.forward(request, response, target, token.token, body);
           }

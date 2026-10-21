@@ -1,21 +1,19 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { validRules, type ToolRule } from "../mcp/policy.js";
+import { validRules, validDefaults, type ToolRule, type ProviderDefault } from "../mcp/policy.js";
 import { DEFAULT_WORKFLOW_PROMPT } from "./workflow.js";
 import { CORE_PROVIDER_ID } from "./providers.js";
 import type { ConnectionBinding } from "../connections/registry.js";
 import { isTranslationModel } from "../translation/models.js";
 
-// Operator-owned assistant policy, living in the gateway's own data directory.
-//
-// Where this state lives is a decision, not an accident: Core stays the registry (which apps exist,
-// which declare an `mcp` interface, at what URL) and the gateway owns the policy (which of them the
-// assistant may reach, and what the operator prepended to the system prompt). Putting the toggles in
-// Core would make the kernel hold configuration for a replaceable app.
-//
-// These are not Hosty app settings either. Those are flat key/value pairs rendered by a generic
-// dialog, which cannot express a list that changes as the fleet changes.
+// Harness owns invocation preferences and reviewed instructions. Core owns MCP access.
+export interface SkillAcceptance { identity: string; digest: string }
+export function validSkillAcceptances(value: unknown): value is Record<string, SkillAcceptance> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length <= 1000 &&
+    Object.values(value).every(v => v && typeof v === "object" && typeof v.identity === "string" && v.identity.length < 3000 &&
+      typeof v.digest === "string" && /^[a-f0-9]{32}$/.test(v.digest)));
+}
 
 export interface RetentionSettings { ordinaryDays: number | null; completedWorkspaceDays: number | null }
 export function validRetention(value: unknown): value is RetentionSettings {
@@ -33,6 +31,9 @@ export interface AssistantSettings {
   translationModels?: Partial<Record<"codex" | "claude", string | null>>;
   mcpToolRules?: Record<string, ToolRule>;
   mcpPolicyMigrated?: string[];
+  mcpDefaults?: Record<string, ProviderDefault>;
+  mcpSkillApprovals?: Record<string, SkillAcceptance>;
+  mcpSkillsMigrated?: boolean;
   immediateHandoffs?: boolean;
   /**
    * Operator text appended to the harness's own instruction sources — never replacing them. The
@@ -131,6 +132,9 @@ export class SettingsStore {
         translationConnections: validTranslationConnections(parsed.translationConnections) ? parsed.translationConnections : {},
         translationModels: validTranslationModels(parsed.translationModels) ? parsed.translationModels : {},
         immediateHandoffs: parsed.immediateHandoffs === true,
+        mcpDefaults: validDefaults(parsed.mcpDefaults) ? parsed.mcpDefaults : {},
+        mcpSkillApprovals: validSkillAcceptances(parsed.mcpSkillApprovals) ? parsed.mcpSkillApprovals : {},
+        mcpSkillsMigrated: parsed.mcpSkillsMigrated === true,
         mcpToolRules: validRules(parsed.mcpToolRules) ? parsed.mcpToolRules : {},
         mcpPolicyMigrated: Array.isArray(parsed.mcpPolicyMigrated) ? parsed.mcpPolicyMigrated.filter(v => typeof v === "string") : [],
         systemPrompt: typeof parsed.systemPrompt === "string" ? parsed.systemPrompt : "",
@@ -191,6 +195,9 @@ export class SettingsStore {
       executionMode: patch.executionMode ?? current.executionMode ?? "native",
       translationConnections: patch.translationConnections ?? current.translationConnections ?? {},
       translationModels: patch.translationModels ?? current.translationModels ?? {},
+      mcpDefaults: patch.mcpDefaults ?? current.mcpDefaults ?? {},
+      mcpSkillApprovals: patch.mcpSkillApprovals ?? current.mcpSkillApprovals ?? {},
+      mcpSkillsMigrated: patch.mcpSkillsMigrated ?? current.mcpSkillsMigrated ?? false,
       mcpToolRules: patch.mcpToolRules ?? current.mcpToolRules ?? {},
       mcpPolicyMigrated: patch.mcpPolicyMigrated ?? current.mcpPolicyMigrated ?? [],
       immediateHandoffs: patch.immediateHandoffs ?? current.immediateHandoffs ?? false,

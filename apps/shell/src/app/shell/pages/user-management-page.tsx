@@ -1,5 +1,6 @@
 "use client";
 
+import { SettingsTokensSection } from "./settings-tokens-section";
 import { fetchCore } from "../core-transport.js";
 
 
@@ -60,6 +61,7 @@ export function UserManagementPanel({
   const [inviteAppIds, setInviteAppIds] = useState<string[]>([]);
   const [createdInvite, setCreatedInvite] = useState<{ setupUrl: string; token: string } | null>(null);
   const [copiedInviteField, setCopiedInviteField] = useState<"url" | "token" | null>(null);
+  const [credentialUser, setCredentialUser] = useState<HostUserSummary | null>(null);
   const [accessUserId, setAccessUserId] = useState<string | null>(null);
   const [accessAppIds, setAccessAppIds] = useState<string[]>([]);
 
@@ -223,6 +225,9 @@ export function UserManagementPanel({
       {confirmationDialog}
       <h2 className="sr-only">User Management</h2>
 
+      <Dialog open={Boolean(credentialUser)} onOpenChange={open => { if (!open) setCredentialUser(null); }}><DialogContent className="sm:max-w-4xl"><DialogHeader><DialogTitle>{credentialUser?.displayName || credentialUser?.email}</DialogTitle><DialogDescription>Account access</DialogDescription></DialogHeader><DialogBody>
+        {credentialUser && <SettingsTokensSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} userId={credentialUser.id} />}
+      </DialogBody></DialogContent></Dialog>
       {error && <InlineError message={error} />}
 
       <Card className="border-0 bg-transparent py-0 shadow-none">
@@ -261,7 +266,7 @@ export function UserManagementPanel({
                 <TableRow key={user.id}>
                   <TableCell>
                     <div className="min-w-48">
-                      <div className="font-medium">{user.displayName || user.email || user.id}</div>
+                      <Button variant="link" onClick={() => setCredentialUser(user)}>{user.displayName || user.email || user.id}</Button>
                       <div className="text-xs text-muted-foreground">{user.email || user.id}</div>
                     </div>
                   </TableCell>

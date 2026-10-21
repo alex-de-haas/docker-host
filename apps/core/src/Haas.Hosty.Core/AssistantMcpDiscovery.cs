@@ -18,7 +18,7 @@ internal static class AssistantMcpDiscovery
             var token = await access.IssueAsync(appId, targetId, CoreSessionAuthorization.ReadBearerToken(request),
                 request.Headers["X-Hosty-User-Token"].ToString(), ct, discoveryOnly: true);
             var snapshot = await directory.ReadForAssistantAsync(appId, ct);
-            var target = snapshot.Targets.FirstOrDefault(t => t.Id == targetId && t.Offered);
+            var target = snapshot.Targets.FirstOrDefault(t => t.Id == targetId);
             var endpoint = target?.Interfaces.FirstOrDefault(i => i.Key == "default" && i.Readiness == "ready")
                 ?? target?.Interfaces.FirstOrDefault(i => i.Readiness == "ready");
             if (endpoint?.Url is null)

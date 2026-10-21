@@ -7,8 +7,8 @@ namespace Haas.Hosty.Core;
 // Credentials for clients that have no browser: a device console, the CLI on another machine, a script.
 //
 // Core's only way to mint a session was posting the HTML login form, which a headless client cannot do.
-// These endpoints add two ways in — a device authorization flow approved in Shell, and direct creation
-// in Shell whose value is shown once — and one place to see and revoke what exists.
+// These endpoints add device authorization and direct issuance on Core. Shell lists metadata
+// and requests reviewed revocation; credential values never appear in its list.
 //
 // What comes out is an ordinary session record with a `Kind`, not a new credential type: bearer
 // resolution, the sliding idle window, instant revocation and the logout cascade already work on that
@@ -38,7 +38,7 @@ internal static class AccessTokenEndpoints
             return CoreJson.Json(new DeviceAuthorizationCodeResponse(
                 result.Request.DeviceCode,
                 result.Request.UserCode,
-                $"{coreOrigin.Effective}/account/tokens",
+                $"{coreOrigin.Effective}/account/device",
                 (int)DeviceAuthorizationStore.PollInterval.TotalSeconds,
                 (int)DeviceAuthorizationStore.RequestLifetime.TotalSeconds));
         });
@@ -186,23 +186,25 @@ internal static class AccessTokenEndpoints
                     var state = await users.ReadAsync(cancellationToken);
                     var now = clock.UtcNow;
                     var isAdmin = AppAccessPolicy.IsAdmin(user);
+                    var selectedUser = request.Query["userId"].FirstOrDefault() ?? user.Id;
+                    if (selectedUser != user.Id && (!isAdmin || AppManagementAuthorization.RequireAdditional(request, CoreAppPermissions.ReadUsers) is not null))
+                        return CoreJson.Json(new ErrorResponse("credential_forbidden", "You may view only your own credentials."), 403);
                     var views = state.Sessions
-                        .Where(session => AccessTokenKinds.IsAccessToken(session.Kind))
+                        .Where(session => session.Kind is null || AccessTokenKinds.IsAccessToken(session.Kind))
                         // An OAuth access token lives an hour and its client mints the next one
                         // itself; listing each would bury the durable credentials in churn. The
                         // *grant* is what an operator holds and revokes, and it is listed below.
                         .Where(session => !string.Equals(session.Kind, AccessTokenKinds.OAuth, StringComparison.Ordinal))
                         .Where(session => CoreSessionAuthorization.IsSessionLive(session, now, lifetimes.IdleFor(session.Kind)))
-                        // A host.user sees only their own; an administrator sees every one, because
-                        // revoking a credential on a lost device is a host-wide concern.
-                        .Where(session => isAdmin || string.Equals(session.UserId, user.Id, StringComparison.Ordinal))
+                        // Every user sees their own credentials by default; administrators can select a user.
+                        .Where(session => string.Equals(session.UserId, selectedUser, StringComparison.Ordinal))
                         .OrderByDescending(session => session.CreatedAt)
                         // The id here is the fingerprint, never the record id: a session id IS the
                         // bearer credential, so listing raw ids would hand every credential's secret to
                         // anyone allowed to see that the credential exists.
                         .Select(session => new AccessTokenView(
                             CoreSessionAuthorization.FingerprintSessionId(session.Id),
-                            session.Kind!,
+                            session.Kind ?? "browser",
                             session.Label,
                             session.UserId,
                             state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, session.UserId, StringComparison.Ordinal))?.DisplayName,
@@ -213,16 +215,17 @@ internal static class AccessTokenEndpoints
                             // "no audience" to be read as "no reach".
                             session.Audience,
                             session.Scopes ?? [],
-                            LastRequestAt: session.LastSeenAt > session.CreatedAt ? session.LastSeenAt : null))
+                            LastRequestAt: session.LastSeenAt > session.CreatedAt ? session.LastSeenAt : null,
+                            ExpiresAt: session.Kind is null ? session.ExpiresAt : null))
                         .ToArray();
 
                     // OAuth grants, one row per refresh chain: the client's name as the label,
                     // the audience and scopes it holds, request activity and rotation separately. Same visibility rule
-                    // as the rows above — owners see their own, an administrator sees all.
+                    // as the rows above, including selected-user administrative support.
                     var oauthState = await oauth.ReadAsync(cancellationToken);
                     var grantViews = oauthState.Grants
                         .Where(grant => OAuthStore.IsGrantLive(grant, now))
-                        .Where(grant => isAdmin || string.Equals(grant.UserId, user.Id, StringComparison.Ordinal))
+                        .Where(grant => string.Equals(grant.UserId, selectedUser, StringComparison.Ordinal))
                         .OrderByDescending(grant => grant.CreatedAt)
                         .Select(grant => new AccessTokenView(
                             CoreSessionAuthorization.FingerprintSessionId(grant.Id),
@@ -248,11 +251,18 @@ internal static class AccessTokenEndpoints
         app.MapPatch("/api/auth/credentials/{fingerprint}/label", (
             string fingerprint, AccessTokenLabelRequest input, HttpRequest request,
             UserDirectoryStore users, OAuthStore oauth, IClock clock, AuditStore audit, CancellationToken cancellationToken) =>
-            CoreSessionAuthorization.RequireAdminBrowserAsync(request, users, clock, async user =>
+            CoreSessionAuthorization.RequireSessionAsync(request, users, clock, async user =>
             {
                 var label = DeviceAuthorizationStore.NormalizeLabel(input.Label);
                 if (string.IsNullOrWhiteSpace(label))
                     return CoreJson.Json(new ErrorResponse("label_required", "Enter a credential label."), statusCode: 400);
+                var directory = await users.ReadAsync(cancellationToken);
+                var oauthState = await oauth.ReadAsync(cancellationToken);
+                var owner = directory.Sessions.FirstOrDefault(s => s.RevokedAt is null && CoreSessionAuthorization.FingerprintSessionId(s.Id) == fingerprint)?.UserId
+                    ?? oauthState.Grants.FirstOrDefault(g => OAuthStore.IsGrantLive(g, clock.UtcNow) && CoreSessionAuthorization.FingerprintSessionId(g.Id) == fingerprint)?.UserId;
+                if (owner is null || (owner != user.Id && !AppAccessPolicy.IsAdmin(user)))
+                    return CoreJson.Json(new ErrorResponse("credential_unknown", "This credential is unavailable."), 404);
+                if (owner != user.Id && AppManagementAuthorization.RequireAdditional(request, CoreAppPermissions.ManageUsers) is { } error) return error;
                 var renamed = await oauth.UpdateAsync(state =>
                 {
                     var target = state.Grants.FirstOrDefault(grant => OAuthStore.IsGrantLive(grant, clock.UtcNow) &&
@@ -268,7 +278,7 @@ internal static class AccessTokenEndpoints
                     {
                         Sessions = state.Sessions.Select(session =>
                         {
-                            if (session.Kind is not (AccessTokenKinds.Device or AccessTokenKinds.Manual) ||
+                            if (session.Kind is not (null or AccessTokenKinds.Device or AccessTokenKinds.Manual) ||
                                 session.RevokedAt is not null || CoreSessionAuthorization.FingerprintSessionId(session.Id) != fingerprint)
                                 return session;
                             renamed = true;
@@ -282,7 +292,7 @@ internal static class AccessTokenEndpoints
                     user.Id,
                     clock, label, null, cancellationToken);
                 return Results.Ok();
-            }, cancellationToken));
+            }, requireCsrf: true, cancellationToken: cancellationToken));
 
         app.MapPost("/api/auth/credentials", (
             HttpRequest request,
@@ -444,6 +454,7 @@ internal static class AccessTokenEndpoints
                                 statusCode: StatusCodes.Status404NotFound);
                         }
 
+                        if (targetGrant.UserId != user.Id && AppManagementAuthorization.RequireAdditional(request, CoreAppPermissions.ManageUsers) is { } grantPermissionError) return grantPermissionError;
                         var revokedAt = clock.UtcNow;
                         await oauth.UpdateAsync<object?>(current => (current with
                         {
@@ -484,7 +495,7 @@ internal static class AccessTokenEndpoints
                     var state = await users.ReadAsync(cancellationToken);
                     // Callers hold the fingerprint the listing gave them; the real id never left Core.
                     var target = state.Sessions.FirstOrDefault(session =>
-                        AccessTokenKinds.IsAccessToken(session.Kind) &&
+                        (session.Kind is null || AccessTokenKinds.IsAccessToken(session.Kind)) &&
                         session.RevokedAt is null &&
                         string.Equals(CoreSessionAuthorization.FingerprintSessionId(session.Id), fingerprint, StringComparison.OrdinalIgnoreCase));
 
@@ -498,6 +509,7 @@ internal static class AccessTokenEndpoints
                             statusCode: StatusCodes.Status404NotFound);
                     }
 
+                    if (target.UserId != user.Id && AppManagementAuthorization.RequireAdditional(request, CoreAppPermissions.ManageUsers) is { } permissionError) return permissionError;
                     await RevokeAsync(target.Id, users, clock, cancellationToken);
 
                     // The credential authorized app grants like any session, so revoking it cascades the
@@ -679,7 +691,8 @@ internal sealed record AccessTokenView(
     [property: JsonPropertyName("oauthClientId")] string? OAuthClientId = null,
     [property: JsonPropertyName("oauthClientName")] string? OAuthClientName = null,
     DateTimeOffset? LastRequestAt = null,
-    DateTimeOffset? LastRefreshAt = null);
+    DateTimeOffset? LastRefreshAt = null,
+    DateTimeOffset? ExpiresAt = null);
 
 internal sealed record AccessTokenLabelRequest(string? Label);
 

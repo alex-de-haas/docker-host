@@ -82,7 +82,7 @@ public sealed class AccessTokenHttpTests
         Assert.Contains(fingerprint, body, StringComparison.Ordinal);
         Assert.DoesNotContain(token, body, StringComparison.Ordinal);
 
-        using var revoke = await SendAsync(client, HttpMethod.Delete, $"/api/auth/credentials/{fingerprint}", owner);
+        using var revoke = await CoreReviewFixture.AsUserAsync(client, HttpMethod.Delete, $"/api/auth/credentials/{fingerprint}", owner);
         Assert.Equal(HttpStatusCode.OK, revoke.StatusCode);
 
         using var afterRevoke = await SendAsync(client, HttpMethod.Get, "/api/auth/session", token);
@@ -221,7 +221,7 @@ public sealed class AccessTokenHttpTests
         var users = harness.Services.GetRequiredService<UserDirectoryStore>();
         var now = harness.Services.GetRequiredService<IClock>().UtcNow;
         var user = new HostUserRecord(userId, $"{userId}@example.test", userId, role, false, now, now);
-        var session = new AuthSessionRecord($"session_{userId}", userId, now, now.AddHours(1), null, now);
+        var session = new AuthSessionRecord($"session_{userId}", userId, now, now.AddHours(1), null, now, BrowserOrigin: "http://localhost");
 
         if (append)
         {

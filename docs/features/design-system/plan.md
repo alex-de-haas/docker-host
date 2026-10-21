@@ -34,6 +34,20 @@ journey. Foundation styling can proceed independently once approved; layout/acti
 their own full verification. Existing deliverables remain outstanding, and D20 tracks the parity inventory
 and acceptance. Partial adoption does not mark the entire design plan complete.
 
+## Core And Settings Coordination (Owner Direction, 2026-10-20)
+
+The supplied Hosty Style Guide HTML adds Core authentication, installation, update,
+permission and outcome artboards. The narrow approved adoption is tracked in
+[Core confirmation design](../core-confirmation-design/feature.md); it does not approve
+this whole Draft. That feature owns the local Core fonts, trusted form palette,
+brand mark and responsive card styling. Shell foundations remain outstanding here; compact Core credential actions also use the shared forms.
+
+[Settings experience](../settings-experience/feature.md) owns the implemented destination
+inventory and protected settings workflow. The access-token grid in this design is
+a visual example: current-user tokens belong to My profile; authorized support
+actions for another user belong in that user's detail. Do not create a competing
+global token destination or a Shell-wide Assistant access tab.
+
 ## Source
 
 The design lives on a Design canvas: <https://claude.ai/artifact/4LypxfZnHz2E7fxhXti4th>. The canvas
@@ -483,7 +497,7 @@ the deliverable that changes it.
 ### Phase 1 — Foundations
 
 - [ ] D1. Replace Shell's neutral shadcn values in `apps/shell/src/app/globals.css` with the light and dark tokens above — the ink primary, the lime brand and lime soft accent, and the three-tone status tokens — and give buttons, inputs, checkboxes, switches, tabs (the line variant in `components/ui/tabs.tsx`), selected table rows (`components/ui/table.tsx`, today `bg-muted`), document-wide text selection (`::selection` in `globals.css`, not only in `input.tsx`) and progress bars the lime hover, focus, selection and progress states described under Components, with the ink-edge focus treatment applied to every `--ring` consumer in Shell (16 components today, including `shell-top-strip.tsx`, `shell-sidebar.tsx`, `ui/dialog.tsx` and `ui/resizable.tsx`).
-- [ ] D2. Load IBM Plex Sans and JetBrains Mono in Shell for `--font-sans` and `--font-mono`, and self-host the same WOFF2 files for Core's own pages: embed them with Core's other browser assets and serve them from one same-origin route, declare the `@font-face` rules and both families in the shared `PageStyles` of `HostyCoreApplication.cs` — which styles the login, setup, invitation, recovery and plain status pages — as well as in the account stylesheet (`Browser/account.css`) and the installation-approval pages' own styles, and add `font-src 'self'` to the page CSPs that start from `default-src 'none'` (`CoreAccountEndpoints.cs`, `InstallationApprovalEndpoints.cs`), which otherwise reject the files — with the Shell and platform version bumps.
+- [ ] D2. Load IBM Plex Sans and JetBrains Mono in Shell for `--font-sans` and `--font-mono`, with the appropriate Shell version bump. Core authentication, compact account actions, confirmation forms and local asset delivery are owned by the Core confirmation design feature.
 - [ ] D3. Replace the H-graph with the grid mark in `assets/hosty-brand` — light, dark, the ink-tile app icon and the favicon cut — outline the wordmark in IBM Plex Sans 600, regenerate the lockups and app icons with `build-assets.mjs` — which also rewrites Shell's public icons and the `apps/shell-swift` AppIcon set, so both ship with version bumps (`MARKETING_VERSION` for the Swift client) — redraw the hand-coded copies of the mark in Shell's `chrome/brand-mark.tsx` and the SDK's `overlay-react.tsx` (with an `@hosty-sdk/app` version bump), and record the ink scale, lime brand and status colors in `brand-tokens.json` and the brand README.
 - [ ] D4. Redraw every first-party app icon as its cell mark on the ink tile — Shell S, Plans P, Telemetry T, Harness A, Whisper V, Marketplace M, Demo App D (whose `icon.svg` still draws the retired H-graph) — replacing each `apps/<app>/assets/icon.svg`, adding one for Whisper and pointing its manifest's `catalogMetadata.icon` at it (Core builds `iconUrl` only from that field), with each app's version bump; then apply the accents as described under App accents: Shell draws each app's 3 px frame strip and tool badges in its accent's strong shade on light and its accent on dark, sourced as the open question settles, and each embedded first-party app other than Shell, whose own charts keep Hosty Blue, sets `--chart-1` to its accent's strong shade on light and its accent on dark for its own charts, swapping the displaced Hosty Blue into the later series it collides with as the Tokens section lists (Telemetry `--chart-2`, Demo App `--chart-3`, Harness and Marketplace `--chart-4`), and shows its mark, accent cell lit, in its own empty states. Because Shell's `AppIcon` shows `iconUrl` as an `<img>`, which cannot follow Shell's own theme class, Shell draws first-party marks inline from the cell map instead, painting the tile `#0F1B2D` in light and `#22324B` in dark; every other consumer — Marketplace's storefront, Harness's context icons, the OS — keeps the baked ink-tile `icon.svg` in both themes and, in dark mode, sets it on a card surface (`#17253B` or lighter) so the tile still separates by a tone.
 - [ ] D5. Ship the Telemetry and Demo App navigation icons in `currentColor` instead of hard-coded colors.
@@ -495,7 +509,7 @@ the deliverable that changes it.
 
 - [ ] D7. Rework the Dashboard rows as described under Dashboard: no header row, role icons instead of the System badge, version and runtime under the name with an available update as `current → new`, status label only off-normal, single-line resources, hover actions plus one contextual action.
 - [ ] D8. Add the Dashboard compact layout, selected by container width.
-- [ ] D9. Build the data-grid page pattern on ReUI Data Grid and apply it first to Settings › Security › Access tokens.
+- [ ] D9. Build the data-grid page pattern on ReUI Data Grid and apply it first to the current-user Tokens & devices view, coordinating navigation and authority with the Settings experience feature.
 - [ ] D10. Replace generic loaders and empty states with the grid-mark loader and cell empty states.
 - [ ] D18. Add the provider role icon set and its chip (icon-only in rows, icon and name in app details) for `ui-client`, `assistant`, `speech-to-text` and `otlp-collector`, with the reserved icons for planned roles, and remove every "System" label from Shell.
 

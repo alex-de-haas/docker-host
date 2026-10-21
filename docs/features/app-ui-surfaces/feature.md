@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-16
+updated: 2026-10-20
 summary: Apps declare where their pages belong, such as settings, panels or navigation, and Shell places them.
 components: [apps/shell, apps/core]
 ---
@@ -57,8 +57,9 @@ and new installations still require icons.
 ## Settings Navigation
 
 Settings is expandable in the sidebar and opens a flyout in compact mode. It contains the built-in
-Users, Access tokens, Core, Ingress and Shared mounts sections, followed by one entry per app declaring
-`ui.settings`, labelled with the app name. Internal settings navigation belongs to the app. Ordinary users only see their own Access tokens section. Stopped apps keep
+My profile, Host, Users & security and Shell groups, followed by one entry per application. Apps
+with `ui.settings` render their own page; other apps open Manage application. Internal navigation
+belongs to the app. Ordinary users see personal Profile and Tokens & devices. Stopped apps keep
 their settings entries and display the existing start/readiness UI when selected.
 
 The former horizontal tab strip is removed. Selection stays in `/settings?tab=...`, so bookmarks,
@@ -66,7 +67,8 @@ reload and back/forward retain the page. App entries use the app id as their key
 Old page-specific bookmarks resolve to the same app entry. Removed or unknown apps fall back to
 the host's normal default.
 
-An app settings iframe fills the workspace surface beside the sidebar and beneath the header, with no
+A small Shell header links the app settings page to Manage application. The iframe fills the remaining
+workspace surface beside the sidebar and beneath that header, with no
 Shell padding inside that surface or height subtraction for tabs. The app owns content padding; its modal overlay covers
 the full iframe without covering Shell navigation or an independently docked panel. Built-in host
 settings remain native Shell pages and retain their own layout.

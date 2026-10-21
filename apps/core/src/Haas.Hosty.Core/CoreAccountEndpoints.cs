@@ -8,7 +8,7 @@ internal static class CoreAccountEndpoints
 {
     public static void Map(WebApplication app)
     {
-        foreach (var path in new[] { "/account/tokens", "/oauth/consent" })
+        foreach (var path in new[] { "/account/tokens", "/account/device", "/account/background", "/oauth/consent" })
             app.MapGet(path, PageAsync).WithMetadata(new DisableCorsAttribute());
         app.MapGet("/account/assets/account.js", () => Asset("account.js", "text/javascript"))
             .WithMetadata(new DisableCorsAttribute());
@@ -22,7 +22,7 @@ internal static class CoreAccountEndpoints
         var request = context.Request;
         context.Response.Headers.CacheControl = "no-store";
         context.Response.Headers["Content-Security-Policy"] =
-            "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'";
+            "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'";
         context.Response.Headers["X-Frame-Options"] = "DENY";
         context.Response.Headers["X-Content-Type-Options"] = "nosniff";
         context.Response.Headers["Referrer-Policy"] = "same-origin";
@@ -32,7 +32,10 @@ internal static class CoreAccountEndpoints
             return Results.Text("Open account settings on Core's isolated browser origin.", statusCode: 409);
         if (await InstallationApprovalEndpoints.BrowserActorAsync(request, users, clock, context.RequestAborted) is null)
             return Results.Redirect("/login?returnTo=" + Uri.EscapeDataString(request.Path + request.QueryString));
-        return Asset("account.html", "text/html");
+        var title = request.Path == "/account/device" ? "Connect a device" : request.Path == "/account/background" ? "Authorize background access"
+            : request.Path == "/oauth/consent" ? "Authorize an application" : "Create access token";
+        return Results.Content(CoreBrowserPages.Approval(title, null, null, "Your Hosty account",
+            "<p id=error role=alert hidden></p><p id=notice role=status hidden></p><div id=content>Loading…</div><script src=/account/assets/account.js defer></script>"), "text/html");
     }
 
     private static IResult Asset(string name, string contentType)

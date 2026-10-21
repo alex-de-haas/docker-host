@@ -1,6 +1,6 @@
 ---
 created: 2026-10-08
-updated: 2026-10-08
+updated: 2026-10-20
 summary: Default-only installation, shared configuration readiness and optional app-author guidance for manifest and app-owned settings.
 components: [apps/core, apps/shell, apps/marketplace, packages/app-sdk]
 ---
@@ -46,7 +46,7 @@ bindings and keeps the target stopped; the operator keeps one binding and then u
 Installation and approved updates register the selected version successfully even when required
 configuration is incomplete. Core leaves the app stopped, without a doomed service launch. Shell
 shows Configuration required beside the normal lifecycle state, with Configure opening the existing
-app-settings dialog (Mounts when only mounts need attention). The warning contributes to the
+Manage application page (Folders when only mounts need attention). The warning contributes to the
 Dashboard attention filter. Start and Restart remain server guarded and their UI controls are
 disabled while Core reports known incompleteness. Saving configuration clears the warning when
 requirements are met and does not start the app; the operator uses Start explicitly. Boot and
@@ -65,21 +65,21 @@ These are recommendations, not manifest restrictions or mandatory migrations:
 - Headless apps retain the generic manifest/Core settings controls. They need no frontend,
   public origin or app-owned settings endpoint.
 
-The generic Shell settings window remains available. Restart requirements alone do not determine
+The generic Shell Manage application → Launch editor remains available. Restart requirements alone do not determine
 ownership. Authors choose the appropriate placement; this change introduces no three-tier settings
-framework, automatic migration or app-to-Core restart notification protocol.
+framework or app-to-Core restart notification protocol. The specific native preference migrations are
+described in [settings experience](../settings-experience/feature.md).
 
 ## First-Party Manifest Inventory
 
-Inventory baseline is the manifests in this implementation branch. It records existing ownership,
-not an approved settings migration. Every declared required setting in this repository has a default.
+This inventory records the current manifest and app-owned configuration. Every declared required setting in this repository has a default.
 
 | App | Manifest configuration | Default readiness / author recommendation |
 | --- | --- | --- |
 | Shell | No app settings | Core generates runtime origin/port inputs. |
-| Marketplace | Required catalog URL with default public catalog | Installs without input; catalog source is installation-wide. |
+| Marketplace | No app settings | Its app-owned Settings page persists the catalog URL, initialized from the former environment value or public default. |
 | Plans | No app settings | Installs without input; user preferences belong to its UI. |
-| Harness | Transcript retention, default 30 days | Installs without input; its existing Settings UI owns provider connections and session choices. |
+| Harness | No user preference parameters | Its Settings UI owns retention, provider connections and invocation preferences; former retention values initialize app storage once. |
 | Demo App | Greeting, channel, refresh interval, auth preview, all defaulted; optional catalog mounts | Demonstrates generic settings and an app-owned Settings page without forcing migration. |
 | Telemetry | No manifest app settings | Runtime service environment and generated endpoint configuration remain separate. |
 | Whisper | Required model, default small | Installs without input; current model changes require restart. |

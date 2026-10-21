@@ -1,6 +1,6 @@
 ---
 created: 2026-08-09
-updated: 2026-10-07
+updated: 2026-10-20
 summary: Hosty Harness, the optional administrator assistant app hosting operator chat sessions on a host-resident agent harness.
 components: [apps/harness, apps/shell]
 ---
@@ -126,7 +126,7 @@ See [assistant MCP delegation](../delegated-token-exchange/feature.md).
 ## Settings Surface
 
 - The manifest declares one `ui.settings` surface, listed as **Hosty Harness** under Shell's
-  Settings. Its app-owned page has **Agent providers**, **Source providers**, **System prompt** and **MCP access** tabs.
+  Settings. Its app-owned page has **Agent providers**, **Translation providers**, **Instructions and retention** and **MCP access** tabs.
   The iframe fills the workspace, so dialogs cover both the content and its internal tabs while
   the Shell header and sidebar remain accessible. Pages are served from the same Node process.
 - Why here and not in Shell: the assistant is optional, removable and replaceable, so a settings
@@ -137,8 +137,10 @@ See [assistant MCP delegation](../delegated-token-exchange/feature.md).
 - Settings use the app's shadcn/ui components for tabs, provider menus and dialogs, labelled
   fields, inputs, selects, switches, alerts and empty states. Layout uses Tailwind utilities and
   semantic theme tokens; the root stylesheet holds theme definitions and the SDK launch-mode
-  chrome rule. MCP access has a searchable application list and a selected-application detail panel. The list
-  moves above the panel at narrow widths; access changes save immediately. Switching tabs preserves unsaved prompt
+  chrome rule. MCP access uses expandable provider rows and tool-level controls, a local draft and one
+  Save. Core confirms provider/tool access in a batch; Harness saves invocation defaults and instruction
+  acceptance locally. [Settings experience](../settings-experience/feature.md) defines recovery and ownership.
+  Switching tabs preserves unsaved prompt
   text and ongoing provider-login polling.
 - **The build runs at every start, from a clean cache.** The app is `localCommand`, so its manifest
   `setup` step installs both workspaces and runs `build:web` before the service command. The reviewed

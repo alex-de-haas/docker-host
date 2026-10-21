@@ -216,7 +216,7 @@ export async function proxyCore(request: Request, path: string[]): Promise<Respo
     return response;
   }
   const headers = new Headers({ Authorization: `Bearer ${getServiceToken() ?? ""}`, "X-Hosty-App-Identity": token });
-  for (const name of ["Content-Type", "If-None-Match", "Range"]) {
+  for (const name of ["Content-Type", "If-None-Match", "Range", "X-Hosty-Settings-Change"]) {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }

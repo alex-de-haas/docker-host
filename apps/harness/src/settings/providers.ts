@@ -1,4 +1,6 @@
-// Core owns offers and skill approvals; this client caches only credential-free discovery.
+// Core owns assistant access; Harness owns local invocation preferences and instruction acceptance.
+import { AppContextError } from "../sessions/app-context.js";
+import type { AssistantSettings, SettingsStore, SkillAcceptance } from "./store.js";
 import { readAppSkill, skillDigest, type AppSkill } from "../mcp/skills.js";
 
 export const MCP_INTERFACE = "mcp";
@@ -7,6 +9,8 @@ export const CORE_PROVIDER_ID = "hosty:core";
 export interface McpProvider {
   appId: string;
   policyIdentity?: string;
+  installationIdentity?: string;
+  deniedTools?: string[];
   displayName: string;
   url: string | null;
   running: boolean;
@@ -20,6 +24,7 @@ export interface AppDirectoryEntry {
 }
 interface AgentTarget {
   installedAt?: string | null;
+  deniedTools?: string[];
   id: string; displayName: string; offered: boolean; runtimeState: string;
   interfaces: Array<{ key: string; url: string | null; readiness: string }>;
   skills: Array<{ key: string; digest: string | null; approvedDigest: string | null }>;
@@ -60,14 +65,66 @@ export class ProviderDirectory {
         .map(skill => [target.id, skill.approvedDigest!])));
   }
 
-  async instructions() {
+  async instructions(settings?: AssistantSettings) {
     return Promise.all((this.snapshot?.agents.targets ?? []).filter(target => target.skills.some(skill => skill.key === "agent"))
       .map(async target => {
         const status = target.skills.find(skill => skill.key === "agent")!;
         const skill = await this.readSkill(target.id);
-        return { appId: target.id, markdown: skill?.markdown ?? null,
-          approved: Boolean(skill && status.digest && skillDigest(skill.markdown) === status.digest && status.digest === status.approvedDigest) };
+        const identity = this.installationIdentity(target), digest = skill ? skillDigest(skill.markdown) : null;
+        const accepted = settings?.mcpSkillApprovals?.[target.id];
+        return { appId: target.id, identity, digest, markdown: skill?.markdown ?? null,
+          approved: Boolean(digest && accepted?.identity === identity && accepted.digest === digest) };
       }));
+  }
+
+  private installationIdentity(target: AgentTarget): string { return JSON.stringify([target.id, target.installedAt ?? "core"]); }
+
+  localApprovedSkills(settings: AssistantSettings): Record<string, string> {
+    return Object.fromEntries((this.snapshot?.agents.targets ?? []).flatMap(target => {
+      const accepted = settings.mcpSkillApprovals?.[target.id];
+      return accepted?.identity === this.installationIdentity(target) ? [[target.id, accepted.digest]] : [];
+    }));
+  }
+
+  async migrateInstructions(store: SettingsStore): Promise<void> {
+    if (!this.snapshot || (await store.read()).mcpSkillsMigrated) return;
+    await store.transform(current => {
+      if (current.mcpSkillsMigrated) return {};
+      const accepted = { ...current.mcpSkillApprovals };
+      for (const target of this.snapshot!.agents.targets) {
+        const skill = target.skills.find(s => s.key === "agent");
+        if (target.offered && skill?.digest && skill.digest === skill.approvedDigest && !accepted[target.id])
+          accepted[target.id] = { identity: this.installationIdentity(target), digest: skill.digest };
+      }
+      return { mcpSkillsMigrated: true, mcpSkillApprovals: accepted };
+    });
+  }
+
+  async validateInstructions(approvals: Record<string, SkillAcceptance>, previous: Record<string, SkillAcceptance> = {}): Promise<void> {
+    if (!await this.read()) throw new Error("Core is unavailable. Instructions were not changed.");
+    const instructions = await this.instructions();
+    for (const [id, approval] of Object.entries(approvals)) {
+      if (previous[id]?.identity === approval.identity && previous[id]?.digest === approval.digest) continue;
+      const current = instructions.find(i => i.appId === id);
+      if (!current || current.identity !== approval.identity || current.digest !== approval.digest)
+        throw new Error("Application instructions changed. Read the current text before saving.");
+    }
+  }
+
+  async accessReview(credential: string, input: { requestId: string; revision: string; targets: unknown[] }) {
+    const request = await this.reviewRequest(credential, "", { assistantAccess: { ...input, assistantId: this.appId } });
+    return request.status === "draft" ? this.reviewRequest(credential, `/${encodeURIComponent(request.id)}/submit`, {}) : request;
+  }
+  async reviewRequest(credential: string, suffix: string, body?: unknown): Promise<{ id: string; status: string; approvalUrl: string; error?: string }> {
+    if (!this.coreOrigin || !this.serviceToken) throw new Error("Core is unavailable.");
+    const response = await fetch(`${this.coreOrigin}/api/internal/apps/${encodeURIComponent(this.appId)}/installations${suffix}`, {
+      method: body === undefined ? "GET" : "POST", headers: { authorization: `Bearer ${this.serviceToken}`,
+        "X-Hosty-App-Identity": credential, "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body), redirect: "error", signal: AbortSignal.timeout(15_000),
+    });
+    const result = await response.json() as { id: string; status: string; approvalUrl: string; error?: string; message?: string; code?: string };
+    if (!response.ok) throw new AppContextError(response.status, result.code ?? "mcp_review_failed", result.message ?? "Core could not prepare this access review.");
+    return result;
   }
 
   async readSkill(targetAppId: string): Promise<AppSkill | null> {
@@ -119,6 +176,7 @@ export class ProviderDirectory {
     }));
     return {
       policyIdentity: JSON.stringify([target.id, target.installedAt ?? "core", interfaces]),
+      installationIdentity: this.installationIdentity(target), deniedTools: target.deniedTools ?? [],
       appId: target.id, displayName: target.displayName, offered: target.offered === true,
       url: interfaces.find(item => item.key === "default")?.url ?? interfaces[0]?.url ?? null,
       running: interfaces.length > 0, interfaces,
@@ -136,11 +194,11 @@ export class ProviderDirectory {
   }
 
   /** Every forwarded request checks the current policy and resolves the current URL. */
-  async resolveOffered(appId: string, expectedUrl?: string): Promise<string | null> {
+  async resolveOffered(appId: string, expectedUrl?: string, external = false): Promise<string | null> {
     const current = await this.read();
     if (!current) throw new Error("Core's agent directory is unavailable.");
     const target = appId === CORE_PROVIDER_ID ? this.core() : current.providers.find(provider => provider.appId === appId);
-    if (!target?.offered || !target.running) return null;
+    if (!target || (!external && !target.offered) || !target.running) return null;
     return expectedUrl ? target.interfaces.find(item => item.url === expectedUrl)?.url ?? null : target.url;
   }
 }

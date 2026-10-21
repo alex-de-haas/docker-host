@@ -48,6 +48,8 @@ import { useManagedPublicOrigins } from "../use-managed-public-origins";
 
 export function AppDetailsDialog({
   app,
+  page = false,
+  onTabChange,
   view,
   settingsTab,
   coreOrigin,
@@ -74,6 +76,8 @@ export function AppDetailsDialog({
   onAskAssistant,
 }: {
   app: CoreApp;
+  page?: boolean;
+  onTabChange?: (tab: SettingsTab) => void;
   view: DetailView;
   settingsTab?: SettingsTab;
   coreOrigin: string;
@@ -109,6 +113,15 @@ export function AppDetailsDialog({
   // an app, never whether it can be uninstalled. The remove panel explains the consequences instead.
   const canRemoveApp = canManageApps;
   const canConfigureApp = canManageApps;
+
+  if (page) return <section className="flex min-h-[32rem] flex-col gap-5">
+    <header className="flex items-center justify-between gap-3"><div><h1 className="text-xl font-semibold">Manage {app.displayName}</h1><p className="text-sm text-muted-foreground">{app.id}</p></div>
+      <Button variant="outline" onClick={onClose}>Back to Dashboard</Button></header>
+    {detail.error && <InlineError message={detail.error} />}
+    {canConfigureApp ? <SettingsDialog app={app} busyAction={busyAction} canManageApps={canConfigureApp} globalMounts={globalMounts} initialTab={settingsTab} onTabChange={onTabChange} coreOrigin={coreOrigin} onSetFeed={onSetFeed} onConfigure={onConfigure} onConfigureMounts={onConfigureMounts} onConfigureSource={onConfigureSource} onClearSource={onClearSource} onRevealSetting={onRevealSetting}
+      backups={app.capabilities.includes("backup") ? <BackupsPanel app={app} detail={detail} busyAction={busyAction} onRefresh={onRefreshBackups} onCreateBackup={onCreateBackup} onRestoreBackup={onRestoreBackup} onDeleteBackup={onDeleteBackup} onPreviewCleanup={onPreviewBackupCleanup} onApplyCleanup={onApplyBackupCleanup} /> : undefined} />
+      : <InlineError message="You do not have permission to manage this application." />}
+  </section>;
 
   const SurfaceDialog = view === "remove" ? AlertDialog : Dialog;
   const SurfaceDialogContent = view === "remove" ? AlertDialogContent : DialogContent;
@@ -379,11 +392,12 @@ function BackupsPanel({
 }
 
 const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
-  { id: "app", label: "App settings" },
+  { id: "app", label: "Launch" },
   { id: "permissions", label: "Permissions" },
-  { id: "publicOrigins", label: "Public origins" },
-  { id: "mounts", label: "Mounts" },
-  { id: "source", label: "Source" },
+  { id: "publicOrigins", label: "Network" },
+  { id: "mounts", label: "Folders" },
+  { id: "source", label: "Source & updates" },
+  { id: "backups", label: "Backups" },
 ];
 
 // Consolidated runtime-app configuration: App settings, Public origins, and Mounts as tabs. A tab is
@@ -395,6 +409,8 @@ function SettingsDialog({
   canManageApps,
   globalMounts,
   initialTab,
+  onTabChange,
+  backups,
   coreOrigin,
   onSetFeed,
   onConfigure,
@@ -408,6 +424,8 @@ function SettingsDialog({
   canManageApps: boolean;
   globalMounts: CoreGlobalMount[];
   initialTab?: SettingsTab;
+  onTabChange?: (tab: SettingsTab) => void;
+  backups?: React.ReactNode;
   coreOrigin: string;
   onSetFeed: (app: CoreApp, feedId: string) => void;
   onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void;
@@ -422,6 +440,8 @@ function SettingsDialog({
   const hasSource = Boolean(app.supportsSource) || canManageApps;
   const availableTabs = SETTINGS_TABS.filter((tab) => {
     switch (tab.id) {
+      case "backups":
+        return !!backups;
       case "app":
         return true;
       case "permissions":
@@ -453,7 +473,7 @@ function SettingsDialog({
             <button
               key={tab.id}
               type="button"
-              onClick={() => setActive(tab.id)}
+              onClick={() => { setActive(tab.id); onTabChange?.(tab.id); }}
               className={cn(
                 "-mb-px border-b-2 px-3 py-2 text-sm transition-colors",
                 active === tab.id ? "border-foreground font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
@@ -465,6 +485,7 @@ function SettingsDialog({
         </div>
       )}
       {canManageApps && <div className={cn("min-h-0 overflow-y-auto", active !== "permissions" && "hidden")}><AppPermissions key={app.id} app={app} active={active === "permissions"} /></div>}
+      {backups && <div className={cn("flex min-h-0 flex-1 flex-col", active !== "backups" && "hidden")}>{backups}</div>}
       {/* All forms stay mounted (toggled with hidden) so drafts survive tab switches. */}
       <div className={cn("flex min-h-0 flex-1 flex-col", active !== "app" && active !== "publicOrigins" && "hidden")}>
         <SettingsForm
@@ -581,7 +602,7 @@ function SettingsForm({
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">This app has no app-owned settings.</p>
+              <p className="text-sm text-muted-foreground">This app has no additional launch parameters.</p>
             )}
           </>
         ) : (

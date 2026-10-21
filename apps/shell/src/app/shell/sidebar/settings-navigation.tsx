@@ -19,7 +19,6 @@ import {
   isNonAdminHostSettingsTab,
 } from "../shell-routes";
 import {
-  resolveSettingsSurface,
   type AppSurfaceTab,
 } from "../surfaces/app-surface-tabs";
 
@@ -28,6 +27,7 @@ export function SettingsNavigation({
   active,
   selected,
   pages,
+  apps = [],
   canManageApps,
   onSelect,
 }: {
@@ -35,6 +35,7 @@ export function SettingsNavigation({
   active: boolean;
   selected: string;
   pages: AppSurfaceTab[];
+  apps?: { id: string; displayName: string }[];
   canManageApps: boolean;
   onSelect(key: string): void;
 }) {
@@ -48,9 +49,13 @@ export function SettingsNavigation({
     const tab = section.tabs.find(tab => canManageApps || isNonAdminHostSettingsTab(tab.id));
     if (tab) onSelect(tab.id);
   };
-  const appPages = canManageApps ? pages : [];
+  const appPages = canManageApps ? [
+    ...pages,
+    ...apps.filter(app => app.id !== "hosty.shell" && !pages.some(page => page.appId === app.id)).map(app => ({ key: `manage:${app.id}`, appId: app.id, label: app.displayName, embeddedUrl: "management" })),
+  ] : [];
   const resolved =
-    resolveSettingsSurface(appPages, selected)?.key ??
+    pages.find(page => page.key === selected || page.appId === selected || `manage:${page.appId}` === selected)?.key ??
+    appPages.find(page => page.key === selected)?.key ??
     (getHostSettingsSection(selected)?.id ?? hostSections[0]?.id);
   const isSelected = (key: string) => active && resolved === key;
   const rowClass = (key: string) =>

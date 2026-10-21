@@ -112,11 +112,9 @@ public sealed class RuntimeAppManifestRepositoryTests
         Assert.Equal("http", navigation.Endpoint);
         Assert.Equal("/", navigation.Path);
 
-        var sourceSetting = Assert.Single(manifest.Settings);
-        Assert.Equal("HOSTY_MARKETPLACE_SOURCE_URL", sourceSetting.Key);
-        Assert.Equal("url", sourceSetting.Type);
-        Assert.True(sourceSetting.Required);
-        Assert.Equal("https://alex-de-haas.github.io/hosty-catalog/catalog.json", sourceSetting.Default);
+        Assert.Empty(manifest.Settings);
+        Assert.Equal("/settings", manifest.Ui.Settings!.Path);
+        Assert.Equal("http", manifest.Ui.Settings.Endpoint);
 
         var selectedService = Assert.Single(selection.Services);
         Assert.Equal("api", selectedService.Key);

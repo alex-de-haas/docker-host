@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-19
+updated: 2026-10-20
 summary: Harness applies independent chat and completed-workspace retention, preserves unfinished work, and recovers coordinated cleanup with stable operation IDs.
 components: [apps/harness, apps/core]
 ---
@@ -10,8 +10,9 @@ components: [apps/harness, apps/core]
 ## Settings And Eligibility
 
 Harness Settings → Instructions and retention exposes independent ordinary-chat and
-completed-workspace durations. Each accepts whole days from 1 to 3650 or Off. Ordinary chats inherit
-`HOSTY_HARNESS_RETENTION_DAYS` until explicitly configured (30 days by default). Completed-workspace
+completed-workspace durations. Each accepts whole days from 1 to 3650 or Off. On first initialization, ordinary chats read
+`HOSTY_HARNESS_RETENTION_DAYS` (30 days by default) and persist the result in Harness settings.
+Later starts use app storage; the legacy environment value is not a competing editor. Completed-workspace
 expiry defaults to Off. Upgrading does not enable it. Invalid persisted retention settings disable
 expiry; unknown legacy sessions remain until Core can reconcile their resource ownership.
 

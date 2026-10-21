@@ -65,7 +65,8 @@ internal static class TokenIntrospectionEndpoints
             if (input.Token.StartsWith(AssistantMcpAccess.Prefix, StringComparison.Ordinal))
             {
                 var actor = input.Purpose == "mcp" ? await assistantMcp.ValidateAsync(input.Token, appId, cancellationToken) : null;
-                if (actor?.DiscoveryOnly == true && tool is not null) actor = null;
+                if (actor?.DiscoveryOnly == true && input.Tool is not null) actor = null;
+                if (input.Tool is not null && actor?.DeniedTools?.Contains(input.Tool, StringComparer.Ordinal) == true) actor = null;
                 if (actor?.AllowedTools is { } allowed && input.Tool is not null
                     && !allowed.Contains(input.Tool, StringComparer.Ordinal)) actor = null;
                 await WriteAuditAsync(audit, clock, actor is null ? "refused" : "succeeded", appId, tool, actor?.UserId, cancellationToken);

@@ -112,10 +112,12 @@ export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
     } finally { submitting.current = false; void pollNow.current?.(); }
   };
   const save = async (overridePath: string | null, repository?: CoreSourceRepository, expectedRevision?: string) => {
-    if (!state) return;
-    await sendCsrfJson(`${coreOrigin}/api/core/source`, { overridePath, revision: expectedRevision ?? state.source.revision, repository }, "PUT");
+    if (!state) throw new Error("Core source is unavailable.");
+    const response = await sendCsrfJson(`${coreOrigin}/api/core/source`, { overridePath, revision: expectedRevision ?? state.source.revision, repository }, "PUT");
+    const saved = await response.json() as CoreDevelopment["source"];
     await refresh();
     toast.success("Core source saved");
+    return saved;
   };
   return { state, phase, busy, restart, save };
 }
@@ -207,48 +209,48 @@ export function CoreGitCell({ state, workspace }: { state: CoreDevelopment | nul
   </div>;
 }
 
-export function CoreSourceDialog({ open, onOpenChange, state, disabled, onSave }: { open: boolean; onOpenChange: (open: boolean) => void; state: CoreDevelopment | null; disabled: boolean; onSave: (path: string | null, repository?: CoreSourceRepository, expectedRevision?: string) => Promise<void> }) {
+export function CoreSourceDialog({ inline = false, open, onOpenChange, state, disabled, onSave }: { inline?: boolean; open: boolean; onOpenChange: (open: boolean) => void; state: CoreDevelopment | null; disabled: boolean; onSave: (path: string | null, repository?: CoreSourceRepository, expectedRevision?: string) => Promise<CoreDevelopment["source"]> }) {
   const [override, setOverride] = useState(false);
   const [path, setPath] = useState("");
   const [repository, setRepository] = useState("");
   const [sourceRef, setSourceRef] = useState("");
   const [project, setProject] = useState("");
   const [connection, setConnection] = useState("");
-  const [draftRevision, setDraftRevision] = useState<string>();
+  const [draftSource, setDraftSource] = useState<CoreDevelopment["source"] | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Refresh the draft when the dialog opens or the saved source changes, in the same render.
+  const seedDraft = (source: CoreDevelopment["source"]) => {
+    setOverride(!!source.overridePath); setPath(source.overridePath ?? "");
+    setRepository(source.repositoryUrl ?? ""); setSourceRef(source.ref ?? "");
+    setProject(source.projectPath ?? "apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj");
+    setConnection(source.connectionId ?? ""); setDraftSource(source); setError(null);
+  };
+  const unavailable = disabled || saving || !state;
+  const trimmedPath = path.trim();
+  // Compare edits to their own snapshot, not a newer polling response. Its revision remains
+  // attached to the displayed fields until they are clean or a save returns a new snapshot.
+  const repositoryDirty = repository.trim() !== (draftSource?.repositoryUrl ?? "") || sourceRef.trim() !== (draftSource?.ref ?? "") || project.trim() !== (draftSource?.projectPath ?? "apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj") || connection.trim() !== (draftSource?.connectionId ?? "");
+  const dirty = repositoryDirty || (override ? trimmedPath !== (draftSource?.overridePath ?? "") : !!draftSource?.overridePath);
   const draftKey = open && state ? "open" : null;
   const [seededKey, setSeededKey] = useState<string | null>(null);
   if (draftKey !== seededKey) {
     setSeededKey(draftKey);
-    if (draftKey !== null) { setOverride(!!state?.source.overridePath); setPath(state?.source.overridePath ?? ""); setRepository(state?.source.repositoryUrl ?? ""); setSourceRef(state?.source.ref ?? ""); setProject(state?.source.projectPath ?? "apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj"); setConnection(state?.source.connectionId ?? ""); setDraftRevision(state?.source.revision); setError(null); }
+    if (draftKey !== null && state) seedDraft(state.source);
+  } else if (open && state && !saving && !dirty && draftSource?.revision !== state.source.revision) {
+    seedDraft(state.source);
   }
-  const unavailable = disabled || saving || !state;
-  const trimmedPath = path.trim();
-  const repositoryDirty = repository.trim() !== (state?.source.repositoryUrl ?? "") || sourceRef.trim() !== (state?.source.ref ?? "") || project.trim() !== (state?.source.projectPath ?? "apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj") || connection.trim() !== (state?.source.connectionId ?? "");
-  const dirty = repositoryDirty || (override ? trimmedPath !== (state?.source.overridePath ?? "") : !!state?.source.overridePath);
-  const canSave = !unavailable && dirty && (!override || trimmedPath.length > 0);
+  const canSave = !unavailable && draftSource !== null && dirty && (!override || trimmedPath.length > 0);
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>Settings · Hosty Core</DialogTitle>
-          <DialogDescription>hosty-core</DialogDescription>
-        </DialogHeader>
-        <div className="flex min-h-0 flex-1 flex-col gap-3">
-          <div className="flex gap-1 border-b">
-            <div className="-mb-px border-b-2 border-foreground px-3 py-2 text-sm font-medium text-foreground">Source</div>
-          </div>
+  const form = (
           <form className="flex min-h-0 flex-1 flex-col gap-4" onSubmit={async event => {
             event.preventDefault();
             if (!canSave) return;
             setSaving(true);
             setError(null);
             try {
-              await onSave(override ? trimmedPath : null, repositoryDirty ? { repositoryUrl: repository.trim(), ref: sourceRef.trim() || null, projectPath: project.trim(), connectionId: connection.trim() || null } : undefined, draftRevision);
-              onOpenChange(false);
+              const saved = await onSave(override ? trimmedPath : null, repositoryDirty ? { repositoryUrl: repository.trim(), ref: sourceRef.trim() || null, projectPath: project.trim(), connectionId: connection.trim() || null } : undefined, draftSource!.revision);
+              seedDraft(saved);
+              if (!inline) onOpenChange(false);
             } catch (e) {
               setError(e instanceof Error ? e.message : "Could not save source.");
             } finally {
@@ -306,8 +308,27 @@ export function CoreSourceDialog({ open, onOpenChange, state, disabled, onSave }
               </Button>
             </DialogFooter>
           </form>
+  );
+  if (inline) return form;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Settings · Hosty Core</DialogTitle>
+          <DialogDescription>hosty-core</DialogDescription>
+        </DialogHeader>
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+          <div className="flex gap-1 border-b">
+            <div className="-mb-px border-b-2 border-foreground px-3 py-2 text-sm font-medium text-foreground">Source</div>
+          </div>
+          {form}
         </div>
       </DialogContent>
     </Dialog>
   );
+}
+
+export function CoreSourceSettings({ coreOrigin }: { coreOrigin: string }) {
+  const development = useCoreDevelopment(coreOrigin, true);
+  return <CoreSourceDialog inline open onOpenChange={() => undefined} state={development.state} disabled={development.busy} onSave={development.save} />;
 }

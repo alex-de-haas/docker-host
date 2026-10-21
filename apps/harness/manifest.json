@@ -3,7 +3,7 @@
   "id": "hosty.harness",
   "name": "Hosty Harness",
   "description": "Hosty assistant with Docker and Local production runtimes, managed Claude and Codex connections, chat and settings.",
-  "version": "0.63.3",
+  "version": "0.64.1",
   "role": "system",
   "source": {
     "type": "git",
@@ -76,7 +76,7 @@
         },
         "docker": {
           "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness:0.63.3",
+          "image": "ghcr.io/alex-de-haas/hosty-harness:0.64.1",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
             "PORT": "3400"
@@ -183,16 +183,6 @@
       }
     ]
   },
-  "settings": [
-    {
-      "key": "HOSTY_HARNESS_RETENTION_DAYS",
-      "type": "string",
-      "default": "30",
-      "required": false,
-      "label": "Transcript retention (days)",
-      "description": "Initial ordinary-chat retention. Harness Settings \u2192 Instructions and retention overrides this value and separately controls verified completed workspaces. Unfinished work never expires."
-    }
-  ],
   "capabilities": [
     "logs"
   ],
@@ -234,7 +224,8 @@
     "apps.read",
     "apps.workspaces.read",
     "apps.skills.read",
-    "apps.sources.full"
+    "apps.sources.full",
+    "apps.mcp.access.request"
   ],
   "optionalCorePermissions": [
     "apps.workspaces.cleanup",
@@ -253,6 +244,6 @@
   ],
   "agentWorker": {
     "service": "api",
-    "image": "ghcr.io/alex-de-haas/hosty-agent-worker:0.63.3"
+    "image": "ghcr.io/alex-de-haas/hosty-agent-worker:0.64.1"
   }
 }

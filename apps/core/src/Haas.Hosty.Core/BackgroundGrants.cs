@@ -154,7 +154,9 @@ internal sealed class BackgroundGrantService(CoreDataPaths paths, AppRegistrySto
                 break;
             case "mcp":
                 var policy = (await policies.ReadAsync(ct)).Targets.GetValueOrDefault(scope.TargetAppId);
-                if (scope.Actions.Count == 0 || !AgentMcpDirectory.IsAssistant(caller) || policy?.Offered != true
+                var binding = policy?.Assistants?.GetValueOrDefault(caller.Id);
+                if (scope.Actions.Count == 0 || !AgentMcpDirectory.IsAssistant(caller) || policy is null || !(binding?.Enabled ?? policy.Offered)
+                    || scope.Actions.Any(a => binding?.DeniedTools?.Contains(a, StringComparer.Ordinal) == true)
                     || policy.InstalledAt != target?.InstalledAt
                     || policy.Assistants?.GetValueOrDefault(caller.Id)?.InstalledAt != caller.InstalledAt
                     || (target is not null && target.Interfaces?.ContainsKey("mcp") != true)) Deny("The assistant has no reviewed MCP target grant.");

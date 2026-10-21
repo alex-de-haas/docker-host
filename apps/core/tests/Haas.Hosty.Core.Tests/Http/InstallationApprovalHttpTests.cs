@@ -185,6 +185,7 @@ public sealed class InstallationApprovalHttpTests
         Assert.Equal("DENY", page.Headers.GetValues("X-Frame-Options").Single());
         Assert.Equal("same-origin", page.Headers.GetValues("Referrer-Policy").Single());
         Assert.Contains("frame-ancestors 'none'", page.Headers.GetValues("Content-Security-Policy").Single());
+        Assert.Contains("font-src 'self'", page.Headers.GetValues("Content-Security-Policy").Single());
         Assert.DoesNotContain("script-src", page.Headers.GetValues("Content-Security-Policy").Single());
         var html = await page.Content.ReadAsStringAsync();
         var nonce = Regex.Match(html, "name=nonce value=\"([^\"]+)\"").Groups[1].Value;

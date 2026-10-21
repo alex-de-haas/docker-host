@@ -1,12 +1,23 @@
 ---
 status: Draft
 created: 2026-10-08
-updated: 2026-10-11
+updated: 2026-10-20
 summary: Proposed shared defaults for host UI and assistants, with personal overrides, explicit migration and no silent replacement of selected providers.
 components: [apps/core, apps/cli, apps/shell, apps/plans, packages/app-sdk]
 ---
 
 # Default Applications
+
+## Owner Direction, 2026-10-20
+
+This proposal remains Draft. The owner distinguished defaults for new unbound
+operations from explicit app-owned links and asked to keep the interface small.
+[Object links](../object-links/plan.md) may ship explicit app targets independently.
+[Settings experience](../settings-experience/feature.md) provides the shared navigation
+and trusted editing flow. Before approval, reconcile this document's older dedicated
+Default applications destination, administrator-only personal preferences and broad
+`core.configure` model with that feature. Those older recommendations are not accepted
+product decisions. Do not implement them incidentally while styling Core forms.
 
 ## Goal And Approval Boundary
 

@@ -29,10 +29,10 @@ public sealed class OAuthHttpTests
         var otherTokens = await RedeemAsync(client, otherId, await ApprovedCodeAsync(client, admin, otherId, challenge), verifier);
         var parkedCode = await ApprovedCodeAsync(client, admin, clientId, challenge);
         using var bearerDenied = await SendAsync(client, HttpMethod.Delete, $"/api/auth/oauth/clients/{clientId}", admin);
-        Assert.Equal(HttpStatusCode.Forbidden, bearerDenied.StatusCode);
+        Assert.Equal(HttpStatusCode.PreconditionRequired, bearerDenied.StatusCode);
         using var noCsrf = await BrowserAsync(client, HttpMethod.Delete, $"/api/auth/oauth/clients/{clientId}", admin, csrf: false);
         Assert.Equal(HttpStatusCode.Forbidden, noCsrf.StatusCode);
-        using var deleted = await BrowserAsync(client, HttpMethod.Delete, $"/api/auth/oauth/clients/{clientId}", admin);
+        using var deleted = await CoreReviewFixture.AsUserAsync(client, HttpMethod.Delete, $"/api/auth/oauth/clients/{clientId}", admin);
         Assert.Equal(HttpStatusCode.OK, deleted.StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await InitializeMcpAsync(client, tokens.GetProperty("access_token").GetString()!)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await InitializeMcpAsync(client, otherTokens.GetProperty("access_token").GetString()!)).StatusCode);
@@ -49,7 +49,7 @@ public sealed class OAuthHttpTests
         });
         Assert.Equal(HttpStatusCode.BadRequest, refresh.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await AuthorizeAsync(client, clientId, challenge, "http://localhost:7070/api/mcp")).StatusCode);
-        using var repeated = await BrowserAsync(client, HttpMethod.Delete, $"/api/auth/oauth/clients/{clientId}", admin);
+        using var repeated = await CoreReviewFixture.AsUserAsync(client, HttpMethod.Delete, $"/api/auth/oauth/clients/{clientId}", admin);
         Assert.Equal(HttpStatusCode.OK, repeated.StatusCode);
         var listed = await ReadJsonAsync(await SendAsync(client, HttpMethod.Get, "/api/auth/oauth/clients", admin));
         Assert.Equal(otherId, Assert.Single(listed.GetProperty("clients").EnumerateArray()).GetProperty("clientId").GetString());
@@ -83,7 +83,7 @@ public sealed class OAuthHttpTests
         var users = harness.Services.GetRequiredService<UserDirectoryStore>();
         await users.UpdateAsync(state => state with { Sessions = state.Sessions.Where(session => session.GrantId != before.Id).ToArray() });
         var listed = await ReadJsonAsync(await SendAsync(client, HttpMethod.Get, "/api/auth/credentials", admin));
-        var row = Assert.Single(listed.GetProperty("credentials").EnumerateArray());
+        var row = Assert.Single(listed.GetProperty("credentials").EnumerateArray(), item => item.GetProperty("kind").GetString() == "oauth");
         Assert.Equal(id, row.GetProperty("id").GetString());
         Assert.Equal(clientId, row.GetProperty("oauthClientId").GetString());
         Assert.Equal("Codex", row.GetProperty("oauthClientName").GetString());
@@ -127,7 +127,7 @@ public sealed class OAuthHttpTests
     [Theory]
     [InlineData("device")]
     [InlineData("manual")]
-    public async Task BrowserAdminCanRenameCredentialWithoutChangingItsAuthority(string kind)
+    public async Task OwnerCanRenameCredentialWithoutChangingItsAuthority(string kind)
     {
         await using var harness = await CoreHttpHarness.StartAsync();
         var admin = await SeedSessionAsync(harness, "host.admin");
@@ -136,8 +136,8 @@ public sealed class OAuthHttpTests
             harness.Services.GetRequiredService<IClock>(), harness.Services.GetRequiredService<AuthLifetimes>(), default);
         var fingerprint = CoreSessionAuthorization.FingerprintSessionId(record.Id);
         using var client = harness.CreateClient();
-        using var denied = await SendAsync(client, HttpMethod.Patch, $"/api/auth/credentials/{fingerprint}/label", record.Id, new { label = "Changed" });
-        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        using var ownRename = await SendAsync(client, HttpMethod.Patch, $"/api/auth/credentials/{fingerprint}/label", record.Id, new { label = "Changed" });
+        Assert.Equal(HttpStatusCode.OK, ownRename.StatusCode);
         using var renamed = await BrowserAsync(client, HttpMethod.Patch, $"/api/auth/credentials/{fingerprint}/label", admin, new { label = "Changed" });
         Assert.Equal(HttpStatusCode.OK, renamed.StatusCode);
         Assert.Equivalent(record with { Label = "Changed" }, (await users.ReadAsync()).Sessions.Single(session => session.Id == record.Id));
@@ -167,7 +167,7 @@ public sealed class OAuthHttpTests
             form = new() { ["grant_type"] = "refresh_token", ["client_id"] = clientId,
                 ["refresh_token"] = initial.GetProperty("refresh_token").GetString()! };
         }
-        var deletion = BrowserAsync(client, HttpMethod.Delete, $"/api/auth/oauth/clients/{clientId}", admin);
+        var deletion = CoreReviewFixture.AsUserAsync(client, HttpMethod.Delete, $"/api/auth/oauth/clients/{clientId}", admin);
         var issuance = PostFormAsync(client, form);
         await Task.WhenAll(deletion, issuance);
         using var deleted = await deletion;
@@ -458,7 +458,7 @@ public sealed class OAuthHttpTests
         //    the refresh chain on its next rotation.
         var fingerprint = row.GetProperty("id").GetString()!;
         Assert.Equal(HttpStatusCode.OK,
-            (await SendAsync(client, HttpMethod.Delete, $"/api/auth/credentials/{fingerprint}", admin)).StatusCode);
+            (await CoreReviewFixture.AsUserAsync(client, HttpMethod.Delete, $"/api/auth/credentials/{fingerprint}", admin)).StatusCode);
         // 401, not 403: a *live* credential with the wrong audience is refused by name, but a
         // revoked one is simply no longer a credential at all.
         Assert.Equal(HttpStatusCode.Unauthorized, (await InitializeMcpAsync(client, access2)).StatusCode);
@@ -742,7 +742,7 @@ public sealed class OAuthHttpTests
 
     private static async Task SetRegistrationAsync(HttpClient client, string admin, string value)
     {
-        using var response = await SendAsync(client, HttpMethod.Put, "/api/core/settings", admin,
+        using var response = await CoreReviewFixture.AsUserAsync(client, HttpMethod.Put, "/api/core/settings", admin,
             new { settings = new Dictionary<string, string> { ["HOSTY_OAUTH_DCR_ENABLED"] = value } });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
@@ -911,7 +911,7 @@ public sealed class OAuthHttpTests
         var users = harness.Services.GetRequiredService<UserDirectoryStore>();
         var now = harness.Services.GetRequiredService<IClock>().UtcNow;
         var user = new HostUserRecord(userId, $"{userId}@example.test", userId, role, false, now, now);
-        var session = new AuthSessionRecord($"session_{userId}", userId, now, now.AddHours(1), null, now);
+        var session = new AuthSessionRecord($"session_{userId}", userId, now, now.AddHours(1), null, now, BrowserOrigin: "http://localhost");
         if (append)
         {
             var existing = await users.ReadAsync();

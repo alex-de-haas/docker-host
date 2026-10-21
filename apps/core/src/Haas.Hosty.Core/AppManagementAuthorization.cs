@@ -79,6 +79,13 @@ internal static class AppManagementAuthorization
         }
     }
 
+    internal static async Task<IResult?> RevalidateCallerAsync(HttpRequest request, CancellationToken ct)
+    {
+        var resolved = await ResolveAsync(request, ct);
+        if (resolved.Error is null) request.HttpContext.Items[CallerKey] = resolved.Caller;
+        return resolved.Error;
+    }
+
     public static bool HasPermission(AppRecord app, string permission)
         => app.GrantedCorePermissions?.Contains(permission, StringComparer.Ordinal) == true;
 
@@ -155,12 +162,12 @@ internal static class AppManagementAuthorization
             "GET /api/apps/{appId}/remove-impact");
         Add(CoreAppPermissions.ReadCore,
             "GET /api/core/status", "GET /api/core/development", "GET /api/core/operations/{id}",
-            "GET /api/core/update-status", "GET /api/core/bootstrap");
+            "GET /api/core/update-status", "GET /api/core/bootstrap", "GET /api/core/settings");
         Add(CoreAppPermissions.CoreLifecycle, "POST /api/core/restart");
         Add(CoreAppPermissions.UpdateCore, "POST /api/core/update");
         Add(CoreAppPermissions.CoreLogs, "GET /api/core/logs");
         Add(CoreAppPermissions.ConfigureCore,
-            "GET /api/core/settings", "PUT /api/core/settings", "PUT /api/core/source",
+            "PUT /api/core/settings", "PUT /api/core/source",
             "POST /api/core/source/prepare", "POST /api/core/source/workspaces",
             "POST /api/development/workspaces/{workspaceId}/activation-plan",
             "GET /api/core/agents", "PUT /api/core/agents/{targetId}",
@@ -169,6 +176,9 @@ internal static class AppManagementAuthorization
             "GET /api/core/cloudflare/token-template", "GET /api/core/cloudflare/status", "GET /api/core/cloudflare/diagnostics",
             "POST /api/core/cloudflare/connect", "POST /api/core/cloudflare/disconnect");
         Add(CoreAppPermissions.ReadUsers, "GET /api/users", "GET /api/auth/users", "GET /api/auth/invitations");
+        Add(CoreAppPermissions.ReadCredentials, "GET /api/auth/credentials", "GET /api/auth/background-grants");
+        Add(CoreAppPermissions.RevokeCredentials, "PATCH /api/auth/credentials/{fingerprint}/label", "DELETE /api/auth/credentials/{fingerprint}", "DELETE /api/auth/background-grants/{id}", "POST /api/auth/background-grants/revoke-all-authorizations");
+        Add(CoreAppPermissions.ConfigureCore, "GET /api/auth/oauth/clients", "DELETE /api/auth/oauth/clients/{clientId}");
         Add(CoreAppPermissions.ManageUsers,
             "POST /api/auth/invitations", "DELETE /api/auth/invitations/{invitationId}",
             "PATCH /api/auth/users/{userId}", "DELETE /api/auth/users/{userId}",
@@ -187,7 +197,7 @@ internal static class AppManagementAuthorization
         result.Add("GET /api/events", [CoreAppPermissions.ReadApps, CoreAppPermissions.ReadCore, CoreAppPermissions.Notifications]);
         // Self-session probes and reviewed requests need identity, not a blanket management grant.
         // InstallationApprovalService checks the operation's permission and request ownership itself.
-        foreach (var route in new[] { "GET /api/profile", "GET /api/profile/", "PUT /api/profile", "PUT /api/profile/", "GET /api/auth/session", "POST /api/installations",
+        foreach (var route in new[] { "DELETE /api/settings/changes/{id}", "GET /api/settings/changes/{id}", "GET /api/profile", "GET /api/profile/", "PUT /api/profile", "PUT /api/profile/", "GET /api/auth/session", "POST /api/installations",
                      "POST /api/installations/{id}/submit", "GET /api/installations/{id}" })
             result.Add(route, []);
         return result;

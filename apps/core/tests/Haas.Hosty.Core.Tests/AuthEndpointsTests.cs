@@ -105,6 +105,9 @@ public sealed class AuthEndpointsTests
     [InlineData("/marketplace")]
     [InlineData("/api/apps/x/launch-code")]
     [InlineData("/api/core/status")]
+    [InlineData("/settings/confirm/short")]
+    [InlineData("/settings/confirm/0123456789abcdef0123456789abcdeg")]
+    [InlineData("/settings/confirm/0123456789abcdef0123456789abcdef/other")]
     public void IsAllowedLoginReturnTo_RejectsEverythingElse(string? returnTo)
         => Assert.False(AuthEndpoints.IsAllowedLoginReturnTo(returnTo));
 
@@ -118,6 +121,13 @@ public sealed class AuthEndpointsTests
         => Assert.Equal(
             $"https://shell.example{returnTo}",
             AuthEndpoints.ResolveLoginRedirect(returnTo, "https://shell.example/"));
+
+    [Theory]
+    [InlineData("/account/device?user_code=ABCD-EFGH")]
+    [InlineData("/account/background")]
+    [InlineData("/settings/confirm/0123456789abcdef0123456789abcdef")]
+    public void ResolveLoginRedirect_PreservesTrustedCoreActions(string path)
+        => Assert.Equal(path, AuthEndpoints.ResolveLoginRedirect(path, "https://shell.example"));
 
     [Fact]
     public void ResolveLoginRedirect_PrefersACoreContinuationAndFallsBackToTheOrigin()
