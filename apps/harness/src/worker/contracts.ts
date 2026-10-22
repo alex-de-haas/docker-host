@@ -25,7 +25,7 @@ export type WorkerReceipt = {
   runId: string; conversationId: string; generation: string; state: RunState; revision: number;
   boundary?: "container" | "local"; exitConfirmed?: boolean;
   pending?: WorkerEvent[];
-  selection: ExecutionSelection; snapshot?: { text?: string; nativeSessionId?: string; result?: HarnessEvent }; createdAt: string; updatedAt: string; error?: string;
+  selection: ExecutionSelection; snapshot?: { text?: string; nativeSessionId?: string; result?: HarnessEvent; contextUsage?: WorkerEvent }; createdAt: string; updatedAt: string; error?: string;
 };
 export type WorkerControl = { controlId: string; eventId: number; expectedRevision: number } & (
   { kind: "approval"; id: string; decision: "allow" | "deny"; message?: string }

@@ -126,6 +126,7 @@ Plans: 13 In Progress · 1 Blocked · 41 Draft · 7 On Hold.
 - [External Development Workspaces](features/external-development-workspaces/feature.md) — Local external agents use authorized Core-owned worktrees, separate plan progress, and read-only pull request tracking through Harness and Core. · [plan](features/external-development-workspaces/plan.md): Draft, 0/6, updated 2026-10-18
 - [External Host-Path Mounts](features/external-mounts/feature.md) — Apps declare external mount slots and operators bind host folders to them, injected as HOSTY_MOUNT_{KEY} and never backed up or deleted.
 - [Global (Shared) Host-Path Mounts](features/global-mounts/feature.md) — A host-level library of shared host folders that apps attach by reference.
+- [Harness Context Usage](features/harness-context-usage/feature.md) — Current context-window usage for Claude and Codex conversations, with durable replay and a compact composer indicator.
 - [Harness Development UI](features/harness-development-ui/feature.md) — Harness combines app-grouped conversations, multi-repository workspace details, sandbox previews and verified lifecycle actions.
 - [Harness Session Retention](features/harness-session-retention/feature.md) — Harness applies independent chat and completed-workspace retention, preserves unfinished work, and recovers coordinated cleanup with stable operation IDs.
 - [Host Networking](features/host-networking/feature.md) — A docker service can run with network host to share the host network namespace, for peer-to-peer workloads the bridge NAT throttles.

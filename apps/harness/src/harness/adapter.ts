@@ -53,6 +53,7 @@ export interface HarnessQuestion {
 }
 
 export type HarnessEvent =
+  | { type: "context_usage"; usage: import("./context-usage.js").ContextUsage | null }
   | { type: "execution_model"; requested: { model: string | null; reasoningEffort: string | null }; reported: { model: string | null; reasoningEffort: string | null } }
   | { type: "activity"; activity: import("./activity.js").HarnessActivity }
   /** The harness-native session id became known; persisted for resume-after-restart. */

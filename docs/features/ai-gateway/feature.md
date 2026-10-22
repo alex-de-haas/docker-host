@@ -1,6 +1,6 @@
 ---
 created: 2026-08-09
-updated: 2026-10-20
+updated: 2026-10-22
 summary: Hosty Harness, the optional administrator assistant app hosting operator chat sessions on a host-resident agent harness.
 components: [apps/harness, apps/shell]
 ---
@@ -29,6 +29,13 @@ state and source availability. Every accepted message captures a fresh, bounded 
 snapshot and revision for both native harnesses. Selection changes apply to subsequent messages and
 grant no filesystem, command or runtime authority. The complete API, concurrency rules and coverage
 are documented in [Assistant App Context](../assistant-app-context/feature.md).
+
+## Context Usage
+
+The full-page chat and embedded assistant show the latest estimated context usage beside the
+composer controls, with token counts and a percentage when the provider reports a limit.
+Measurements survive replay and reload. See [Harness Context Usage](../harness-context-usage/feature.md)
+for provider semantics, unavailable values and worker recovery.
 
 ## Versioned Handoffs
 

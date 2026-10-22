@@ -180,6 +180,18 @@ function handle(msg) {
       send({ method: "item/completed", params: { item: { type: "agentMessage", id: "selection", text: JSON.stringify({ model: msg.params.model, effort: msg.params.effort, thread: msg.params.threadId }) } } });
       send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "selected", status: "completed" } } }); return;
     }
+    if (currentTurnText === "context-usage") {
+      send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "current" } } });
+      const usage = (totalTokens, modelContextWindow = 1000, threadId = activeThreadId, turnId = "current") =>
+        send({ method: "thread/tokenUsage/updated", params: { threadId, turnId, tokenUsage: {
+          total: { totalTokens: 900000 }, last: { totalTokens, inputTokens: 80, cachedInputTokens: 70, outputTokens: 20, reasoningOutputTokens: 10 }, modelContextWindow,
+        } } });
+      usage(100);
+      usage(999, 1000, "other-thread"); usage(999, 1000, activeThreadId, "old-turn");
+      send({ method: "item/completed", params: { threadId: activeThreadId, turnId: "current", item: { id: "compact", type: "contextCompaction" } } });
+      usage(20); usage(30, null); usage(-1);
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "current", status: "completed" } } }); return;
+    }
     if (currentTurnText === "activity") {
       send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "current" } } });
       const itemEvent = (method, item, turnId = "current") => send({ method, params: { threadId: activeThreadId, turnId, item } });

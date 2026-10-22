@@ -71,6 +71,13 @@ describe("codex harness adapter", () => {
     }
   });
 
+  it("tracks current context, compaction and unknown limits while rejecting unrelated notifications", async () => {
+    start().send("context-usage");
+    await waitFor(() => events.find(e => e.type === "result"), "context turn");
+    expect(events.filter(e => e.type === "context_usage").map(e => e.usage && [e.usage.usedTokens, e.usage.maxTokens]))
+      .toEqual([[100, 1000], null, [20, 1000], [30, null], null]);
+  });
+
   it("reports native live activity, concurrent calls and completion without retaining arguments or stale items", async () => {
     start().send("activity");
     await waitFor(() => events.find(e => e.type === "result"), "activity turn");

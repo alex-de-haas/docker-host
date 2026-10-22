@@ -1,3 +1,4 @@
+import { ContextUsageReader, claudeContextUsage } from "./context-usage.js";
 import { randomUUID } from "node:crypto";
 import { ActivityTracker, activeTool, type ActiveTool } from "./activity.js";
 import type {
@@ -122,6 +123,7 @@ class ClaudeRun implements HarnessRun {
     setMcpServers?(servers: Record<string, unknown>): Promise<{ errors?: Record<string, string> }>;
     toggleMcpServer?(name: string, enabled: boolean): Promise<void>;
   } | null = null;
+  private contextReader: ContextUsageReader | null = null;
   private stopped = false;
   private turnActive = false;
   private readonly proposedTools = new Map<string, ActiveTool>();
@@ -224,6 +226,7 @@ class ClaudeRun implements HarnessRun {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.contextReader?.close();
     // Unblock any approval or question the harness is still paused on, then tear the query down.
     for (const [, pending] of this.pending) {
       pending.resolve({ behavior: "deny", message: "Session stopped." });
@@ -279,16 +282,36 @@ class ClaudeRun implements HarnessRun {
             this.requestApproval(toolName, input, context),
         },
       } as never) as AsyncIterable<Record<string, never>> & { interrupt(): Promise<unknown>; close(): void;
+        getContextUsage?(options: { detail: "summary" }): Promise<unknown>;
         applyFlagSettings(settings: { model: string | null; effortLevel: string | null }): Promise<unknown> };
       this.query = query;
+      if (query.getContextUsage) this.contextReader = new ContextUsageReader(
+        async () => claudeContextUsage(await query.getContextUsage!({ detail: "summary" })),
+        usage => this.options.onEvent({ type: "context_usage", usage }),
+      );
       try {
         if (this.options.model !== undefined || this.options.reasoningEffort !== undefined)
           await query.applyFlagSettings({ model: this.options.model ?? null, effortLevel: this.options.reasoningEffort ?? null });
       } catch (error) { this.input.end(); query.close(); throw error; }
       finally { releaseInput(); }
 
+      let lastMessageId: unknown;
       for await (const message of query) {
-        this.dispatch(message as Record<string, unknown>);
+        const value = message as Record<string, unknown>;
+        if (!value.parent_tool_use_id) {
+          const id = (value.message as { id?: unknown } | undefined)?.id;
+          const compacted = value.type === "system" && value.subtype === "compact_boundary";
+          if (compacted) this.options.onEvent({ type: "context_usage", usage: null });
+          if (value.type === "result") {
+            // Worker teardown follows result immediately. Flush a bounded final measurement first.
+            await this.contextReader?.refresh();
+          } else if (compacted || value.type === "system" && value.subtype === "init"
+            || value.type === "assistant" && (id === undefined || id !== lastMessageId)) {
+            if (value.type === "assistant") lastMessageId = id;
+            void this.contextReader?.refresh();
+          }
+        }
+        this.dispatch(value);
       }
     } catch (error) {
       if (!this.stopped) {
@@ -297,6 +320,8 @@ class ClaudeRun implements HarnessRun {
           message: error instanceof Error ? error.message : String(error),
         });
       }
+    } finally {
+      this.contextReader?.close();
     }
   }
 

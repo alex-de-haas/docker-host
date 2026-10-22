@@ -1,6 +1,7 @@
 import { cleanAgentEnvironment } from "../connections/codex-login.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { toCodexMcpConfig } from "./codex-mcp.js";
+import { codexContextUsage } from "./context-usage.js";
 import { randomUUID } from "node:crypto";
 import { ActivityTracker, activeTool } from "./activity.js";
 import path from "node:path";
@@ -527,6 +528,14 @@ class CodexRun implements HarnessRun {
       return;
     }
     if (typeof params.turnId === "string" && this.activityTurnId && params.turnId !== this.activityTurnId) return;
+    if (message.method === "thread/tokenUsage/updated") {
+      this.emit({ type: "context_usage", usage: codexContextUsage(params.tokenUsage) });
+      return;
+    }
+    if (message.method === "thread/compacted" || (message.method === "item/completed"
+      && (params.item as { type?: string } | undefined)?.type === "contextCompaction")) {
+      this.emit({ type: "context_usage", usage: null });
+    }
     // Item lifecycle shapes are verified from the installed app-server's generated v2 types.
     if (message.method === "item/started") {
       const item = (params.item ?? {}) as Record<string, unknown>;

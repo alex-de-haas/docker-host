@@ -1,4 +1,6 @@
 "use client";
+import { ContextUsageIndicator } from "@/components/context-usage";
+import { applyContextUsage, emptyContextUsage } from "@/lib/context-usage";
 import { HostyNavigationBoundary } from "@hosty-sdk/app/react";
 import { SessionModel } from "@/components/session-model";
 import { SessionAutonomy } from "@/components/session-autonomy";
@@ -95,6 +97,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     ui.reportSurfaceState({ route: `${route.pathname}${route.search}${route.hash}`, state: "ready" });
   }, [ui, session?.id, surfaceSessionId]);
   const [status, setStatus] = useState("idle");
+  const [contextUsage, setContextUsage] = useState(() => emptyContextUsage(""));
   const [activity, setActivity] = useState<SessionActivity | null>(null);
   const [connection, setConnection] = useState<StreamConnection>("connecting");
   const [events, setEvents] = useState<AssistantEvent[]>([]);
@@ -179,6 +182,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const attach = useCallback((record: AssistantSession) => {
     streamAbortRef.current?.abort();
     activeSessionId.current = record.id;
+    setContextUsage(emptyContextUsage(record.id));
     setSession(record);
     setHealth(null);
     void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
@@ -212,6 +216,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       record.id,
       (event) => {
         if (abort.signal.aborted) return;
+        if (event.type === "context_usage") {
+          setContextUsage(current => applyContextUsage(current, record.id, event));
+          return;
+        }
         if (event.type === "session_activity") {
           const update = event as unknown as SessionActivity;
           setActivity(current => current?.epoch === update.epoch && current.revision >= update.revision ? current : update);
@@ -958,6 +966,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                 }}
               />
               <InputGroupAddon align="block-end" className="flex-col items-stretch gap-2">
+                {session && <ContextUsageIndicator usage={contextUsage.sessionId === session.id ? contextUsage.usage : null} connected={connection === "connected"} />}
                 {(pending.length > 0 || uploaded.length > 0) && (
                   <div className="flex max-h-48 shrink-0 flex-col gap-2 overflow-y-auto pb-2" aria-label="Attachments to send">
                     {uploaded.map((attachment) => (

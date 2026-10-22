@@ -104,6 +104,7 @@ export class WorkerJournal {
       if (Buffer.byteLength(text) > 1024 * 1024) throw new WorkerApiError(413, "result_limit", "Final response exceeds the snapshot limit.");
       snapshot.text = text;
     }
+    if (event.type === "context_usage") snapshot.contextUsage = frame;
     if (event.type === "harness_session") snapshot.nativeSessionId = event.harnessSessionId;
     if (event.type === "result" || event.type === "error") snapshot.result = event;
     if (event.type === "approval_request" || event.type === "question_request") (record.receipt.pending ??= []).push(frame);

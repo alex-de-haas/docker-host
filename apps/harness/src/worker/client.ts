@@ -94,6 +94,9 @@ export class WorkerClient {
                 throw new WorkerApiError(409, "generation_mismatch", "Worker run generation changed.");
               if (type === "state") return receipt;
               if (!terminal(receipt.state)) throw new WorkerApiError(410, "replay_expired", "Active run replay is unavailable.");
+              // Restore the observation before synthetic text advances the durable cursor.
+              const context = receipt.snapshot?.contextUsage;
+              if (context) await deliverEvent(() => onEvent(context), signal);
               if (receipt.snapshot?.text) await deliverEvent(() => onEvent({ runId: id, generation: receipt.generation, sequence: receipt.revision - 1,
                 event: { type: "assistant_text", text: receipt.snapshot!.text! } }), signal);
               // Resync metadata has no durable run sequence; reserve the receipt revision for its terminal event.
