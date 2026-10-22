@@ -47,9 +47,6 @@ internal static class RuntimeServiceStorage
     {
         foreach (var service in services)
         {
-            if (service.Runtime.Resources is { } resources && (service.Runtime.Type != "docker" || resources.MemoryBytes < 67108864
-                || !double.IsFinite(resources.Cpus) || resources.Cpus < 0.1 || resources.Pids < 16))
-                errors.Add(new("app_manifest_service_resources_invalid", "Docker resource limits require at least 64 MiB, 0.1 CPU and 16 PIDs.", "$.services[].runtimes[].resources"));
             if (service.Injection?.Settings is { } settings && (settings.Distinct(StringComparer.Ordinal).Count() != settings.Count
                 || settings.Any(key => !manifest.Settings.Any(setting => setting.Key == key))))
                 errors.Add(new("app_manifest_injection_invalid", "Service settings injection must name unique declared settings.", "$.services[].injection.settings"));

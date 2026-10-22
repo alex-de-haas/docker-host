@@ -1,6 +1,6 @@
 ---
 created: 2026-10-07
-updated: 2026-10-16
+updated: 2026-10-21
 summary: Administrator plan overview across installed source repositories and unreleased development workspaces, backed by bounded Core document reads.
 components: [apps/core, apps/plans, apps/harness, apps/shell, packages/app-sdk]
 ---
@@ -314,7 +314,7 @@ replaced by these source test installations.
   shared in-flight fetches, stale commits/SHAs, path and size guards, symlinks and UTF-8 bytes.
   LF/CRLF reference tests cover full and focused listings for target, base and worktree versions,
   including existing directories, missing components, regular-file components and unchanged bytes/SHAs;
-  the Windows CI lane also runs these cases.
+  the local `npm run test:integration -- windows` suite also runs these cases.
 - Workspace tests cover integrated target changes, merge/squash/cherry-pick equality, concurrent
   target edits, new/deleted documents, private fallback, clearing/rebinding/revocation, interrupted
   cleanup, private workspace reads during provider downtime and removed/reinstalled assistant origins.
@@ -334,5 +334,5 @@ replaced by these source test installations.
 - Integration verification uses Core-managed app lifecycle and normal password login in a separate
   data root, including Shell embedding and workspace changes. Core passes its tests and Native AOT
   publish; the app, Shell, Harness and SDK pass affected tests and builds.
-- CI's real-Docker transport smoke prepares its owned networks before Core startup and checks health,
+- The local `npm run test:integration -- transport` smoke prepares its owned networks before Core startup and checks health,
   unauthenticated app refusal and local-control isolation from default and per-app networks.

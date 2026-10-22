@@ -31,6 +31,11 @@ Where the version lives:
   Do not restart review merely because CI needed a fix. Honor an explicit review cutoff from the
   user; after that, address only critical findings and blocking CI failures, then merge once the
   required checks pass when merge is authorized.
+- **Run affected integration checks locally before creating a PR.** Use
+  `npm run test:integration -- <suite>` for the behavior changed; see the
+  [local integration guide](docs/features/ci-feedback-loop/feature.md#local-integration-checks).
+  Record commands, platforms and results in the PR's Verification section, including any
+  checks that could not run and why. Documentation-only changes need no runtime suite.
 - **PR descriptions track the plan.** When the work is driven by a `plan.md`, the
   description lists the deliverables this PR completes by ID (`D3`, `D5`) and
   links the feature folder. Always state the version outcome ("0.4.2 → 0.5.0" or "No version

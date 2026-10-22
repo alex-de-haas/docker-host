@@ -31,7 +31,9 @@ internal sealed partial class CoreLifecycleService
         var outside = new List<string> { "Shared/external directories, remote databases, provider state and external side effects are not included in the managed-data backup." };
         foreach (var mount in AppConfigurationFingerprint.ResolveMounts(app, await globalMounts.ReadAsync(ct)))
             outside.Add($"{mount.Key}: {mount.HostPath} ({(mount.ReadOnly ? "read-only" : "writable")})");
-        var installed = await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct);
+        var installed = input.Action == "return"
+            ? await LoadDevReturnSelectionAsync(app, op, ct)
+            : await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct);
         if (input.Action != "return") await ValidateDevSourceAuthorityAsync(app, installed, actor, ct);
         var target = input.TargetRuntime;
         bool changed = false;
@@ -82,10 +84,10 @@ internal sealed partial class CoreLifecycleService
             if (op is not { Active: true } || op.Installation != app.InstalledAt) throw DevError("not_active", "No active development operation belongs to this installation.");
             await ValidateDevBindingAsync(app, op, ct);
             source = op.SourcePath; treeId = op.WorktreeId;
-            target = input.Action == "return" ? op.PreviousRuntime : op.TargetRuntime;
+            target = input.Action == "return" ? installed.RuntimeProfile.Key : op.TargetRuntime;
             changed = op.DataHash is not null && op.DataHash != await DevDataHashAsync(GetAppDataPath(appId), ct);
             if (input.Action == "restart" && op.Phase != "active") throw DevError("recovery_required", "Recover the original request or return before restarting.");
-            changes.Add(input.Action == "return" ? $"Restore runtime {op.PreviousRuntime} and its prior source/artifact selection; leave it {(op.WasRunning ? "running" : "stopped")}." : "Restart the active development runtime with the same live source and ordinary data.");
+            changes.Add(input.Action == "return" ? $"Restore runtime {target} and its prior source/artifact selection; leave it {(op.WasRunning ? "running" : "stopped")}." : "Restart the active development runtime with the same live source and ordinary data.");
             changes.Add("Keep current data, source edits, worktree, caches and backups. This does not undo writes or schema migrations.");
             if (changed) changes.Add("Data changed since entry. Core cannot prove schema downgrade compatibility. Return stays stopped unless compatibility is explicitly accepted.");
         }
@@ -312,9 +314,24 @@ internal sealed partial class CoreLifecycleService
         return op;
     }
 
+    private async Task<RuntimeAppManifestSelection> LoadDevReturnSelectionAsync(
+        AppRecord app, AppDevOperation? operation, CancellationToken ct)
+    {
+        if (operation is not { Active: true } || operation.Installation != app.InstalledAt)
+            throw DevError("not_active", "No active development operation belongs to this installation.");
+        var selection = await manifests.LoadAsync(operation.PackageReturn ? app.ManifestPath! : operation.PreviousManifest,
+            operation.PackageReturn ? operation.PackageRuntime ?? operation.PreviousRuntime : operation.PreviousRuntime,
+            ct, forceRead: true);
+        if (!operation.PackageReturn && selection.ManifestDigest != operation.ManifestDigest)
+            throw DevError("previous_contract_changed", "The retained runtime contract changed; restore the operation record before returning.");
+        return selection;
+    }
+
     private async Task<AppDevOperation> ReturnDevAsync(AppDevOperation op, string requestId, bool acceptDataChanges, CancellationToken ct)
     {
         if (op.Phase == "returned") return op;
+        // Review the destination before stopping the current runtime, including recovery retries.
+        var previous = await LoadDevReturnSelectionAsync(await RequireAppAsync(op.AppId, ct), op, ct);
         if (op.Phase is not ("return-stopped" or "return-bound" or "return-starting"))
         {
             await StopDevRuntimeAsync(await RequireAppAsync(op.AppId, ct), ct);
@@ -325,10 +342,6 @@ internal sealed partial class CoreLifecycleService
         if (op.Phase == "return-stopped")
         {
             var app = await RequireAppAsync(op.AppId, ct);
-            var previous = await manifests.LoadAsync(op.PackageReturn ? app.ManifestPath! : op.PreviousManifest,
-                op.PackageReturn ? op.PackageRuntime ?? op.PreviousRuntime : op.PreviousRuntime, ct, forceRead: true);
-            if (!op.PackageReturn && previous.ManifestDigest != op.ManifestDigest)
-                throw DevError("previous_contract_changed", "The retained runtime contract changed; restore the operation record before returning.");
             // Unified switching returns to the current installed package; captured bytes are only
             // for legacy recovery. Current settings, source edits and permission revocations survive.
             if (!op.PackageReturn) await manifests.SaveManifestCopyAsync(previous, GetAppRoot(op.AppId), ct);
@@ -373,7 +386,7 @@ internal sealed partial class CoreLifecycleService
         // Stop uses the last launched admitted contract, even when live source is invalid or
         // an execution refresh changed its service topology before an interrupted restart.
         var operation = await AppDevStore.ReadAsync(paths, app, ct);
-        var selection = operation is { Active: true, ExecutionManifest: not null } && app.SelectedRuntime == operation.TargetRuntime &&
+        var selection = operation is { Active: true } && app.SelectedRuntime == operation.TargetRuntime &&
             !operation.Phase.StartsWith("return-", StringComparison.Ordinal)
             ? await LoadDevExecutionSelectionAsync(operation, ct, running: true)
             : await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct);

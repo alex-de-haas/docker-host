@@ -99,9 +99,9 @@ commit probe in [Runtime App Update](../runtime-app-update/feature.md) for sourc
 
 ## GitHub Actions Model
 
-[CI Feedback Loop](../ci-feedback-loop/feature.md) owns automatic affected checks, additional native qualification, the stable `ci-required` aggregate and the development/review readiness rules.
+[CI Feedback Loop](../ci-feedback-loop/feature.md) owns automatic affected checks, explicit local integration, the stable `ci-required` aggregate and the development/review readiness rules.
 
-`ci.yml` runs on every PR and main push without a workflow-level path filter. Cheap policy, version and documentation checks run first; affected component checks and relevant risk suites run in parallel. Core unit tests and NativeAOT are separate jobs. Manual exact-revision and nightly-main qualification use the same policy. Shared web changes affect Shell/Harness; root Node dependencies affect Node consumers; genuine .NET toolchain/configuration changes affect .NET consumers. Strictly verified platform version-only metadata does not run every native scenario.
+`ci.yml` runs on every PR and main push without a workflow-level path filter. Cheap policy, version and documentation checks run first; affected component checks run in parallel. Core unit tests and NativeAOT are separate jobs. Manual exact-revision CI runs the remaining normal checks; expensive native/Docker acceptance uses explicit local commands. Shared web changes affect Shell/Harness; root Node dependencies affect Node consumers; genuine .NET toolchain/configuration changes affect .NET consumers. Strictly verified platform version-only metadata does not run every native scenario.
 
 Image and native-release workflows start after completed main CI, validate the exact successful main push revision, and select affected artifacts. Unrelated CI completions are no-ops. SDK workflows retain path-filtered push triggers and their trusted execution context, waiting for the exact main validation before publication. Artifact-specific production validation stays where CI does not produce reusable release output. Cardputer normal publication consumes the complete verified firmware/recovery artifact of that exact CI run. Manual main recovery remains available.
 
@@ -189,7 +189,7 @@ action, so the same job runs shellcheck (pinned image, same rationale) over `.gi
 That is why the publish guard's logic sits in `guard.sh` rather than inline in its `action.yml`: as an
 ordinary script it is lintable, and `action.yml` stays declarative.
 
-Image and native release workflows select their affected artifact after successful main CI. SDK workflows retain path-filtered push triggers. The exact automatic policy, component suites and risk qualification are documented in [CI Feedback Loop](../ci-feedback-loop/feature.md). Cardputer CI produces the complete firmware/recovery bundle rather than only an application image.
+Image and native release workflows select their affected artifact after successful main CI. SDK workflows retain path-filtered push triggers. The exact automatic policy, component suites and local integration commands are documented in [CI Feedback Loop](../ci-feedback-loop/feature.md). Cardputer CI produces the complete firmware/recovery bundle rather than only an application image.
 
 The root `npm run ci` command remains a local convenience sequence for primary components; it does not replace automatically selected CI or feature-specific acceptance.
 

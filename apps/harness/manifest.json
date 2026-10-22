@@ -3,7 +3,7 @@
   "id": "hosty.harness",
   "name": "Hosty Harness",
   "description": "Hosty assistant with Docker and Local production runtimes, managed Claude and Codex connections, chat and settings.",
-  "version": "0.65.1",
+  "version": "0.65.2",
   "role": "system",
   "source": {
     "type": "git",
@@ -77,7 +77,7 @@
         },
         "docker": {
           "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness:0.65.1",
+          "image": "ghcr.io/alex-de-haas/hosty-harness:0.65.2",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
             "PORT": "3400"
@@ -97,11 +97,6 @@
             "timeoutSeconds": 5,
             "retries": 3,
             "gracePeriodSeconds": 20
-          },
-          "resources": {
-            "memoryBytes": 536870912,
-            "cpus": 0.5,
-            "pids": 128
           }
         }
       },
@@ -168,7 +163,7 @@
         },
         "docker": {
           "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness-worker:0.65.1",
+          "image": "ghcr.io/alex-de-haas/hosty-harness-worker:0.65.2",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
             "PORT": "3401"
@@ -188,11 +183,6 @@
             "timeoutSeconds": 5,
             "retries": 3,
             "gracePeriodSeconds": 20
-          },
-          "resources": {
-            "memoryBytes": 4294967296,
-            "cpus": 2,
-            "pids": 512
           }
         }
       }

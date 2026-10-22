@@ -1,6 +1,6 @@
 ---
 created: 2026-10-19
-updated: 2026-10-20
+updated: 2026-10-21
 summary: Core observes workspace changes through filesystem and mutation events, while Harness consumes authorized SSE updates.
 components: [apps/core, apps/harness]
 ---
@@ -90,8 +90,8 @@ fall from 41 (39 without HEAD/source changes) to one real source change. This is
 of an active host with concurrent work, not an isolated benchmark or a CPU guarantee.
 
 Local verification passes 180 Core workspace tests, 850 Harness tests and 38 Workspaces tests.
-Native AOT passes on macOS ARM64. CI also runs the full Core suite, real Docker network checks
-and Linux x64 Native AOT; four opt-in integrations are excluded from its default suite.
+Native AOT passes on macOS ARM64. CI also runs the full Core suite and Linux x64 Native AOT;
+real Docker network checks use `npm run test:integration -- transport` locally; four opt-in integrations are excluded from its default suite.
 The published clients have regression coverage for legacy-Core compatibility, failed snapshot
 retries and rejected-stream cleanup.
 Harness 0.60.1 and Workspaces 0.5.1 include the subsequent browser response cleanup.

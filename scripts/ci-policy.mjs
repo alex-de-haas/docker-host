@@ -8,21 +8,15 @@ export const COMPONENTS = Object.freeze([
   "shell", "app-sdk", "app-sdk-dotnet", "whisper", "demo-app", "core", "cli",
   "telemetry-backend", "marketplace", "plans", "harness", "telemetry-ui", "swift-shell", "cardputer-shell",
 ]);
-export const PROFILES = Object.freeze([
-  "core-aot", "core-windows-process-control", "workspace-native-activation", "core-transport", "harness-worker", "whisper-native",
-]);
+export const PROFILES = Object.freeze(["core-aot"]);
 export const ALL_JOBS = Object.freeze([...BASE_JOBS, "actionlint", ...COMPONENTS, ...PROFILES]);
 const NODE_COMPONENTS = ["shell", "app-sdk", "demo-app", "marketplace", "plans", "harness", "telemetry-ui"];
 const DOTNET_COMPONENTS = ["app-sdk-dotnet", "whisper", "core", "cli", "telemetry-backend"];
-const CORE_PROFILES = ["core-aot", "core-windows-process-control", "workspace-native-activation", "core-transport"];
 const COMPONENT_PATHS = [
   ["apps/shell/", "shell"], ["apps/demo-app/", "demo-app"], ["apps/marketplace/", "marketplace"],
   ["apps/plans/", "plans"], ["apps/harness/", "harness"], ["apps/telemetry-ui/", "telemetry-ui"],
   ["apps/shell-swift/", "swift-shell"], ["apps/shell-cardputer/", "cardputer-shell"],
 ];
-const NATIVE_INPUT = /(?:WorkspaceActivation|WorkspaceRuntimeActivation|WorkspaceReturn|CoreDevelopment|CoreBuild|CoreCommand|CoreLaunch|CoreStateSnapshot|CoreLifecycle|DevelopmentWorkspace|MountPathPolicy|WorkspaceDirectoryIdentity|RuntimePreparation|LocalCommand|DetachedCli|ProcessLiveness|ProcessRunner|WindowsProcessControl|SharedReceiptSharing)/;
-const WINDOWS_INPUT = /(?:WindowsProcessControl|LocalCommand|ProcessRunner|ProcessLiveness|CoreDevelopment|CoreLaunch|CoreStateSnapshot|MountPathPolicy|WorkspaceDirectoryIdentity|WorkspaceGit|SourceDocument|SharedReceiptSharing|DetachedCli)/;
-const WORKER_INPUT = /^apps\/harness\/(?:worker\/|src\/worker\/|test\/worker-native|src\/runtime\/|src\/harness\/|src\/sessions\/(?:manager|docker-manager|shutdown|development|core-recovery|workspace)(?:\.|\/))/;
 const BUILD_CONFIG = /(?:^|\/)(?:[^/]+\.csproj|global\.json|[Nn]u[Gg]et\.[Cc]onfig|appsettings[^/]*\.json)$/;
 const WORKFLOW_COMPONENTS = {
   "shell-image.yml": ["shell"], "demo-app-image.yml": ["demo-app"], "marketplace-image.yml": ["marketplace"],
@@ -76,7 +70,6 @@ export function classifyPaths(paths, { versionOnlyPaths = [] } = {}) {
       const name = path.slice(".github/workflows/".length);
       if (!(name in WORKFLOW_COMPONENTS) && !["ci.yml", "claude-code-review.yml"].includes(name)) all(reason("unrecognized workflow; validate all jobs"));
       add(WORKFLOW_COMPONENTS[name] ?? [], reason("artifact workflow"));
-      if (name === "harness-worker-image.yml") add("harness-worker", reason("worker workflow"));
       if (name === "cli-release.yml") add("core-aot", reason("platform publication workflow"));
     } else if (path.startsWith(".github/actions/")) {
       add("actionlint", reason("composite action"));
@@ -92,39 +85,22 @@ export function classifyPaths(paths, { versionOnlyPaths = [] } = {}) {
       add(["core", "cli", "core-aot"], reason("platform version metadata only"));
     } else if (["global.json", "Directory.Build.props", "Directory.Build.targets", "NuGet.Config", "nuget.config", "scripts/HostyBuildIdentity.cs"].includes(path)) {
       add(DOTNET_COMPONENTS, reason("shared .NET build input"));
-      add([...CORE_PROFILES, "whisper-native"], reason("shared .NET runtime/toolchain input"));
+      add("core-aot", reason("shared .NET build/toolchain input"));
     } else if (path.startsWith("packages/app-sdk/")) {
       add(NODE_COMPONENTS, reason("shared app SDK"));
     } else if (path.startsWith("packages/app-sdk-dotnet/")) {
       add(["app-sdk-dotnet", "whisper"], reason("shared .NET app SDK"));
-      if (!path.includes(".Tests/")) add("whisper-native", reason("speech host SDK dependency"));
     } else if (path.startsWith("shared/web/")) {
       add(["shell", "harness"], reason("shared web components"));
     } else if (/^shared\/[^/]+\.cs$/.test(path)) {
-      add(["core", "cli", ...CORE_PROFILES], reason("shared native launch and recovery contracts"));
+      add(["core", "cli", "core-aot"], reason("shared native launch and recovery contracts"));
     } else if (path.startsWith("apps/core/")) {
       add("core", reason("Core component"));
       if (path.startsWith("apps/core/src/") || BUILD_CONFIG.test(path)) add("core-aot", reason("Core production input"));
-      if (NATIVE_INPUT.test(path) || BUILD_CONFIG.test(path) || /\/(?:Program|HostyCoreApplication|CoreJsonSerializerContext)\.cs$/.test(path)) {
-        add("workspace-native-activation", reason("native preparation, handover or recovery"));
-      }
-      if (WINDOWS_INPUT.test(path) || BUILD_CONFIG.test(path) || /\/(?:Program|HostyCoreApplication)\.cs$/.test(path)) {
-        add("core-windows-process-control", reason("Windows process, path or receipt behavior"));
-      }
-      if (/\/(?:DockerCoreListener|Program|HostyCoreApplication|RuntimeAppManifest)\.cs$/.test(path) || BUILD_CONFIG.test(path)) {
-        add("core-transport", reason("Core listener or Docker transport contract"));
-      }
     } else if (path.startsWith("apps/cli/")) {
       add("cli", reason("CLI component"));
-      if (NATIVE_INPUT.test(path) || BUILD_CONFIG.test(path) || /\/Program\.cs$/.test(path)) {
-        add("workspace-native-activation", reason("CLI native preparation, handover or recovery"));
-      }
-      if (WINDOWS_INPUT.test(path) || BUILD_CONFIG.test(path)) add("core-windows-process-control", reason("Windows process, path or receipt behavior"));
     } else if (path.startsWith("apps/whisper/")) {
       add("whisper", reason("Whisper component"));
-      if (path.startsWith("apps/whisper/Hosty.Whisper/") || /\/(?:NativeSpeechTests\.cs|Fixtures\/)/.test(path) || BUILD_CONFIG.test(path) || path.endsWith("/manifest.json")) {
-        add("whisper-native", reason("speech inference or native runtime input"));
-      }
     } else if (path.startsWith("apps/telemetry-backend/")) {
       add("telemetry-backend", reason("telemetry backend"));
     } else if (path.startsWith("apps/telemetry/")) {
@@ -132,17 +108,16 @@ export function classifyPaths(paths, { versionOnlyPaths = [] } = {}) {
     } else if (COMPONENT_PATHS.some(([prefix]) => path.startsWith(prefix))) {
       const [, component] = COMPONENT_PATHS.find(([prefix]) => path.startsWith(prefix));
       add(component, reason("component source or configuration"));
-      if (WORKER_INPUT.test(path) || /^apps\/harness\/(?:package(?:-lock)?\.json|manifest\.json)$/.test(path)) {
-        add("harness-worker", reason("worker image, transport or session lifecycle"));
-      }
+    } else if (["scripts/test-integration.mjs", "scripts/test-integration.test.mjs"].includes(path)) {
+      add("ci-policy", reason("local integration command contract"));
     } else if (path === "scripts/check-workspace-activation.py") {
-      add(["core", "cli", "workspace-native-activation", "core-windows-process-control"], reason("native acceptance fixture"));
+      add(["core", "cli"], reason("native acceptance fixture"));
     } else if (path === "scripts/check-core-aot.mjs") {
       add(["core", "core-aot"], reason("NativeAOT compatibility gate"));
     } else if (path === "scripts/check-docker-core-transport.py") {
-      add(["core", "core-transport"], reason("Docker transport fixture"));
+      add("core", reason("Docker transport fixture"));
     } else if (path === "scripts/check-harness-worker.mjs") {
-      add(["harness", "harness-worker"], reason("Docker worker fixture"));
+      add("harness", reason("Docker worker fixture"));
     } else if (path === "scripts/check-versions.mjs") {
       add("cardputer-shell", reason("firmware version contract"));
     } else if (["scripts/install.sh", "scripts/install.ps1"].includes(path)) {

@@ -1,7 +1,7 @@
 ---
 created: 2026-10-20
-updated: 2026-10-20
-summary: Automatic affected PR validation, selected native qualification and publication of verified main revisions.
+updated: 2026-10-21
+summary: Affected component CI, explicit local integration checks and publication of verified main revisions.
 components: [.github, scripts]
 ---
 
@@ -9,7 +9,7 @@ components: [.github, scripts]
 
 ## Everyday Development
 
-Implement a coherent feature batch, run the affected local tests and build, and request review of the complete change. A PR push automatically selects its checks; developers do not choose a CI profile for ordinary work. Superseded PR runs are cancelled. Main, scheduled and manual validation have separate concurrency identities, so a qualification run cannot cancel publication's required main validation.
+Implement a coherent feature batch, run the affected local tests and build, and request review of the complete change. A PR push automatically selects its checks; developers do not choose a CI profile for ordinary work. Superseded PR runs are cancelled. Main and manual validation have separate concurrency identities, so a manual run cannot cancel publication's required main validation.
 
 The fast PR path contains classification, version consistency, documentation validation and CI policy tests. Affected components add their lint, type checks, bounded tests and build. Shell and Demo App include their existing unit suites. Component jobs are parallel siblings.
 
@@ -21,34 +21,68 @@ The fast PR path contains classification, version consistency, documentation val
 
 - Component source selects its own checks; the shared app SDK selects its Node consumers.
 - `shared/web` selects Shell and Harness. It does not compile Core or CLI.
-- Root Node dependencies select Node consumers. Actual .NET build/toolchain changes select .NET consumers and native profiles.
+- Root Node dependencies select Node consumers. Actual .NET build/toolchain changes select .NET consumers and NativeAOT.
 - A strictly validated version-only change in `Directory.Build.props` selects Core, CLI and Core NativeAOT without triggering unrelated speech, SDK or native lifecycle scenarios. Added, deleted, malformed or substantive configuration stays conservative.
 - Documentation also selects Plans because its tests exercise the repository document parser contract.
 - CI scheduling edits select workflow lint; policy implementation changes and unrecognized inputs conservatively select all checks.
 
 Core's managed build/unit suite and NativeAOT publication are independent jobs. A production Core source/configuration/dependency change selects NativeAOT; isolated unit-test edits do not require it. The AOT script retains its cold Release compile and zero-new-warning check.
 
-## Additional Qualification
+## Local Integration Checks
 
-The same policy selects expensive PR suites for their implementation and fixture inputs:
+Run affected runtime acceptance locally before creating a pull request. Record commands,
+platforms and results in the PR's Verification section, including any checks that could not
+run and why. Documentation-only changes need no runtime suite.
 
-| Suite | Relevant behavior |
+GitHub CI has no activation,
+Windows process-control, Docker transport/worker or native speech jobs, nightly risk schedule
+or integration dispatch scopes. Ordinary component suites remain intact, including their
+existing isolated HTTP/component tests. NativeAOT and Docker-based artifact builds remain
+build checks.
+
+Use the console entry point from a registered development worktree:
+
+```bash
+npm run test:integration -- activation
+npm run test:integration -- windows
+npm run test:integration -- transport
+npm run test:integration -- worker
+npm run test:integration -- whisper
+```
+
+Each command runs only its named suite. No argument prints help and runs nothing; there is
+no implicit all-suite mode. Add `--dry-run` to inspect commands without executing them.
+The launcher checks prerequisites before building, prints each command, propagates failures
+and stops at the first failed step without retrying. It refuses runtime execution under
+GitHub Actions. Its small command-construction tests remain in the CI policy job.
+
+| Suite | Preparation and local behavior |
 | --- | --- |
-| Workspace activation on Linux, Windows and macOS | Native launch, source preparation, activation, Return, supervisor and recovery |
-| Windows process control | Windows handles, jobs, paths and shared receipt replacement |
-| Core Docker transport | Listener and container transport contracts |
-| Harness Docker worker | Worker image, transports, mounts and session/process lifecycle |
-| Whisper native on three operating systems | Real CPU inference and native speech dependencies |
+| activation | Requires .NET, Git, Python and Docker; builds Core/CLI and runs Return plus detached-helper recovery in parent-owned isolated Core environments. |
+| windows | Requires Windows, Git and .NET; runs the focused process/path/document/storage Core tests and CLI shared-receipt tests. Other operating systems receive an explicit refusal. |
+| transport | Requires .NET, Python and Docker; builds Core and runs its isolated real-Docker listener/transport fixture. |
+| worker | Requires Docker; builds the worker image named by the current manifest and runs its process/mount/control fixtures. |
+| whisper | Requires .NET; explicitly enables only NativeSpeechTests, including pinned-model download and real CPU inference. `HOSTY_WHISPER_TEST_CACHE` can reuse a verified cache. |
 
-Manual CI dispatch accepts a source revision and an optional qualification scope. The resolved full SHA is recorded and component/qualification jobs check out that SHA. CI policy tests and the aggregate execute the workflow revision, so an older manually selected source does not need to contain the current gate implementation. Full qualification includes component validation and all risk suites. Narrow manual scopes provide focused reproduction; they do not replace an ordinary PR gate.
+The launcher uses `python3` on Unix and `python` on Windows. Existing fixture entry points
+remain available for focused scenarios and supported native modes; see
+[workspace activation](../workspace-live-activation/feature.md#testing-expectations).
+Passing on macOS does not establish Windows or Linux readiness. Failure diagnostics and
+cleanup retain each fixture's existing ownership rules; ordinary app data and provider
+credentials remain outside these checks.
 
-Nightly qualification compares main with the last successful scheduled run and selects the affected risk suites. Missing baseline/API access widens to all risk suites rather than omitting work. A main nightly result does not qualify an unmerged PR revision.
+Manual CI dispatch accepts an exact source revision and runs the remaining normal checks.
+The resolved full SHA is recorded and component jobs check out that SHA. CI policy tests
+and the aggregate execute the workflow revision, so an older source need not contain the
+current gate implementation. Runtime acceptance is invoked locally rather than through
+GitHub's manual workflow UI.
 
-Feature plans continue to own browser acceptance, Hosty identity and sandbox checks. CI scheduling does not grant provider credential access, authorize live-data trials or replace normal setup/login verification.
+Feature plans continue to own browser acceptance, Hosty identity and sandbox checks. Local
+integration uses isolated data, normal setup/login and the supported Core-managed lifecycle.
 
 ## Publication
 
-Image and native-release workflows react to completed main push CI and validate its exact source identity before selecting an affected artifact from that CI run's saved selection manifest. Publication does not recompute a smaller last-commit diff that could omit earlier changes in a multi-commit push. Failed, cancelled, PR and scheduled runs cannot authorize publication. Unrelated completed runs are short no-ops, avoiding idle publication runners during ordinary CI. The two SDK workflows retain their path-filtered push triggers and wait for the exact main result: their trusted-publisher execution and automatic provenance stay tied to the package source revision.
+Image and native-release workflows react to completed main push CI and validate its exact source identity before selecting an affected artifact from that CI run's saved selection manifest. Retained format-1 manifests from before local integration separation remain readable: only the five known retired profiles are accepted, with consistent required membership and no duplicates; current CI still rejects those profiles. Publication does not recompute a smaller last-commit diff that could omit earlier changes in a multi-commit push. Failed, cancelled and non-push runs cannot authorize automatic publication. Unrelated completed runs are short no-ops, avoiding idle publication runners during ordinary CI. The two SDK workflows retain their path-filtered push triggers and wait for the exact main result: their trusted-publisher execution and automatic provenance stay tied to the package source revision.
 
 Manual recovery remains restricted to main and requires successful push CI for that exact SHA. Artifact-specific production builds and tests remain where CI output is not a complete reusable artifact. A host Next.js build is not a multi-platform OCI image, and a managed Core build is not a five-RID production release.
 
@@ -93,9 +127,24 @@ A feature is ready to merge when its agreed scope is implemented, current revisi
 
 Review the complete change once, collect findings into a consolidated correction batch, then verify the affected paths. A new full review needs a material design change or new evidence. Correctness, data loss, security and supported-runtime failures block completion. Optional suggestions do not automatically restart the loop. A failing check is investigated; repeated reruns are not a fix.
 
+## Verified Migration
+
+The 2026-10-21 local migration verification passes 208 CI-policy, publication, launcher and
+documentation tests, workflow lint, composite shell lint, documentation validation and version
+consistency. The macOS activation command builds Core/CLI and passes managed Return and
+interrupted-helper recovery; both child environments confirm Finish and removal of their
+processes, ports and scratch data. Docker transport passes health and authorization checks
+from both default and per-app networks. The locally built Harness worker passes process,
+mount and native control checks without provider credentials or model turns. Native Whisper
+CPU inference passes its Russian speech, silence, capacity and cancellation checks on macOS.
+Windows acceptance is not run because the local host is macOS; launcher tests cover its
+command selection and refusal on unsupported hosts. Local results do not establish Windows
+or Linux native readiness. Hosted validation is reported separately in the pull request.
+
 ## Testing Expectations
 
-- Policy tests cover affected/shared/unknown inputs, semantic version metadata, deleted/renamed paths and exact source resolution.
+- Policy tests cover affected/shared/unknown inputs, semantic version metadata, deleted/renamed paths, exact source resolution and exclusion of local runtime suites from every CI selection.
+- Local launcher tests cover explicit selection, prerequisite and command failures, unsupported platforms, shell-free arguments, native inference opt-in and side-effect-free previews.
 - Gate tests cover failed classification, missing/cancelled/failed/required-skipped jobs and workflow coverage.
 - Publication tests cover exact main identity, stale source, current run attempts, failed or missing CI, complete verified artifact consumption, and required signing identity/source/workflow fields.
 - GitHub Actions syntax and composite shell scripts are linted; docs/index and version checks run on every PR.

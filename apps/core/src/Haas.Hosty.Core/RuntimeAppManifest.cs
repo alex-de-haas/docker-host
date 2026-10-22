@@ -65,6 +65,24 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         bool allowUnsupportedPermissions = false,
         bool allowRetiredContracts = false)
     {
+        var (manifest, source, digest) = await ReadDocumentAsync(manifestPath, manifestGrant, forceRead, cancellationToken);
+        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl,
+            validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && digest != legacyManifestDigest,
+            allowUnsupportedPermissions: allowUnsupportedPermissions, allowRetiredContracts: allowRetiredContracts);
+    }
+
+    // Discovery reads declarations, not an execution contract. Admission still goes through LoadAsync
+    // for the selected destination; an unrelated broken default recipe must not hide recovery choices.
+    internal async Task<IReadOnlyList<RuntimeProfileManifest>> ReadRuntimeProfilesAsync(
+        string manifestPath, CancellationToken cancellationToken)
+    {
+        var (manifest, _, _) = await ReadDocumentAsync(manifestPath, null, false, cancellationToken);
+        return manifest.RuntimeProfiles;
+    }
+
+    private async Task<(RuntimeAppManifest Manifest, AppManifestSource Source, string Digest)> ReadDocumentAsync(
+        string manifestPath, SourceReadGrant? manifestGrant, bool forceRead, CancellationToken cancellationToken)
+    {
         if (string.IsNullOrWhiteSpace(manifestPath))
         {
             throw new AppManifestException("manifest_path_required", "A runtime app manifest path is required.");
@@ -79,7 +97,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             localManifestCache.TryGetValue(localPath, out var cached) &&
             cached.Stamp == stamp)
         {
-            return Select(cached.Manifest, localPath, cached.Digest, selectedRuntime, cached.Json, manifestUrl: null, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && cached.Digest != legacyManifestDigest, allowUnsupportedPermissions: allowUnsupportedPermissions, allowRetiredContracts: allowRetiredContracts);
+            return (cached.Manifest, new AppManifestSource(localPath, cached.Json, null), cached.Digest);
         }
 
         var source = manifestGrant is null
@@ -107,7 +125,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             localManifestCache[localPath] = new CachedLocalManifest(manifest, source.Json, digest, stamp);
         }
 
-        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && digest != legacyManifestDigest, allowUnsupportedPermissions: allowUnsupportedPermissions, allowRetiredContracts: allowRetiredContracts);
+        return (manifest, source, digest);
     }
 
     // Mirrors ReadManifestSourceAsync/ReadLocalManifestAsync resolution for the cache key: null for a
@@ -604,36 +622,6 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
                 errors.Add(new("app_manifest_runtime_profile_duplicate", $"Runtime profile '{profile.Key}' is declared more than once.", "$.runtimeProfiles[].key"));
             }
 
-            if (profile.ReadinessTimeoutSeconds is <= 0)
-            {
-                errors.Add(new("app_manifest_runtime_profile_readiness_timeout_invalid", $"Runtime profile '{profile.Key}' readinessTimeoutSeconds must be greater than zero.", "$.runtimeProfiles[].readinessTimeoutSeconds"));
-            }
-
-            if (profile.Type is not "docker" and not "localCommand" and not "mixed")
-            {
-                errors.Add(new("app_manifest_runtime_type_unsupported", $"Runtime profile type '{profile.Type}' is not supported by this Hosty Core build.", "$.runtimeProfiles[].type"));
-            }
-
-            if (profile.Type == "mixed" && !profile.Development)
-            {
-                errors.Add(new("app_manifest_mixed_requires_development", "Mixed profiles must declare development: true.", "$.runtimeProfiles[].development"));
-            }
-
-            if (profile.Development && !manifest.Services.Any(service =>
-                service.Runtimes.TryGetValue(profile.Key, out var runtime) &&
-                (runtime.SourceMount is not null ||
-                 ((runtime.Type ?? profile.Type) == "localCommand" && runtime.Artifact is null or "source"))))
-            {
-                errors.Add(new("app_manifest_development_requires_source", $"Development profile '{profile.Key}' must contain an editable source service.", "$.runtimeProfiles[].development"));
-            }
-
-            if (profile.Development && manifest.Services.Any(service =>
-                service.Runtimes.TryGetValue(profile.Key, out var runtime)
-                && string.Equals(runtime.Artifact?.Trim(), "prebuilt", StringComparison.OrdinalIgnoreCase)))
-            {
-                errors.Add(new("app_manifest_development_requires_source", $"Development profile '{profile.Key}' cannot contain prebuilt services. Use a reviewed profile for immutable builds.", "$.runtimeProfiles[].development"));
-            }
-
             if (profile.Default)
             {
                 defaultProfileCount++;
@@ -661,6 +649,41 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         if (selectedProfile is null)
         {
             errors.Add(new("app_manifest_selected_runtime_missing", $"Selected runtime '{resolvedRuntime}' does not reference a runtime profile.", "$.defaultRuntime"));
+        }
+
+        // Recipe rules belong to the selected runtime. Install/update can request all-profile
+        // validation below, but recovery to a valid profile must not re-admit unrelated recipes.
+        if (selectedProfile is { } selectedRecipe)
+        {
+            if (selectedRecipe.ReadinessTimeoutSeconds is <= 0)
+            {
+                errors.Add(new("app_manifest_runtime_profile_readiness_timeout_invalid", $"Runtime profile '{selectedRecipe.Key}' readinessTimeoutSeconds must be greater than zero.", "$.runtimeProfiles[].readinessTimeoutSeconds"));
+            }
+
+            if (selectedRecipe.Type is not "docker" and not "localCommand" and not "mixed")
+            {
+                errors.Add(new("app_manifest_runtime_type_unsupported", $"Runtime profile type '{selectedRecipe.Type}' is not supported by this Hosty Core build.", "$.runtimeProfiles[].type"));
+            }
+
+            if (selectedRecipe.Type == "mixed" && !selectedRecipe.Development)
+            {
+                errors.Add(new("app_manifest_mixed_requires_development", "Mixed profiles must declare development: true.", "$.runtimeProfiles[].development"));
+            }
+
+            if (selectedRecipe.Development && !manifest.Services.Any(service =>
+                service.Runtimes.TryGetValue(selectedRecipe.Key, out var runtime) &&
+                (runtime.SourceMount is not null ||
+                 ((runtime.Type ?? selectedRecipe.Type) == "localCommand" && runtime.Artifact is null or "source"))))
+            {
+                errors.Add(new("app_manifest_development_requires_source", $"Development profile '{selectedRecipe.Key}' must contain an editable source service.", "$.runtimeProfiles[].development"));
+            }
+
+            if (selectedRecipe.Development && manifest.Services.Any(service =>
+                service.Runtimes.TryGetValue(selectedRecipe.Key, out var runtime)
+                && string.Equals(runtime.Artifact?.Trim(), "prebuilt", StringComparison.OrdinalIgnoreCase)))
+            {
+                errors.Add(new("app_manifest_development_requires_source", $"Development profile '{selectedRecipe.Key}' cannot contain prebuilt services. Use a reviewed profile for immutable builds.", "$.runtimeProfiles[].development"));
+            }
         }
 
         if (manifest.Services.Count == 0)
@@ -1951,7 +1974,7 @@ internal sealed partial class DockerRuntimeAdapter(
             // through to the normal recreate path below. Adopted
             // containers are intentionally NOT added to startedContainers: this start did not create
             // them, so a later sibling's failure must not tear a healthy running service down.
-            if (service.Runtime.SourceMount is null && (admission is null || await admission.MatchesAsync(runner, containerName, cancellationToken)) && await TryAdoptRunningContainerAsync(context.App.Id, containerName, service.Image, existingLock, cancellationToken, context, service, admission is null))
+            if (service.Runtime.SourceMount is null && (admission is null || await admission.MatchesAsync(runner, containerName, cancellationToken)) && await TryAdoptRunningContainerAsync(context.App.Id, containerName, service.Image, existingLock, cancellationToken, context, service))
             {
                 resolvedLocks[service.Key] = existingLock!;
                 AppendServiceEndpoints(endpoints, service, AssignServicePorts(context, service, hostNetwork), config);
@@ -2034,11 +2057,6 @@ internal sealed partial class DockerRuntimeAdapter(
             // Privileged extras (validated + install-review gated): Linux capabilities and host
             // device nodes, e.g. NET_ADMIN + /dev/net/tun for an in-container VPN.
             if (admission is not null) runArgs.AddRange(admission.Arguments);
-            else if (service.Runtime.Resources is { } resources) runArgs.AddRange([
-                "--memory", resources.MemoryBytes.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                "--memory-swap", resources.MemoryBytes.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                "--cpus", resources.Cpus.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                "--pids-limit", resources.Pids.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
             runArgs.AddRange(BuildPrivilegedArguments(service.Runtime));
             runArgs.AddRange(BuildHealthcheckArguments(service.Runtime));
 
@@ -2599,7 +2617,7 @@ internal sealed partial class DockerRuntimeAdapter(
         string containerName,
         RuntimeDockerImage image,
         ArtifactLock? existingLock,
-        CancellationToken cancellationToken, RuntimeLifecycleContext context, RuntimeSelectedService service, bool ordinaryResources)
+        CancellationToken cancellationToken, RuntimeLifecycleContext context, RuntimeSelectedService service)
     {
         if (string.IsNullOrWhiteSpace(existingLock?.ImageDigest))
         {
@@ -2633,11 +2651,11 @@ internal sealed partial class DockerRuntimeAdapter(
             string.Equals(parts[2].Trim(), config.InstanceId, StringComparison.Ordinal) &&
             string.Equals(parts[3].Trim(), pinnedReference, StringComparison.Ordinal) &&
             (service.Injection?.AppServiceToken == false ? !parts[4].Split('\n').Any(line => line.StartsWith("HOSTY_APP_SERVICE_TOKEN=", StringComparison.Ordinal)) : HasValidServiceToken(appId, parts[4]))
-            && await MatchesServiceConfigurationAsync(context, service, containerName, ordinaryResources, cancellationToken);
+            && await MatchesServiceConfigurationAsync(context, service, containerName, cancellationToken);
     }
 
     private static bool HasExplicitServiceContract(RuntimeLifecycleContext context, RuntimeSelectedService service)
-        => service.Injection is not null || service.Runtime.Resources is not null || RuntimeServiceStorage.Resolve(context.Manifest, service).Any(b => b.Target.SubPath is not null || b.Target.Mode == "ro")
+        => service.Injection is not null || RuntimeServiceStorage.Resolve(context.Manifest, service).Any(b => b.Target.SubPath is not null || b.Target.Mode == "ro")
             || context.Mounts.Any(m => m.ManagedCollection && (m.Service is null || m.Service == service.Key));
 
     private static string ServiceConfigurationFingerprint(RuntimeLifecycleContext context, RuntimeSelectedService service)
@@ -2650,7 +2668,7 @@ internal sealed partial class DockerRuntimeAdapter(
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', values)))).ToLowerInvariant();
     }
 
-    private async Task<bool> MatchesServiceConfigurationAsync(RuntimeLifecycleContext context, RuntimeSelectedService service, string name, bool ordinaryResources, CancellationToken ct)
+    private async Task<bool> MatchesServiceConfigurationAsync(RuntimeLifecycleContext context, RuntimeSelectedService service, string name, CancellationToken ct)
     {
         if (!HasExplicitServiceContract(context, service)) return true; // Existing default-token applications retain their adoption contract.
         var inspected = await RunRawAsync(["inspect", name], ct);
@@ -2662,12 +2680,6 @@ internal sealed partial class DockerRuntimeAdapter(
             var labels = container.GetProperty("Config").GetProperty("Labels");
             if (!labels.TryGetProperty("hosty.app.service", out var key) || key.GetString() != service.Key
                 || !labels.TryGetProperty("hosty.service.configuration", out var fingerprint) || fingerprint.GetString() != ServiceConfigurationFingerprint(context, service)) return false;
-            if (ordinaryResources && service.Runtime.Resources is { } resources)
-            {
-                var limits = container.GetProperty("HostConfig");
-                if (limits.GetProperty("Memory").GetInt64() != resources.MemoryBytes || limits.GetProperty("MemorySwap").GetInt64() != resources.MemoryBytes
-                    || limits.GetProperty("NanoCpus").GetInt64() != (long)(resources.Cpus * 1_000_000_000) || limits.GetProperty("PidsLimit").GetInt64() != resources.Pids) return false;
-            }
             var environment = container.GetProperty("Config").GetProperty("Env").EnumerateArray().Select(e => e.GetString() ?? "").ToArray();
             if (service.Injection?.AppIdentityToken == false && environment.Any(e => e.StartsWith("HOSTY_APP_IDENTITY_TOKEN=", StringComparison.Ordinal))) return false;
             if (service.Injection?.Settings is { } allowed && context.App.Settings.Keys.Any(k => !allowed.Contains(k) && environment.Any(e => e.StartsWith(k + "=", StringComparison.Ordinal)))) return false;
@@ -3774,11 +3786,8 @@ internal sealed record RuntimeServiceHealthcheckManifest
     public int? GracePeriodSeconds { get; init; }
 }
 
-internal sealed record RuntimeServiceResources(long MemoryBytes, double Cpus, int Pids);
-
 internal sealed record RuntimeServiceProfileManifest
 {
-    public RuntimeServiceResources? Resources { get; init; }
     public string? Type { get; init; }
 
     // How the running code is delivered for this runtime (A1). `image` is a compiled, lockable

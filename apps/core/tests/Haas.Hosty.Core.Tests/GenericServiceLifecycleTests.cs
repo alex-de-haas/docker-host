@@ -15,7 +15,6 @@ public sealed partial class DockerRuntimeAdapterTests
             var processor = baseline.Manifest.Services[1] with
             {
                 Injection = new() { AppServiceToken = false, AppIdentityToken = false, Settings = [] },
-                Runtime = baseline.Manifest.Services[1].Runtime with { Resources = new(268435456, 0.5, 64) },
             };
             var manifest = new RuntimeAppManifest
             {
@@ -50,9 +49,6 @@ public sealed partial class DockerRuntimeAdapterTests
             Assert.Contains(MountPathPolicy.ResolveRealPath(Path.Combine(root, "data", "processor")) + ":/control/state:rw", processorRun);
             Assert.Contains(MountPathPolicy.ResolveRealPath(Path.Combine(root, "data", "auth")) + ":/control/auth:ro", processorRun);
             Assert.DoesNotContain(processorRun, value => value.EndsWith(":/web:rw"));
-            Assert.Contains("--memory", processorRun); Assert.Contains("268435456", processorRun);
-            Assert.Contains("--cpus", processorRun); Assert.Contains("0.5", processorRun);
-            Assert.Contains("--pids-limit", processorRun); Assert.Contains("64", processorRun);
             await adapter.StopAsync(context);
             Assert.Equal(2, runner.Commands.Count(command => command[0] == "stop"));
         }

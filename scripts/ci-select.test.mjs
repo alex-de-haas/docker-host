@@ -7,13 +7,15 @@ import { execFileSync } from 'node:child_process';
 import { qualificationPlan, changedPaths, resolveRevision, select } from './ci-select.mjs';
 import { classifyPaths, fullPlan } from './ci-policy.mjs';
 
-test('manual and nightly qualification share the automatic risk policy', () => {
+test('manual validation retains all normal checks and refuses retired risk scopes', () => {
   const affected = classifyPaths(['scripts/check-workspace-activation.py']);
-  assert.deepEqual(qualificationPlan('nightly', affected).profiles, affected.profiles);
+  assert.deepEqual(qualificationPlan('affected', affected), affected);
   assert.deepEqual(qualificationPlan('all', affected), fullPlan());
-  assert.deepEqual(qualificationPlan('windows', affected).profiles, ['core-windows-process-control']);
-  assert.equal(qualificationPlan('nightly', classifyPaths(['README.md'])).profiles.length, 0);
-  assert.throws(() => qualificationPlan('typo', affected));
+  for (const scope of ['nightly', 'windows', 'lifecycle', 'docker', 'whisper', 'typo']) {
+    assert.throws(() => qualificationPlan(scope, affected));
+  }
+  assert.throws(() => select('schedule', {}, {}), /Unsupported CI event/);
+  assert.throws(() => select('workflow_dispatch', { inputs: { scope: 'lifecycle' } }, {}), /moved/);
 });
 
 test('exact revisions and renamed paths are resolved from a real Git repository', () => {
@@ -39,9 +41,9 @@ test('exact revisions and renamed paths are resolved from a real Git repository'
     const selection = select('pull_request', { pull_request: { base: { sha: base } } }, { GITHUB_SHA: head });
     assert.equal(selection.head, head);
     assert.deepEqual(new Set(selection.paths), new Set(['old.txt', 'new name.txt']));
-    const manual = select('workflow_dispatch', { inputs: { revision: base, scope: 'lifecycle' } }, { GITHUB_SHA: head });
+    const manual = select('workflow_dispatch', { inputs: { revision: base } }, { GITHUB_SHA: head });
     assert.equal(manual.head, base);
-    assert.deepEqual(manual.plan.profiles, ['workspace-native-activation']);
+    assert.deepEqual(manual.plan, fullPlan());
     assert.throws(() => select('workflow_dispatch', { inputs: { revision: 'does-not-exist' } }, {}));
   } finally {
     process.chdir(previous);
@@ -49,22 +51,6 @@ test('exact revisions and renamed paths are resolved from a real Git repository'
   }
 });
 
-test('nightly baseline is the last successful scheduled main revision, with safe full fallback', async () => {
-  const { previousNightly } = await import('./ci-select.mjs');
-  const env = { GITHUB_REPOSITORY: 'owner/repo', GITHUB_TOKEN: 'test-not-a-secret' };
-  let requested;
-  const sha = 'a'.repeat(40);
-  const fetcher = async url => {
-    requested = url;
-    return { ok: true, json: async () => ({ workflow_runs: [{ event: 'schedule', head_branch: 'main', conclusion: 'success', status: 'completed', head_sha: sha }] }) };
-  };
-  assert.equal(await previousNightly(env, fetcher), sha);
-  assert.match(requested, /event=schedule&status=success&branch=main/);
-  assert.equal(await previousNightly({}, fetcher), undefined);
-  assert.equal(await previousNightly(env, async () => ({ ok: true, json: async () => ({ workflow_runs: [] }) })), undefined);
-  await assert.rejects(previousNightly(env, async () => ({ ok: false, status: 403 })));
-  await assert.rejects(previousNightly(env, async () => ({ ok: true, json: async () => ({ workflow_runs: [{ head_sha: sha, head_branch: 'other' }] }) })));
-});
 
 test('push selection narrows version metadata only after comparing real Git contents', () => {
   const directory = mkdtempSync(join(tmpdir(), 'hosty-ci-props-'));
@@ -89,7 +75,7 @@ test('push selection narrows version metadata only after comparing real Git cont
     writeFileSync(join(directory, 'Directory.Build.props'), '<Project><PropertyGroup><Version>0.1.1</Version><DefineConstants>NEW_RUNTIME</DefineConstants></PropertyGroup></Project>');
     command('commit', '-qam', 'build configuration');
     const config = select('push', { before: head }, { GITHUB_SHA: command('rev-parse', 'HEAD') });
-    assert.ok(config.plan.profiles.includes('workspace-native-activation'));
+    assert.deepEqual(config.plan.profiles, ['core-aot']);
     assert.ok(config.plan.components.includes('whisper'));
   } finally {
     process.chdir(previous);
