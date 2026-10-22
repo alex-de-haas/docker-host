@@ -265,6 +265,8 @@ it.each([
   await first.postMessage(record.id, "work"); await expect.poll(f.starts).toBe(1);
   const runId = (await store.readRecord(record.id))!.workerRun!.id;
   await first.shutdown();
+  const usage = { usedTokens: 4200, maxTokens: 10000, estimated: true, observedAt: new Date().toISOString() };
+  f.options()!.onEvent({ type: "context_usage", usage });
   if (text) f.options()!.onEvent({ type: "assistant_text", text: "Retained final answer" });
   f.options()!.onEvent(type === "result" ? { type, status: "success" } : { type, message: "Retained provider error" });
   await expect.poll(async () => (await f.journal.load(runId)).receipt.state).toBe(type === "result" ? "completed" : "failed");
@@ -283,5 +285,9 @@ it.each([
   expect(events.find(event => event.type === "notice" && String(event.message).includes("replay expired"))).toMatchObject({ type: "notice" });
   expect(events.filter(event => event.workerSequence === receipt.revision)).toHaveLength(1);
   expect(events.filter(event => event.type === "assistant_text")).toHaveLength(text ? 1 : 0);
+  expect(events.filter(event => event.type === "context_usage")).toEqual([
+    expect.objectContaining({ usage, workerSequence: receipt.snapshot!.contextUsage!.sequence }),
+  ]);
+  expect(events.findIndex(event => event.type === "context_usage")).toBeLessThan(events.findIndex(event => event.type === type));
   expect(f.starts()).toBe(1); expect(f.stopped()).toBe(1);
 });

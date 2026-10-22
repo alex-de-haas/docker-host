@@ -789,6 +789,7 @@ export class SessionManager {
       session.record.updatedAt = new Date().toISOString();
       await this.store.saveRecord(session.record);
       await this.append(id, { type: "model_selection_changed", selection: session.record.executionSelection, revision: session.record.selectionRevision });
+      await this.append(id, { type: "context_usage", usage: null });
       return session.record;
     });
   }
