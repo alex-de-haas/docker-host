@@ -45,8 +45,9 @@ capabilities. An individual can keep a small, simple environment, while a family
 more shared tools and richer interfaces. The composition determines the experience.
 
 The owner clarified this broader direction on 2026-10-23. Decision 52 and the
-[exploration below](#personal-and-shared-environments-owner-exploration-2026-10-23) retain the ideas
-without selecting a new architecture, creating plans or changing existing implementation status.
+[exploration below](#personal-and-shared-environments-owner-exploration-2026-10-23) retain the
+direction without selecting a new architecture, creating plans or changing existing implementation
+status. Forms that are still raw live in [ideas](ideas.md).
 
 ## App Creation And Development (owner direction, 2026-09-16)
 
@@ -784,9 +785,9 @@ Decisions 1–5: 2026-08-19.
     The owner broadens the product framing from hosting plus development to everyday personal,
     family and team environments. Preserve the existing modular foundation and investigate useful
     extension boundaries as scenarios become concrete. Optional workspaces, independent sessions,
-    reusable knowledge, collaboration and QA tools are composable capabilities. The detailed
-    [exploration below](#personal-and-shared-environments-owner-exploration-2026-10-23) records possible
-    forms and unresolved choices. It revises the long-term exclusive-session assumption in decisions
+    reusable knowledge, collaboration and QA tools are composable capabilities. The
+    [exploration below](#personal-and-shared-environments-owner-exploration-2026-10-23) records the
+    direction; [ideas](ideas.md) I1–I2 and I12–I16 keep the possible forms and unresolved choices. It revises the long-term exclusive-session assumption in decisions
     10/24 and reopens the packaging and retention choices around decision 45; it does not reverse
     shipped behavior, select component extraction or weaken existing access boundaries.
 
@@ -837,127 +838,22 @@ consumers under the existing cleanup rules until a replacement lifecycle is expl
 Historical references, permissions after detachment and retention of shared attachments need their
 own semantics. This direction does not define a mandatory archive or authorize current cleanup.
 
-| Resource | Intended lifetime and relationship |
-| --- | --- |
-| Workspace and its worktrees | Retained while useful for work and while source/consumer checks require them; optional for ordinary app use |
-| Agent session | Has its own history and retention; can attach to or detach from a workspace |
-| Documents, attachments and reports | May be shared materials with their own owner and lifetime rather than disposable chat files |
-| Knowledge and decisions | Can remain useful across sessions and workspaces, including sessions that never had a workspace |
-| Search index | Supports discovery of authorized material; storage and rebuild/deletion semantics depend on the selected provider |
+Sharing concerns both people and their agents. Family or team membership must not imply access to
+every member's private information or provider credentials. Resource lifetimes, distinguishable
+authority and external session history are explored in [ideas I12](ideas.md#i12-workspace-session-and-material-lifetimes).
 
-Sharing concerns both people and their agents. Participation, reading a conversation, editing source,
-using an app, running tests and publishing changes need distinguishable authority. Family or team
-membership must not imply access to every member's private information or provider credentials.
-The existing administrator-only development path is the current baseline. Narrower team roles and
-ordinary-user source work remain questions alongside
-[user sessions](features/user-agent-sessions/plan.md) and existing execution/authorization work;
-this exploration does not mark their boundaries implemented.
+### Still-Open Topics
 
-Internal sessions are enough to reason about the first scenarios. External session-history exchange
-remains open and is not a prerequisite for the ideas here. Preserve the existing external workspace
-capability without assuming that Hosty can obtain another agent application's conversation history.
+The 2026-10-23 exploration also covered topics that remain too unformed for a direction beyond
+decision 52. They live in [ideas](ideas.md), where each topic also records prior art and known
+pitfalls:
 
-### Knowledge And Search Providers
-
-Knowledge is broader than project documentation: personal information, documents, selected
-conversation excerpts, requirements, decisions and reports may all be useful. Scope can be personal,
-shared with a household or team, associated with apps, or tied to a particular activity. A mandatory
-Project container is not selected. Knowledge can be discovered across permitted contexts without
-keeping their original workspaces alive or loading every previous conversation into a new session.
-
-The owner leans toward an independently supplied knowledge capability with a common interface.
-Harness knows its session representation and could submit selected history, excerpts or summaries;
-other apps could contribute their own documents or artifacts. The provider chooses how to store,
-organize and retrieve them. An initial idea placed aggregation in Core; the later clarification
-favors replaceable provider implementations, with any necessary Core contract/authority support
-still to be determined. Core need not become the owner of every source document or conversation.
-
-A search capability may be part of that provider or separately supplied. Qdrant is one possible
-backend for a provider; no engine, embedding model, deployment or vector schema is selected. The
-interoperability question is what producers and consumers exchange: content or retrievable
-references, identity/version, provenance, sharing scope and update/deletion meaning are candidate
-common elements. Apps retain their domain semantics. Native provider storage formats need not be
-identical, and a common interface must not erase authorship or current access restrictions.
-
-Prefer bounded discovery followed by explicit reading of relevant excerpts and surrounding context.
-A new session can discover associated apps and available materials without receiving their complete
-contents. Session-local context remains independent of the shared store. Searching retained history
-and recalling curated knowledge are distinct capabilities; the consuming app can expose optional
-MCP tools and instructions controlling when to use them. Tool enablement, background ingestion and
-summarization policies should be distinguishable choices, with context size and processing cost
-visible enough to tune. Disabling retrieval stops subsequent access; it does not erase information
-already delivered to a conversation.
-
-A remembered proposal, a confirmed decision and an inferred summary have different meanings.
-Retained knowledge should carry its origin and any known revision or replacement; a search hit
-alone cannot establish that a proposal was accepted or remains applicable. Exact representation,
-validation and conflict resolution remain open. Source permissions and sharing changes must also
-apply to retrieval and derived copies; indexing is not a new access grant.
-
-### Retention, Transcription And Summaries
-
-Users may choose to keep, archive, summarize or delete conversations independently of workspaces.
-One possible experience offers those choices when a conversation ages, including summarizing before
-deleting its full history. Another installation may retain all text transcripts. No universal
-retention duration or automatic deletion rule is selected, and storage cost alone does not decide
-how much history is useful.
-
-Optional recorded conversations or meetings could be transcribed into text without retaining the
-original audio indefinitely. Recording, audio retention, transcription and later summarization are
-separate choices; this is not a requirement to record every discussion. A summary is a lossy derived
-material, not a complete transcript. Preserve its provenance and make unavailable originals clear;
-any retained supporting excerpts need explicit retention semantics. Full history, summaries,
-attachments and search copies need coordinated deletion rules, without retaining workspace resources
-as an accidental archive. Indexing and bounded retrieval must keep a large archive from filling an
-agent's context in one request.
-
-### Collaboration And QA As Optional Compositions
-
-A development example combines business analysis and plans, source work, tests and review. A
-business analyst may work in an external system or a Plans-like app. A developer may prepare a
-workspace and give QA access to test it; QA may describe a failure or ask an authorized agent to
-propose a fix, and a developer may inspect, adjust and publish those changes. Users can exchange
-responsibility or work concurrently. None of those roles or transitions is a mandatory platform
-workflow, and a single person can use the same capabilities.
-
-It should be possible to distinguish earlier implementation work from later QA/agent changes and
-review a particular change before committing it. Commits and PRs provide some evidence; reviewable
-uncommitted changes and links to sessions/runs are also candidates. Their representation is open,
-including whether checkpoints are useful. Concurrent unrestricted writes to one directory do not
-provide reliable authorship merely because a session was active. This does not introduce source
-snapshot/restore guarantees or relax repository commit rules.
-
-A workspace might group one feature, several independent efforts or a release, with zero, one or
-several PRs. Multiple PR references do not themselves supply independent branches or safe concurrent
-publication; worktree/branch structure and change attribution need design. Existing per-repository
-feature/PR rules remain applicable. Comments or discussion threads may refer to a workspace, session,
-plan, change or test result. Text or optional voice collaboration could help participants and an
-agent prepare a plan together, while the resulting plan has its own explicit review and authority.
-
-A QA application could let a person describe scenarios, have an agent generate or refine Playwright
-or other test definitions, review those definitions, run them on demand or by a chosen schedule,
-and inspect reports. Test authoring, runner/provider, scheduling and reporting may be separate
-capabilities or one app's composition. Reuse authorized sandbox/runtime inputs and export useful
-results independently of temporary resources. Existing Playwright/browser support is a starting
-point, not proof that this proposed QA application or automatic scenario pipeline exists.
-
-### Bringing Existing Applications Into The Environment
-
-The desired entry points include installing from a catalog, a remote link or an existing local
-repository. One candidate flow selects source/development execution at installation and reuses the
-operator's existing checkout, possibly through existing override mechanisms, without creating a
-second source copy. A later explicit switch can select a packaged production runtime. This revisits
-source-adoption choices; it does not change today's registered-workspace instructions, adopt a
-checkout, or select a live runtime merely by recording the idea.
-
-Another candidate lets an agent inspect an existing web project and prepare the Hosty manifest
-using its declared commands, such as those in `package.json`. The intended benefit is convenient
-Start/Stop and managed hosting with minimal project changes, ideally a manifest where sufficient.
-Arbitrary projects may need additional runtime configuration. Manifestless/convention-based hosting
-is a further possibility, not a selected manifest-contract change. These entry points should be
-useful without a mandatory Marketplace, Shell or hosted assistant; an authorized external client
-may supply the editing workflow. Existing installation/source/runtime behavior remains authoritative
-until a concrete change is approved.
+- Knowledge and search providers: [I1](ideas.md#i1-memory-as-a-replaceable-provider) and
+  [I2](ideas.md#i2-search-across-knowledge-providers).
+- Retention, transcription and summaries: [I13](ideas.md#i13-retention-transcription-and-summaries).
+- Collaboration and QA as optional compositions: [I14](ideas.md#i14-collaboration-and-qa-as-optional-compositions).
+- Bringing existing applications into Hosty: [I15](ideas.md#i15-bringing-existing-applications-into-hosty).
+- A portable environment and a dedicated Hosty OS: [I16](ideas.md#i16-a-portable-environment-and-a-dedicated-hosty-os).
 
 ## Expectations And Later Directions
 
@@ -1022,16 +918,20 @@ the manifest contract. Two standing consequences:
    provenance, version, sharing and deletion semantics across providers with different storage,
    without making a project or workspace mandatory. How are private, household and team scopes
    represented, and how are changed permissions reflected in summaries and search copies?
+   Explored in [ideas I1–I2](ideas.md#i1-memory-as-a-replaceable-provider).
 7. **Which retention and retrieval choices fit different environments?** Full transcripts,
    archives, summaries and selected excerpts have different costs and fidelity. How can users
    choose storage and processing policies, see stale or missing evidence, and bound agent context
-   without retaining obsolete workspace resources?
+   without retaining obsolete workspace resources? Explored in
+   [ideas I13](ideas.md#i13-retention-transcription-and-summaries).
 8. **How is shared work attributed and reviewed?** Consider several users/sessions, uncommitted
    changes, separate publication streams and session detachment. What evidence is reliable with
    simultaneous writers, and what remains useful after resources or conversations are deleted?
+   Explored in [ideas I12 and I14](ideas.md#i14-collaboration-and-qa-as-optional-compositions).
 9. **How small can onboarding and UI composition stay?** Explore existing-repository adoption and
    optional tools/panels without hiding lifecycle consequences or requiring a development-oriented
    setup for personal use. Which conventions are sufficient before introducing another contract?
+   Explored in [ideas I15](ideas.md#i15-bringing-existing-applications-into-hosty).
 
 ## Spanned Features
 
