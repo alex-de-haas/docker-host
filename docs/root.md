@@ -9,6 +9,10 @@ where installing an app is what extends the agent's tool environment — is reco
 [Hosty platform vision](vision.md), the umbrella that individual
 feature decisions are judged against.
 
+[Ideas](ideas.md) collects raw possibilities and questions that may expand or complement that
+vision, before they are concrete enough for a Draft plan. It is a living collection outside the
+feature status index.
+
 ```mermaid
 flowchart LR
   A["app.0.1 manifest"] --> B["Hosty Core"]
