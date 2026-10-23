@@ -20,3 +20,10 @@ mkdir -p "${build_dir}"
 
 "${build_dir}/host-tests"
 
+
+# Exercise the actual native HTTP adapter with a deterministic ESP-IDF seam.
+"${CXX:-c++}" -std=c++20 -Wall -Wextra -Werror -pedantic \
+  -I"${app_dir}/host/esp_stubs" -I"${app_dir}/main" -I"${core_dir}/include" \
+  "${app_dir}/main/hosty_client.cpp" "${core_dir}"/src/*.cpp \
+  "${app_dir}/host/http_test.cpp" -o "${build_dir}/http-tests"
+"${build_dir}/http-tests"

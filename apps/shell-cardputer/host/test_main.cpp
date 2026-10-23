@@ -1,11 +1,10 @@
 #include "hosty/auth.hpp"
+#include "hosty/clock.hpp"
 #include "hosty/endpoint.hpp"
 #include "hosty/json_stream.hpp"
-#include "hosty/power.hpp"
 #include "hosty/protocol.hpp"
 #include "hosty/render.hpp"
 #include "hosty/semver.hpp"
-#include "hosty/sse.hpp"
 #include "hosty/state.hpp"
 #include "ppm_canvas.hpp"
 
@@ -46,19 +45,6 @@ std::uint8_t rgb332_bucket(hosty::Color color) {
                                      (((color >> 8U) & 0x07U) << 2U) |
                                      ((color >> 3U) & 0x03U));
 }
-
-class CollectSse final : public hosty::SseListener {
-public:
-    bool on_sse_event(const hosty::SseEvent& event) override {
-        name = event.name;
-        data = event.data;
-        ++count;
-        return true;
-    }
-    std::string name;
-    std::string data;
-    int count = 0;
-};
 
 class AcceptJson final : public hosty::JsonListener {
 public:
@@ -219,46 +205,66 @@ void test_notifications() {
     CHECK(notifications.items[0].app_id == "com.example.app");
 }
 
-void test_sse() {
-    CollectSse listener;
-    hosty::SseParser parser(listener);
-    constexpr std::string_view stream = ": connected\n\nevent: app.changed\ndata: {\"appId\":\"com.example\"}\n\nevent: notification\ndata: line one\ndata: line two\n\n";
-    for (const char character : stream) CHECK(parser.feed(std::string_view(&character, 1)) == hosty::SseError::None);
-    CHECK(parser.finish() == hosty::SseError::None);
-    CHECK(listener.count == 2);
-    CHECK(listener.name == "notification");
-    CHECK(listener.data == "line one\nline two");
-}
-
-void test_state_and_power() {
+void test_state() {
     hosty::ClientState state;
     state.apply({hosty::ConnectionEvent::Type::Configured, 0});
     state.apply({hosty::ConnectionEvent::Type::WifiConnected, 10});
     state.apply({hosty::ConnectionEvent::Type::TimeReady, 20});
     state.apply({hosty::ConnectionEvent::Type::SyncCompleted, 30});
     CHECK(state.connection() == hosty::ConnectionState::Online);
-    CHECK(state.on_sse_event("app.changed") == hosty::SyncHint::Apps);
-    CHECK(state.on_sse_event("future.event") == hosty::SyncHint::None);
     state.apply({hosty::ConnectionEvent::Type::TransportFailed, 40});
     CHECK(state.connection() == hosty::ConnectionState::Stale);
 
-    hosty::PowerPolicy policy;
-    policy.display_timeout_ms = 1000;
-    policy.motion_cooldown_ms = 500;
-    policy.motion_threshold_mg = 100;
-    hosty::PowerController power(policy);
-    CHECK(power.tick(999, false, 0).display_off == false);
-    CHECK(power.tick(1000, false, 0).display_off);
-    CHECK(power.mode() == hosty::PowerMode::OnlineStandby);
-    CHECK(!power.tick(1100, false, 120).display_on);
-    CHECK(!power.tick(1200, false, 80).display_on);
-    CHECK(!power.tick(1300, false, 120).display_on);
-    const hosty::PowerAction motion_wake = power.tick(1550, false, 120);
-    CHECK(motion_wake.display_on);
-    CHECK(motion_wake.wake_reason == hosty::WakeReason::Motion);
-    CHECK(power.notification(1600, hosty::NotificationLevel::Info, false).play_sound);
-    CHECK(power.request_deep_standby().enter_deep_sleep);
-    CHECK(power.tick(1700, true, 0).leave_deep_sleep);
+}
+
+void test_attention_and_current_contract() {
+    // Match the maintained Shell's attention contract, including overlapping running/attention counts.
+    const std::string cases[] = {
+        R"({"lastError":"failed probe"})",
+        R"({"operationStatus":"failed"})",
+        R"({"configurationReadiness":{"required":true}})",
+        R"({"permissionState":{"status":"known","missingRequired":["files"]}})",
+        R"({"permissionState":{"error":"access unavailable"}})",
+        R"({"restartRequired":true})",
+        R"({"health":{"status":"degraded"}})",
+        R"({"updateCheck":{"error":"check failed"}})",
+        R"({"lastOperation":"update","updateProgress":{"stage":"needs-attention"}})",
+    };
+    for (const auto& fields : cases) {
+        const std::string json = R"({"apps":[{"id":"app","runtimeState":"running",)" + fields.substr(1) + "]}";
+        hosty::CoreSnapshot snapshot;
+        hosty::AppsResponseParser parser(snapshot);
+        CHECK(feed_chunked(parser, json, 1) == hosty::ProtocolError::None);
+        CHECK(snapshot.apps.size() == 1);
+        CHECK(hosty::needs_attention(snapshot.apps[0]));
+        CHECK(hosty::count_dashboard(snapshot).running == 1);
+        CHECK(hosty::count_dashboard(snapshot).attention == 1);
+    }
+    hosty::AppSummary healthy;
+    healthy.runtime_state = hosty::RuntimeState::Running;
+    healthy.operation_state = hosty::OperationState::Idle;
+    CHECK(!hosty::needs_attention(healthy));
+    healthy.health_degraded = true;
+    healthy.operation_state = hosty::OperationState::Updating;
+    CHECK(!hosty::needs_attention(healthy));
+    healthy.configuration_required = true;
+    CHECK(hosty::needs_attention(healthy));
+    healthy = {};
+    healthy.runtime_state = hosty::RuntimeState::Stopped;
+    CHECK(!hosty::needs_attention(healthy));
+    healthy.runtime_state = hosty::RuntimeState::Unknown;
+    CHECK(hosty::needs_attention(healthy));
+
+    hosty::CoreRestartState restart;
+    hosty::CoreRestartParser development(restart, true);
+    CHECK(feed_chunked(development, R"({"instance":"37724:12345","source":{"revision":"abc123"},"launch":{"mode":"dev"}})", 1) == hosty::ProtocolError::None);
+    CHECK(restart.instance == "37724:12345");
+    CHECK(restart.source_revision == "abc123");
+    hosty::CoreRestartParser incomplete(restart, true);
+    CHECK(feed_chunked(incomplete, R"({"instance":"1:2"})", 2) == hosty::ProtocolError::MissingField);
+    hosty::CoreRestartParser operation(restart, false);
+    CHECK(feed_chunked(operation, R"({"status":"completed"})", 1) == hosty::ProtocolError::None);
+    CHECK(restart.status == "completed");
 }
 
 void test_render() {
@@ -323,8 +329,13 @@ int main() {
     test_apps_fixture();
     test_app_collection_limit();
     test_notifications();
-    test_sse();
-    test_state_and_power();
+    test_state();
+    CHECK(!hosty::clock_valid(0, 1000));
+    CHECK(!hosty::clock_valid(999, 1000));
+    CHECK(hosty::clock_valid(1000, 1000));
+    CHECK(hosty::clock_valid(1001, 1000));
+    CHECK(!hosty::clock_valid(1000, 0));
+    test_attention_and_current_contract();
     test_render();
     if (failures != 0) {
         std::cerr << failures << " host test(s) failed\n";

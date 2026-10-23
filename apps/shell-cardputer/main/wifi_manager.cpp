@@ -33,7 +33,7 @@ bool WifiManager::begin() {
                                             this, &ip_handler_) != ESP_OK) {
         return false;
     }
-    if (esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK || esp_wifi_set_ps(WIFI_PS_MIN_MODEM) != ESP_OK) return false;
+    if (esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK || esp_wifi_set_ps(WIFI_PS_NONE) != ESP_OK) return false;
     initialized_ = true;
     return true;
 }

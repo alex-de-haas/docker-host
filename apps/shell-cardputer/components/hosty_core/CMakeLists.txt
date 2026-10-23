@@ -3,11 +3,9 @@ idf_component_register(
         "src/auth.cpp"
         "src/endpoint.cpp"
         "src/json_stream.cpp"
-        "src/power.cpp"
         "src/protocol.cpp"
         "src/render.cpp"
         "src/semver.cpp"
-        "src/sse.cpp"
         "src/state.cpp"
     INCLUDE_DIRS "include"
 )

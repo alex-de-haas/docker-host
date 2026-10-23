@@ -38,7 +38,7 @@ std::string_view header_status(ConnectionState state) {
         case ConnectionState::TimeSyncing: return "Setting time";
         case ConnectionState::Authorizing: return "Authorize";
         case ConnectionState::Connecting: return "Syncing...";
-        case ConnectionState::Online: return "Synced";
+        case ConnectionState::Online: return "Snapshot";
         case ConnectionState::Stale: return "Stale";
         case ConnectionState::Unauthorized: return "Revoked";
         case ConnectionState::UnsupportedCore: return "Upgrade Core";
@@ -95,22 +95,18 @@ void format_sync_age(const ClientState& state, std::uint64_t now_ms, char* outpu
 
     const std::uint64_t age_seconds = (now_ms - state.last_sync_ms()) / 1000;
     if (age_seconds < 10) {
-        std::snprintf(output, size, "Synced just now");
+        std::snprintf(output, size, "Just now");
     } else if (age_seconds < 60) {
-        std::snprintf(output, size, "Synced %us ago", static_cast<unsigned>(age_seconds));
+        std::snprintf(output, size, "%us ago", static_cast<unsigned>(age_seconds));
     } else if (age_seconds < 3600) {
-        std::snprintf(output, size, "Synced %um ago", static_cast<unsigned>(age_seconds / 60));
+        std::snprintf(output, size, "%um ago", static_cast<unsigned>(age_seconds / 60));
     } else {
-        std::snprintf(output, size, "Synced %uh ago", static_cast<unsigned>(age_seconds / 3600));
+        std::snprintf(output, size, "%uh ago", static_cast<unsigned>(age_seconds / 3600));
     }
 }
 
 std::string_view device_label(DeviceItem item) {
     switch (item) {
-        case DeviceItem::StandbyMode: return "Standby";
-        case DeviceItem::ScreenTimeout: return "Screen off";
-        case DeviceItem::AlertInterval: return "Check alerts";
-        case DeviceItem::MotionWake: return "Motion wake";
         case DeviceItem::Theme: return "Theme";
         case DeviceItem::Sound: return "Sound";
         case DeviceItem::QuietHours: return "Quiet hours";
@@ -120,11 +116,6 @@ std::string_view device_label(DeviceItem item) {
         case DeviceItem::Count: break;
     }
     return "Unknown";
-}
-
-void format_duration(char* output, std::size_t size, std::uint32_t duration_ms) {
-    if (duration_ms < 60'000) std::snprintf(output, size, "%u sec", static_cast<unsigned>(duration_ms / 1'000));
-    else std::snprintf(output, size, "%u min", static_cast<unsigned>(duration_ms / 60'000));
 }
 
 }  // namespace
@@ -206,20 +197,13 @@ void Renderer::footer(Canvas& canvas, const ClientState& state, const UiState& u
     }
 
     switch (ui.view) {
-        case View::Dashboard:
-            if (state.notifications().unread_count > 0) {
-                key_hint(canvas, x, y + 2, "ENT", "Alerts", palette);
-            } else {
-                // How old the numbers above are — the one thing Home cannot otherwise tell you, and the
-                // only reason to trust or distrust what it shows. This slot used to carry operation
-                // results ("App stopped", "Alerts marked read"), which restated what the operator had
-                // just done and what the state already showed. Failures now open an overlay instead,
-                // so they are visible from every view rather than only this one.
-                char age[40];
-                format_sync_age(state, ui.now_ms, age, sizeof(age));
-                canvas.text(5, y + 4, age, palette.muted, palette.panel_raised);
-            }
+        case View::Dashboard: {
+            key_hint(canvas, x, y + 2, "R", "Refresh", palette);
+            char age[40];
+            format_sync_age(state, ui.now_ms, age, sizeof(age));
+            canvas.text(x, y + 4, age, palette.muted, palette.panel_raised);
             break;
+        }
         case View::Apps:
             key_hint(canvas, x, y + 2, "UP/DN", "Select", palette);
             key_hint(canvas, x, y + 2, "ENT", "Actions", palette);
@@ -235,7 +219,6 @@ void Renderer::footer(Canvas& canvas, const ClientState& state, const UiState& u
                 case DeviceItem::DeviceActions:
                     key_hint(canvas, x, y + 2, "ENT", "Open", palette);
                     break;
-                case DeviceItem::MotionWake:
                 case DeviceItem::Sound:
                 case DeviceItem::QuietHours:
                     key_hint(canvas, x, y + 2, "ENT", "Toggle", palette);
@@ -302,14 +285,21 @@ void Renderer::overlay(Canvas& canvas, const UiState& ui, const ThemePalette& pa
     }
 }
 
-void Renderer::dashboard(Canvas& canvas, const ClientState& state, const UiState&,
+void Renderer::dashboard(Canvas& canvas, const ClientState& state, const UiState& ui,
                          const ThemePalette& palette) const {
+    if (state.core().received_at_ms == 0) {
+        canvas.text(8, 35, "Loading app status...", palette.muted, palette.background);
+        canvas.text(8, 55, ui.status_message.view(), palette.text, palette.background);
+        return;
+    }
     const auto counts = count_dashboard(state.core());
     char line[96];
     std::snprintf(line, sizeof(line), "Core %s", state.core().version.c_str());
     canvas.text(7, 26, line, palette.text, palette.background);
     if (state.core().core_update.available) {
         canvas.text(168, 26, "Update [U]", palette.warning, palette.background);
+    } else if (!state.core().core_update.known || !state.core().core_update.error.empty()) {
+        canvas.text(168, 26, "Update ?", palette.muted, palette.background);
     }
 
     canvas.fill_rect(5, 42, 111, 31, palette.panel);
@@ -321,9 +311,9 @@ void Renderer::dashboard(Canvas& canvas, const ClientState& state, const UiState
     canvas.text(86, 61, line, palette.warning, palette.panel);
 
     canvas.fill_rect(123, 42, 112, 31, palette.panel);
-    canvas.text(128, 48, "FAILED", palette.muted, palette.panel);
-    std::snprintf(line, sizeof(line), "%u", static_cast<unsigned>(counts.failed));
-    canvas.text(205, 48, line, counts.failed ? palette.error : palette.success, palette.panel);
+    canvas.text(128, 48, "ATTENTION", palette.muted, palette.panel);
+    std::snprintf(line, sizeof(line), "%u", static_cast<unsigned>(counts.attention));
+    canvas.text(205, 48, line, counts.attention ? palette.error : palette.success, palette.panel);
     canvas.text(128, 61, "STOPPED", palette.muted, palette.panel);
     std::snprintf(line, sizeof(line), "%u", static_cast<unsigned>(counts.stopped));
     canvas.text(205, 61, line, palette.text, palette.panel);
@@ -332,6 +322,9 @@ void Renderer::dashboard(Canvas& canvas, const ClientState& state, const UiState
     std::snprintf(line, sizeof(line), "Updates %u  Review %u  Alerts %u",
                   static_cast<unsigned>(counts.updates), static_cast<unsigned>(counts.review_updates),
                   static_cast<unsigned>(state.notifications().unread_count));
+    if (!ui.alerts_loaded) {
+        std::snprintf(line, sizeof(line), "Updates %u  Alerts ...", static_cast<unsigned>(counts.updates));
+    }
     canvas.text(10, 87, line, counts.review_updates ? palette.warning : palette.text, palette.panel);
 }
 
@@ -352,7 +345,7 @@ void Renderer::apps(Canvas& canvas, const ClientState& state, const UiState& ui,
         const bool selected = index == ui.selected_app;
         const Color background = selected ? palette.panel_raised : palette.background;
         if (selected) canvas.fill_rect(3, y, 234, 18, background);
-        canvas.fill_rect(6, y + 5, 5, 8, state_color(app.runtime_state, palette));
+        canvas.fill_rect(6, y + 5, 5, 8, needs_attention(app) ? palette.error : state_color(app.runtime_state, palette));
         canvas.text(15, y + 3, app.display_name.view(), palette.text, background);
         canvas.text(154, y + 3, runtime_state_label(app.runtime_state), state_color(app.runtime_state, palette), background);
         if (app.update.available) canvas.text(219, y + 3, app.update.requires_review ? "R" : "U", palette.warning, background);
@@ -397,10 +390,6 @@ void Renderer::device(Canvas& canvas, const ClientState&, const UiState& ui,
 
         char value[24]{};
         switch (item) {
-            case DeviceItem::StandbyMode: std::snprintf(value, sizeof(value), "%s", ui.eco_standby ? "Eco" : "Live"); break;
-            case DeviceItem::ScreenTimeout: format_duration(value, sizeof(value), ui.display_timeout_ms); break;
-            case DeviceItem::AlertInterval: format_duration(value, sizeof(value), ui.alert_interval_ms); break;
-            case DeviceItem::MotionWake: std::snprintf(value, sizeof(value), "%s", ui.motion_wake ? "On" : "Off"); break;
             case DeviceItem::Theme: std::snprintf(value, sizeof(value), "%s", theme_name(ui.theme).data()); break;
             case DeviceItem::Sound: std::snprintf(value, sizeof(value), "%s", ui.sound_enabled ? "On" : "Off"); break;
             case DeviceItem::QuietHours: std::snprintf(value, sizeof(value), "%s", ui.quiet_hours_enabled ? "On" : "Off"); break;

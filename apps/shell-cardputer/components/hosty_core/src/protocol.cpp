@@ -189,6 +189,20 @@ bool CoreUpdateStatusParser::on_json_event(const JsonEvent& event) {
 
 bool CoreUpdateStatusParser::validate() { return saw_available_; }
 
+bool CoreRestartParser::on_json_event(const JsonEvent& event) {
+    if (!remember_key(event)) return false;
+    if (event.type != JsonEventType::String) return true;
+    if (event.depth == 1 && key_at(1) == "instance" && !output_.instance.assign(event.value)) reject(ProtocolError::FieldTooLong);
+    if (event.depth == 1 && key_at(1) == "status" && !output_.status.assign(event.value)) reject(ProtocolError::FieldTooLong);
+    if (event.depth == 2 && key_at(1) == "source" && key_at(2) == "revision" &&
+        !output_.source_revision.assign(event.value)) reject(ProtocolError::FieldTooLong);
+    return protocol_error_ == ProtocolError::None;
+}
+
+bool CoreRestartParser::validate() {
+    return development_ ? !output_.instance.empty() && !output_.source_revision.empty() : !output_.status.empty();
+}
+
 AppsResponseParser::AppsResponseParser(CoreSnapshot& output) : output_(output) {
     output_.apps.clear();
     output_.update_check = {};
@@ -253,6 +267,27 @@ bool AppsResponseParser::on_json_event(const JsonEvent& event) {
 
     if (!is_scalar(event.type)) return true;
 
+    if (app_object_depth_ >= 0 && event.depth == app_object_depth_ + 2) {
+        const auto parent = key_at(app_object_depth_ + 1);
+        const auto key = key_at(event.depth);
+        if (parent == "configurationReadiness" && key == "required" && event.type == JsonEventType::Boolean)
+            current_app_.configuration_required = event.boolean;
+        if (parent == "permissionState" && event.type == JsonEventType::String) {
+            if (key == "status") current_app_.permissions_known = event.value == "known";
+            if (key == "error") current_app_.permission_error = !event.value.empty();
+        }
+        if (parent == "health" && key == "status" && event.type == JsonEventType::String) {
+            current_app_.health_healthy = event.value == "healthy";
+            current_app_.health_degraded = event.value == "degraded" || event.value == "unhealthy";
+        }
+        if (parent == "updateProgress" && key == "stage" && event.type == JsonEventType::String)
+            current_app_.update_needs_attention = event.value == "needs-attention";
+    }
+    if (app_object_depth_ >= 0 && event.depth == app_object_depth_ + 3 &&
+        key_at(app_object_depth_ + 1) == "permissionState" &&
+        key_at(app_object_depth_ + 2) == "missingRequired" && event.type == JsonEventType::String)
+        current_app_.missing_permissions = true;
+
     if (app_update_depth_ >= 0 && event.depth == app_update_depth_ + 1) apply_app_update_scalar(event);
     else if (app_object_depth_ >= 0 && event.depth == app_object_depth_ + 1) apply_app_scalar(event);
     else if (fleet_update_depth_ >= 0 && event.depth == fleet_update_depth_ + 1) {
@@ -274,10 +309,12 @@ void AppsResponseParser::apply_app_scalar(const JsonEvent& event) {
         else if (key == "runtimeState") current_app_.runtime_state = parse_runtime_state(event.value);
         else if (key == "operationStatus") current_app_.operation_state = parse_operation_state(event.value);
         else if (key == "lastError") copy_display(event.value, current_app_.last_error);
+        else if (key == "lastOperation") current_app_.last_operation_update = event.value == "update";
     } else if (event.type == JsonEventType::Boolean) {
         if (key == "system") current_app_.system = event.boolean;
         else if (key == "autostart") current_app_.autostart = event.boolean;
         else if (key == "live") current_app_.live = event.boolean;
+        else if (key == "restartRequired") current_app_.restart_required = event.boolean;
     }
 }
 
@@ -289,7 +326,7 @@ void AppsResponseParser::apply_app_update_scalar(const JsonEvent& event) {
     } else if (event.type == JsonEventType::String) {
         if (key == "planDigest" && !current_app_.update.plan_digest.assign(event.value)) reject(ProtocolError::FieldTooLong);
         else if (key == "error") {
-            current_app_.update.has_error = true;
+            current_app_.update.has_error = !event.value.empty();
             copy_display(event.value, current_app_.update.error);
         }
     }

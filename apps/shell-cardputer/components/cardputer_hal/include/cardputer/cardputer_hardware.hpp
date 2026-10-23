@@ -16,20 +16,12 @@ class CardputerHardware final : public hosty::Canvas {
 public:
     CardputerHardware();
 
-    /// What to power up. A measurement run wants as little alive as possible: the speaker amplifier
-    /// and the IMU both draw current continuously, which corrupts the very reading being taken, and the
-    /// amplifier additionally pops audibly each time the device sleeps and wakes. Nothing is rendered
-    /// during a run either, so the 32 KB frame buffer is skipped with them.
-    enum class Peripherals : std::uint8_t { Full, MeasurementOnly };
-
-    bool begin(Peripherals peripherals = Peripherals::Full);
+    bool begin();
     void update();
     void set_wake_task(TaskHandle_t task);
     [[nodiscard]] bool keyboard_activity_pending() const;
     bool read_key(KeyInput& input);
 
-    [[nodiscard]] std::uint16_t motion_delta_mg();
-    void reset_motion_reference();
     [[nodiscard]] int battery_percent() const;
     [[nodiscard]] bool charging() const;
     void display_on();
@@ -46,10 +38,6 @@ public:
 private:
     M5Canvas frame_;
     Tca8418Keyboard keyboard_;
-    float previous_x_ = 0;
-    float previous_y_ = 0;
-    float previous_z_ = 1;
-    bool accelerometer_ready_ = false;
     bool display_awake_ = true;
     bool frame_ready_ = false;
     bool force_present_ = true;

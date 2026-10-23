@@ -16,7 +16,7 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(output);
 
     hosty::CoreSnapshot core;
-    core.version.assign_truncated("0.73.0");
+    core.version.assign_truncated("0.150.2");
     for (int index = 0; index < 8; ++index) {
         hosty::AppSummary app;
         char id[32];
@@ -44,6 +44,8 @@ int main(int argc, char** argv) {
 
     hosty::UiState ui;
     ui.battery_percent = 78;
+    ui.alerts_loaded = true;
+    ui.now_ms = 1000;
     ui.firmware_version.assign_truncated(HOSTY_CARDPUTER_VERSION);
     ui.device_label.assign_truncated("Pocket admin");
     ui.endpoint.assign_truncated("https://hosty.example");

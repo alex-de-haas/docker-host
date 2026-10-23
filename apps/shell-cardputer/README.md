@@ -5,8 +5,10 @@ an administrator console for one Hosty Core host; it is not a Hosty runtime app
 and cannot open runtime-app user interfaces.
 
 The implementation is in progress. The firmware already builds for ESP32-S3,
-but physical-device power, wake, notification, and rollback acceptance remains
-open. Host-side protocol, state, power, and rendering tests do not require
+with a short-session workflow: switch on, check the dashboard, refresh explicitly,
+and switch off. Storage migration and OTA rollback acceptance remain tracked in
+[the plan](../../docs/features/cardputer-shell/plan.md). Host-side protocol, state,
+HTTP-adapter and rendering tests do not require
 ESP-IDF or hardware. A firmware build uses ESP-IDF v5.5.4 and the exact
 M5Unified/M5GFX versions recorded in `dependencies.lock`.
 
@@ -50,7 +52,7 @@ list and revoke the entry carrying the same device label.
 ## Controls
 
 Left and Right cycle through Home, Apps, Updates, and Device. The header names
-the current page, shows the live connection phase, and keeps battery state in
+the current page, shows the connection phase and snapshot state, and keeps battery state in
 view. The footer shows only the controls that apply to the current page.
 `Fn+1` through `Fn+4` remain available as direct, undisclosed page shortcuts.
 
@@ -62,16 +64,17 @@ also displays its direct letter shortcut. The legacy shortcuts remain active:
   routine update. Lifecycle/autostart commands do not appear for system apps.
 - Updates: `C` starts a fleet check and `A` confirms all routine updates.
   Review-required updates remain read-only and are completed from normal Shell.
-- Home: `U` opens Core-update confirmation only when `Update [U]` is visible.
-- Device: select Standby, Screen off, Check alerts, Motion wake, Theme, Sound,
-  or Quiet hours and press `Enter` to cycle or toggle its value. Connection
+- Home: `R` refreshes the snapshot; `Enter` opens the latest alert. `U` opens
+  Core-update confirmation only when `Update [U]` is visible.
+- Device: select Theme, Sound, or Quiet hours and press `Enter` to cycle or
+  toggle its value. Connection
   setup, Core actions, and Device actions are named rows in the same list.
 - Direct Device shortcuts: `R` restarts Core, `U` updates Core, `O` installs
-  firmware OTA, `D` enters deep standby, and `Delete` revokes the credential.
+  firmware OTA, and `Delete` revokes the credential.
   Core and firmware operations require two Enter presses.
 
 The Theme setting cycles between the dark Amber, Ocean, and Violet palettes.
-Amber is the default. The selected palette and all power preferences persist
+Amber is the default. The selected palette and sound preferences persist
 across restarts without changing Wi-Fi credentials or authorization.
 
 Informational popups close with `Esc` (`Fn+\``), the bare backtick key,
@@ -79,13 +82,31 @@ Informational popups close with `Esc` (`Fn+\``), the bare backtick key,
 popups.
 
 Mutations are refused below 15% battery unless USB-C power is connected.
-Firmware OTA requires 50% or USB-C power and a valid clock. Live standby keeps
-Wi-Fi/SSE active with the screen asleep. Eco standby disconnects Wi-Fi and
-checks alerts every 5, 10, or 30 minutes; notifications can therefore arrive
-up to one interval late. A keyboard interrupt wakes either mode immediately,
-reconnects Eco mode, and performs a full sync. The IMU is sampled at 4 Hz only
-in standby when Motion wake is enabled. Deep standby disconnects Wi-Fi and does
-not poll notifications.
+Firmware OTA requires 50% or USB-C power and a valid clock. The display stays
+on until the physical power switch is used. There is no event stream, background
+notification delivery, motion wake or standby mode. Legacy standby keys in NVS
+are ignored; upgrading preserves Wi-Fi, the Core origin and the access token.
+
+The first app snapshot appears before notifications and the cached Core update
+verdict finish loading. Unloaded alerts show `...`; an unknown Core update
+verdict shows `Update ?`. App update counts come from Core's existing checks:
+booting the console does not launch a new fleet check. The Home footer always
+shows snapshot age and Refresh. Attention includes configuration/permission
+problems, restart requirements, failed update checks and unhealthy running apps.
+
+Refresh is explicit. An operation started on the device gets a bounded follow-up
+window (two minutes, at most one refresh every two seconds while requests are
+idle). Settled app operations end follow-up early. After a minute without a fresh
+snapshot the header says Stale; the last-known values remain visible. Core restart
+uses an instance/source revision and a request ID, then checks its receipt. A lost
+restart response is recovered with the same ID during the session, without
+reissuing the POST. A Core update response is displayed as accepted, not completed.
+
+Sequential reads share one validated HTTP connection; it is released after five
+idle seconds and before firmware OTA. Startup logs report Wi-Fi readiness,
+authorization, first app data, complete sync, request duration and heap. The
+NTP startup jitter is at most 100 ms. Local HTTP does not wait for the clock;
+HTTPS still waits and compares time against an explicit UTC build epoch.
 
 ## Build and flash
 
@@ -127,6 +148,10 @@ apps/shell-cardputer/tools/host-test.sh
 apps/shell-cardputer/tools/render-harness.sh
 ```
 
+The host suite includes the actual HTTP adapter through a deterministic ESP-IDF
+seam, including persistent handles, per-request headers/body, failures, native
+header-clearing behavior and Core restart recovery.
+
 The render harness writes the four 240 x 135 views, Ocean/Violet theme samples,
 a conditional Core-update indicator, and an action-menu sample under
 `apps/shell-cardputer/build-host/render/` for review without a Cardputer.
@@ -147,7 +172,7 @@ a conditional Core-update indicator, and an action-menu sample under
   that credential in Shell and approve the new code as `host.admin`.
 - `stale` or `offline` keeps the last bounded snapshot visible but disables
   trustworthy current-state assumptions. Check Core reachability and Wi-Fi;
-  reconnect performs a full resync before returning to `online`.
+  press Home `R` after connectivity returns to fetch a fresh snapshot.
 - `Release is older` is not an OTA failure: downgrade protection rejected the
   compiled-in rolling release. A same-version rolling development image may be
   reinstalled deliberately; a download or validation error leaves the current

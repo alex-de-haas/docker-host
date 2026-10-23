@@ -1,7 +1,6 @@
 #pragma once
 
 #include "hosty/bounded.hpp"
-#include "hosty/power.hpp"
 #include "hosty/state.hpp"
 
 #include <cstdint>
@@ -18,10 +17,6 @@ enum class ColorTheme : std::uint8_t { Amber, Ocean, Violet };
 // somebody glanced at it would lose the one signal saying the host needs attention.
 enum class OverlayMode : std::uint8_t { Info, Confirmation, Menu, Alert };
 enum class DeviceItem : std::uint8_t {
-    StandbyMode,
-    ScreenTimeout,
-    AlertInterval,
-    MotionWake,
     Theme,
     Sound,
     QuietHours,
@@ -86,12 +81,8 @@ struct UiState {
     std::uint8_t device_scroll = 0;
     int battery_percent = -1;
     bool charging = false;
-    PowerMode power_mode = PowerMode::Active;
+    bool alerts_loaded = false;
     ColorTheme theme = ColorTheme::Amber;
-    bool eco_standby = false;
-    std::uint32_t display_timeout_ms = 30'000;
-    std::uint32_t alert_interval_ms = 10 * 60'000;
-    bool motion_wake = false;
     bool sound_enabled = true;
     bool quiet_hours_enabled = true;
     FixedString<32> firmware_version;
