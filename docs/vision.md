@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-20
+updated: 2026-10-23
 ---
 
 # Hosty Platform Vision
@@ -9,31 +9,44 @@ The umbrella document: where Hosty is going, so individual decisions have a crit
 against. It authorizes no implementation and owns no deliverables — work it names is tracked in the
 owning feature's `plan.md` — and it links the features it spans rather than duplicating them. It is a
 living document outside the status workflow: when the direction changes, so does this file, and
-its `updated` date says when.
+its `updated` date says when. Exploratory owner directions may remain here before any feature plan
+is requested; they are not implementation commitments or a delivery schedule.
 
 ## Thesis
 
-Hosty is becoming a **tightly integrated pair of a hosting platform and an agent harness — where
-hosting is what produces the harness's tool environment.** Installing an app is not adjacent to the
-agent story; it *is* the agent story: an installed app brings its MCP tools, its telemetry, its
-surfaces, and its identity, and the agent's reach grows by exactly that much.
+Hosty is a **modular platform for personal and shared environments, assembled from independently
+installed applications.** Docker-based application hosting supplies the foundation. Applications
+can serve their own purpose and extend the environment through tools, interfaces, data and UI
+surfaces. An assistant can use the capabilities its user has enabled, alongside ordinary direct
+interaction with those applications.
 
-This is not a hybrid of two products. The seam is already built, and every mechanism on it serves
-both halves at once:
+The environment may serve one person's everyday work, documents, media, entertainment and pet
+projects; a household sharing selected photos, events and information; or a team coordinating
+analysis, development and testing. Software development is one important use case. A project,
+workspace, assistant, Shell or Marketplace must not become a conceptual prerequisite for every
+use of Hosty. The desired minimal composition can simply host an application; richer compositions
+add the applications and integrations their users need. Product vocabulary such as "environment"
+does not introduce a new Core record or rename the existing sandbox/child-Core environment API.
 
-| Mechanism | Hosting half | Harness half |
+The hosting and assistant capabilities already share useful mechanisms:
+
+| Mechanism | Application environment | Agent integration |
 | --- | --- | --- |
-| Delegated tokens | app authenticates its user | the agent's per-call credential to app tools |
-| `interfaces.mcp` | an app's self-description | the tool set of the assistant and of external clients |
-| App identity | app→app authorization | how telemetry answers the agent |
-| Telemetry | fleet observability | the agent's diagnostic tools |
-| The manifest | what to run and how | which surfaces and tools appear |
+| Delegated tokens | app authenticates its user | agent calls tools under the acting user's authority |
+| `interfaces.mcp` | app declares its tools | enabled tools become available to assistants and external clients |
+| App identity | authorized app-to-app interaction | attributable access to each app's capabilities |
+| Telemetry | runtime visibility | diagnostic tools for authorized agents |
+| The manifest | runtime, identity and declared contributions | discoverable interfaces and UI surfaces |
 
-The intended operator story: a small company hosts its working software on Hosty; an administrator
-or a small team develops those apps *in* Hosty — edit, run, and test in place — and agents do an
-increasing share of that work under the operator's control. Regular users work in the apps; their
-feedback reaches development through surfaces built for it (an annotation overlay is the recorded
-example), with the administrator approving what becomes an agent's task.
+Installing an application makes its declared contributions available under the platform's review
+and access rules; it does not automatically enable its tools or share every user's information.
+External connections, including document and email integrations, are further possible app-supplied
+capabilities. An individual can keep a small, simple environment, while a family or team can choose
+more shared tools and richer interfaces. The composition determines the experience.
+
+The owner clarified this broader direction on 2026-10-23. Decision 52 and the
+[exploration below](#personal-and-shared-environments-owner-exploration-2026-10-23) retain the ideas
+without selecting a new architecture, creating plans or changing existing implementation status.
 
 ## App Creation And Development (owner direction, 2026-09-16)
 
@@ -70,14 +83,15 @@ Those are separate milestones, not one publish flag, and none implies public net
 The [app-authoring epic](features/app-authoring/plan.md) gathers existing mechanisms and assigns the
 remaining work to prototype workspaces, development controls, integrations and publication. Its plans
 are Draft: this direction does not approve their implementation choices. Interactive live editing
-continues decision 2 below. Decision 10 adds session-owned worktrees for Git-backed interactive work;
-non-interactive jobs with disposable validation remain the distinct Development Agent Bridge workflow.
+continues decision 2 below. Decision 10 records the original session-owned worktree direction;
+decision 52 revisits that ownership for optional shared workspaces. Non-interactive jobs with
+disposable validation remain the distinct Development Agent Bridge workflow.
 
 ## The Security Consequence
 
-If installing an app extends the agent, then **installing an app is a capability grant**, and the
-rules this repository already enforces stop being caution and become the product's core security
-property:
+As applications extend the environment, **reviewed grants and the acting user's rights bound their
+reach**. Installation, tool enablement and sharing are separate choices. The existing authority
+mechanisms apply to personal, family and team use alike:
 
 - MCP providers are off by default; enabling one is a decision, not a side effect of installing.
 - An app's `readOnlyHint` is an assertion, not enforcement; whose word counts is the operator's
@@ -85,7 +99,8 @@ property:
 - Assistant handoffs default to a draft. Owner clarification, 2026-09-27 (decision 16), permits an
   explicit receiver-side immediate-start setting for all authorized handoffs, including app prompts;
   prompt authorship is not treated as a verifiable authorization fact.
-- External clients stay read-only until enforcement is real rather than labelled.
+- External clients use their reviewed scopes. Read-only access does not become write authority;
+  the separately authorized local workspace path in decisions 46/47 retains its stated boundaries.
 
 Any future feature that weakens one of these must say so in its plan, in those words.
 
@@ -193,6 +208,9 @@ Decisions 1–5: 2026-08-19.
     Publish, Merge and Complete. Prefer managed source with a verified migration from overrides.
     The [session umbrella](features/assistant-development-sessions/plan.md) coordinates independently
     approved feature plans, including rare explicit local external-agent context exchange.
+    Decision 52 supersedes exclusive session ownership as the long-term direction: independent
+    sessions may share a workspace. It does not implement that change or require agent switching
+    within one conversation for collaboration.
 
 11. **Feedback intake before agent work (2026-09-25).** Users can capture a region or UI element,
     add a comment and submit an app/page-linked observation; screenshots and element context are
@@ -333,7 +351,9 @@ Decisions 1–5: 2026-08-19.
     It may contain worktrees for several repositories and apps, each with its own branches and PR
     history. Agent switching is deferred session work. The
     [workspace model](features/assistant-session-workspaces/feature.md) documents compatible grouping
-    of per-repository worktree records and the inspection authority boundary.
+    of per-repository worktree records and the inspection authority boundary. This remains the
+    current allocation baseline; decision 52 replaces the exclusive-session assumption in the
+    intended direction, with membership, independent lifetimes and compatibility still undesigned.
 
 25. **Read-only workspace inspection first (2026-10-09).** The initial
     [Workspaces app](features/workspaces-app/feature.md) originally shipped workspace/worktree inventory, source
@@ -629,6 +649,9 @@ Decisions 1–5: 2026-08-19.
     without publication, one consented bootstrap commit and child-Core Docker preview; the
     [local creation feature](features/app-prototype-workspaces/feature.md) records that implementation
     and resolves the earlier no-Git candidate for this creation flow.
+    Decision 52 reopens long-term UI/component placement and session/workspace retention boundaries.
+    The existing Harness integration and Workspaces-app retirement remain the implementation
+    baseline; no extraction, restoration or data migration is selected by that exploration.
 
 46. **Platform-managed development before retiring legacy source controls (2026-10-16).**
     The preferred internal and external agent journey is: request source through Hosty, receive
@@ -657,7 +680,9 @@ Decisions 1–5: 2026-08-19.
     owns missing direct-client adapters/authority; [Development Sessions D1-D2](features/assistant-development-sessions/plan.md#deliverables)
     owns integrated acceptance. Sandbox and PR services retain their own implementation ownership.
     This direction authorizes documentation alignment, not new implementation, experiments or
-    removal of `localCommand`, overrides or development profiles.
+    removal of `localCommand`, overrides or development profiles. Decision 52 additionally explores
+    bringing an existing local repository into Hosty without a duplicate checkout. That candidate
+    does not change the managed-source workflow required by decision 48 and repository instructions.
 
 47. **Built-in agents are the normal constrained path; external agents are a trusted exception (2026-10-16).**
     The owner expects most edits through the built-in assistant, including remote operators and
@@ -686,6 +711,9 @@ Decisions 1–5: 2026-08-19.
     authority and execution prerequisites. Ordinary-user MCP-only sessions retain their separate
     [On Hold plan](features/user-agent-sessions/plan.md). Source/native-runtime retirement remains
     conditional under decision 46; this clarification approves no new implementation or access grants.
+    Decision 52 broadens the product beyond this development-client preference: a hosted assistant
+    is an optional component of the environment. Existing authorization and execution limits still
+    apply to whichever clients are used.
 
 48. **Managed source and sandbox become the default local workflow (2026-10-18).**
     Preserve unpublished plans before retiring old checkouts. Use Core-registered workspaces for
@@ -752,6 +780,185 @@ Decisions 1–5: 2026-08-19.
     This records a planning decision, not a request to perform resets, remove current workspaces
     or interrupt parallel external agents in this session.
 
+52. **Explore personal and shared environments assembled from applications (2026-10-23).**
+    The owner broadens the product framing from hosting plus development to everyday personal,
+    family and team environments. Preserve the existing modular foundation and investigate useful
+    extension boundaries as scenarios become concrete. Optional workspaces, independent sessions,
+    reusable knowledge, collaboration and QA tools are composable capabilities. The detailed
+    [exploration below](#personal-and-shared-environments-owner-exploration-2026-10-23) records possible
+    forms and unresolved choices. It revises the long-term exclusive-session assumption in decisions
+    10/24 and reopens the packaging and retention choices around decision 45; it does not reverse
+    shipped behavior, select component extraction or weaken existing access boundaries.
+
+    The owner explicitly requests vision capture only: no new plans, deliverables, implementation,
+    prioritization or near-term schedule. Existing plans retain their statuses and scope; references
+    below identify related work without assigning these ideas to it. Any later selected work needs
+    its own planning and approval under repository policy. No live data or source is changed by this
+    direction, including the local-repository scenario.
+
+## Personal And Shared Environments (owner exploration, 2026-10-23)
+
+### Composition And Extension Boundaries
+
+Core supplies reusable hosting, identity, authorization and resource-lifecycle mechanisms. Apps
+supply capabilities through discoverable interfaces and can expose MCP tools and UI contributions.
+A team may combine several small apps or build one larger app with its own chosen workflow. Neither
+approach requires the platform to prescribe an analysis-to-development-to-QA pipeline. The same
+foundation should support ordinary personal applications and selectively shared household material.
+
+Review boundaries against concrete uses before designing additional contracts. Existing provider
+discovery, permissions, SDK composition and independent sandbox APIs are starting points. Questions
+include how much workspace coordination must remain with Core's resource owner, which higher-level
+workspace services could become providers, and whether Harness should keep its current combined UI
+or expose more independently usable components. The retired Workspaces application is a useful
+comparison, not a decision to restore it. No universal plugin framework or wholesale rewrite is
+selected. Docker remains a foundation without this exploration removing supported Local/native
+runtimes.
+
+Progressive UI composition matters as much as API modularity. A small installation should remain
+simple; additional panels, discussions, overlays and team tools appear when installed and useful.
+The host UI and provider choices can vary. An app may offer a highly specialized team interface
+without making that interface or its workflow a requirement for other users. Some users may never
+need to see or use a workspace.
+
+### Independent Workspaces, Sessions And Materials
+
+The desired workspace is an optional shared work context with its own identity, name and possible
+description, app associations and materials. Several users and concurrent agent sessions may
+participate, with separate session names, purposes and local conversational context. Creation from
+an agent session can remain a convenient default: create the workspace and attach that session.
+Creating another session in the same workspace should not require transferring a single conversation
+between agents. A workspace may also exist without a session, and a session without a workspace.
+
+Treat their association as a separate relationship. A session may detach or survive deletion of a
+workspace; removing one session need not remove shared work. Workspace resources should not be kept
+merely to preserve conversation history or knowledge. Preserve unfinished source and actual resource
+consumers under the existing cleanup rules until a replacement lifecycle is explicitly designed.
+Historical references, permissions after detachment and retention of shared attachments need their
+own semantics. This direction does not define a mandatory archive or authorize current cleanup.
+
+| Resource | Intended lifetime and relationship |
+| --- | --- |
+| Workspace and its worktrees | Retained while useful for work and while source/consumer checks require them; optional for ordinary app use |
+| Agent session | Has its own history and retention; can attach to or detach from a workspace |
+| Documents, attachments and reports | May be shared materials with their own owner and lifetime rather than disposable chat files |
+| Knowledge and decisions | Can remain useful across sessions and workspaces, including sessions that never had a workspace |
+| Search index | Supports discovery of authorized material; storage and rebuild/deletion semantics depend on the selected provider |
+
+Sharing concerns both people and their agents. Participation, reading a conversation, editing source,
+using an app, running tests and publishing changes need distinguishable authority. Family or team
+membership must not imply access to every member's private information or provider credentials.
+The existing administrator-only development path is the current baseline. Narrower team roles and
+ordinary-user source work remain questions alongside
+[user sessions](features/user-agent-sessions/plan.md) and existing execution/authorization work;
+this exploration does not mark their boundaries implemented.
+
+Internal sessions are enough to reason about the first scenarios. External session-history exchange
+remains open and is not a prerequisite for the ideas here. Preserve the existing external workspace
+capability without assuming that Hosty can obtain another agent application's conversation history.
+
+### Knowledge And Search Providers
+
+Knowledge is broader than project documentation: personal information, documents, selected
+conversation excerpts, requirements, decisions and reports may all be useful. Scope can be personal,
+shared with a household or team, associated with apps, or tied to a particular activity. A mandatory
+Project container is not selected. Knowledge can be discovered across permitted contexts without
+keeping their original workspaces alive or loading every previous conversation into a new session.
+
+The owner leans toward an independently supplied knowledge capability with a common interface.
+Harness knows its session representation and could submit selected history, excerpts or summaries;
+other apps could contribute their own documents or artifacts. The provider chooses how to store,
+organize and retrieve them. An initial idea placed aggregation in Core; the later clarification
+favors replaceable provider implementations, with any necessary Core contract/authority support
+still to be determined. Core need not become the owner of every source document or conversation.
+
+A search capability may be part of that provider or separately supplied. Qdrant is one possible
+backend for a provider; no engine, embedding model, deployment or vector schema is selected. The
+interoperability question is what producers and consumers exchange: content or retrievable
+references, identity/version, provenance, sharing scope and update/deletion meaning are candidate
+common elements. Apps retain their domain semantics. Native provider storage formats need not be
+identical, and a common interface must not erase authorship or current access restrictions.
+
+Prefer bounded discovery followed by explicit reading of relevant excerpts and surrounding context.
+A new session can discover associated apps and available materials without receiving their complete
+contents. Session-local context remains independent of the shared store. Searching retained history
+and recalling curated knowledge are distinct capabilities; the consuming app can expose optional
+MCP tools and instructions controlling when to use them. Tool enablement, background ingestion and
+summarization policies should be distinguishable choices, with context size and processing cost
+visible enough to tune. Disabling retrieval stops subsequent access; it does not erase information
+already delivered to a conversation.
+
+A remembered proposal, a confirmed decision and an inferred summary have different meanings.
+Retained knowledge should carry its origin and any known revision or replacement; a search hit
+alone cannot establish that a proposal was accepted or remains applicable. Exact representation,
+validation and conflict resolution remain open. Source permissions and sharing changes must also
+apply to retrieval and derived copies; indexing is not a new access grant.
+
+### Retention, Transcription And Summaries
+
+Users may choose to keep, archive, summarize or delete conversations independently of workspaces.
+One possible experience offers those choices when a conversation ages, including summarizing before
+deleting its full history. Another installation may retain all text transcripts. No universal
+retention duration or automatic deletion rule is selected, and storage cost alone does not decide
+how much history is useful.
+
+Optional recorded conversations or meetings could be transcribed into text without retaining the
+original audio indefinitely. Recording, audio retention, transcription and later summarization are
+separate choices; this is not a requirement to record every discussion. A summary is a lossy derived
+material, not a complete transcript. Preserve its provenance and make unavailable originals clear;
+any retained supporting excerpts need explicit retention semantics. Full history, summaries,
+attachments and search copies need coordinated deletion rules, without retaining workspace resources
+as an accidental archive. Indexing and bounded retrieval must keep a large archive from filling an
+agent's context in one request.
+
+### Collaboration And QA As Optional Compositions
+
+A development example combines business analysis and plans, source work, tests and review. A
+business analyst may work in an external system or a Plans-like app. A developer may prepare a
+workspace and give QA access to test it; QA may describe a failure or ask an authorized agent to
+propose a fix, and a developer may inspect, adjust and publish those changes. Users can exchange
+responsibility or work concurrently. None of those roles or transitions is a mandatory platform
+workflow, and a single person can use the same capabilities.
+
+It should be possible to distinguish earlier implementation work from later QA/agent changes and
+review a particular change before committing it. Commits and PRs provide some evidence; reviewable
+uncommitted changes and links to sessions/runs are also candidates. Their representation is open,
+including whether checkpoints are useful. Concurrent unrestricted writes to one directory do not
+provide reliable authorship merely because a session was active. This does not introduce source
+snapshot/restore guarantees or relax repository commit rules.
+
+A workspace might group one feature, several independent efforts or a release, with zero, one or
+several PRs. Multiple PR references do not themselves supply independent branches or safe concurrent
+publication; worktree/branch structure and change attribution need design. Existing per-repository
+feature/PR rules remain applicable. Comments or discussion threads may refer to a workspace, session,
+plan, change or test result. Text or optional voice collaboration could help participants and an
+agent prepare a plan together, while the resulting plan has its own explicit review and authority.
+
+A QA application could let a person describe scenarios, have an agent generate or refine Playwright
+or other test definitions, review those definitions, run them on demand or by a chosen schedule,
+and inspect reports. Test authoring, runner/provider, scheduling and reporting may be separate
+capabilities or one app's composition. Reuse authorized sandbox/runtime inputs and export useful
+results independently of temporary resources. Existing Playwright/browser support is a starting
+point, not proof that this proposed QA application or automatic scenario pipeline exists.
+
+### Bringing Existing Applications Into The Environment
+
+The desired entry points include installing from a catalog, a remote link or an existing local
+repository. One candidate flow selects source/development execution at installation and reuses the
+operator's existing checkout, possibly through existing override mechanisms, without creating a
+second source copy. A later explicit switch can select a packaged production runtime. This revisits
+source-adoption choices; it does not change today's registered-workspace instructions, adopt a
+checkout, or select a live runtime merely by recording the idea.
+
+Another candidate lets an agent inspect an existing web project and prepare the Hosty manifest
+using its declared commands, such as those in `package.json`. The intended benefit is convenient
+Start/Stop and managed hosting with minimal project changes, ideally a manifest where sufficient.
+Arbitrary projects may need additional runtime configuration. Manifestless/convention-based hosting
+is a further possibility, not a selected manifest-contract change. These entry points should be
+useful without a mandatory Marketplace, Shell or hosted assistant; an authorized external client
+may supply the editing workflow. Existing installation/source/runtime behavior remains authoritative
+until a concrete change is approved.
+
 ## Expectations And Later Directions
 
 - **Apps ship with source.** The default is open source; a company's internal apps are closed by
@@ -807,6 +1014,24 @@ the manifest contract. Two standing consequences:
 4. **How are live Core edits seen on a dev environment, with one Core per host and no installation
    split?** No mechanism exists today; running Core from source is the developer loop in this
    repository, not an operator affordance.
+5. **Which boundaries enable useful independent compositions?** Decision 52 reopens the placement
+   of higher-level workspace functions, knowledge/search, QA and collaboration. Which mechanisms
+   must stay with Core's resource owner, and which can be supplied by ordinary apps? Evaluate
+   small concrete consumers before selecting extraction or a universal interface.
+6. **What do knowledge producers and consumers need to exchange?** Resolve useful content/reference,
+   provenance, version, sharing and deletion semantics across providers with different storage,
+   without making a project or workspace mandatory. How are private, household and team scopes
+   represented, and how are changed permissions reflected in summaries and search copies?
+7. **Which retention and retrieval choices fit different environments?** Full transcripts,
+   archives, summaries and selected excerpts have different costs and fidelity. How can users
+   choose storage and processing policies, see stale or missing evidence, and bound agent context
+   without retaining obsolete workspace resources?
+8. **How is shared work attributed and reviewed?** Consider several users/sessions, uncommitted
+   changes, separate publication streams and session detachment. What evidence is reliable with
+   simultaneous writers, and what remains useful after resources or conversations are deleted?
+9. **How small can onboarding and UI composition stay?** Explore existing-repository adoption and
+   optional tools/panels without hiding lifecycle consequences or requiring a development-oriented
+   setup for personal use. Which conventions are sufficient before introducing another contract?
 
 ## Spanned Features
 
