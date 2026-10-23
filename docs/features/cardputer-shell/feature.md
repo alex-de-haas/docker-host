@@ -10,7 +10,7 @@ components: [apps/shell-cardputer]
 ## Short Operator Sessions
 
 The native ESP32-S3 firmware targets M5Stack Cardputer ADV, with a 240 x 135
-display, keyboard and 8 MB flash. Version 0.2.1 supports a short session: switch
+display, keyboard and 8 MB flash. Version 0.2.2 supports a short session: switch
 on, inspect Home, optionally operate apps, switch off.
 It has no Hosty runtime manifest and uses the native ESP-IDF build/USB workflow.
 
@@ -94,6 +94,10 @@ with a random 32-hex request ID, and observes `/api/core/operations/{id}`. Only
 completed receipts count as success. An uncertain restart retains its ID for
 another explicit recovery attempt during the same firmware session. Core update
 is presented as accepted, with explicit refresh to inspect the resulting version.
+Development and receipt parsers have non-overlapping lifetimes, so only one large
+parser occupies the command stack at a time. Native and host adapter compilation
+reject stack frames larger than 5 KiB; this is a frame-size regression guard,
+not a bound on the complete HTTP/TLS call chain.
 
 Wi-Fi settings and tokens retain their NVS keys. Battery guards and A/B OTA from
 the compiled-in firmware origin remain. The firmware README discloses plaintext
@@ -104,7 +108,7 @@ additional hardware acceptance rather than treating them as verified.
 ## Verification On 2026-10-23
 
 Version 0.2.1 is built with ESP-IDF 5.5.4 and flashed over USB to the connected
-Cardputer ADV; esptool verifies the written image hash. The final application
+Cardputer ADV; esptool verifies the written image hash. The 0.2.1 application
 image is 1,298,016 bytes, leaving 68% of its OTA slot free. NVS remains intact:
 the existing Wi-Fi connection and authorization token work with Core 0.150.2.
 
@@ -129,6 +133,18 @@ transport failure and retained snapshot age, including text bounds/overlap.
 The HTTP tests cover ESP-IDF's absent Content-Type result when clearing a GET
 body, which does not block the request.
 
+The 0.2.2 review fix reduces the ESP32-S3 `restart_core()` frame from 7,632 to
+4,240 bytes with the production compiler and `-fstack-usage`. The host compiler
+reports 7,792 to 4,224 bytes. The frame-budget check rejects the old source and
+accepts the fix; existing HTTP restart tests still exercise the complete
+request/receipt/polling flow without restarting the live Core.
+
+The 0.2.2 production image is 1,298,000 bytes and is also USB-flashed with its hash
+verified. Its boot log confirms version 0.2.2, retained Wi-Fi/token settings and
+HTTP 200 for all five startup reads. First app data appears at 6.2 s from the
+bootloader start and all supplementary data at 6.9 s in this boot; session
+validation takes 2.7 s. No requests occur during the remaining idle capture.
+
 Live Core/app lifecycle mutations, token revocation and OTA rollback have not
 been exercised in this session; the running Core remains unchanged. Remaining
 hardware acceptance and storage hardening are tracked in [the plan](plan.md).
@@ -137,7 +153,8 @@ hardware acceptance and storage hardening are tracked in [the plan](plan.md).
 
 - `apps/shell-cardputer/tools/host-test.sh`: bounded JSON/protocol/state, Attention
   semantics, rendering, clock floor, actual HTTP adapter reuse/isolation and Core
-  restart requests through an ESP-IDF test seam. Home checks cover incomplete data,
+  restart requests through an ESP-IDF test seam, plus the adapter frame budget.
+  Home checks cover incomplete data,
   retained ages after failure/disconnection, long problem names, maximum counts
   and text bounds/overlap in the 240 x 135 layout.
 - `apps/shell-cardputer/tools/render-harness.sh`: inspect all four 240 x 135 views,

@@ -120,9 +120,13 @@ HttpResult HostyClient::apply_routine_update(std::string_view app_id, std::strin
 HttpResult HostyClient::restart_core() const {
     hosty::CoreRestartState state;
     if (pending_restart_id_.empty()) {
-        hosty::CoreRestartParser development(state, true);
-        const HttpResult read = request(HTTP_METHOD_GET, "/api/core/development", {}, true, &development);
-        if (!read.ok()) return read;
+        // Keep the development parser off the stack while parsing the restart receipt.
+        // Each parser owns several KiB; the command task has only an 8 KiB stack.
+        {
+            hosty::CoreRestartParser development(state, true);
+            const HttpResult read = request(HTTP_METHOD_GET, "/api/core/development", {}, true, &development);
+            if (!read.ok()) return read;
+        }
         char id[33];
         std::snprintf(id, sizeof(id), "%08lx%08lx%08lx%08lx",
                       static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()),

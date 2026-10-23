@@ -25,6 +25,8 @@ idf_component_register(
 
 target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_20)
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Werror)
+# Keep HTTP-adapter frames below 5 KiB, leaving command-task space for HTTP/TLS.
+set_source_files_properties(hosty_client.cpp PROPERTIES COMPILE_OPTIONS "-Wframe-larger-than=5120")
 
 # Certificate time validation uses UTC, independent of the build machine's timezone.
 string(TIMESTAMP HOSTY_BUILD_EPOCH "%s" UTC)
