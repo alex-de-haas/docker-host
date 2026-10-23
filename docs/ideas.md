@@ -281,6 +281,84 @@ delegation and attribution of usage need defined semantics; aggregate usage shou
 same work twice. A Hosty-managed delegation mechanism could complement native support, but would
 need to be identified as its own execution mechanism. This idea adds no new implementation plan.
 
+## I10. Interactive Sessions That Wait For User Actions
+
+**Owner exploration:** A user could ask an assistant to start an interactive activity, act in an
+application's UI, and receive the assistant's next response in the same conversation. Chess is one
+example; learning exercises, forms and collaborative editing could use the same mechanism.
+
+**Candidate interpretation:** Keep the application's domain state, the conversation and each agent
+run distinct. The app could retain an activity identity, current state and its link to a session.
+After a response, the interaction can wait without repeatedly invoking the model. A relevant user
+action could continue the associated session with bounded context: the action, current state and
+any results needed for the next response. The model need not reconstruct the activity from the
+entire transcript. Persisted state could allow the user to close the UI and return later.
+
+MCP tools can expose application actions and state. Elicitation is a possible mechanism for asking
+the user for input through a supporting client; MCP Apps can provide an interactive view that calls
+tools and sends messages or context to the host. Hosty's own app panels are another presentation
+candidate. These mechanisms are not interchangeable guarantees: a notification or context update
+does not by itself promise that an agent will run. The assistant host needs an explicit connection
+between the interaction and the appropriate session, subject to its provider's continuation support.
+Keeping a tool call pending is another option for bounded waits, with client/runtime timeout limits
+to investigate; it need not be the lifetime of the activity.
+
+**Open boundary:** Determine which app or client owns continuation, how a waiting activity is
+cancelled or resumed after reconnect, and how duplicate actions or actions against an older state
+are handled. Opening or focusing a panel should remain separate from submitting an action.
+The [panel system](features/sdk-panel-system/feature.md) and
+[background sessions](features/agent-background-sessions/feature.md) are related existing concepts,
+not evidence of a complete app-action continuation contract. Relate this idea to I6's event and
+execution questions without selecting a new scheduler, MCP adapter or Core responsibility here.
+
+## I11. Application-Provided Roles, Instructions And Interaction Profiles
+
+**Owner exploration:** An application could supply the assistant with roles, additional instructions
+and selectable behavior profiles for its own activity. Users could choose a profile in the app
+without writing a system prompt themselves. A game might offer an opponent or coach; a language
+app might offer a conversation partner or teacher.
+
+**Candidate interpretation:** A profile could combine instructions, relevant tools and context,
+and application parameters. Keep its scope and duration explicit: a role for one activity should
+not silently change unrelated conversations. App instructions guide behavior within the user's
+selected scenario; they do not grant extra access or override platform or user constraints.
+Changing a profile could change tone or assistance without discarding the activity's state.
+Instructions express preferences, while app rules and runtime controls enforce concrete limits.
+
+### Example: Chess With Difficulty, Personality And Coaching
+
+The user says "Let's play chess," the app creates a match and opens its board, and the assistant
+joins as the selected opponent or coach. A move made on the board, by voice or in chat is validated
+by the game. The resulting position can trigger the next assistant response through the interaction
+described in I10. Move comments can accompany the opponent's reply or be requested separately.
+
+Three independent choices could shape the experience:
+
+- **Difficulty:** Beginner, intermediate or stronger play, including deliberate leniency for a
+  beginner. The game or a selected chess engine could control move selection and strength, with
+  instructions supplementing those settings. Asking an LLM to "go easy" alone does not define a
+  reproducible difficulty level. An LLM choosing moves and an engine choosing moves with an LLM
+  explaining them are alternative arrangements, not a selected implementation.
+- **Personality:** Calm, encouraging, competitive, talkative or playfully sarcastic commentary.
+  Tone and verbosity can vary independently of playing strength. A strong opponent can still be
+  supportive, and a beginner opponent can have an expressive character.
+- **Coaching:** Explain good moves and mistakes, highlight threats, offer hints or suggest trying
+  again. Feedback could appear during play, after a move or in a post-game review. A coach might
+  say, "You attacked the rook, but left your knight undefended. Would you like to reconsider?"
+  Such explanations should be grounded in the actual position and available analysis. Timing and
+  hint settings can prevent unsolicited coaching from revealing the opponent's plan.
+
+The chess app would own the board, rules, legal-move validation and persisted match state. The
+assistant would handle conversation and use the available game tools. Opponent strength, analysis
+and commentary can be supplied by different components when useful. Chess-specific rules and
+personalities need not become Core features.
+
+**Open boundary:** Explore how apps declare profiles and supported controls, how users inspect or
+change the effective role, and how a role ends when the interaction ends. Provider capabilities,
+instruction precedence and the distinction between advice and an executed action need clear
+semantics. These are reusable interaction ideas, not a chess implementation commitment or an
+addition to any feature plan.
+
 ## Relationship To Existing Documents
 
 The following implementation observations were checked on 2026-10-23 at repository commit
@@ -313,6 +391,8 @@ Primary sources consulted on 2026-10-23, in addition to the supplied slides and 
 - [Ollama deployment, local-only mode and concurrency](https://docs.ollama.com/faq).
 - [Upstream Whisper transcription and initial-prompt support](https://github.com/openai/whisper/blob/main/whisper/transcribe.py).
 - [Hugging Face's Whisper fine-tuning walkthrough](https://huggingface.co/blog/fine-tune-whisper).
+- [MCP elicitation, protocol revision 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation).
+- [MCP Apps interactive views and host communication](https://apps.extensions.modelcontextprotocol.io/api/documents/overview.html).
 
 The technical references establish available mechanisms, not verified Hosty integrations.
 Concrete integrations require their own investigation and verification when an idea is developed.
