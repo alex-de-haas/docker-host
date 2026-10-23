@@ -12,7 +12,7 @@ constexpr int kVisibleDeviceItems = 6;
 constexpr int kVisibleMenuItems = 5;
 
 constexpr ThemePalette kAmber{
-    0x2000, 0x4920, 0x6120, 0xF62D, 0x9C4D, 0xFCE3, 0x56B7, 0xFE8C, 0xFAEE, 0x6A40,
+    0x0000, 0x2104, 0x4208, 0xFFFF, 0x9495, 0xFDA0, 0x56B7, 0xFDA0, 0xFA4A, 0x4208,
 };
 constexpr ThemePalette kOcean{
     0x000A, 0x012A, 0x024A, 0xD7BE, 0x7D35, 0x3DFF, 0x4E8F, 0xF5EA, 0xFB8E, 0x0295,
@@ -38,8 +38,8 @@ std::string_view header_status(ConnectionState state) {
         case ConnectionState::TimeSyncing: return "Setting time";
         case ConnectionState::Authorizing: return "Authorize";
         case ConnectionState::Connecting: return "Syncing...";
-        case ConnectionState::Online: return "Synced";
-        case ConnectionState::Stale: return "Stale";
+        case ConnectionState::Online: return "Hosty";
+        case ConnectionState::Stale: return "Retry [R]";
         case ConnectionState::Unauthorized: return "Revoked";
         case ConnectionState::UnsupportedCore: return "Upgrade Core";
         case ConnectionState::Offline: return "Offline";
@@ -49,8 +49,8 @@ std::string_view header_status(ConnectionState state) {
 
 Color connection_color(ConnectionState state, const ThemePalette& palette) {
     switch (state) {
-        case ConnectionState::Online: return palette.success;
-        case ConnectionState::Stale:
+        case ConnectionState::Online: return palette.muted;
+        case ConnectionState::Stale: return palette.error;
         case ConnectionState::WifiConnecting:
         case ConnectionState::TimeSyncing:
         case ConnectionState::Authorizing:
@@ -88,29 +88,25 @@ void key_hint(Canvas& canvas, int& x, int y, std::string_view key, std::string_v
 // Age of the snapshot the Home numbers were read from, in the coarsest unit that is still honest.
 // A console is only worth trusting if it says how old what it shows is.
 void format_sync_age(const ClientState& state, std::uint64_t now_ms, char* output, std::size_t size) {
-    if (!state.synchronized() || state.last_sync_ms() == 0 || now_ms < state.last_sync_ms()) {
+    if (state.core().received_at_ms == 0 || state.last_sync_ms() == 0 || now_ms < state.last_sync_ms()) {
         std::snprintf(output, size, "Waiting for Core");
         return;
     }
 
     const std::uint64_t age_seconds = (now_ms - state.last_sync_ms()) / 1000;
     if (age_seconds < 10) {
-        std::snprintf(output, size, "Synced just now");
+        std::snprintf(output, size, "Checked now");
     } else if (age_seconds < 60) {
-        std::snprintf(output, size, "Synced %us ago", static_cast<unsigned>(age_seconds));
+        std::snprintf(output, size, "Checked %us ago", static_cast<unsigned>(age_seconds));
     } else if (age_seconds < 3600) {
-        std::snprintf(output, size, "Synced %um ago", static_cast<unsigned>(age_seconds / 60));
+        std::snprintf(output, size, "Checked %um ago", static_cast<unsigned>(age_seconds / 60));
     } else {
-        std::snprintf(output, size, "Synced %uh ago", static_cast<unsigned>(age_seconds / 3600));
+        std::snprintf(output, size, "Checked %uh ago", static_cast<unsigned>(age_seconds / 3600));
     }
 }
 
 std::string_view device_label(DeviceItem item) {
     switch (item) {
-        case DeviceItem::StandbyMode: return "Standby";
-        case DeviceItem::ScreenTimeout: return "Screen off";
-        case DeviceItem::AlertInterval: return "Check alerts";
-        case DeviceItem::MotionWake: return "Motion wake";
         case DeviceItem::Theme: return "Theme";
         case DeviceItem::Sound: return "Sound";
         case DeviceItem::QuietHours: return "Quiet hours";
@@ -120,11 +116,6 @@ std::string_view device_label(DeviceItem item) {
         case DeviceItem::Count: break;
     }
     return "Unknown";
-}
-
-void format_duration(char* output, std::size_t size, std::uint32_t duration_ms) {
-    if (duration_ms < 60'000) std::snprintf(output, size, "%u sec", static_cast<unsigned>(duration_ms / 1'000));
-    else std::snprintf(output, size, "%u min", static_cast<unsigned>(duration_ms / 60'000));
 }
 
 }  // namespace
@@ -165,11 +156,12 @@ void Renderer::render(Canvas& canvas, const ClientState& state, const UiState& u
 void Renderer::header(Canvas& canvas, const ClientState& state, const UiState& ui,
                       const ThemePalette& palette) const {
     canvas.fill_rect(0, 0, canvas.width(), kHeaderHeight, palette.panel_raised);
-    const std::string_view status = header_status(state.connection());
-    canvas.text(5, 5, status, connection_color(state.connection(), palette), palette.panel_raised);
+    const bool starting = ui.view == View::Dashboard && state.core().received_at_ms == 0;
+    const std::string_view status = starting ? "Hosty" : header_status(state.connection());
+    canvas.text(5, 5, status, starting ? palette.muted : connection_color(state.connection(), palette), palette.panel_raised);
 
     char page[20];
-    std::snprintf(page, sizeof(page), "< %s >", view_name(ui.view).data());
+    std::snprintf(page, sizeof(page), starting ? "%s" : "< %s >", starting ? "Startup" : view_name(ui.view).data());
     const int page_x = (canvas.width() - static_cast<int>(std::char_traits<char>::length(page)) * 6) / 2;
     canvas.text(page_x, 5, page, palette.accent, palette.panel_raised);
 
@@ -206,20 +198,18 @@ void Renderer::footer(Canvas& canvas, const ClientState& state, const UiState& u
     }
 
     switch (ui.view) {
-        case View::Dashboard:
-            if (state.notifications().unread_count > 0) {
-                key_hint(canvas, x, y + 2, "ENT", "Alerts", palette);
-            } else {
-                // How old the numbers above are — the one thing Home cannot otherwise tell you, and the
-                // only reason to trust or distrust what it shows. This slot used to carry operation
-                // results ("App stopped", "Alerts marked read"), which restated what the operator had
-                // just done and what the state already showed. Failures now open an overlay instead,
-                // so they are visible from every view rather than only this one.
-                char age[40];
-                format_sync_age(state, ui.now_ms, age, sizeof(age));
-                canvas.text(5, y + 4, age, palette.muted, palette.panel_raised);
+        case View::Dashboard: {
+            if (state.core().received_at_ms == 0) {
+                canvas.text(8, y + 4, "Status appears as soon as it is ready", palette.muted, palette.panel_raised);
+                break;
             }
+            key_hint(canvas, x, y + 2, "R", "Refresh", palette);
+            char age[40];
+            format_sync_age(state, ui.now_ms, age, sizeof(age));
+            const int age_x = canvas.width() - static_cast<int>(std::char_traits<char>::length(age)) * 6 - 5;
+            canvas.text(age_x, y + 4, age, palette.muted, palette.panel_raised);
             break;
+        }
         case View::Apps:
             key_hint(canvas, x, y + 2, "UP/DN", "Select", palette);
             key_hint(canvas, x, y + 2, "ENT", "Actions", palette);
@@ -235,7 +225,6 @@ void Renderer::footer(Canvas& canvas, const ClientState& state, const UiState& u
                 case DeviceItem::DeviceActions:
                     key_hint(canvas, x, y + 2, "ENT", "Open", palette);
                     break;
-                case DeviceItem::MotionWake:
                 case DeviceItem::Sound:
                 case DeviceItem::QuietHours:
                     key_hint(canvas, x, y + 2, "ENT", "Toggle", palette);
@@ -302,37 +291,124 @@ void Renderer::overlay(Canvas& canvas, const UiState& ui, const ThemePalette& pa
     }
 }
 
-void Renderer::dashboard(Canvas& canvas, const ClientState& state, const UiState&,
-                         const ThemePalette& palette) const {
-    const auto counts = count_dashboard(state.core());
-    char line[96];
-    std::snprintf(line, sizeof(line), "Core %s", state.core().version.c_str());
-    canvas.text(7, 26, line, palette.text, palette.background);
-    if (state.core().core_update.available) {
-        canvas.text(168, 26, "Update [U]", palette.warning, palette.background);
+void Renderer::startup(Canvas& canvas, const ClientState& state, const ThemePalette& palette) const {
+    const auto connection = state.connection();
+    const int step = connection == ConnectionState::Connecting ? 2 :
+        (connection == ConnectionState::TimeSyncing || connection == ConnectionState::Authorizing) ? 1 : 0;
+    const bool failed = connection == ConnectionState::Offline || connection == ConnectionState::Unauthorized ||
+        connection == ConnectionState::UnsupportedCore;
+    canvas.text_scaled(8, 29, failed ? "Check interrupted" : "Starting up", palette.text, palette.background, 2);
+    constexpr std::string_view detail[] = {"Connecting to Wi-Fi", "Connecting to Core", "Reading app status"};
+    const std::string_view message = connection == ConnectionState::Offline ? "Connection failed; press R to retry" :
+        connection == ConnectionState::Unauthorized ? "Device approval required" :
+        connection == ConnectionState::UnsupportedCore ? "Core needs an update" : detail[step];
+    canvas.text(8, 54, message, failed ? palette.error : palette.muted, palette.background);
+    constexpr std::string_view labels[] = {"Wi-Fi", "Core", "Apps"};
+    for (int index = 0; index < 3; ++index) {
+        const int x = 8 + index * 77;
+        const Color color = failed ? palette.border : index < step ? palette.success :
+            index == step ? palette.accent : palette.border;
+        canvas.fill_rect(x, 81, 69, 3, color);
+        canvas.text(x, 94, labels[index], index == step ? palette.text : palette.muted, palette.background);
     }
+}
 
-    canvas.fill_rect(5, 42, 111, 31, palette.panel);
-    canvas.text(10, 48, "RUNNING", palette.muted, palette.panel);
-    std::snprintf(line, sizeof(line), "%u", static_cast<unsigned>(counts.running));
-    canvas.text(86, 48, line, palette.success, palette.panel);
-    canvas.text(10, 61, "BUSY", palette.muted, palette.panel);
-    std::snprintf(line, sizeof(line), "%u", static_cast<unsigned>(counts.busy));
-    canvas.text(86, 61, line, palette.warning, palette.panel);
+namespace {
 
-    canvas.fill_rect(123, 42, 112, 31, palette.panel);
-    canvas.text(128, 48, "FAILED", palette.muted, palette.panel);
-    std::snprintf(line, sizeof(line), "%u", static_cast<unsigned>(counts.failed));
-    canvas.text(205, 48, line, counts.failed ? palette.error : palette.success, palette.panel);
-    canvas.text(128, 61, "STOPPED", palette.muted, palette.panel);
-    std::snprintf(line, sizeof(line), "%u", static_cast<unsigned>(counts.stopped));
-    canvas.text(205, 61, line, palette.text, palette.panel);
+std::string_view attention_reason(const AppSummary& app) {
+    if (app.configuration_required) return "setup needed";
+    if (app.permission_error || (app.permissions_known && app.missing_permissions)) return "permissions";
+    if (app.restart_required) return "restart needed";
+    if (app.update.has_error || app.update_needs_attention) return "update problem";
+    if (app.runtime_state == RuntimeState::Failed || app.operation_state == OperationState::Failed || !app.last_error.empty())
+        return "error reported";
+    if (app.health_degraded) return "unhealthy";
+    return "status unknown";
+}
 
-    canvas.fill_rect(5, 80, 230, 29, palette.panel);
-    std::snprintf(line, sizeof(line), "Updates %u  Review %u  Alerts %u",
-                  static_cast<unsigned>(counts.updates), static_cast<unsigned>(counts.review_updates),
-                  static_cast<unsigned>(state.notifications().unread_count));
-    canvas.text(10, 87, line, counts.review_updates ? palette.warning : palette.text, palette.panel);
+// Reserve room for the reason, even when an app has a long display name.
+void problem_detail(char* output, std::size_t size, const AppSummary& app) {
+    const auto reason = attention_reason(app);
+    const auto name = app.display_name.empty() ? app.id.view() : app.display_name.view();
+    const std::size_t maximum_name = 37 - reason.size() - 2;
+    const bool truncate = name.size() > maximum_name;
+    std::snprintf(output, size, "%.*s%s: %.*s", static_cast<int>(truncate ? maximum_name - 3 : name.size()),
+                  name.data(), truncate ? "..." : "", static_cast<int>(reason.size()), reason.data());
+}
+
+}  // namespace
+
+void Renderer::dashboard(Canvas& canvas, const ClientState& state, const UiState& ui,
+                         const ThemePalette& palette) const {
+    if (state.core().received_at_ms == 0) {
+        startup(canvas, state, palette);
+        return;
+    }
+    const auto counts = count_dashboard(state.core());
+    const auto connection = state.connection();
+    const auto& core_update = state.core().core_update;
+    const auto unread = state.notifications().unread_count;
+    std::string_view title = "All clear";
+    Color outcome_color = palette.text;
+    char detail[96] = "No apps need attention";
+    if (connection == ConnectionState::Offline || connection == ConnectionState::Stale ||
+        connection == ConnectionState::Unauthorized || connection == ConnectionState::UnsupportedCore) {
+        title = connection == ConnectionState::Offline ? "Wi-Fi offline" :
+            connection == ConnectionState::Unauthorized ? "Access revoked" :
+            connection == ConnectionState::UnsupportedCore ? "Update Core" : "Check failed";
+        outcome_color = palette.error;
+        std::snprintf(detail, sizeof(detail), "Showing the last app check");
+    } else if (counts.attention != 0) {
+        title = "Needs attention";
+        outcome_color = palette.error;
+        for (const auto& app : state.core().apps) {
+            if (needs_attention(app)) { problem_detail(detail, sizeof(detail), app); break; }
+        }
+    } else if (connection != ConnectionState::Online || !ui.alerts_loaded ||
+               (!core_update.known && core_update.error.empty())) {
+        title = "Checking status";
+        std::snprintf(detail, sizeof(detail), "App status ready; finishing checks");
+    } else if (!core_update.error.empty()) {
+        title = "Check incomplete";
+        outcome_color = palette.warning;
+        std::snprintf(detail, sizeof(detail), "Core update status unavailable");
+    } else if (counts.busy != 0) {
+        title = "Apps are busy";
+        std::snprintf(detail, sizeof(detail), "An app operation is in progress");
+    } else if (unread != 0) {
+        title = "New alerts";
+        std::snprintf(detail, sizeof(detail), "Press Enter to read the latest alert");
+    } else if (state.core().apps.empty()) {
+        title = "No apps installed";
+        std::snprintf(detail, sizeof(detail), "Core is available");
+    }
+    canvas.text_scaled(8, 24, title, outcome_color, palette.background, 2);
+    canvas.text(8, 45, detail, palette.muted, palette.background);
+
+    char line[96];
+    std::snprintf(line, sizeof(line), "%u", static_cast<unsigned>(counts.attention));
+    canvas.text_scaled(8, 62, line, counts.attention ? palette.error : palette.muted, palette.background, 3);
+    canvas.text(50, 62, "Attention", palette.text, palette.background);
+    std::snprintf(line, sizeof(line), "of %u apps", static_cast<unsigned>(state.core().apps.size()));
+    canvas.text(50, 77, line, palette.muted, palette.background);
+    canvas.fill_rect(118, 62, 1, 23, palette.border);
+    std::snprintf(line, sizeof(line), "%u", static_cast<unsigned>(counts.updates));
+    canvas.text_scaled(128, 62, line, counts.updates ? palette.accent : palette.muted, palette.background, 3);
+    canvas.text(170, 62, "Updates", palette.text, palette.background);
+    std::snprintf(line, sizeof(line), "%u review", static_cast<unsigned>(counts.review_updates));
+    canvas.text(170, 77, line, palette.muted, palette.background);
+
+    std::snprintf(line, sizeof(line), "%u running  %u busy  %u stopped", static_cast<unsigned>(counts.running),
+                  static_cast<unsigned>(counts.busy), static_cast<unsigned>(counts.stopped));
+    canvas.text(8, 96, line, palette.muted, palette.background);
+    if (!ui.alerts_loaded) std::snprintf(line, sizeof(line), "Alerts ...");
+    else if (unread > 999) std::snprintf(line, sizeof(line), "Alerts 999+ [ENT]");
+    else std::snprintf(line, sizeof(line), "Alerts %lu%s", static_cast<unsigned long>(unread), unread ? " [ENT]" : "");
+    canvas.text(8, 108, line, unread && ui.alerts_loaded ? palette.accent : palette.muted, palette.background);
+    const std::string_view update = core_update.available ? "Core update [U]" : !core_update.error.empty() ?
+        "Core check failed" : !core_update.known ? "Core ..." : "";
+    const int update_x = canvas.width() - static_cast<int>(update.size()) * 6 - 8;
+    canvas.text(update_x, 108, update, core_update.available ? palette.accent : palette.muted, palette.background);
 }
 
 void Renderer::apps(Canvas& canvas, const ClientState& state, const UiState& ui,
@@ -352,7 +428,7 @@ void Renderer::apps(Canvas& canvas, const ClientState& state, const UiState& ui,
         const bool selected = index == ui.selected_app;
         const Color background = selected ? palette.panel_raised : palette.background;
         if (selected) canvas.fill_rect(3, y, 234, 18, background);
-        canvas.fill_rect(6, y + 5, 5, 8, state_color(app.runtime_state, palette));
+        canvas.fill_rect(6, y + 5, 5, 8, needs_attention(app) ? palette.error : state_color(app.runtime_state, palette));
         canvas.text(15, y + 3, app.display_name.view(), palette.text, background);
         canvas.text(154, y + 3, runtime_state_label(app.runtime_state), state_color(app.runtime_state, palette), background);
         if (app.update.available) canvas.text(219, y + 3, app.update.requires_review ? "R" : "U", palette.warning, background);
@@ -377,30 +453,27 @@ void Renderer::updates(Canvas& canvas, const ClientState& state, const UiState&,
     }
 }
 
-void Renderer::device(Canvas& canvas, const ClientState&, const UiState& ui,
+void Renderer::device(Canvas& canvas, const ClientState& state, const UiState& ui,
                       const ThemePalette& palette) const {
-    // The firmware version used to occupy a whole line at the top of this list. It is a fact one reads
-    // once, not a setting, so it moved to the far right of this view's footer and the list gained a row.
+    char core_version[40];
+    std::snprintf(core_version, sizeof(core_version), "Core %s", state.core().version.empty() ? "unknown" : state.core().version.c_str());
+    canvas.text(8, 24, core_version, palette.muted, palette.background);
     const std::uint8_t item_count = static_cast<std::uint8_t>(DeviceItem::Count);
     const std::uint8_t start = std::min(ui.device_scroll, static_cast<std::uint8_t>(item_count - 1));
     for (std::uint8_t row = 0; row < kVisibleDeviceItems && start + row < item_count; ++row) {
         const auto index = static_cast<std::uint8_t>(start + row);
         const auto item = static_cast<DeviceItem>(index);
-        const int y = 23 + static_cast<int>(row) * 16;
+        const int y = 40 + static_cast<int>(row) * 13;
         const bool selected = index == ui.selected_device;
         const Color background = selected ? palette.panel_raised : palette.background;
         if (selected) {
-            canvas.fill_rect(3, y - 2, 234, 15, background);
-            canvas.fill_rect(3, y - 2, 3, 15, palette.accent);
+            canvas.fill_rect(3, y - 2, 234, 13, background);
+            canvas.fill_rect(3, y - 2, 3, 13, palette.accent);
         }
         canvas.text(9, y, device_label(item), selected ? palette.text : palette.muted, background);
 
         char value[24]{};
         switch (item) {
-            case DeviceItem::StandbyMode: std::snprintf(value, sizeof(value), "%s", ui.eco_standby ? "Eco" : "Live"); break;
-            case DeviceItem::ScreenTimeout: format_duration(value, sizeof(value), ui.display_timeout_ms); break;
-            case DeviceItem::AlertInterval: format_duration(value, sizeof(value), ui.alert_interval_ms); break;
-            case DeviceItem::MotionWake: std::snprintf(value, sizeof(value), "%s", ui.motion_wake ? "On" : "Off"); break;
             case DeviceItem::Theme: std::snprintf(value, sizeof(value), "%s", theme_name(ui.theme).data()); break;
             case DeviceItem::Sound: std::snprintf(value, sizeof(value), "%s", ui.sound_enabled ? "On" : "Off"); break;
             case DeviceItem::QuietHours: std::snprintf(value, sizeof(value), "%s", ui.quiet_hours_enabled ? "On" : "Off"); break;

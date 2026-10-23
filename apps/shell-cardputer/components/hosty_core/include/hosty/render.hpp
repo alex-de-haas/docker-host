@@ -1,7 +1,6 @@
 #pragma once
 
 #include "hosty/bounded.hpp"
-#include "hosty/power.hpp"
 #include "hosty/state.hpp"
 
 #include <cstdint>
@@ -18,10 +17,6 @@ enum class ColorTheme : std::uint8_t { Amber, Ocean, Violet };
 // somebody glanced at it would lose the one signal saying the host needs attention.
 enum class OverlayMode : std::uint8_t { Info, Confirmation, Menu, Alert };
 enum class DeviceItem : std::uint8_t {
-    StandbyMode,
-    ScreenTimeout,
-    AlertInterval,
-    MotionWake,
     Theme,
     Sound,
     QuietHours,
@@ -70,6 +65,8 @@ public:
     virtual void fill(Color color) = 0;
     virtual void fill_rect(int x, int y, int width, int height, Color color) = 0;
     virtual void text(int x, int y, std::string_view value, Color foreground, Color background) = 0;
+    virtual void text_scaled(int x, int y, std::string_view value, Color foreground, Color background,
+                             std::uint8_t scale) = 0;
     virtual void present() {}
 };
 
@@ -86,12 +83,8 @@ struct UiState {
     std::uint8_t device_scroll = 0;
     int battery_percent = -1;
     bool charging = false;
-    PowerMode power_mode = PowerMode::Active;
+    bool alerts_loaded = false;
     ColorTheme theme = ColorTheme::Amber;
-    bool eco_standby = false;
-    std::uint32_t display_timeout_ms = 30'000;
-    std::uint32_t alert_interval_ms = 10 * 60'000;
-    bool motion_wake = false;
     bool sound_enabled = true;
     bool quiet_hours_enabled = true;
     FixedString<32> firmware_version;
@@ -120,6 +113,7 @@ private:
                 const ThemePalette& palette) const;
     void footer(Canvas& canvas, const ClientState& state, const UiState& ui,
                 const ThemePalette& palette) const;
+    void startup(Canvas& canvas, const ClientState& state, const ThemePalette& palette) const;
     void dashboard(Canvas& canvas, const ClientState& state, const UiState& ui,
                    const ThemePalette& palette) const;
     void apps(Canvas& canvas, const ClientState& state, const UiState& ui,

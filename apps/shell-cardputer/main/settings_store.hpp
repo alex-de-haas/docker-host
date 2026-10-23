@@ -1,7 +1,6 @@
 #pragma once
 
 #include "hosty/bounded.hpp"
-#include "hosty/power.hpp"
 #include "hosty/render.hpp"
 
 #include <cstdint>
@@ -13,10 +12,7 @@ struct DeviceSettings {
     hosty::FixedString<64> time_zone{"UTC0"};
     hosty::FixedString<64> device_label{"Hosty Cardputer"};
     hosty::FixedString<96> access_token;
-    hosty::PowerPolicy power;
     hosty::ColorTheme theme = hosty::ColorTheme::Amber;
-    std::uint32_t eco_alert_interval_ms = 10 * 60'000;
-    bool eco_standby = false;
     bool sound_enabled = true;
     bool quiet_hours_enabled = true;
     std::uint8_t quiet_start_hour = 22;

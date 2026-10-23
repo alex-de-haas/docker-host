@@ -3,7 +3,6 @@
 #include "hosty/bounded.hpp"
 #include "hosty/model.hpp"
 #include "hosty/protocol.hpp"
-#include "hosty/sse.hpp"
 
 #include <esp_err.h>
 #include <esp_http_client.h>
@@ -23,12 +22,6 @@ struct HttpResult {
                protocol_error == hosty::ProtocolError::None;
     }
     [[nodiscard]] bool unauthorized() const { return status_code == 401 || status_code == 403; }
-};
-
-class EventStreamObserver : public hosty::SseListener {
-public:
-    virtual void on_stream_connected() = 0;
-    virtual void on_stream_closed(const HttpResult& result) = 0;
 };
 
 class HostyClient {
@@ -52,7 +45,8 @@ public:
     HttpResult logout() const;
     HttpResult mark_notifications_read() const;
 
-    HttpResult stream_events(EventStreamObserver& observer) const;
+    void release() const;
+    void release_if_idle(std::uint64_t now_ms) const;
 
 private:
     struct ResponseContext {
@@ -73,8 +67,10 @@ private:
     hosty::FixedString<192> origin_;
     hosty::FixedString<96> access_token_;
     bool secure_ = false;
-    // Serializes requests across the sync and command tasks; see request() for why concurrent TLS
-    // handshakes are not survivable here. The event stream keeps its own connection and is not gated
-    // by this, because it blocks for minutes by design.
+    // All access, including credential changes and idle cleanup, owns this lock.
     mutable SemaphoreHandle_t request_lock_ = nullptr;
+    mutable esp_http_client_handle_t client_ = nullptr;
+    mutable ResponseContext response_;
+    mutable hosty::FixedString<32> pending_restart_id_;
+    mutable std::uint64_t last_request_ms_ = 0;
 };

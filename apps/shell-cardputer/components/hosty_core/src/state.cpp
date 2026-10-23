@@ -36,15 +36,24 @@ bool is_running(const AppSummary& app) {
     return app.runtime_state == RuntimeState::Running;
 }
 
+bool needs_attention(const AppSummary& app) {
+    const bool transitioning = app.runtime_state == RuntimeState::Starting || app.runtime_state == RuntimeState::Stopping;
+    return app.configuration_required || app.permission_error ||
+        (app.permissions_known && app.missing_permissions) || app.restart_required || app.update.has_error ||
+        !app.last_error.empty() || app.operation_state == OperationState::Failed ||
+        app.runtime_state == RuntimeState::Unknown || app.runtime_state == RuntimeState::Failed ||
+        (app.operation_state != OperationState::Updating && !transitioning && !app.health_healthy &&
+         ((is_running(app) && app.health_degraded) || (app.last_operation_update && app.update_needs_attention)));
+}
+
 DashboardCounts count_dashboard(const CoreSnapshot& snapshot) {
     DashboardCounts counts;
     for (const auto& app : snapshot.apps) {
+        // Attention is independent of runtime: a running app can still be unhealthy.
+        if (is_running(app)) ++counts.running;
         if (is_busy(app)) ++counts.busy;
-        else if (app.runtime_state == RuntimeState::Running) ++counts.running;
-        else if (app.runtime_state == RuntimeState::Failed || app.operation_state == OperationState::Failed ||
-                 !app.last_error.empty()) ++counts.failed;
-        else ++counts.stopped;
-
+        if (app.runtime_state == RuntimeState::Stopped) ++counts.stopped;
+        if (needs_attention(app)) ++counts.attention;
         if (app.update.available) {
             ++counts.updates;
             if (app.update.requires_review || app.update.plan_digest.empty()) ++counts.review_updates;
@@ -140,15 +149,6 @@ bool ClientState::predict_runtime_state(std::string_view app_id, RuntimeState st
         return true;
     }
     return false;
-}
-
-SyncHint ClientState::on_sse_event(std::string_view event_name) {
-    if (event_name == "notification") return SyncHint::Notifications;
-    if (event_name == "app.changed" || event_name == "app.removed" ||
-        event_name == "app.update-check.changed" || event_name == "apps.update-check.changed") {
-        return SyncHint::Apps;
-    }
-    return SyncHint::None;
 }
 
 bool ClientState::stale(std::uint64_t now_ms, std::uint64_t threshold_ms) const {

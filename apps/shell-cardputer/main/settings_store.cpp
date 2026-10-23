@@ -47,22 +47,11 @@ bool SettingsStore::load(DeviceSettings& settings) const {
     read_string(handle, "device_label", settings.device_label);
     read_string(handle, "access_token", settings.access_token);
 
-    std::uint32_t value32 = 0;
-    std::uint16_t value16 = 0;
     std::uint8_t value8 = 0;
-    if (nvs_get_u32(handle, "display_ms", &value32) == ESP_OK) settings.power.display_timeout_ms = value32;
-    if (nvs_get_u32(handle, "motion_cd_ms", &value32) == ESP_OK) settings.power.motion_cooldown_ms = value32;
-    if (nvs_get_u16(handle, "motion_mg", &value16) == ESP_OK) settings.power.motion_threshold_mg = value16;
-    if (nvs_get_u8(handle, "motion_wake", &value8) == ESP_OK) settings.power.motion_wake = value8 != 0;
     if (nvs_get_u8(handle, "sound", &value8) == ESP_OK) settings.sound_enabled = value8 != 0;
     if (nvs_get_u8(handle, "quiet", &value8) == ESP_OK) settings.quiet_hours_enabled = value8 != 0;
     if (nvs_get_u8(handle, "quiet_start", &value8) == ESP_OK && value8 < 24) settings.quiet_start_hour = value8;
     if (nvs_get_u8(handle, "quiet_end", &value8) == ESP_OK && value8 < 24) settings.quiet_end_hour = value8;
-    if (nvs_get_u8(handle, "eco", &value8) == ESP_OK) settings.eco_standby = value8 != 0;
-    if (nvs_get_u32(handle, "eco_alert_ms", &value32) == ESP_OK &&
-        (value32 == 5 * 60'000 || value32 == 10 * 60'000 || value32 == 30 * 60'000)) {
-        settings.eco_alert_interval_ms = value32;
-    }
     if (nvs_get_u8(handle, "theme", &value8) == ESP_OK &&
         value8 <= static_cast<std::uint8_t>(hosty::ColorTheme::Violet)) {
         settings.theme = static_cast<hosty::ColorTheme>(value8);
@@ -80,16 +69,10 @@ bool SettingsStore::save(const DeviceSettings& settings) const {
         write_string(handle, "time_zone", settings.time_zone) &&
         write_string(handle, "device_label", settings.device_label) &&
         write_string(handle, "access_token", settings.access_token) &&
-        nvs_set_u32(handle, "display_ms", settings.power.display_timeout_ms) == ESP_OK &&
-        nvs_set_u32(handle, "motion_cd_ms", settings.power.motion_cooldown_ms) == ESP_OK &&
-        nvs_set_u16(handle, "motion_mg", settings.power.motion_threshold_mg) == ESP_OK &&
-        nvs_set_u8(handle, "motion_wake", settings.power.motion_wake ? 1 : 0) == ESP_OK &&
         nvs_set_u8(handle, "sound", settings.sound_enabled ? 1 : 0) == ESP_OK &&
         nvs_set_u8(handle, "quiet", settings.quiet_hours_enabled ? 1 : 0) == ESP_OK &&
         nvs_set_u8(handle, "quiet_start", settings.quiet_start_hour) == ESP_OK &&
         nvs_set_u8(handle, "quiet_end", settings.quiet_end_hour) == ESP_OK &&
-        nvs_set_u8(handle, "eco", settings.eco_standby ? 1 : 0) == ESP_OK &&
-        nvs_set_u32(handle, "eco_alert_ms", settings.eco_alert_interval_ms) == ESP_OK &&
         nvs_set_u8(handle, "theme", static_cast<std::uint8_t>(settings.theme)) == ESP_OK &&
         nvs_commit(handle) == ESP_OK;
     nvs_close(handle);

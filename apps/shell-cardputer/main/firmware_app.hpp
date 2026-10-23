@@ -3,7 +3,6 @@
 #include "cardputer/cardputer_hardware.hpp"
 #include "firmware_ota.hpp"
 #include "hosty/auth.hpp"
-#include "hosty/power.hpp"
 #include "hosty/render.hpp"
 #include "hosty/state.hpp"
 #include "hosty_client.hpp"
@@ -12,19 +11,15 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
-#include <esp_pm.h>
 
 #include <atomic>
 #include <cstdint>
 #include <string_view>
 
-class FirmwareApp final : public EventStreamObserver {
+class FirmwareApp final {
 public:
     void run();
 
-    bool on_sse_event(const hosty::SseEvent& event) override;
-    void on_stream_connected() override;
-    void on_stream_closed(const HttpResult& result) override;
 
 private:
     enum class PendingAction : std::uint8_t {
@@ -40,7 +35,7 @@ private:
         FirmwareOta,
         Revoke,
         MarkAlertsRead,
-        DeepStandby,
+        CheckUpdates,
     };
 
     enum class MenuContext : std::uint8_t { None, App, Updates, Core, Device };
@@ -57,10 +52,8 @@ private:
         std::uint8_t presses_remaining = 0;
     };
 
-    static void sse_task_entry(void* context);
     static void command_task_entry(void* context);
     static void apps_sync_task_entry(void* context);
-    void sse_task();
     void command_task();
     void apps_sync_task();
     bool initialize();
@@ -71,7 +64,7 @@ private:
     bool synchronize_clock();
     bool authorize();
     bool full_sync();
-    bool sync_notifications(bool alert);
+    void play_alert();
     void main_loop();
     void handle_key(const cardputer::KeyInput& key);
     void move_view(int delta);
@@ -100,11 +93,6 @@ private:
     void show_error(std::string_view detail);
     void set_request_failure(std::string_view operation, const HttpResult& result);
     void render();
-    void apply_power_action(const hosty::PowerAction& action);
-    void enter_eco_standby();
-    void resume_from_eco();
-    void poll_eco_notifications();
-    void enter_deep_standby();
     void signal_transport(EventBits_t bits);
     void handle_transport_events();
     void mark_image_healthy_when_ready();
@@ -124,7 +112,6 @@ private:
     hosty::NotificationSnapshot staging_notifications_;
     hosty::UiState ui_;
     hosty::Renderer renderer_;
-    hosty::PowerController power_;
     Confirmation confirmation_;
     Confirmation pending_command_;
     MenuContext menu_context_ = MenuContext::None;
@@ -136,24 +123,17 @@ private:
     hosty::RuntimeState predicted_state_ = hosty::RuntimeState::Unknown;
     EventGroupHandle_t transport_events_ = nullptr;
     TaskHandle_t main_task_ = nullptr;
-    TaskHandle_t sse_task_handle_ = nullptr;
-    esp_pm_lock_handle_t display_awake_lock_ = nullptr;
-    esp_pm_lock_handle_t display_apb_lock_ = nullptr;
-    std::uint64_t last_motion_sample_ms_ = 0;
     std::uint64_t last_power_sample_ms_ = 0;
     std::uint64_t last_age_tick_ms_ = 0;
     std::uint64_t last_full_sync_ms_ = 0;
+    std::uint64_t follow_operation_until_ms_ = 0;
+    std::uint64_t next_operation_sync_ms_ = 0;
     std::uint64_t last_sound_ms_ = 0;
     std::uint64_t boot_start_ms_ = 0;
-    std::uint64_t next_eco_poll_ms_ = 0;
     std::uint32_t last_unread_count_ = 0;
-    std::uint16_t last_motion_delta_mg_ = 0;
     bool clock_ready_ = false;
-    std::atomic_bool stream_suspended_{false};
     bool image_pending_verification_ = false;
     bool image_health_eligible_ = false;
-    bool display_awake_lock_held_ = false;
-    bool display_apb_lock_held_ = false;
     bool command_in_flight_ = false;
     bool command_waiting_for_sync_ = false;
     bool apps_sync_in_flight_ = false;
@@ -161,6 +141,5 @@ private:
     SyncMode apps_sync_mode_ = SyncMode::Apps;
     bool full_sync_pending_ = false;
     bool notifications_sync_pending_ = false;
-    bool eco_sleeping_ = false;
     bool render_requested_ = true;
 };

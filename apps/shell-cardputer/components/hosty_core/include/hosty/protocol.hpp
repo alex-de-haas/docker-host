@@ -96,6 +96,16 @@ private:
     bool saw_available_ = false;
 };
 
+class CoreRestartParser final : public ProtocolParserBase {
+public:
+    CoreRestartParser(CoreRestartState& output, bool development) : output_(output), development_(development) { output_ = {}; }
+    bool on_json_event(const JsonEvent& event) override;
+private:
+    bool validate() override;
+    CoreRestartState& output_;
+    bool development_;
+};
+
 class AppsResponseParser final : public ProtocolParserBase {
 public:
     explicit AppsResponseParser(CoreSnapshot& output);

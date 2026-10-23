@@ -4,6 +4,9 @@
 #include <esp_log.h>
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
+#include <esp_random.h>
+#include <freertos/task.h>
+#include <cstdio>
 
 #include <cerrno>
 #include <cstdint>
@@ -12,10 +15,6 @@ namespace {
 
 constexpr const char* kTag = "hosty_http";
 constexpr int kLifecycleRequestTimeoutMs = 120'000;
-
-// Two missed keep-alive comments. Core sends one every 20 seconds, so this tolerates a single late
-// heartbeat and still notices a dead connection long before TCP keepalive would.
-constexpr std::int64_t kStreamSilenceLimitUs = 50LL * 1'000'000;
 
 bool unreserved(char character) {
     return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
@@ -28,6 +27,7 @@ char hex_digit(unsigned value) { return static_cast<char>(value < 10 ? '0' + val
 }  // namespace
 
 bool HostyClient::configure(std::string_view origin, std::string_view access_token) {
+    release();
     if (!origin_.assign(origin) || !access_token_.assign(access_token)) return false;
     secure_ = origin.starts_with("https://");
     if (request_lock_ == nullptr) {
@@ -38,7 +38,10 @@ bool HostyClient::configure(std::string_view origin, std::string_view access_tok
 }
 
 void HostyClient::set_access_token(std::string_view access_token) {
+    release();
+    if (request_lock_ != nullptr) xSemaphoreTake(request_lock_, portMAX_DELAY);
     if (!access_token_.assign(access_token)) access_token_.clear();
+    if (request_lock_ != nullptr) xSemaphoreGive(request_lock_);
 }
 
 HttpResult HostyClient::request_device_code(std::string_view label, hosty::DeviceCode& output) const {
@@ -115,7 +118,50 @@ HttpResult HostyClient::apply_routine_update(std::string_view app_id, std::strin
 }
 
 HttpResult HostyClient::restart_core() const {
-    return request(HTTP_METHOD_POST, "/api/core/restart", "{}", true, nullptr);
+    hosty::CoreRestartState state;
+    if (pending_restart_id_.empty()) {
+        // Keep the development parser off the stack while parsing the restart receipt.
+        // Each parser owns several KiB; the command task has only an 8 KiB stack.
+        {
+            hosty::CoreRestartParser development(state, true);
+            const HttpResult read = request(HTTP_METHOD_GET, "/api/core/development", {}, true, &development);
+            if (!read.ok()) return read;
+        }
+        char id[33];
+        std::snprintf(id, sizeof(id), "%08lx%08lx%08lx%08lx",
+                      static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()),
+                      static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()));
+        hosty::FixedString<256> body;
+        if (!body.append("{\"requestId\":") || !append_json_string(id, body) ||
+            !body.append(",\"instance\":") || !append_json_string(state.instance.view(), body) ||
+            !body.append(",\"sourceRevision\":") || !append_json_string(state.source_revision.view(), body) ||
+            !body.append('}')) return {ESP_ERR_INVALID_SIZE};
+        pending_restart_id_.assign_truncated(id);
+        ESP_LOGI(kTag, "Core restart request=%s", pending_restart_id_.c_str());
+        hosty::CoreRestartParser receipt(state, false);
+        const HttpResult accepted = request(HTTP_METHOD_POST, "/api/core/restart", body.view(), true, &receipt);
+        if (accepted.status_code >= 400 && accepted.transport_error == ESP_OK) {
+            pending_restart_id_.clear();
+            return accepted;
+        }
+        // A dropped POST response is uncertain: recover by ID, never issue another restart.
+    }
+    hosty::FixedString<96> path{"/api/core/operations/"};
+    static_cast<void>(path.append(pending_restart_id_.view()));
+    const auto deadline = esp_timer_get_time() + 120LL * 1'000'000;
+    while (esp_timer_get_time() < deadline) {
+        vTaskDelay(pdMS_TO_TICKS(2'000));
+        hosty::CoreRestartParser operation(state, false);
+        const HttpResult result = request(HTTP_METHOD_GET, path.view(), {}, true, &operation, 5'000);
+        if (result.unauthorized()) return result;
+        if (!result.ok()) continue;
+        if (state.status == "completed" || state.status == "failed") {
+            pending_restart_id_.clear();
+            return state.status == "completed" ? result : HttpResult{ESP_FAIL, result.status_code};
+        }
+    }
+    // Retain the ID for another explicit status-recovery attempt during this session.
+    return {ESP_ERR_TIMEOUT};
 }
 
 HttpResult HostyClient::update_core() const {
@@ -133,80 +179,6 @@ HttpResult HostyClient::mark_notifications_read() const {
     return request(HTTP_METHOD_POST, "/api/notifications/read", "{\"ids\":null}", true, nullptr);
 }
 
-HttpResult HostyClient::stream_events(EventStreamObserver& observer) const {
-    hosty::FixedString<320> url;
-    if (!make_url("/api/events", url)) return {ESP_ERR_INVALID_SIZE};
-
-    esp_http_client_config_t config{};
-    config.url = url.c_str();
-    config.method = HTTP_METHOD_GET;
-    // Comfortably past Core's 20-second keep-alive rather than 5 seconds past it: one heartbeat
-    // delayed by a loaded host or a busy access point should not cost a reconnect and a full resync.
-    // Liveness is enforced by kStreamSilenceLimitUs below, not by this timeout.
-    config.timeout_ms = 45'000;
-    config.buffer_size = 1024;
-    config.buffer_size_tx = 512;
-    config.keep_alive_enable = true;
-    if (secure_) config.crt_bundle_attach = esp_crt_bundle_attach;
-
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (client == nullptr) return {ESP_ERR_NO_MEM};
-    apply_common_headers(client, true, "text/event-stream");
-
-    HttpResult result;
-    result.transport_error = esp_http_client_open(client, 0);
-    if (result.transport_error == ESP_OK) {
-        const std::int64_t headers = esp_http_client_fetch_headers(client);
-        result.status_code = esp_http_client_get_status_code(client);
-        if (headers < 0) result.transport_error = static_cast<esp_err_t>(headers);
-    }
-
-    hosty::SseParser parser(observer);
-    if (result.transport_error == ESP_OK && result.status_code >= 200 && result.status_code < 300) {
-        observer.on_stream_connected();
-        // esp_http_client_read() fills the requested length before returning. A
-        // large destination therefore retains small SSE frames indefinitely
-        // because Core's heartbeat arrives before the socket timeout. Reading
-        // one byte at a time lets the streaming parser dispatch each frame as
-        // soon as its terminating blank line arrives.
-        char byte = 0;
-        std::int64_t last_byte_us = esp_timer_get_time();
-        while (true) {
-            const int read = esp_http_client_read(client, &byte, 1);
-            if (read > 0) {
-                last_byte_us = esp_timer_get_time();
-                if (parser.feed(std::string_view(&byte, 1)) != hosty::SseError::None) {
-                    result.transport_error = ESP_FAIL;
-                    break;
-                }
-                continue;
-            }
-            if (read == 0) break;
-            if (read == -ESP_ERR_HTTP_EAGAIN || errno == EAGAIN) {
-                // A socket timeout is indistinguishable from "nothing to read yet", so silence is the
-                // only signal that the connection died without telling us — a NAT entry dropped, an
-                // access point rebooted. Core sends a keep-alive comment every 20 seconds, so silence
-                // well past that means the stream is gone and waiting for TCP keepalive to notice
-                // would leave the console showing stale state in the meantime.
-                if (esp_timer_get_time() - last_byte_us > kStreamSilenceLimitUs) {
-                    ESP_LOGW(kTag, "Event stream silent for %lld s; reconnecting",
-                             static_cast<long long>(kStreamSilenceLimitUs / 1'000'000));
-                    result.transport_error = ESP_ERR_TIMEOUT;
-                    break;
-                }
-                continue;
-            }
-            result.transport_error = ESP_FAIL;
-            break;
-        }
-        if (result.transport_error == ESP_OK && parser.finish() != hosty::SseError::None) result.transport_error = ESP_FAIL;
-    }
-    esp_http_client_close(client);
-    esp_http_client_cleanup(client);
-    observer.on_stream_closed(result);
-    return result;
-}
-
 esp_err_t HostyClient::http_event(esp_http_client_event_t* event) {
     auto* context = static_cast<ResponseContext*>(event->user_data);
     if (event->event_id == HTTP_EVENT_ON_DATA && context != nullptr && context->parser != nullptr && event->data_len > 0) {
@@ -220,71 +192,87 @@ esp_err_t HostyClient::http_event(esp_http_client_event_t* event) {
     return ESP_OK;
 }
 
+void HostyClient::release() const {
+    if (request_lock_ == nullptr) return;
+    xSemaphoreTake(request_lock_, portMAX_DELAY);
+    if (client_ != nullptr) esp_http_client_cleanup(client_);
+    client_ = nullptr;
+    response_ = {};
+    xSemaphoreGive(request_lock_);
+}
+
+void HostyClient::release_if_idle(std::uint64_t now_ms) const {
+    if (request_lock_ == nullptr || xSemaphoreTake(request_lock_, 0) != pdTRUE) return;
+    if (client_ != nullptr && now_ms >= last_request_ms_ && now_ms - last_request_ms_ >= 5'000) {
+        esp_http_client_cleanup(client_);
+        client_ = nullptr;
+        response_ = {};
+    }
+    xSemaphoreGive(request_lock_);
+}
+
 HttpResult HostyClient::request(esp_http_client_method_t method, std::string_view path, std::string_view body,
                                 bool authenticated, hosty::ProtocolParserBase* parser, int timeout_ms) const {
     hosty::FixedString<320> url;
     if (!make_url(path, url)) return {ESP_ERR_INVALID_SIZE};
-    ResponseContext context{parser, false};
-
-    esp_http_client_config_t config{};
-    config.url = url.c_str();
-    config.method = method;
-    config.timeout_ms = timeout_ms;
-    config.buffer_size = 1024;
-    config.buffer_size_tx = 512;
-    config.keep_alive_enable = true;
-    config.event_handler = &HostyClient::http_event;
-    config.user_data = &context;
-    if (secure_) config.crt_bundle_attach = esp_crt_bundle_attach;
-
-    // One client per request, torn down when it returns — and only one at a time.
-    //
-    // A pooled, kept-alive connection was tried here and reverted: it cut a full sync from 5,990 ms to
-    // 460 ms, but the device already keeps one TLS context alive permanently for the event stream, and
-    // holding a second one across requests pushed mbedTLS into MBEDTLS_ERR_SSL_ALLOC_FAILED mid-read
-    // (a 12.8 KB allocation refused) and starved xTaskCreate of a contiguous 10 KB for the sync task.
-    // On 512 KB of internal SRAM with a 32 KB frame buffer and three task stacks, latency is the
-    // cheaper thing to spend. Intermediate lifecycle states stay visible regardless, because the UI
-    // predicts them locally instead of waiting for the round-trip.
-    //
-    // The lock is what survived that experiment, and it turned out to be the valuable half. Requests
-    // come from the sync task and the command task independently, so without it a lifecycle POST and an
-    // /api/apps GET perform their TLS handshakes simultaneously — three live contexts counting the
-    // event stream, two certificate-bundle validations competing for the same heap. That fails as
-    // ESP_ERR_HTTP_FETCH_HEADER after ten or fifteen seconds of retrying, on operations that take an
-    // instant when they are allowed to run one after another.
     if (request_lock_ == nullptr) return {ESP_ERR_INVALID_STATE};
     xSemaphoreTake(request_lock_, portMAX_DELAY);
-
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (client == nullptr) {
+    response_ = {parser, false};
+    const std::int64_t started = esp_timer_get_time();
+    if (client_ == nullptr) {
+        esp_http_client_config_t config{};
+        config.url = url.c_str();
+        config.buffer_size = 1024;
+        config.buffer_size_tx = 512;
+        config.keep_alive_enable = true;
+        config.disable_auto_redirect = true;
+        config.event_handler = &HostyClient::http_event;
+        config.user_data = &response_;
+        if (secure_) config.crt_bundle_attach = esp_crt_bundle_attach;
+        client_ = esp_http_client_init(&config);
+    }
+    if (client_ == nullptr) {
+        response_ = {};
         xSemaphoreGive(request_lock_);
         return {ESP_ERR_NO_MEM};
     }
-    apply_common_headers(client, authenticated);
-    if (!body.empty()) {
-        esp_http_client_set_header(client, "Content-Type", "application/json");
-        esp_http_client_set_post_field(client, body.data(), static_cast<int>(body.size()));
-    }
-
     HttpResult result;
-    result.transport_error = esp_http_client_perform(client);
-    result.status_code = esp_http_client_get_status_code(client);
+    result.transport_error = esp_http_client_set_url(client_, url.c_str());
+    if (result.transport_error == ESP_OK) result.transport_error = esp_http_client_set_method(client_, method);
+    if (result.transport_error == ESP_OK) result.transport_error = esp_http_client_set_timeout_ms(client_, timeout_ms);
+    apply_common_headers(client_, authenticated);
+    // Clear per-request state as well as setting it: a GET following a POST must not
+    // retain the old body, and an anonymous request must not inherit a bearer token.
+    if (body.empty()) esp_http_client_delete_header(client_, "Content-Type");
+    else esp_http_client_set_header(client_, "Content-Type", "application/json");
+    if (result.transport_error == ESP_OK) {
+        result.transport_error = esp_http_client_set_post_field(client_, body.empty() ? nullptr : body.data(),
+                                                                static_cast<int>(body.size()));
+        // Clearing the body deletes Content-Type in ESP-IDF. A new GET has no such
+        // header, so ESP_ERR_NOT_FOUND is successful clearing, not a transport error.
+        if (body.empty() && result.transport_error == ESP_ERR_NOT_FOUND) result.transport_error = ESP_OK;
+    }
+    if (result.transport_error == ESP_OK) result.transport_error = esp_http_client_perform(client_);
+    result.status_code = esp_http_client_get_status_code(client_);
     if (result.transport_error == ESP_OK && result.status_code >= 200 && result.status_code < 300 && parser != nullptr) {
         result.protocol_error = parser->finish();
-    } else if (context.parser_failed) {
-        result.protocol_error = hosty::ProtocolError::Json;
-    }
+    } else if (response_.parser_failed) result.protocol_error = hosty::ProtocolError::Json;
+    ESP_LOGI(kTag, "%s %.*s: %lld ms HTTP=%d transport=%s protocol=%s heap=%u largest=%u",
+             method == HTTP_METHOD_GET ? "GET" : "POST", static_cast<int>(path.size()), path.data(),
+             static_cast<long long>((esp_timer_get_time() - started) / 1000), result.status_code,
+             esp_err_to_name(result.transport_error), hosty::protocol_error_name(result.protocol_error),
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+    // Never replay a mutation after an ambiguous transport failure. The next explicit
+    // request gets a clean client; parser output from a failed read is not installed.
     if (!result.ok()) {
-        ESP_LOGW(kTag, "%.*s %.*s failed: transport=%s status=%d protocol=%s heap-free=%u largest=%u",
-                 static_cast<int>(method == HTTP_METHOD_GET ? 3 : method == HTTP_METHOD_POST ? 4 : 6),
-                 method == HTTP_METHOD_GET ? "GET" : method == HTTP_METHOD_POST ? "POST" : "DELETE",
-                 static_cast<int>(path.size()), path.data(), esp_err_to_name(result.transport_error), result.status_code,
-                 hosty::protocol_error_name(result.protocol_error),
-                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
-                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+        esp_http_client_cleanup(client_);
+        client_ = nullptr;
+    } else {
+        esp_http_client_set_post_field(client_, nullptr, 0);
     }
-    esp_http_client_cleanup(client);
+    response_ = {};
+    last_request_ms_ = static_cast<std::uint64_t>(esp_timer_get_time() / 1000);
     xSemaphoreGive(request_lock_);
     return result;
 }
@@ -330,5 +318,7 @@ void HostyClient::apply_common_headers(esp_http_client_handle_t client, bool aut
         static_cast<void>(authorization.append("Bearer "));
         static_cast<void>(authorization.append(access_token_.view()));
         esp_http_client_set_header(client, "Authorization", authorization.c_str());
+    } else {
+        esp_http_client_delete_header(client, "Authorization");
     }
 }

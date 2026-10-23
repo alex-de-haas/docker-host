@@ -1,14 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Debug image: same sources, power management compiled out.
-#
-# The shipping build enables light sleep and frequency scaling, which take the USB-Serial/JTAG
-# peripheral down with them — the device drops off the host between a build and a flash. This profile
-# keeps it enumerated so the edit/flash/observe loop stops stalling.
-#
-# It builds into build-debug/ so it never clobbers the release artifacts, and it layers
-# sdkconfig.debug over sdkconfig.defaults rather than editing either.
+# Debug image: production behavior with extra logging, built in build-debug/.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 app_dir="$(cd "${script_dir}/.." && pwd)"
 
@@ -30,5 +23,5 @@ Debug image built in build-debug/. Flash it with:
 
   apps/shell-cardputer/tools/debug-flash.sh /dev/cu.usbmodemXXXX
 
-Battery figures from this image are meaningless — measure with the release build.
+Both images keep the screen and USB active until the physical power switch is used.
 MESSAGE

@@ -1,11 +1,10 @@
 #include "hosty/auth.hpp"
+#include "hosty/clock.hpp"
 #include "hosty/endpoint.hpp"
 #include "hosty/json_stream.hpp"
-#include "hosty/power.hpp"
 #include "hosty/protocol.hpp"
 #include "hosty/render.hpp"
 #include "hosty/semver.hpp"
-#include "hosty/sse.hpp"
 #include "hosty/state.hpp"
 #include "ppm_canvas.hpp"
 
@@ -14,6 +13,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #ifndef HOSTY_FIXTURE_DIR
 #define HOSTY_FIXTURE_DIR "fixtures"
@@ -46,19 +46,6 @@ std::uint8_t rgb332_bucket(hosty::Color color) {
                                      (((color >> 8U) & 0x07U) << 2U) |
                                      ((color >> 3U) & 0x03U));
 }
-
-class CollectSse final : public hosty::SseListener {
-public:
-    bool on_sse_event(const hosty::SseEvent& event) override {
-        name = event.name;
-        data = event.data;
-        ++count;
-        return true;
-    }
-    std::string name;
-    std::string data;
-    int count = 0;
-};
 
 class AcceptJson final : public hosty::JsonListener {
 public:
@@ -219,46 +206,193 @@ void test_notifications() {
     CHECK(notifications.items[0].app_id == "com.example.app");
 }
 
-void test_sse() {
-    CollectSse listener;
-    hosty::SseParser parser(listener);
-    constexpr std::string_view stream = ": connected\n\nevent: app.changed\ndata: {\"appId\":\"com.example\"}\n\nevent: notification\ndata: line one\ndata: line two\n\n";
-    for (const char character : stream) CHECK(parser.feed(std::string_view(&character, 1)) == hosty::SseError::None);
-    CHECK(parser.finish() == hosty::SseError::None);
-    CHECK(listener.count == 2);
-    CHECK(listener.name == "notification");
-    CHECK(listener.data == "line one\nline two");
-}
-
-void test_state_and_power() {
+void test_state() {
     hosty::ClientState state;
     state.apply({hosty::ConnectionEvent::Type::Configured, 0});
     state.apply({hosty::ConnectionEvent::Type::WifiConnected, 10});
     state.apply({hosty::ConnectionEvent::Type::TimeReady, 20});
     state.apply({hosty::ConnectionEvent::Type::SyncCompleted, 30});
     CHECK(state.connection() == hosty::ConnectionState::Online);
-    CHECK(state.on_sse_event("app.changed") == hosty::SyncHint::Apps);
-    CHECK(state.on_sse_event("future.event") == hosty::SyncHint::None);
     state.apply({hosty::ConnectionEvent::Type::TransportFailed, 40});
     CHECK(state.connection() == hosty::ConnectionState::Stale);
 
-    hosty::PowerPolicy policy;
-    policy.display_timeout_ms = 1000;
-    policy.motion_cooldown_ms = 500;
-    policy.motion_threshold_mg = 100;
-    hosty::PowerController power(policy);
-    CHECK(power.tick(999, false, 0).display_off == false);
-    CHECK(power.tick(1000, false, 0).display_off);
-    CHECK(power.mode() == hosty::PowerMode::OnlineStandby);
-    CHECK(!power.tick(1100, false, 120).display_on);
-    CHECK(!power.tick(1200, false, 80).display_on);
-    CHECK(!power.tick(1300, false, 120).display_on);
-    const hosty::PowerAction motion_wake = power.tick(1550, false, 120);
-    CHECK(motion_wake.display_on);
-    CHECK(motion_wake.wake_reason == hosty::WakeReason::Motion);
-    CHECK(power.notification(1600, hosty::NotificationLevel::Info, false).play_sound);
-    CHECK(power.request_deep_standby().enter_deep_sleep);
-    CHECK(power.tick(1700, true, 0).leave_deep_sleep);
+}
+
+void test_attention_and_current_contract() {
+    // Match the maintained Shell's attention contract, including overlapping running/attention counts.
+    const std::string cases[] = {
+        R"({"lastError":"failed probe"})",
+        R"({"operationStatus":"failed"})",
+        R"({"configurationReadiness":{"required":true}})",
+        R"({"permissionState":{"status":"known","missingRequired":["files"]}})",
+        R"({"permissionState":{"error":"access unavailable"}})",
+        R"({"restartRequired":true})",
+        R"({"health":{"status":"degraded"}})",
+        R"({"updateCheck":{"error":"check failed"}})",
+        R"({"lastOperation":"update","updateProgress":{"stage":"needs-attention"}})",
+    };
+    for (const auto& fields : cases) {
+        const std::string json = R"({"apps":[{"id":"app","runtimeState":"running",)" + fields.substr(1) + "]}";
+        hosty::CoreSnapshot snapshot;
+        hosty::AppsResponseParser parser(snapshot);
+        CHECK(feed_chunked(parser, json, 1) == hosty::ProtocolError::None);
+        CHECK(snapshot.apps.size() == 1);
+        CHECK(hosty::needs_attention(snapshot.apps[0]));
+        CHECK(hosty::count_dashboard(snapshot).running == 1);
+        CHECK(hosty::count_dashboard(snapshot).attention == 1);
+    }
+    hosty::AppSummary healthy;
+    healthy.runtime_state = hosty::RuntimeState::Running;
+    healthy.operation_state = hosty::OperationState::Idle;
+    CHECK(!hosty::needs_attention(healthy));
+    healthy.health_degraded = true;
+    healthy.operation_state = hosty::OperationState::Updating;
+    CHECK(!hosty::needs_attention(healthy));
+    healthy.configuration_required = true;
+    CHECK(hosty::needs_attention(healthy));
+    healthy = {};
+    healthy.runtime_state = hosty::RuntimeState::Stopped;
+    CHECK(!hosty::needs_attention(healthy));
+    healthy.runtime_state = hosty::RuntimeState::Unknown;
+    CHECK(hosty::needs_attention(healthy));
+
+    hosty::CoreRestartState restart;
+    hosty::CoreRestartParser development(restart, true);
+    CHECK(feed_chunked(development, R"({"instance":"37724:12345","source":{"revision":"abc123"},"launch":{"mode":"dev"}})", 1) == hosty::ProtocolError::None);
+    CHECK(restart.instance == "37724:12345");
+    CHECK(restart.source_revision == "abc123");
+    hosty::CoreRestartParser incomplete(restart, true);
+    CHECK(feed_chunked(incomplete, R"({"instance":"1:2"})", 2) == hosty::ProtocolError::MissingField);
+    hosty::CoreRestartParser operation(restart, false);
+    CHECK(feed_chunked(operation, R"({"status":"completed"})", 1) == hosty::ProtocolError::None);
+    CHECK(restart.status == "completed");
+}
+
+class LayoutCanvas final : public hosty::Canvas {
+public:
+    struct Text { int x, y, width, height; std::string value; };
+    std::vector<Text> items;
+    int width() const override { return 240; }
+    int height() const override { return 135; }
+    void fill(hosty::Color) override { items.clear(); }
+    void fill_rect(int, int, int, int, hosty::Color) override {}
+    void text(int x, int y, std::string_view value, hosty::Color fg, hosty::Color bg) override {
+        text_scaled(x, y, value, fg, bg, 1);
+    }
+    void text_scaled(int x, int y, std::string_view value, hosty::Color, hosty::Color, std::uint8_t scale) override {
+        if (value.empty()) return;
+        items.push_back({x, y, static_cast<int>(value.size()) * 6 * scale, 8 * scale, std::string(value)});
+    }
+    bool contains(std::string_view value) const {
+        return std::any_of(items.begin(), items.end(), [value](const Text& item) { return item.value == value; });
+    }
+    void check_bounds() const {
+        for (std::size_t i = 0; i < items.size(); ++i) {
+            const auto& a = items[i];
+            CHECK(a.x >= 0 && a.y >= 0 && a.x + a.width <= width() && a.y + a.height <= height());
+            for (std::size_t j = i + 1; j < items.size(); ++j) {
+                const auto& b = items[j];
+                const bool overlap = a.x < b.x + b.width && b.x < a.x + a.width &&
+                    a.y < b.y + b.height && b.y < a.y + a.height;
+                if (overlap) std::cerr << "Overlapping UI text: " << a.value << " / " << b.value << '\n';
+                CHECK(!overlap);
+            }
+        }
+    }
+};
+
+void test_home_outcomes_and_layout() {
+    hosty::Renderer renderer;
+    LayoutCanvas canvas;
+    hosty::ClientState state;
+    hosty::UiState ui;
+    ui.battery_percent = 100;
+    ui.charging = true;
+    for (auto event : {hosty::ConnectionEvent::Type::Configured, hosty::ConnectionEvent::Type::WifiConnected,
+                       hosty::ConnectionEvent::Type::AuthorizationStarted, hosty::ConnectionEvent::Type::Authorized}) {
+        state.apply({event, 10});
+        renderer.render(canvas, state, ui);
+        CHECK(canvas.contains("Starting up"));
+        CHECK(!canvas.contains("All clear"));
+        CHECK(!canvas.contains("0"));
+        canvas.check_bounds();
+    }
+
+    hosty::CoreSnapshot snapshot;
+    snapshot.version.assign_truncated("0.150.2");
+    hosty::AppSummary app;
+    app.id.assign_truncated("app");
+    app.display_name.assign_truncated("An unusually long application name that needs truncation");
+    app.runtime_state = hosty::RuntimeState::Running;
+    app.operation_state = hosty::OperationState::Idle;
+    CHECK(snapshot.apps.push_back(app));
+    state.install_snapshot(snapshot, 1000);
+    state.apply({hosty::ConnectionEvent::Type::SyncCompleted, 1000});
+    ui.now_ms = 181000;
+    renderer.render(canvas, state, ui);
+    CHECK(canvas.contains("Checking status")); // Unloaded alerts/metadata must not look healthy.
+    CHECK(!canvas.contains("All clear"));
+    ui.alerts_loaded = true;
+    renderer.render(canvas, state, ui);
+    CHECK(!canvas.contains("All clear")); // Core update metadata is still unknown.
+    snapshot.core_update.known = true;
+    state.install_snapshot(snapshot, 1000);
+    renderer.render(canvas, state, ui);
+    CHECK(canvas.contains("All clear"));
+    CHECK(canvas.contains("Checked 3m ago")); // Aging alone is not a transport failure.
+    CHECK(!canvas.contains("Stale"));
+    canvas.check_bounds();
+
+    state.apply({hosty::ConnectionEvent::Type::TransportFailed, 181000});
+    renderer.render(canvas, state, ui);
+    CHECK(canvas.contains("Check failed"));
+    CHECK(canvas.contains("Checked 3m ago"));
+    CHECK(!canvas.contains("All clear"));
+    canvas.check_bounds();
+    state.apply({hosty::ConnectionEvent::Type::WifiLost, 181000});
+    renderer.render(canvas, state, ui);
+    CHECK(canvas.contains("Wi-Fi offline"));
+    CHECK(canvas.contains("Checked 3m ago")); // Retained data keeps its actual age after disconnection.
+    canvas.check_bounds();
+
+    state.apply({hosty::ConnectionEvent::Type::SyncCompleted, 1000});
+    snapshot.core_update.error.assign_truncated("Unavailable");
+    state.install_snapshot(snapshot, 1000);
+    renderer.render(canvas, state, ui);
+    CHECK(canvas.contains("Check incomplete"));
+    CHECK(!canvas.contains("All clear"));
+    canvas.check_bounds();
+    snapshot.core_update.error.clear();
+    snapshot.apps[0].restart_required = true;
+    state.install_snapshot(snapshot, 1000);
+    renderer.render(canvas, state, ui);
+    CHECK(canvas.contains("Needs attention"));
+    CHECK(std::any_of(canvas.items.begin(), canvas.items.end(), [](const LayoutCanvas::Text& text) {
+        return text.value.ends_with("...: restart needed");
+    }));
+    canvas.check_bounds();
+
+    snapshot.apps.clear();
+    for (unsigned i = 0; i < hosty::kMaximumApps; ++i) {
+        app.restart_required = true;
+        app.update.available = true;
+        app.update.requires_review = true;
+        CHECK(snapshot.apps.push_back(app));
+    }
+    snapshot.core_update.error.assign_truncated("Unavailable");
+    state.install_snapshot(snapshot, 1000);
+    hosty::NotificationSnapshot notifications;
+    notifications.unread_count = 4'294'967'295;
+    state.install_notifications(notifications);
+    renderer.render(canvas, state, ui);
+    CHECK(canvas.contains("64"));
+    CHECK(canvas.contains("Alerts 999+ [ENT]"));
+    canvas.check_bounds();
+    ui.view = hosty::View::Device;
+    ui.firmware_version.assign_truncated("0.2.1");
+    renderer.render(canvas, state, ui);
+    CHECK(canvas.contains("Core 0.150.2"));
+    canvas.check_bounds();
 }
 
 void test_render() {
@@ -323,9 +457,15 @@ int main() {
     test_apps_fixture();
     test_app_collection_limit();
     test_notifications();
-    test_sse();
-    test_state_and_power();
+    test_state();
+    CHECK(!hosty::clock_valid(0, 1000));
+    CHECK(!hosty::clock_valid(999, 1000));
+    CHECK(hosty::clock_valid(1000, 1000));
+    CHECK(hosty::clock_valid(1001, 1000));
+    CHECK(!hosty::clock_valid(1000, 0));
+    test_attention_and_current_contract();
     test_render();
+    test_home_outcomes_and_layout();
     if (failures != 0) {
         std::cerr << failures << " host test(s) failed\n";
         return 1;

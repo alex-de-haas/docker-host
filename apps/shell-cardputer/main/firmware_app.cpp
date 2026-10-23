@@ -1,16 +1,14 @@
 #include "firmware_app.hpp"
 
 #include "hosty/endpoint.hpp"
+#include "hosty/clock.hpp"
 #include "hosty/semver.hpp"
 
-#include <driver/gpio.h>
 #include <esp_app_desc.h>
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_netif_sntp.h>
 #include <esp_ota_ops.h>
-#include <esp_pm.h>
-#include <esp_sleep.h>
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <nvs_flash.h>
@@ -37,79 +35,17 @@ constexpr EventBits_t kAppsSyncFinished = BIT6;
 constexpr EventBits_t kAllTransportEvents =
     kSyncApps | kSyncNotifications | kFullSync | kTransportFailed | kUnauthorized |
     kCommandFinished | kAppsSyncFinished;
-constexpr gpio_num_t kKeyboardInterruptPin = GPIO_NUM_11;
-constexpr std::uint32_t kEventStreamStackBytes = 16'384;
 constexpr std::uint32_t kCommandStackBytes = 8'192;
 constexpr std::uint32_t kSyncStackBytes = 10'240;
 
-constexpr std::uint32_t kEventStreamHealthyLifetimeMs = 60'000;
 constexpr std::uint32_t kActiveLoopIntervalMs = 20;
-constexpr std::uint32_t kMotionStandbyIntervalMs = 250;
-constexpr std::uint32_t kIdleStandbyIntervalMs = 1'000;
-constexpr std::array<std::uint32_t, 4> kDisplayTimeouts{15'000, 30'000, 60'000, 120'000};
-constexpr std::array<std::uint32_t, 3> kEcoAlertIntervals{5 * 60'000, 10 * 60'000, 30 * 60'000};
-
-int month_number(std::string_view month) {
-    constexpr std::string_view months[] = {
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    };
-    for (int index = 0; index < 12; ++index) {
-        if (month == months[index]) return index + 1;
-    }
-    return 0;
-}
-
-// Howard Hinnant's civil-calendar transform, used only to compare the SNTP
-// epoch against the firmware build timestamp without relying on the configured
-// display time zone.
-std::int64_t days_from_civil(int year, unsigned month, unsigned day) {
-    year -= month <= 2;
-    const int era = (year >= 0 ? year : year - 399) / 400;
-    const unsigned year_of_era = static_cast<unsigned>(year - era * 400);
-    const unsigned adjusted_month = static_cast<unsigned>(static_cast<int>(month) + (month > 2 ? -3 : 9));
-    const unsigned day_of_year = (153U * adjusted_month + 2U) / 5U + day - 1U;
-    const unsigned day_of_era = year_of_era * 365U + year_of_era / 4U - year_of_era / 100U + day_of_year;
-    return static_cast<std::int64_t>(era) * 146097 + static_cast<std::int64_t>(day_of_era) - 719468;
-}
-
-std::time_t build_time_floor() {
-    const esp_app_desc_t* description = esp_app_get_description();
-    if (description == nullptr) return 0;
-    char month[4]{};
-    int day = 0;
-    int year = 0;
-    int hour = 0;
-    int minute = 0;
-    int second = 0;
-    if (std::sscanf(description->date, "%3s %d %d", month, &day, &year) != 3 ||
-        std::sscanf(description->time, "%d:%d:%d", &hour, &minute, &second) != 3) {
-        return 0;
-    }
-    const int numeric_month = month_number(month);
-    if (numeric_month == 0) return 0;
-    return static_cast<std::time_t>(days_from_civil(year, static_cast<unsigned>(numeric_month),
-                                                    static_cast<unsigned>(day)) * 86'400 +
-                                    hour * 3'600 + minute * 60 + second);
-}
 
 bool clock_meets_build_floor() {
-    const std::time_t current = std::time(nullptr);
-    const std::time_t floor = build_time_floor();
-    return floor > 0 && current >= floor;
+    return hosty::clock_valid(std::time(nullptr), HOSTY_BUILD_EPOCH);
 }
 
 char lower_character(char character) {
     return static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
-}
-
-const char* wake_reason_name(hosty::WakeReason reason) {
-    switch (reason) {
-        case hosty::WakeReason::Keyboard: return "keyboard";
-        case hosty::WakeReason::Motion: return "motion";
-        case hosty::WakeReason::Notification: return "notification";
-        case hosty::WakeReason::None: return "unspecified";
-    }
-    return "unknown";
 }
 
 }  // namespace
@@ -161,12 +97,6 @@ void FirmwareApp::run() {
     image_health_eligible_ = full_sync();
     mark_image_healthy_when_ready();
 
-    if (xTaskCreate(&FirmwareApp::sse_task_entry, "hosty_sse", kEventStreamStackBytes,
-                    this, 4, &sse_task_handle_) != pdPASS) {
-        ESP_LOGE(kTag, "Unable to allocate event-stream task");
-        set_status("Event stream unavailable");
-    }
-    static_cast<void>(power_.tick(now_ms(), true, 0));
     main_loop();
 }
 
@@ -176,35 +106,6 @@ bool FirmwareApp::initialize() {
     if (!hardware_.begin()) return false;
     hardware_.set_wake_task(main_task_);
 
-#if CONFIG_PM_ENABLE
-    esp_pm_config_t power_management{};
-    power_management.max_freq_mhz = 240;
-    power_management.min_freq_mhz = 40;
-    power_management.light_sleep_enable = true;
-    if (esp_pm_configure(&power_management) != ESP_OK) return false;
-    if (esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "display_awake", &display_awake_lock_) != ESP_OK ||
-        esp_pm_lock_acquire(display_awake_lock_) != ESP_OK) {
-        return false;
-    }
-    // The backlight flickers without this. M5GFX configures its LEDC timer with LEDC_AUTO_CLK, and on
-    // ESP32-S3 the driver's clock-source search list starts with APB, so the PWM divisor is computed
-    // once against an 80 MHz APB. Dynamic frequency scaling then moves APB with the CPU — min_freq is
-    // 40 MHz — and the PWM frequency moves with it, which is visible as the backlight changing
-    // brightness whenever the CPU idles down and back up. ESP-IDF's LEDC driver takes no PM lock of its
-    // own, so the display owner has to pin APB for as long as the panel is lit.
-    if (esp_pm_lock_create(ESP_PM_APB_FREQ_MAX, 0, "display_apb", &display_apb_lock_) != ESP_OK ||
-        esp_pm_lock_acquire(display_apb_lock_) != ESP_OK) {
-        return false;
-    }
-    display_awake_lock_held_ = true;
-    display_apb_lock_held_ = true;
-#else
-    // Power management is compiled out in the debug profile: without light sleep and frequency scaling
-    // the USB-Serial/JTAG peripheral stays enumerated, so the device does not vanish from the host
-    // between a build and a flash. It costs battery life, which is exactly why it is not the shipping
-    // configuration.
-    ESP_LOGW(kTag, "Built without power management: light sleep and frequency scaling are off");
-#endif
 
     image_pending_verification_ = FirmwareOta::pending_verification();
     transport_events_ = xEventGroupCreate();
@@ -221,8 +122,9 @@ bool FirmwareApp::initialize() {
         if (!configure_device()) return false;
     }
 
-    power_.set_policy(settings_.power);
     sync_ui_settings();
+    ui_.battery_percent = hardware_.battery_percent();
+    ui_.charging = hardware_.charging();
     ui_.device_label.assign_truncated(settings_.device_label.view());
     ui_.endpoint.assign_truncated(settings_.core_origin.view());
     const esp_app_desc_t* description = esp_app_get_description();
@@ -323,8 +225,10 @@ bool FirmwareApp::connect_network() {
         set_status(wifi_.last_failure_message());
         return false;
     }
+    ESP_LOGI(kTag, "Startup Wi-Fi ready at %llu ms", static_cast<unsigned long long>(now_ms()));
     state_.apply({hosty::ConnectionEvent::Type::WifiConnected, now_ms()});
     set_status("Wi-Fi connected; setting clock");
+    render();
     return synchronize_clock();
 }
 
@@ -339,7 +243,7 @@ bool FirmwareApp::synchronize_clock() {
             3, ESP_SNTP_SERVER_LIST("pool.ntp.org", "time.cloudflare.com", "time.google.com"));
         const esp_err_t initialized = esp_netif_sntp_init(&config);
         if (initialized == ESP_OK || initialized == ESP_ERR_INVALID_STATE) {
-            static_cast<void>(esp_netif_sntp_sync_wait(pdMS_TO_TICKS(5'000)));
+            if (endpoint.secure) static_cast<void>(esp_netif_sntp_sync_wait(pdMS_TO_TICKS(5'000)));
         }
     }
     clock_ready_ = clock_meets_build_floor();
@@ -353,6 +257,8 @@ bool FirmwareApp::synchronize_clock() {
 }
 
 bool FirmwareApp::authorize() {
+    state_.apply({hosty::ConnectionEvent::Type::AuthorizationStarted, now_ms()});
+    render();
     if (settings_.access_token.empty()) {
         hosty::Enrollment enrollment;
         enrollment.start(now_ms());
@@ -429,20 +335,17 @@ bool FirmwareApp::authorize() {
     }
     close_overlay();
     state_.apply({hosty::ConnectionEvent::Type::Authorized, now_ms()});
-    ESP_LOGI(kTag, "Authorized as host.admin");
+    ESP_LOGI(kTag, "Startup authorized at %llu ms", static_cast<unsigned long long>(now_ms()));
     return true;
 }
 
 bool FirmwareApp::full_sync() {
     last_full_sync_ms_ = now_ms();
     state_.apply({hosty::ConnectionEvent::Type::SyncStarted, now_ms()});
+    render();
     staging_core_ = {};
     std::string_view operation = "Core status";
     HttpResult result = client_.read_core_status(staging_core_);
-    if (result.ok()) {
-        operation = "Core update";
-        result = client_.read_core_update_status(staging_core_);
-    }
     if (result.ok()) {
         operation = "Apps";
         result = client_.read_apps(staging_core_);
@@ -462,6 +365,13 @@ bool FirmwareApp::full_sync() {
         state_.apply({hosty::ConnectionEvent::Type::UnsupportedCore, now_ms()});
         return false;
     }
+    state_.install_snapshot(staging_core_, now_ms());
+    reapply_prediction();
+    render();
+    ESP_LOGI(kTag, "Startup first app data at %llu ms; apps=%u heap=%u largest=%u",
+             static_cast<unsigned long long>(now_ms()), static_cast<unsigned>(staging_core_.apps.size()),
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
     staging_notifications_ = {};
     operation = "Notifications";
     result = client_.read_notifications(staging_notifications_);
@@ -475,9 +385,21 @@ bool FirmwareApp::full_sync() {
     state_.install_snapshot(staging_core_, now_ms());
     reapply_prediction();
     state_.install_notifications(staging_notifications_);
+    ui_.alerts_loaded = true;
+    play_alert();
     last_unread_count_ = staging_notifications_.unread_count;
     state_.apply({hosty::ConnectionEvent::Type::SyncCompleted, now_ms()});
     image_health_eligible_ = true;
+    render();
+    const HttpResult update_result = client_.read_core_update_status(staging_core_);
+    if (update_result.ok()) state_.install_snapshot(staging_core_, state_.last_sync_ms());
+    else if (update_result.unauthorized()) signal_transport(kUnauthorized);
+    else {
+        staging_core_.core_update.error.assign_truncated("Status unavailable");
+        state_.install_snapshot(staging_core_, state_.last_sync_ms());
+        set_request_failure("Core update status", update_result);
+    }
+    ESP_LOGI(kTag, "Startup complete at %llu ms", static_cast<unsigned long long>(now_ms()));
     ESP_LOGI(kTag, "Full synchronization completed with Core %s", staging_core_.version.c_str());
     return true;
 }
@@ -535,6 +457,8 @@ void FirmwareApp::request_full_sync() {
 
     full_sync_pending_ = false;
     apps_sync_pending_ = false;
+    state_.apply({hosty::ConnectionEvent::Type::SyncStarted, now_ms()});
+    render_requested_ = true;
     apps_sync_mode_ = SyncMode::Full;
     last_full_sync_ms_ = now_ms();
     staging_core_ = {};
@@ -559,16 +483,17 @@ void FirmwareApp::apps_sync_task() {
     } else if (apps_sync_mode_ == SyncMode::Full) {
         apps_sync_result_ = client_.read_core_status(staging_core_);
         if (apps_sync_result_.ok()) {
-            apps_sync_operation_.assign_truncated("Core update");
-            apps_sync_result_ = client_.read_core_update_status(staging_core_);
-        }
-        if (apps_sync_result_.ok()) {
             apps_sync_operation_.assign_truncated("Apps");
             apps_sync_result_ = client_.read_apps(staging_core_);
         }
         if (apps_sync_result_.ok()) {
             apps_sync_operation_.assign_truncated("Notifications");
             apps_sync_result_ = client_.read_notifications(staging_notifications_);
+        }
+        if (apps_sync_result_.ok()) {
+            const auto update = client_.read_core_update_status(staging_core_);
+            if (update.unauthorized()) apps_sync_result_ = update;
+            else if (!update.ok()) staging_core_.core_update.error.assign_truncated("Status unavailable");
         }
     } else {
         apps_sync_result_ = client_.read_apps(staging_core_);
@@ -584,11 +509,12 @@ void FirmwareApp::apps_sync_task() {
 void FirmwareApp::finish_apps_sync() {
     const HttpResult result = apps_sync_result_;
     const SyncMode mode = apps_sync_mode_;
+    if (result.ok() && mode != SyncMode::Apps) ui_.alerts_loaded = true;
     const bool full = mode == SyncMode::Full;
     apps_sync_in_flight_ = false;
     if (!result.ok()) {
         set_request_failure(apps_sync_operation_.view(), result);
-        if (full) {
+        {
             state_.apply({result.unauthorized() ? hosty::ConnectionEvent::Type::Unauthorized
                                                : hosty::ConnectionEvent::Type::TransportFailed,
                           now_ms()});
@@ -605,7 +531,7 @@ void FirmwareApp::finish_apps_sync() {
         // left alone; ringing for a genuinely new alert is the one side effect.
         if (staging_notifications_.unread_count > last_unread_count_ && !staging_notifications_.items.empty()) {
             state_.install_notifications(staging_notifications_);
-            apply_power_action(power_.notification(now_ms(), staging_notifications_.items[0].level, quiet_hours()));
+            play_alert();
         }
         last_unread_count_ = staging_notifications_.unread_count;
         state_.install_notifications(staging_notifications_);
@@ -623,6 +549,9 @@ void FirmwareApp::finish_apps_sync() {
         render_requested_ = true;
     }
 
+    if (result.ok() && !state_.core().update_check.running && hosty::count_dashboard(state_.core()).busy == 0) {
+        follow_operation_until_ms_ = 0;
+    }
     if (command_waiting_for_sync_) {
         if (!start_command_task()) show_error("Unable to start Core operation");
     } else if (full_sync_pending_) {
@@ -635,27 +564,9 @@ void FirmwareApp::finish_apps_sync() {
     }
 }
 
-bool FirmwareApp::sync_notifications(bool alert) {
-    staging_notifications_ = {};
-    const HttpResult result = client_.read_notifications(staging_notifications_);
-    if (!result.ok()) {
-        set_request_failure("Notifications", result);
-        return false;
-    }
-    if (alert && staging_notifications_.unread_count > last_unread_count_ && !staging_notifications_.items.empty()) {
-        const auto& notification = staging_notifications_.items[0];
-        state_.install_notifications(staging_notifications_);
-        apply_power_action(power_.notification(now_ms(), notification.level, quiet_hours()));
-    }
-    last_unread_count_ = staging_notifications_.unread_count;
-    state_.install_notifications(staging_notifications_);
-    render_requested_ = true;
-    return true;
-}
-
 void FirmwareApp::main_loop() {
     while (true) {
-        if (power_.mode() == hosty::PowerMode::Active) hardware_.update();
+        hardware_.update();
         handle_transport_events();
 
         cardputer::KeyInput key;
@@ -666,24 +577,6 @@ void FirmwareApp::main_loop() {
         }
 
         const std::uint64_t current = now_ms();
-        if (power_.mode() == hosty::PowerMode::OnlineStandby && settings_.power.motion_wake &&
-            current - last_motion_sample_ms_ >= kMotionStandbyIntervalMs) {
-            last_motion_sample_ms_ = current;
-            last_motion_delta_mg_ = hardware_.motion_delta_mg();
-        } else {
-            last_motion_delta_mg_ = 0;
-        }
-        apply_power_action(power_.tick(current, keyboard_activity, last_motion_delta_mg_));
-        const hosty::PowerMode previous_power_mode = ui_.power_mode;
-        ui_.power_mode = power_.mode();
-        if (ui_.power_mode != previous_power_mode) render_requested_ = true;
-
-        if (eco_sleeping_ && power_.mode() == hosty::PowerMode::Active) {
-            resume_from_eco();
-        } else if (eco_sleeping_ && current >= next_eco_poll_ms_) {
-            poll_eco_notifications();
-        }
-
         if (last_power_sample_ms_ == 0 || current - last_power_sample_ms_ >= 5'000) {
             last_power_sample_ms_ = current;
             const int battery_percent = hardware_.battery_percent();
@@ -693,31 +586,31 @@ void FirmwareApp::main_loop() {
             ui_.charging = charging;
         }
 
-        if (wifi_.connected() && current - last_full_sync_ms_ >= 60'000) request_full_sync();
+        clock_ready_ = clock_meets_build_floor();
+        if (!wifi_.connected() && state_.connection() != hosty::ConnectionState::Offline) {
+            state_.apply({hosty::ConnectionEvent::Type::WifiLost, current});
+            render_requested_ = true;
+        }
+        if (follow_operation_until_ms_ > current && current >= next_operation_sync_ms_ &&
+            wifi_.connected() && !command_in_flight_ && !apps_sync_in_flight_) {
+            next_operation_sync_ms_ = current + 2'000;
+            request_full_sync();
+        }
+        if (!command_in_flight_ && !apps_sync_in_flight_) client_.release_if_idle(current);
 
         // The Home footer counts the snapshot's age in seconds, so it has to be redrawn while it is on
         // screen or it would freeze at whatever it last said — a stale age is worse than none, because
-        // it reads as fresh. Only while Active and only on Dashboard: the frame hash still gates the
+        // it reads as fresh. Only on Dashboard: the frame hash still gates the
         // SPI push, so a second where nothing changed costs a redraw into RAM and no panel traffic.
-        if (power_.mode() == hosty::PowerMode::Active && ui_.view == hosty::View::Dashboard &&
+        if (ui_.view == hosty::View::Dashboard &&
             !ui_.overlay_visible && current - last_age_tick_ms_ >= 1'000) {
             last_age_tick_ms_ = current;
             render_requested_ = true;
         }
 
-        if (power_.mode() == hosty::PowerMode::Active && render_requested_) render();
+        if (render_requested_) render();
         mark_image_healthy_when_ready();
-        std::uint32_t wait_ms = power_.mode() == hosty::PowerMode::Active
-            ? kActiveLoopIntervalMs
-            : settings_.power.motion_wake ? kMotionStandbyIntervalMs : kIdleStandbyIntervalMs;
-        if (eco_sleeping_ && !settings_.power.motion_wake) {
-            const std::uint64_t current_after_work = now_ms();
-            const std::uint64_t remaining = next_eco_poll_ms_ > current_after_work
-                ? next_eco_poll_ms_ - current_after_work
-                : 1;
-            wait_ms = static_cast<std::uint32_t>(std::min<std::uint64_t>(remaining, settings_.eco_alert_interval_ms));
-        }
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(wait_ms));
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(kActiveLoopIntervalMs));
     }
 }
 
@@ -826,6 +719,11 @@ void FirmwareApp::handle_key(const cardputer::KeyInput& key) {
         else if (ui_.view == hosty::View::Apps) move_selection(character == ';' ? -1 : 1);
         return;
     }
+    if (ui_.view == hosty::View::Dashboard && character == 'r') {
+        if (!wifi_.connected()) show_error("Wi-Fi reconnecting; press R to retry");
+        else request_full_sync();
+        return;
+    }
     if (ui_.view == hosty::View::Apps) execute_shortcut(MenuContext::App, character);
     else if (ui_.view == hosty::View::Updates) execute_shortcut(MenuContext::Updates, character);
     else if (ui_.view == hosty::View::Dashboard && character == 'u' &&
@@ -834,16 +732,13 @@ void FirmwareApp::handle_key(const cardputer::KeyInput& key) {
     }
     else if (ui_.view == hosty::View::Device) {
         if (character == 'r' || character == 'u') execute_shortcut(MenuContext::Core, character);
-        else if (character == 'o' || character == 'd' || character == 'x') {
+        else if (character == 'o' || character == 'x') {
             // The Device view forwards its shortcuts straight through, without opening the menu first.
             // Every action offered in that menu has to be listed here too, or the key does nothing at
             // all and looks like a dead button.
             execute_shortcut(MenuContext::Device, character);
         }
-        else if (character == 'm') {
-            ui_.selected_device = static_cast<std::uint8_t>(hosty::DeviceItem::MotionWake);
-            change_device_item();
-        } else if (character == 's') {
+        else if (character == 's') {
             ui_.selected_device = static_cast<std::uint8_t>(hosty::DeviceItem::Sound);
             change_device_item();
         } else if (character == 'q') {
@@ -851,9 +746,6 @@ void FirmwareApp::handle_key(const cardputer::KeyInput& key) {
             change_device_item();
         } else if (character == 't') {
             ui_.selected_device = static_cast<std::uint8_t>(hosty::DeviceItem::Theme);
-            change_device_item();
-        } else if (character == 'e') {
-            ui_.selected_device = static_cast<std::uint8_t>(hosty::DeviceItem::StandbyMode);
             change_device_item();
         }
     }
@@ -943,7 +835,6 @@ void FirmwareApp::open_context_menu(MenuContext context) {
     } else if (context == MenuContext::Device) {
         ui_.overlay_title.assign_truncated("Device actions");
         add('O', "Firmware update");
-        add('D', "Deep standby");
         add('X', "Revoke credential");
     }
 
@@ -982,9 +873,11 @@ void FirmwareApp::execute_shortcut(MenuContext context, char shortcut) {
         }
     } else if (context == MenuContext::Updates) {
         if (shortcut == 'c') {
-            const HttpResult result = client_.start_update_check();
-            if (!result.ok()) show_error("Update check failed");
-            request_apps_sync();
+            Confirmation command;
+            command.action = PendingAction::CheckUpdates;
+            if (!command_in_flight_ && mutation_allowed()) {
+                if (!dispatch_command(command)) show_error("Unable to start update check");
+            }
         } else if (shortcut == 'a') {
             begin_confirmation(PendingAction::UpdateAll, "Apply all routine updates?");
         }
@@ -993,7 +886,6 @@ void FirmwareApp::execute_shortcut(MenuContext context, char shortcut) {
         else if (shortcut == 'u') begin_confirmation(PendingAction::UpdateCore, "Update Core? Enter twice", nullptr, 2);
     } else if (context == MenuContext::Device) {
         if (shortcut == 'o') begin_confirmation(PendingAction::FirmwareOta, "Firmware update? Enter twice", nullptr, 2);
-        else if (shortcut == 'd') begin_confirmation(PendingAction::DeepStandby, "Enter deep standby?");
         else if (shortcut == 'x') begin_confirmation(PendingAction::Revoke, "Revoke this credential?");
     }
 }
@@ -1002,32 +894,6 @@ void FirmwareApp::change_device_item() {
     const auto item = static_cast<hosty::DeviceItem>(ui_.selected_device);
     bool save = true;
     switch (item) {
-        case hosty::DeviceItem::StandbyMode:
-            settings_.eco_standby = !settings_.eco_standby;
-            break;
-        case hosty::DeviceItem::ScreenTimeout: {
-            const auto next = std::find_if(kDisplayTimeouts.begin(), kDisplayTimeouts.end(),
-                                           [this](std::uint32_t value) { return value > settings_.power.display_timeout_ms; });
-            settings_.power.display_timeout_ms = next == kDisplayTimeouts.end() ? kDisplayTimeouts.front() : *next;
-            power_.set_policy(settings_.power);
-            break;
-        }
-        case hosty::DeviceItem::AlertInterval: {
-            const auto current = std::find(kEcoAlertIntervals.begin(), kEcoAlertIntervals.end(),
-                                           settings_.eco_alert_interval_ms);
-            settings_.eco_alert_interval_ms = current == kEcoAlertIntervals.end() || std::next(current) == kEcoAlertIntervals.end()
-                ? kEcoAlertIntervals.front()
-                : *std::next(current);
-            break;
-        }
-        case hosty::DeviceItem::MotionWake:
-            settings_.power.motion_wake = !settings_.power.motion_wake;
-            if (settings_.power.motion_wake) {
-                hardware_.reset_motion_reference();
-                last_motion_sample_ms_ = 0;
-            }
-            power_.set_policy(settings_.power);
-            break;
         case hosty::DeviceItem::Theme:
             settings_.theme = static_cast<hosty::ColorTheme>((static_cast<unsigned>(settings_.theme) + 1U) % 3U);
             break;
@@ -1039,7 +905,8 @@ void FirmwareApp::change_device_item() {
             break;
         case hosty::DeviceItem::Setup:
             save = false;
-            if (configure_device()) esp_restart();
+            if (command_in_flight_ || apps_sync_in_flight_) show_error("Wait for the active request");
+            else if (configure_device()) esp_restart();
             break;
         case hosty::DeviceItem::CoreActions:
             save = false;
@@ -1062,10 +929,6 @@ void FirmwareApp::change_device_item() {
 
 void FirmwareApp::sync_ui_settings() {
     ui_.theme = settings_.theme;
-    ui_.eco_standby = settings_.eco_standby;
-    ui_.display_timeout_ms = settings_.power.display_timeout_ms;
-    ui_.alert_interval_ms = settings_.eco_alert_interval_ms;
-    ui_.motion_wake = settings_.power.motion_wake;
     ui_.sound_enabled = settings_.sound_enabled;
     ui_.quiet_hours_enabled = settings_.quiet_hours_enabled;
 }
@@ -1097,7 +960,7 @@ void FirmwareApp::execute_confirmation() {
         render();
         return;
     }
-    if (command.action != PendingAction::Revoke && command.action != PendingAction::DeepStandby &&
+    if (command.action != PendingAction::Revoke &&
         !mutation_allowed()) {
         show_error("Connect USB-C or charge above 15%");
         render();
@@ -1109,6 +972,11 @@ void FirmwareApp::execute_confirmation() {
         hosty::FixedString<96> detail;
         show_overlay("Firmware update", "Downloading over validated HTTPS...");
         render();
+        if (apps_sync_in_flight_) {
+            show_error("Refresh in progress; retry firmware update");
+            return;
+        }
+        client_.release();
         const OtaResult ota_result = ota_.install(clock_ready_, hardware_.battery_percent(), hardware_.charging(), detail);
         if (ota_result == OtaResult::Installed) {
             show_overlay("Firmware installed", "Rebooting into the new OTA slot");
@@ -1118,10 +986,6 @@ void FirmwareApp::execute_confirmation() {
         }
         close_overlay();
         show_error(detail.empty() ? ota_result_name(ota_result) : detail.view());
-        return;
-    }
-    if (command.action == PendingAction::DeepStandby) {
-        enter_deep_standby();
         return;
     }
     if (command.action == PendingAction::None) return;
@@ -1201,8 +1065,8 @@ void FirmwareApp::command_task() {
         case PendingAction::UpdateCore: result = client_.update_core(); break;
         case PendingAction::Revoke: result = client_.logout(); break;
         case PendingAction::MarkAlertsRead: result = client_.mark_notifications_read(); break;
+        case PendingAction::CheckUpdates: result = client_.start_update_check(); break;
         case PendingAction::FirmwareOta:
-        case PendingAction::DeepStandby:
         case PendingAction::None: result.transport_error = ESP_ERR_INVALID_ARG; break;
     }
     command_result_ = result;
@@ -1239,11 +1103,18 @@ void FirmwareApp::finish_command() {
             signal_transport(kUnauthorized);
         } else {
             set_request_failure("Operation", result);
+            request_full_sync();
         }
         return;
     }
 
+    if (command.action == PendingAction::UpdateCore) {
+        show_overlay("Update accepted", "Core is updating. Refresh to check\nits version after it reconnects.");
+    }
+    follow_operation_until_ms_ = now_ms() + 120'000;
+    next_operation_sync_ms_ = now_ms() + 2'000;
     if (command.action == PendingAction::MarkAlertsRead) {
+        follow_operation_until_ms_ = 0;
         // Re-read notifications rather than assuming: the counter on screen has to come from Core, so
         // a mark that partially applied shows the truth instead of a hopeful zero.
         signal_transport(kSyncNotifications);
@@ -1252,7 +1123,8 @@ void FirmwareApp::finish_command() {
 
     const bool app_related = command.action == PendingAction::Start || command.action == PendingAction::Stop ||
         command.action == PendingAction::Restart || command.action == PendingAction::Autostart ||
-        command.action == PendingAction::UpdateApp || command.action == PendingAction::UpdateAll;
+        command.action == PendingAction::UpdateApp || command.action == PendingAction::UpdateAll ||
+        command.action == PendingAction::CheckUpdates;
     if (full_sync_pending_) {
         request_full_sync();
     } else if (app_related) {
@@ -1334,7 +1206,6 @@ void FirmwareApp::show_error(std::string_view detail) {
 }
 
 void FirmwareApp::render() {
-    ui_.power_mode = power_.mode();
     // The Home footer reports how old the snapshot is, so the renderer needs the clock the rest of the
     // app runs on rather than one of its own.
     ui_.now_ms = now_ms();
@@ -1342,105 +1213,14 @@ void FirmwareApp::render() {
     render_requested_ = false;
 }
 
-void FirmwareApp::apply_power_action(const hosty::PowerAction& action) {
-    if (action.display_on) {
-        ESP_LOGI(kTag, "Display waking reason=%s motion_delta_mg=%u", wake_reason_name(action.wake_reason),
-                 static_cast<unsigned>(last_motion_delta_mg_));
-        if (display_awake_lock_ != nullptr && !display_awake_lock_held_ &&
-            esp_pm_lock_acquire(display_awake_lock_) == ESP_OK) {
-            display_awake_lock_held_ = true;
-        }
-        // Pinned together with the sleep lock: a lit panel needs a stable APB or its backlight PWM
-        // drifts with the CPU frequency (see the lock's creation).
-        if (display_apb_lock_ != nullptr && !display_apb_lock_held_ &&
-            esp_pm_lock_acquire(display_apb_lock_) == ESP_OK) {
-            display_apb_lock_held_ = true;
-        }
-        hardware_.display_on();
-        render_requested_ = true;
-    }
-    if (action.display_off) {
-        ESP_LOGI(kTag, "Display entering %s standby", settings_.eco_standby ? "Eco" : "live");
-        hardware_.display_off();
-        if (display_awake_lock_ != nullptr && display_awake_lock_held_ &&
-            esp_pm_lock_release(display_awake_lock_) == ESP_OK) {
-            display_awake_lock_held_ = false;
-        }
-        // Released with the panel, so standby — the mode the runtime target is measured in — keeps the
-        // full frequency-scaling range.
-        if (display_apb_lock_ != nullptr && display_apb_lock_held_ &&
-            esp_pm_lock_release(display_apb_lock_) == ESP_OK) {
-            display_apb_lock_held_ = false;
-        }
-        if (settings_.eco_standby) enter_eco_standby();
-    }
-    if (action.play_sound && settings_.sound_enabled &&
-        (last_sound_ms_ == 0 || now_ms() - last_sound_ms_ >= 10'000)) {
-        const auto& notifications = state_.notifications();
-        hardware_.play_notification(notifications.items.empty() ? hosty::NotificationLevel::Info
-                                                                 : notifications.items[0].level);
-        last_sound_ms_ = now_ms();
-    }
-    if (action.enter_deep_sleep) enter_deep_standby();
-}
-
-void FirmwareApp::enter_eco_standby() {
-    if (eco_sleeping_) return;
-    eco_sleeping_ = true;
-    stream_suspended_.store(true);
-    next_eco_poll_ms_ = now_ms() + settings_.eco_alert_interval_ms;
-    state_.apply({hosty::ConnectionEvent::Type::TransportFailed, now_ms()});
-    wifi_.disconnect();
-    ESP_LOGI(kTag, "Eco standby: radio off, next alert check in %u ms",
-             static_cast<unsigned>(settings_.eco_alert_interval_ms));
-}
-
-void FirmwareApp::resume_from_eco() {
-    if (!eco_sleeping_) return;
-    eco_sleeping_ = false;
-    ESP_LOGI(kTag, "Leaving Eco standby");
-    const bool connected = connect_network();
-    const bool authorized = connected && authorize();
-    if (authorized) {
-        static_cast<void>(full_sync());
-    } else {
-        set_status("Reconnect pending");
-    }
-    stream_suspended_.store(false);
-    if (sse_task_handle_ != nullptr) xTaskNotifyGive(sse_task_handle_);
-    render_requested_ = true;
-}
-
-void FirmwareApp::poll_eco_notifications() {
-    if (!eco_sleeping_) return;
-    next_eco_poll_ms_ = now_ms() + settings_.eco_alert_interval_ms;
-    ESP_LOGI(kTag, "Eco standby alert check");
-    if (!wifi_.connect(settings_, 20'000)) {
-        ESP_LOGW(kTag, "Eco alert check skipped: %s", wifi_.last_failure_message());
-        wifi_.disconnect();
-        return;
-    }
-    static_cast<void>(sync_notifications(true));
-    if (power_.mode() == hosty::PowerMode::Active) {
-        resume_from_eco();
-        return;
-    }
-    wifi_.disconnect();
-}
-
-void FirmwareApp::enter_deep_standby() {
-    hardware_.display_off();
-    wifi_.disconnect();
-    gpio_config_t keyboard{};
-    keyboard.pin_bit_mask = 1ULL << static_cast<unsigned>(kKeyboardInterruptPin);
-    keyboard.mode = GPIO_MODE_INPUT;
-    keyboard.pull_up_en = GPIO_PULLUP_ENABLE;
-    keyboard.intr_type = GPIO_INTR_DISABLE;
-    static_cast<void>(gpio_config(&keyboard));
-    static_cast<void>(esp_sleep_enable_ext1_wakeup_io(1ULL << static_cast<unsigned>(kKeyboardInterruptPin),
-                                                      ESP_EXT1_WAKEUP_ANY_LOW));
-    static_cast<void>(esp_sleep_enable_timer_wakeup(60ULL * 60ULL * 1'000'000ULL));
-    esp_deep_sleep_start();
+void FirmwareApp::play_alert() {
+    if (!settings_.sound_enabled || quiet_hours() || state_.notifications().items.empty()) return;
+    const auto& notification = state_.notifications().items[0];
+    if (notification.read || (notification.level != hosty::NotificationLevel::Warning &&
+                              notification.level != hosty::NotificationLevel::Error)) return;
+    if (last_sound_ms_ != 0 && now_ms() - last_sound_ms_ < 10'000) return;
+    hardware_.play_notification(notification.level);
+    last_sound_ms_ = now_ms();
 }
 
 void FirmwareApp::signal_transport(EventBits_t bits) {
@@ -1453,6 +1233,10 @@ void FirmwareApp::handle_transport_events() {
     if ((events & kCommandFinished) != 0) finish_command();
     if ((events & kAppsSyncFinished) != 0) finish_apps_sync();
     if ((events & kUnauthorized) != 0) {
+        if (command_in_flight_ || apps_sync_in_flight_) {
+            signal_transport(kUnauthorized);
+            return;
+        }
         state_.apply({hosty::ConnectionEvent::Type::Unauthorized, now_ms()});
         static_cast<void>(settings_store_.clear_access_token());
         settings_.access_token.clear();
@@ -1506,54 +1290,6 @@ bool FirmwareApp::quiet_hours() const {
 
 std::uint64_t FirmwareApp::now_ms() const { return static_cast<std::uint64_t>(esp_timer_get_time() / 1000); }
 
-bool FirmwareApp::on_sse_event(const hosty::SseEvent& event) {
-    if (stream_suspended_.load()) return true;
-    const hosty::SyncHint hint = state_.on_sse_event(event.name);
-    ESP_LOGI(kTag, "SSE event=%.*s sync-hint=%u", static_cast<int>(event.name.size()), event.name.data(),
-             static_cast<unsigned>(hint));
-    if (hint == hosty::SyncHint::Apps) signal_transport(kSyncApps);
-    else if (hint == hosty::SyncHint::Notifications) signal_transport(kSyncNotifications);
-    else if (hint == hosty::SyncHint::Full) signal_transport(kFullSync);
-    return true;
-}
-
-void FirmwareApp::on_stream_connected() {
-    if (!stream_suspended_.load()) signal_transport(kFullSync);
-}
-
-void FirmwareApp::on_stream_closed(const HttpResult& result) {
-    if (!stream_suspended_.load()) {
-        signal_transport(result.unauthorized() ? kUnauthorized : kTransportFailed);
-    }
-}
-
-void FirmwareApp::sse_task_entry(void* context) { static_cast<FirmwareApp*>(context)->sse_task(); }
-
 void FirmwareApp::command_task_entry(void* context) { static_cast<FirmwareApp*>(context)->command_task(); }
 
 void FirmwareApp::apps_sync_task_entry(void* context) { static_cast<FirmwareApp*>(context)->apps_sync_task(); }
-
-void FirmwareApp::sse_task() {
-    std::uint32_t delay_ms = 1'000;
-    while (true) {
-        if (stream_suspended_.load()) {
-            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-            continue;
-        }
-        const std::uint64_t connected_at_ms = now_ms();
-        const HttpResult result = client_.stream_events(*this);
-        if (stream_suspended_.load()) continue;
-        const std::uint64_t lifetime_ms = now_ms() - connected_at_ms;
-        if (result.unauthorized() ||
-            (result.status_code >= 200 && result.status_code < 300 && lifetime_ms >= kEventStreamHealthyLifetimeMs)) {
-            delay_ms = 1'000;
-        } else {
-            delay_ms = std::min<std::uint32_t>(30'000, delay_ms * 2);
-        }
-        ESP_LOGW(kTag, "Event stream closed: transport=%s HTTP=%d lifetime=%llu ms; retry=%u ms; stack-free=%u bytes",
-                 esp_err_to_name(result.transport_error), result.status_code,
-                 static_cast<unsigned long long>(lifetime_ms), static_cast<unsigned>(delay_ms),
-                 static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
-        vTaskDelay(pdMS_TO_TICKS(delay_ms));
-    }
-}

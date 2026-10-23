@@ -26,13 +26,12 @@ std::uint64_t frame_hash(const void* buffer, std::uint32_t length) {
 
 CardputerHardware::CardputerHardware() : frame_(&M5.Display) {}
 
-bool CardputerHardware::begin(Peripherals peripherals) {
-    const bool measuring = peripherals == Peripherals::MeasurementOnly;
+bool CardputerHardware::begin() {
 
     auto config = M5.config();
     config.clear_display = true;
-    config.internal_imu = !measuring;
-    config.internal_spk = !measuring;
+    config.internal_imu = false;
+    config.internal_spk = true;
     config.output_power = true;
     M5.begin(config);
     if (M5.getBoard() != m5::board_t::board_M5CardputerADV) return false;
@@ -41,14 +40,6 @@ bool CardputerHardware::begin(Peripherals peripherals) {
     M5.Display.setTextSize(1);
     M5.Display.setTextDatum(m5gfx::textdatum_t::top_left);
     M5.Display.setBrightness(80);
-
-    if (measuring) {
-        // Nothing is drawn and nothing is played during a run. Leaving the frame buffer unallocated is
-        // 32 KB the measurement does not need; leaving the amplifier down is both a current draw and an
-        // audible pop on every sleep and wake avoided.
-        frame_ready_ = false;
-        return keyboard_.begin();
-    }
 
     M5.Speaker.setVolume(64);
     frame_.setPsram(false);
@@ -69,28 +60,6 @@ void CardputerHardware::set_wake_task(TaskHandle_t task) { keyboard_.set_wake_ta
 bool CardputerHardware::keyboard_activity_pending() const { return keyboard_.activity_pending(); }
 
 bool CardputerHardware::read_key(KeyInput& input) { return keyboard_.read(input); }
-
-std::uint16_t CardputerHardware::motion_delta_mg() {
-    M5.Imu.update();
-    float x = 0;
-    float y = 0;
-    float z = 0;
-    if (!M5.Imu.getAccel(&x, &y, &z)) return 0;
-    if (!accelerometer_ready_) {
-        previous_x_ = x;
-        previous_y_ = y;
-        previous_z_ = z;
-        accelerometer_ready_ = true;
-        return 0;
-    }
-    const float delta = std::fabs(x - previous_x_) + std::fabs(y - previous_y_) + std::fabs(z - previous_z_);
-    previous_x_ = x;
-    previous_y_ = y;
-    previous_z_ = z;
-    return static_cast<std::uint16_t>(std::min(65'535.0F, delta * 1000.0F));
-}
-
-void CardputerHardware::reset_motion_reference() { accelerometer_ready_ = false; }
 
 int CardputerHardware::battery_percent() const { return static_cast<int>(M5.Power.getBatteryLevel()); }
 
@@ -125,12 +94,19 @@ void CardputerHardware::fill_rect(int x, int y, int width_value, int height_valu
 }
 
 void CardputerHardware::text(int x, int y, std::string_view value, hosty::Color foreground, hosty::Color background) {
+    text_scaled(x, y, value, foreground, background, 1);
+}
+
+void CardputerHardware::text_scaled(int x, int y, std::string_view value, hosty::Color foreground,
+                                    hosty::Color background, std::uint8_t scale) {
     char buffer[160];
     const std::size_t length = std::min(value.size(), sizeof(buffer) - 1);
     std::memcpy(buffer, value.data(), length);
     buffer[length] = '\0';
     frame_.setTextColor(foreground, background);
+    frame_.setTextSize(scale);
     frame_.drawString(buffer, x, y);
+    frame_.setTextSize(1);
 }
 
 void CardputerHardware::present() {

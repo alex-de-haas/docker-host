@@ -62,6 +62,15 @@ struct AppSummary {
     bool autostart = true;
     bool live = false;
     FixedString<160> last_error;
+    bool configuration_required = false;
+    bool permission_error = false;
+    bool permissions_known = false;
+    bool missing_permissions = false;
+    bool restart_required = false;
+    bool health_healthy = false;
+    bool health_degraded = false;
+    bool last_operation_update = false;
+    bool update_needs_attention = false;
     AppUpdateState update;
 };
 
@@ -103,6 +112,12 @@ struct NotificationSnapshot {
     FixedString<40> updated_at;
 };
 
+struct CoreRestartState {
+    FixedString<64> instance;
+    FixedString<64> source_revision;
+    FixedString<24> status;
+};
+
 struct SessionInfo {
     bool authenticated = false;
     bool administrator = false;
@@ -131,7 +146,7 @@ struct DashboardCounts {
     std::uint16_t running = 0;
     std::uint16_t stopped = 0;
     std::uint16_t busy = 0;
-    std::uint16_t failed = 0;
+    std::uint16_t attention = 0;
     std::uint16_t updates = 0;
     std::uint16_t review_updates = 0;
 };
@@ -141,6 +156,7 @@ struct DashboardCounts {
 [[nodiscard]] NotificationLevel parse_notification_level(std::string_view value);
 [[nodiscard]] bool is_busy(const AppSummary& app);
 [[nodiscard]] bool is_running(const AppSummary& app);
+[[nodiscard]] bool needs_attention(const AppSummary& app);
 [[nodiscard]] DashboardCounts count_dashboard(const CoreSnapshot& snapshot);
 [[nodiscard]] std::string_view runtime_state_label(RuntimeState state);
 [[nodiscard]] std::string_view connection_state_label(ConnectionState state);

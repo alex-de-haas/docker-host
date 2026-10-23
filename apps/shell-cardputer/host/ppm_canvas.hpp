@@ -18,13 +18,14 @@ public:
     void fill(Color color) override;
     void fill_rect(int x, int y, int width, int height, Color color) override;
     void text(int x, int y, std::string_view value, Color foreground, Color background) override;
+    void text_scaled(int x, int y, std::string_view value, Color foreground, Color background,
+                     std::uint8_t scale) override;
 
     [[nodiscard]] bool write(const std::string& path) const;
     [[nodiscard]] std::uint64_t checksum() const;
 
 private:
     void pixel(int x, int y, Color color);
-    void glyph(int x, int y, char character, Color foreground, Color background);
 
     std::array<Color, kWidth * kHeight> pixels_{};
 };
