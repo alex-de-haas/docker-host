@@ -8,7 +8,7 @@
 // The format is specified in AGENTS.md ("Documentation"). The canonical copy of this script lives in
 // alex-de-haas/docker-host; other repositories carry a byte-identical copy, so change it there first.
 //
-// Workflow docs live in docs/features/<name>/{feature.md,plan.md}, plus docs/vision.md and the
+// Workflow docs live in docs/features/<name>/{feature.md,plan.md}, plus docs/vision.md, docs/ideas.md and the
 // docs/reviews/ archive. Any other Markdown under docs/ is rejected, except the top-level files other
 // tooling owns (TOOLING_FILES).
 
@@ -34,6 +34,7 @@ const SCHEMAS = {
   plan: { required: ["status", "created", "updated", "summary"], optional: ["components"] },
   feature: { required: ["created", "updated", "summary"], optional: ["components"] },
   vision: { required: ["created", "updated"], optional: [] },
+  ideas: { required: ["created", "updated"], optional: [] },
 };
 
 const mode = process.argv.includes("--fix") ? "fix" : process.argv.includes("--check") ? "check" : "print";
@@ -302,6 +303,12 @@ function readDoc(file, kind) {
     if (sections.at(-1)?.line.trim() !== "## Testing Expectations")
       errors.push(`${rel(file)}: feature.md must end with a "## Testing Expectations" section`);
   }
+  if (kind === "ideas") {
+    for (const { index, line } of prose) {
+      if (/^## Deliverables\s*$/.test(line) || /^\s*[-*+] \[[ xX]\]/.test(line))
+        errors.push(`${rel(file)}:${index + 1}: ideas.md must not carry deliverables or task checkboxes; scoped work belongs in a plan`);
+    }
+  }
   const progress = kind === "plan" ? checkDeliverables(file, prose) : null;
   return { data, title: title ?? "Untitled", progress };
 }
@@ -370,7 +377,7 @@ if (existsSync(docsDir)) {
       if (WORKFLOW_DIRS.has(name)) continue;
       for (const file of markdownUnder(path))
         errors.push(`${rel(file)}: not a workflow location; documents live in docs/features/<name>/ (feature.md, plan.md)`);
-    } else if (name.endsWith(".md") && !["root.md", "vision.md"].includes(name) && !TOOLING_FILES.has(name)) {
+    } else if (name.endsWith(".md") && !["root.md", "vision.md", "ideas.md"].includes(name) && !TOOLING_FILES.has(name)) {
       errors.push(`${rel(path)}: not a workflow location; documents live in docs/features/<name>/ (feature.md, plan.md)`);
     }
   }
@@ -378,6 +385,8 @@ if (existsSync(docsDir)) {
 
 const visionMd = join(docsDir, "vision.md");
 if (existsSync(visionMd)) readDoc(visionMd, "vision");
+const ideasMd = join(docsDir, "ideas.md");
+if (existsSync(ideasMd)) readDoc(ideasMd, "ideas");
 
 const counts = PLAN_STATUSES.filter((s) => statusCounts.has(s)).map((s) => `${statusCounts.get(s)} ${s}`);
 if (statusCounts.has("?")) counts.push(`${statusCounts.get("?")} without a status`);

@@ -51,6 +51,7 @@ Development is document-driven: every non-trivial change starts and ends in `doc
 docs/
 ├── root.md              — prose overview + generated status index
 ├── vision.md            — optional: the direction the project is built toward (living, no status)
+├── ideas.md             — optional: raw possibilities and questions before planning (living, no status)
 ├── features/
 │   └── <feature-name>/  — kebab-case; the feature's stable, permanent home
 │       ├── feature.md   — current reality only
@@ -77,6 +78,14 @@ docs/
   `docs/reviews/`. It authorizes no implementation and owns no deliverables:
   work it names is tracked in the owning feature's `plan.md`. Feature and plan
   documents may cite its decisions by number and date.
+- `docs/ideas.md`, where a repository has one, collects raw possibilities, questions
+  and examples that may expand or complement the vision but are too unformed even
+  for a Draft plan. It is a living document, with only `created` / `updated`
+  frontmatter, no status, deliverables or task checkboxes, and no implementation
+  approval. It stays outside the generated status index. Ideas can be revised,
+  combined or discarded; once one becomes concrete enough to plan, develop it in
+  the owning feature's `plan.md` and link that work. Recording an idea does not
+  change the vision or create a delivery commitment.
 - A feature folder holds only `feature.md` and `plan.md`; images and other
   non-Markdown assets may sit beside them.
 - Beyond that there are no other documentation folders. A large or cross-cutting
@@ -91,7 +100,7 @@ docs/
 
 ### Frontmatter
 
-Every `feature.md`, `plan.md` and `vision.md` starts at its first line with a
+Every `feature.md`, `plan.md`, `vision.md` and `ideas.md` starts at its first line with a
 frontmatter block, followed by the `# Title` heading:
 
 ```markdown
@@ -113,7 +122,7 @@ components: [apps/core, apps/shell]
 - `components` — optional in `feature.md` and `plan.md`: the
   repository-relative directories the document concerns. Each must exist. Omit
   it when the document concerns the whole repository.
-- `vision.md` carries only `created` and `updated`.
+- `vision.md` and `ideas.md` carry only `created` and `updated`.
 
 The block is a strict subset of YAML: one `key: value` per line, plain values or
 `[a, b]` lists, no nesting, comments or multi-line values. Wrap a value that
@@ -124,7 +133,7 @@ Unknown keys are rejected. The H1 is the title; there is no `title` key.
 
 - Describes current behavior only: present tense, verifiable against the code.
   Words like "will", "planned", or "future" do not belong here — that content
-  goes to `plan.md`.
+  goes to `plan.md`, or to `ideas.md` while still too unformed to plan.
 - Created in the PR that first ships behavior, never earlier. When
   implementation diverges from the plan, this file follows the code.
 - Its frontmatter has no `status`. It ends with a `## Testing Expectations`
@@ -132,10 +141,10 @@ Unknown keys are rejected. The H1 is the title; there is no `title` key.
 
 ### plan.md — intent
 
-- The single artifact for unbuilt work, from first idea to last deliverable:
+- The single artifact for scoped unbuilt work, from a concrete proposal to the last deliverable:
   goal, target behavior (written as a diff against `feature.md` when the
   feature already exists), deliverables checklist, phases, open questions,
-  verification steps.
+  verification steps. Raw possibilities that cannot yet support a Draft plan belong in `ideas.md`.
 - Its frontmatter `status` is one of:
   - **Draft** — being shaped; open questions allowed.
   - **On Hold** — deliberately parked.
@@ -171,7 +180,7 @@ Statuses and checkboxes change in the same commit as the work they describe:
   `plan.md`, and regenerates the index — completion is never deferred to a
   later PR, and scope is never silently narrowed to force completion.
 
-Unfinished work exists only as unchecked deliverables — never hidden in notes,
+Tracked implementation work exists only as unchecked deliverables — never hidden in notes,
 "future work" sections, or follow-up remarks. Bump `updated` on every
 meaningful change to a document.
 
