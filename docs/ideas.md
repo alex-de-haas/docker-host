@@ -734,9 +734,10 @@ administrator-only development path is the current baseline. Narrower team roles
 source work remain questions alongside [user sessions](features/user-agent-sessions/plan.md) and
 existing execution/authorization work; this exploration does not mark their boundaries implemented.
 
-Internal sessions are enough to reason about the first scenarios. External session-history exchange
-remains open and is not a prerequisite for the ideas here. Preserve the existing external workspace
-capability without assuming that Hosty can obtain another agent application's conversation history.
+Internal sessions are enough to reason about the first scenarios. The owner is not pursuing
+external chat viewing or synchronization for now; [I17](#i17-viewing-external-agent-chats-beside-workspaces)
+keeps the earlier exploration for reference. Preserve the existing external workspace capability
+without assuming that Hosty can obtain another agent application's conversation history.
 
 **Prior art and options:**
 
@@ -909,6 +910,62 @@ export.
   satisfy the same provider role with its own runtime.
 - "One click" can still mean hundreds of gigabytes of media. Show the size and allow excluding
   large data.
+
+## I17. Viewing External Agent Chats Beside Workspaces
+
+**Owner position, 2026-10-23:** Do not pursue chat viewing or synchronization for external systems
+for now, including the proposed Codex viewer. The owner currently leans against adding this
+capability. The separate Draft prepared on 2026-10-22 is withdrawn; the notes below preserve the
+possibility for reference, without a plan, delivery commitment or implementation approval.
+
+**Original motivation:** An operator could read the conversation behind external development
+work beside its diff, branch and PR in Harness, reducing switches between applications when several
+tasks are active. Its value is less clear when the operator already follows the work in Codex and
+uses Harness mainly for application management. The cost includes local-profile access, client
+compatibility, conversation binding and continued maintenance.
+
+**Earlier candidate, retained as context:** The proposed first version was a read-only view of one
+explicitly selected local Codex chat associated with an external workspace. It would show saved
+user/assistant messages and compact tool activity, load older pages on demand, and refresh on entry,
+manual request or return to the view. A last-read timestamp and incomplete/unavailable indicators
+would distinguish saved history from live execution. Live streaming, durable history mirroring,
+attachment-file access and recursive child-chat imports were not part of that proposal.
+
+The design boundaries considered were:
+
+- Codex would remain the conversation owner. No composer, session start/resume/stop, steering,
+  approvals, provider switching, execution takeover or automatic context import into a Harness agent.
+- A workspace/task ID, agent label, branch or working directory would not establish the identity
+  of a Codex chat. Any association would need an explicit thread and local-profile identity, scoped
+  access and a way to unlink it without changing Codex history.
+- A backend reader would use supported history APIs rather than depend on internal SQLite/JSONL
+  formats. It would expose only authorized history reads, not an unrestricted provider connection.
+  Core would retain its workspace role rather than become a conversation engine.
+- Native and containerized Harness have different access to the host user's Codex profile. A local
+  helper might be necessary; a browser alone cannot read that history. Mounting the entire Codex
+  home or copying provider credentials was not selected as an integration approach.
+- Codex would stay the authoritative history store, with only bounded disposable viewer caches.
+  Unlinking, permission changes and workspace deletion would clear the view without deleting the
+  source chat. An inaccessible or archived chat would not justify resuming or taking it over.
+
+**Technical lead from 2026-10-22:** The
+[official Codex app-server documentation](https://learn.chatgpt.com/docs/app-server) described
+stored-history methods such as `thread/read`, `thread/turns/list` and `thread/items/list` without
+resuming a session. Method/store compatibility and safe reading while another client owns the
+active chat were not tested for this idea. A history-read API does not establish live subscriptions
+or guarantee compatibility with the Codex version bundled in Harness.
+
+**Questions only if reconsidered:** Is the benefit sufficient to maintain another chat view?
+Which local topology and Codex versions are supportable? How could the operator authorize and bind
+one conversation without exposing unrelated chats? How would paging, stale content and permission
+revocation behave? Revisit these questions only after an explicit decision to reopen the idea.
+
+**Related scope:** [External development workspaces](features/external-development-workspaces/feature.md)
+continue to support source work and observed Git/PR state without a synchronized chat. The separate
+[external context exchange](features/assistant-external-session-context/plan.md) proposal concerns
+explicit reads/reports, already excludes automatic Codex synchronization, and is not expanded or
+approved by this note.
+
 
 ## Platform Precedents
 
