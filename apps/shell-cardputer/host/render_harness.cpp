@@ -17,6 +17,7 @@ int main(int argc, char** argv) {
 
     hosty::CoreSnapshot core;
     core.version.assign_truncated("0.150.2");
+    core.core_update.known = true;
     for (int index = 0; index < 8; ++index) {
         hosty::AppSummary app;
         char id[32];
@@ -117,6 +118,51 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::cout << update_path.string() << " " << update_canvas.checksum() << '\n';
+
+    const auto save_view = [&](const char* name, const hosty::ClientState& sample, const hosty::UiState& options) {
+        hosty::host::PpmCanvas sample_canvas;
+        renderer.render(sample_canvas, sample, options);
+        const auto path = output / (std::string(name) + ".ppm");
+        if (!sample_canvas.write(path.string())) return false;
+        std::cout << path.string() << " " << sample_canvas.checksum() << '\n';
+        return true;
+    };
+    hosty::CoreSnapshot healthy_core;
+    healthy_core.version = core.version;
+    healthy_core.core_update.known = true;
+    for (int index = 0; index < 11; ++index) {
+        hosty::AppSummary app;
+        app.id.assign_truncated("app");
+        app.display_name.assign_truncated("Media server");
+        app.runtime_state = hosty::RuntimeState::Running;
+        app.operation_state = hosty::OperationState::Idle;
+        static_cast<void>(healthy_core.apps.push_back(app));
+    }
+    hosty::ClientState healthy_state;
+    healthy_state.install_snapshot(healthy_core, 1000);
+    healthy_state.apply({hosty::ConnectionEvent::Type::SyncCompleted, 1000});
+    ui.now_ms = 181000;
+    if (!save_view("home-healthy", healthy_state, ui)) return 1;
+    healthy_state.apply({hosty::ConnectionEvent::Type::TransportFailed, 181000});
+    if (!save_view("home-failed", healthy_state, ui)) return 1;
+    healthy_state.apply({hosty::ConnectionEvent::Type::WifiLost, 181000});
+    if (!save_view("home-offline", healthy_state, ui)) return 1;
+    healthy_state.apply({hosty::ConnectionEvent::Type::SyncStarted, 181000});
+    if (!save_view("home-refreshing", healthy_state, ui)) return 1;
+    hosty::ClientState partial_state;
+    healthy_core.core_update.known = false;
+    partial_state.install_snapshot(healthy_core, 1000);
+    partial_state.apply({hosty::ConnectionEvent::Type::SyncStarted, 1000});
+    ui.alerts_loaded = false;
+    if (!save_view("home-partial", partial_state, ui)) return 1;
+    ui.alerts_loaded = true;
+    hosty::ClientState startup_state;
+    startup_state.apply({hosty::ConnectionEvent::Type::Configured, 0});
+    if (!save_view("startup-wifi", startup_state, ui)) return 1;
+    startup_state.apply({hosty::ConnectionEvent::Type::AuthorizationStarted, 1000});
+    if (!save_view("startup-core", startup_state, ui)) return 1;
+    startup_state.apply({hosty::ConnectionEvent::Type::Authorized, 1000});
+    if (!save_view("startup-apps", startup_state, ui)) return 1;
 
     ui.view = hosty::View::Apps;
     ui.overlay_visible = true;

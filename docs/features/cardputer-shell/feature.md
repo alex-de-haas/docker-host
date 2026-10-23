@@ -10,8 +10,8 @@ components: [apps/shell-cardputer]
 ## Short Operator Sessions
 
 The native ESP32-S3 firmware targets M5Stack Cardputer ADV, with a 240 x 135
-display, keyboard and 8 MB flash. Version 0.2.0 replaces continuous monitoring
-with a short session: switch on, inspect Home, optionally operate apps, switch off.
+display, keyboard and 8 MB flash. Version 0.2.1 supports a short session: switch
+on, inspect Home, optionally operate apps, switch off.
 It has no Hosty runtime manifest and uses the native ESP-IDF build/USB workflow.
 
 Home, Apps, Updates and Device remain keyboard-driven. Home `R` refreshes and
@@ -30,8 +30,38 @@ deleting credentials. Explicit checks can sound for an unread warning/error.
 There is no idle status polling. Operator-started operations receive bounded
 follow-up reads, at most once per two seconds for two minutes while the worker
 is idle. A settled app operation ends this window early. Snapshot age continues
-to advance without network work; after 60 seconds the header reports Stale.
-Failed refreshes retain last-known data and expose the failure.
+to advance without network work, using neutral Checked-now/seconds/minutes/hours
+text. Age alone does not turn a successful snapshot into a transport failure.
+Failed refreshes retain last-known data and its actual age, and show Check failed.
+Offline, revoked access and unsupported Core remain distinct outcomes.
+
+## Home And Startup Presentation
+
+Home gives the check outcome the largest text: All clear, Needs attention,
+Checking status, Check incomplete, Apps are busy, New alerts, or a connection
+failure. It reports the first affected app and a bounded short reason, preserving
+space for the reason even with a long name. Missing notification/Core-update data
+cannot produce All clear. Attention and Updates use large counts, with compact
+running/busy/stopped, review, alert and Core-update context below. Core version is
+on Device; all existing keyboard commands remain available.
+
+Startup uses one stable layout with Wi-Fi, Core and Apps steps. Clock validation
+and authorization belong to the Core step. There are no animation delays or
+additional network calls. App status replaces this screen immediately after the
+required reads, while the outcome stays Checking status until supplementary data
+arrives unless an app already needs attention. Setup, enrollment and failure
+dialogs remain explicit overlays.
+
+Amber uses a black background, light text, muted secondary details and an amber
+accent; red emphasizes problems. Ocean and Violet remain selectable. The display
+retains its existing 8-bit framebuffer and pixel font, scaled only for the main
+outcome/counts. Host renders include lowercase glyphs and scaled text.
+
+Synthetic host-rendered examples at the native 240 x 135 resolution:
+
+![Home showing an app that needs attention](home.png)
+
+![Startup while connecting to Core](startup.png)
 
 ## Startup And Transport
 
@@ -73,38 +103,46 @@ additional hardware acceptance rather than treating them as verified.
 
 ## Verification On 2026-10-23
 
-Version 0.2.0 is built with ESP-IDF 5.5.4 and flashed over USB to the connected
+Version 0.2.1 is built with ESP-IDF 5.5.4 and flashed over USB to the connected
 Cardputer ADV; esptool verifies the written image hash. The final application
-image is 1,295,424 bytes, leaving 68% of its OTA slot free. NVS remains intact:
+image is 1,298,016 bytes, leaving 68% of its OTA slot free. NVS remains intact:
 the existing Wi-Fi connection and authorization token work with Core 0.150.2.
 
 The captured boot reads the session, Core status, all 11 apps, notifications and
-Core update status successfully over HTTPS. First app data arrives about 5.9 s
-from the bootloader start and supplementary reads finish about 6.5 s from that
-start. Firmware-relative diagnostic timestamps are 5,463 ms and 6,102 ms.
-The first snapshot has 85,156 bytes free heap and a 38,912-byte largest block.
-This is one measured boot; no equivalent instrumented old-firmware baseline
-is available. An 85-second idle USB capture contains no subsequent HTTP requests.
+Core update status successfully over HTTPS. First app data arrives about 4.7 s
+from the bootloader start and supplementary reads finish about 5.4 s from that
+start. Firmware-relative diagnostic timestamps are 4,280 ms and 4,959 ms.
+The first snapshot has 84,940 bytes free heap and a 38,912-byte largest block.
+These are single-boot observations, not a controlled speed comparison: the
+preceding 0.2.0 boot measured 5.9/6.5 s with a longer Wi-Fi connection phase.
+
+The USB capture also records the operator's Home R refresh, with all four reads
+returning HTTP 200 and the worker completing normally. Between boot and that
+explicit refresh there are no HTTP requests. The operator confirms the new Home
+is readable without overlaps and manual refresh works on the physical device.
 
 Host tests, HTTP-adapter regression tests, rendering, production build, version
-consistency, documentation/link validation and whitespace checks pass. The
-240 x 135 Home and Device renders have been visually inspected. The HTTP tests
-include the ESP-IDF behavior where clearing an already-empty POST body returns
-`ESP_ERR_NOT_FOUND` for an absent Content-Type; that result does not block GETs.
+consistency, documentation/link validation and whitespace checks pass. Home,
+Device and startup renders have been visually inspected. Layout tests cover
+long names, 64-app/update counts, very large unread counts, incomplete data,
+transport failure and retained snapshot age, including text bounds/overlap.
+The HTTP tests cover ESP-IDF's absent Content-Type result when clearing a GET
+body, which does not block the request.
 
-The operator confirms Home `R` refresh and keyboard navigation through Apps and
-Device work normally on the flashed device. Live Core/app lifecycle mutations,
-token revocation and OTA rollback have not been exercised
-in this session; the running Core remains unchanged. The remaining acceptance
-and storage hardening are tracked in [the plan](plan.md).
+Live Core/app lifecycle mutations, token revocation and OTA rollback have not
+been exercised in this session; the running Core remains unchanged. Remaining
+hardware acceptance and storage hardening are tracked in [the plan](plan.md).
 
 ## Testing Expectations
 
 - `apps/shell-cardputer/tools/host-test.sh`: bounded JSON/protocol/state, Attention
   semantics, rendering, clock floor, actual HTTP adapter reuse/isolation and Core
-  restart requests through an ESP-IDF test seam.
+  restart requests through an ESP-IDF test seam. Home checks cover incomplete data,
+  retained ages after failure/disconnection, long problem names, maximum counts
+  and text bounds/overlap in the 240 x 135 layout.
 - `apps/shell-cardputer/tools/render-harness.sh`: inspect all four 240 x 135 views,
-  themes, update availability, age and action menus.
+  themes, update availability, age and action menus, plus healthy/failed/partial
+  Home and all three startup phases.
 - `apps/shell-cardputer/tools/idf.sh build`: pinned ESP-IDF 5.5.4 production target;
   check the generated configuration and image/OTA-slot size.
 - Verify USB flash hashes, actual boot, retained settings, fresh app data and

@@ -1,7 +1,6 @@
 #include "ppm_canvas.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <fstream>
 
 namespace hosty::host {
@@ -13,6 +12,19 @@ struct Glyph {
 };
 
 constexpr Glyph kGlyphs[] = {
+    {'a', {0x20, 0x54, 0x54, 0x54, 0x78}}, {'b', {0x7f, 0x48, 0x44, 0x44, 0x38}},
+    {'c', {0x38, 0x44, 0x44, 0x44, 0x20}}, {'d', {0x38, 0x44, 0x44, 0x48, 0x7f}},
+    {'e', {0x38, 0x54, 0x54, 0x54, 0x18}}, {'f', {0x08, 0x7e, 0x09, 0x01, 0x02}},
+    {'g', {0x0c, 0x52, 0x52, 0x52, 0x3e}}, {'h', {0x7f, 0x08, 0x04, 0x04, 0x78}},
+    {'i', {0, 0x44, 0x7d, 0x40, 0}}, {'j', {0x20, 0x40, 0x44, 0x3d, 0}},
+    {'k', {0x7f, 0x10, 0x28, 0x44, 0}}, {'l', {0, 0x41, 0x7f, 0x40, 0}},
+    {'m', {0x7c, 0x04, 0x18, 0x04, 0x78}}, {'n', {0x7c, 0x08, 0x04, 0x04, 0x78}},
+    {'o', {0x38, 0x44, 0x44, 0x44, 0x38}}, {'p', {0x7c, 0x14, 0x14, 0x14, 0x08}},
+    {'q', {0x08, 0x14, 0x14, 0x18, 0x7c}}, {'r', {0x7c, 0x08, 0x04, 0x04, 0x08}},
+    {'s', {0x48, 0x54, 0x54, 0x54, 0x20}}, {'t', {0x04, 0x3f, 0x44, 0x40, 0x20}},
+    {'u', {0x3c, 0x40, 0x40, 0x20, 0x7c}}, {'v', {0x1c, 0x20, 0x40, 0x20, 0x1c}},
+    {'w', {0x3c, 0x40, 0x30, 0x40, 0x3c}}, {'x', {0x44, 0x28, 0x10, 0x28, 0x44}},
+    {'y', {0x0c, 0x50, 0x50, 0x50, 0x3c}}, {'z', {0x44, 0x64, 0x54, 0x4c, 0x44}},
     {' ', {0, 0, 0, 0, 0}}, {'!', {0, 0, 0x5f, 0, 0}}, {'%', {0x63, 0x13, 0x08, 0x64, 0x63}},
     {'+', {0x08, 0x08, 0x3e, 0x08, 0x08}}, {',', {0, 0x50, 0x30, 0, 0}}, {'-', {0x08, 0x08, 0x08, 0x08, 0x08}},
     {'.', {0, 0x60, 0x60, 0, 0}}, {'/', {0x20, 0x10, 0x08, 0x04, 0x02}}, {':', {0, 0x36, 0x36, 0, 0}},
@@ -34,7 +46,7 @@ constexpr Glyph kGlyphs[] = {
 };
 
 const std::array<std::uint8_t, 5>& columns_for(char character) {
-    const char normalized = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
+    const char normalized = character;
     for (const auto& glyph : kGlyphs) {
         if (glyph.character == normalized) return glyph.columns;
     }
@@ -73,11 +85,23 @@ void PpmCanvas::fill_rect(int x, int y, int width, int height, Color color) {
 }
 
 void PpmCanvas::text(int x, int y, std::string_view value, Color foreground, Color background) {
+    text_scaled(x, y, value, foreground, background, 1);
+}
+
+void PpmCanvas::text_scaled(int x, int y, std::string_view value, Color foreground, Color background,
+                            std::uint8_t scale) {
+    if (scale == 0) return;
     int cursor = x;
     for (const char character : value) {
-        if (cursor + 5 >= kWidth) break;
-        glyph(cursor, y, character, foreground, background);
-        cursor += 6;
+        if (cursor + 6 * scale > kWidth) break;
+        const auto& columns = columns_for(character);
+        for (int column = 0; column < 6; ++column) {
+            for (int row = 0; row < 8; ++row) {
+                const bool set = column < 5 && (columns[column] & (1U << row)) != 0;
+                fill_rect(cursor + column * scale, y + row * scale, scale, scale, set ? foreground : background);
+            }
+        }
+        cursor += 6 * scale;
     }
 }
 
@@ -109,16 +133,6 @@ void PpmCanvas::pixel(int x, int y, Color color) {
     if (x >= 0 && x < kWidth && y >= 0 && y < kHeight) {
         pixels_[static_cast<std::size_t>(y * kWidth + x)] = quantize_rgb332(color);
     }
-}
-
-void PpmCanvas::glyph(int x, int y, char character, Color foreground, Color background) {
-    const auto& columns = columns_for(character);
-    for (int column = 0; column < 5; ++column) {
-        for (int row = 0; row < 7; ++row) {
-            pixel(x + column, y + row, (columns[column] & (1U << row)) != 0 ? foreground : background);
-        }
-    }
-    for (int row = 0; row < 7; ++row) pixel(x + 5, y + row, background);
 }
 
 }  // namespace hosty::host

@@ -21,6 +21,30 @@ The implementation remains native ESP-IDF firmware, not a Hosty runtime app.
 Use its native build and physical-device verification paths; do not invent a
 Docker runtime for the device or change the operator's running Core.
 
+## Approved Home And Startup Refresh
+
+On 2026-10-23 the owner approved refreshing Home and startup, updating PR #647
+and flashing the connected device. This extends the existing In Progress scope.
+
+The design is a compact instrument panel, with the check outcome as its strongest
+visual element. Keep the existing 6 x 8 pixel font, use 2x text for the outcome and
+3x digits for Attention/Updates, and left-align supporting text. The restrained
+Amber palette uses black (#000000), slate (#494955), white (#FFFFFF), muted gray
+(#9292AA), amber (#FFB600) and error red (#FF4955), with RGB332-compatible values.
+Ocean and Violet remain available. No new fonts, animation, framebuffer expansion
+or artificial startup delays are needed.
+
+Home layout: header; large outcome; first affected app/reason; Attention and
+Updates counts; compact runtime/alert/Core-update context; explicit refresh and
+check age in the footer. Core version moves to Device. A successful old snapshot
+remains neutral; failed reads and disconnected/revoked states remain distinct.
+Unknown supplemental data never produces an all-clear outcome.
+
+Startup layout: stable title and detail; three fixed steps (Wi-Fi, Core, Apps);
+only completed/current step emphasis changes. Existing setup, authorization and
+error dialogs retain precedence. App data replaces startup immediately when read.
+This deliberately favors status legibility over adding dashboard decoration.
+
 ## Target Behavior
 
 - Reuse one serialized HTTP connection and remove the permanent SSE connection.
@@ -83,6 +107,14 @@ notes; they are not claims of verification against the current Core.
   avoid the LAN clock wait and add startup/request timing diagnostics.
 - [x] D36. Correct current Core compatibility and attention-state interpretation,
   with regressions for running apps that still require attention.
+
+- [x] D37. Refresh Home and startup with clear outcomes, prominent Attention and
+  Updates, bounded problem text, neutral snapshot age and preserved failure states.
+- [x] D38. Verify healthy/problem/loading/failure layouts, build and flash the
+  updated firmware, and publish the verified change in the existing PR #647.
+  Version 0.2.1 passes native build, host/render/layout checks and USB hash
+  verification. The operator confirms readable Home and working R refresh;
+  the serial capture also records a successful explicit full refresh.
 
 ## Verification
 

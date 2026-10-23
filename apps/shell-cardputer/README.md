@@ -49,6 +49,14 @@ Changing the Core origin clears the old token so it cannot be sent to another
 host. Losing the device is handled from Shell: open the active-credentials
 list and revoke the entry carrying the same device label.
 
+## Home And Startup
+
+Home leads with a large check outcome, the first affected app/reason when needed,
+and large Attention/Updates counts. Unloaded supplemental data cannot produce
+`All clear`. Core version is on Device. Startup keeps one layout with Wi-Fi,
+Core and Apps steps; the Core step includes clock validation and authorization.
+The first app snapshot replaces startup without animation or added waits.
+
 ## Controls
 
 Left and Right cycle through Home, Apps, Updates, and Device. The header names
@@ -65,7 +73,7 @@ also displays its direct letter shortcut. The legacy shortcuts remain active:
 - Updates: `C` starts a fleet check and `A` confirms all routine updates.
   Review-required updates remain read-only and are completed from normal Shell.
 - Home: `R` refreshes the snapshot; `Enter` opens the latest alert. `U` opens
-  Core-update confirmation only when `Update [U]` is visible.
+  Core-update confirmation only when `Core update [U]` is visible.
 - Device: select Theme, Sound, or Quiet hours and press `Enter` to cycle or
   toggle its value. Connection
   setup, Core actions, and Device actions are named rows in the same list.
@@ -89,15 +97,16 @@ are ignored; upgrading preserves Wi-Fi, the Core origin and the access token.
 
 The first app snapshot appears before notifications and the cached Core update
 verdict finish loading. Unloaded alerts show `...`; an unknown Core update
-verdict shows `Update ?`. App update counts come from Core's existing checks:
+verdict shows `Core ...`. App update counts come from Core's existing checks:
 booting the console does not launch a new fleet check. The Home footer always
 shows snapshot age and Refresh. Attention includes configuration/permission
 problems, restart requirements, failed update checks and unhealthy running apps.
 
 Refresh is explicit. An operation started on the device gets a bounded follow-up
 window (two minutes, at most one refresh every two seconds while requests are
-idle). Settled app operations end follow-up early. After a minute without a fresh
-snapshot the header says Stale; the last-known values remain visible. Core restart
+idle). Settled app operations end follow-up early. Snapshot age is neutral:
+`Checked 3m ago` does not indicate a failure. Failed refreshes show `Check failed`
+and retain the last-known values and their age. Core restart
 uses an instance/source revision and a request ID, then checks its receipt. A lost
 restart response is recovered with the same ID during the session, without
 reissuing the POST. A Core update response is displayed as accepted, not completed.

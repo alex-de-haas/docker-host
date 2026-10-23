@@ -90,7 +90,7 @@ Plans: 13 In Progress · 1 Blocked · 41 Draft · 7 On Hold.
 - [Auth Provider Extensions](features/auth-provider-extensions/plan.md) — External identity providers, password reset and durable login throttling beyond local password login. · Draft, 0/7, updated 2026-10-10
 - [Auth Session Lifecycle And Recovery](features/auth-session-lifecycle/feature.md) — The identity error contract, opaque app session grants, sliding lifetimes and session recovery through Core login.
 - [Feature: Automatic Runtime App Ports](features/automatic-runtime-app-ports/feature.md) — Core reserves host ports at install, injects them into the environment and lets operators reassign or pin them. · [plan](features/automatic-runtime-app-ports/plan.md): Draft, 0/10, updated 2026-10-21
-- [Cardputer Operator Shell](features/cardputer-shell/feature.md) — Native Cardputer ADV console with early app status, explicit refresh and bounded Core operations. · [plan](features/cardputer-shell/plan.md): In Progress, 5/10, updated 2026-10-23
+- [Cardputer Operator Shell](features/cardputer-shell/feature.md) — Native Cardputer ADV console with early app status, explicit refresh and bounded Core operations. · [plan](features/cardputer-shell/plan.md): In Progress, 7/12, updated 2026-10-23
 - [CI Feedback Loop](features/ci-feedback-loop/feature.md) — Affected component CI, explicit local integration checks and publication of verified main revisions.
 - [CLI Bootstrap](features/cli-bootstrap/feature.md) — The hosty CLI installs itself and Core, discovers the Core control API and manages runtime apps.
 - [Feature: Cloudflare Ingress](features/cloudflare-ingress/feature.md) — An opt-in Cloudflare Tunnel provider that publishes app endpoints and derives their public origins.

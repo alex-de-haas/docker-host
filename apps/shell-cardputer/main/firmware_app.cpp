@@ -123,6 +123,8 @@ bool FirmwareApp::initialize() {
     }
 
     sync_ui_settings();
+    ui_.battery_percent = hardware_.battery_percent();
+    ui_.charging = hardware_.charging();
     ui_.device_label.assign_truncated(settings_.device_label.view());
     ui_.endpoint.assign_truncated(settings_.core_origin.view());
     const esp_app_desc_t* description = esp_app_get_description();
@@ -255,6 +257,8 @@ bool FirmwareApp::synchronize_clock() {
 }
 
 bool FirmwareApp::authorize() {
+    state_.apply({hosty::ConnectionEvent::Type::AuthorizationStarted, now_ms()});
+    render();
     if (settings_.access_token.empty()) {
         hosty::Enrollment enrollment;
         enrollment.start(now_ms());
@@ -338,6 +342,7 @@ bool FirmwareApp::authorize() {
 bool FirmwareApp::full_sync() {
     last_full_sync_ms_ = now_ms();
     state_.apply({hosty::ConnectionEvent::Type::SyncStarted, now_ms()});
+    render();
     staging_core_ = {};
     std::string_view operation = "Core status";
     HttpResult result = client_.read_core_status(staging_core_);
@@ -389,7 +394,11 @@ bool FirmwareApp::full_sync() {
     const HttpResult update_result = client_.read_core_update_status(staging_core_);
     if (update_result.ok()) state_.install_snapshot(staging_core_, state_.last_sync_ms());
     else if (update_result.unauthorized()) signal_transport(kUnauthorized);
-    else set_request_failure("Core update status", update_result);
+    else {
+        staging_core_.core_update.error.assign_truncated("Status unavailable");
+        state_.install_snapshot(staging_core_, state_.last_sync_ms());
+        set_request_failure("Core update status", update_result);
+    }
     ESP_LOGI(kTag, "Startup complete at %llu ms", static_cast<unsigned long long>(now_ms()));
     ESP_LOGI(kTag, "Full synchronization completed with Core %s", staging_core_.version.c_str());
     return true;
@@ -586,10 +595,6 @@ void FirmwareApp::main_loop() {
             wifi_.connected() && !command_in_flight_ && !apps_sync_in_flight_) {
             next_operation_sync_ms_ = current + 2'000;
             request_full_sync();
-        }
-        if (state_.connection() == hosty::ConnectionState::Online && state_.stale(current, 60'000)) {
-            state_.apply({hosty::ConnectionEvent::Type::TransportFailed, current});
-            render_requested_ = true;
         }
         if (!command_in_flight_ && !apps_sync_in_flight_) client_.release_if_idle(current);
 

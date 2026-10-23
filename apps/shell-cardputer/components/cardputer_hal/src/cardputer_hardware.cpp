@@ -94,12 +94,19 @@ void CardputerHardware::fill_rect(int x, int y, int width_value, int height_valu
 }
 
 void CardputerHardware::text(int x, int y, std::string_view value, hosty::Color foreground, hosty::Color background) {
+    text_scaled(x, y, value, foreground, background, 1);
+}
+
+void CardputerHardware::text_scaled(int x, int y, std::string_view value, hosty::Color foreground,
+                                    hosty::Color background, std::uint8_t scale) {
     char buffer[160];
     const std::size_t length = std::min(value.size(), sizeof(buffer) - 1);
     std::memcpy(buffer, value.data(), length);
     buffer[length] = '\0';
     frame_.setTextColor(foreground, background);
+    frame_.setTextSize(scale);
     frame_.drawString(buffer, x, y);
+    frame_.setTextSize(1);
 }
 
 void CardputerHardware::present() {

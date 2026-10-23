@@ -33,6 +33,8 @@ public:
     void fill(hosty::Color color) override;
     void fill_rect(int x, int y, int width, int height, hosty::Color color) override;
     void text(int x, int y, std::string_view value, hosty::Color foreground, hosty::Color background) override;
+    void text_scaled(int x, int y, std::string_view value, hosty::Color foreground, hosty::Color background,
+                     std::uint8_t scale) override;
     void present() override;
 
 private:

@@ -13,6 +13,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #ifndef HOSTY_FIXTURE_DIR
 #define HOSTY_FIXTURE_DIR "fixtures"
@@ -267,6 +268,133 @@ void test_attention_and_current_contract() {
     CHECK(restart.status == "completed");
 }
 
+class LayoutCanvas final : public hosty::Canvas {
+public:
+    struct Text { int x, y, width, height; std::string value; };
+    std::vector<Text> items;
+    int width() const override { return 240; }
+    int height() const override { return 135; }
+    void fill(hosty::Color) override { items.clear(); }
+    void fill_rect(int, int, int, int, hosty::Color) override {}
+    void text(int x, int y, std::string_view value, hosty::Color fg, hosty::Color bg) override {
+        text_scaled(x, y, value, fg, bg, 1);
+    }
+    void text_scaled(int x, int y, std::string_view value, hosty::Color, hosty::Color, std::uint8_t scale) override {
+        if (value.empty()) return;
+        items.push_back({x, y, static_cast<int>(value.size()) * 6 * scale, 8 * scale, std::string(value)});
+    }
+    bool contains(std::string_view value) const {
+        return std::any_of(items.begin(), items.end(), [value](const Text& item) { return item.value == value; });
+    }
+    void check_bounds() const {
+        for (std::size_t i = 0; i < items.size(); ++i) {
+            const auto& a = items[i];
+            CHECK(a.x >= 0 && a.y >= 0 && a.x + a.width <= width() && a.y + a.height <= height());
+            for (std::size_t j = i + 1; j < items.size(); ++j) {
+                const auto& b = items[j];
+                const bool overlap = a.x < b.x + b.width && b.x < a.x + a.width &&
+                    a.y < b.y + b.height && b.y < a.y + a.height;
+                if (overlap) std::cerr << "Overlapping UI text: " << a.value << " / " << b.value << '\n';
+                CHECK(!overlap);
+            }
+        }
+    }
+};
+
+void test_home_outcomes_and_layout() {
+    hosty::Renderer renderer;
+    LayoutCanvas canvas;
+    hosty::ClientState state;
+    hosty::UiState ui;
+    ui.battery_percent = 100;
+    ui.charging = true;
+    for (auto event : {hosty::ConnectionEvent::Type::Configured, hosty::ConnectionEvent::Type::WifiConnected,
+                       hosty::ConnectionEvent::Type::AuthorizationStarted, hosty::ConnectionEvent::Type::Authorized}) {
+        state.apply({event, 10});
+        renderer.render(canvas, state, ui);
+        CHECK(canvas.contains("Starting up"));
+        CHECK(!canvas.contains("All clear"));
+        CHECK(!canvas.contains("0"));
+        canvas.check_bounds();
+    }
+
+    hosty::CoreSnapshot snapshot;
+    snapshot.version.assign_truncated("0.150.2");
+    hosty::AppSummary app;
+    app.id.assign_truncated("app");
+    app.display_name.assign_truncated("An unusually long application name that needs truncation");
+    app.runtime_state = hosty::RuntimeState::Running;
+    app.operation_state = hosty::OperationState::Idle;
+    CHECK(snapshot.apps.push_back(app));
+    state.install_snapshot(snapshot, 1000);
+    state.apply({hosty::ConnectionEvent::Type::SyncCompleted, 1000});
+    ui.now_ms = 181000;
+    renderer.render(canvas, state, ui);
+    CHECK(canvas.contains("Checking status")); // Unloaded alerts/metadata must not look healthy.
+    CHECK(!canvas.contains("All clear"));
+    ui.alerts_loaded = true;
+    renderer.render(canvas, state, ui);
+    CHECK(!canvas.contains("All clear")); // Core update metadata is still unknown.
+    snapshot.core_update.known = true;
+    state.install_snapshot(snapshot, 1000);
+    renderer.render(canvas, state, ui);
+    CHECK(canvas.contains("All clear"));
+    CHECK(canvas.contains("Checked 3m ago")); // Aging alone is not a transport failure.
+    CHECK(!canvas.contains("Stale"));
+    canvas.check_bounds();
+
+    state.apply({hosty::ConnectionEvent::Type::TransportFailed, 181000});
+    renderer.render(canvas, state, ui);
+    CHECK(canvas.contains("Check failed"));
+    CHECK(canvas.contains("Checked 3m ago"));
+    CHECK(!canvas.contains("All clear"));
+    canvas.check_bounds();
+    state.apply({hosty::ConnectionEvent::Type::WifiLost, 181000});
+    renderer.render(canvas, state, ui);
+    CHECK(canvas.contains("Wi-Fi offline"));
+    CHECK(canvas.contains("Checked 3m ago")); // Retained data keeps its actual age after disconnection.
+    canvas.check_bounds();
+
+    state.apply({hosty::ConnectionEvent::Type::SyncCompleted, 1000});
+    snapshot.core_update.error.assign_truncated("Unavailable");
+    state.install_snapshot(snapshot, 1000);
+    renderer.render(canvas, state, ui);
+    CHECK(canvas.contains("Check incomplete"));
+    CHECK(!canvas.contains("All clear"));
+    canvas.check_bounds();
+    snapshot.core_update.error.clear();
+    snapshot.apps[0].restart_required = true;
+    state.install_snapshot(snapshot, 1000);
+    renderer.render(canvas, state, ui);
+    CHECK(canvas.contains("Needs attention"));
+    CHECK(std::any_of(canvas.items.begin(), canvas.items.end(), [](const LayoutCanvas::Text& text) {
+        return text.value.ends_with("...: restart needed");
+    }));
+    canvas.check_bounds();
+
+    snapshot.apps.clear();
+    for (unsigned i = 0; i < hosty::kMaximumApps; ++i) {
+        app.restart_required = true;
+        app.update.available = true;
+        app.update.requires_review = true;
+        CHECK(snapshot.apps.push_back(app));
+    }
+    snapshot.core_update.error.assign_truncated("Unavailable");
+    state.install_snapshot(snapshot, 1000);
+    hosty::NotificationSnapshot notifications;
+    notifications.unread_count = 4'294'967'295;
+    state.install_notifications(notifications);
+    renderer.render(canvas, state, ui);
+    CHECK(canvas.contains("64"));
+    CHECK(canvas.contains("Alerts 999+ [ENT]"));
+    canvas.check_bounds();
+    ui.view = hosty::View::Device;
+    ui.firmware_version.assign_truncated("0.2.1");
+    renderer.render(canvas, state, ui);
+    CHECK(canvas.contains("Core 0.150.2"));
+    canvas.check_bounds();
+}
+
 void test_render() {
     hosty::CoreSnapshot snapshot;
     snapshot.version.assign_truncated("0.73.0");
@@ -337,6 +465,7 @@ int main() {
     CHECK(!hosty::clock_valid(1000, 0));
     test_attention_and_current_contract();
     test_render();
+    test_home_outcomes_and_layout();
     if (failures != 0) {
         std::cerr << failures << " host test(s) failed\n";
         return 1;

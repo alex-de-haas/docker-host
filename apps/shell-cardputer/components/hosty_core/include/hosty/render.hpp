@@ -65,6 +65,8 @@ public:
     virtual void fill(Color color) = 0;
     virtual void fill_rect(int x, int y, int width, int height, Color color) = 0;
     virtual void text(int x, int y, std::string_view value, Color foreground, Color background) = 0;
+    virtual void text_scaled(int x, int y, std::string_view value, Color foreground, Color background,
+                             std::uint8_t scale) = 0;
     virtual void present() {}
 };
 
@@ -111,6 +113,7 @@ private:
                 const ThemePalette& palette) const;
     void footer(Canvas& canvas, const ClientState& state, const UiState& ui,
                 const ThemePalette& palette) const;
+    void startup(Canvas& canvas, const ClientState& state, const ThemePalette& palette) const;
     void dashboard(Canvas& canvas, const ClientState& state, const UiState& ui,
                    const ThemePalette& palette) const;
     void apps(Canvas& canvas, const ClientState& state, const UiState& ui,
