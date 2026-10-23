@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-updated: 2026-10-20
+updated: 2026-10-22
 summary: Explicit navigation and tool policy, manifest navigation, and retained tool instances shared by Shell, desktop hosts and standalone apps.
 components: [packages/app-sdk, apps/core, apps/shell, apps/plans, apps/demo-app, apps/harness, apps/marketplace, apps/telemetry-ui, apps/shell-swift]
 ---
@@ -15,6 +15,18 @@ panel renderer. Framing decides transport, independently of presentation policy.
 This extends the [SDK panel system](../sdk-panel-system/feature.md). Apps retain ownership of
 conversations and domain actions. Plans finalizes its discussion before requesting placement;
 opening or retrying a presentation neither submits a message nor creates another discussion.
+The standard workspace renderer scopes font-inheritance resets to its own chrome controls, such
+as rail, chooser and recovery/review actions. App-owned buttons and links in the workspace document
+retain their own size, weight and line-height utilities; embedding does not transfer typography
+ownership to the SDK. The `.hosty-panel-workspace` content ancestor supplies layout only.
+SDK palette variables (`--hp-*`), foreground and background belong to the rail, panel body, notice,
+review, chooser and error roots, each with its own fallbacks so portal placement retains those
+values. Focus rules target explicit SDK-owned controls: rail/header actions, resizer, backdrop,
+state links/select, notices, review links, chooser/error actions, navigation links/buttons and child
+tools. They do not select app document controls. These narrow style corrections preserve DOM,
+layout, scrolling, authentication and theme behavior. They do not establish full isolation; the
+separate [SDK Style Isolation draft](../sdk-style-isolation/plan.md) records the unselected architecture
+and migration questions while current composition/authentication contracts remain in force.
 
 Implementation approval: on 2026-10-11, after the contract refinement, the owner explicitly
 instructed the implementation agent in chat to proceed. [Vision decision 33](../../vision.md)
@@ -281,6 +293,12 @@ assistant link is pending; only expansion transitions persist the preference.
 
 ## Testing Expectations
 
+- SDK chrome controls retain their own typography while app-owned workspace buttons/links preserve
+  explicit font size, weight and line height, including when app styles use CSS layers.
+- Verify the layout-only workspace ancestor does not supply SDK foreground, background or palette
+  variables to app content. SDK-owned chrome roots retain their own values/fallbacks in both themes
+  and portal placement. Explicit SDK controls retain visible focus without applying SDK focus rules
+  to app document controls; preserve existing DOM, layout/scroll and authentication behavior.
 - Core tests cover own-navigation access without a catalog grant, foreign access and installation
   pinning, canonical destinations, stable keys, unavailable entries and absolute icon origins.
 - SDK tests cover policy precedence/capture/history, copied legacy storage, immutable models,

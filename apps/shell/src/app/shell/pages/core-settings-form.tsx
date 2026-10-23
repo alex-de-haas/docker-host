@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { LoaderCircle } from "lucide-react";
+import { HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { Button } from "@/components/ui/button";
 import { SettingInput } from "../settings";
 import type { CoreSettingItem, CoreSettingsState } from "../types";
@@ -116,7 +117,7 @@ export function CoreSettingsForm({
             secret: false,
             options: item.options,
           }}
-          stacked={layout === "core"}
+          descriptionMode={layout === "core" ? "inline" : "hint"}
           unit={settingUnitLabel(item.unit)}
           value={value}
           disabled={saving}
@@ -149,7 +150,7 @@ export function CoreSettingsForm({
 
       {!settings && !error && (
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <LoaderCircle className="size-4 animate-spin" aria-hidden /> Loading Core settings…
+          <HostyLoader className="size-5" label={null} /> Loading Core settings…
         </p>
       )}
 
@@ -166,7 +167,7 @@ export function CoreSettingsForm({
 
           <div className="flex items-center gap-3">
             <Button size="sm" disabled={saving || changed.length === 0} onClick={save}>
-              {saving && <LoaderCircle className="size-3.5 animate-spin" aria-hidden />}
+              {saving && <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />}
               Save settings
             </Button>
             {changed.length > 0 && !saving && (

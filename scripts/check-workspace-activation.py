@@ -2,7 +2,9 @@
 """Native Core activation/Return acceptance with isolated users, Git source and data.
 
 Build Core and CLI in Debug first, then run with repository path and optional scenario:
-return (default), stop-failure, auto, cancel. --managed runs inside a parent-owned child
+return (default), stop-failure, auto, cancel, direct, catalog. The catalog scenario verifies
+read-only Core workspace discovery without an activation or runtime switch. The direct scenario verifies
+workspace-to-workspace handover, same-workspace restart continuity and baseline Return. --managed runs inside a parent-owned child
 Core and requires the local Docker engine for the supported child environment lifecycle.
 No provider credentials are copied. Failure retains diagnostics; success removes test data.
 """
@@ -20,8 +22,8 @@ windows = os.name == 'nt'
 suffix = '.exe' if windows else ''
 root = base / 'instance'
 remote = base / 'fixture-source'
-cli = workspace / ('apps/cli/src/Haas.Hosty.Cli/bin/Debug/net10.0/hosty' + suffix)
-core = workspace / ('apps/core/src/Haas.Hosty.Core/bin/Debug/net10.0/hosty-core' + suffix)
+cli = pathlib.Path(os.environ.get('HOSTY_ACTIVATION_CLI', str(workspace / ('apps/cli/src/Haas.Hosty.Cli/bin/Debug/net10.0/hosty' + suffix)))).resolve()
+core = pathlib.Path(os.environ.get('HOSTY_ACTIVATION_CORE', str(workspace / ('apps/core/src/Haas.Hosty.Core/bin/Debug/net10.0/hosty-core' + suffix)))).resolve()
 project = 'apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj'
 # Keep native SDK OS-directory discovery while excluding credentials and provider configuration.
 env = {k: os.environ[k] for k in [
@@ -226,11 +228,20 @@ def wait_for(fn, seconds=90):
 try:
     files=run(['git','ls-files','-z','--cached','--others','--exclude-standard'],workspace).split('\0')
     for name in files:
-        if not name: continue
+        if not name or any(part.startswith('.next') for part in pathlib.Path(name).parts): continue
         source=workspace/name
         if not source.is_file(): continue
         destination=remote/name; destination.parent.mkdir(parents=True,exist_ok=True)
         shutil.copy2(source,destination)
+    if scenario == 'direct':
+        # A separate native service verifies keep-apps adoption through each Core replacement.
+        (remote/'acceptance-idle.cjs').write_text("require('node:fs').writeFileSync(process.argv[2], String(process.pid)); setInterval(()=>{}, 1000);\n")
+        fixture_manifest = {'schemaVersion':'app.0.1','id':'test.core-switch.idle','name':'Core switch fixture',
+            'description':'Isolated native service retained across Core switches.','version':'0.1.0',
+            'source':{'type':'git','repository':'REPOSITORY','branch':'main'},
+            'runtimeProfiles':[{'key':'local','type':'localCommand','default':True}], 'defaultRuntime':'local',
+            'services':[{'key':'idle','runtimes':{'local':{'type':'localCommand','workingDirectory':'.',
+                'command':"node acceptance-idle.cjs '"+str(base/'idle.pid')+"'"}}}]}
     run(['git','init','-b','main'],remote)
     run(['git','add','.'],remote)
     run(['git','-c','user.name=Fixture','-c','user.email=fixture@example.test','commit','-m','Fixture source for isolated activation acceptance'],remote)
@@ -281,6 +292,25 @@ try:
         csrf = request('/api/auth/csrf')['token']
         initial = request('/control/v1/core/status',control=True)
         say('Started a parent-managed child Core and logged in with its separate test account')
+    if scenario == 'direct':
+        fixture_manifest['source']['repository'] = repository
+        fixture_path = base/'idle-manifest.json'
+        fixture_path.write_text(json.dumps(fixture_manifest))
+        run([cli,'--data-root',root,'apps','install',fixture_path,'--runtime','local','--no-autostart'])
+        run([cli,'--data-root',root,'apps','start','test.core-switch.idle'])
+        idle_pid = int(wait_for(lambda: (base/'idle.pid').read_text() if (base/'idle.pid').exists() else None))
+        owned_pids.add(idle_pid)
+        idle_data = root/'apps/test.core-switch.idle/data/preserve.txt'
+        idle_data.parent.mkdir(parents=True,exist_ok=True)
+        idle_data.write_text('Retain ordinary fixture application data.\n')
+        idle_installation = next(row for row in request('/api/apps')['apps'] if row['id']=='test.core-switch.idle')['installationId']
+        def assert_idle_preserved():
+            row = next(row for row in request('/api/apps')['apps'] if row['id']=='test.core-switch.idle')
+            assert row['installationId'] == idle_installation and row['selectedRuntime'] == 'local' and row['runtimeState'] == 'running'
+            assert int((base/'idle.pid').read_text()) == idle_pid and alive(idle_pid)
+            assert idle_data.read_text() == 'Retain ordinary fixture application data.\n'
+            assert request('/api/apps/test.core-switch.idle/health')['status']=='healthy'
+        assert_idle_preserved()
     development=request('/api/core/development')
     source=request('/api/core/source',{'revision':development['source']['revision'],'overridePath':None,
         'repository':{'repositoryUrl':repository,'ref':'main','projectPath':project,'connectionId':None}},method='PUT',confirm_settings=True)
@@ -290,8 +320,39 @@ try:
     assert tree.get('observation', {}).get('state') == 'ok', tree.get('observation')
     sentinel=pathlib.Path(tree['path'])/'uncommitted-sentinel.txt';sentinel.write_text('preserve native fixture source')
     request(f"/api/development/workspaces/{tree['id']}/operations/release-lease",{'requestId':str(uuid.uuid4()),'leaseId':lease})
+    if scenario == 'catalog':
+        fixture_trees = [tree]
+        for index in range(2):
+            other_lease = str(uuid.uuid4())
+            other = request('/api/core/source/workspaces', {'requestId':str(uuid.uuid4()),
+                'taskId':'core-catalog-' + str(index), 'leaseId':other_lease,
+                'sourceRevision':source['revision'], 'targetBranch':'main', 'label':'Catalog fixture ' + str(index)})
+            request(f"/api/development/workspaces/{other['id']}/operations/release-lease",
+                {'requestId':str(uuid.uuid4()), 'leaseId':other_lease})
+            fixture_trees.append(other)
+        records = {entry['id']:read_receipt_bytes(root/'core/development/workspaces'/f"{entry['id']}.json")
+            for entry in fixture_trees}
+        timings = []
+        for _ in range(3):
+            started = time.monotonic()
+            catalog = request('/api/core/execution-targets')
+            timings.append(time.monotonic() - started)
+            assert {row['worktreeId'] for row in catalog['targets']} == set(records)
+            assert all(not row.get('unavailable') and row['projectPath'].endswith(project) for row in catalog['targets'])
+            assert catalog['activations'] == []
+            assert all(read_receipt_bytes(root/'core/development/workspaces'/f"{id}.json") == before
+                for id, before in records.items()), 'Catalog refreshed workspace Git observations'
+        assert max(timings) < 5, 'Metadata-only catalog unexpectedly took more than five seconds'
+        assert sentinel.read_text() == 'preserve native fixture source'
+        assert request('/control/v1/core/status',control=True)['launch'] == initial['launch']
+        assert not list((root/'core/workspace-activations').glob('*.json'))
+        assert not list((root/'core/workspace-snapshots').glob('*.zip'))
+        say('PASS: authorized GET listed three Core workspaces without Git observation, activation, snapshot or restart; seconds=' +
+            ', '.join(format(value, '.3f') for value in timings))
+        success = True
+        sys.exit(0)
     activation_id=str(uuid.uuid4())
-    if scenario == 'return':
+    if scenario in ('return', 'direct'):
         review = request(f"/api/development/workspaces/{tree['workspaceId']}/activation/plan", {'selection':{'coreSelected':True}})
         request(f"/api/development/workspaces/{tree['workspaceId']}/activation/apply", {'requestId':activation_id, 'selection':{'coreSelected':True}, 'planDigest':review['planDigest']})
     else:
@@ -302,7 +363,7 @@ try:
     activation_path=root/'core/workspace-activations'/f'{activation_id}.json'
     helper_path=root/'core/workspace-activations/helpers'/f'{activation_id}.json'
     # The initiating CLI exits while the detached helper performs the build and handover.
-    if scenario != 'return':
+    if scenario not in ('return', 'direct'):
         output=run([cli,'--data-root',root,'core','activate-workspace',activation_id])
         assert 'accepted' in output
     say('Initiating CLI exited; detached helper is building candidate')
@@ -318,7 +379,7 @@ try:
         sys.exit(0)
     deadline=time.time()+180
     interrupted=False
-    while scenario != 'return' and time.time()<deadline:
+    while scenario not in ('return', 'direct') and time.time()<deadline:
         a,helper=wait_for(lambda: (read_receipt(activation_path), read_receipt(helper_path)),5)
         target=(a['phase']=='core-stopping') if scenario=='stop-failure' else (helper['state']=='running' and a['phase']=='prepared' and list((root/'core/builds').glob('*/build.log')))
         if target:
@@ -330,12 +391,12 @@ try:
         if helper['state']=='failed': raise helper_failure('Helper failed', a, helper)
         if a['phase']=='active': raise RuntimeError('Missed deterministic interruption boundary')
         time.sleep(.001)
-    assert interrupted or scenario == 'return'
+    assert interrupted or scenario in ('return', 'direct')
     if scenario=='stop-failure':
         time.sleep(.3)
         output=run([cli,'--data-root',root,'core','activate-workspace',activation_id])
         say('Original request resumed after helper failure')
-    elif scenario != 'return':
+    elif scenario not in ('return', 'direct'):
         say('Waiting for Core supervisor to redrive the abandoned request automatically')
     def completed():
         a=read_receipt(activation_path)
@@ -361,7 +422,68 @@ try:
     assert request('/control/v1/core/status',control=True)['launch']==status['launch']
     assert len(list((root/'core/workspace-snapshots').glob('*.zip')))==1
     say('PASS: exact replacement identity, one verified snapshot, source/user/session preserved, completed replay has no process change')
-    if scenario == 'return':
+    if scenario == 'direct':
+        baseline = final['previousCore']
+        first_activation = activation_id
+        first_tree = tree
+        first_sentinel = sentinel
+        first_status = status
+        # The authorized ordinary same-target restart must update activation ownership after
+        # readiness, while preserving the baseline executable used by Return.
+        run([cli, '--data-root', root, 'core', 'restart', '--keep-apps', '--project', pathlib.Path(tree['path'])/project, '--url', origin])
+        restarted = request('/control/v1/core/status', control=True)
+        owned_pids.add(restarted['launch']['processId'])
+        final = read_receipt(activation_path)
+        assert restarted['launch']['processId'] != first_status['launch']['processId']
+        assert restarted['launch']['generationPath'] != first_status['launch']['generationPath']
+        assert final['activatedCore'] == restarted['launch']
+        assert final['generation'] == restarted['launch']['generationPath']
+        assert final['previousCore'] == baseline
+        assert request('/api/auth/session')['authenticated']
+        assert_idle_preserved()
+        say('PASS: ordinary same-workspace restart adopted the verified generation and retained baseline Return')
+        source_revision = request('/api/core/development')['source']['revision']
+        second_lease = str(uuid.uuid4())
+        tree = request('/api/core/source/workspaces', {'requestId':str(uuid.uuid4()),
+            'taskId':'native-direct-core-switch', 'leaseId':second_lease,
+            'sourceRevision':source_revision, 'targetBranch':'main', 'label':'Second Core workspace'})
+        sentinel = pathlib.Path(tree['path'])/'uncommitted-sentinel.txt'
+        sentinel.write_text('preserve second workspace source')
+        request(f"/api/development/workspaces/{tree['id']}/operations/release-lease",
+            {'requestId':str(uuid.uuid4()),'leaseId':second_lease})
+        # No Return is dispatched between the two confirmed workspaces.
+        first_before_switch = read_receipt(root/'core/workspace-activations'/f'{first_activation}.json')
+        initial_review = request(f"/api/development/workspaces/{tree['workspaceId']}/activation/plan", {'selection':{'coreSelected':False}})
+        selection = {'coreSelected':True, 'coreWorktreeId':tree['id'], 'apps':[
+            {'appId':row['id'],'selected':False,'worktreeId':row.get('worktreeId'),'runtime':row.get('targetRuntime')}
+            for row in initial_review['plan']['participants'] if row['kind']=='app']}
+        review = request(f"/api/development/workspaces/{tree['workspaceId']}/activation/plan", {'selection':selection})
+        activation_id = str(uuid.uuid4())
+        command = {'requestId':activation_id,'selection':selection,'planDigest':review['planDigest']}
+        activation_path = root/'core/workspace-activations'/f'{activation_id}.json'
+        helper_path = root/'core/workspace-activations/helpers'/f'{activation_id}.json'
+        request(f"/api/development/workspaces/{tree['workspaceId']}/activation/apply", command)
+        final = wait_for(completed,600)
+        status = request('/control/v1/core/status',control=True)
+        owned_pids.add(status['launch']['processId'])
+        previous = read_receipt(root/'core/workspace-activations'/f'{first_activation}.json')
+        assert final['replacesCoreActivationId'] == first_activation
+        assert final['previousCore'] == restarted['launch']
+        assert final['coreReturnTarget']['launch'] == baseline
+        assert final['activatedCore'] == status['launch']
+        assert status['launch']['projectPath'] == str(pathlib.Path(tree['path'])/project)
+        assert previous['coreReturned'] and not previous.get('returns')
+        assert not first_before_switch.get('coreReturned')
+        assert first_sentinel.read_text() == 'preserve native fixture source'
+        assert sentinel.read_text() == 'preserve second workspace source'
+        assert request('/api/auth/session')['authenticated']
+        before = read_receipt_bytes(activation_path)
+        request(f"/api/development/workspaces/{tree['workspaceId']}/activation/apply", command)
+        assert read_receipt_bytes(activation_path) == before
+        assert request('/control/v1/core/status',control=True)['launch'] == status['launch']
+        assert_idle_preserved()
+        say('PASS: direct A-to-B handover retired only A Core ownership, preserved both sources/session and replay did not restart')
+    if scenario in ('return', 'direct'):
         return_id = str(uuid.uuid4())
         payload = {'activationId':activation_id,'return':{'requestId':return_id,'apps':[],'core':True,'acceptDataChanges':True}}
         request(f"/api/development/workspaces/{tree['workspaceId']}/activation/return", payload)
@@ -376,12 +498,14 @@ try:
         assert restored['launch']['processId'] != status['launch']['processId']
         assert result['coreReturned'] and result['returns'][-1]['state']=='succeeded'
         assert request('/api/auth/session')['authenticated']
-        assert sentinel.read_text()=='preserve native fixture source'
+        assert sentinel.read_text()==('preserve second workspace source' if scenario == 'direct' else 'preserve native fixture source')
+        if scenario == 'direct': assert first_sentinel.read_text()=='preserve native fixture source'
         before=read_receipt_bytes(activation_path)
         request(f"/api/development/workspaces/{tree['workspaceId']}/activation/return",payload)
         assert before==read_receipt_bytes(activation_path)
         assert request('/control/v1/core/status',control=True)['launch']==restored['launch']
-        assert len(list((root/'core/workspace-snapshots').glob('*.zip')))==1
+        assert len(list((root/'core/workspace-snapshots').glob('*.zip')))==(2 if scenario == 'direct' else 1)
+        if scenario == 'direct': assert_idle_preserved()
         say('PASS: reviewed HTTP Return restored exact prior target, kept current users/session/source/snapshot, and replay did not restart')
     success=True
 except BaseException as error:

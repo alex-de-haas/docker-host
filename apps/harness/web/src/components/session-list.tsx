@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { Input } from "@/components/ui/input";
 import { Check, Loader2, Pencil, Trash2, X } from "lucide-react";
 import { AppContextIcons } from "@/components/app-context-icons";
 import { isWaiting } from "@/lib/attention";
@@ -70,7 +71,7 @@ export function SessionList({
                     setDeletingId(null);
                   }
                 }}
-                className="shrink-0 rounded-md p-1.5 text-destructive hover:bg-destructive/10"
+                className="shrink-0 rounded-md p-1.5 text-destructive hover:bg-destructive/10 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0"
               >
                 {deletingId === record.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-label="Deleting session" /> : <Check className="h-3.5 w-3.5" aria-hidden />}
               </button>
@@ -79,7 +80,7 @@ export function SessionList({
                 disabled={deletingId !== null}
                 aria-label="Keep session"
                 onClick={() => setConfirmingId(null)}
-                className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:text-foreground"
+                className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:text-foreground outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0"
               >
                 <X className="h-3.5 w-3.5" aria-hidden />
               </button>
@@ -98,17 +99,17 @@ export function SessionList({
               <button
                 type="button"
                 onClick={() => onPick(record)}
-                className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left"
+                className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0"
               >
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm">{record.title || "Untitled session"}</div>
+                  <div className="truncate text-sm font-normal">{record.title || "Untitled session"}</div>
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     {isWaiting(record.status) && (
                       // Marked as well as ordered: ordering alone is invisible to someone who has not seen the
                       // list before, and the row has to say *why* it is first.
                       <span className="inline-flex size-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
                     )}
-                    <span>{new Date(record.createdAt).toLocaleString()}</span>
+                    <span className="tabular-nums">{new Date(record.createdAt).toLocaleString()}</span>
                     <span aria-hidden>·</span>
                     <span className={cn(isWaiting(record.status) && "font-medium text-amber-600 dark:text-amber-500")}>
                       {isWaiting(record.status) ? "waiting for you" : record.status}
@@ -124,7 +125,7 @@ export function SessionList({
                 type="button"
                 aria-label={`Rename ${record.title || "session"}`}
                 onClick={() => setEditingId(record.id)}
-                className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0"
               >
                 <Pencil className="h-3.5 w-3.5" aria-hidden />
               </button>
@@ -132,7 +133,7 @@ export function SessionList({
                 type="button"
                 aria-label={`Delete ${record.title || "session"}`}
                 onClick={() => setConfirmingId(record.id)}
-                className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0"
               >
                 <Trash2 className="h-3.5 w-3.5" aria-hidden />
               </button>
@@ -144,7 +145,7 @@ export function SessionList({
   );
 }
 
-function SessionTitleInput({
+export function SessionTitleInput({
   title,
   onCommit,
   onCancel,
@@ -168,7 +169,8 @@ function SessionTitleInput({
   };
 
   return (
-    <input
+    <Input
+      aria-label="Session title"
       autoFocus
       value={value}
       onChange={(event) => setValue(event.target.value)}
@@ -186,7 +188,7 @@ function SessionTitleInput({
       // finishing, and losing it would be the same theft as dropping a draft.
       onBlur={() => settle(() => void onCommit(value))}
       placeholder="Name this session…"
-      className="min-w-0 flex-1 rounded-md border bg-background px-2 py-1.5 text-sm outline-none focus-visible:border-ring"
+      className="min-w-0 flex-1 rounded-md border bg-background px-2 py-1.5 text-sm outline-none focus-visible:border-brand focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0"
     />
   );
 }

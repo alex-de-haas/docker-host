@@ -1,5 +1,6 @@
 import { harnessEnvironmentActions } from "./environment-tools.js";
 import { projectWorktreePaths } from "../worker/resources.js";
+import { transcriptFileEdits } from "./transcript-edits.js";
 import type { ConnectionService } from "../connections/service.js";
 import { hasResourceHistory, reconcileRetentionSnapshot, retentionBusy, retentionStatus, type RetentionStatus } from "./retention.js";
 import type { RetentionSnapshot } from "./development.js";
@@ -19,6 +20,8 @@ import { HOST_SYSTEM_PROMPT, DOCKER_SYSTEM_PROMPT } from "./host-prompt.js";
 import { randomUUID } from "node:crypto";
 import { deriveTitleFromMessage, normalizeTitle } from "./title.js";
 import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapter.js";
+import { sanitizeCommandResult } from "../harness/command-result.js";
+import { sanitizeToolResult, shouldRetainToolOutput } from "../harness/tool-result.js";
 import { workingActivity, type SessionActivity, type HarnessActivity } from "../harness/activity.js";
 import type { SessionRecord, SessionStatus, SessionStore, StoredEvent } from "./store.js";
 import type { AuditReporter } from "../audit.js";
@@ -46,6 +49,7 @@ export interface SessionListener {
 }
 
 interface LiveSession {
+  toolOutputCalls?: Map<string, string | null>;
   runEpoch?: string;
   persistedWorkerSequences?: Set<number>;
   activity: SessionActivity;
@@ -236,6 +240,11 @@ export class SessionManager {
   async workspaceEvents(credential: string, signal: AbortSignal): Promise<Response> {
     if (!this.development) throw new AppContextError(503, "workspaces_unavailable", "Workspace inspection requires Core.");
     return this.development.inspectionEvents(credential, signal);
+  }
+
+  async workspaceApplications(credential: string, method: string, path: string, body?: unknown): Promise<unknown> {
+    if (!this.development) throw new AppContextError(503, "workspaces_unavailable", "Workspace applications require Core.");
+    return this.development.workspaceApplications(credential, method, path, body);
   }
 
   async inspectWorkspaces(credential: string, path = "", body?: Record<string, unknown>, userId?: string): Promise<unknown> {
@@ -783,13 +792,16 @@ export class SessionManager {
         const { validateSelection } = await import("../worker/models.js");
         validateSelection(selection, await this.modelCatalog(id));
       }
+      const modelChanged = (session.record.executionSelection?.model ?? null) !== selection.model;
       if (session.run) { await (session.run.stopAndWait ? session.run.stopAndWait() : session.run.stop()); session.run = null; }
+      // Retire queued callbacks only after exit succeeds; a refused save keeps its live run.
+      session.runEpoch = undefined;
       session.record.executionSelection = { model: selection.model, reasoningEffort: selection.reasoningEffort };
       session.record.selectionRevision = (session.record.selectionRevision ?? 0) + 1;
       session.record.updatedAt = new Date().toISOString();
       await this.store.saveRecord(session.record);
       await this.append(id, { type: "model_selection_changed", selection: session.record.executionSelection, revision: session.record.selectionRevision });
-      await this.append(id, { type: "context_usage", usage: null });
+      if (modelChanged) await this.append(id, { type: "context_usage", usage: null });
       return session.record;
     });
   }
@@ -1921,6 +1933,20 @@ export class SessionManager {
     }
   }
 
+  /** Recover current-turn call identities after coordinator restart without replaying a tool. */
+  private async outputCalls(session: LiveSession): Promise<Map<string, string | null>> {
+    if (session.toolOutputCalls) return session.toolOutputCalls;
+    const calls = new Map<string, string | null>();
+    for (const event of await this.store.readEvents(session.record.id)) {
+      if (["user_message", "session_created", "result", "error"].includes(event.type)
+        || event.type === "session_status" && ["idle", "cancelled", "failed", "abandoned"].includes(String(event.status))) calls.clear();
+      if (event.type === "tool_use" && typeof event.toolUseId === "string" && (calls.has(event.toolUseId) || calls.size < 2048))
+        calls.set(event.toolUseId, calls.has(event.toolUseId) ? null : String(event.toolName ?? ""));
+    }
+    session.toolOutputCalls = calls;
+    return calls;
+  }
+
   private async applyHarnessEvent(id: string, event: HarnessEvent & { workerRunId?: string; workerSequence?: number }, persisted = false): Promise<void> {
     const session = this.live.get(id);
     if (!session) {
@@ -1941,6 +1967,44 @@ export class SessionManager {
         // Live-only: fanned out for typing UX, never persisted (the final text is the record).
         this.fanOut(session, { seq: session.record.lastEventSeq, ts: new Date().toISOString(), ...event });
         return;
+      case "tool_use": {
+        // Bind once while the executing session still owns the descriptor. Replay keeps this fact;
+        // a later app/workspace selection must never reinterpret a historical relative filename.
+        let trees = session.record.developmentWorkspaces ?? [];
+        if (this.worker && ["Edit", "Write", "MultiEdit", "NotebookEdit", "FileChange"].includes(event.toolName)) {
+          const root = (await this.worker.capabilities().catch(() => null))?.resources?.trees;
+          trees = root ? projectWorktreePaths(trees, root) as typeof trees : [];
+        }
+        const fileEdits = transcriptFileEdits(event.toolName, event.input, id, trees, event.cwd);
+        const calls = await this.outputCalls(session);
+        try { await this.append(id, { ...event, ...(fileEdits.length ? { fileEdits } : {}) }); }
+        catch (error) { session.toolOutputCalls = undefined; throw error; }
+        if (typeof event.toolUseId === "string" && (calls.has(event.toolUseId) || calls.size < 2048))
+          calls.set(event.toolUseId, calls.has(event.toolUseId) ? null : event.toolName);
+        return;
+      }
+      case "tool_result": {
+        if (!["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) return;
+        const result = sanitizeToolResult(event);
+        if (!result) return;
+        const toolName = (await this.outputCalls(session)).get(result.toolUseId);
+        if (!toolName || !shouldRetainToolOutput(toolName)) return;
+        await this.append(id, { ...result,
+          ...(event.workerRunId !== undefined ? { workerRunId: event.workerRunId, workerSequence: event.workerSequence } : {}),
+        });
+        return;
+      }
+      case "command_result": {
+        // Completion metadata is an allowlisted projection, never a provider output envelope.
+        // A late callback after a terminal turn cannot change its recorded command outcome.
+        if (!["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) return;
+        const result = sanitizeCommandResult(event);
+        if (!result) return;
+        await this.append(id, { ...result,
+          ...(event.workerRunId !== undefined ? { workerRunId: event.workerRunId, workerSequence: event.workerSequence } : {}),
+        });
+        return;
+      }
       case "approval_request":
         session.pendingApprovals.set(event.approvalId, event.toolName);
         await this.append(id, { ...event });
@@ -2017,6 +2081,7 @@ export class SessionManager {
       && payload.input && typeof payload.input === "object" && !Array.isArray(payload.input)) {
       payload = { ...payload, input: { ...payload.input, password: "[redacted]" } };
     }
+    if (payload.type === "user_message") session.toolOutputCalls = undefined;
     session.record.lastEventSeq += 1;
     const event: StoredEvent = {
       seq: session.record.lastEventSeq,

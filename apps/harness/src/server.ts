@@ -26,6 +26,7 @@ import { readAppCredential, resolveAppSession, exchangeLaunchCode, getAppRecover
 import { isValidCodeVerifier } from "@hosty-sdk/app/app-code";
 import { isSourceConnectionRoute, requestSourceConnection } from "./source-connections.js";
 import { isWorkspaceAccessReviewRoute, requestWorkspaceAccessReview } from "./workspace-access-reviews.js";
+import { workspaceApplicationsRoute } from "./workspace-applications.js";
 import { serveStaticSite } from "./settings/static-site.js";
 
 // Upper bound for an event stream opened with an app session rather than a delegated token: the
@@ -624,14 +625,32 @@ async function route(
     return;
   }
 
-  const inspection = url.pathname.match(/^\/api\/development-workspaces(\/local-apps|\/[a-f0-9]{64}(?:\/name|\/execution-target(?:\/[a-f0-9-]{36})?|\/activation\/(?:plan|apply|list|status|cancel|resume|return)|\/(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|\/previews(?:\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))?|\/worktrees\/[a-f0-9]{64}(?:\/(?:diff|recover-lease))?|\/workflow(?:\/(?:complete|resume|pause|defer|delete|close))?)?)?$/);
+  if (workspaceApplicationsRoute(method, url.pathname)) {
+    const credential = actor.via === "app-session" ? readAppCredential(request) : null;
+    if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to manage workspace applications.");
+    response.setHeader("cache-control", "no-store");
+    sendJson(response, 200, await manager.workspaceApplications(credential, method, url.pathname,
+      method === "POST" ? await readJson(request) : undefined)); return;
+  }
+
+  const inspection = url.pathname.match(/^\/api\/development-workspaces(\/local-apps|\/[a-f0-9]{64}(?:\/name|\/execution-target(?:\/[a-f0-9-]{36})?|\/discard\/(?:plan|apply|status)|\/activation\/(?:plan|apply|list|status|cancel|resume|return)|\/(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|\/previews(?:\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))?|\/worktrees\/[a-f0-9]{64}(?:\/(?:diff|recover-lease|review(?:\/diff)?|reviews\/(?:reply|resolve|comment)))?|\/workflow(?:\/(?:complete|resume|pause|defer|delete|close))?)?)?$/);
   if (inspection && (method === "GET" || method === "POST")) {
     const credential = actor.via === "app-session" ? readAppCredential(request) : null;
     if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to inspect workspaces.");
-    if (method === "POST" && !/\/(?:name|execution-target|activation\/(?:plan|apply|list|status|cancel|resume|return)|(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|worktrees\/[a-f0-9]{64}\/recover-lease|workflow\/(?:complete|resume|pause|defer|delete|close)|previews\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))$/.test(inspection[1] ?? ""))
+    const discard = /\/discard\/(plan|apply|status)$/.exec(inspection[1] ?? "");
+    if (discard && method !== (discard[1] === "apply" ? "POST" : "GET"))
+      throw new AppContextError(405, "workspace_method_invalid", "Removal review and status require GET; removal apply requires POST.");
+    if (method === "POST" && !/\/(?:name|execution-target|discard\/apply|activation\/(?:plan|apply|list|status|cancel|resume|return)|(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|worktrees\/[a-f0-9]{64}\/(?:recover-lease|reviews\/(?:reply|resolve|comment))|workflow\/(?:complete|resume|pause|defer|delete|close)|previews\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))$/.test(inspection[1] ?? ""))
       throw new AppContextError(400, "workspace_action_invalid", "Choose a workspace lifecycle action.");
-    sendJson(response, 200, await manager.inspectWorkspaces(credential, (inspection[1] ?? "") + url.search,
-      method === "POST" ? await readJson(request) : undefined, actor.userId)); return;
+    if (method === "GET" && /\/reviews\/(?:reply|resolve|comment)$/.test(inspection[1] ?? ""))
+      throw new AppContextError(405, "workspace_method_invalid", "Review actions require POST.");
+    response.setHeader("cache-control", "no-store");
+    const inspected = await manager.inspectWorkspaces(credential, (inspection[1] ?? "") + url.search,
+      method === "POST" ? await readJson(request) : undefined, actor.userId);
+    // Drafts and pending browser actions belong to the authenticated operator, not the workspace owner.
+    const reviewInventory = method === "GET" && /\/worktrees\/[a-f0-9]{64}\/review$/.test(inspection[1] ?? "");
+    sendJson(response, 200, reviewInventory && inspected && typeof inspected === "object"
+      ? { ...inspected, viewerId: actor.userId } : inspected); return;
   }
 
   const sessionMatch = url.pathname.match(/^\/api\/sessions\/([a-zA-Z0-9-]+)(\/.*)?$/);

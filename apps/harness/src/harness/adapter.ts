@@ -60,7 +60,11 @@ export type HarnessEvent =
   | { type: "harness_session"; harnessSessionId: string }
   | { type: "assistant_delta"; text: string }
   | { type: "assistant_text"; text: string }
-  | { type: "tool_use"; toolName: string; input: unknown; mcp?: { server: string; tool: string } }
+  /** Bounded tool content for the expandable transcript; separate from command metadata. */
+  | import("./tool-result.js").ToolResult
+  | { type: "tool_use"; toolName: string; input: unknown; toolUseId?: string; cwd?: string; mcp?: { server: string; tool: string } }
+  /** Bounded command completion metadata. Absence or unknown never establishes success. */
+  | { type: "command_result"; toolUseId: string; status: "completed" | "failed" | "cancelled" | "unknown"; exitCode?: number; durationMs?: number; summary?: string }
   /**
    * A proposed write is paused inside the harness until resolveApproval is called.
    *

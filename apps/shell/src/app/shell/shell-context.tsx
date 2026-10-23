@@ -27,10 +27,6 @@ export type ShellContextValue = {
   canManageApps: boolean;
   busyAction: string | null;
   pendingAppActions: Record<string, AppAction>;
-  // Per-app counter bumped whenever a mutation resets an app's artifact locks (apply update, switch
-  // runtime), which makes any cached "update available" verdict stale. Dashboard watches it to
-  // re-probe the affected app so the row Update icon does not linger after the update lands.
-  updateStatusInvalidations: Record<string, number>;
   // Host settings: which tab the URL selected, plus the data the Core and Shared mounts tabs render.
   // A raw string, because the value is either a host tab or the id of an app whose settings page
   // fills the tab (docs/features/app-ui-surfaces/feature.md).
@@ -66,7 +62,7 @@ export type ShellActionsContextValue = {
   startAppById: (appId: string) => void;
   shellAppId: string;
   refresh: () => Promise<void>;
-  sendCsrfJson: (endpoint: string, body?: unknown, method?: string) => Promise<Response>;
+  sendCsrfJson: (endpoint: string, body?: unknown, method?: string, signal?: AbortSignal) => Promise<Response>;
   launchAppPage: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<boolean>;
   getStandaloneAppHref: (app: CoreApp, page: AppPageLink) => string;
   // Opens the direct-manifest install review dialog. Feed intents use the separate iframe handoff

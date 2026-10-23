@@ -17,6 +17,13 @@ internal sealed class WorkspaceActivationReturn(string root, IWorkspaceActivatio
                 throw new InvalidOperationException("Preserve the original Return request ID and selection.");
             return a;
         }
+        if (input.Core && WorkspaceCoreLaunchContinuation.PendingGenerations(root).Any())
+            throw new InvalidOperationException("Recover the retained Core restart before returning the workspace.");
+        WorkspaceActivationHandover.ReconcileReplacements(root);
+        a = WorkspaceRuntimeFiles.Read(root, id);
+        if (input.Core && WorkspaceRuntimeFiles.List(root).Any(next => next.ReplacesCoreActivationId == id &&
+            !next.CoreReturned && next.CoreReserved && next.Phase is not ("active" or "returned" or "cancelled")))
+            throw new InvalidOperationException("Resolve the retained direct Core switch before returning its previous workspace.");
         var helper = WorkspaceActivationSupervisor.Read(root, id);
         if (WorkspaceActivationSupervisor.Pending(helper) && WorkspaceActivationSupervisor.Alive(helper!))
             throw new InvalidOperationException("Pause the active helper at a retained boundary before Return.");
@@ -30,7 +37,8 @@ internal sealed class WorkspaceActivationReturn(string root, IWorkspaceActivatio
         if (input.Core && a.PreviousExecutable is null && a.Phase is not ("preparing" or "prepared"))
             throw new IOException("The previous executable was not captured. Retain the stopped-state diagnostics and recover that target explicitly.");
         a = a with { Phase = "return-apps", Error = null, Authority = actor,
-            Returns = [.. (a.Returns ?? []).Select(r => r.State == "pending" ? r with { State = "superseded" } : r), new(input, "pending")] };
+            Returns = [.. (a.Returns ?? []).Select(r => r.State == "pending" ? r with { State = "superseded" } : r), new(input, "pending", CoreTarget: input.Core ? a.Phase == "active"
+                    ? a.CoreReturnTarget ?? ImmediateTarget(a) : ImmediateTarget(a) : null)] };
         WorkspaceRuntimeFiles.Save(root, a);
         WorkspaceActivationSupervisor.ClearCancellation(root, id);
         return a;
@@ -42,6 +50,7 @@ internal sealed class WorkspaceActivationReturn(string root, IWorkspaceActivatio
         var receipt = a.Returns?.LastOrDefault() ?? throw new InvalidOperationException("Return selection is unavailable.");
         if (receipt.State != "pending") return;
         RequireCompatibility(receipt.Request);
+        var target = receipt.CoreTarget ?? ImmediateTarget(a);
         WorkspaceActivationSupervisor.CheckCancellation(root, id);
         if (a.Phase == "return-apps")
         {
@@ -62,12 +71,12 @@ internal sealed class WorkspaceActivationReturn(string root, IWorkspaceActivatio
             }
             if (!receipt.Request.Core) { Complete(a); return; }
             var observed = await runtime.ObserveAsync();
-            if (observed is not null && WorkspaceActivationHandover.SameTarget(a.PreviousCore, observed.Launch))
+            if (observed is not null && WorkspaceActivationHandover.SameTarget(target.Launch, observed.Launch))
             { await CompleteCoreAsync(a); return; }
             if (observed is not null && !WorkspaceActivationHandover.IsCandidate(a, observed.Launch))
                 throw new InvalidOperationException("A different Core owns the data root. Return did not stop it.");
-            VerifyPrevious(a);
-            if (!File.Exists(a.PreviousExecutable)) throw new IOException("The captured previous executable is unavailable. Current Core remains running.");
+            VerifyPrevious(WithTarget(a, target));
+            if (!File.Exists(target.Executable)) throw new IOException("The captured previous executable is unavailable. Current Core remains running.");
             var appStates = await runtime.CaptureReturnAppsAsync(a);
             var receipts = a.Returns!;
             a = Save(a with { Phase = "return-core-stopping", Returns = receipts.Select((r, i) =>
@@ -79,7 +88,7 @@ internal sealed class WorkspaceActivationReturn(string root, IWorkspaceActivatio
             var current = await runtime.ObserveAsync();
             if (current is not null)
             {
-                if (WorkspaceActivationHandover.SameTarget(a.PreviousCore, current.Launch))
+                if (WorkspaceActivationHandover.SameTarget(target.Launch, current.Launch))
                 { await CompleteCoreAsync(a); return; }
                 if (!WorkspaceActivationHandover.IsCandidate(a, current.Launch))
                     throw new InvalidOperationException("Core changed during Return. No unrelated process was stopped.");
@@ -96,11 +105,14 @@ internal sealed class WorkspaceActivationReturn(string root, IWorkspaceActivatio
             if (current is null)
             {
                 using (StoppedLock()) { }
-                VerifyPrevious(a);
-                await runtime.RestorePreviousAsync(a);
+                VerifyPrevious(WithTarget(a, target));
+                var receipts = a.Returns!;
+                a = Save(a with { Returns = receipts.Select((r, i) => i == receipts.Length - 1
+                    ? r with { CoreRestoreStarted = true } : r).ToArray() });
+                await runtime.RestorePreviousAsync(WithTarget(a, target));
                 current = await runtime.ObserveAsync();
             }
-            if (current is null || !WorkspaceActivationHandover.SameTarget(a.PreviousCore, current.Launch))
+            if (current is null || !WorkspaceActivationHandover.SameTarget(target.Launch, current.Launch))
                 throw new IOException("The captured previous Core has not confirmed readiness. Current data and recovery records are retained.");
             await CompleteCoreAsync(a);
         }
@@ -109,9 +121,30 @@ internal sealed class WorkspaceActivationReturn(string root, IWorkspaceActivatio
     private async Task CompleteCoreAsync(WorkspaceRuntimeActivation a)
     {
         if (a.Phase != "return-core-starting") a = Save(a with { Phase = "return-core-starting" });
-        await runtime.RestoreReturnAppsAsync(a, a.Returns!.Last().AppsBeforeCoreReturn ?? []);
+        var target = a.Returns!.Last().CoreTarget ?? ImmediateTarget(a);
+        await runtime.RestoreReturnAppsAsync(WithTarget(a, target), a.Returns!.Last().AppsBeforeCoreReturn ?? []);
+        if (a.ReplacesCoreActivationId is { } previousId && target == ImmediateTarget(a))
+        {
+            // A failed direct switch returns to its exact immediate owner. Its verified generation
+            // may have a new process identity after recovery; this retained Return proves ancestry.
+            var observed = await runtime.ObserveAsync();
+            var previous = WorkspaceRuntimeFiles.Read(root, previousId);
+            if (observed is null || !WorkspaceActivationHandover.SameTarget(target.Launch, observed.Launch) ||
+                previous.Phase != "active" || previous.CoreReturned ||
+                previous.ActivatedCore != a.PreviousCore && previous.ActivatedCore != observed.Launch ||
+                previous.ActivatedCore != observed.Launch && !a.Returns!.Last().CoreRestoreStarted ||
+                !WorkspaceActivationHandover.IsCandidate(previous, observed.Launch) ||
+                target.ExecutableHash is { } hash && ExecutableHash(target.Executable) != hash)
+                throw new InvalidOperationException("The immediate Core owner changed during recovery. Retain the original Return request.");
+            WorkspaceRuntimeFiles.Save(root, previous with { ActivatedCore = observed.Launch });
+        }
         Complete(WorkspaceRuntimeFiles.Read(root, a.Id) with { CoreReturned = true });
     }
+
+    internal static WorkspaceCoreReturnTarget ImmediateTarget(WorkspaceRuntimeActivation a) =>
+        new(a.PreviousCore, a.PreviousExecutable, a.PreviousExecutableHash);
+    private static WorkspaceRuntimeActivation WithTarget(WorkspaceRuntimeActivation a, WorkspaceCoreReturnTarget target) =>
+        a with { PreviousCore = target.Launch, PreviousExecutable = target.Executable, PreviousExecutableHash = target.ExecutableHash };
 
     internal static void RequireCompatibility(WorkspaceReturnRequest input)
     {

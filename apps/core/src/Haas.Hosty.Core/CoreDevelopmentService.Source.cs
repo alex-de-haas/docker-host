@@ -70,14 +70,18 @@ internal sealed partial class CoreDevelopmentService
         return result;
     }
 
-    internal async Task<SourceReadGrant?> SourceGrantAsync(CoreSourceSettings source, string? actor, CancellationToken ct)
+    internal async Task<SourceReadGrant?> SourceGrantAsync(CoreSourceSettings source, string? actor, CancellationToken ct, UserProviderConnection? heldConnection = null)
     {
         if (source.ConnectionId is null) return null;
         if (source.ConnectionOwnerId is null || source.RepositoryUrl is null || actor != source.ConnectionOwnerId)
             throw PrivateSourceService.Denied("The configured Core source belongs to another user.");
         var access = privateSources ?? throw PrivateSourceService.Denied();
-        var grant = await access.BindAsync(actor, source.ConnectionId, source.RepositoryUrl, false, ct);
-        await access.ValidateAsync(new(Git: grant), ct);
+        var grant = heldConnection is null
+            ? await access.BindAsync(actor, source.ConnectionId, source.RepositoryUrl, false, ct)
+            : new SourceReadGrant(actor, source.ConnectionId, heldConnection.Provider, heldConnection.AccountName,
+                heldConnection.Label, access.NormalizeRepository(source.RepositoryUrl));
+        if (heldConnection is null) await access.ValidateAsync(new(Git: grant), ct);
+        else access.ValidateWithConnection(new(Git: grant), heldConnection);
         return grant;
     }
 

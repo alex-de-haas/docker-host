@@ -2,7 +2,9 @@ import { cleanAgentEnvironment } from "../connections/codex-login.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { toCodexMcpConfig } from "./codex-mcp.js";
 import { codexContextUsage } from "./context-usage.js";
+import { toolResult, shouldRetainToolOutput } from "./tool-result.js";
 import { randomUUID } from "node:crypto";
+import { codexCommandResult, commandToolUseId } from "./command-result.js";
 import { ActivityTracker, activeTool } from "./activity.js";
 import path from "node:path";
 import type {
@@ -185,6 +187,11 @@ class CodexRun implements HarnessRun {
   private ready: Promise<void>;
   private turnActive = false;
   private activityTurnId: string | null = null;
+  private readonly commandRun = randomUUID();
+  private commandTurn = 0;
+  private readonly commandCalls = new Map<string, { id: string; turnId: string }>();
+  private readonly completedCommandCalls = new Set<string>();
+  private readonly completedToolCalls = new Set<string>();
   private readonly activity = new ActivityTracker(activity => this.emit({ type: "activity", activity }));
   private stopped = false;
   private failed = false;
@@ -421,6 +428,8 @@ class CodexRun implements HarnessRun {
     }
 
     this.turnActive = true;
+    this.commandTurn++;
+    this.commandCalls.clear(); this.completedCommandCalls.clear(); this.completedToolCalls.clear();
     this.activityTurnId = null;
     this.activity.reset();
     try {
@@ -524,7 +533,7 @@ class CodexRun implements HarnessRun {
     }
     if (message.method === "turn/started") {
       const turn = params.turn as { id?: string } | undefined;
-      if (this.turnActive) this.activityTurnId = turn?.id ?? null;
+      if (this.turnActive && (!this.activityTurnId || this.activityTurnId === turn?.id)) this.activityTurnId = turn?.id ?? null;
       return;
     }
     if (typeof params.turnId === "string" && this.activityTurnId && params.turnId !== this.activityTurnId) return;
@@ -540,6 +549,12 @@ class CodexRun implements HarnessRun {
     if (message.method === "item/started") {
       const item = (params.item ?? {}) as Record<string, unknown>;
       if (!this.turnActive || typeof item.id !== "string" || this.deniedItems.has(item.id)) return;
+      if (item.type === "commandExecution" && item.status === "inProgress" && params.threadId === this.threadId &&
+          typeof params.turnId === "string" && params.turnId === this.activityTurnId && this.commandCalls.size < 2048 &&
+          !this.commandCalls.has(item.id) && !this.completedCommandCalls.has(item.id)) {
+        const id = commandToolUseId(this.commandRun, this.commandTurn, item.id, params.turnId);
+        if (id) this.commandCalls.set(item.id, { id, turnId: params.turnId });
+      }
       if (item.type === "reasoning") this.activity.phase(item.id, "thinking");
       else if (item.type === "mcpToolCall" && item.status === "inProgress") {
         const server = String(item.server ?? "App"), tool = String(item.tool ?? "Tool");
@@ -588,6 +603,21 @@ class CodexRun implements HarnessRun {
       this.activity.finish(String(item.id ?? "response"));
       this.activity.finish("response");
       const type = String(item.type ?? "");
+      const scopedTool = (type === "mcpToolCall" || type === "dynamicToolCall")
+        && params.threadId === this.threadId && typeof params.turnId === "string"
+        && params.turnId === this.activityTurnId && typeof item.id === "string";
+      if (type === "mcpToolCall" || type === "dynamicToolCall") {
+        const id = typeof item.id === "string" ? item.id : null;
+        if (id && this.deniedItems.has(id)) {
+          this.deniedItems.delete(id);
+          if (this.completedToolCalls.size < 2048) this.completedToolCalls.add(id);
+          return;
+        }
+        if (id && this.completedToolCalls.has(id)) return;
+      }
+      const toolUseId = scopedTool && this.completedToolCalls.size < 2048
+        ? commandToolUseId(this.commandRun, this.commandTurn, item.id, params.turnId as string) : undefined;
+      if (toolUseId) this.completedToolCalls.add(item.id as string);
       if (type === "agentMessage") {
         const text = readItemText(item);
         if (text) {
@@ -600,24 +630,68 @@ class CodexRun implements HarnessRun {
         const tool = String(item.tool ?? "unknown");
         this.emit({
           type: "tool_use",
+          ...(toolUseId ? { toolUseId } : {}),
           toolName: `mcp__${server}__${tool}`,
           input: item.arguments,
           // Either name can contain __, so retain the boundary instead of reparsing the alias.
           mcp: { server, tool },
         });
+        if (toolUseId && shouldRetainToolOutput(`mcp__${server}__${tool}`)) {
+          const result = item.result && typeof item.result === "object" && !Array.isArray(item.result) ? item.result as Record<string, unknown> : {};
+          const error = item.error && typeof item.error === "object" ? item.error as Record<string, unknown> : {};
+          const hasResult = Array.isArray(result.content) || result.structuredContent !== undefined && result.structuredContent !== null;
+          const status = item.status === "failed" || typeof error.message === "string" ? "failed"
+            : item.status === "completed" && hasResult ? "completed" : "unknown";
+          // Project public tool content only. Provider _meta, app identity and configuration stay private.
+          this.emit(toolResult(toolUseId, status, typeof error.message === "string" ? error.message
+            : hasResult ? { content: result.content, structuredContent: result.structuredContent } : undefined));
+        }
+      } else if (type === "dynamicToolCall") {
+        const toolName = typeof item.namespace === "string" && item.namespace ? `${item.namespace}: ${String(item.tool ?? "Tool")}` : String(item.tool ?? "Tool");
+        this.emit({ type: "tool_use", ...(toolUseId ? { toolUseId } : {}), toolName, input: item.arguments });
+        if (toolUseId && shouldRetainToolOutput(toolName)) {
+          const content = Array.isArray(item.contentItems) ? item.contentItems.map(value => {
+            const block = value && typeof value === "object" ? value as Record<string, unknown> : {};
+            return block.type === "inputText" ? { type: "text", text: block.text }
+              : { type: block.type === "inputAudio" ? "audio" : "image" };
+          }) : undefined;
+          const status = item.status === "failed" || item.success === false ? "failed"
+            : item.status === "completed" && item.success === true && content !== undefined ? "completed" : "unknown";
+          this.emit(toolResult(toolUseId, status, content));
+        }
       } else if (type === "commandExecution" || type === "fileChange") {
         // Codex reports a refused item as completed too; reporting it as a tool use would tell the
         // operator their denial ran anyway.
         const itemId = typeof item.id === "string" ? item.id : null;
         if (itemId && this.deniedItems.has(itemId)) {
           this.deniedItems.delete(itemId);
+          if (type === "commandExecution") {
+            this.commandCalls.delete(itemId);
+            if (this.completedCommandCalls.size < 2048) this.completedCommandCalls.add(itemId);
+          }
           return;
         }
+        if (type === "commandExecution" && itemId && this.completedCommandCalls.has(itemId)) return;
+        if (type === "commandExecution" && item.status === "declined") {
+          if (itemId) { this.commandCalls.delete(itemId); if (this.completedCommandCalls.size < 2048) this.completedCommandCalls.add(itemId); }
+          return;
+        }
+        const command = type === "commandExecution" && itemId ? this.commandCalls.get(itemId) : undefined;
+        const toolUseId = command && params.threadId === this.threadId && params.turnId === command.turnId ? command.id : undefined;
+        if (type === "commandExecution" && itemId && this.completedCommandCalls.size < 2048) this.completedCommandCalls.add(itemId);
+        if (itemId) this.commandCalls.delete(itemId);
         this.emit({
           type: "tool_use",
+          ...(toolUseId ? { toolUseId } : {}),
           toolName: type === "commandExecution" ? "Command" : "FileChange",
+          ...(type === "fileChange" ? { cwd: this.options.cwd } : {}),
           input: type === "commandExecution" ? { command: item.command ?? null } : { changes: item.changes ?? null },
         });
+        if (toolUseId) {
+          const result = codexCommandResult(toolUseId, item);
+          if (result) this.emit(result);
+          this.emit(toolResult(toolUseId, result?.status ?? "unknown", item.aggregatedOutput));
+        }
       }
       return;
     }
@@ -631,6 +705,7 @@ class CodexRun implements HarnessRun {
       const completedTurn = params.turn as { id?: string } | undefined;
       if (this.activityTurnId && completedTurn?.id && completedTurn.id !== this.activityTurnId) return;
       this.turnActive = false;
+      this.commandCalls.clear();
       this.activity.reset();
       const turn = params.turn as Record<string, unknown> | undefined;
       const usage = turn?.usage as Record<string, unknown> | undefined;

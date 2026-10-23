@@ -14,14 +14,14 @@ import { markdownCodeProps } from "@/components/reui/code-block/code-block-highl
 // a heading that shouts is worse than one that is merely legible.
 
 const PROSE_CLASS = [
-  "text-sm leading-relaxed break-words",
+  "min-w-0 text-sm wrap-anywhere",
   "[&>:first-child]:mt-0 [&>:last-child]:mb-0",
   "[&_p]:my-2",
   "[&_a]:underline [&_a]:underline-offset-2 [&_a:hover]:text-primary",
   "[&_strong]:font-semibold",
-  "[&_h4]:mt-3 [&_h4]:mb-1 [&_h4]:text-base [&_h4]:font-semibold",
+  "[&_h4]:mt-3 [&_h4]:mb-1 [&_h4]:text-lg [&_h4]:font-semibold [&_h4]:tracking-[-0.01em]",
   "[&_h5]:mt-3 [&_h5]:mb-1 [&_h5]:font-semibold",
-  "[&_h6]:mt-3 [&_h6]:mb-1 [&_h6]:font-medium",
+  "[&_h6]:mt-3 [&_h6]:mb-1 [&_h6]:font-semibold",
   "[&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1",
   "[&_blockquote]:my-2 [&_blockquote]:border-l-2 [&_blockquote]:border-muted-foreground/40 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground",
   "[&_code:not(pre_code)]:rounded [&_code:not(pre_code)]:bg-background/70 [&_code:not(pre_code)]:px-1 [&_code:not(pre_code)]:py-0.5 [&_code]:font-mono [&_code]:text-xs",
@@ -64,7 +64,7 @@ export function Markdown({ text, className, streaming = false }: { text: string;
           // The panel is narrow and a table is as wide as its content: scrolling the table beats
           // wrapping every cell into an unreadable column.
           table: ({ children }) => (
-            <div className="my-2 overflow-x-auto">
+            <div className="my-2 max-w-full overflow-x-auto">
               <table>{children}</table>
             </div>
           ),

@@ -101,14 +101,14 @@ export function SessionProvider({ session, busy, onChange, onSavingChange }: {
         <p className="text-muted-foreground">Credentials changed; start a new chat.</p>}
       {legacy && <>
         <label className="flex gap-2 text-muted-foreground">
-          <input type="checkbox" checked={confirmed} disabled={busy || saving}
+          <input type="checkbox" className="outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0" checked={confirmed} disabled={busy || saving}
             onChange={event => setConfirmed(event.target.checked)} />
           This older chat used the selected provider and account. Resume it with that connection.
         </label>
         <Button type="button" size="sm" variant="outline" disabled={busy || saving || !selected || !confirmed}
           onClick={() => void save(selected, confirmed)}>Confirm original provider</Button>
       </>}
-      {error && <p role="alert" className="text-destructive">{error}</p>}
+      {error && <p role="alert" className="text-destructive-foreground wrap-anywhere">{error}</p>}
     </div>
   );
 }

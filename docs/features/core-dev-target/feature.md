@@ -1,15 +1,16 @@
 ---
 created: 2026-09-18
-updated: 2026-10-21
+updated: 2026-10-23
 summary: Run Core from source in Debug, restart into isolated build generations and switch back to the installed release.
 components: [apps/core, apps/cli, apps/shell]
 ---
 
 # Core Development Mode
 
-Core remains a CLI-launched platform process. The Dashboard Core row exposes release/source selection,
-Restart, console logs, and a Source-only settings dialog. Its state comes from the running Core;
-there is no browser-owned launch mode and no persisted default mode.
+Core remains a CLI-launched platform process. The Dashboard Core row exposes Release and named
+existing workspace selection through More > Runtime / workspace, plus Restart, console logs and
+separate Source settings. The selector has no generic Source/main target. Its current state comes
+from the running Core; there is no browser-owned launch mode and no persisted default mode.
 
 ## Launch And Restart
 
@@ -32,15 +33,24 @@ project explicitly. A conflicting `core start` is refused rather than silently s
 already-running instance. Status includes mode, absolute project and generation paths, PID, and
 process start time on authenticated/control surfaces. A direct launch without launcher metadata
 reports `unmanaged`; Shell displays it as `external` with a keyboard-accessible tooltip explaining
-the external launch and CLI recovery. No runtime dropdown is shown when launch control is unavailable.
-Managed Core modes use the same runtime label typography, separate chevron button, and menu layout
-as app runtime selectors, with a checkmark on the current mode. The visible source label is
-`workspace` when the factual development project matches an active registered worktree, otherwise
-`source`; the backend launch mode remains `dev`. A configured source change does not relabel the
-currently running project. No dev-mode indicator or Runtime menu heading is shown. The label
-tooltip explains that source builds require a restart rather than live reload and includes Git
-inspection diagnostics when available.
-Managed dev/release launches also require a resolvable Hosty CLI to enable these controls.
+the external launch and CLI recovery. New runtime selection is disabled when launch control or the
+Hosty CLI is unavailable; an existing retained operation remains inspectable.
+
+The Dashboard and app menus share the name Runtime / workspace. Core offers Release and matching
+registered workspaces by their names, with unavailable reasons and a checkmark based on its actual
+project. Its source identity still shows only the workspace display name or observed branch/commit
+with a dotted underline and complete hover/focus/click details. The adjacent runtime reads workspace
+when the factual development project matches an active registered worktree, otherwise source; the
+backend launch mode remains `dev`. Configured source for a later restart never relabels the live
+project. Source settings and IDE/external state remain available independently of selectable targets.
+
+Opening the Core selector reads one uncached `GET /api/core/execution-targets` catalog. It projects
+owned, authorized registered workspace metadata against the configured Core repository/project and
+includes retained Core operations for recovery. Listing does not collect Git status/diffs, hash executables or
+prepare activation plans for every candidate. The selected destination receives a fresh Core-only
+review before switching; catalog availability is not permission to apply. Reopening the menu
+refreshes its choices. Only unfinished or conflicting switches add a contextual recovery/progress
+entry; healthy active switches add no separate details action.
 
 Start, Restart, Stop, Update, Source edits and detached restart operations coordinate through one
 per-data-root launch lease. `hosty update` updates installed release artifacts while a dev Core
@@ -215,6 +225,45 @@ Return. Runtime consumers persist independently of workspace Close and sandbox F
 participation requires separate Core authority; ordinary source or lifecycle access is insufficient.
 Return preserves current data and live source edits.
 
+The Dashboard Core selector reads existing named workspace candidates and reviews an explicitly
+Core-only selection, deselecting every app participant before apply. It reuses the same administrator,
+source/binding and separately reviewed Core activation authority as Harness. Opening the menu or
+review does not change runtimes. The dialog lives outside the transient More menu.
+
+A retained active Core workspace can switch directly to another reviewed workspace. The detached
+handover builds the selected candidate before Stop, verifies its workspace-handover contract and
+transfers Core ownership only after exact candidate readiness. Applications retain their selected
+runtimes and current data. The new activation retains the chain's original captured Return target.
+Release selection explicitly accepts current-data compatibility with that baseline; source/dev
+baselines still require explicit continuation to installed Release.
+
+Ordinary same-target CLI start/restart records a separate durable workspace-launch continuation
+before Stop and updates the owning activation only after the exact prepared generation confirms
+readiness. The executable, generation marker, PID and process-start identity are checked. A lost
+ready response recovers the retained prepared generation instead of rebuilding or adopting a
+process merely because its project path matches. The original captured Return executable and
+application ownership remain unchanged; pending generations remain protected from cleanup.
+
+Old launches without continuation evidence require an explicit local administrator recovery:
+`hosty --data-root <root> core adopt-workspace <activation-id> --instance <pid:ticks> --generation
+<absolute-path>`. This metadata-only operation checks the factual current instance, managed
+executable/hash, generation ownership, registered workspace/project/source and retained authority
+before writing an explicit adoption receipt. It does not claim historical restart ancestry, stop
+Core, select another target or change the captured Return baseline. An unconfirmed or unrelated
+process remains blocked.
+
+Candidate builds expose the read-only `--workspace-activation-contract` probe. Direct handover and
+workspace restart continuity require `workspace-activation.2` before any application or Core Stop.
+An older candidate receives an actionable update refusal while the current Core remains running.
+Existing Return to the captured baseline retains its exact executable/hash contract.
+
+Workspace apply/Return requests and staged Release are retained without credentials under the
+current user/Core-origin scope. Reconnect and remount read status rather than creating another
+request. Failed preparation exposes diagnostics and exact retry or explicit review of the same
+selection after source repair; resume and boundary pause reuse the retained operation. Actor/scope
+changes abort queued mutations and discard stale read results. Core's existing CLI/log recovery
+remains available when a returned older Core cannot serve these APIs.
+
 ## Testing Expectations
 
 - CLI: build failure before stop, explicit release/dev selection, isolated output and generation
@@ -232,11 +281,19 @@ Return preserves current data and live source edits.
   the original failure while stopping all previously started services.
 - Shell: live mode and Git/version cells, Source dialog, one Restart action for pending and normal
   use, compiler diagnostics, operation reconciliation after connection loss, and hidden dev updates.
-  Runtime controls match app selector styling; external launches explain their unavailable controls
-  on hover and keyboard focus, and the current managed mode is checked without triggering a restart.
+  Runtime / workspace lists Release and eligible existing named workspaces, with no generic
+  Source/main option. Verify direct Core-only handover, exact workspace/worktree/project and factual
+  generation/PID/start checks, explicit baseline Return compatibility and factual Release readiness. Retain original IDs/bodies
+  through uncertainty, stale-review repair, remount and queued actor cancellation; do not replay
+  work after an unknown status. External launches explain unavailable selection on hover/focus,
+  while Source settings and factual source/IDE state remain available.
   Git inspection errors retain the amber dev warning and accessible diagnostic even with cached Git
   data; Source save failures expose an alert without requiring focus to move.
 - Gateway: token outage versus revocation and recovery through the same proxy route without
   forwarding or replaying the failed mutation.
 - Exercise a Core-managed instance on each supported OS; verify the actual Gateway/harness turn
   as well as process identity. Record unavailable platform/provider checks explicitly.
+
+- Verify durable same-target workspace restart continuation before/after lost ready receipts,
+  original baseline preservation, pending generation retention, exact executable/marker/process
+  checks and explicit legacy adoption without guessed history or source/grant bypass.

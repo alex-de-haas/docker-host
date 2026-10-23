@@ -4,6 +4,7 @@ import type {
   CatalogAppsResponse,
   ErrorResponse,
 } from "@/lib/catalog-types";
+import type { InstalledApp } from "./installed-types";
 import type { MarketplaceIdentity } from "@/lib/host-auth";
 
 export async function fetchCatalogApps(refresh: boolean, signal?: AbortSignal): Promise<CatalogAppsResponse> {
@@ -23,9 +24,9 @@ export async function fetchIdentity(signal?: AbortSignal): Promise<MarketplaceId
   return fetchJson<MarketplaceIdentity>("/api/auth/identity", signal);
 }
 
-export async function fetchInstalledAppIds(signal?: AbortSignal): Promise<string[]> {
-  const result = await fetchJson<{ appIds?: string[] }>("/api/installed-apps", signal);
-  return Array.isArray(result.appIds) ? result.appIds : [];
+export async function fetchInstalledApps(signal?: AbortSignal): Promise<InstalledApp[]> {
+  const result = await fetchJson<{ apps: InstalledApp[] }>("/api/installed-apps", signal);
+  return result.apps;
 }
 
 export async function fetchAppUpdateAvailable(appId: string, signal?: AbortSignal): Promise<boolean> {

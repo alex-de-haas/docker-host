@@ -29,3 +29,24 @@ it("retains the original text if highlighting cannot load", async () => {
   expect(container.textContent).toContain("could not load"); expect(container.querySelector("pre")?.textContent).toBe(diff.combined);
   expect(renderDiff).not.toHaveBeenCalled();
 });
+
+it("renders current-side threads inline and retains file, outdated and missing-coordinate threads", async () => {
+  renderDiff.mockImplementation(props => <div>Highlighted diff{props.lineAnnotations.map((annotation: unknown, index: number) => <div key={index}>{props.renderAnnotation(annotation)}</div>)}</div>);
+  const base = { path: "new.ts", resolved: false, comments: ["Review comment"], diffSide: "RIGHT" };
+  const threads = [{ ...base, id: "inline", line: 1 }, { ...base, id: "same-line", line: 1 }, { ...base, id: "file", subjectType: "FILE" }, { ...base, id: "outdated", line: 1, outdated: true }, { ...base, id: "gap", line: 99 }];
+  await act(async () => root.render(<WorkspaceDiffView diff={diff} layout="split" wrap threads={threads} />));
+  const annotations = renderDiff.mock.lastCall?.[0].lineAnnotations;
+  expect(annotations).toHaveLength(1); expect(annotations[0]).toMatchObject({ side: "additions", lineNumber: 1, metadata: [threads[0], threads[1]] });
+  expect(container.querySelectorAll("article")).toHaveLength(threads.length);
+  expect(container.querySelector('[aria-label="File comments"]')?.textContent).toContain("Review comment");
+  expect(container.querySelector('[aria-label="Outdated threads"]')?.textContent).toContain("earlier revision");
+  expect(container.querySelector('[aria-label="Threads outside this preview"]')?.textContent).toContain("new.ts:99");
+});
+it.each([{ binary: true }, { truncated: true }, { contentKind: undefined }, { combined: "invalid patch", contentKind: "patch" as const }])("retains review actions alongside unreadable diff fallback %j", async flags => {
+  const ask = vi.fn();
+  const thread = { id: "retained", path: "new.ts", line: 1, resolved: false, comments: ["Do not lose this comment"], diffSide: "RIGHT" };
+  await act(async () => root.render(<WorkspaceDiffView diff={{ ...diff, ...flags }} layout="unified" wrap threads={[thread]} onThreadAsk={ask} />));
+  expect(renderDiff).not.toHaveBeenCalled(); expect(container.textContent).toContain("Do not lose this comment");
+  await act(async () => [...container.querySelectorAll("button")].find(button => button.textContent === "Ask Harness")!.click());
+  expect(ask).toHaveBeenCalledWith(thread);
+});

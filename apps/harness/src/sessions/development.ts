@@ -5,6 +5,7 @@ import { AppContextError } from "./app-context.js";
 import { CoreEnvironmentClient, type CoreEnvironmentAction, SandboxError, SandboxClient, sandboxActions, type SandboxAction } from "@hosty-sdk/app/sandbox/server";
 import { coreEnvironmentTools, harnessEnvironmentActions } from "./environment-tools.js";
 import { sandboxTools } from "./sandbox-tools.js";
+import { requestWorkspaceApplications } from "../workspace-applications.js";
 
 export interface DevelopmentWorkspace {
   id: string; workspaceId?: string; name?: string; path: string; branch: string; targetBranch: string; originalBase: string; state: string;
@@ -56,6 +57,11 @@ export class DevelopmentClient {
       throw new AppContextError(response.ok ? 502 : response.status, "workspace_stream_unavailable", "Core could not open workspace updates.");
     }
     return response;
+  }
+  async workspaceApplications(credential: string, method: string, path: string, body?: unknown): Promise<unknown> {
+    if (!this.available) throw new AppContextError(503, "workspaces_unavailable", "Workspace applications require Core.");
+    return requestWorkspaceApplications(method, path, credential, body, { origin: this.origin!, serviceToken: this.token!,
+      appId: this.appId, inspect: value => this.inspection(value) });
   }
   async inspection(credential: string, path = "", body?: Record<string, unknown>, absolute = false): Promise<unknown> {
     if (!this.available) throw new AppContextError(503, "workspaces_unavailable", "Workspace inspection requires Core.");

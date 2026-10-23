@@ -1,6 +1,6 @@
 ---
 created: 2026-06-04
-updated: 2026-10-09
+updated: 2026-10-22
 summary: Reviewed update plans and their apply behavior, including permission changes and routine updates.
 components: [apps/core, apps/shell]
 ---
@@ -125,7 +125,7 @@ The classification is deliberately conservative and not operator-tunable: it is 
 
 ## Update Availability (`update-status`)
 
-`GET /api/apps/{appId}/update-status` reports availability and per-service digest detail. It is a **projection of the app's cached plan**: with a fresh plan it does no network work at all. Without one it builds a plan (caching it) and projects that. `?refresh=true` forces a single-app rebuild — the "Check for updates" action on an expanded row.
+`GET /api/apps/{appId}/update-status` reports availability and per-service digest detail. It is a **projection of the app's cached plan**: with a fresh plan it does no network work at all. Without one it builds a plan (caching it) and projects that. `?refresh=true` forces a single-app rebuild — the app row's More > Check for updates action and Manage's Check now.
 
 The candidate is whatever the reviewed plan would use: the followed feed's current `manifestRef` for feed-bound apps, or a refetch of the stored manifest URL for non-feed URL installs. Refetching the external manifest matters for candidates that move to new *versioned* image tags: comparing the registry against the installed copy's old tags would report "up to date" forever. Resolution failures degrade service detail to `unknown` and set an explicit error on the summary verdict; the installed app is left untouched.
 
@@ -176,14 +176,24 @@ This is what makes the flow reload-safe. The request-scoped cancellation token u
 
 Progress and outcome live on the app record, not in a client:
 
-- `operationStatus: "updating"` is persisted for the duration — every client renders progress from it, and it survives reloads, second browsers, and the Shell restarting itself. It is the **only** in-progress marker: a successful apply of a *running* app ends at `started` when the post-update restart completes. A target with incomplete required configuration stays stopped and ends at `updated` with a completed outcome.
+- `operationStatus: "updating"` is persisted for the duration — every client renders progress from it, and it survives reloads, second browsers, and the Shell restarting itself. It is the update operation's in-progress marker, separate from the actual runtime state: a successful apply of a *running* app ends at `started` when the post-update restart completes. A target with incomplete required configuration stays stopped and ends at `updated` with a completed outcome.
+- Core records runtime `stopping` atomically with the update's stopping progress before invoking the runtime adapter. A confirmed stop settles runtime to `stopped` and clears stale health. A failed or cancelled stop settles the transition to `unknown` instead of claiming the app is running or stopped. Update progress never substitutes for runtime evidence.
 - Completion flips the record (`updated`/`started`, or `failed` with `lastError`), so a reloaded page still learns the outcome. A post-apply single-app re-plan settles the app's verdict against its new base immediately instead of waiting for the next sweep.
 - A record still marked `"updating"` at startup means Core stopped mid-apply: the boot sweep flips it to `failed` with an actionable "interrupted by a Core restart" error. It runs before autostart reconciliation, and skips any app whose apply is genuinely in flight.
-- No update outcome is published to the notification inbox. An apply is always something the operator just asked for, and the record already carries the result onto the app row — a second copy in the bell was noise. Core purges any `app-update-applied:` / `app-update-failed:` advisories left by earlier versions on boot.
+- No update outcome is published to the notification inbox. An apply is always something the operator just asked for, and its result is already available through transient feedback and persistent diagnostics; there is no separate durable inbox entry. Core purges any `app-update-applied:` / `app-update-failed:` advisories left by earlier versions on boot.
 
 `POST /control/v1/apps/{appId}/update` stays synchronous — the CLI's confirm-and-wait shape is the right one there.
 
 ## Shell UX
+
+Manage application's Updates tab displays an applicable cached Core plan without rebuilding it on
+entry. It shows installed/target version, check time, review classification, reported changes and
+known permission additions. Check now explicitly rebuilds through the existing Shell plan handler;
+Update and Review update delegate to the same queue/confirmation handler as Dashboard. Source/feed
+and account editors remain available alongside the plan. A failed check stays incomplete rather
+than current, mismatched base/digest evidence is not displayed as a fresh offer, and live source
+explains its supported restart behavior. Download size and automatic-update policies are not
+inferred. Dashboard retains all existing update entries.
 
 After each app-record change, Shell re-reads the installed-app list through the shared Core event
 stream. The same subscription resyncs after a reconnect or returning to the tab. Full-page and event
@@ -194,21 +204,25 @@ additionally wait for their restart before reloading the page into the new asset
 
 Rows render from the app summary's `updateCheck` verdict, so the affordances survive navigation and reloads without re-probing:
 
-- **routine** — a blue update icon applies the cached plan by digest with no dialog; the row's actions menu offers "Review and update" for the curious;
-- **review-required** — an amber update icon opens the plan; there is no silent path;
-- **check failed** — an amber icon carrying the error;
-- **applying** — the current stage beneath the versions in the Version cell, driven by `updateProgress` and `operationStatus`.
+- **routine** — Update applies the cached plan by digest through Core's queue, without a confirmation dialog;
+- **review-required** — the existing review path opens Core confirmation; there is no silent path;
+- **check failed** — the problem icon after the app name carries the error;
+- **applying** — active update progress appears beneath the current runtime/health status in the Status column, driven by `updateProgress` and `operationStatus`.
 
-The update icon and the versions share the **Version** cell, because "an update exists" and "which version" are one statement. The cell stacks the installed version over the version the update resolves to, in the icon's own colour, with the icon after them. The second line names that version even when it equals the installed one: an update that keeps its version is the normal shape for a source app tracking a branch, and the row is answering "which version would I get". The commit that separates the two builds lives in the tooltip. A verdict naming no version at all — an older Core — leaves the installed version alone with the icon. The platform row follows the same rule for Core's own update.
+Package metadata shows the installed and available versions as `current → target`, including a
+new build with the same version. Revision/build tooltips distinguish those builds. A verdict with
+no target version leaves the installed version alone rather than inventing one. Active source or
+workspace metadata keeps its source identity; package update information remains in its disclosure
+and Manage. Update actions remain separate from version metadata.
 
-Both version lines are tooltip triggers, marked with a dotted underline rather than an icon, and spell out the exact revisions that version identifies — the reviewed source commit, each service's image digest — in full. The installed line carries its tooltip whether or not an update exists: a version string alone cannot separate two builds of the same version, which is exactly what a source app tracking a branch ships.
+Both version values are tooltip triggers, marked with a dotted underline rather than an icon, and spell out the exact revisions that version identifies — the reviewed source commit, each service's image digest — in full. The installed value carries its tooltip whether or not an update exists: a version string alone cannot separate two builds of the same version, which is exactly what a source app tracking a branch ships.
 
-The package icon aligns with the installed version. The update activity indicator and message occupy
-a separate line below the versions, starting at the cell's left edge like the changes below a Dev Mode branch.
+Update activity does not add a line beneath version/source metadata. The primary Status label
+uses actual runtime state and applicable health; update operation progress occupies the line below it.
 
-The header "Check updates" triggers or joins the fleet sweep. "Update all (N)" applies every routine verdict, leaving review-class ones on their rows and counting them in the summary toast; the Shell's own app goes last, because its apply restarts the Shell serving the page.
+App actions > Check updates triggers or joins the fleet sweep. "Update all (N)" applies every routine verdict, leaving review-class ones on their rows and counting them in the summary toast; the Shell's own app goes last, because its apply restarts the Shell serving the page.
 
-Applying closes the dialog immediately. A rejected enqueue (stale, expired, consumed, or already updating) toasts the error and refreshes so the row corrects itself rather than resending a dead digest. The update dialog opens over the cached pending plan, rebuilding only for an explicitly supplied source or after a feed change. Progress needs no poll: every app-record commit publishes a hint on Core's event stream, and the page re-reads the list from it.
+An accepted update follows the existing queue/Core-confirmation flow. A rejected enqueue (stale, expired, consumed, or already updating) keeps the existing error/recovery handling and refreshes state; uncertain submissions do not authorize replay. Manage reads the applicable cached pending plan; explicit Check now, a source/feed change or a definite stale-preparation refusal uses the existing rebuild path. Progress needs no poll: every app-record commit publishes a hint on Core's event stream, and the page re-reads the list from it.
 
 ### Update stages and check feedback
 
@@ -218,14 +232,19 @@ start and readiness. Docker reports downloading only when it actually pulls an i
 setup reports preparation. Running apps retain `operationStatus: updating` until readiness finishes.
 The terminal status remains `started` for a restarted app and `updated` for an app left stopped,
 maintaining compatibility with existing Shell self-update waiters. `lastOperation` remains `update`.
-App update stages and outcomes appear below the versions in the Version cell.
-A healthy finish shows Updated for 30 seconds; an unhealthy finish shows Updated · needs attention.
-The warning opens app details with service readiness states and a console-log action. It disappears
-after a healthy observation. Terminal notifications use these same app-state outcomes, rather than
-treating a successful installation request as proof of readiness.
-Failures and interrupted updates remain visible with their error.
+Dashboard always keeps actual Running, Starting, Stopping or Stopped primary, composed with
+applicable health; missing runtime observations show Unknown. Shell never derives lifecycle from
+an arbitrary operation label. Active update phases `stopping` and `starting` show only Updating
+beneath the primary status, without a service suffix. Other supported phases show Update queued,
+Preparing update, Creating backup, Installing, Downloading or Checking readiness, with the reported
+service when present. Queueing or preparation can coexist with Running; readiness checking can
+coexist with a newly running runtime.
+Terminal update outcomes add no row message or expiry timer. Existing success/error/readiness
+toasts use the same app-state outcomes rather than treating installation as proof of readiness.
+Readiness warnings retain affected service states and an addressable console-log action; problem
+icons and Manage keep failure/interruption diagnostics. Healthy recovery clears the readiness warning.
 
-Version/check tooltips distinguish never checked, no updates, and a failed attempt, and include the
+Update-check tooltips distinguish never checked, no updates, and a failed attempt, and include the
 last successful check time. A failed check keeps the found target visible and opens review; bulk
 update skips failed verdicts. A fleet check with failures and no offers reports an incomplete check.
 
@@ -275,7 +294,7 @@ Failed updates leave enough state for diagnosis and retry. Runtime state and app
 - **Core-owned settings** — host-port overrides and local browser names survive apply and a fresh check after recreating Core reports no phantom update; removal of ordinary app settings still requires review.
 - **Shell self-update wait** — the page stays put through `"updating"` and through the intermediate `"updated"` while the restart is still to report, settles on that restart's `"started"` (and on `"updated"` when no restart is coming), reports a `"failed"` record with its error, treats a failed read as no outcome at all, and gives up on its deadline (and when the app is gone) without reloading.
 - **Fleet check** — availability projected into summaries (target version and revisions alongside the verdict, and nothing named for a probe that did not resolve), live-source apps skipped and an earlier verdict suppressed, per-app failures captured without failing the sweep, an app with no update source reported as an error rather than as up to date (and cleared by a plan from an explicit manifest), per-app timeout recorded as that app's error while the rest of the fleet still completes, shutdown not recorded as timeouts, single-flight joining, and the finish announced only once the run no longer reports running.
-- **Version cell** — the target version shown whether or not it advances, and nothing shown when the verdict names no version; installed revisions read from the app record alone, so the tooltip stands without an update.
+- **Version metadata** — the target version shown whether or not it advances, and nothing shown when the verdict names no version; installed revisions read from the app record alone, so the tooltip stands without an update.
 - **Check diagnostics** — unresolved images name the candidate service and reference; returned plan
   errors and exceptions both contribute to the fleet failure count. A tag published after its
   manifest clears the error on recheck, preserves the installed version, and replaces the retained
@@ -293,12 +312,16 @@ Digest resolution is covered offline against a stub transport — the suite must
   TTL, disabled scheduled checks, changed bases, malformed snapshots, owner-only files, removal,
   retained failures, pruning, and unresolved git probes after restart.
 
+- Update-stop tests cover atomic runtime/progress publication before the adapter, a confirmed stop
+  clearing stale health, and failed/cancelled stops settling to Unknown without claiming success.
 - Update-feedback tests cover real download callbacks, continued updating through readiness, healthy
   completion, synchronous failure, retained offers after failed source/registry checks, and recovery.
 - Core availability tests cover retained results and timestamps, successful recovery, and rejection
   of a retained offer after the installed version or release channel changes.
-- Shell tests cover expiring success feedback, unknown/failed/empty checks, and bulk-update exclusion
-  of failed, review-required, expired and already-updating offers.
+- Shell tests cover actual runtime/health status above active update progress, generic Updating for
+  stopping/starting phases, specific other phases and optional service, absent terminal row labels
+  and timers, unknown/failed/empty checks, and bulk-update exclusion of failed, review-required,
+  expired and already-updating offers.
 - Shell distinguishes installed-but-unready updates from successful readiness: a terminal warning
   names affected services and opens logs, while persistent details survive page reloads. A separate
   available update remains visible; healthy recovery clears stale readiness feedback.

@@ -178,7 +178,7 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
   const enabled = entries.filter(p => (draft.access[p.appId]?.enabled ?? p.offered) && catalogs.some(c => c.provider === p.appId));
   const allModes = enabled.flatMap(p => { const c = catalogs.find(c => c.provider === p.appId)!; return c.tools.filter(t => !draft.access[p.appId]?.denied.includes(t.name) && !locallyDisabled(c, t.name)).map(t => mode(c, t.name)); });
   return <FieldGroup>
-    <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><h2 className="text-base font-semibold">MCP & tools</h2>
+    <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><h2 className="text-lg font-semibold tracking-[-0.01em]">MCP & tools</h2>
       <Popover><PopoverTrigger asChild><Button variant="ghost" size="icon" aria-label="About new tools"><Info /></Button></PopoverTrigger><PopoverContent>New tools from enabled applications become available automatically. Tools you explicitly disable remain disabled.</PopoverContent></Popover></div>
       <Button variant="outline" disabled={busy || loading} onClick={() => void refresh()}><RefreshCw data-icon="inline-start" />{loading ? "Loading…" : "Refresh tools"}</Button></div>
     {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}

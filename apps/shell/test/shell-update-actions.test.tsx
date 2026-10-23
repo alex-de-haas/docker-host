@@ -6,21 +6,25 @@ import { useShellActions, useShellState, type ShellActionsContextValue, type She
 import { DashboardPage } from "../src/app/shell/pages/dashboard-page";
 import { CoreRequestError } from "../src/app/shell/core-api";
 import type { CoreApp } from "../src/app/shell/types";
+import { getManageAppHref } from "../src/app/shell/shell-routes";
 
 const fixture = vi.hoisted(() => ({
   read: vi.fn(), settle: vi.fn(), switchSettle: vi.fn(), showConfirmation: vi.fn(), confirm: vi.fn(),
   toast: { info: vi.fn(), warning: vi.fn(), error: vi.fn(), success: vi.fn() },
   router: { replace: vi.fn(), push: vi.fn() },
-  params: new URLSearchParams(),
+  params: new URLSearchParams(), pathname: "/dashboard", realResources: false,
+  openUpdateLogs: null as ((app: CoreApp) => void) | null,
 }));
 vi.mock("../src/app/shell/core-transport.js", () => ({ fetchCore: fixture.read }));
-vi.mock("next/navigation", () => ({ useRouter: () => fixture.router, usePathname: () => "/dashboard", useSearchParams: () => fixture.params }));
+vi.mock("next/navigation", () => ({ useRouter: () => fixture.router, usePathname: () => fixture.pathname, useSearchParams: () => fixture.params }));
 vi.mock("next-themes", () => ({ useTheme: () => ({ theme: "light", resolvedTheme: "light" }) }));
 vi.mock("../src/app/shell/events/core-event-stream", () => ({ CoreEventNames: {}, subscribeToCoreEvents: (_origin: string, options: { topic?: string; onSync: () => Promise<void> }) => { if (!options.topic) void options.onSync(); return () => {}; } }));
 vi.mock("../src/app/shell/assistant/use-assistant-selection", () => ({
   useAssistantSelection: () => ({ assistants: [], selected: null, selectedId: null, select: () => {}, choose: async () => null }),
 }));
-vi.mock("../src/app/shell/update-notifications", () => ({ useAppUpdateNotifications: () => {} }));
+vi.mock("../src/app/shell/update-notifications", () => ({
+  useAppUpdateNotifications: (_apps: readonly CoreApp[], openLogs: (app: CoreApp) => void) => { fixture.openUpdateLogs = openLogs; },
+}));
 vi.mock("../src/app/shell/self-update", () => ({ waitForShellUpdateToSettle: fixture.settle }));
 vi.mock("../src/app/shell/self-runtime-switch", () => ({ waitForShellRuntimeSwitch: fixture.switchSettle }));
 vi.mock("../src/app/shell/core-confirmation", () => ({ showCoreConfirmation: fixture.showConfirmation }));
@@ -29,9 +33,14 @@ vi.mock("../src/components/reui/operation-toast", async () => {
   return { toast: fixture.toast, AssistantFeedbackContext: createContext({}), errorReportText: () => "" };
 });
 vi.mock("../src/components/reui/confirmation", () => ({ useConfirmation: () => ({ confirm: fixture.confirm, dialog: null }) }));
-vi.mock("../src/app/shell/resources/resource-usage", () => ({ ResourceUsageProvider: ({ children }: { children: ReactNode }) => children, ResourceUsage: () => null }));
+vi.mock("../src/app/shell/resources/resource-usage", async importOriginal => {
+  const actual = await importOriginal<typeof import("../src/app/shell/resources/resource-usage")>();
+  return { ResourceUsageProvider: ({ children }: { children: ReactNode }) => children,
+    ResourceUsage: (props: React.ComponentProps<typeof actual.ResourceUsage>) => fixture.realResources ? <actual.ResourceUsage {...props} /> : null };
+});
 vi.mock("../src/components/ui/sonner", () => ({ Toaster: () => null }));
 vi.mock("../src/app/shell/sidebar/shell-sidebar", () => ({ ShellSidebar: () => null }));
+vi.mock("../src/app/shell/chrome/shell-mobile-tabs", () => ({ ShellMobileTabs: () => null }));
 vi.mock("../src/app/shell/chrome/shell-top-strip", () => ({ ShellTopStrip: () => null }));
 vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUiHost: () => null }));
 vi.mock("../src/app/shell/chrome/shell-panel-workspace", () => ({ ShellPanelWorkspace: ({ children }: { children: ReactNode }) => children }));
@@ -55,8 +64,8 @@ function ActionCapture({ dashboard = false }: { dashboard?: boolean }) {
   useEffect(() => { actions = current; shell = state; }, [current, state]);
   return dashboard ? <DashboardPage coreOrigin={current.coreOrigin} apps={state.state.apps} status={null}
     coreUpdate={null} coreUpdating={false} onUpdateCore={() => {}} shellAppId={current.shellAppId}
-    canManageApps loading={false} busyAction={state.busyAction} pendingAppActions={state.pendingAppActions}
-    updateCheck={null} updateStatusInvalidations={{}} onRefresh={() => {}} onInstall={() => {}}
+    canManageApps={state.canManageApps} loading={false} busyAction={state.busyAction} pendingAppActions={state.pendingAppActions}
+    updateCheck={null} onRefresh={() => {}} onInstall={() => {}}
     onAction={current.runAppAction} onSwitchRuntime={current.switchAppRuntime} onUpdateApp={current.applyUpdateFromRow}
     onCheckUpdates={() => {}} onUpdateAll={() => {}} onOpenPanel={current.openAppPanel} /> : null;
 }
@@ -69,7 +78,9 @@ beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }));
   vi.spyOn(window, "open").mockReturnValue(null);
-  apps = [target];
+  apps = [target]; fixture.realResources = false;
+  fixture.pathname = "/dashboard"; fixture.params = new URLSearchParams(); fixture.openUpdateLogs = null;
+  fixture.router.push.mockReset(); fixture.router.replace.mockReset();
   fixture.read.mockReset(); fixture.settle.mockReset(); fixture.showConfirmation.mockReset();
   fixture.confirm.mockReset();
   fixture.switchSettle.mockReset().mockResolvedValue({ kind: "unresolved" });
@@ -100,11 +111,16 @@ beforeEach(() => {
 });
 afterEach(async () => {
   await act(async () => root.unmount()); container.remove();
+  window.getSelection()?.removeAllRanges();
   vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks();
 });
 async function mount(dashboard = false) {
   await act(async () => root.render(<ShellClient coreOrigin="https://core.test" shellAppId="hosty.shell"
     initialSidebarCompact={false} initialRightPanelOpen={false} initialRightPanelWidth={360}><ActionCapture dashboard={dashboard} /></ShellClient>));
+}
+function setRoute(href: string) {
+  const url = new URL(href, "https://shell.test");
+  fixture.pathname = url.pathname; fixture.params = url.searchParams;
 }
 function overrideRequests(override: (path: string, init?: RequestInit) => Response | Promise<Response> | undefined) {
   const fallback = fixture.read.getMockImplementation()!;
@@ -208,8 +224,216 @@ function deferred<T>() {
 }
 function appRow(id = target.id) {
   return [...container.querySelectorAll<HTMLTableRowElement>('table[aria-label="Installed apps"] tbody tr')]
-    .find(row => row.textContent?.includes(id))!;
+    .find(row => row.dataset.testid === `app-row-${id}`)!;
 }
+
+function expectDevelopmentMetadata(kind: "source" | "workspace") {
+  expect(appRow().querySelector(".dashboard-runtime")).toBeNull();
+  const version = appRow().querySelector<HTMLElement>(".dashboard-version")!;
+  const trigger = version.querySelector("button")!;
+  const icon = trigger.querySelector(kind === "workspace" ? ".lucide-hammer" : ".lucide-git-branch");
+  expect(icon).not.toBeNull();
+  expect(icon?.getAttribute("aria-hidden")).toBe("true");
+  expect(trigger.querySelectorAll("svg")).toHaveLength(1);
+  expect([...version.parentElement!.children].filter(child => child.textContent?.trim() === "·")).toHaveLength(0);
+}
+
+async function openAppMenu(id = target.id) {
+  const trigger = appRow(id).querySelector('button[aria-label="More actions"]')!;
+  await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+}
+async function openRuntimeMenu() {
+  await openAppMenu();
+  const trigger = document.querySelector('[aria-label="Switch runtime for Routine app"]')!;
+  await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
+  return [...document.querySelectorAll('[role="menu"]')].at(-1);
+}
+async function restartDisabled(id = target.id) {
+  await openAppMenu(id);
+  const item = [...document.querySelectorAll('[role="menuitem"]')].find(item => item.textContent === "Restart app")!;
+  const disabled = item.hasAttribute("data-disabled");
+  await act(async () => item.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  return disabled;
+}
+
+
+const contextAction = () => appRow().querySelector<HTMLButtonElement>(".dashboard-context-action button");
+const observedHealth = (status: string): NonNullable<CoreApp["health"]> => ({ status, services: [], observedAt: "2026-10-22T00:00:00Z" });
+
+it.each([
+  { runtime: "running", status: "Running", stage: "queued", label: "Update queued", operation: "updating" },
+  { runtime: "stopping", status: "Stopping…", stage: "stopping", label: "Updating", operation: "updating" },
+  { runtime: "stopped", status: "Stopped", stage: "stopping", label: "Updating", operation: "updating" },
+  { runtime: "starting", status: "Starting…", stage: "starting", service: "web", label: "Updating", operation: "updating" },
+  { runtime: "running", status: "Running", stage: "starting", label: "Updating", operation: "updating" },
+  { runtime: "unknown", status: "Unknown", stage: "stopping", label: "Updating", operation: "updating" },
+  { runtime: "stopped", status: "Stopped", stage: "installing", service: "web", label: "Installing · web", operation: "updating" },
+  { runtime: "starting", status: "Starting…", stage: "checking", label: "Checking readiness", operation: "updating" },
+])("keeps $runtime runtime status above $stage update feedback in the Status column", async ({ runtime, status, stage, service, label, operation }) => {
+  apps = [{ ...target, updateCheck: null, runtimeState: runtime, operationStatus: operation, lastOperation: "update",
+    health: observedHealth("healthy"),
+    updateProgress: { stage, changedAt: new Date(Date.now()).toISOString(), service } }];
+  await mount(true);
+  const cell = appRow().querySelector<HTMLElement>(".dashboard-status")!;
+  const main = [...cell.querySelectorAll("span")].find(node => node.textContent === status)!;
+  const feedback = [...cell.querySelectorAll("span, button")].find(node => node.textContent === label)!;
+  expect(main).toBeDefined(); expect(feedback).toBeDefined();
+  expect(main.compareDocumentPosition(feedback) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(appRow().querySelector(".dashboard-identity")?.textContent).not.toContain(label);
+  expect(appRow().querySelector(".dashboard-version")?.textContent).toContain(target.version);
+});
+
+it.each([
+  { runtime: "running", status: "Running", stage: "completed", label: "Updated", operation: "updated", error: null },
+  { runtime: "running", status: "Running · degraded", stage: "needs-attention", label: "Updated · needs attention", operation: "updated", error: null },
+  { runtime: "stopped", status: "Stopped", stage: "failed", label: "Update failed", operation: "failed", error: "Image download failed" },
+  { runtime: "running", status: "Running", stage: "interrupted", label: "Update interrupted", operation: "failed", error: "Core stopped before the update finished" },
+])("omits terminal $stage row feedback without losing runtime status or diagnostic icons", async ({ runtime, status, stage, label, operation, error }) => {
+  apps = [{ ...target, updateCheck: null, runtimeState: runtime, operationStatus: operation, lastOperation: "update", lastError: error,
+    health: observedHealth(stage === "needs-attention" ? "degraded" : "healthy"),
+    updateProgress: { stage, changedAt: new Date(Date.now()).toISOString() } }];
+  await mount(true);
+  const cell = appRow().querySelector<HTMLElement>(".dashboard-status")!;
+  expect(cell.textContent).toBe(status);
+  expect(cell.querySelector("button")).toBeNull();
+  expect(appRow().querySelector(".dashboard-identity")?.textContent).not.toContain(label);
+  const diagnostic = appRow().querySelector<HTMLElement>('[role="img"][aria-label*="problem"]');
+  if (stage === "completed") expect(diagnostic).toBeNull();
+  else {
+    expect(diagnostic).not.toBeNull();
+    await act(async () => diagnostic!.focus());
+    await act(async () => vi.advanceTimersByTime(200));
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(error ?? "readiness checks did not pass");
+  }
+  await act(async () => vi.advanceTimersByTime(31_000));
+  expect(cell.textContent).toBe(status);
+  expect(appRow().querySelector(".dashboard-identity")?.textContent).not.toContain(label);
+});
+
+it.each(["completed", "needs-attention", "failed", "interrupted"])("does not show terminal %s feedback when the operation snapshot still says updating", async stage => {
+  apps = [{ ...target, updateCheck: null, operationStatus: "updating", lastOperation: "update",
+    updateProgress: { stage, changedAt: new Date(Date.now()).toISOString() } }];
+  await mount(true);
+  expect(appRow().querySelector(".dashboard-status")?.textContent).toBe("Running");
+  expect(appRow().querySelector(".dashboard-identity")?.textContent).not.toMatch(/Updated|Update failed|Update interrupted|needs attention/);
+});
+
+it.each([
+  { runtime: "running", status: "Running" },
+  { runtime: "", status: "Unknown" },
+])("shows legacy Updating feedback beneath $status when progress is unavailable", async ({ runtime, status }) => {
+  apps = [{ ...target, updateCheck: null, runtimeState: runtime, operationStatus: "updating" }];
+  await mount(true);
+  const cell = appRow().querySelector<HTMLElement>(".dashboard-status")!;
+  expect(cell.textContent).toBe(`${status}Updating`);
+  expect(appRow().querySelector(".dashboard-identity")?.textContent).not.toContain("Updating");
+});
+
+it.each(["source", "workspace"])("retains update feedback below runtime status for %s metadata", async kind => {
+  apps = [{ ...target, updateCheck: null, live: true, selectedRuntime: "debug", runtimeProfiles: workspaceProfiles,
+    sourceLivePath: "/work/dashboard", operationStatus: "updating", lastOperation: "update",
+    updateProgress: { stage: "checking", changedAt: new Date(Date.now()).toISOString() } }];
+  mockWorkspaceRequests();
+  if (kind === "source") overrideRequests(path => path === "/api/apps/execution-targets"
+    ? Response.json({ apps: [{ appId: target.id, current: { kind: "legacy", runtime: "debug" }, choices: [] }] })
+    : path === "/api/development/activation-workspaces" ? Response.json({ workspaces: [] }) : undefined);
+  await mount(true);
+  expectDevelopmentMetadata(kind === "workspace" ? "workspace" : "source");
+  expect(appRow().querySelector(".dashboard-status")?.textContent).toBe("RunningChecking readiness");
+  expect(appRow().querySelector(".dashboard-identity")?.textContent).not.toContain("Checking readiness");
+});
+
+it.each([undefined, observedHealth("healthy")])("offers Stop for a running app without a reported problem, with health %j", async health => {
+  apps = [{ ...target, capabilities: ["logs"], health, updateCheck: null }];
+  await mount(true);
+  expect(contextAction()?.textContent).toBe("Stop");
+  expect(contextAction()?.disabled).toBe(false);
+  await openAppMenu();
+  expect([...document.querySelectorAll('[role="menuitem"]')].some(item => item.textContent?.trim() === "Console logs")).toBe(true);
+  await act(async () => document.querySelector('[role="menu"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  const stopping = deferred<Response>();
+  overrideRequests(path => path.endsWith("/stop") ? stopping.promise : undefined);
+  await act(async () => contextAction()!.click());
+  expect(callsTo("/api/apps/routine.app/stop")).toHaveLength(1);
+  expect(contextAction()?.textContent).toBe("Stopping…");
+  expect(contextAction()?.disabled).toBe(true);
+  await act(async () => { stopping.resolve(Response.json({ status: "stopped" })); });
+});
+
+it.each([
+  { health: observedHealth("degraded") },
+  { health: observedHealth("unhealthy") },
+  { health: { ...observedHealth("degraded"), services: [{ service: "sidecar", status: "stopped", health: null }] } },
+  { health: { ...observedHealth("unhealthy"), services: [{ service: "web", status: "exited", health: "unhealthy" }] } },
+])("offers Logs for an observed runtime-health failure: %j", async problem => {
+  apps = [{ ...target, updateCheck: null, ...problem, capabilities: ["logs"] }];
+  await mount(true);
+  expect(contextAction()?.textContent).toBe("Logs");
+  await openAppMenu();
+  const stop = [...document.querySelectorAll('[role="menuitem"]')].find(item => item.textContent?.trim() === "Stop app");
+  expect(stop).toBeDefined();
+  expect(stop?.hasAttribute("data-disabled")).toBe(false);
+});
+
+it.each([
+  { lastError: "Last operation failed" },
+  { operationStatus: "failed", lastError: "The previous update failed" },
+  { updateCheck: { ...target.updateCheck!, updateAvailable: false, error: "Feed unavailable" } },
+  { manifestError: "Unable to inspect the update manifest" },
+  { permissionState: {
+    status: "stale", required: [], optional: [], acceptedRequired: [], acceptedOptional: [], granted: [],
+    missingRequired: [], reviewRequired: false, unconfirmedRoles: [], error: "Permission check unavailable",
+    checkedAt: "2026-10-22T00:00:00Z", descriptions: {},
+  } satisfies NonNullable<CoreApp["permissionState"]> },
+])("keeps Stop for a healthy running app despite an unrelated diagnostic: %j", async problem => {
+  apps = [{ ...target, updateCheck: null, health: observedHealth("healthy"), ...problem, capabilities: ["logs"] }];
+  await mount(true);
+  expect(contextAction()?.textContent).toBe("Stop");
+  expect(appRow().querySelector('[role="img"][aria-label*="problem"], button[aria-label="Permission manifest could not be checked"]')).not.toBeNull();
+});
+
+it.each(["unknown", "starting", "stopped"])("does not infer a runtime-health failure from %s health", async status => {
+  apps = [{ ...target, updateCheck: null, health: observedHealth(status), capabilities: ["logs"] }];
+  await mount(true);
+  expect(contextAction()?.textContent).toBe("Stop");
+});
+
+it("keeps Stop available when a problematic running app does not provide logs", async () => {
+  apps = [{ ...target, updateCheck: null, health: observedHealth("unhealthy") }];
+  await mount(true);
+  expect(contextAction()?.textContent).toBe("Stop");
+});
+
+it.each(["healthy", "degraded"])("does not offer Stop to a non-administrator for a %s running app", async status => {
+  apps = [{ ...target, updateCheck: null, capabilities: ["logs"], health: observedHealth(status) }];
+  overrideRequests(path => path === "/api/auth/session" ? Response.json({ authenticated: true, user: { id: "reader", role: "host.user" } }) : undefined);
+  await mount(true);
+  expect(contextAction()?.textContent).toBe("Logs");
+  expect([...appRow().querySelectorAll("button")].some(button => button.textContent === "Stop")).toBe(false);
+});
+
+it("keeps higher-priority setup, update and stopped-app actions ahead of the contextual Stop", async () => {
+  apps = [{ ...target, capabilities: ["logs"] }];
+  await mount(true);
+  expect(contextAction()?.textContent).toBe("Update");
+  apps = [{ ...apps[0], configurationReadiness: { required: true, missingSettings: ["apiKey"], mounts: [] } }];
+  await act(async () => actions.refresh());
+  expect(contextAction()?.textContent).toBe("Configure");
+  apps = [{ ...target, runtimeState: "stopped", capabilities: ["logs"], updateCheck: null }];
+  await act(async () => actions.refresh());
+  expect(contextAction()?.textContent).toBe("Start");
+});
+
+it("uses the existing Shell stop confirmation from the contextual shortcut", async () => {
+  apps = [{ ...target, id: "hosty.shell", updateCheck: null, capabilities: ["logs"] }];
+  fixture.confirm.mockResolvedValue(false);
+  await mount(true);
+  const stop = container.querySelector<HTMLButtonElement>('[data-testid="app-row-hosty.shell"] .dashboard-context-action button')!;
+  expect(stop.textContent).toBe("Stop");
+  await act(async () => stop.click());
+  expect(fixture.confirm).toHaveBeenCalledTimes(1);
+  expect(callsTo("/api/apps/hosty.shell/stop")).toHaveLength(0);
+});
 
 it("shows immediate restart progress and keeps each queued app busy without submitting duplicates", async () => {
   const first = deferred<Response>(); const second = deferred<Response>();
@@ -228,9 +452,11 @@ it("shows immediate restart progress and keeps each queued app busy without subm
   });
   expect(callsTo("/api/apps/routine.app/restart")).toHaveLength(1);
   expect(callsTo("/api/apps/routine.app/stop")).toHaveLength(0);
-  expect(appRow().querySelector('[role="status"]')?.textContent).toBe("Restarting…");
+  expect(appRow().querySelector('.dashboard-status [role="status"]')?.textContent).toBe("Restarting…");
+  expect(appRow().querySelector('.dashboard-identity [role="status"]')).toBeNull();
+  expect(appRow().querySelector('.dashboard-identity')?.textContent).not.toContain("Restarting");
   expect(appRow().textContent).not.toContain("Restart required");
-  expect(appRow().querySelector<HTMLButtonElement>('button[title="Restart app"]')?.disabled).toBe(true);
+  expect(await restartDisabled()).toBe(true);
 
   let otherAction!: Promise<void>;
   await act(async () => { otherAction = actions.runAppAction(other, "restart"); });
@@ -246,7 +472,7 @@ it("shows immediate restart progress and keeps each queued app busy without subm
   await act(async () => { first.resolve(Response.json({ status: "restarted" })); });
   expect(shell.pendingAppActions).toEqual({ "other.app": "restart" });
   expect(appRow().querySelector('[role="status"]')).toBeNull();
-  expect(appRow(other.id).querySelector<HTMLButtonElement>('button[title="Restart app"]')?.disabled).toBe(true);
+  expect(await restartDisabled(other.id)).toBe(true);
   expect(callsTo("/api/apps/other.app/restart")).toHaveLength(1);
   apps = apps.map(app => ({ ...app, restartRequired: false }));
   await act(async () => { second.resolve(Response.json({ status: "restarted" })); await otherAction; });
@@ -257,17 +483,19 @@ it("shows immediate restart progress and keeps each queued app busy without subm
 it("uses server lifecycle stages in the row, including for operations started by another client", async () => {
   apps = [{ ...target, runtimeState: "stopping", restartRequired: true }];
   await mount(true);
-  expect(appRow().querySelector('[role="status"]')?.textContent).toBe("Stopping…");
+  expect(appRow().querySelector('.dashboard-status [role="status"]')?.textContent).toBe("Stopping…");
+  expect(appRow().querySelector('.dashboard-identity')?.textContent).not.toContain("Stopping");
   await act(async () => actions.runAppAction(target, "restart"));
   expect(callsTo("/api/apps/routine.app/restart")).toHaveLength(0);
   apps = [{ ...target, runtimeState: "starting", restartRequired: false }];
   await act(async () => actions.refresh());
-  expect(appRow().querySelector('[role="status"]')?.textContent).toBe("Starting…");
-  expect(appRow().querySelector<HTMLButtonElement>('button[title="Restart app"]')?.disabled).toBe(true);
+  expect(appRow().querySelector('.dashboard-status [role="status"]')?.textContent).toBe("Starting…");
+  expect(appRow().querySelector('.dashboard-identity')?.textContent).not.toContain("Starting");
+  expect(await restartDisabled()).toBe(true);
   apps = [{ ...target, runtimeState: "running", restartRequired: false }];
   await act(async () => actions.refresh());
   expect(appRow().querySelector('[role="status"]')).toBeNull();
-  expect(appRow().querySelector<HTMLButtonElement>('button[title="Restart app"]')?.disabled).toBe(false);
+  expect(await restartDisabled()).toBe(false);
 });
 
 it("clears failed restart progress, preserves the warning and allows an explicit retry", async () => {
@@ -444,9 +672,7 @@ function mockWorkspaceRequests() {
 it("offers only package profiles and named app-bound workspaces in one dropdown", async () => {
   apps = [{ ...target, selectedRuntime: "docker", runtimeProfiles: workspaceProfiles }];
   mockWorkspaceRequests(); await mount(true);
-  const trigger = appRow().querySelector('button[aria-label="Switch runtime for Routine app"]')!;
-  await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
-  const menu = document.querySelector('[role="menu"]');
+  const menu = await openRuntimeMenu();
   expect(menu?.textContent).toContain("docker"); expect(menu?.textContent).toContain("Dashboard layout");
   expect(menu?.textContent).not.toMatch(/Run from|debug|dev|previous|session|feature\/dashboard/);
   const choice = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === "Dashboard layout")!;
@@ -468,9 +694,10 @@ it.each(["empty", "current package", "current workspace", "unavailable alternati
         ...(kind === "unavailable alternative" ? [{ kind: "package", runtime: "docker", available: false }] : [])],
   }] }) : undefined);
   await mount(true);
-  expect(appRow().querySelector('button[aria-label="Switch runtime for Routine app"]')).toBeNull();
-  expect(appRow().querySelector(".dashboard-runtime")?.textContent).toBe(development ? "workspace" : "docker");
-  expect(appRow().querySelector(".dashboard-runtime .lucide-radio")).toBeNull();
+  await openAppMenu();
+  expect(document.querySelector('[aria-label="Switch runtime for Routine app"]')).toBeNull();
+  if (development) expectDevelopmentMetadata("workspace");
+  else expect(appRow().querySelector(".dashboard-runtime")?.textContent).toBe("docker");
 });
 
 it("offers a single package choice when it is an alternative to the current legacy source runtime", async () => {
@@ -480,9 +707,7 @@ it("offers a single package choice when it is an alternative to the current lega
     current: { kind: "legacy", runtime: "dev" }, choices: [{ kind: "package", runtime: "docker", available: true }],
   }] }) : undefined);
   await mount(true);
-  const trigger = appRow().querySelector('button[aria-label="Switch runtime for Routine app"]')!;
-  expect(trigger).not.toBeNull();
-  await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  await openRuntimeMenu();
   const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === "docker")!;
   await act(async () => item.click());
   expect(JSON.parse(callsTo("/api/apps/routine.app/execution-target")[0][1].body)).toMatchObject({ kind: "package", runtime: "docker" });
@@ -491,8 +716,7 @@ it("offers a single package choice when it is an alternative to the current lega
 it("keeps package choices enabled while a workspace is active, with no duplicate return action", async () => {
   apps = [{ ...target, selectedRuntime: "debug", live: true, runtimeProfiles: workspaceProfiles, sourceLivePath: "/work/dashboard" }];
   mockWorkspaceRequests(); await mount(true);
-  const trigger = appRow().querySelector('button[aria-label="Switch runtime for Routine app"]')!;
-  await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  await openRuntimeMenu();
   const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === "docker")!;
   expect(item.hasAttribute("data-disabled")).toBe(false);
   expect(document.querySelector('[role="menu"]')?.textContent).not.toContain("Return");
@@ -501,19 +725,19 @@ it("keeps package choices enabled while a workspace is active, with no duplicate
   expect(fixture.confirm).not.toHaveBeenCalled();
 });
 
-it("shows one workspace runtime label and its purpose with Git details, clearing them after Return", async () => {
-  apps = [{ ...target, live: true, selectedRuntime: "debug", runtimeProfiles: workspaceProfiles, sourceLivePath: "/work/dashboard" }];
+it("shows one workspace name with its icon and Git details, clearing them after Return", async () => {
+  apps = [{ ...target, live: true, autostart: false, selectedRuntime: "debug", runtimeProfiles: workspaceProfiles, sourceLivePath: "/work/dashboard" }];
   mockWorkspaceRequests();
   await mount(true);
-  expect(appRow().querySelector(".dashboard-runtime")?.textContent).toBe("workspace");
-  expect(appRow().querySelector(".dashboard-runtime .lucide-radio")).toBeNull();
+  expectDevelopmentMetadata("workspace");
   const source = appRow().querySelector(".dashboard-version")!;
   expect(source.textContent).toContain("Dashboard layout");
   expect(source.textContent).not.toContain("feature/dashboard");
   expect(source.textContent?.match(/Dashboard layout/g)).toHaveLength(1);
   const workspaceLabel = source.querySelector<HTMLElement>('[aria-label="Workspace: Dashboard layout"]')!;
   expect(workspaceLabel).not.toBeNull();
-  expect(workspaceLabel.querySelector(".lucide-boxes")).not.toBeNull();
+  expect(workspaceLabel.textContent).toBe("Dashboard layout");
+  expect(workspaceLabel.querySelector('.lucide-hammer[aria-hidden="true"]')).not.toBeNull();
   expect(source.querySelector(".lucide-git-branch")).toBeNull();
   await act(async () => workspaceLabel.focus());
   await act(async () => vi.advanceTimersByTime(200));
@@ -522,8 +746,18 @@ it("shows one workspace runtime label and its purpose with Git details, clearing
   expect(tooltip?.textContent).toContain("Commit: abc123");
   expect(tooltip?.textContent).toContain("Installed package: 1.0.0");
   expect(callsTo("/api/development/activation-workspaces", "GET")).toHaveLength(1);
+  expect(source.parentElement?.textContent).not.toContain("Manual start");
+  await openAppMenu();
+  expect(document.querySelector('[role="menuitemcheckbox"]')?.textContent).toBe("Autostart");
+  expect(document.querySelector('[role="menuitemcheckbox"]')?.getAttribute("aria-checked")).toBe("false");
+  await act(async () => document.querySelector('[role="menu"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  apps = [{ ...apps[0], autostart: true }];
+  await act(async () => actions.refresh());
+  expectDevelopmentMetadata("workspace");
+  expect(appRow().querySelector(".dashboard-version")?.parentElement?.textContent).not.toContain("Manual start");
   apps = [{ ...apps[0], selectedRuntime: "docker", live: false }];
   await act(async () => actions.refresh());
+  expect(appRow().querySelector(".dashboard-runtime")?.textContent).toBe("docker");
   expect(appRow().querySelector(".dashboard-version")?.textContent).toContain("1.0.0");
   expect(appRow().textContent).not.toContain("Dashboard layout");
 });
@@ -539,65 +773,363 @@ it.each(["dev_selection_changed", "dev_installation_changed", "execution_request
   expect(second.requestId).not.toBe(first.requestId);
 });
 
-it.each(["localCommand", "docker", "mixed", "extensionRuntime"])("uses one source label for an unregistered %s development runtime", async type => {
+it.each(["localCommand", "docker", "mixed", "extensionRuntime"])("identifies the %s development recipe as source without exposing its engine", async type => {
   apps = [{ ...target, selectedRuntime: "preview", runtimeProfiles: [{ key: "docker", type: "docker", default: true },
     { key: "preview", type, default: false, development: true }] }];
   await mount(true);
-  const runtime = appRow().querySelector(".dashboard-runtime")!;
-  expect(runtime.textContent).toBe("source");
-  expect(runtime.querySelector(".lucide-radio")).toBeNull();
+  expectDevelopmentMetadata("source");
+  expect(appRow().querySelector(".dashboard-version")).not.toBeNull();
 });
 
-it.each(["running", "stopped"])("labels an unregistered %s development folder only as source", async runtimeState => {
+it.each(["running", "stopped"])("does not label an unregistered %s development folder as a workspace", async runtimeState => {
   apps = [{ ...target, selectedRuntime: "dev", runtimeState, runtimeProfiles: workspaceProfiles, sourceLivePath: "/ordinary/source" }];
   overrideRequests(path => path === "/api/development/activation-workspaces" ? Response.json({ workspaces: [] }) : undefined);
   await mount(true);
-  const runtime = appRow().querySelector(".dashboard-runtime")!;
-  expect(runtime.textContent).toBe("source");
-  expect(runtime.querySelector(".lucide-radio")).toBeNull();
+  expectDevelopmentMetadata("source");
+  expect(appRow().querySelector(".dashboard-version")?.textContent).not.toContain("Workspace");
 });
 it("recognizes an older workspace source binding without a unified current workspace target", async () => {
   apps = [{ ...target, selectedRuntime: "dev", runtimeProfiles: workspaceProfiles, sourceLivePath: "/work/dashboard" }];
   mockWorkspaceRequests();
   overrideRequests(path => path === "/api/apps/execution-targets" ? Response.json({ apps: [{ appId: target.id, current: { kind: "legacy", runtime: "dev" }, choices: [] }] }) : undefined);
   await mount(true);
-  expect(appRow().querySelector(".dashboard-runtime")?.textContent).toBe("workspace");
-  expect(appRow().querySelector(".dashboard-runtime .lucide-radio")).toBeNull();
+  expectDevelopmentMetadata("workspace");
 });
-it("keeps package runtime names without a source marker even when the profile uses a local command", async () => {
-  apps = [{ ...target, selectedRuntime: "native", runtimeProfiles: [{ key: "native", type: "localCommand", default: true }], sourceManagedPath: "/work/dashboard" }];
+it.each(["native", "local"])("keeps the actual %s package runtime without a development icon for a local-command profile", async runtime => {
+  apps = [{ ...target, selectedRuntime: runtime, runtimeProfiles: [{ key: runtime, type: "localCommand", default: true }], sourceManagedPath: "/work/dashboard" }];
   await mount(true);
-  expect(appRow().querySelector(".dashboard-runtime")?.textContent).toBe("native");
+  expect(appRow().querySelector(".dashboard-runtime")?.textContent).toBe(runtime);
+  expect(appRow().querySelector(".dashboard-version")?.textContent).toContain(target.version);
+  expect(appRow().querySelector(".dashboard-version .lucide-hammer, .dashboard-version .lucide-git-branch")).toBeNull();
 });
-it("uses source without guessing a workspace when workspace metadata is inaccessible", async () => {
+it("labels a development source without guessing a workspace when metadata is inaccessible", async () => {
   apps = [{ ...target, selectedRuntime: "dev", runtimeProfiles: workspaceProfiles, sourceLivePath: "/work/dashboard" }];
   overrideRequests(path => ["/api/development/activation-workspaces", "/api/apps/execution-targets"].includes(path) ? new Response(null, { status: 403 }) : undefined);
   await mount(true);
-  const runtime = appRow().querySelector(".dashboard-runtime")!;
-  expect(runtime.textContent).toBe("source");
-  expect(runtime.querySelector(".lucide-radio")).toBeNull();
+  expectDevelopmentMetadata("source");
+  expect(appRow().querySelector(".dashboard-version")?.textContent).not.toContain("Workspace");
 });
 it("retains authoritative workspace provenance when its selected profile metadata is missing", async () => {
   apps = [{ ...target, selectedRuntime: "preview" }];
   mockWorkspaceRequests();
   await mount(true);
-  const runtime = appRow().querySelector(".dashboard-runtime")!;
-  expect(runtime.textContent).toBe("workspace");
-  expect(runtime.querySelector(".lucide-radio")).toBeNull();
+  expectDevelopmentMetadata("workspace");
+  expect(appRow().querySelector('[aria-label="Workspace: Dashboard layout"]')).not.toBeNull();
 });
 
-it("puts app line totals before the changed-file count using the same spaced summary as Core", async () => {
+it("shows factual source counts after the source name and retains them in the accessible disclosure", async () => {
   apps = [{ ...target, selectedRuntime: "dev", runtimeProfiles: workspaceProfiles, sourceLivePath: "/work/dashboard" }];
   mockWorkspaceRequests();
   overrideRequests(path => path.endsWith("/source/summary") ? Response.json({ state: "changes", branch: "feature/dashboard", head: "abc123",
     fileCount: 7, truncated: true, lineStats: { additions: 12, deletions: 3 }, observedAt: "2026-10-20T00:00:00Z" }) : undefined);
   await mount(true);
   const source = appRow().querySelector(".dashboard-version")!;
-  const totals = source.querySelector<HTMLElement>('[role="img"][aria-label="12 lines added, 3 lines deleted"]')!;
-  expect(totals).not.toBeNull();
-  expect(totals.textContent).toBe("+12−3");
-  const files = [...source.querySelectorAll<HTMLElement>("span")].find(span => span.textContent === "7+ changed files")!;
-  expect(files).toBeDefined();
-  expect(totals.compareDocumentPosition(files) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
-  expect(totals.parentElement).toBe(files.parentElement);
+  expect(source.textContent).toContain("7+ files");
+  expect(source.querySelector('[aria-label="12 lines added, 3 lines deleted"]')).not.toBeNull();
+  await act(async () => source.querySelector<HTMLElement>('[aria-label="Workspace: Dashboard layout"]')!.focus());
+  await act(async () => vi.advanceTimersByTime(200));
+  const tooltip = document.querySelector('[role="tooltip"]');
+  expect(tooltip?.textContent).toContain("Changed files: 7+ (incomplete list)");
+  expect(tooltip?.textContent).toContain("Lines: +12 / −3 (HEAD to working tree)");
+  await act(async () => source.querySelector<HTMLButtonElement>('[aria-label="Workspace: Dashboard layout"]')!.click());
+  const disclosure = document.querySelector('[role="dialog"][aria-label="Source details for Routine app"]');
+  expect(disclosure?.textContent).toContain("Changed files: 7+ (incomplete list)");
+  expect(disclosure?.textContent).toContain("Lines: +12 / −3 (HEAD to working tree)");
+});
+
+
+it("keeps update-check errors on the problem icon instead of the release version", async () => {
+  const error = "No update source is configured; choose a manifest URL or folder.";
+  const successfulAt = "2026-10-20T09:09:53Z";
+  apps = [{ ...target, updateCheck: { ...target.updateCheck!, updateAvailable: false, error, lastSuccessfulCheckAt: successfulAt } }];
+  await mount(true);
+  const version = appRow().querySelector(".dashboard-version")!;
+  expect(version.querySelector("[title]")).toBeNull();
+  expect(version.closest("[title]")).toBeNull();
+  const icon = appRow().querySelector<HTMLElement>('[role="img"][aria-label="1 problem needing attention"]')!;
+  expect(icon.hasAttribute("title")).toBe(false);
+  expect(icon.tabIndex).toBe(0);
+  await act(async () => icon.focus());
+  await act(async () => vi.advanceTimersByTime(200));
+  const diagnostic = document.querySelector('[role="tooltip"]');
+  expect(diagnostic?.textContent).toContain(`Update check failed: ${error}`);
+  expect(diagnostic?.textContent).toContain(`Last successful check: ${new Date(successfulAt).toLocaleString()}.`);
+  expect(icon.getAttribute("aria-describedby")).toBe(diagnostic?.id);
+  fixture.router.push.mockClear();
+  await act(async () => icon.click());
+  expect(fixture.router.push).not.toHaveBeenCalled();
+  await act(async () => version.querySelector<HTMLElement>("[tabindex]")!.focus());
+  await act(async () => vi.advanceTimersByTime(200));
+  expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("Installed 1.0.0");
+  expect(document.querySelector('[role="tooltip"]')?.textContent).not.toContain(error);
+});
+
+it("keeps the full diagnostic detail on each corresponding severity icon", async () => {
+  apps = [{ ...target, updateCheck: null, lastError: "Runtime failed to start: port is occupied", manifestError: "Unknown manifest field" }];
+  await mount(true);
+  const error = appRow().querySelector<HTMLElement>('[role="img"][aria-label="1 problem affecting this app"]')!;
+  const warning = appRow().querySelector<HTMLElement>('[role="img"][aria-label="1 problem needing attention"]')!;
+  expect(error.hasAttribute("title")).toBe(false);
+  expect(warning.hasAttribute("title")).toBe(false);
+  await act(async () => error.focus());
+  await act(async () => vi.advanceTimersByTime(200));
+  expect(document.querySelector('[role="tooltip"]')?.textContent)
+    .toBe("Last operation failed: Runtime failed to start: port is occupied");
+  await act(async () => warning.focus());
+  await act(async () => vi.advanceTimersByTime(200));
+  expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("Unknown manifest field");
+});
+
+
+it("opens app settings inside the focusable SDK host without Dashboard detail expanders", async () => {
+  // The real SDK frame wraps Shell in a tabindex=-1 content surface, outside the app row.
+  container.className = "hosty-app-content";
+  container.tabIndex = -1;
+  await mount(true); fixture.router.push.mockClear();
+  await act(async () => appRow().querySelector<HTMLElement>(".dashboard-status")!.click());
+  expect(fixture.router.push).toHaveBeenCalledExactlyOnceWith(getManageAppHref(target.id), { scroll: false });
+  expect(callsTo(`/api/apps/${target.id}/health`, "GET")).toHaveLength(0);
+  expect(appRow().querySelector('button[aria-label="Show services"]')).toBeNull();
+  expect(appRow().querySelector('button[aria-label="Hide services"]')).toBeNull();
+  expect(container.querySelector('button[aria-label="Show Core details"]')).toBeNull();
+  expect(container.querySelector('button[aria-label="Hide Core details"]')).toBeNull();
+  const core = container.querySelector('table[aria-label="Hosty Core"]')!;
+  expect(core.querySelector('button[aria-label="More actions for Hosty Core"]')).not.toBeNull();
+  expect(core.textContent).toContain("Hosty Core");
+  expect(container.textContent).not.toContain("Listen address");
+  expect(container.textContent).not.toContain("Data root");
+});
+
+it("exposes the app name as a keyboard-focusable native settings link without a second row tab stop", async () => {
+  await mount(true); fixture.router.push.mockClear();
+  const link = [...appRow().querySelectorAll<HTMLAnchorElement>("a")].find(node => node.textContent === target.displayName)!;
+  expect(link.href).toBe(new URL(getManageAppHref(target.id), window.location.href).href);
+  expect(link.tabIndex).toBe(0);
+  expect(appRow().hasAttribute("tabindex")).toBe(false);
+  await act(async () => link.focus());
+  expect(document.activeElement).toBe(link);
+  // The native anchor owns Enter activation; the row must not synthesize another navigation.
+  await act(async () => link.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  expect(fixture.router.push).not.toHaveBeenCalled();
+});
+
+it("does not hijack modified, non-primary or text-selection clicks on an app row", async () => {
+  await mount(true); fixture.router.push.mockClear();
+  const cell = appRow().querySelector<HTMLElement>(".dashboard-status")!;
+  for (const init of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }, { shiftKey: true }, { button: 1 }]) {
+    await act(async () => cell.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0, ...init })));
+  }
+  const range = document.createRange(); range.selectNodeContents(cell);
+  window.getSelection()!.addRange(range);
+  await act(async () => cell.click());
+  expect(fixture.router.push).not.toHaveBeenCalled();
+  window.getSelection()!.removeAllRanges();
+  await act(async () => cell.click());
+  expect(fixture.router.push).toHaveBeenCalledExactlyOnceWith(getManageAppHref(target.id), { scroll: false });
+});
+
+it("keeps lifecycle and menu actions independent of row settings navigation", async () => {
+  apps = [{ ...target, updateCheck: null, capabilities: ["logs"] }];
+  overrideRequests(path => path.endsWith("/stop") ? Response.json({ status: "stopped" })
+    : path.endsWith("/logs") ? Response.json({ text: "Recent output", services: [] }) : undefined);
+  await mount(true); fixture.router.push.mockClear();
+  await act(async () => contextAction()!.click());
+  expect(callsTo(`/api/apps/${target.id}/stop`)).toHaveLength(1);
+  await openAppMenu();
+  const menu = document.querySelector('[role="menu"]')!;
+  expect(menu.textContent).not.toContain("Manage application");
+  const logs = [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(node => node.textContent?.trim() === "Console logs")!;
+  await act(async () => logs.querySelector("svg")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  expect(fixture.router.push).toHaveBeenCalledExactlyOnceWith(getManageAppHref(target.id, "logs"), { scroll: false });
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(callsTo(`/api/apps/${target.id}/logs`, "GET")).toHaveLength(0);
+});
+
+it.each(["host.admin", "host.user"])("routes the contextual Logs shortcut to the app Logs tab for %s", async role => {
+  apps = [{ ...target, updateCheck: null, capabilities: ["logs"], health: observedHealth("degraded") }];
+  overrideRequests(path => path === "/api/auth/session"
+    ? Response.json({ authenticated: true, user: { id: role === "host.admin" ? "admin" : "reader", role } }) : undefined);
+  await mount(true); fixture.router.push.mockClear();
+  await act(async () => contextAction()!.click());
+  expect(fixture.router.push).toHaveBeenCalledExactlyOnceWith(getManageAppHref(target.id, "logs"), { scroll: false });
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(callsTo(`/api/apps/${target.id}/logs`, "GET")).toHaveLength(0);
+});
+
+it("does not show a late backup read failure after navigating to Logs", async () => {
+  apps = [{ ...target, updateCheck: null, capabilities: ["backup", "logs"] }];
+  const backups = deferred<Response>();
+  overrideRequests(path => path.endsWith("/backups") ? backups.promise : path.endsWith("/logs") ? Response.json({ text: "Runtime output" }) : undefined);
+  await mount();
+  setRoute(getManageAppHref(target.id, "backups")); await mount();
+  expect(callsTo(`/api/apps/${target.id}/backups`, "GET")).toHaveLength(1);
+  await act(async () => actions.openAppPanel(apps[0], "logs"));
+  setRoute(getManageAppHref(target.id, "logs")); await mount();
+  await act(async () => backups.resolve(Response.json({ message: "Old backup error" }, { status: 503 })));
+  expect(container.querySelector("pre")?.textContent).toBe("Runtime output");
+  expect(container.textContent).not.toContain("Old backup error");
+});
+
+it("routes the update notification's Logs callback to the same app Logs tab", async () => {
+  apps = [{ ...target, updateCheck: null, capabilities: ["logs"] }];
+  await mount(); fixture.router.push.mockClear();
+  expect(fixture.openUpdateLogs).toBeTypeOf("function");
+  await act(async () => fixture.openUpdateLogs!(apps[0]));
+  expect(fixture.router.push).toHaveBeenCalledExactlyOnceWith(getManageAppHref(target.id, "logs"), { scroll: false });
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+});
+
+it.each([false, true])("opens an administrator Logs deep link as App Details without a modal or hidden-service probes, legacy=%s", async legacy => {
+  apps = [{ ...target, updateCheck: null, capabilities: ["logs"] }];
+  setRoute(legacy ? `/settings?tab=manage:${target.id}&section=logs` : getManageAppHref(target.id, "logs"));
+  overrideRequests(path => path.endsWith("/logs") ? Response.json({ text: "Recent runtime output", services: [] }) : undefined);
+  await mount();
+  expect(container.querySelector("h1")?.textContent).toBe(target.displayName);
+  expect(container.querySelector('nav[aria-label="Breadcrumb"] a')?.getAttribute("href")).toBe("/dashboard");
+  if (legacy) expect(fixture.router.replace).toHaveBeenCalledWith(getManageAppHref(target.id, "logs"));
+  const selected = container.querySelector('[role="tab"][data-state="active"]');
+  expect(selected?.textContent).toBe("Logs");
+  expect(container.querySelector("pre")?.textContent).toContain("Recent runtime output");
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(callsTo(`/api/apps/${target.id}/logs`, "GET")).toHaveLength(1);
+  expect(callsTo(`/api/apps/${target.id}/health`, "GET")).toHaveLength(0);
+  expect(callsTo(`/api/apps/${target.id}/update-status`, "GET")).toHaveLength(0);
+  expect(fixture.router.replace).not.toHaveBeenCalledWith("/apps");
+});
+
+it.each([false, true])("retains an assigned ordinary user's Logs page and factual Core refusal without exposing management, legacy=%s", async legacy => {
+  apps = [{ ...target, updateCheck: null, capabilities: ["logs"] }];
+  setRoute(legacy ? `/settings?tab=manage:${target.id}&section=logs` : getManageAppHref(target.id, "logs"));
+  overrideRequests(path => path === "/api/auth/session"
+    ? Response.json({ authenticated: true, user: { id: "reader", role: "host.user" } })
+    : path.endsWith("/logs") ? Response.json({ code: "forbidden", message: "Host administrator access is required." }, { status: 403 }) : undefined);
+  await mount();
+  expect(container.querySelector("h1")?.textContent).toBe(target.displayName);
+  expect(container.textContent).toContain("Host administrator access is required.");
+  expect(container.querySelector('nav[aria-label="Breadcrumb"] a')?.getAttribute("href")).toBe("/apps");
+  if (legacy) expect(fixture.router.replace).toHaveBeenCalledWith(getManageAppHref(target.id, "logs"));
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(fixture.router.replace).not.toHaveBeenCalledWith("/apps");
+  expect(callsTo(`/api/apps/${target.id}/logs`, "GET")).toHaveLength(1);
+  expect(container.querySelector("form")).toBeNull();
+  expect([...container.querySelectorAll('[role="tab"]')].every(tab => tab.textContent === "Logs")).toBe(true);
+  expect([...container.querySelectorAll("button")].some(button => ["Start", "Restart", "Stop", "Remove app…"].includes(button.textContent || ""))).toBe(false);
+  expect(callsTo(`/api/apps/${target.id}/health`, "GET")).toHaveLength(0);
+  expect(fixture.read.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+});
+
+it.each([
+  { section: "logs", logs: false, assigned: true },
+  { section: "source", logs: true, assigned: true },
+  { section: "permissions", logs: true, assigned: true },
+  { section: "logs", logs: true, assigned: false },
+])("refuses an ordinary-user management deep link without the exact assigned Logs capability: %j", async ({ section, logs, assigned }) => {
+  apps = assigned ? [{ ...target, updateCheck: null, capabilities: logs ? ["logs"] : [] }] : [];
+  setRoute(getManageAppHref(target.id, section));
+  overrideRequests(path => path === "/api/auth/session"
+    ? Response.json({ authenticated: true, user: { id: "reader", role: "host.user" } }) : undefined);
+  await mount();
+  expect(fixture.router.replace).toHaveBeenCalledWith("/apps");
+  expect(container.querySelector("form")).toBeNull();
+  expect(container.querySelector("pre")).toBeNull();
+  expect(callsTo(`/api/apps/${target.id}/logs`, "GET")).toHaveLength(0);
+  expect(callsTo(`/api/apps/${target.id}/health`, "GET")).toHaveLength(0);
+});
+
+it("keeps version and diagnostic disclosures from opening app settings", async () => {
+  apps = [{ ...target, updateCheck: null, lastError: "Runtime failed" }];
+  await mount(true); fixture.router.push.mockClear();
+  const version = appRow().querySelector<HTMLElement>('.dashboard-version [tabindex="0"]')!;
+  await act(async () => version.focus());
+  await act(async () => vi.advanceTimersByTime(200));
+  expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("Installed 1.0.0");
+  await act(async () => version.click());
+  const problem = appRow().querySelector<HTMLElement>('[role="img"][aria-label="1 problem affecting this app"]')!;
+  await act(async () => problem.click());
+  expect(fixture.router.push).not.toHaveBeenCalled();
+});
+
+it("keeps source popover triggers and their portaled content independent of the app row", async () => {
+  apps = [{ ...target, live: true, selectedRuntime: "debug", runtimeProfiles: workspaceProfiles, sourceLivePath: "/work/dashboard" }];
+  mockWorkspaceRequests(); await mount(true); fixture.router.push.mockClear();
+  await act(async () => appRow().querySelector<HTMLElement>('[aria-label="Workspace: Dashboard layout"]')!.click());
+  const details = document.querySelector<HTMLElement>('[data-slot="popover-content"][aria-label="Source details for Routine app"]')!;
+  expect(details.textContent).toContain("Branch: feature/dashboard");
+  await act(async () => details.querySelector<HTMLElement>(".font-medium")!.click());
+  expect(fixture.router.push).not.toHaveBeenCalled();
+});
+
+it("keeps the real resource popover trigger and portaled readings from opening app settings", async () => {
+  fixture.realResources = true; await mount(true); fixture.router.push.mockClear();
+  const resource = appRow().querySelector<HTMLElement>('button[aria-label^="Routine app resources:"]')!;
+  await act(async () => resource.querySelector("span")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  const content = document.querySelector<HTMLElement>('[data-slot="popover-content"]')!;
+  expect(content.textContent).toContain("Waiting for resource samples");
+  await act(async () => content.querySelector<HTMLElement>("p")!.click());
+  expect(fixture.router.push).not.toHaveBeenCalled();
+});
+
+it("does not expose a settings link or navigate ordinary-user app rows", async () => {
+  overrideRequests(path => path === "/api/auth/session" ? Response.json({ authenticated: true, user: { id: "member", role: "host.user" } }) : undefined);
+  await mount(true); fixture.router.push.mockClear();
+  expect([...appRow().querySelectorAll("a")].some(link => link.textContent === target.displayName)).toBe(false);
+  await act(async () => appRow().querySelector<HTMLElement>(".dashboard-status")!.click());
+  expect(fixture.router.push).not.toHaveBeenCalled();
+});
+
+it.each([false, true])("keeps explicit update checks guarded and retryable after failure=%s without row navigation", async fails => {
+  const response = deferred<Response>();
+  overrideRequests(path => path.endsWith("/update-status") ? response.promise : undefined);
+  await mount(true); fixture.router.push.mockClear(); await openAppMenu();
+  const check = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent?.trim() === "Check for updates")!;
+  await act(async () => { check.click(); check.click(); });
+  const requests = callsTo(`/api/apps/${target.id}/update-status`, "GET");
+  expect(requests).toHaveLength(1);
+  expect(new URL(requests[0][0]).searchParams.get("refresh")).toBe("true");
+  expect(check.hasAttribute("data-disabled")).toBe(true);
+  await act(async () => response.resolve(fails
+    ? Response.json({ message: "Feed is unavailable" }, { status: 502 }) : Response.json({ updateAvailable: true })));
+  expect(check.hasAttribute("data-disabled")).toBe(false);
+  if (fails) expect(fixture.toast.error).toHaveBeenCalledWith("Update check failed", {
+    description: "Routine app: Feed is unavailable", appId: target.id,
+  });
+  else expect(fixture.toast.success).toHaveBeenCalledWith("Update available", { description: target.displayName });
+  await act(async () => check.click());
+  expect(callsTo(`/api/apps/${target.id}/update-status`, "GET")).toHaveLength(2);
+  expect(fixture.router.push).not.toHaveBeenCalled();
+});
+
+
+it("does not dispatch an aborted workspace mutation after waiting in the CSRF queue", async () => {
+  const held = deferred<Response>();
+  overrideRequests(path => path === "/api/test/held" ? held.promise
+    : path === "/api/test/after" ? Response.json({ ok: true }) : undefined);
+  await mount();
+  let first!: Promise<Response>, cancelled!: Promise<unknown>;
+  const controller = new AbortController();
+  await act(async () => {
+    first = actions.sendCsrfJson("https://core.test/api/test/held", {});
+    cancelled = actions.sendCsrfJson("https://core.test/api/development/workspaces/tree/activation/apply", {}, "POST", controller.signal).catch(error => error);
+  });
+  controller.abort();
+  await act(async () => { held.resolve(Response.json({ ok: true })); await first; });
+  expect(await cancelled).toMatchObject({ name: "AbortError" });
+  expect(callsTo("/api/development/workspaces/tree/activation/apply")).toHaveLength(0);
+  await act(async () => { await actions.sendCsrfJson("https://core.test/api/test/after", {}); });
+  expect(callsTo("/api/test/after")).toHaveLength(1);
+});
+
+it("does not dispatch Core restart when its actor is cancelled during CSRF acquisition", async () => {
+  const token = deferred<Response>();
+  overrideRequests(path => path === "/api/auth/csrf" ? token.promise : undefined);
+  await mount();
+  const controller = new AbortController();
+  let cancelled!: Promise<unknown>;
+  await act(async () => {
+    cancelled = actions.sendCsrfJson("https://core.test/api/core/restart", {}, "POST", controller.signal).catch(error => error);
+  });
+  controller.abort();
+  await act(async () => { token.resolve(Response.json({ token: "expired-actor-token" })); });
+  expect(await cancelled).toMatchObject({ name: "AbortError" });
+  expect(callsTo("/api/core/restart")).toHaveLength(0);
 });

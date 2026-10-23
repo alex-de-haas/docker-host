@@ -97,6 +97,12 @@ Set up administrator obtains a fresh setup link, opens it and offers explicit li
 After registration the row offers Shell when installed or CLI/API guidance for a Core-only child.
 Setup credentials stay in component memory, outside inventory and persisted browser receipts.
 
+The parent dialog and expanded progress use Choose apps, Install, Administrator and Open stages.
+Their state follows actual initialization/readiness/setup observations rather than a synthetic
+percentage. Recommended choices remain editable; loading is neutral, per-app failures and the
+existing Resume action stay visible. Core-only completion has its own CLI/API guidance. Child
+registration reuses the existing Core-owned form; the stage display grants no new setup authority.
+
 The child has its own users, keys, app registry and data. Parent observation, app inventory and
 setup-link issuance use bounded fixed control operations and need no child password or
 `parent-session.json`. Browser setup/login happens inside the child. Existing agent setup/account

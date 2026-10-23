@@ -13,14 +13,14 @@ export function readPanelWidth(value: string | undefined): number {
 }
 
 /** Relax pixel minimums on small screens rather than overflowing the Shell viewport. */
-export function panelWidthBounds(groupWidth: number) {
+export function panelWidthBounds(groupWidth: number, pageMinimum?: number, railSize = PANEL_RAIL_WIDTH) {
   const available = Math.max(0, groupWidth - WORKSPACE_PANEL_GAP);
-  const rail = Math.min(PANEL_RAIL_WIDTH, available);
+  const rail = Math.min(railSize, available);
   const bodySpace = available - rail;
-  const workspaceMin = Math.min(240, bodySpace * 0.3);
+  const workspaceMin = pageMinimum === undefined ? Math.min(240, bodySpace * 0.3) : Math.min(pageMinimum, bodySpace);
   return {
     workspaceMin,
-    panelMin: rail + Math.min(280, bodySpace * 0.65),
+    panelMin: rail + Math.min(pageMinimum === undefined ? 280 : 320, Math.max(0, bodySpace - workspaceMin)),
     panelMax: Math.min(MAX_RIGHT_PANEL_WIDTH + rail, available - workspaceMin),
   };
 }

@@ -26,7 +26,6 @@ export function SessionAutonomy({ session, busy, onChange, onSavingChange }: {
   };
   const Icon = autonomous ? ShieldAlert : Shield;
   return <div className="flex min-w-0 flex-col text-xs">
-    <span className="px-2 text-muted-foreground">{session.executionMode === "docker" ? "Docker" : "Local"}</span>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button type="button" variant="ghost" className="h-9 gap-1.5 px-2" disabled={busy || saving || active}
@@ -36,13 +35,13 @@ export function SessionAutonomy({ session, busy, onChange, onSavingChange }: {
           {autonomous ? "Autonomous" : "Normal"}<ChevronDown className="size-3" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="start" className="w-80">
+      <DropdownMenuContent side="top" align="start" className="w-80 max-w-[calc(100vw-1.5rem)]">
         <DropdownMenuRadioGroup value={autonomous ? "autonomous" : "normal"} onValueChange={value => void save(value)}>
           <DropdownMenuRadioItem value="normal"><div>Normal<p className="mt-1 text-xs text-muted-foreground">Use tool rules; ask for other actions.</p></div></DropdownMenuRadioItem>
           <DropdownMenuRadioItem value="autonomous"><div>Autonomous<p className="mt-1 text-xs text-muted-foreground">Commands, file changes and enabled MCP tools without approval. {session.executionMode === "docker" ? "Commands run within the shared Docker worker." : "Access follows the native Harness process permissions."} Disabled MCP tools stay disabled.</p></div></DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>
-    {error && <span role="alert" className="max-w-80 text-destructive">{error}</span>}
+    {error && <span role="alert" className="max-w-full text-destructive-foreground wrap-anywhere">{error}</span>}
   </div>;
 }

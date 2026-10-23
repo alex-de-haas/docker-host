@@ -15,6 +15,9 @@ internal interface ISourceGitAccess
     Task<T> WithConnectionAsync<T>(SourceReadGrant grant, Func<UserProviderConnection, Task<T>> action, CancellationToken ct);
     Task<SourceReadGrant> BindAsync(string owner, string id, string url, bool manifest, CancellationToken ct);
     Task ValidateAsync(PrivateSourceAccess? access, CancellationToken ct);
+    // Only callers already inside the selected connection's consumption lock may borrow it.
+    void ValidateWithConnection(PrivateSourceAccess? access, UserProviderConnection connection)
+        => throw PrivateSourceService.Denied("Borrowed source connection validation is unavailable.");
     Task<string> GitAsync(SourceReadGrant grant, string repository, string? directory, IReadOnlyList<string> args, CancellationToken ct);
     Task<string> GitWithConnectionAsync(SourceReadGrant grant, string repository, string? directory, IReadOnlyList<string> args, UserProviderConnection connection, CancellationToken ct);
 
@@ -40,6 +43,16 @@ internal sealed class PrivateSourceService(UserConnectionService connections, Ht
     {
         foreach (var grant in new[] { access?.Manifest, access?.Git }.OfType<SourceReadGrant>())
             await UseGrantAsync(grant, _ => Task.FromResult(true), ct);
+    }
+
+    public void ValidateWithConnection(PrivateSourceAccess? access, UserProviderConnection connection)
+    {
+        foreach (var grant in new[] { access?.Manifest, access?.Git }.OfType<SourceReadGrant>())
+        {
+            if (connection.Id != grant.ConnectionId || connection.UserId != grant.OwnerId || connection.Provider != grant.Provider)
+                throw Denied("The source grant no longer matches the selected source account.");
+            ValidateProvider(connection, grant.Repository);
+        }
     }
 
     public async Task<byte[]> ReadAsync(SourceReadGrant grant, string url, long limit, CancellationToken ct)

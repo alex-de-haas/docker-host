@@ -12,17 +12,17 @@ internal sealed partial class PublicationService
     private string ExternalPath(string id) => Path.Combine(Root, "external", id + ".json");
 
     private async Task<(ISourceProvider Source, string Repository, UserProviderConnection Connection)> ExternalConnection(
-        DevelopmentWorkspace tree, CancellationToken ct)
+        DevelopmentWorkspace tree, CancellationToken ct, UserProviderConnection? heldConnection = null)
     {
         if (!tree.Owner.IsExternal) throw new PublicationException("forbidden", "External workspace required.");
-        await workspaces.RequireExternalSourceAsync(tree, ct);
+        await workspaces.RequireExternalSourceAsync(tree, ct, heldConnection);
         var state = await users.ReadAsync(ct);
         if (!state.Users.Any(u => u.Id == tree.Owner.UserId && !u.Disabled && AppAccessPolicy.IsAdmin(u)))
             throw new PublicationException("forbidden", "PR tracking requires the workspace owner's active administrator account.");
         var source = connections.Providers.ForUrl(tree.Repository);
         var provider = source.Publication ?? throw new PublicationException("unsupported", "This source provider does not support PR tracking.");
         var repository = provider.NormalizeRepository(tree.Repository);
-        var grant = await workspaces.WorkspaceGrantAsync(tree, ct);
+        var grant = await workspaces.WorkspaceGrantAsync(tree, ct, heldConnection);
         if (grant is null)
         {
             foreach (var binding in tree.Apps)

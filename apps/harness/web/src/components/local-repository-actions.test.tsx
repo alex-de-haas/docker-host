@@ -82,3 +82,19 @@ it("can inspect a conflicted merge and abort locally after remote access is revo
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   expect(refresh).toHaveBeenCalledTimes(2);
 });
+
+
+it("retains accepted-base publication review in the compact repository menu without sending source on open", async () => {
+  Element.prototype.hasPointerCapture = vi.fn(() => false);
+  Element.prototype.scrollIntoView = vi.fn();
+  await act(async () => root.render(<LocalRepositoryActions compact sessionId="session" appId="local.app" tree={tree} disabled={false} refresh={() => {}} />));
+  await act(async () => container.querySelector('[aria-label="local.app repository actions"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  const entries = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+  expect(entries.map(item => item.textContent)).toEqual(["Fetch upstream…", "Publish accepted base…", "Configure publication…"]);
+  expect(vi.mocked(workspaceAction).mock.calls.map(c => c[1])).toEqual(["remote-status", "pr-list"]);
+  await act(async () => entries.find(item => item.textContent === "Publish accepted base…")!.click());
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(remote.acceptedHead);
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("qa/base");
+  await click("Cancel");
+  expect(vi.mocked(workspaceAction).mock.calls.map(c => c[1])).toEqual(["remote-status", "pr-list"]);
+});

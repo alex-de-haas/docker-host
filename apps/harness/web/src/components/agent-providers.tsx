@@ -170,7 +170,7 @@ export function AgentProviders() {
     <section className="grid gap-3" aria-labelledby="agent-providers-heading">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 flex-1 basis-64">
-          <h2 id="agent-providers-heading" className="text-base font-semibold">
+          <h2 id="agent-providers-heading" className="text-lg font-semibold tracking-[-0.01em]">
             Agent providers
           </h2>
           <p className="text-sm text-muted-foreground">

@@ -65,7 +65,7 @@ export function SessionWorkspaces({ session, running }: { session: AssistantSess
     <div className="max-h-80 space-y-3 overflow-y-auto px-3 pb-3">
       <p className="text-xs text-muted-foreground">Prepare a worktree when you want source changes. The installed application keeps its current runtime and data.</p>
       <div className="flex flex-wrap gap-2">
-        <select className="max-w-full rounded border bg-background p-1" aria-label="Source app" value={appId} onChange={e => setAppId(e.target.value)}>
+        <select className="max-w-full rounded border bg-background p-1 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0 focus-visible:border-brand" aria-label="Source app" value={appId} onChange={e => setAppId(e.target.value)}>
           <option value="">Choose an attached app</option>
           {(session.appIds ?? []).map(id => <option key={id} value={id}>{id}</option>)}
         </select>
@@ -113,23 +113,23 @@ function WorkspaceCard({ workspace: w, sessionId, busy, cleanup, refresh }: {
   return <section className="space-y-2 rounded border p-2" aria-label={`Workspace ${w.id.slice(0, 8)}`}>
     {viewerUrl && <Button size="sm" variant="outline" asChild><a href={viewerUrl} target="_blank" rel="noreferrer">Open owning session</a></Button>}
     {viewer?.unavailable && <p className="text-xs text-muted-foreground">{viewer.unavailable}</p>}
-    <p className="break-all font-medium">{w.apps.map(a => a.appId).join(", ")} · {w.state}</p>
+    <p className="break-all font-mono text-xs">{w.apps.map(a => a.appId).join(", ")} · {w.state}</p>
     <p className="break-all font-mono text-xs">{w.path}</p>
-    <p className="text-xs">{w.targetBranch} · {w.observation?.head?.slice(0, 8) ?? "Unknown HEAD"} · {w.leases.length > 0 ? "In use" : "No active leases"}</p>
+    <p className="font-mono text-xs">{w.targetBranch} · {w.observation?.head?.slice(0, 8) ?? "Unknown HEAD"} · {w.leases.length > 0 ? "In use" : "No active leases"}</p>
     {w.observation?.error && <p role="alert">{w.observation.error}</p>}
     {w.state === "active" && <>
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" disabled={busy} onClick={refresh}>Fetch target</Button>
         <Button size="sm" variant="outline" disabled={busy || w.leases.length > 0 || !w.observation?.head} onClick={cleanup}>Remove merged worktree</Button>
       </div>
-      <select aria-label="Workspace diff view" className="rounded border bg-background p-1" value={view} onChange={e => { ++generation.current; setView(e.target.value); setPreview(null); setError(""); }}>
+      <select aria-label="Workspace diff view" className="rounded border bg-background p-1 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0 focus-visible:border-brand" value={view} onChange={e => { ++generation.current; setView(e.target.value); setPreview(null); setError(""); }}>
         <option value="session">All session changes</option><option value="local">Uncommitted changes</option>
       </select>
       <ul>{files.map(path => <li key={path}><button className="break-all text-left font-mono text-xs hover:underline" onClick={() => void show(path)}>{path}</button></li>)}</ul>
       {files.length === 0 && w.observation?.state === "ok" && <p className="text-muted-foreground">No changes in this view.</p>}
       {error && <p role="alert">{error}</p>}
       {preview && <div aria-label={`Changes in ${preview.path}`}>
-        {preview.truncated ? <p>Diff exceeds the preview limit. Inspect it in your Git client.</p> : preview.binary || preview.image ? <p>Binary or image change. Inspect this file in Shell or your editor.</p> : <pre className="overflow-auto rounded bg-muted p-2 text-xs">{preview.combined || "No text changes."}</pre>}
+        {preview.truncated ? <p>Diff exceeds the preview limit. Inspect it in your Git client.</p> : preview.binary || preview.image ? <p>Binary or image change. Inspect this file in Shell or your editor.</p> : <pre className="overflow-auto rounded bg-muted p-2 font-mono text-xs">{preview.combined || "No text changes."}</pre>}
       </div>}
     </>}
     {w.pullRequests?.map(url => <a key={url} href={url} target="_blank" rel="noreferrer" className="block break-all underline">Pull request</a>)}
@@ -143,12 +143,12 @@ function PublicationCard({ publication: p }: { publication: Publication }) {
   const stale = !o || now - Date.parse(o.at) > 90_000;
   const label = p.outcome === "submitted" ? "Submitted for review" : p.outcome === "merged" ? "Completed" : p.outcome === "abandoned" ? "Abandoned" : o?.state === "merged" ? o.complete ? "Merged · release verified" : "Merged · awaiting release evidence" : o?.draft ? "Draft PR" : o?.state ?? "Not yet observed";
   return <section className="space-y-2 rounded border p-2" aria-label={`Publication ${p.repository}`}>
-    <p className="break-all font-medium">{p.repository} · {label}</p>
+    <p className="break-all font-mono text-xs">{p.repository} · {label}</p>
     {p.url && <a className="underline" href={p.url} target="_blank" rel="noreferrer">Pull request #{p.number}</a>}
-    <p className="text-xs">{p.branch} → {p.targetBranch} · {o?.head?.slice(0, 8) ?? "Unknown head"}</p>
-    <p className="text-xs text-muted-foreground">{o ? `Last checked ${new Date(o.at).toLocaleString()}` : "No provider observation"}{stale ? " · stale" : ""}</p>
+    <p className="font-mono text-xs">{p.branch} → {p.targetBranch} · {o?.head?.slice(0, 8) ?? "Unknown head"}</p>
+    <p className="text-xs tabular-nums text-muted-foreground">{o ? `Last checked ${new Date(o.at).toLocaleString()}` : "No provider observation"}{stale ? " · stale" : ""}</p>
     {o?.error && <p role="alert">{o.error}</p>}
-    {o?.reviewDecision && <p className="text-xs">Review: {o.reviewDecision} · unresolved threads: {o.unresolvedThreads}</p>}
+    {o?.reviewDecision && <p className="text-xs tabular-nums">Review: {o.reviewDecision} · unresolved threads: {o.unresolvedThreads}</p>}
     {o?.checks?.map((c, i) => <p key={`${c.name}-${i}`} className="text-xs">{c.name}: {c.state}</p>)}
     {p.operations.filter(op => op.state !== "succeeded").map(op => <p key={op.id} className="text-xs">{op.kind}: {op.state} · {op.error}</p>)}
     {p.cleanupRequested && <p className="text-xs">Cleanup queued until the worktree is clean and unused.</p>}

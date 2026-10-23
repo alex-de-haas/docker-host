@@ -2,7 +2,7 @@
 
 import type { FormEvent } from "react";
 import { Fragment, useState } from "react";
-import { ChevronRight, HardDrive, LoaderCircle, Lock, Pencil, Plus, Trash2, TriangleAlert } from "lucide-react";
+import { ChevronRight, LoaderCircle, Lock, Pencil, Plus, Trash2, TriangleAlert } from "lucide-react";
 import { useConfirmation } from "@/components/reui/confirmation";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,7 +23,7 @@ import { sharedMountMode, sharedMountPath, type MountAssignmentChange } from "..
 import { EmptyState, IconButton, InlineError } from "../ui";
 
 const CONTROL_CLASS =
-  "flex h-9 rounded-md border border-input bg-transparent px-2 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
+  "flex h-9 rounded-md border border-input bg-transparent px-2 py-1 text-sm shadow-sm outline-none focus-visible:border-brand focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50";
 
 type DraftMount = { name: string; hostPath: string; mode: string; description: string };
 
@@ -154,7 +154,7 @@ export function SettingsMountsSection({
       {listError && <InlineError message={listError} />}
 
       {globalMounts.length === 0 ? (
-        <EmptyState icon={HardDrive} title="No shared mounts" description="Add a host folder to make it available to apps." />
+        <EmptyState title="No shared mounts" description="Add a host folder to make it available to apps." />
       ) : (
         <div className="rounded-lg border">
           <Table>
@@ -171,16 +171,16 @@ export function SettingsMountsSection({
               {globalMounts.map((mount) => (
                 <Fragment key={mount.name}>
                 <TableRow>
-                  <TableCell className="font-mono text-xs"><button type="button" className="flex items-center gap-2 rounded-sm py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-expanded={expanded.has(mount.name)} aria-controls={`mount-usage-${mount.name}`} onClick={() => setExpanded(current => { const next = new Set(current); if (next.has(mount.name)) next.delete(mount.name); else next.add(mount.name); return next; })}>
+                  <TableCell className="font-mono text-xs"><button type="button" className="flex items-center gap-2 rounded-sm py-1 text-left outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0 focus-visible:ring-brand" aria-expanded={expanded.has(mount.name)} aria-controls={`mount-usage-${mount.name}`} onClick={() => setExpanded(current => { const next = new Set(current); if (next.has(mount.name)) next.delete(mount.name); else next.add(mount.name); return next; })}>
                     <ChevronRight className={`size-4 shrink-0 ${expanded.has(mount.name) ? "rotate-90" : ""}`} />{mount.name}
                   </button></TableCell>
-                  <TableCell className="max-w-[200px] truncate font-mono text-xs text-muted-foreground">
+                  <TableCell title={mount.hostPath} className="max-w-[200px] truncate font-mono text-xs text-muted-foreground">
                     <span className="inline-flex items-center gap-1">
                       {mount.mode === "ro" && <Lock className="h-3 w-3 shrink-0" />}
                       {/* Explicit === false: an older Core omits the field, and absent must not read as missing. */}
                       {mount.hostPathExists === false && (
                         <span
-                          className="inline-flex shrink-0 text-amber-600 dark:text-amber-500"
+                          className="inline-flex shrink-0 text-warning-foreground"
                           title="Host path not found. Apps using this mount will fail to start until it exists — expected if the drive is not attached."
                         >
                           <TriangleAlert className="h-3 w-3" aria-label="Host path not found" />
@@ -296,7 +296,7 @@ export function SettingsMountsSection({
                 Cancel
               </Button>
               <Button type="submit" disabled={busy || !canManageApps || draft.name.trim().length === 0 || draft.hostPath.trim().length === 0}>
-                {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : editing ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                {busy ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : editing ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
                 {editing ? "Save mount" : "Add mount"}
               </Button>
             </DialogFooter>

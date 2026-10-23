@@ -84,7 +84,7 @@ function AttachmentContent({
     <div
       data-slot="attachment-content"
       className={cn(
-        "max-w-full min-w-0 flex-1 leading-tight group-data-[orientation=vertical]/attachment:px-1",
+        "max-w-full min-w-0 flex-1 group-data-[orientation=vertical]/attachment:px-1",
         className
       )}
       {...props}
@@ -172,7 +172,7 @@ function AttachmentTrigger({
     <Comp
       data-slot="attachment-trigger"
       type={asChild ? undefined : (type ?? "button")}
-      className={cn("absolute inset-0 z-10 outline-none", className)}
+      className={cn("absolute inset-0 z-10 rounded-[inherit] outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:outline-offset-[-2px] focus-visible:ring-0", className)}
       {...props}
     />
   )

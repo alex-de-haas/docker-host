@@ -43,3 +43,25 @@ it("shows bounded service error logs and clears the old snapshot when a fresh re
   vi.mocked(developmentRequest).mockResolvedValue({ status: 403, body: { message: "Sandbox access revoked" } });
   await click("Show service logs"); expect(container.textContent).toContain("Sandbox access revoked"); expect(container.textContent).not.toContain("Cannot find module");
 });
+
+
+it("opens compact preview controls without running a command and keeps recipe review, logs and restart accessible", async () => {
+  Element.prototype.hasPointerCapture = vi.fn(() => false);
+  Element.prototype.scrollIntoView = vi.fn();
+  vi.mocked(developmentRequest).mockResolvedValue(reply());
+  await act(async () => root.render(<PreviewChecks compact workspaceId="work" environmentId="child" appId="demo" refresh={() => {}} />));
+  const openMenu = () => act(async () => container.querySelector('[aria-label="demo preview actions"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  const choose = (label: string) => act(async () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === label)!.click());
+  await openMenu(); expect(developmentRequest).not.toHaveBeenCalled();
+  expect([...document.querySelectorAll('[role="menuitem"]')].map(item => item.textContent)).toEqual(["Check preview", "Restart app", "Show service logs"]);
+  await choose("Check preview");
+  expect(container.textContent).toContain('"npm" "test"');
+  expect(vi.mocked(developmentRequest).mock.calls.every(([path]) => path?.endsWith("/checks"))).toBe(true);
+  await click("Run reviewed check");
+  expect(developmentRequest).toHaveBeenCalledWith("/work/previews/child/demo/run", { id: "web/unit", digest: "revision1", requestId: expect.any(String) }, undefined);
+  vi.mocked(developmentRequest).mockImplementation(async (path = "") => path.endsWith("/logs") ? { status: 200, body: { text: "Observed service log" } } as never : reply() as never);
+  await openMenu(); await choose("Show service logs");
+  expect(container.textContent).toContain("Observed service log");
+  await openMenu(); await choose("Restart app");
+  expect(developmentRequest).toHaveBeenCalledWith("/work/previews/child/demo/restart", {}, undefined);
+});

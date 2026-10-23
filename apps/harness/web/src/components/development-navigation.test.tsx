@@ -4,20 +4,20 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DevelopmentNavigation } from "./development-navigation";
 import type { AssistantSession } from "@/lib/assistant-api";
-import { changeTotals } from "@/lib/development-api";
+import { changeTotals, type DevelopmentWorkspace } from "@/lib/development-api";
 let root: Root; let container: HTMLDivElement;
-beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
+beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} }); container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
-it("groups a multi-app conversation without cloning identity and keeps unassigned chats last", async () => {
+it("lists each conversation once across app contexts in activity order without group headings", async () => {
   const multi = { id: "same", title: "Shared work", status: "running", appIds: ["one", "two"], createdAt: "2026-10-16" } as AssistantSession;
   const quick = { id: "quick", title: "Quick chat", status: "completed", appIds: [], createdAt: "2026-10-16" } as AssistantSession;
   const onPick = vi.fn();
   await act(async () => root.render(<DevelopmentNavigation sessions={[multi,quick]} activeId="same" workspaces={[]} onPick={onPick} onNew={() => {}} onDelete={vi.fn()} />));
-  const rows = [...container.querySelectorAll('button[aria-current="page"]')]; expect(rows).toHaveLength(2);
+  const rows = [...container.querySelectorAll('button[aria-current="page"]')]; expect(rows).toHaveLength(1);
   for (const row of rows) await act(async () => (row as HTMLButtonElement).click());
-  expect(onPick.mock.calls).toEqual([[multi],[multi]]);
-  expect([...container.querySelectorAll("h2")].map(n=>n.textContent)).toEqual(["one","two","Unassigned chats"]);
-  expect(container.querySelectorAll('[aria-label="Agent running"]')).toHaveLength(2);
+  expect(onPick.mock.calls).toEqual([[multi]]);
+  expect([...container.querySelectorAll("h2")].map(n=>n.textContent)).toEqual([]);
+  expect(container.querySelectorAll('[aria-label="Agent running"]')).toHaveLength(1);
 });
 it("does not invent line counts when evidence is missing or double count binary files", () => {
   expect(changeTotals([{ path: "missing", status: "M" }])).toBeNull();
@@ -29,7 +29,7 @@ const click = async (name: string) => act(async () => {
   const button = [...document.querySelectorAll("button")].find(b => b.getAttribute("aria-label") === name || b.textContent === name);
   expect(button).toBeDefined(); button!.click();
 });
-it("confirms deletion from either app group without selecting the session, and allows cancellation", async () => {
+it("confirms deletion from the unique row without selecting the session, and allows cancellation", async () => {
   const onDelete = vi.fn().mockResolvedValue(undefined), onPick = vi.fn();
   await act(async () => root.render(<DevelopmentNavigation sessions={[disposable]} activeId="other" workspaces={[]} onPick={onPick} onNew={() => {}} onDelete={onDelete} />));
   expect(container.querySelector("button button")).toBeNull();
@@ -38,8 +38,8 @@ it("confirms deletion from either app group without selecting the session, and a
   expect(onDelete).not.toHaveBeenCalled(); expect(onPick).not.toHaveBeenCalled();
   await click("Keep session"); expect(document.querySelector('[role="dialog"]')).toBeNull();
   const triggers = container.querySelectorAll<HTMLButtonElement>('[aria-label="Delete Disposable chat"]');
-  expect(triggers).toHaveLength(2);
-  await act(async () => triggers[1].click()); await click("Delete session");
+  expect(triggers).toHaveLength(1);
+  await act(async () => triggers[0].click()); await click("Delete session");
   expect(onDelete).toHaveBeenCalledExactlyOnceWith("delete-me"); expect(onPick).not.toHaveBeenCalled();
   expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
@@ -49,7 +49,7 @@ it("keeps a refused workspace deletion visible and retries once without losing n
   await act(async () => root.render(<DevelopmentNavigation sessions={[disposable]} activeId="delete-me" workspaces={[]} onPick={onPick} onNew={() => {}} onDelete={onDelete} />));
   await click("Delete Disposable chat"); await click("Delete session");
   expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toContain("Complete and delete");
-  expect(container.querySelectorAll('[aria-current="page"]')).toHaveLength(2);
+  expect(container.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
   onDelete.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
   await click("Delete session");
   const confirm = [...document.querySelectorAll("button")].find(b => b.textContent === "Deleting…")!;
@@ -59,34 +59,68 @@ it("keeps a refused workspace deletion visible and retries once without losing n
   expect(onPick).not.toHaveBeenCalled();
 });
 
-it("shows remaining chats when deletion removes the last session in the filtered app", async () => {
+it("keeps remaining chats available and returns focus to New session when deletion removes its trigger", async () => {
   const quick = { ...disposable, id: "quick", title: "Quick chat", appIds: [] };
-  const render = (sessions: AssistantSession[]) => act(async () => root.render(<DevelopmentNavigation sessions={sessions} workspaces={[]} onPick={vi.fn()} onNew={() => {}} onDelete={vi.fn()} />));
-  await render([disposable, quick]);
-  const filter = container.querySelector("select")!;
-  await act(async () => { filter.value = "one"; filter.dispatchEvent(new Event("change", { bubbles: true })); });
-  expect(container.textContent).not.toContain("Quick chat");
-  await render([quick]);
-  expect(filter.value).toBe(""); expect(container.textContent).toContain("Quick chat");
-  await render([disposable, quick]);
-  expect(filter.value).toBe(""); expect(container.textContent).toContain("Quick chat");
-  expect(container.textContent).toContain("Disposable chat");
+  const onNew = vi.fn();
+  let sessions = [disposable, quick];
+  const render = () => root.render(<DevelopmentNavigation sessions={sessions} workspaces={[]} onPick={vi.fn()} onNew={onNew} onDelete={onDelete} />);
+  const onDelete = vi.fn(async () => { sessions = [quick]; render(); });
+  await act(async () => render());
+  await click("Delete Disposable chat");
+  await click("Delete session");
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+  expect(document.activeElement).toBe(container.querySelector('[aria-label="New session"]'));
+  expect([...container.querySelectorAll("h2")].map(node => node.textContent)).toEqual([]);
+  expect(container.textContent).toContain("Quick chat");
+  await click("New session");
+  expect(onNew).toHaveBeenCalledOnce();
 });
 
-it("returns to all applications when the final unassigned chat is deleted", async () => {
-  const quick = { ...disposable, id: "quick", title: "Quick chat", appIds: [] };
-  const another = { ...quick, id: "another", title: "Another quick chat" };
-  const render = (sessions: AssistantSession[]) => act(async () => root.render(<DevelopmentNavigation sessions={sessions} workspaces={[]} onPick={vi.fn()} onNew={() => {}} onDelete={vi.fn()} />));
-  await render([disposable, quick, another]);
-  const filter = container.querySelector("select")!;
-  await act(async () => { filter.value = "unassigned"; filter.dispatchEvent(new Event("change", { bubbles: true })); });
-  expect(container.textContent).not.toContain("Disposable chat");
-  await render([disposable, quick]);
-  expect(filter.value).toBe("unassigned"); expect(container.textContent).toContain("Quick chat");
-  expect(container.textContent).not.toContain("Disposable chat");
-  await render([disposable]);
-  expect(filter.value).toBe(""); expect(container.textContent).toContain("Disposable chat");
-  await render([disposable, quick]);
-  expect(filter.value).toBe(""); expect(container.textContent).toContain("Disposable chat");
-  expect(container.textContent).toContain("Quick chat");
+it("combines search and state filters without changing session identity or order", async () => {
+  const older = { ...disposable, id: "older", title: "Older task", status: "awaiting_approval", appIds: [], createdAt: "2026-10-18" };
+  const newer = { ...older, id: "newer", title: "Newer task", createdAt: "2026-10-20" };
+  const running = { ...older, id: "working", title: "Working task", status: "running" };
+  const pick = vi.fn(), external = vi.fn();
+  await act(async () => root.render(<DevelopmentNavigation sessions={[older, running, newer]} workspaces={[]} onPick={pick} onNew={vi.fn()} onDelete={vi.fn()} externalCount={3} onExternal={external} />));
+  const waiting = [...container.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')].find(button => button.textContent?.startsWith("Needs you"))!;
+  await act(async () => waiting.click());
+  expect(container.textContent).not.toContain("Working task");
+  const rows = [...container.querySelectorAll<HTMLButtonElement>('button')].filter(button => button.textContent?.includes("task") && !button.getAttribute("aria-label")?.startsWith("Delete"));
+  expect(rows.map(button => button.textContent?.split("Needs you")[0])).toEqual(["Newer task", "Older task"]);
+  const search = container.querySelector<HTMLInputElement>('[aria-label="Search sessions"]')!;
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "Older"); search.dispatchEvent(new Event("input", { bubbles: true })); });
+  expect(container.textContent).not.toContain("Newer task");
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.startsWith("Older task"))!.click());
+  expect(pick).toHaveBeenCalledWith(older);
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.startsWith("External workspaces"))!.click());
+  expect(external).toHaveBeenCalledOnce();
+});
+
+it("uses the owned workspace name while retaining original-title and application search, identity and deletion", async () => {
+  const session = { id: "work", title: "Original conversation", status: "idle", appIds: ["notes.app", "other.app"],
+    contextApps: [{ id: "notes.app", displayName: "Notebook", available: true }], createdAt: "2026-10-22" } as AssistantSession;
+  const workspace = { id: "workspace", name: "Review changes", owner: { kind: "assistant", appId: "hosty.harness", reference: session.id, label: "Owned work" }, workflow: { state: "in-progress", revision: 0 }, worktrees: [] } as unknown as DevelopmentWorkspace;
+  const onPick = vi.fn();
+  const render = (workspaces = [workspace]) => act(async () => root.render(<DevelopmentNavigation sessions={[session]} activeId={session.id} workspaces={workspaces} onPick={onPick} onNew={vi.fn()} onDelete={vi.fn()} />));
+  await render();
+  const row = () => container.querySelector<HTMLButtonElement>('[aria-current="page"]')!;
+  expect(row().textContent).toBe("Review changes");
+  expect(container.querySelector('[aria-label="Delete Review changes"]')).not.toBeNull();
+  expect(container.textContent).not.toContain("Idle");
+  const search = container.querySelector<HTMLInputElement>('[aria-label="Search sessions"]')!;
+  for (const query of ["Review changes", "Original conversation", "Notebook", "other.app"]) {
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, query); search.dispatchEvent(new Event("input", { bubbles: true })); });
+    expect(row().textContent).toBe("Review changes");
+  }
+  await act(async () => row().click()); expect(onPick).toHaveBeenCalledWith(session);
+  await render([{ ...workspace, name: "Renamed workspace" }]);
+  expect(row().textContent).toBe("Renamed workspace");
+  await click("Delete Renamed workspace");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Delete the session “Renamed workspace”');
+  await click("Keep session");
+  await render([{ ...workspace, name: " " }]); expect(row().textContent).toBe("Owned work");
+  await render([{ ...workspace, name: "", owner: { ...workspace.owner, label: "" } }]); expect(row().textContent).toBe("Original conversation");
+  await render([{ ...workspace, owner: { ...workspace.owner, reference: "another-session" } }]); expect(row().textContent).toBe("Original conversation");
+  await render([{ ...workspace, owner: { ...workspace.owner, appId: "another-owner" } }]); expect(row().textContent).toBe("Original conversation");
+  await render([{ ...workspace, workflow: { ...workspace.workflow, state: "deleted" } }]); expect(row().textContent).toBe("Original conversation");
 });

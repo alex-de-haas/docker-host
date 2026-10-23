@@ -152,6 +152,111 @@ public sealed class WorkspaceActivationHandoverTests : IDisposable
         Assert.Equal(1, runtime.Stops);
     }
 
+    private (FakeRuntime Runtime, WorkspaceRuntimeActivation Previous) PrepareDirectSwitch()
+    {
+        _ = Prepare();
+        var baselineExecutable = Path.Combine(root, "captured-release");
+        File.WriteAllText(baselineExecutable, "original baseline executable");
+        var currentExecutable = Path.Combine(root, "workspace-a-executable");
+        File.WriteAllText(currentExecutable, "workspace A executable");
+        var current = new CoreLaunchIdentity("dev", Path.Combine(root, "workspace-a", "core.csproj"),
+            Path.Combine(root, "generation-a"), 303, DateTimeOffset.UtcNow.AddMinutes(-1));
+        var prior = new WorkspaceRuntimeActivation(Guid.NewGuid().ToString(), "workspace-a", "user", "review-a", "instance-a", "revision",
+            "tree-a", current.ProjectPath, previous, ["existing-app"], "active", currentExecutable, current.GenerationPath,
+            ActivatedCore: current, PreviousExecutable: baselineExecutable,
+            PreviousExecutableHash: WorkspaceActivationReturn.ExecutableHash(baselineExecutable), CoreReserved: true);
+        WorkspaceRuntimeFiles.Save(root, prior);
+        var next = WorkspaceRuntimeFiles.Read(root, id) with { PreviousCore = current, Apps = [],
+            ReplacesCoreActivationId = prior.Id, CoreReturnTarget = WorkspaceActivationReturn.ImmediateTarget(prior) };
+        WorkspaceRuntimeFiles.Save(root, next);
+        return (new(root, id, new(current, "http://localhost:7171", currentExecutable)), prior);
+    }
+
+    [Theory]
+    [InlineData("stop")]
+    [InlineData("start")]
+    [InlineData("verify")]
+    public async Task DirectSwitch_ReplacesOnlyCoreAfterReadinessAndResumesLostResponses(string boundary)
+    {
+        var (runtime, prior) = PrepareDirectSwitch();
+        runtime.FailAfter = boundary;
+        var handover = new WorkspaceActivationHandover(root, runtime);
+        await Assert.ThrowsAsync<IOException>(() => handover.RunAsync(id));
+        Assert.False(WorkspaceRuntimeFiles.Read(root, prior.Id).CoreReturned);
+        runtime.FailAfter = null;
+        await handover.RunAsync(id);
+
+        var active = WorkspaceRuntimeFiles.Read(root, id);
+        var retired = WorkspaceRuntimeFiles.Read(root, prior.Id);
+        Assert.Equal("active", active.Phase);
+        Assert.Equal(WorkspaceActivationReturn.ImmediateTarget(prior), active.CoreReturnTarget);
+        Assert.Equal(prior.ActivatedCore, active.PreviousCore);
+        Assert.True(retired.CoreReturned);
+        Assert.Equal(id, retired.CoreSupersededBy);
+        Assert.Equal("active", retired.Phase); // Its existing application participants keep ownership.
+        Assert.Equal(prior.Apps, retired.Apps);
+        Assert.Null(retired.ReturnedApps);
+        Assert.Null(retired.Returns);
+        Assert.Equal(1, runtime.Builds);
+        Assert.Equal(1, runtime.Stops);
+        Assert.Equal(1, runtime.Starts);
+        Assert.Equal(0, runtime.AppMutations);
+        Assert.Equal(0, runtime.PreviousRestarts);
+        await handover.RunAsync(id);
+        Assert.Equal(1, runtime.Stops);
+        Assert.Equal(1, runtime.Starts);
+    }
+
+    [Fact]
+    public async Task DirectSwitch_BuildFailureKeepsCurrentOwnerAndRunningCore()
+    {
+        var (runtime, prior) = PrepareDirectSwitch();
+        runtime.FailAfter = "build";
+        await Assert.ThrowsAsync<IOException>(() => new WorkspaceActivationHandover(root, runtime).RunAsync(id));
+        Assert.Equal(prior.ActivatedCore, runtime.Current!.Launch);
+        Assert.False(WorkspaceRuntimeFiles.Read(root, prior.Id).CoreReturned);
+        Assert.Equal("preparing", WorkspaceRuntimeFiles.Read(root, id).Phase);
+        Assert.Equal(0, runtime.Stops);
+        Assert.Equal(0, runtime.AppMutations);
+    }
+
+    [Fact]
+    public async Task DirectSwitch_LostRetirementReceiptReconcilesWithoutAnotherRestart()
+    {
+        var (runtime, prior) = PrepareDirectSwitch();
+        var active = WorkspaceRuntimeFiles.Read(root, id) with { Phase = "active", Generation = "candidate-generation" };
+        active = active with { ActivatedCore = new("dev", active.CoreProject, active.Generation, 999, DateTimeOffset.UtcNow) };
+        WorkspaceRuntimeFiles.Save(root, active);
+        await new WorkspaceActivationHandover(root, runtime).RunAsync(id);
+        Assert.True(WorkspaceRuntimeFiles.Read(root, prior.Id).CoreReturned);
+        Assert.Equal(id, WorkspaceRuntimeFiles.Read(root, prior.Id).CoreSupersededBy);
+        Assert.Equal(0, runtime.Starts);
+        Assert.Equal(0, runtime.Stops);
+        WorkspaceActivationHandover.ReconcileReplacements(root);
+        Assert.True(WorkspaceRuntimeFiles.Read(root, prior.Id).CoreReturned);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DirectSwitch_UnsupportedCandidateContractRefusesBeforeAnyAppMutationOrStop(bool resumedPrepared)
+    {
+        var (runtime, prior) = PrepareDirectSwitch();
+        if (resumedPrepared)
+        {
+            var candidate = await runtime.BuildAsync(WorkspaceRuntimeFiles.Read(root, id).CoreProject!);
+            WorkspaceRuntimeFiles.Save(root, WorkspaceRuntimeFiles.Read(root, id) with {
+                PreparedExecutable = candidate.Executable, Generation = candidate.Generation });
+        }
+        runtime.FailAfter = "contract";
+        await Assert.ThrowsAsync<IOException>(() => new WorkspaceActivationHandover(root, runtime).RunAsync(id));
+        Assert.Equal(prior.ActivatedCore, runtime.Current!.Launch);
+        Assert.False(WorkspaceRuntimeFiles.Read(root, prior.Id).CoreReturned);
+        Assert.Equal(0, runtime.AppMutations);
+        Assert.Equal(0, runtime.Stops);
+        Assert.Equal(0, runtime.Starts);
+    }
+
     private sealed class FakeRuntime(string root, string id, WorkspaceCoreObservation initial) : IWorkspaceActivationRuntime
     {
         private readonly WorkspaceCoreObservation initialTarget = initial;
@@ -160,6 +265,8 @@ public sealed class WorkspaceActivationHandoverTests : IDisposable
         internal bool CancelDuringBuild;
         internal int Builds, Stops, Starts, AppMutations, PreviousRestarts;
         public Task<WorkspaceCoreObservation?> ObserveAsync() => Task.FromResult(Current);
+        public Task ValidateCoreContractAsync(WorkspaceRuntimeActivation activation)
+        { if (activation.ReplacesCoreActivationId is not null) Fail("contract"); return Task.CompletedTask; }
         public Task ValidateAuthorityAsync(string requestId)
         { Assert.Equal(id, requestId); Fail("authority"); return Task.CompletedTask; }
         public Task<WorkspaceCoreOutput> BuildAsync(string project)
@@ -175,7 +282,7 @@ public sealed class WorkspaceActivationHandoverTests : IDisposable
         {
             Assert.Equal(id, requestId);
             var a = WorkspaceRuntimeFiles.Read(root, id);
-            if (a.Phase == "prepared") { AppMutations++; WorkspaceRuntimeFiles.Save(root, a with { Phase = "apps-active" }); }
+            if (a.Phase == "prepared") { if (a.Apps.Length != 0) AppMutations++; WorkspaceRuntimeFiles.Save(root, a with { Phase = "apps-active" }); }
             Fail("apply"); return Task.CompletedTask;
         }
         public Task VerifyAppsAsync(string requestId)

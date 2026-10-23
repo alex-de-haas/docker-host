@@ -1,6 +1,7 @@
 "use client";
 
 import { SettingsTokensSection } from "./settings-tokens-section";
+import { HostyEmptySlots, HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { fetchCore } from "../core-transport.js";
 
 
@@ -259,9 +260,9 @@ export function UserManagementPanel({
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground">Loading users</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground"><span role="status" className="flex items-center justify-center gap-2"><HostyLoader className="size-5" label={null} />Loading users</span></TableCell></TableRow>
               ) : filteredUsers.length === 0 ? (
-                <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground">No users</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground"><span className="flex flex-col items-center gap-3">{!error && <HostyEmptySlots className="size-12" />}No users</span></TableCell></TableRow>
               ) : filteredUsers.map((user) => (
                 <TableRow key={user.id}>
                   <TableCell>
@@ -294,7 +295,7 @@ export function UserManagementPanel({
       </Card>
 
       {pendingInvitations.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Pending invitations · {loading ? "Loading…" : "0"}</p>
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">Pending invitations · {loading ? <span role="status" className="inline-flex items-center gap-2"><HostyLoader className="size-5" label={null} />Loading…</span> : "0"}</p>
       ) : (
       <Card className="border-0 bg-transparent py-0 shadow-none">
         <CardHeader className="px-0">
@@ -377,7 +378,7 @@ export function UserManagementPanel({
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setInviteOpen(false)}>Cancel</Button>
               <Button type="submit" disabled={pendingAction === "invite"}>
-                {pendingAction === "invite" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                {pendingAction === "invite" ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <UserPlus className="h-4 w-4" />}
                 Generate link
               </Button>
             </DialogFooter>
@@ -414,7 +415,7 @@ export function UserManagementPanel({
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setAccessUserId(null)}>Cancel</Button>
                 <Button type="button" onClick={saveAccess} disabled={pendingAction === `access:${accessUser.id}`}>
-                  {pendingAction === `access:${accessUser.id}` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  {pendingAction === `access:${accessUser.id}` ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Check className="h-4 w-4" />}
                   Save access
                 </Button>
               </DialogFooter>
@@ -467,18 +468,18 @@ function UserRowActionsMenu({
           </DropdownMenuItem>
         )}
         <DropdownMenuItem disabled={roleActionDisabled} onClick={() => onUpdateRole(user)}>
-          {pendingAction === roleActionKey ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+          {pendingAction === roleActionKey ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <CheckCircle2 className="h-4 w-4" />}
           {roleActionLabel}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         {user.disabled ? (
-          <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={purgeActionDisabled} onClick={() => onPurgeUser(user)}>
-            {pendingAction === purgeActionKey ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+          <DropdownMenuItem className="text-destructive-foreground focus:text-destructive-foreground" disabled={purgeActionDisabled} onClick={() => onPurgeUser(user)}>
+            {pendingAction === purgeActionKey ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Trash2 className="h-4 w-4" />}
             Delete permanently
           </DropdownMenuItem>
         ) : (
-          <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={disableActionDisabled} onClick={() => onDisableUser(user)}>
-            {pendingAction === disableActionKey ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <UserX className="h-4 w-4" />}
+          <DropdownMenuItem className="text-destructive-foreground focus:text-destructive-foreground" disabled={disableActionDisabled} onClick={() => onDisableUser(user)}>
+            {pendingAction === disableActionKey ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <UserX className="h-4 w-4" />}
             Disable
           </DropdownMenuItem>
         )}

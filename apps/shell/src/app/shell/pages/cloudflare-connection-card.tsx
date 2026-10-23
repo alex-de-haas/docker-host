@@ -1,5 +1,7 @@
 "use client";
 
+import { HostyLoader } from "../../../../../../shared/web/hosty-states";
+
 import { useCallback, useEffect, useState } from "react";
 import { ExternalLink, LoaderCircle } from "lucide-react";
 import { toast } from "@/components/reui/operation-toast";
@@ -140,12 +142,12 @@ export function CloudflareConnectionCard() {
 
       {loading ? (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <LoaderCircle className="h-4 w-4 animate-spin" /> Loading…
+          <HostyLoader className="h-4 w-4" label={null} /> Loading…
         </div>
       ) : connected ? (
         <div className="space-y-1.5 rounded-md border p-3 text-xs">
           <div className="flex items-center justify-between">
-            <span className="font-medium text-emerald-600 dark:text-emerald-400">Connected</span>
+            <span className="font-medium text-success-foreground">Connected</span>
             <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => setConfirmingDisconnect(true)}>
               Disconnect
             </Button>
@@ -176,7 +178,7 @@ export function CloudflareConnectionCard() {
             <dd className="text-foreground">{status?.connectorStatus}</dd>
           </dl>
           {status?.locality === "not_local" && (
-            <p className="text-amber-600 dark:text-amber-400">
+            <p className="text-warning-foreground">
               The connector appears to run on a different host; public routes would target the wrong machine.
             </p>
           )}
@@ -184,11 +186,11 @@ export function CloudflareConnectionCard() {
       ) : (
         <div className="space-y-2">
           {status?.status === "reconnect_required" && status.reconnectReason && (
-            <p className="text-xs text-amber-600 dark:text-amber-400">Reconnect required: {status.reconnectReason}</p>
+            <p className="text-xs text-warning-foreground">Reconnect required: {status.reconnectReason}</p>
           )}
           {template && (
             <div className="text-xs">
-              <a className="inline-flex items-center gap-1 text-primary hover:underline" href={template.url} target="_blank" rel="noreferrer">
+              <a className="inline-flex items-center gap-1 text-foreground hover:underline" href={template.url} target="_blank" rel="noreferrer">
                 Create a Cloudflare API token <ExternalLink className="h-3 w-3" />
               </a>
               <ul className="mt-1 space-y-0.5 text-[11px] text-muted-foreground">
@@ -208,7 +210,7 @@ export function CloudflareConnectionCard() {
               className="h-8 text-xs"
             />
             <Button type="button" size="sm" disabled={busy || !token.trim()} onClick={() => void connect()}>
-              {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+              {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin motion-reduce:animate-none" />}
               Connect
             </Button>
           </div>

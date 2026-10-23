@@ -81,8 +81,7 @@ export async function requestCoreApproval(
 
 export function requestAppRemoval(
   client: InstallationClient, appId: string,
-  options: NonNullable<InstallationSource["removalOptions"]>,
   onSubmitted: (request: InstallationRequest) => void | (() => void),
 ): Promise<InstallationRequest> {
-  return requestCoreApproval(client, { removeAppId: appId, removalOptions: options }, onSubmitted);
+  return requestCoreApproval(client, { removeAppId: appId }, onSubmitted);
 }

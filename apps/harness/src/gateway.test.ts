@@ -924,6 +924,66 @@ describe("gateway", () => {
     }
   });
 
+  it("forwards exact review scopes and replay IDs only with own app authority and same-origin mutations", async () => {
+    const core = createServer((request, response) => { request.resume(); response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" })); });
+    await new Promise<void>(resolve => core.listen(0, resolve));
+    process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+    process.env.HOSTY_APP_SERVICE_TOKEN = "review-service";
+    const inspect = vi.spyOn(manager, "inspectWorkspaces").mockResolvedValue({ state: "succeeded" });
+    const base = `/${"a".repeat(64)}/worktrees/${"b".repeat(64)}`;
+    const headers = { authorization: "Bearer hostyg_browser", "content-type": "application/json" };
+    const command = { requestId: randomUUID(), pullRequestUrl: "https://github.com/acme/app/pull/7", expectedHead: "abc", threadId: "thread", body: "Reply", authorIntent: true };
+    try {
+      const query = new URLSearchParams({ scope: "pull-request", pullRequestUrl: command.pullRequestUrl, path: "a b.ts", revision: "immutable" });
+      const preview = await fetch(origin + `/api/development-workspaces${base}/review/diff?${query}`, { headers });
+      expect(preview.status).toBe(200); expect(preview.headers.get("cache-control")).toBe("no-store");
+      expect(inspect).toHaveBeenLastCalledWith("hostyg_browser", `${base}/review/diff?${query}`, undefined, "user_admin");
+      const target = origin + `/api/development-workspaces${base}/reviews/reply`;
+      expect((await fetch(target, { method: "POST", headers, body: JSON.stringify(command) })).status).toBe(403);
+      expect((await fetch(target, { method: "POST", headers: { ...headers, origin: "https://foreign.test" }, body: JSON.stringify(command) })).status).toBe(403);
+      expect((await fetch(target, { headers })).status).toBe(405);
+      for (let attempt = 0; attempt < 2; attempt++) expect((await fetch(target, { method: "POST", headers: { ...headers, origin }, body: JSON.stringify(command) })).status).toBe(200);
+      expect(inspect).toHaveBeenLastCalledWith("hostyg_browser", `${base}/reviews/reply`, command, "user_admin");
+      expect((await call(`/api/development-workspaces${base}/review`)).status).toBe(401);
+      const comment = { ...command, threadId: "", path: "a b.ts", diffSide: "RIGHT", startLine: 2, line: 4 };
+      const commentTarget = origin + `/api/development-workspaces${base}/reviews/comment`;
+      expect((await fetch(commentTarget, { method: "POST", headers, body: JSON.stringify(comment) })).status).toBe(403);
+      expect((await fetch(commentTarget, { headers })).status).toBe(405);
+      expect((await fetch(commentTarget, { method: "POST", headers: { ...headers, origin }, body: JSON.stringify(comment) })).status).toBe(200);
+      expect(inspect).toHaveBeenLastCalledWith("hostyg_browser", `${base}/reviews/comment`, comment, "user_admin");
+      const inventory = await fetch(origin + `/api/development-workspaces${base}/review`, { headers });
+      expect(await inventory.json()).toMatchObject({ viewerId: "user_admin" });
+      expect(inspect).toHaveBeenCalledTimes(5);
+    } finally { inspect.mockRestore(); await new Promise(resolve => core.close(resolve)); }
+  });
+
+  it("forwards removal review and recovery through app authority and restricts destructive apply to same-origin POST", async () => {
+    const core = createServer((request, response) => { request.resume(); response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" })); });
+    await new Promise<void>(resolve => core.listen(0, resolve));
+    process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+    process.env.HOSTY_APP_SERVICE_TOKEN = "discard-service";
+    const inspect = vi.spyOn(manager, "inspectWorkspaces").mockResolvedValue({ state: "pending" });
+    const base = `/${"a".repeat(64)}/discard`;
+    const headers = { authorization: "Bearer hostyg_browser", "content-type": "application/json" };
+    const command = { requestId: randomUUID(), expectedRevision: 4, digest: "reviewed-dirty-bytes", confirmationName: "Experiment" };
+    try {
+      for (const suffix of ["plan", `status?requestId=${command.requestId}`]) {
+        const response = await fetch(origin + `/api/development-workspaces${base}/${suffix}`, { headers });
+        expect(response.status).toBe(200); expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(inspect).toHaveBeenLastCalledWith("hostyg_browser", `${base}/${suffix}`, undefined, "user_admin");
+      }
+      const target = origin + `/api/development-workspaces${base}/apply`;
+      expect((await fetch(target, { headers })).status).toBe(405);
+      expect((await fetch(target, { method: "POST", headers, body: JSON.stringify(command) })).status).toBe(403);
+      expect((await fetch(target, { method: "POST", headers: { ...headers, origin: "https://foreign.test" }, body: JSON.stringify(command) })).status).toBe(403);
+      for (const suffix of ["plan", "status"]) expect((await fetch(origin + `/api/development-workspaces${base}/${suffix}`, { method: "POST", headers: { ...headers, origin }, body: "{}" })).status).toBe(405);
+      for (let attempt = 0; attempt < 2; attempt++) expect((await fetch(target, { method: "POST", headers: { ...headers, origin }, body: JSON.stringify(command) })).status).toBe(200);
+      expect(inspect).toHaveBeenLastCalledWith("hostyg_browser", `${base}/apply`, command, "user_admin");
+      expect((await call(`/api/development-workspaces${base}/plan`)).status).toBe(401);
+      expect(inspect).toHaveBeenCalledTimes(4);
+    } finally { inspect.mockRestore(); await new Promise(resolve => core.close(resolve)); }
+  });
+
   it("accepts app-authenticated chat without giving it cross-app MCP authority", async () => {
     const seen: string[] = [];
     const core = createServer((request, response) => {

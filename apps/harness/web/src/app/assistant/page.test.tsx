@@ -512,7 +512,7 @@ it.each(["deleted", "retained", "unavailable"])("reconciles a lost non-active de
   }
 });
 
-const navigationTitles = () => [...container.querySelectorAll('nav[aria-label="Sessions by application"] section:first-child button span.block:first-child')].map(node => node.textContent);
+const navigationTitles = () => [...container.querySelectorAll('nav[aria-label="Sessions"] button > span[title]')].map(node => node.textContent);
 const renderActivityOrder = async () => {
   record = { ...record, appIds: ["one"], appContextRevision: 1, updatedAt: "2026-10-18T10:00:00Z" };
   const newer = { ...record, id: "newer", title: "Newer conversation", updatedAt: "2026-10-18T11:00:00Z" };

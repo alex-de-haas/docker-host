@@ -4,6 +4,7 @@ import { Hammer } from "lucide-react";
 import { newBuildingSession, type AssistantSession } from "@/lib/assistant-api";
 import { developmentRequest } from "@/lib/development-api";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 export type BuildingApp = { appId: string; name: string; acceptedHead: string | null; unavailable: string | null;
@@ -46,7 +47,14 @@ export function ContinueBuilding({ sessions, onPick }: { sessions: AssistantSess
     if (busy) return; setOpen(value);
     if (value) { setPending(readPending()); void refresh(); }
   }}>
-    <DialogTrigger asChild><Button variant="outline" className="w-full justify-start"><Hammer />Continue building</Button></DialogTrigger>
+    <TooltipProvider delayDuration={250}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DialogTrigger asChild><Button variant="ghost" size="icon-sm" aria-label="Continue building"><Hammer aria-hidden="true" /></Button></DialogTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="right">Continue building</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
     <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-xl">
       <DialogHeader><DialogTitle>Continue building</DialogTitle>
         <DialogDescription>Reopen existing work or start a new session from accepted local main. Other worktrees and their unfinished changes stay intact.</DialogDescription></DialogHeader>

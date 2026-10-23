@@ -1,5 +1,7 @@
 "use client";
 
+import { HostyLoader } from "../../../../../../shared/web/hosty-states";
+
 import { useState } from "react";
 import { LoaderCircle, Shuffle, TriangleAlert, Unplug } from "lucide-react";
 import { toast } from "@/components/reui/operation-toast";
@@ -27,7 +29,7 @@ export function EndpointAvailabilityMarker({ availability }: { availability?: Co
 
   return (
     <span title="The reserved port failed to bind — reassign or free it" className="inline-flex shrink-0">
-      <Unplug className="h-4 w-4 text-destructive" aria-label="Reserved port unavailable" />
+      <Unplug className="h-4 w-4 text-destructive-foreground" aria-label="Reserved port unavailable" />
     </span>
   );
 }
@@ -138,7 +140,7 @@ export function PortReassignControl({ app, endpoint }: { app: CoreApp; endpoint:
           <DialogBody>
             {loading ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <LoaderCircle className="h-4 w-4 animate-spin" /> Loading plan…
+                <HostyLoader className="h-4 w-4" label={null} /> Loading plan…
               </div>
             ) : plan ? (
               <div className="grid gap-3">
@@ -184,8 +186,8 @@ export function PortReassignControl({ app, endpoint }: { app: CoreApp; endpoint:
                   </p>
                 </div>
                 {plan.ownerRunning && (
-                  <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs">
-                    <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                  <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-xs">
+                    <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning-foreground" />
                     <span>{app.displayName} is running on the current port; restart it after reassigning.</span>
                   </div>
                 )}
@@ -215,7 +217,7 @@ export function PortReassignControl({ app, endpoint }: { app: CoreApp; endpoint:
               Cancel
             </Button>
             <Button type="button" onClick={() => void apply()} disabled={!plan || applying}>
-              {applying && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+              {applying && <LoaderCircle className="mr-1 h-4 w-4 animate-spin motion-reduce:animate-none" />}
               {manual ? "Pin port" : "Reassign port"}
             </Button>
           </DialogFooter>

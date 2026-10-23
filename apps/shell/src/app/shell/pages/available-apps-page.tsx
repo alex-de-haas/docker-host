@@ -1,6 +1,8 @@
 "use client";
 
-import { ExternalLink, LayoutGrid, LoaderCircle, RefreshCw } from "lucide-react";
+import { HostyLoader } from "../../../../../../shared/web/hosty-states";
+
+import { ExternalLink, LayoutGrid, LoaderCircle, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { getAppPageLinks } from "../app-helpers";
@@ -11,12 +13,16 @@ export function AvailableAppsPage({
   apps,
   loading,
   busyAction,
+  canManageApps,
+  onUninstall,
   onLaunchApp,
   getStandaloneHref,
 }: {
   apps: CoreApp[];
   loading: boolean;
   busyAction: string | null;
+  canManageApps: boolean;
+  onUninstall: (app: CoreApp) => void;
   onLaunchApp: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<boolean>;
   getStandaloneHref: (app: CoreApp, page: AppPageLink) => string;
 }) {
@@ -24,11 +30,11 @@ export function AvailableAppsPage({
     <div className="space-y-6">
       <PageHeader title="Apps" description="Runtime apps available to the current user." />
       {loading && apps.length === 0 ? (
-        <div className="flex items-center justify-center py-12">
-          <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+        <div role="status" className="flex items-center justify-center gap-2 py-12">
+              <HostyLoader className="size-8" label="Loading apps" />
         </div>
       ) : apps.length === 0 ? (
-        <EmptyState icon={LayoutGrid} title="No apps available" description="No runtime app UI is available for this account." />
+        <EmptyState title="No apps available" description="No runtime app UI is available for this account." />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {apps.map((app) => {
@@ -57,7 +63,7 @@ export function AvailableAppsPage({
                       }
                     }}
                   >
-                    {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <LayoutGrid className="h-4 w-4" />}
+                    {busy ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <LayoutGrid className="h-4 w-4" />}
                     Open
                   </Button>
                   {primaryPage && (
@@ -76,6 +82,19 @@ export function AvailableAppsPage({
                         <ExternalLink className="h-4 w-4" />
                         Standalone
                       </a>
+                    </Button>
+                  )}
+                  {canManageApps && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      aria-label={`Uninstall ${app.displayName}`}
+                      disabled={busyAction !== null}
+                      onClick={() => onUninstall(app)}
+                    >
+                      {busyAction === `${app.id}:remove` ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Trash2 className="h-4 w-4" />}
+                      Uninstall
                     </Button>
                   )}
                 </div>

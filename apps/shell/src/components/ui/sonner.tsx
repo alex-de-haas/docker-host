@@ -23,11 +23,11 @@ const Toaster = ({ ...props }: ToasterProps) => {
       closeButton
       visibleToasts={3}
       icons={{
-        success: <CircleCheckIcon className="size-4 text-success" />,
-        info: <InfoIcon className="size-4 text-info" />,
-        warning: <TriangleAlertIcon className="size-4 text-warning" />,
-        error: <OctagonXIcon className="size-4 text-destructive" />,
-        loading: <Loader2Icon className="size-4 animate-spin" />,
+        success: <CircleCheckIcon className="size-4 text-success-foreground" />,
+        info: <InfoIcon className="size-4 text-info-foreground" />,
+        warning: <TriangleAlertIcon className="size-4 text-warning-foreground" />,
+        error: <OctagonXIcon className="size-4 text-destructive-foreground" />,
+        loading: <Loader2Icon className="size-4 animate-spin motion-reduce:animate-none" />,
       }}
       style={
         {

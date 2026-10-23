@@ -296,12 +296,30 @@ const styles = `
 .hosty-panel-viewport{flex:1;min-height:0;min-width:0}
 .hosty-app-layout{display:flex;width:100%;height:100%;min-width:0;min-height:0}.hosty-app-content{flex:1;min-width:0;min-height:0;overflow:auto}
 
-.hosty-panel-workspace{--hp-bg:var(--hosty-panel-background,#f8f9fb);--hp-fg:var(--hosty-panel-foreground,#20242c);--hp-muted:var(--hosty-panel-muted,#606875);--hp-border:var(--hosty-panel-border,#e0e4eb);display:flex;position:relative;min-width:0;min-height:0;width:100%;height:100dvh;overflow:hidden;background:var(--hp-bg);color:var(--hp-fg)}
-html.dark .hosty-panel-workspace,html[data-hosty-theme=dark] .hosty-panel-workspace{--hp-bg:var(--hosty-panel-background,#14171c);--hp-fg:var(--hosty-panel-foreground,#f0f2f5);--hp-muted:var(--hosty-panel-muted,#a2aab7);--hp-border:var(--hosty-panel-border,#323843)}
+.hosty-panel-workspace{display:flex;position:relative;min-width:0;min-height:0;width:100%;height:100dvh;overflow:hidden}
+:is(.hosty-panel-rail,.hosty-panel-body,.hosty-panel-notice,.hosty-panel-review,.hosty-tool-chooser,.hosty-panel-error){--hp-bg:var(--hosty-panel-background,#f8f9fb);--hp-fg:var(--hosty-panel-foreground,#20242c);--hp-muted:var(--hosty-panel-muted,#606875);--hp-border:var(--hosty-panel-border,#e0e4eb);background:var(--hp-bg);color:var(--hp-fg)}
+html.dark :is(.hosty-panel-rail,.hosty-panel-body,.hosty-panel-notice,.hosty-panel-review,.hosty-tool-chooser,.hosty-panel-error),html[data-hosty-theme=dark] :is(.hosty-panel-rail,.hosty-panel-body,.hosty-panel-notice,.hosty-panel-review,.hosty-tool-chooser,.hosty-panel-error){--hp-bg:var(--hosty-panel-background,#14171c);--hp-fg:var(--hosty-panel-foreground,#f0f2f5);--hp-muted:var(--hosty-panel-muted,#a2aab7);--hp-border:var(--hosty-panel-border,#323843)}
 .hosty-panel-document{flex:1;min-width:0;min-height:0;overflow:auto}.hosty-panel-rail{order:3;flex:0 0 48px;display:flex;flex-direction:column;align-items:center;gap:8px;padding:10px 0;border-left:1px solid var(--hp-border);overflow:auto}
-.hosty-panel-workspace button,.hosty-panel-workspace a{font:inherit}.hosty-panel-rail button,.hosty-panel-body header button,.hosty-panel-body header a,.hosty-tool-chooser header button{position:relative;display:grid;place-items:center;flex-shrink:0;border:1px solid transparent;border-radius:8px;width:32px;height:32px;padding:0;background:transparent;color:inherit;font:500 13px system-ui;cursor:pointer;text-decoration:none}
+.hosty-panel-review button,.hosty-tool-chooser li>button{font:inherit}.hosty-panel-rail button,.hosty-panel-body header button,.hosty-panel-body header a,.hosty-tool-chooser header button{position:relative;display:grid;place-items:center;flex-shrink:0;border:1px solid transparent;border-radius:8px;width:32px;height:32px;padding:0;background:transparent;color:inherit;font:500 13px system-ui;cursor:pointer;text-decoration:none}
 .hosty-panel-rail button:hover,.hosty-panel-rail button[aria-expanded=true]{border-color:var(--hp-border);background:color-mix(in srgb,var(--hp-fg) 8%,transparent)}
-.hosty-panel-workspace :focus-visible{outline:2px solid #5286ee;outline-offset:2px}.hosty-panel-attention{position:absolute;top:0;right:1px;color:#e9a52b;font-size:20px}
+.hosty-panel-rail>button:focus-visible,
+.hosty-panel-body>header>button:focus-visible,
+.hosty-panel-body>header>a:focus-visible,
+.hosty-panel-resize:focus-visible,
+.hosty-panel-backdrop:focus-visible,
+.hosty-panel-review:focus-visible,
+.hosty-panel-state>a:focus-visible,
+.hosty-panel-state>select:focus-visible,
+.hosty-panel-notice button:focus-visible,
+.hosty-panel-notice a:focus-visible,
+.hosty-tool-chooser button:focus-visible,
+.hosty-tool-chooser a:focus-visible,
+.hosty-panel-error>button:focus-visible,
+.hosty-navigation button:focus-visible,
+.hosty-navigation a:focus-visible,
+.hosty-navigation-dialog button:focus-visible,
+.hosty-navigation-dialog a:focus-visible,
+.hosty-child-tools>button:focus-visible{outline:2px solid #5286ee;outline-offset:2px}.hosty-panel-attention{position:absolute;top:0;right:1px;color:#e9a52b;font-size:20px}
 .hosty-panel-body{order:2;display:flex;flex:0 0 var(--hosty-panel-width);flex-direction:column;position:relative;min-width:0;min-height:0;margin-left:12px;border-left:1px solid var(--hp-border);background:var(--hp-bg)}
 .hosty-panel-body[hidden],.hosty-panel-frame[hidden]{display:none}.hosty-panel-body header,.hosty-tool-chooser header{display:flex;align-items:center;gap:6px;min-height:44px;padding:0 10px;border-bottom:1px solid var(--hp-border);font:500 13px system-ui}.hosty-panel-body header strong,.hosty-tool-chooser header strong{flex:1}
 .hosty-panel-focus-guard{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}

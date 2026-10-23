@@ -3,11 +3,14 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { WorkspaceDetails } from "./workspace-details";
-import { developmentRequest, type DevelopmentWorkspace } from "@/lib/development-api";
+import { developmentRequest, DevelopmentRequestError, type DevelopmentWorkspace } from "@/lib/development-api";
 vi.mock("@/lib/development-api", async original => ({ ...await original<object>(), developmentRequest: vi.fn() }));
+vi.mock("@/lib/workspace-applications", async original => ({ ...await original<object>(), useWorkspaceApplications: () => ({ applications: [], loading: false, error: "", refresh: () => {} }) }));
 let root: Root, container: HTMLDivElement;
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); localStorage.clear();
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  Element.prototype.scrollIntoView = vi.fn();
+  Element.prototype.hasPointerCapture = vi.fn(() => false); localStorage.clear();
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });
@@ -19,22 +22,28 @@ const workspace = (): DevelopmentWorkspace => ({ id: "workspace", state: "active
 function replies(w: DevelopmentWorkspace) {
   vi.mocked(developmentRequest).mockImplementation(async (path = "") => {
     if (path.endsWith("/previews")) return { environments: [], instances: [], applications: {} } as never;
+    if (path.includes("/review?")) {
+      const query = new URLSearchParams(path.split("?")[1]);
+      if (query.get("scope") !== "pull-request") throw new DevelopmentRequestError("Endpoint unavailable", "workspace_failed", 404);
+      return { source: { scope: "pull-request", label: "Published PR", base: "base", head: "published", revision: "pr-revision", observedAt: "", pullRequestUrl: query.get("pullRequestUrl"), published: true, notPublished: false }, files: [], threads: [], truncated: false } as never;
+    }
     if (path.includes("/diff?")) return { combined: "+new text", binary: false, truncated: false } as never;
     return w.worktrees.find(t => path.split("?")[0].endsWith(t.id)) as never;
   });
 }
+async function expandCards() { for (const button of container.querySelectorAll<HTMLButtonElement>('[data-slot="pull-request-card"] > button')) if (button.getAttribute("aria-expanded") !== "true") await act(async () => button.click()); }
 it("shows each repository and honestly missing CI; opens a repository-specific diff without a sandbox section", async () => {
   const w = workspace(); replies(w);
   await act(async () => root.render(<WorkspaceDetails workspace={w} title="Multi-repo change" refresh={() => {}} />));
-  expect(container.textContent).toContain("one · CI unknown"); expect(container.textContent).toContain("two · CI unknown");
+  expect(container.querySelector('[aria-label^="Expand one #1"]')).not.toBeNull(); expect(container.querySelector('[aria-label^="Expand two #1"]')).not.toBeNull(); expect(container.textContent).toContain("CI unknown");
   expect(container.querySelector('[aria-label="Sandbox previews"]')).toBeNull();
-  const changes = [...container.querySelectorAll("button")].filter(b => b.textContent?.startsWith("Changes"));
+  const changes = [...container.querySelectorAll("button")].filter(b => b.textContent?.startsWith("Session changes"));
   expect(changes).toHaveLength(2);
   await act(async () => changes[1].click());
   expect(developmentRequest).toHaveBeenCalledWith(expect.stringContaining("/workspace/worktrees/two/diff?"), undefined, expect.any(AbortSignal));
   await vi.waitFor(async () => {
     await act(async () => {});
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("+new text");
+    expect(document.querySelector('[aria-label="Workspace review"]')?.textContent).toContain("+new text");
   });
 });
 it("recovers deletion from Core after browser storage loss and keeps the original revision and UUID", async () => {
@@ -57,7 +66,8 @@ it("keeps each PR's repository, head evidence, failed checks and review threads 
   } }, { url: "https://example.test/one/pull/2", observation: { title: "Earlier change", at: "2026-01-01", state: "merged", draft: false, unresolvedThreads: 0, checks: [] } }];
   replies(w);
   await act(async () => root.render(<WorkspaceDetails workspace={w} title="PR evidence" refresh={() => {}} />));
-  expect(container.textContent).toContain("one · CI 2/2 · 7 discussion comments");
+  await expandCards();
+  expect(container.textContent).toContain("7 discussion comments");
   expect(container.textContent).not.toContain("Tests: FAILURE");
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   const checks = container.querySelector<HTMLButtonElement>('[aria-label="one #3: CI 2/2, show checks"]')!;
@@ -68,9 +78,9 @@ it("keeps each PR's repository, head evidence, failed checks and review threads 
   expect(popover.textContent).toContain("Tests");
   expect(popover.textContent).toContain("Failure");
   expect(popover.textContent).not.toContain("Earlier change");
-  expect(container.textContent).toContain("CHANGES_REQUESTED · 2 unresolved threads");
-  expect(container.textContent).toContain("merged · Stale / unobserved");
-  expect(container.textContent).toContain("two · CI unknown");
+  expect(container.textContent).toContain("Changes requested"); expect(container.textContent).toContain("2 unresolved threads");
+  expect(container.textContent).toContain("Merged"); expect(container.textContent).toContain("Outdated");
+  expect(container.textContent).toContain("CI unknown");
 });
 
 it("labels external ownership and per-repository observation age without implying agent activity", async () => {
@@ -81,7 +91,7 @@ it("labels external ownership and per-repository observation age without implyin
   expect(container.textContent).toContain("External work: External QA");
   expect(container.textContent).toContain("Conversation and agent activity are not synchronized.");
   expect(container.querySelector("time")?.dateTime).toBe("2020-01-01T00:00:00Z");
-  expect(container.textContent).toContain("Stale");
+  await expandCards(); expect(container.textContent).toContain("Outdated");
   expect(container.textContent).toContain("Observation unavailable");
 });
 
@@ -93,21 +103,21 @@ it("retains each repository's file and scope after closing its diff", async () =
   }
   replies(w);
   await act(async () => root.render(<WorkspaceDetails workspace={w} title="Remember diff" refresh={() => {}} />));
-  const changes = [...container.querySelectorAll("button")].filter(b => b.textContent?.startsWith("Changes"));
+  const changes = [...container.querySelectorAll("button")].filter(b => b.textContent?.startsWith("Session changes"));
   await act(async () => changes[0].click());
-  await act(async () => [...document.querySelectorAll('[role="dialog"] button')].find(b => b.textContent === "details.txt")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await act(async () => [...document.querySelectorAll('[aria-label="Changed files"] button')].find(b => b.textContent?.startsWith("details.txt"))!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
   await act(async () => {
-    const scope = document.querySelector<HTMLSelectElement>('[aria-label="Diff scope"]')!;
-    scope.value = "local"; scope.dispatchEvent(new Event("change", { bubbles: true }));
+    document.querySelector<HTMLButtonElement>('[aria-label="Diff scope"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   });
-  const close = () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent === "Close")!;
+  await act(async () => { [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(node => node.textContent === "Uncommitted changes")!.click(); });
+  const close = () => [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Workspace review"] button')].find(b => b.textContent === "Back to session")!;
   await act(async () => close().click());
   await act(async () => changes[1].click());
-  expect(document.querySelector<HTMLSelectElement>('[aria-label="Diff scope"]')!.value).toBe("session");
+  expect(document.querySelector('[aria-label="Diff scope"]')!.textContent).toBe("All workspace changes");
   await act(async () => close().click());
   await act(async () => changes[0].click());
-  expect(document.querySelector<HTMLSelectElement>('[aria-label="Diff scope"]')!.value).toBe("local");
-  expect(document.querySelector('[aria-label="Changed files"] [aria-current="true"]')?.textContent).toBe("details.txt");
+  expect(document.querySelector('[aria-label="Diff scope"]')!.textContent).toBe("Uncommitted changes");
+  expect(document.querySelector('[aria-label="Changed files"] [aria-current="true"]')?.textContent).toContain("details.txt");
 });
 
 
@@ -116,7 +126,7 @@ it("uses refreshed workflow state and stops offering a successful journal reques
   localStorage.setItem("hosty.workspace.action.workspace", JSON.stringify({ kind: "complete", requestId: id, expectedRevision: 0 }));
   replies(w);
   await act(async () => root.render(<WorkspaceDetails workspace={w} title="Refresh" refresh={() => {}} />));
-  expect(container.textContent).toContain("Pending action: complete");
+  expect(container.textContent).toContain("Action outcome unconfirmed: complete");
   const updated = { ...w, workflow: { state: "completed", revision: 1, operations: [{ id, kind: "complete", expectedRevision: 0, state: "succeeded" }] } };
   await act(async () => root.render(<WorkspaceDetails workspace={updated} title="Refresh" refresh={() => {}} />));
   expect(container.textContent).toContain("completed");
@@ -190,7 +200,7 @@ it("clears a recovered detail-read error without retaining a stale authenticatio
   replies(w);
   await act(async () => root.render(<WorkspaceDetails workspace={{ ...w }} title="Recovery" refresh={() => {}} />));
   expect(container.textContent).not.toContain("Temporary access failure");
-  expect(container.textContent).toContain("one · CI unknown");
+  expect(container.textContent).toContain("CI unknown");
 });
 
 
@@ -260,4 +270,307 @@ it("uses the workspace name and renames it without running an app or altering so
   expect(refresh).toHaveBeenCalledOnce();
   await act(async () => root.render(<WorkspaceDetails workspace={{ ...w, name: "Runtime switch controls" }} title="Conversation title" refresh={refresh} />));
   expect(container.querySelector("h2")?.textContent).toBe("Runtime switch controls");
+});
+
+it("opens the exact bound PR and repository in review while retaining GitHub and CI controls", async () => {
+  const w = workspace(); replies(w); const onReview = vi.fn();
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="PR review" refresh={() => {}} onReview={onReview} />));
+  await expandCards();
+  const review = container.querySelector<HTMLButtonElement>('[aria-label="Review changes for two #1"]')!;
+  expect(review).toBeDefined();
+  await act(async () => review.click());
+  expect(onReview).toHaveBeenCalledExactlyOnceWith(w.worktrees[1], { view: "pr:https://example.test/two/pull/1", path: "" });
+  expect(container.querySelector('a[href="https://example.test/two/pull/1"]')).not.toBeNull();
+  expect(container.textContent).toContain("CI unknown");
+  expect(container.querySelector('[aria-label="Workspace review"]')).toBeNull();
+});
+
+it("opens a PR-specific review without a parent callback and keeps released PR links available", async () => {
+  const w = workspace(); w.worktrees[0].state = "released"; replies(w);
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="PR fallback" refresh={() => {}} />));
+  await expandCards();
+  expect(container.querySelector<HTMLButtonElement>('[aria-label="Review changes for one #1"]')!.disabled).toBe(true);
+  expect(container.querySelector('a[href="https://example.test/one/pull/1"]')).not.toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Review changes for two #1"]')!.click());
+  await vi.waitFor(() => expect(container.querySelector('[aria-label="Workspace review"]')).not.toBeNull());
+  expect(container.querySelector('[aria-label="Diff scope"]')?.textContent).toContain("PR: https://example.test/two/pull/1");
+});
+
+it("keeps bound app icons and collapsed consumer diagnostics without obsolete management links", async () => {
+  const w = workspace();
+  w.worktrees[0].leases = ["diagnostic-lease"];
+  w.worktrees[0].apps = [{ appId: "hosty.shell", name: "Shell" }];
+  w.worktrees[0].consumers = [
+    { kind: "local-service", reference: "hosty.shell/web", name: "Shell", managementUrl: "https://core.test/manage/shell" },
+    { kind: "core-runtime", reference: "hosty:core", name: "Core" },
+    { kind: "dev-runtime", reference: "outside.worker/service", name: "Unbound worker" },
+  ];
+  const metadata = [
+    { id: "hosty.shell", displayName: "Shell", available: true, iconUrl: "http://127.0.0.1:7070/api/apps/hosty.shell/assets/assets/custom.svg?v=1" },
+    { id: "hosty.harness", displayName: "Harness", available: true, iconUrl: "https://images.test/harness.svg" },
+  ];
+  replies(w);
+  const render = (appMetadata = metadata) => act(async () => root.render(<WorkspaceDetails workspace={w} title="Manifest icons" appMetadata={appMetadata} refresh={vi.fn()} />));
+  await render();
+  const images = [...container.querySelectorAll<HTMLImageElement>("img")];
+  expect(images).toHaveLength(2);
+  expect(images.every(image => image.src === `http://${window.location.hostname}:7070/api/apps/hosty.shell/assets/assets/custom.svg?v=1`)).toBe(true);
+  expect(container.querySelector('a[href="https://core.test/manage/shell"]')).toBeNull();
+  expect(container.textContent).not.toContain("Manage application");
+  expect(container.querySelector('[aria-label="Applications using source"]')).toBeNull();
+  const diagnostics = container.querySelector<HTMLDetailsElement>('[aria-label="Workspace activity diagnostics"]')!;
+  expect(diagnostics.open).toBe(false);
+  expect(diagnostics.textContent).toContain("Core · core-runtime · hosty:core");
+  expect(diagnostics.textContent).toContain("Unbound worker · dev-runtime · outside.worker/service");
+  expect(diagnostics.textContent).toContain("Lease: diagnostic-lease");
+  expect(diagnostics.textContent).toContain("Stop or return active runtimes");
+  const reads = vi.mocked(developmentRequest).mock.calls.length;
+  await render(metadata.map(app => ({ ...app, iconUrl: app.iconUrl.replace("v=1", "v=2") })));
+  expect([...container.querySelectorAll<HTMLImageElement>("img")].every(image => image.src.includes("custom.svg?v=2"))).toBe(true);
+  await render([]);
+  expect(container.querySelector("img")).toBeNull();
+  expect(container.querySelector('[aria-label="Workspace activity diagnostics"]')?.textContent).toContain("Shell · local-service · hosty.shell/web");
+  expect(container.querySelector('[aria-label="Workspace applications"]')?.textContent).toContain("Shell");
+  expect(vi.mocked(developmentRequest).mock.calls).toHaveLength(reads);
+});
+
+
+const workflowJournal = "hosty.workspace.action.workspace";
+type Workflow = DevelopmentWorkspace["workflow"];
+function workflowReplies(w: DevelopmentWorkspace, action: (body: Record<string, unknown>) => Workflow | Promise<Workflow>, read: () => Workflow | Promise<Workflow>) {
+  replies(w);
+  const fallback = vi.mocked(developmentRequest).getMockImplementation()!;
+  vi.mocked(developmentRequest).mockImplementation(async (path = "", body, signal) => {
+    if (path === "/workspace/workflow") return await read() as never;
+    if (path.startsWith("/workspace/workflow/")) return await action(body!) as never;
+    return await fallback(path, body, signal) as never;
+  });
+}
+async function chooseWorkflowAction(label: string) {
+  await act(async () => container.querySelector('[aria-label="Workspace actions"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  const entry = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === label)!;
+  expect(entry.getAttribute("aria-disabled")).not.toBe("true");
+  await act(async () => entry.click());
+}
+const retryWorkflowAction = () => act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Retry action")!.click());
+
+it.each([
+  ["workspace_dirty", "Commit or resolve every repository's changes before completing or deleting the workspace."],
+  ["workspace_unmerged", "Current commits are not merged in https://example.test/one.git."],
+  ["workspace_in_use", "An agent still holds an activity lease. Stop it and verify its exit first."],
+])("reconciles a definite %s refusal and permits a fresh action at the observed revision", async (code, message) => {
+  const w = workspace(); w.owner = { kind: "external", label: "External QA", reference: "task" };
+  const requests: Record<string, unknown>[] = [];
+  workflowReplies(w, body => {
+    requests.push(body);
+    if (requests.length === 1) throw new DevelopmentRequestError(message, code, 409);
+    return { state: "completed", revision: 4 };
+  }, () => ({ state: "in-progress", revision: 3 }));
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Unwanted work" refresh={vi.fn()} />));
+  await chooseWorkflowAction("Complete workspace");
+  expect(requests).toHaveLength(1); expect(requests[0]).toMatchObject({ expectedRevision: 0 });
+  expect(vi.mocked(developmentRequest).mock.calls.some(([path]) => path === "/workspace/workflow")).toBe(true);
+  expect(localStorage.getItem(workflowJournal)).toBeNull();
+  expect(container.textContent).toContain(message); expect(container.textContent).not.toContain("Pending action:");
+  expect([...container.querySelectorAll("button")].some(button => button.textContent === "Retry action")).toBe(false);
+  await chooseWorkflowAction("Complete workspace");
+  expect(requests).toHaveLength(2); expect(requests[1]).toMatchObject({ expectedRevision: 3 });
+  expect(requests[1].requestId).not.toBe(requests[0].requestId);
+  expect(localStorage.getItem(workflowJournal)).toBeNull(); expect(container.textContent).not.toContain(message);
+});
+
+it("accepts an authoritative succeeded receipt after a rejected response without retaining its error", async () => {
+  const w = workspace();
+  let request: Record<string, unknown> = {};
+  workflowReplies(w, body => {
+    request = body; throw new DevelopmentRequestError("Workspace changed. Refresh before choosing an action.", "workspace_revision_conflict", 409);
+  }, () => ({ state: "completed", revision: 1, operations: [{ id: String(request.requestId), kind: "complete", expectedRevision: 0, state: "succeeded" }] }));
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Confirmed completion" refresh={vi.fn()} />));
+  await chooseWorkflowAction("Complete workspace");
+  expect(container.textContent).toContain("completed");
+  expect(container.textContent).not.toContain("Workspace changed. Refresh before choosing an action.");
+  expect(container.textContent).not.toContain("Pending action:"); expect(localStorage.getItem(workflowJournal)).toBeNull();
+});
+
+it.each([
+  { kind: "pause", receipt: "pending", observed: { state: "in-progress", closure: "closing", revision: 4 } },
+  { kind: "delete", receipt: "pending", observed: { state: "deleting", revision: 4 } },
+  { kind: "pause", receipt: "unknown", observed: { state: "in-progress", closure: "closing", revision: 4 } },
+  { kind: "delete", receipt: "unknown", observed: { state: "deleting", revision: 4 } },
+])("retains the original $kind request after a 409 with a matching $receipt receipt", async ({ kind, receipt, observed }) => {
+  const w = workspace(), request = { kind, requestId: "3402bd15-80e9-43c3-b62e-ef0574232cd4", expectedRevision: 4 };
+  w.workflow = { state: kind === "delete" ? "completed" : "in-progress", revision: 4 };
+  localStorage.setItem(workflowJournal, JSON.stringify(request));
+  const requests: Record<string, unknown>[] = [];
+  workflowReplies(w, body => {
+    requests.push(body);
+    if (requests.length === 1) throw new DevelopmentRequestError("The action still requires recovery.", "workspace_in_use", 409);
+    return { state: kind === "delete" ? "deleted" : "in-progress", ...(kind === "pause" ? { closure: "closed" } : {}), revision: 5 };
+  }, () => ({ ...observed, operations: [{ id: request.requestId, kind, expectedRevision: 4, state: receipt }] }));
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Recovery" refresh={vi.fn()} />));
+  await retryWorkflowAction();
+  expect(JSON.parse(localStorage.getItem(workflowJournal)!)).toEqual(request);
+  expect(container.textContent).toContain(`${receipt === "pending" ? "Pending action" : "Action outcome unconfirmed"}: ${kind}`);
+  expect(container.textContent).not.toContain("Dismiss");
+  await retryWorkflowAction();
+  expect(requests).toEqual(Array.from({ length: 2 }, () => ({ requestId: request.requestId, expectedRevision: 4 })));
+  expect(localStorage.getItem(workflowJournal)).toBeNull();
+});
+
+it.each([
+  { state: "in-progress", closure: "closing", revision: 3 },
+  { state: "deleting", revision: 3 },
+])("retains an unconfirmed request when the authoritative workflow is protected: %j", async observed => {
+  const w = workspace(), request = { kind: "complete", requestId: "ba9421be-e659-434f-a700-d5ef58d16b79", expectedRevision: 2 };
+  w.workflow = { state: "in-progress", revision: 2 };
+  localStorage.setItem(workflowJournal, JSON.stringify(request));
+  workflowReplies(w, () => { throw new DevelopmentRequestError("Source cleanup or pause has started.", "workspace_workflow_closed", 409); }, () => observed);
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Protected work" refresh={vi.fn()} />));
+  await retryWorkflowAction();
+  expect(JSON.parse(localStorage.getItem(workflowJournal)!)).toEqual(request);
+  expect(container.textContent).toContain("Action outcome unconfirmed: complete"); expect(container.textContent).not.toContain("Dismiss");
+});
+
+it("retains a refused request when its authoritative workflow cannot be read", async () => {
+  const w = workspace(), request = { kind: "complete", requestId: "e0a13488-f4f4-4db8-82ee-81a73c14449d", expectedRevision: 0 };
+  localStorage.setItem(workflowJournal, JSON.stringify(request));
+  workflowReplies(w, () => { throw new DevelopmentRequestError("Source is dirty.", "workspace_dirty", 409); }, () => { throw new Error("Workflow status is unavailable."); });
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Uncertain status" refresh={vi.fn()} />));
+  await retryWorkflowAction();
+  expect(JSON.parse(localStorage.getItem(workflowJournal)!)).toEqual(request);
+  expect(container.textContent).toContain("Action outcome unconfirmed: complete");
+  expect(container.textContent).toContain("Source is dirty.");
+});
+
+it.each([
+  new Error("Connection lost before the outcome was received."),
+  new DevelopmentRequestError("Core is temporarily unavailable.", "workspace_failed", 503),
+  ...[408, 425, 429].map(status => new DevelopmentRequestError("Retryable request outcome is not confirmed.", "workspace_retry", status)),
+])("keeps the original recovery identity after an uncertain action response: %s", async failure => {
+  const w = workspace(), request = { kind: "complete", requestId: "616cb7c6-7079-41be-8b80-0ce5c16d9cd2", expectedRevision: 0 };
+  localStorage.setItem(workflowJournal, JSON.stringify(request));
+  const requests: Record<string, unknown>[] = [];
+  workflowReplies(w, body => {
+    requests.push(body);
+    if (requests.length === 1) throw failure;
+    return { state: "completed", revision: 1 };
+  }, () => ({ state: "in-progress", revision: 0 }));
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Uncertain outcome" refresh={vi.fn()} />));
+  await retryWorkflowAction();
+  expect(JSON.parse(localStorage.getItem(workflowJournal)!)).toEqual(request);
+  expect(container.textContent).toContain("Action outcome unconfirmed: complete");
+  await retryWorkflowAction();
+  expect(requests).toEqual(Array.from({ length: 2 }, () => ({ requestId: request.requestId, expectedRevision: 0 })));
+  expect(localStorage.getItem(workflowJournal)).toBeNull();
+});
+
+
+it.each([
+  { kind: "resume", expectedRevision: 0 },
+  { kind: "complete", expectedRevision: 1 },
+])("does not treat a same-ID succeeded receipt for different arguments as completion: %j", async receipt => {
+  const w = workspace(), request = { kind: "complete", requestId: "40dcc32c-2044-4610-978f-b0c210555723", expectedRevision: 0 };
+  localStorage.setItem(workflowJournal, JSON.stringify(request));
+  workflowReplies(w, () => { throw new DevelopmentRequestError("Reuse the original workspace action and revision.", "workspace_request_conflict", 409); },
+    () => ({ state: "in-progress", revision: 2, operations: [{ id: request.requestId, ...receipt, state: "succeeded" }] }));
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Conflicting receipt" refresh={vi.fn()} />));
+  await retryWorkflowAction();
+  expect(JSON.parse(localStorage.getItem(workflowJournal)!)).toEqual(request);
+  expect(container.textContent).toContain("Action outcome unconfirmed: complete");
+  expect(container.textContent).toContain("Reuse the original workspace action and revision.");
+  expect([...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Retry action")?.disabled).toBe(false);
+  expect(developmentRequest).toHaveBeenCalledWith("/workspace/workflow/complete", { requestId: request.requestId, expectedRevision: 0 });
+});
+
+it("keeps discard recovery separate from generic lifecycle retry after browser storage loss", async () => {
+  const w = workspace(); const requestId = "94fcd992-875a-46dd-a729-a4ae6b0f0b69";
+  w.workflow = { state: "deleting", closure: "closed", revision: 4, operations: [{ id: requestId, kind: "discard", expectedRevision: 3, state: "pending" }] }; replies(w);
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Remove" refresh={() => {}} />));
+  expect(container.textContent).toContain("Workspace removal is pending");
+  expect([...container.querySelectorAll("button")].some(button => button.textContent === "Retry action")).toBe(false);
+  vi.mocked(developmentRequest).mockImplementationOnce(async () => ({ workspaceId: "workspace", requestId, state: "pending", command: { requestId, expectedRevision: 3, digest: "same-review", confirmationName: "Remove" }, trees: [], resources: [] }));
+  await act(async () => [...container.querySelectorAll("button")].find(button => button.textContent === "Recover removal")!.click());
+  expect(developmentRequest).toHaveBeenLastCalledWith(`/workspace/discard/status?requestId=${requestId}`, undefined, expect.any(AbortSignal));
+  expect(developmentRequest).not.toHaveBeenCalledWith("/workspace/workflow/discard", expect.anything());
+});
+
+
+it("shows completion progress through the action and refusal check without premature recovery controls", async () => {
+  const w = workspace(); w.owner = { kind: "external", label: "External QA", reference: "task" };
+  w.worktrees[0].leases = ["external-writer-lease"];
+  let rejectAction!: (error: unknown) => void;
+  let resolveRead!: (value: Workflow) => void;
+  const action = new Promise<Workflow>((_, reject) => { rejectAction = reject; });
+  const observed = new Promise<Workflow>(resolve => { resolveRead = resolve; });
+  const requests: Record<string, unknown>[] = [];
+  workflowReplies(w, body => { requests.push(body); return action; }, () => observed);
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Leased work" refresh={vi.fn()} />));
+  await chooseWorkflowAction("Complete workspace");
+  const expectProgress = () => {
+    expect([...container.querySelectorAll('[role="status"]')].some(status => status.textContent === "Completing workspace…")).toBe(true);
+    expect([...container.querySelectorAll("button")].some(button => button.textContent === "Retry action" || button.textContent === "Dismiss")).toBe(false);
+    expect(container.textContent).not.toContain("Pending action:");
+    expect(container.textContent).not.toContain("Action outcome unconfirmed:");
+  };
+  expectProgress();
+  expect(requests).toHaveLength(1);
+  expect(JSON.parse(localStorage.getItem(workflowJournal)!)).toMatchObject({ kind: "complete", ...requests[0] });
+  const message = "An agent still holds an activity lease. Stop it and verify its exit first.";
+  await act(async () => rejectAction(new DevelopmentRequestError(message, "workspace_in_use", 409)));
+  expect(developmentRequest).toHaveBeenCalledWith("/workspace/workflow");
+  expectProgress();
+  expect(localStorage.getItem(workflowJournal)).not.toBeNull();
+  await act(async () => resolveRead({ state: "in-progress", revision: 3 }));
+  expect(localStorage.getItem(workflowJournal)).toBeNull();
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain(message);
+  expect(container.textContent).not.toContain("Completing workspace…");
+  expect([...container.querySelectorAll("button")].some(button => button.textContent === "Retry action" || button.textContent === "Dismiss")).toBe(false);
+  expect(container.textContent).toContain("Pause this workspace, then confirm that the external agent and its commands have stopped.");
+  expect([...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Pause workspace")?.disabled).toBe(false);
+  await act(async () => container.querySelector('[aria-label="Workspace actions"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  for (const label of ["Complete workspace", "Pause workspace", "Discard and remove workspace…"]) {
+    const entry = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === label);
+    expect(entry).toBeDefined();
+    expect(entry!.getAttribute("aria-disabled")).not.toBe("true");
+  }
+  expect(requests).toHaveLength(1);
+});
+
+it("lets a local-only uncertain journal open read-only discard review without replacing its recovery identity", async () => {
+  const w = workspace(), request = { kind: "complete", requestId: "ba3c2cc8-b85b-4b12-8f64-fbec4bab51d3", expectedRevision: 0 };
+  localStorage.setItem(workflowJournal, JSON.stringify(request));
+  replies(w);
+  const fallback = vi.mocked(developmentRequest).getMockImplementation()!;
+  vi.mocked(developmentRequest).mockImplementation(async (path = "", body, signal) => path === "/workspace/discard/plan"
+    ? { workspaceId: w.id, name: "Unwanted work", revision: 0, digest: "read-only-review", expiresAt: new Date(Date.now() + 60000).toISOString(),
+      trees: [], resources: [], blockers: ["Pause active writers before removal."] } as never
+    : await fallback(path, body, signal) as never);
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Unwanted work" refresh={vi.fn()} />));
+  expect(container.textContent).toContain("Action outcome unconfirmed: complete");
+  await chooseWorkflowAction("Discard and remove workspace…");
+  expect(developmentRequest).toHaveBeenCalledWith("/workspace/discard/plan", undefined, expect.any(AbortSignal));
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Discard and remove workspace?");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Pause active writers before removal.");
+  expect(vi.mocked(developmentRequest).mock.calls.every(([, body]) => body === undefined)).toBe(true);
+  expect(JSON.parse(localStorage.getItem(workflowJournal)!)).toEqual(request);
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent === "Keep workspace")!.click());
+  expect([...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Retry action")?.disabled).toBe(false);
+  expect(JSON.parse(localStorage.getItem(workflowJournal)!)).toEqual(request);
+});
+
+it.each(["pending", "unknown"])("keeps discard review disabled for a Core %s receipt without a local journal", async receipt => {
+  const w = workspace(), requestId = "51229231-6b3b-4803-8728-904b7215b2a7";
+  w.workflow = { state: "in-progress", revision: 0, operations: [{ id: requestId, kind: "complete", expectedRevision: 0, state: receipt }] };
+  replies(w);
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Core recovery" refresh={vi.fn()} />));
+  expect(container.textContent).toContain(`${receipt === "pending" ? "Pending action" : "Action outcome unconfirmed"}: complete`);
+  expect([...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Retry action")?.disabled).toBe(false);
+  expect([...container.querySelectorAll("button")].some(button => button.textContent === "Dismiss")).toBe(false);
+  await act(async () => container.querySelector('[aria-label="Workspace actions"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  const entry = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === "Discard and remove workspace…");
+  expect(entry).toBeDefined();
+  expect(entry?.getAttribute("aria-disabled")).toBe("true");
+  expect(vi.mocked(developmentRequest).mock.calls.some(([path]) => path === "/workspace/discard/plan")).toBe(false);
+  expect(vi.mocked(developmentRequest).mock.calls.every(([, body]) => body === undefined)).toBe(true);
+  expect(localStorage.getItem(workflowJournal)).toBeNull();
 });

@@ -15,7 +15,6 @@ import { useAppUpdateNotifications } from "./shell/update-notifications";
 
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LoaderCircle } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { toast, AssistantFeedbackContext, errorReportText, type ErrorReport } from "@/components/reui/operation-toast";
@@ -41,6 +40,7 @@ import { useAssistantSessionLink } from "./shell/assistant/use-assistant-session
 import { useAssistantPresentation } from "./shell/assistant/use-assistant-presentation";
 import { assistantMessageFor, assistantSupportsContext, createAppSession, createErrorSession, createHandoff, pendingAssistantIntent, toggleAssistantPanel } from "./shell/assistant/assistant-client";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
+import { ShellMobileTabs } from "./shell/chrome/shell-mobile-tabs";
 import { ShellTopStrip } from "./shell/chrome/shell-top-strip";
 import { useHostyUiHost } from "@hosty-sdk/app/ui/react";
 import { ShellPanelWorkspace } from "./shell/chrome/shell-panel-workspace";
@@ -85,7 +85,6 @@ import type {
   CoreBackupCleanupPlan,
   CoreSettingsState,
   CoreGlobalMount,
-  CoreRemovalImpact,
   AppExecutionSelection,
   AppExecutionResult,
   CoreStatus,
@@ -97,7 +96,6 @@ import type {
   MountBindingInput,
   LoadState,
   OpenPanelOptions,
-  RemoveOptions,
   SessionResponse,
   WorkspaceRoute,
 } from "./shell/types";
@@ -201,11 +199,21 @@ export function ShellClient({
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [pendingAppActions, setPendingAppActions] = useState<Record<string, AppAction>>({});
   const appActionActivations = useRef(new Set<string>());
-  const [dialogPanel, setActivePanel] = useState<ActivePanel | null>(null);
-  const managementAppId = shellRoute.view === "settings" && shellRoute.settingsTab.startsWith("manage:") && state.session?.user?.role === "host.admin" ? shellRoute.settingsTab.slice(7) : null;
-  const managementTab = (["app", "permissions", "publicOrigins", "mounts", "source", "backups"].includes(searchParams?.get("section") ?? "") ? searchParams?.get("section") : "app") as NonNullable<ActivePanel["settingsTab"]>;
+  const [panelSelection, setActivePanel] = useState<ActivePanel | null>(null);
+  // A previously loaded bundle may retain the retired Shell removal panel; dismiss it without a mutation.
+  const dialogPanel = panelSelection?.view === "remove" ? null : panelSelection;
+  const managementTab = shellRoute.appDetails?.section ?? "app";
+  const requestedManagementAppId = shellRoute.appDetails?.appId ?? null;
+  // Preserve the existing logs entry for visible apps without exposing management controls.
+  // Core still enforces authorization on the log read itself.
+  const logsPageAccessible = Boolean(state.session?.authenticated && requestedManagementAppId && managementTab === "logs"
+    && state.apps.some(app => app.id === requestedManagementAppId && app.capabilities.includes("logs")));
+  const managementAppId = state.session?.user?.role === "host.admin" || logsPageAccessible ? requestedManagementAppId : null;
   const activePanel = useMemo<ActivePanel | null>(() => dialogPanel ?? (managementAppId ? { appId: managementAppId, view: managementTab === "backups" ? "backups" : "settings", settingsTab: managementTab } : null), [dialogPanel, managementAppId, managementTab]);
-  const openUpdateLogs = useCallback((app: CoreApp) => setActivePanel({ appId: app.id, view: "logs" }), []);
+  const openUpdateLogs = useCallback((app: CoreApp) => {
+    setActivePanel(null);
+    router.push(getManageAppHref(app.id, "logs"), { scroll: false });
+  }, [router]);
   useAppUpdateNotifications(state.apps, openUpdateLogs);
   const [detailPanel, setDetailPanel] = useState<DetailPanelState>(emptyDetailPanelState);
   const [installOpen, setInstallOpen] = useState(false);
@@ -226,16 +234,14 @@ export function ShellClient({
   const coreUpdateProbeGeneration = useRef(0);
   const coreUpdateProbeAbort = useRef<AbortController | null>(null);
   const coreUpdateProbeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Applying an update / switching runtime resets Core's artifact locks, so the cached update-status
-  // owned by the Installed Apps page goes stale (it would keep showing "Update available"). We can't
-  // reach into that page's state from here, so we bump a per-app counter it watches to re-probe.
+  // Runtime switches reset artifact locks. Refresh any open Manage service diagnostics afterwards.
   const [updateStatusInvalidations, setUpdateStatusInvalidations] = useState<Record<string, number>>({});
   const [workspace, setWorkspace] = useState<EmbeddedWorkspace | null>(null);
   const [optimisticWorkspaceRoute, setOptimisticWorkspaceRoute] = useState<WorkspaceRoute | null>(null);
   const [sidebarCompact, setSidebarCompact] = useState(initialSidebarCompact ?? false);
   const [narrowViewport, setNarrowViewport] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const effectiveSidebarCompact = narrowViewport ? !mobileSidebarOpen : sidebarCompact;
+  const [shellWidth, setShellWidth] = useState(0);
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 767px)");
@@ -259,6 +265,22 @@ export function ShellClient({
   const panelHost = useHostyUiHost();
   const assistantSessionParam = readAssistantSessionParam(searchParams.get("assistantSession"));
   const rightPanelOpen = usePanelExpanded(panelHost, initialRightPanelOpen, !!assistantSessionParam);
+  const pageMinimum = shellRoute.view === "dashboard" && !shellRoute.appDetails && !workspace ? 440 : 560;
+  const fitCompact = rightPanelOpen && shellWidth > 0 && shellWidth < 280 + pageMinimum + 320 + 24;
+  const effectiveSidebarCompact = narrowViewport ? !mobileSidebarOpen : sidebarCompact || fitCompact;
+  useEffect(() => {
+    const sync = () => {
+      setShellWidth(window.innerWidth);
+      const viewport = window.visualViewport;
+      const height = viewport?.height ?? window.innerHeight;
+      const keyboard = window.innerWidth < 600 && window.innerHeight - height > 150;
+      document.documentElement.style.setProperty("--shell-visible-height", `${height}px`);
+      document.documentElement.style.setProperty("--shell-phone-tabs-height", keyboard ? "0px" : "calc(60px + env(safe-area-inset-bottom))");
+      document.documentElement.toggleAttribute("data-shell-keyboard", keyboard);
+    };
+    sync(); window.addEventListener("resize", sync); window.visualViewport?.addEventListener("resize", sync);
+    return () => { window.removeEventListener("resize", sync); window.visualViewport?.removeEventListener("resize", sync); document.documentElement.style.removeProperty("--shell-visible-height"); document.documentElement.style.removeProperty("--shell-phone-tabs-height"); document.documentElement.removeAttribute("data-shell-keyboard"); };
+  }, []);
   // Gates the chrome grid's column transition. Off during the initial settle: the right panel
   // column can only appear once /api/apps names a panel-capable app, and animating that data
   // arrival reads as the panel opening by itself on load.
@@ -442,8 +464,10 @@ export function ShellClient({
     );
   }, [coreOrigin]);
 
-  const loadCsrfToken = useCallback(async () => {
-    const response = await fetchCore(`${coreOrigin}/api/auth/csrf`, { credentials: "include" });
+  const loadCsrfToken = useCallback(async (signal?: AbortSignal) => {
+    signal?.throwIfAborted();
+    const response = await fetchCore(`${coreOrigin}/api/auth/csrf`, { credentials: "include", signal });
+    signal?.throwIfAborted();
     redirectToCoreLoginIfAuthRequired(response, coreOrigin);
     if (!response.ok) {
       throw new Error(`CSRF endpoint returned ${response.status}.`);
@@ -453,7 +477,8 @@ export function ShellClient({
   }, [coreOrigin]);
 
   const sendCsrfJson = useCallback(
-    async (endpoint: string, body?: unknown, method = "POST") => {
+    async (endpoint: string, body?: unknown, method = "POST", signal?: AbortSignal) => {
+      signal?.throwIfAborted();
       const previousOperation = csrfOperationQueue.current;
       let releaseOperation = () => {};
       csrfOperationQueue.current = new Promise<void>((resolve) => {
@@ -463,7 +488,11 @@ export function ShellClient({
       await previousOperation.catch(() => undefined);
 
       try {
-        const csrf = await loadCsrfToken();
+        // A workspace operation can outlive its browser actor while waiting in
+        // this queue. Abort before obtaining a token or dispatching its mutation.
+        signal?.throwIfAborted();
+        const csrf = await loadCsrfToken(signal);
+        signal?.throwIfAborted();
         const response = await (endpoint === "/api/assistant/handoff" ? fetch : fetchCore)(endpoint, {
           method,
           credentials: "include",
@@ -472,8 +501,10 @@ export function ShellClient({
             "X-Hosty-CSRF": csrf,
           },
           body: body === undefined ? undefined : JSON.stringify(body),
+          signal,
         });
 
+        signal?.throwIfAborted();
         redirectToCoreLoginIfAuthRequired(response, coreOrigin);
         if (!response.ok) {
           // A CoreRequestError is still an ordinary Error carrying the same message, so every caller that
@@ -1054,6 +1085,12 @@ export function ShellClient({
     }, forceRefresh,
   ), [appEndpoint, coreOrigin, sendCsrfJson]);
 
+  const checkManageAppUpdate = useCallback(async (app: CoreApp) => {
+    const plan = await getUpdatePlan(app, true);
+    await refresh();
+    return plan;
+  }, [getUpdatePlan, refresh]);
+
   const enqueueUpdate = useCallback(
     async (app: CoreApp, planDigest: string, popup = openInstallationConfirmation()) => {
       const actionKey = `${app.id}:update`;
@@ -1220,12 +1257,50 @@ export function ShellClient({
     [appEndpoint, getUpdatePlan, refresh, sendCsrfJson],
   );
 
+  const removalActivations = useRef(new Set<string>());
+  const removeApp = useCallback(async (app: CoreApp) => {
+    if (!canManageApps || removalActivations.current.has(app.id)) return;
+    removalActivations.current.add(app.id);
+    const actionKey = `${app.id}:remove`;
+    setBusyAction(actionKey);
+    // Core owns cleanup choices and their final approval; reserve its window in the click event.
+    const popup = openInstallationConfirmation();
+    let submitted = false;
+    try {
+      const result = await requestAppRemoval(installationClient, app.id, pending => {
+        submitted = true;
+        return showCoreConfirmation(popup, pending);
+      });
+      if (result.status === "denied") {
+        toast.info("App removal cancelled");
+        return;
+      }
+      await refresh();
+      setActivePanel(current => current?.appId === app.id ? null : current);
+      setWorkspace(current => current?.appId === app.id ? null : current);
+      toast.success("App removed", { description: app.displayName });
+    } catch (error) {
+      if (!submitted) popup?.close();
+      if (!isAuthRequiredRedirectError(error)) toast.error("App removal failed", {
+        description: error instanceof Error ? error.message : "Remove failed.",
+      });
+    } finally {
+      removalActivations.current.delete(app.id);
+      setBusyAction(current => current === actionKey ? null : current);
+    }
+  }, [canManageApps, installationClient, refresh]);
+
   const openAppPanel = useCallback(
     (app: CoreApp, view: DetailView, options?: OpenPanelOptions) => {
-      if (view === "settings" || view === "backups") {
+      if (view === "settings" || view === "backups" || view === "logs") {
+        detailRequestRef.current += 1;
         setActivePanel(null);
         setDetailPanel(emptyDetailPanelState());
-        router.push(getManageAppHref(app.id, view === "backups" ? "backups" : options?.settingsTab), { scroll: false });
+        router.push(getManageAppHref(app.id, view === "logs" ? "logs" : view === "backups" ? "backups" : options?.settingsTab), { scroll: false });
+        return;
+      }
+      if (view === "remove") {
+        void removeApp(app);
         return;
       }
       if (view === "update") {
@@ -1236,7 +1311,7 @@ export function ShellClient({
       setActivePanel({ appId: app.id, view, settingsTab: options?.settingsTab });
       setDetailPanel(emptyDetailPanelState());
     },
-    [applyUpdateFromRow, router],
+    [applyUpdateFromRow, removeApp, router],
   );
 
   const loadedBackups = useRef<string | null>(null);
@@ -1648,70 +1723,6 @@ export function ShellClient({
     await reviewUpdatesInOrder(routine, shellAppId, app => enqueueRoutine(app, app.updateCheck!.planDigest!));
   }, [enqueueRoutine, shellAppId, state.apps]);
 
-  // Advisory preview for the remove panel: what else declares a dependency on this app and who
-  // consumes the platform capabilities it provides. A failure here degrades to "no impact shown"
-  // rather than blocking the removal — Core never gates on it either.
-  const loadRemovalImpact = useCallback(
-    async (appId: string): Promise<CoreRemovalImpact | null> => {
-      const response = await fetchCore(`${coreOrigin}/api/apps/${encodeURIComponent(appId)}/remove-impact`, {
-        credentials: "include",
-      });
-      redirectToCoreLoginIfAuthRequired(response, coreOrigin);
-      if (!response.ok) {
-        throw new Error(await readCoreError(response));
-      }
-
-      return (await response.json()) as CoreRemovalImpact;
-    },
-    [coreOrigin],
-  );
-
-  const removeApp = useCallback(
-    // Shell chooses options; only Core's isolated page can authorize their execution.
-    async (app: CoreApp, options: RemoveOptions) => {
-      const actionKey = `${app.id}:remove`;
-      setBusyAction(actionKey);
-      const popup = openInstallationConfirmation();
-      let submitted = false;
-      try {
-        const result = await requestAppRemoval(installationClient, app.id, {
-          deleteRuntimeState: true,
-          deleteData: options.deleteData,
-          deleteBackups: options.deleteBackups,
-          deleteSource: options.deleteSource,
-          ignoreRuntimeErrors: options.ignoreRuntimeErrors,
-        }, (pending) => {
-          submitted = true;
-          return showCoreConfirmation(popup, pending);
-        });
-        if (result.status === "denied") {
-          toast.info("App removal cancelled");
-          return;
-        }
-        await refresh();
-        setActivePanel(null);
-        if (workspace?.appId === app.id) {
-          setWorkspace(null);
-        }
-        toast.success("App removed", { description: app.displayName });
-      } catch (error) {
-        if (!submitted) popup?.close();
-        if (isAuthRequiredRedirectError(error)) {
-          return;
-        }
-
-        setDetailPanel((current) => ({
-          ...current,
-          loading: false,
-          error: error instanceof Error ? error.message : "Remove failed.",
-        }));
-      } finally {
-        setBusyAction((current) => (current === actionKey ? null : current));
-      }
-    },
-    [installationClient, refresh, workspace?.appId],
-  );
-
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -1724,7 +1735,7 @@ export function ShellClient({
     () => state.apps.filter((app) => app.id !== shellAppId && getAppPageLinks(app).length > 0),
     [shellAppId, state.apps],
   );
-  const effectiveView = getAuthorizedShellView(shellRoute.view, Boolean(canManageApps), shellRoute.settingsTab);
+  const effectiveView = logsPageAccessible && !canManageApps ? "available-apps" : getAuthorizedShellView(shellRoute.view, Boolean(canManageApps), shellRoute.settingsTab);
   const workspaceSurfaceActive = Boolean(workspace || activeWorkspaceRoute);
   const selectedApp = activePanel ? state.apps.find((app) => app.id === activePanel.appId) ?? null : null;
   const resetWorkspaceLaunch = useCallback(
@@ -1742,7 +1753,7 @@ export function ShellClient({
     [],
   );
 
-  const authorizationRedirect = getShellAuthorizationRedirect(
+  const authorizationRedirect = logsPageAccessible ? null : getShellAuthorizationRedirect(
     shellRoute, Boolean(state.session?.authenticated), Boolean(canManageApps),
   );
   useEffect(() => {
@@ -2084,11 +2095,11 @@ export function ShellClient({
   // What the strip names: the app whose page fills the content area, or the Shell page itself.
   const stripTitle = workspace?.title ?? SHELL_VIEW_LABELS[effectiveView] ?? "Hosty";
   const selectedSettingsPage = resolveSettingsSurface(appSettingsTabs, shellRoute.settingsTab);
-  const stripSubtitle = workspace?.pageLabel ?? (effectiveView === "settings"
-    ? managementAppId ? `Manage ${state.apps.find(app => app.id === managementAppId)?.displayName ?? managementAppId}`
-      : selectedSettingsPage ? selectedSettingsPage.label
-      : getHostSettingsSection(shellRoute.settingsTab)?.label ?? null
-    : null);
+  const stripSubtitle = workspace?.pageLabel ?? (managementAppId
+    ? state.apps.find(app => app.id === managementAppId)?.displayName ?? managementAppId
+    : effectiveView === "settings"
+      ? selectedSettingsPage?.label ?? getHostSettingsSection(shellRoute.settingsTab)?.label ?? null
+      : null);
 
   const requestDelegatedTokenFor = useCallback((_appId: string) => {
     void _appId;
@@ -2133,7 +2144,6 @@ export function ShellClient({
       canManageApps: Boolean(canManageApps),
       busyAction,
       pendingAppActions,
-      updateStatusInvalidations,
       settingsTab: shellRoute.settingsTab,
       appSettingsTabs,
       assistantSelection,
@@ -2162,7 +2172,6 @@ export function ShellClient({
       shellRoute.settingsTab,
       state,
       uiApps,
-      updateStatusInvalidations,
     ],
   );
 
@@ -2230,11 +2239,16 @@ export function ShellClient({
     ],
   );
 
-  const appDetails = selectedApp && activePanel ? (
+  const appDetails = selectedApp && activePanel && activePanel.view !== "remove" ? (
           <AppDetailsDialog
             page={!!managementAppId && !dialogPanel}
+            onManageAction={canManageApps ? action => void runAppAction(selectedApp, action) : undefined}
+            onOpenApp={getAppPageLinks(selectedApp).length ? () => void launchAppPage(selectedApp, getAppPageLinks(selectedApp)[0]) : undefined}
+            onShowLogs={selectedApp.capabilities.includes("logs") ? () => openAppPanel(selectedApp, "logs") : undefined}
+            onShowRemoval={canManageApps ? () => openAppPanel(selectedApp, "remove") : undefined}
             onTabChange={tab => router.push(getManageAppHref(selectedApp.id, tab), { scroll: false })}
             app={selectedApp}
+            serviceRevision={updateStatusInvalidations[selectedApp.id] ?? 0}
             view={activePanel.view}
             settingsTab={activePanel.settingsTab}
             coreOrigin={coreOrigin}
@@ -2243,7 +2257,7 @@ export function ShellClient({
             isShell={selectedApp.id === shellAppId}
             busyAction={busyAction}
             detail={detailPanel}
-            onClose={managementAppId && !dialogPanel ? () => router.push("/dashboard") : closeAppPanel}
+            onClose={managementAppId && !dialogPanel ? () => router.push(canManageApps ? "/dashboard" : "/apps") : closeAppPanel}
             onRefreshBackups={(app) => loadAppBackups(app, false)}
             onCreateBackup={createManualBackup}
             onRestoreBackup={restoreBackup}
@@ -2255,8 +2269,8 @@ export function ShellClient({
             onConfigureSource={configureAppSource}
             onClearSource={clearAppSource}
             onSetFeed={setAppFeed}
-            onRemove={removeApp}
-            onLoadRemovalImpact={loadRemovalImpact}
+            onCheckUpdate={checkManageAppUpdate}
+            onUpdate={app => void applyUpdateFromRow(app)}
             onRevealSetting={revealAppSetting}
             onAskAssistant={assistantAvailable
               ? () => askAssistant(`About the ${selectedApp.displayName || selectedApp.id} app (${activePanel.view} page): `, shellAppId)
@@ -2267,12 +2281,13 @@ export function ShellClient({
   return (
     <ShellActionsContext.Provider value={shellActionsContextValue}>
       <ShellStateContext.Provider value={shellStateContextValue}>
-      <div className="flex h-dvh flex-col overflow-hidden bg-sidebar">
+      <div className="shell-viewport flex h-dvh flex-col overflow-hidden bg-sidebar">
         <ShellTopStrip
+          assistantAppId={assistantGateway?.appId}
           title={stripTitle}
           subtitle={stripSubtitle}
           leftRailExpanded={!effectiveSidebarCompact}
-          navigationWidth={narrowViewport || sidebarCompact ? 60 : 280}
+          navigationWidth={effectiveSidebarCompact ? 60 : 280}
           onToggleLeftRail={() => setCompact(!effectiveSidebarCompact)}
           // Null while no installed app declares a panel surface: there is no rail to toggle, and a
           // control for chrome that does not exist is worse than no control.
@@ -2290,9 +2305,9 @@ export function ShellClient({
       {assistantPresentationNotice}
       <div
         className={cn(
-          "relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)]",
+          "shell-content-grid relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)]",
           chromeTransitions && !narrowViewport && "motion-safe:transition-[grid-template-columns] motion-safe:duration-200",
-          (narrowViewport || sidebarCompact)
+          (narrowViewport || effectiveSidebarCompact)
             ? "grid-cols-[60px_minmax(0,1fr)]"
             : "grid-cols-[280px_minmax(0,1fr)]",
         )}
@@ -2306,7 +2321,8 @@ export function ShellClient({
           />
         )}
         <aside id="shell-navigation" className={cn(
-          "relative z-30 h-full min-h-0 overflow-visible bg-sidebar text-sidebar-foreground",
+          "shell-navigation relative z-30 h-full min-h-0 overflow-visible bg-sidebar text-sidebar-foreground",
+          mobileSidebarOpen && "shell-navigation-open",
           narrowViewport && mobileSidebarOpen && "absolute inset-y-0 left-0 w-[280px] max-w-[85vw] shadow-lg",
         )}>
           <ShellSidebar
@@ -2347,9 +2363,9 @@ export function ShellClient({
             getStandaloneHref={getStandaloneAppHref}
           />
         </aside>
-        {narrowViewport && mobileSidebarOpen && <div aria-hidden />}
+        {narrowViewport && mobileSidebarOpen && <div className="max-[599px]:hidden" aria-hidden />}
 
-        <ShellPanelWorkspace initialWidth={initialRightPanelWidth}
+        <ShellPanelWorkspace pageMinimum={pageMinimum} initialWidth={initialRightPanelWidth}
           onExpandedChange={open => persistChromePref(RIGHT_PANEL_OPEN_PREF_KEY, open)}
           onStartApp={canManageApps ? startAppById : undefined} onAskAssistant={assistantAvailable ? askAssistant : undefined}
           onAuthRequired={handleSurfaceAuthRequired}
@@ -2361,7 +2377,7 @@ export function ShellClient({
               appSettingsSurfaceActive && "bg-background",
             )}
           >
-            <main className={cn("w-full", (workspaceSurfaceActive || appSettingsSurfaceActive) ? "h-full" : effectiveView === "dashboard" ? "mx-auto max-w-7xl space-y-6 px-3 py-4 sm:px-4" : "mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8")}>
+            <main className={cn("w-full", (workspaceSurfaceActive || appSettingsSurfaceActive) ? "h-full" : effectiveView === "dashboard" && !shellRoute.appDetails ? "mx-auto max-w-7xl space-y-6 px-3 py-4 sm:px-4" : "mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8")}>
               {workspace ? (
                 <EmbeddedWorkspacePanel
                   workspace={workspace}
@@ -2379,7 +2395,7 @@ export function ShellClient({
               ) : (
                 <>
                   {state.loading && !state.status ? (
-                    <EmptyState icon={LoaderCircle} title="Loading Core state" description="Waiting for Core status and current session." iconClassName="animate-spin" />
+                    <EmptyState loading title="Loading Core state" description="Waiting for Core status and current session." />
                   ) : (
                     managementAppId ? (dialogPanel ? children : appDetails ?? <InlineError message="This application is no longer installed." />) : children
                   )}
@@ -2409,6 +2425,10 @@ export function ShellClient({
         {(!managementAppId || dialogPanel) && appDetails}
 
 
+      <ShellMobileTabs active={workspace ? "workspace" : effectiveView} canManage={Boolean(canManageApps)} onNavigate={view => {
+        setMobileSidebarOpen(false); setWorkspace(null); setOptimisticWorkspaceRoute(null); panelHost?.collapseWorkspace("default");
+        router.push(view === "settings" ? getSettingsHref("profile") : getShellViewHref(view));
+      }} />
       </div>
       {assistantPicker}
       {confirmationDialog}

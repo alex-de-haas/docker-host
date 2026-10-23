@@ -7,6 +7,7 @@ import type { UiHost } from "@hosty-sdk/app/ui/host";
 import type { UiBootstrap, UiPanel } from "@hosty-sdk/app/ui/types";
 import { ShellPanelWorkspace } from "../src/app/shell/chrome/shell-panel-workspace";
 import { usePanelExpanded } from "../src/app/shell/chrome/use-panel-expanded";
+import { ShellMobileTabs } from "../src/app/shell/chrome/shell-mobile-tabs";
 import { ShellTopStrip } from "../src/app/shell/chrome/shell-top-strip";
 import { useAssistantSessionLink } from "../src/app/shell/assistant/use-assistant-session-link";
 import { RIGHT_PANEL_OPEN_PREF_KEY } from "../src/app/shell/shell-routes";
@@ -31,7 +32,8 @@ function Shell({ initialOpen, link }: { initialOpen: boolean | null; link: boole
   return <>
     <ShellTopStrip title="Plans" navigationWidth={60} leftRailExpanded={false} onToggleLeftRail={() => {}}
       rightRailExpanded={expanded} onToggleRightRail={() => panelHost?.setExpanded(!expanded)} showNotifications={false} onBrandClick={() => {}} />
-    <ShellPanelWorkspace onExpandedChange={persisted}><div>Document</div></ShellPanelWorkspace>
+    <ShellMobileTabs active="dashboard" canManage onNavigate={() => {}} />
+    <ShellPanelWorkspace onExpandedChange={persisted}><div>Document<input aria-label="Document draft" defaultValue="" /></div></ShellPanelWorkspace>
   </>;
 }
 async function render(initialOpen: boolean | null, link = false) {
@@ -138,7 +140,7 @@ it("retains tool frames across rail toggles, switching and the drawer breakpoint
   expect(container.querySelector('[aria-label="Open separately"]')).not.toBeNull();
   expect(container.querySelector('[aria-label="Minimize panel"]')).toBeNull();
   expect(container.querySelector('[aria-label="Close tool"]')).toBeNull();
-  await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="assistant"]')!.click());
+  await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Hide tool"]')!.click());
   expect(host!.getSnapshot().expanded).toBe(false);
   expect(container.querySelector('iframe[title="assistant"]')).toBe(assistant);
   await act(async () => { await host!.selectPanel(panels[0].panel); });
@@ -149,7 +151,7 @@ it("retains tool frames across rail toggles, switching and the drawer breakpoint
     await act(async () => resizeWorkspace());
     expect(container.querySelector('[data-shell-panel-layout="drawer"]')).not.toBeNull();
     expect(container.querySelector('aside[role="dialog"]')?.getAttribute("aria-modal")).toBe("true");
-    expect(container.querySelector('nav[aria-label="Tools"]')?.hasAttribute("inert")).toBe(true);
+    expect(container.querySelector('nav[aria-label="Tools"]')).toBeNull();
     expect(container.querySelector('iframe[title="assistant"]')).toBe(assistant);
     await act(async () => container.querySelector("aside")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
     expect(host!.getSnapshot().expanded).toBe(false);
@@ -159,7 +161,7 @@ it("retains tool frames across rail toggles, switching and the drawer breakpoint
 it("serves SDK picker requests with the Shell dialog and releases SDK-closed presentations", async () => {
   await render(false);
   await act(async () => { expect(await ui.openToolPicker({ requestId: createPresentationRequestId() })).toMatchObject({ status: "accepted" }); });
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Open a tool beside your document");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Open a tool and keep its current conversation or draft");
   await act(async () => { await host!.selectPanel(panels[0].panel); });
   const id = host!.getSnapshot().tools[0].presentationId;
   await act(async () => host!.closePresentation(id));
@@ -194,7 +196,7 @@ it.each(["access", "policy", "origin", "stopped"])("explains a retained panel in
   expect(container.querySelector('iframe[title="assistant"]')).toBeNull();
   expect(container.querySelector('aside [role="status"]')?.textContent).toContain("This tool is no longer available");
   await act(async () => container.querySelector<HTMLButtonElement>('aside button[aria-label="Choose another tool"]')!.click());
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Add tool");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("All tools");
 });
 
 
@@ -204,15 +206,15 @@ it.each(["disabled", "hidden"])("honors %s tool chrome and restores the rail whe
   await act(async () => host!.setViewChrome("root", { tools: mode === "disabled" ? { enabled: false } : { launcher: "hide" } }));
   expect(toggle(false)).toBeNull();
   expect(toggle(true)).toBeNull();
-  expect(container.querySelector('nav[aria-label="Tools"]')?.hasAttribute("hidden")).toBe(true);
+  expect(container.querySelector('nav[aria-label="Tools"]')).toBeNull();
   expect(container.querySelector('#right-panel')?.hasAttribute("hidden")).toBe(true);
   if (mode === "disabled") {
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     await act(async () => { expect((await ui.openToolPicker({ requestId: createPresentationRequestId() })).status).not.toBe("accepted"); });
   }
   await act(async () => host!.setViewChrome("root", {}));
-  expect(container.querySelector('nav[aria-label="Tools"]')?.hasAttribute("hidden")).toBe(false);
-  expect(container.querySelector('#right-panel')?.hasAttribute("hidden")).toBe(false);
+  expect(container.querySelector('[aria-label="Tools"]')).not.toBeNull();
+  expect(container.querySelector('#right-panel')?.hasAttribute("hidden")).toBe(true);
 });
 
 
@@ -232,4 +234,67 @@ it("keeps frame access-review links out of document flow without SDK workspace s
   expect(getComputedStyle(frame.parentElement!).position).toBe("relative");
   expect(getComputedStyle(frame).display).toBe("block");
   expect(container.querySelector('iframe[title="assistant"]')).toBe(frame);
+});
+
+it("phone Tools hides and restores the last presentation without replacing its iframe", async () => {
+  await render(false);
+  await act(async () => { await host!.selectPanel(panels[1].panel); });
+  const frame = container.querySelector('iframe[title="assistant"]');
+  const tools = container.querySelector<HTMLButtonElement>('nav[aria-label="Phone navigation"] button[aria-label="Tools"]')!;
+  await act(async () => tools.click());
+  expect(host!.getSnapshot().expanded).toBe(false);
+  expect(container.querySelector('iframe[title="assistant"]')).toBe(frame);
+  await act(async () => tools.click());
+  expect(host!.getSnapshot().expanded).toBe(true);
+  expect(container.querySelector('iframe[title="assistant"]')).toBe(frame);
+  expect(host!.getSnapshot().tools).toHaveLength(1);
+});
+
+it("groups tools by owning app and recovers a no-results search without resolving or replacing tools", async () => {
+  catalog = [...panels, { ...panels[0], panel: { ...panels[0].panel, panelId: "drafts" }, label: "Drafts" }];
+  await render(false);
+  await act(async () => { await ui.openToolPicker({ requestId: createPresentationRequestId() }); });
+  const dialog = document.querySelector('[role="dialog"]')!;
+  expect(dialog.querySelector('section[aria-label="notes tools"]')?.querySelectorAll('button[aria-pressed]')).toHaveLength(2);
+  expect(dialog.querySelector('section[aria-label="assistant tools"]')).not.toBeNull();
+  const search = dialog.querySelector<HTMLInputElement>('[aria-label="Search tools"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "nothing matches this");
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(dialog.querySelector('[role="status"]')?.textContent).toContain("No tools match your search");
+  expect(dialog.querySelectorAll('section[aria-label$=" tools"]')).toHaveLength(0);
+  await act(async () => [...dialog.querySelectorAll("button")].find(button => button.textContent === "Clear search")!.click());
+  expect(search.value).toBe(""); expect(dialog.querySelectorAll('section[aria-label$=" tools"]')).toHaveLength(2);
+  expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("resolve"))).toHaveLength(0);
+});
+it("distinguishes a loaded empty tool list from a filtered list and preserves explicit refresh", async () => {
+  catalog = []; await render(false);
+  await act(async () => { await ui.openToolPicker({ requestId: createPresentationRequestId() }); });
+  const dialog = document.querySelector('[role="dialog"]')!;
+  expect(dialog.querySelector('[role="status"]')?.textContent).toContain("No tools are available for your account.");
+  expect(dialog.textContent).not.toContain("No tools match your search");
+  catalog = panels;
+  await act(async () => [...dialog.querySelectorAll("button")].find(button => button.textContent === "Refresh tools")!.click());
+  expect(dialog.querySelector('section[aria-label="assistant tools"]')).not.toBeNull();
+  expect(host!.getSnapshot().tools).toHaveLength(0);
+});
+it("retains page drafts and the same selected tool through the 599/600 phone boundary and back to dock", async () => {
+  const originalWidth = window.innerWidth;
+  try {
+    await render(false);
+    const draft = container.querySelector<HTMLInputElement>('[aria-label="Document draft"]')!;
+    draft.value = "Unsaved document text";
+    await act(async () => { await host!.selectPanel(panels[1].panel); });
+    const frame = container.querySelector('iframe[title="assistant"]')!;
+    for (const width of [599, 600, 599, 1280]) {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+      await act(async () => resizeWorkspace());
+      expect(container.querySelector('iframe[title="assistant"]')).toBe(frame);
+      expect(container.querySelector('[aria-label="Document draft"]')).toBe(draft); expect(draft.value).toBe("Unsaved document text");
+      expect(container.querySelector('[data-shell-panel-layout]')?.getAttribute("data-shell-panel-layout")).toBe(width < 904 ? "drawer" : "dock");
+    }
+    await act(async () => host!.collapseWorkspace("default"));
+    expect(container.querySelector('iframe[title="assistant"]')).toBe(frame); expect(draft.value).toBe("Unsaved document text");
+  } finally { Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth }); }
 });

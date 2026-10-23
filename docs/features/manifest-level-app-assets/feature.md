@@ -1,6 +1,6 @@
 ---
 created: 2026-07-07
-updated: 2026-10-05
+updated: 2026-10-22
 summary: An app's icon, screenshots and markdown description live in its own repository and Core serves them for installed apps.
 components: [apps/core, apps/shell, apps/marketplace]
 ---
@@ -44,8 +44,8 @@ a monorepo are copied into each app folder.
 
 ## Asset Endpoint
 
-`GET /api/apps/{appId}/assets/{path}` serves assets to any authenticated session. It is not on the
-control plane.
+`GET /api/apps/{appId}/assets/{path}` serves assets to an authenticated session authorized for
+that app, following the installed-app assignment policy. It is not on the control plane.
 
 - **Canonical paths only.** No `.`, `..` or empty segments, no backslashes, no drive letters or `:`
   in segments. URL emitters resolve relative references before they reach the wire; the endpoint
@@ -68,7 +68,14 @@ control plane.
 On install and update Core copies the asset subtree (Git and folder installs) or fetches the declared
 assets plus the images the description references (manifest-by-URL) into the app's internal copy, so
 assets keep working for image-only apps and after the upstream repository disappears. Development
-Mode and live-source apps are served directly from the source checkout. Budgets: icon 512 KB,
+Mode retains the installed copy as fallback. While a registered app workspace is factually active,
+Core reads only the installation's declared relative catalog icon from that app's manifest folder
+in the bound worktree. The development journal, installation, runtime, source path, app binding,
+manifest subpath and workspace identity must still agree; source admission failures retain the
+installed icon. Screenshots, descriptions and unrelated repository images remain served from the
+installed copy. Reading an icon never copies workspace files into the package or changes source
+selection. Source icons use a content-hash ETag and private/no-cache responses even with a version
+query, so edits with unchanged size or timestamp revalidate correctly. Budgets: icon 512 KB,
 screenshot 2 MB (at most 8), description 256 KB; manifest-by-URL vendoring is additionally capped at
 about 32 files and 20 MB. A violation is treated as absent and logged — display assets never fail an
 install or update. Remote fetches stream through a capped reader that ignores `Content-Length`.
@@ -111,7 +118,12 @@ absence does not. The published entry gets a generated `display.descriptionUrl`;
 - Vendoring: per-file, count and total budgets; treated-as-absent on violation; the manifest-by-URL
   declared-plus-referenced set; Development Mode live serving; the capped reader aborts an oversized
   body regardless of `Content-Length`.
-- Headers: `nosniff` and the CSP on every response; immutable caching only with `v`.
+- Active workspace icons: exact app/installation/runtime/source binding and manifest folder;
+  assignment/session checks; inactive/Return and invalid-source package fallback; undeclared
+  paths, symlinks and oversized source files stay inaccessible. Source reads preserve the installed
+  package, and content ETags change for same-size/same-timestamp edits.
+- Headers: `nosniff` and the CSP on every response; immutable caching only with `v` for packaged
+  assets. Active workspace icons always revalidate regardless of `v`.
 - Shell and Marketplace: Lucide fallback without `iconUrl`; raw HTML renders as text; relative
   references resolve against the description's folder; external images render as links.
 - Catalog: discovery forms, build failure on unresolvable references and failed fetches, and

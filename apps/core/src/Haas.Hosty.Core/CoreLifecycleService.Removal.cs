@@ -17,6 +17,22 @@ internal sealed partial class CoreLifecycleService
             };
         }, ct);
 
+    internal Task<AppRemovalPlan> SelectRemovalOptionsAsync(AppRemovalPlan reviewed, AppRemoveRequest options, CancellationToken ct)
+        => WithAppLockAsync(reviewed.AppId, async () =>
+        {
+            var app = await RequireAppAsync(reviewed.AppId, ct);
+            if (RemovalIdentity(app) != reviewed.Identity)
+                throw new AppLifecycleException("removal_plan_stale", "The app changed since removal was prepared. Review a new removal request.");
+            // This only prepares another review. No selected cleanup runs until the operator has
+            // seen these exact consequences/source facts and confirms with a new page nonce.
+            return new AppRemovalPlan(app.Id, app.DisplayName, app.Version, options,
+                await GetRemovalImpactAsync(app.Id, ct))
+            {
+                Identity = reviewed.Identity,
+                SourceReview = await new AppSourceSafety(paths, apps).ReviewAsync(app.Id, options.DeleteSource, ct),
+            };
+        }, ct);
+
     internal Task<AppLifecycleResponse> ApplyRemovalAsync(AppRemovalPlan plan, CancellationToken ct)
         => WithAppLockAsync(plan.AppId, async () =>
         {

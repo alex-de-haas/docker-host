@@ -35,10 +35,10 @@ export function AssistantActivity({ status, activity, connection, stopping, appN
   else if (activity?.phase === "responding") label = "Writing response…";
 
   return <div role="status" aria-live="polite" aria-atomic="true" data-slot="assistant-activity"
-    className="flex min-w-0 items-start gap-2 px-3 py-2 text-xs text-muted-foreground">
+    className="flex min-w-0 items-start gap-2 px-3 py-2 text-xs text-info-foreground">
     {waiting ? <CirclePause className="size-3.5 shrink-0" aria-hidden /> : connection === "reconnecting"
       ? <WifiOff className="size-3.5 shrink-0" aria-hidden />
       : <span className="motion-safe:animate-spin shrink-0" aria-hidden><Loader2 className="size-3.5" /></span>}
-    <span className="min-w-0 wrap-anywhere">{label}{detail && <span className="mt-1 block">{detail}</span>}</span>
+    <span className="min-w-0 tabular-nums wrap-anywhere">{label}{detail && <span className="mt-1 block font-mono">{detail}</span>}</span>
   </div>;
 }

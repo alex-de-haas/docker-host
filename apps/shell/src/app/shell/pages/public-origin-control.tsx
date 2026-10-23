@@ -1,5 +1,7 @@
 "use client";
 
+import { HostyLoader } from "../../../../../../shared/web/hosty-states";
+
 import { useState } from "react";
 import { Globe, LoaderCircle } from "lucide-react";
 import { toast } from "@/components/reui/operation-toast";
@@ -216,7 +218,7 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
           <DialogBody>
             {loading ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <LoaderCircle className="h-4 w-4 animate-spin" /> Loading…
+                <HostyLoader className="h-4 w-4" label={null} /> Loading…
               </div>
             ) : publishes ? (
               !connected ? (
@@ -344,11 +346,11 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
                       that repair, idempotent for the hostname and the DNS record, and there is nothing to press
                       when the route is not drifted. Edited label: the same POST renames the publication. */}
                   <Button type="button" disabled={busy || !publishedAction.enabled} onClick={() => void publish()}>
-                    {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                    {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin motion-reduce:animate-none" />}
                     {publishedAction.action === "reapply" ? "Reapply" : "Rename"}
                   </Button>
                   <Button type="button" variant="outline" disabled={busy} onClick={() => void unpublish()}>
-                    {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                    {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin motion-reduce:animate-none" />}
                     Unpublish
                   </Button>
                 </>
@@ -356,19 +358,19 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
                 <>
                   {conflict && (
                     <Button type="button" variant="outline" disabled={busy} onClick={() => void publish(true)}>
-                      {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                      {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin motion-reduce:animate-none" />}
                       Adopt and publish
                     </Button>
                   )}
                   <Button type="button" disabled={busy || !value.trim()} onClick={() => void publish()}>
-                    {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                    {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin motion-reduce:animate-none" />}
                     Publish
                   </Button>
                 </>
               ) : null
             ) : (
               <Button type="button" disabled={busy} onClick={() => void saveSetting()}>
-                {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin motion-reduce:animate-none" />}
                 Save
               </Button>
             )}

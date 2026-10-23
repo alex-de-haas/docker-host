@@ -1,6 +1,7 @@
 "use client";
 
 import { fetchCore } from "../core-transport.js";
+import { HostyLoader } from "../../../../../../shared/web/hosty-states";
 
 
 import { useCallback, useEffect, useState } from "react";
@@ -55,8 +56,8 @@ export function SettingsAgentsSection({ coreOrigin, sendCsrfJson }: {
         <p className="text-sm text-muted-foreground">Choose available MCP applications and grant access to individual assistants. Tool approval rules stay with each assistant.</p></div>
       <Button variant="outline" disabled={busy} onClick={() => void load().catch(showLoadError)}>Refresh</Button>
     </div>
-    {error && <p role="alert" className="text-destructive">{error}</p>}
-    {!directory && !error && <p>Loading agent directory…</p>}
+    {error && <p role="alert" className="text-destructive-foreground">{error}</p>}
+    {!directory && !error && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader className="size-5" label={null} />Loading agent directory…</p>}
     {directory?.targets.map(target => <article key={target.id} className="space-y-4 rounded-lg border p-4">
       <div className="flex items-start justify-between gap-4">
         <div><h3 className="font-medium">{target.displayName}</h3>

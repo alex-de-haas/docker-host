@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-07-17
-updated: 2026-10-11
+updated: 2026-10-22
 summary: Proposed replaceable browser UIs using confirmed roles and shared defaults, preserving app authorization and Core-owned recovery when the selected UI is unavailable.
 components: [apps/core, apps/cli, apps/shell]
 ---
@@ -31,6 +31,24 @@ can be shared across app views without replacing another conversation. Role conf
 assert that capability. Composition support is negotiated independently of client eligibility.
 [Continuous access](../continuous-app-access/feature.md) supplies the implemented session lifecycle
 independently of a UI client's presentation.
+
+## Owner Direction, 2026-10-22
+
+[Vision decision 52](../../vision.md) makes Core an app-neutral platform, usable headlessly with no
+standard bundle installed. Core behavior must not depend on a built-in app ID, name, vendor or
+repository/path spelling, and must not construct first-party internal routes. `hosty:core` is the
+reserved platform resource, distinct from runtime application identities.
+
+This direction supersedes this Draft's former mandatory Shell `/workspace` adapter and the proposal
+to retain Core-generated management links by explicitly targeting Shell. Select the app-neutral
+navigation contract only after review: typed navigation intents, [object links](../object-links/plan.md)
+and a provider-declared versioned adapter are candidates, not approved schemas. Roles, endpoint
+eligibility and continuations below remain proposals subject to that contract decision. D3 owns
+removing all existing navigation hardcodes, including workspace-owner links into Harness; D4 owns
+selected/last-UI removal warnings and D8 owns inventory/role-derived lifecycle consequences. The
+[audit](../../reviews/2026-10-22-core-application-boundaries.md) records the current violations.
+This plan remains Draft; the architectural prohibition does not authorize implementation of its
+unapproved store, role, navigation or migration proposals.
 
 ## Verified Baseline And Corrections
 
@@ -62,9 +80,10 @@ Installation/update review explains the role without selecting it as the default
 
 For the first contract:
 
-- Serve `/` as the landing page and `/workspace?app=<encoded-app-id>&path=<encoded-relative-path>`
-  as the app-opening adapter. This is a small compatibility route an alternative shell can translate
-  into its own internal navigation. Do not add URL templates or require it to copy Shell's page tree.
+- Define app opening and landing navigation through the separately reviewed app-neutral contract.
+  Compare typed intents, object links and provider-declared versioned adapters without mandating
+  Shell's routes or selecting a new schema here. App implementations own internal paths; Core
+  consumes declared/validated targets and reports unsupported navigation explicitly.
 - Choose the public HTTP(S) endpoint named `web`, otherwise a sole public HTTP(S) endpoint. Missing
   or ambiguous endpoints make the app ineligible, with a visible reason. Do not select a TCP
   endpoint or rely on manifest array order. Resolve the address through `LocalBrowserOrigins`.
@@ -138,18 +157,22 @@ setup/invitation/recovery completion, control-plane `apps open --mode shell`, st
 links to settings. Audit every current `ShellPublicOriginResolver` caller; origin substitution alone
 is insufficient for callers that append first-party Shell-only paths.
 
-Only `/` and the workspace adapter are required navigation routes in the new UI contract. Existing Shell-specific
-management links must remain bound to an explicitly identified Shell installation, or degrade to
-the selected UI's landing page without claiming the same deep destination exists. In particular,
-an Agents settings link must not append Shell's `/settings` layout to an arbitrary UI.
+Do not require or construct first-party internal paths in Core, including workspace, application
+management, settings and owner-session routes. Replacing only the origin or explicitly choosing
+Shell preserves the same coupling. D3 audits every resolver caller and `WorkspaceInspectionService`
+owner-link construction, then migrates them through the reviewed app-neutral navigation contract.
+A destination lacking that contract produces an explicit unsupported/recovery result. Object-link
+registration and SDK presentation mechanisms remain with their existing owners.
 
 Preserve the existing validated Core-relative login continuations for OAuth, app open and trusted
 confirmation. For new UI return links, freeze the destination installation and validated relative
 route in an expiring, opaque Core continuation; redeem it using the current actor/access and registry
 origin. No caller-supplied absolute URL is authority. The reference carries no credential and cannot
 mint an app grant. A removed/reinstalled destination produces recovery, not a new default lookup.
-Legacy unqualified Shell-relative `returnTo` paths stay bound to the legacy Shell compatibility
-installation; if it is absent, show recovery instead of interpreting the path in another UI.
+Legacy continuations may be retained only as already-bound data whose installation, actor, access
+and declared navigation contract can still be validated. An unqualified first-party relative path
+must not become a Core-generated route or be reinterpreted in another UI; unavailable validation
+produces recovery rather than an ID-based runtime fallback.
 
 For shell-mode CLI app-open links, return a Core-owned navigation link that resolves at browser
 open under the browser's actor. It freezes the chosen UI and target before any login round trip;
@@ -185,27 +208,29 @@ Core confirmation and authentication pages retain their own origins and existing
 
 ## Bootstrap And Upgrade Proposal
 
-- Release Shell with the reviewed `ui-client` declaration through its ordinary update flow. Fresh
-  setup can explicitly seed the UI it successfully installs when no previous UI policy exists;
-  record this source of the choice. Later installs do not overwrite it.
-- On upgrading Core, preserve an existing `hosty.shell` as an explicit default only if no UI policy
-  was previously saved. Bind to that installation and record a one-time migration version. If Shell
-  is absent, do not reinstall it or invent a preference; use automatic/no-UI behavior.
-- For an existing Shell predating the role declaration, keep a narrow compatibility marker bound
-  to that pre-upgrade installation. It preserves the existing navigation behavior and grants no new
-  permission. A later app reusing the same ID does not receive the exception.
-- Replace that installation's marker when it accepts the reviewed role-bearing manifest; removal
-  invalidates the marker. Merely publishing a new Shell version is not a reason to remove support
-  for installed older versions. Keep the compatibility path tested throughout this feature's release.
-- Prepare/record migration atomically with the shared store revision. Retrying after a crash must
-  neither overwrite operator choices nor enroll a new installation as the old legacy Shell.
+- First-party UI apps publish the reviewed role/interface declaration through ordinary update and
+  installation review. Fresh setup may record an explicit selection from the app it actually installs
+  when no UI policy exists; later installations do not overwrite that choice.
+- Preserve an existing explicit UI choice as installation-bound data when a reviewed migration can
+  validate its provenance and no new UI policy was saved. Any historical exact app identity belongs
+  only to the bounded, one-time migration input; it must never remain a runtime lookup, fallback
+  selector, eligibility exception or grant. Do not scan for a built-in ID to invent a preference.
+- An older app without the confirmed role or selected navigation contract needs explicit unsupported
+  diagnostics and an ordinary reviewed update path. Its historical name or ID cannot supply the
+  missing confirmation. Define the precise compatibility policy in D5 before approval; no new broad
+  compatibility marker is accepted here.
+- Keep no-UI recovery and deliberate uninstalls intact. Migrations do not install, promote or grant
+  an application automatically. Legacy catalog/bootstrap configuration migration belongs to
+  [Removable System Apps](../removable-system-apps/plan.md), not this UI selection feature.
+- Prepare/record approved selection migration atomically with the shared store revision. A crash or
+  retry must not overwrite operator choices or bind a reinstalled app to a historical selection.
 
 ## Deliverables
 
 - [ ] D1. Implement reviewed `ui-client` roles, eligibility and the shared-store UI resolution adapter, specifying shared SDK panel-host conformance while separating selection from readiness and preserving explicit targets.
-- [ ] D3. Integrate Core navigation, bound continuations, UI recovery through shared control/CLI and status; remove app-ID-based selection and audit every old resolver consumer.
+- [ ] D3. Define/review the app-neutral navigation contract and integrate Core navigation, bound continuations, UI recovery through shared control/CLI and status. Remove built-in app-ID/name/vendor/repository-path selection and first-party internal routes from every resolver caller, including WorkspaceInspectionService's Harness owner links; preserve access, explicit targets and unsupported recovery without inventing a replacement schema.
 - [ ] D4. Add the UI row to the shared settings page, the Core recovery/choice page and selected/last-UI removal warnings while preserving assignments and allowed headless operation.
-- [ ] D5. Release Shell's role declaration and implement/test one-time default migration, bootstrap seeding and installation-bound compatibility for older installed Shell versions.
+- [ ] D5. Review and deliver UI role/interface declaration rollout and bounded one-time selection migration, preserving explicit choices, installation identity and no-UI recovery. Any historical exact identity remains migration data only, never a runtime selector or grant; settle older-client compatibility before implementation. Catalog/bootstrap configuration migration stays with Removable System Apps.
 - [ ] D6. Complete cross-client navigation and panel-host conformance, including adoption of explicit navigation/tool policy when supported, migration and failure verification; update current feature documentation, remove this plan when complete and regenerate the index. SDK policy and multi-view mechanisms remain owned by SDK UI composition.
 - [ ] D7. Verify all UI clients use the existing app-bound authorization contract; do not restore primary-session browser CORS or derive permissions from the UI role.
 
@@ -223,12 +248,14 @@ feature as one PR. Negotiate composition support with each peer rather than infe
 The shared store/settings and panel protocol are dependencies; their selection,
 renderer, explicit-policy mechanisms and Plans integration deliverables are not duplicated here. The principal changes from
 the old draft are confirmed roles, no CORS expansion, no earliest-installed fallback, retained
-failed selections with Core recovery, current workspace
-routes and compatibility tied to installed upgrades rather than publication dates.
+failed selections with Core recovery, app-owned internal routes and a reviewed app-neutral navigation
+contract. Navigation representation and older-client compatibility remain open for owner approval;
+historical identity migration cannot become runtime selection or authority.
 
-Marketplace listing, per-role autostart priorities, personal UI defaults, generic URL templates and
-new notification-link features are outside this feature. Existing callers must still be migrated;
-these exclusions do not excuse broken current deep links.
+Marketplace listing, per-role autostart priorities, personal UI defaults and new notification-link
+features are outside this feature. The choice among typed navigation, object links and a declared
+versioned adapter remains open; this plan introduces no template or manifest schema. Existing
+callers must still be migrated; these boundaries do not excuse broken current deep links.
 
 ## Verification
 
@@ -249,9 +276,10 @@ these exclusions do not excuse broken current deep links.
   continuation; it remains bound and checks the current installation and actor.
 - Cross-origin requests do not acquire primary Core-session access from the role. Both UIs obey
   independent grants, assignments and normal app-owned identity/renewal through Core-managed runs.
-- Upgrade Core before Shell, Shell before Core, and resume an interrupted migration; preserve
-  existing choices and deliberate uninstalls. Existing Shell without a role keeps working only
-  through its recorded installation-bound compatibility path.
+- Upgrade Core before a UI app and the UI app before Core, then resume interrupted selection
+  migration; preserve choices and deliberate uninstalls. Missing confirmed role/contract remains
+  explicit; historical IDs cannot grant eligibility or drive runtime fallback. Verify Core setup,
+  login, CLI/API and recovery with no standard apps installed, plus an unrelated third-party UI.
 - Run Core/CLI tests/builds, Shell tests/build/lint, affected identity/navigation integration tests,
   version checks and documentation checks. This draft is documentation-only and requires no bump;
   implementation versions the affected platform and Shell artifacts per repository policy.

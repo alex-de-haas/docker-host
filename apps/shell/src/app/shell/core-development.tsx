@@ -4,13 +4,13 @@ import { fetchCore } from "./core-transport.js";
 
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Boxes, Check, ChevronDown, FolderGit2, GitBranch, LoaderCircle, Lock, Radio } from "lucide-react";
+import { FolderGit2, GitBranch, Hammer, LoaderCircle, Radio } from "lucide-react";
 import { toast } from "@/components/reui/operation-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { useShellActions } from "./shell-context";
 import { readCoreError } from "./core-api";
@@ -96,8 +96,9 @@ export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
     };
   }, [coreOrigin, enabled, key, refresh]);
 
-  const restart = async (mode?: "release" | "dev") => {
-    if (!state?.manageable || operation.current) return;
+  const restart = async (mode?: "release" | "dev", target = state, signal?: AbortSignal) => {
+    signal?.throwIfAborted();
+    if (!target?.manageable || operation.current) return;
     const requestId = crypto.randomUUID().replaceAll("-", "");
     operation.current = requestId;
     setBusy(true);
@@ -105,11 +106,12 @@ export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
     setPhase("Preparing");
     submitting.current = true;
     try {
-      await sendCsrfJson(`${coreOrigin}/api/core/restart`, { requestId, instance: state.instance, mode, sourceRevision: state.source.revision });
+      await sendCsrfJson(`${coreOrigin}/api/core/restart`, { requestId, instance: target.instance, mode, sourceRevision: target.source.revision }, "POST", signal);
     } catch (error) {
       // Keep the id for reconciliation if the transport disappeared after the helper was started.
       toast.error("Core restart could not be confirmed", { description: error instanceof Error ? error.message : "Checking operation status…" });
     } finally { submitting.current = false; void pollNow.current?.(); }
+    return requestId;
   };
   const save = async (overridePath: string | null, repository?: CoreSourceRepository, expectedRevision?: string) => {
     if (!state) throw new Error("Core source is unavailable.");
@@ -119,93 +121,44 @@ export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
     toast.success("Core source saved");
     return saved;
   };
-  return { state, phase, busy, restart, save };
-}
-
-export function CoreModeControl({ state, workspace, disabled, onChange }: { state: CoreDevelopment | null; workspace?: WorkspaceSource; disabled: boolean; onChange: (mode: "release" | "dev") => void }) {
-  const mode = state?.launch.mode;
-  const external = mode === "unmanaged";
-  const sourceLabel = mode === "dev" && workspace ? "workspace" : "source";
-  const label = external ? "external" : mode === "dev" ? sourceLabel : mode ?? "unknown";
-  const description = external
-    ? "Core was started outside the Hosty CLI, for example from an IDE or with dotnet run. Its launch mode is unknown, so Shell cannot switch or restart it. Start Core through the Hosty CLI to enable these controls."
-    : !state
-      ? "Core launch information is unavailable."
-      : !state.manageable
-        ? "The Hosty CLI is unavailable. Restore CLI access to switch or restart Core."
-        : mode === "dev"
-          ? `Core runs a build from ${workspace ? "a registered workspace" : "source"}. Restart to rebuild and apply changes; there is no hot reload.`
-          : "Core runs the installed release. Switching runtime restarts Core.";
-
-  return (
-    <TooltipProvider delayDuration={150}>
-      <div className="flex min-w-0 items-center gap-x-1">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span tabIndex={0} className="shrink-0 cursor-help whitespace-nowrap text-sm">
-              {label}
-            </span>
-          </TooltipTrigger>
-          <TooltipContent className="max-w-sm">{description}{state?.gitError && ` Git warning: ${state.gitError}`}</TooltipContent>
-        </Tooltip>
-        {state?.manageable && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button type="button" variant="ghost" size="icon-sm" aria-label="Switch runtime for Hosty Core" title="Switch runtime" disabled={disabled}>
-                <ChevronDown className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-56">
-              <DropdownMenuGroup>
-                {(["release", "dev"] as const).map(target => (
-                  <DropdownMenuItem key={target} disabled={disabled || mode === target} onSelect={() => onChange(target)}>
-                    <Check className={cn("h-4 w-4", mode === target ? "opacity-100" : "opacity-0")} />
-                    <span className="min-w-0 flex-1 truncate">{target === "dev" ? sourceLabel : target}</span>
-                    {target === "release" && <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
-                      <Lock className="size-3" />Locked
-                    </span>}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-      </div>
-    </TooltipProvider>
-  );
+  return { state, phase, busy, restart, save, refresh };
 }
 
 export function CoreGitCell({ state, workspace }: { state: CoreDevelopment | null; workspace?: WorkspaceSource }) {
-  return <div className="flex min-w-0 flex-col gap-1 text-xs">
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const details = <div className="space-y-1">
+    <div className="font-medium">Hosty Core · source</div>
+    {workspace && <div className="break-all">Workspace: {workspace.label}</div>}
+    {state?.branch && <div className="break-all">Branch: {state.branch}</div>}
+    {state?.commit && <div>Commit: <span className="break-all font-mono">{state.commit}</span></div>}
+    {state?.changedFiles != null && <div>Changed files: {state.changedFiles}{state.gitTruncated ? "+ (incomplete list)" : ""}</div>}
+    {state?.additions != null && state.deletions != null && <div>Lines: +{state.additions} / −{state.deletions} (HEAD to working tree)</div>}
+    {state?.launch.projectPath && <div className="break-all">Project: {state.launch.projectPath}</div>}
+    {state?.gitError && <div>{state.gitError}</div>}
+    {!state && <div>Source unavailable</div>}
+  </div>;
+  return <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
     <TooltipProvider delayDuration={150}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span tabIndex={0} aria-label={workspace ? `Workspace: ${workspace.label}` : undefined}
-            className="flex min-w-0 cursor-help items-center gap-1 text-sm">
-            {workspace ? <Boxes aria-hidden="true" className="size-3.5 shrink-0" />
-              : <GitBranch aria-hidden="true" className="size-3.5 shrink-0" />}
-            <span className={cn("truncate underline decoration-dotted decoration-muted-foreground/70 underline-offset-4", !workspace && "font-mono")}>
-              {workspace?.label ?? state?.branch ?? state?.commit?.slice(0, 10) ?? "Source unavailable"}
-            </span>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent className="max-w-sm">
-          <div className="space-y-1">
-            <div className="font-medium">Hosty Core · source</div>
-            {workspace && <div className="break-all">Workspace: {workspace.label}</div>}
-            {state?.branch && <div className="break-all">Branch: {state.branch}</div>}
-            {state?.commit && <div>Commit: <span className="break-all font-mono">{state.commit}</span></div>}
-            {state?.changedFiles != null && <div>Changed files: {state.changedFiles}{state.gitTruncated ? "+ (incomplete list)" : ""}</div>}
-            {state?.additions != null && state.deletions != null && <div>Lines: +{state.additions} / −{state.deletions} (HEAD to working tree)</div>}
-            {state?.launch.projectPath && <div className="break-all">Project: {state.launch.projectPath}</div>}
-            {state?.gitError && <div>{state.gitError}</div>}
-            {!state && <div>Source unavailable</div>}
-          </div>
-        </TooltipContent>
-      </Tooltip>
+      <Popover open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="ghost" size="sm" aria-label={workspace ? `Workspace: ${workspace.label}` : "Source details for Hosty Core"}
+                className="h-auto max-w-full min-w-0 justify-start gap-1.5 rounded-none p-0 has-[>svg]:px-0 font-mono text-xs font-normal text-muted-foreground underline decoration-dotted decoration-muted-foreground/70 underline-offset-4 hover:bg-transparent hover:text-muted-foreground dark:hover:bg-transparent">
+                {workspace ? <Hammer data-icon="inline-start" className="size-3" aria-hidden /> : <GitBranch data-icon="inline-start" className="size-3" aria-hidden />}
+                <span className="truncate">{workspace?.label ?? state?.branch ?? state?.commit?.slice(0, 10) ?? "Source unavailable"}</span>
+              </Button>
+            </PopoverTrigger>
+          </TooltipTrigger>
+          {!detailsOpen && <TooltipContent className="max-w-sm">{details}</TooltipContent>}
+        </Tooltip>
+        <PopoverContent className="w-80 max-w-[calc(100vw-2rem)] text-xs" align="start" aria-label="Source details for Hosty Core">{details}</PopoverContent>
+      </Popover>
     </TooltipProvider>
-    {state?.changedFiles != null && <SourceChangeSummary fileCount={state.changedFiles} truncated={state.gitTruncated}
-      lineStats={state.additions != null && state.deletions != null ? { additions: state.additions, deletions: state.deletions } : null} />}
+    {state?.changedFiles != null && <span className="inline-flex min-w-0 items-center gap-2"><span aria-hidden="true">·</span>
+      <SourceChangeSummary fileCount={state.changedFiles} truncated={state.gitTruncated}
+        lineStats={state.additions != null && state.deletions != null ? { additions: state.additions, deletions: state.deletions } : null} />
+    </span>}
   </div>;
 }
 
@@ -261,7 +214,7 @@ export function CoreSourceDialog({ inline = false, open, onOpenChange, state, di
               {error && <div role="alert"><InlineError message={error} /></div>}
               <div className="space-y-2">
                 <div className="text-sm font-medium">Development profiles</div>
-                <p className="text-sm text-muted-foreground">Use the Dashboard runtime menu to switch between the installed release and a source build.</p>
+                <p className="text-sm text-muted-foreground">Use the Dashboard Runtime / workspace menu to switch between the installed release and a registered workspace.</p>
                 <label className="block text-sm">Development repository URL<Input value={repository} disabled={unavailable} onChange={e => setRepository(e.target.value)} placeholder="https://github.com/owner/repository.git" /></label>
                 <label className="block text-sm">Tracked branch or ref<Input value={sourceRef} disabled={unavailable} onChange={e => setSourceRef(e.target.value)} placeholder="Repository default branch" /></label>
                 <label className="block text-sm">Project path relative to repository<Input value={project} disabled={unavailable} onChange={e => setProject(e.target.value)} /></label>
@@ -270,8 +223,8 @@ export function CoreSourceDialog({ inline = false, open, onOpenChange, state, di
                 <p className="break-all text-xs text-muted-foreground">Release update origin: {state?.updateRepository ?? "Unknown"}. Development source does not change release downloads.</p>
                 {state?.source.repositoryUrl && state.updateRepository && state.source.repositoryUrl.replace(/\.git$/, "").replace(/\/$/, "") !== state.updateRepository.replace(/\/$/, "") && <p className="text-xs">Development and release repositories differ. Returning or updating retains the existing release distribution.</p>}
               </div>
-              <div className="flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm">
-                <Radio className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <div className="flex items-start gap-2 rounded-md border border-info-foreground/20 bg-info-soft px-3 py-2 text-sm">
+                <Radio className="mt-0.5 h-4 w-4 shrink-0 text-info-foreground" />
                 <p className="text-muted-foreground">Core builds from the selected source folder. Restart to rebuild and apply source changes; there is no hot reload.</p>
               </div>
               <fieldset className="min-w-0 space-y-2" disabled={unavailable}>
@@ -303,7 +256,7 @@ export function CoreSourceDialog({ inline = false, open, onOpenChange, state, di
             </DialogBody>
             <DialogFooter>
               <Button type="submit" disabled={!canSave}>
-                {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FolderGit2 className="h-4 w-4" />}
+                {saving ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <FolderGit2 className="h-4 w-4" />}
                 Save source
               </Button>
             </DialogFooter>

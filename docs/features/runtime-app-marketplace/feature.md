@@ -1,11 +1,14 @@
 ---
 created: 2026-06-25
-updated: 2026-10-20
+updated: 2026-10-22
 summary: The optional Marketplace app that owns catalog discovery and requests Core-confirmed installations.
 components: [apps/marketplace]
 ---
 
 # Marketplace System App
+
+The web UI uses the [shared Hosty visual foundations](../design-system/feature.md): local IBM Plex
+Sans/JetBrains Mono fonts, ink surfaces, lime interaction states and its app chart accent.
 
 ## Description
 
@@ -80,9 +83,46 @@ The Marketplace manifest declares a strict `ui.entrypoint` and administrator nav
 
 Marketplace catalog and installed-state API routes are gated on that identity: the shared authorization check requires an `active` session whose `hostRole` is `host.admin`, and it runs before the route resolves any data. A missing token is `401 app_identity_required`, an active non-admin is `403 system_app_admin_required`, and an unreachable or misconfigured Core is `503`. The gate covers the catalog routes and the two installed-state routes alike — the installed-app id roster and per-app update availability are host state, so they never leave the Marketplace origin without an administrator session, and an unauthorized request is refused before Marketplace spends its service token on Core.
 
-Storefront clients treat those refusals as missing data rather than errors: an unauthorized installed-state response leaves the installed set empty and update availability at "no update", so the catalog still renders without install badges. This is the same degradation Marketplace applies when Core is unreachable.
+The installed-list route calls Core's existing `GET /api/apps` with Marketplace's service credential
+and the current app identity in `X-Hosty-App-Identity`. Core revalidates the actor and `apps.read`;
+Marketplace forwards no Core session cookie. The server returns only display metadata and navigation
+links, excluding settings, mounts and local source paths. Missing, revoked and unreachable authority
+produces an explicit failure with Retry installed apps, rather than a successful empty list.
+Per-app detail update probes retain their existing best-effort availability behavior.
 
-The storefront supports search/filtering, catalog cards, detail metadata, feed choices, description rendering, source diagnostics, and install actions. It renders catalog facts only; it does not join Core registry state into its responses.
+Discover contains category chips, cards and search across names, IDs, publishers, categories,
+summaries and tags. Installed lists every app returned by Core, including apps absent from the
+configured catalog, with its installed name/version, recorded feed or direct/local source, runtime,
+and last known update verdict. Desktop rows reserve a shared action-column width so installed
+versions stay aligned when rows offer different actions. Narrow screens stack version and action
+information beneath each app. Catalog membership does not determine provenance. Failed update
+checks retain an explicit incomplete state. Running apps with UI entries have installation-bound
+Core Open links; stopped apps show disabled Open and keep Manage. Manage targets the installed
+Shell's public/browser endpoint and existing app management route; it does not guess a port.
+Headless apps retain Manage without an invented UI destination. Catalog metadata enriches icons and
+detail links without asserting installed permissions or footprint. Detail opens beside the catalog
+in a sticky in-page pane on wide screens; narrow screens show the selected detail with Back to
+catalog. The same mounted detail/feed choice survives resizing. It retains declared signer,
+screenshots, description, feed choice, update probe and the existing installer. Installed version,
+Open and Manage come from the authorized installed roster, including for out-of-catalog apps.
+Missing footprint/permission facts are omitted. Source/settings, detail refresh, diagnostics, empty
+states and session recovery remain available. Catalog responses contain catalog facts only; the client
+joins the separate authorized installed-state response for display.
+
+The standalone storefront and settings page hide the SDK navigation rail; their initial bootstrap
+metadata declares the same chrome policy, avoiding a temporary single-entry sidebar. The storefront
+starts with the catalog source rather than a repeated Marketplace heading and description. Settings
+sits beside that source and remains available during loading or failure. There is no global Refresh
+button or replacement polling. Catalog and installed-list failures retain explicit retry controls,
+including when a transient catalog failure leaves cached cards visible. App details keeps its own
+Refresh action.
+
+Superseded detail requests are aborted and cannot replace a newer selection or reopen closed
+content. A detail refresh failure keeps last-loaded content visible with Retry and disables its
+install choices until successful recovery. HTTP 401/403 clears the catalog, detail and installed
+roster and cancels pending reads. Detail/update loading and errors have separate accessible states;
+unknown update evidence is not rendered as current. Closing returns focus to its opening control.
+The shared Hosty loading mark and Marketplace empty mark follow reduced-motion preferences.
 
 ## Install Handoff
 
@@ -140,14 +180,26 @@ message with a sign-in link or retry action. Once the session is active, catalog
 single indicator. Source metadata and diagnostics appear only after a real catalog response;
 a fetch failure never fabricates an unconfigured source or an empty catalog. HTTP 401/403 responses
 hide a previously loaded catalog, while a transient catalog-fetch error can retain the last loaded
-cards. Refresh after an expired session restarts identity recovery. A ready but empty catalog and a
+cards. Retry after an expired session restarts identity recovery. A ready but empty catalog and a
 search with no matches have distinct empty states.
 
 The app exposes the SDK GET/POST adapter at `/api/hosty/ui/[...action]` behind the existing
 administrator session gate. It supplies host verification, navigation metadata and tool resolution,
-so Shell policy hides app navigation after reloads and standalone navigation finishes loading.
+so Shell policy hides app navigation after reloads; the app also hides its redundant standalone
+navigation rail.
 These SDK routes reject missing identity with HTTP 401 and non-administrator identity with
 HTTP 403 (`admin_required`) before requesting UI metadata from Core.
+
+Loading states include visible labels; empty catalog and filtered results offer source or filter
+recovery as appropriate. Narrow feed disclosures stay within the viewport and long feed identifiers
+wrap. Closing details restores the originating control, or the search field if that control has
+left the page.
+
+A transient installed-list failure retains the last successful roster, labels it as last observed
+and preserves its Open/Manage actions. An authorization failure clears protected content instead.
+Settings distinguishes initial loading from a retryable load failure, validates the returned source,
+and keeps an unsaved source after a rejected save. Pending saves disable edits and retain the
+observed source used by the server's concurrency check.
 
 ## Testing Expectations
 
@@ -185,3 +237,8 @@ HTTP 403 (`admin_required`) before requesting UI metadata from Core.
   recovery; SDK tests cover development effect replay and terminal recovery states.
 - Rendered session-gate tests assert a single loading or terminal state and no premature catalog
   loading/source placeholders; active identity proceeds to the storefront loading state.
+- Storefront and settings chrome tests cover hidden standalone navigation and matching initial
+  bootstrap metadata. Verify the catalog-source Settings link during loading and failure, absence
+  of the redundant storefront heading and global Refresh, explicit catalog/installed retries with
+  and without cached content, and the retained detail Refresh action. Check the same controls in
+  Shell and at narrow widths without changing identity or installation authority.

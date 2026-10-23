@@ -119,3 +119,41 @@ it("copies setup links and tokens and gives a fallback when clipboard access is 
   expect(container.textContent).toContain("Token copied");
   expect(container.textContent).not.toContain("Clipboard unavailable");
 });
+
+
+it("keeps progress neutral until Core replies and shows errors without inventing readiness", async () => {
+  transport.read.mockReturnValue(new Promise(() => {}));
+  const request = vi.fn();
+  const item = { id: "1".repeat(32) } as CoreEnvironment;
+  await act(async () => root.render(<EnvironmentInitialization item={item} origin="https://core.test" pollVersion={0} request={request} />));
+  expect(container.querySelector('[aria-label="Environment setup stages"] [aria-current]')).toBeNull();
+  expect(container.textContent).toContain("Reading initialization progress");
+  transport.read.mockResolvedValue(Response.json({ phase: "failed", hasAdministrator: false, recoveryRequired: false,
+    error: "Application start failed", apps: [{ id: "hosty.shell", title: "Shell", state: "failed", error: "Port unavailable" },
+      { id: "hosty.harness", title: "Harness", state: "ready" }] }));
+  await act(async () => root.render(<EnvironmentInitialization item={item} origin="https://core.test" pollVersion={1} request={request} />));
+  expect(container.querySelector('[aria-current="step"]')?.textContent).toContain("Install");
+  expect(container.querySelector('[aria-label="Selected application progress"]')?.textContent).toContain("1 of 2 ready");
+  expect(container.textContent).toContain("Port unavailable");
+  expect(container.textContent).toContain("Application start failed");
+  expect(container.textContent).not.toContain("Register the first administrator");
+  expect([...container.querySelectorAll("button")].map(item => item.textContent)).toEqual(["Resume initialization"]);
+  expect(request).not.toHaveBeenCalled();
+});
+
+it("maps existing selection, administrator and Core-only readiness to the setup stages", async () => {
+  const item = { id: "1".repeat(32) } as CoreEnvironment;
+  const request = vi.fn();
+  for (const [pollVersion, status, expected] of [
+    [0, { phase: "selection", hasAdministrator: false }, "Choose apps"],
+    [1, { phase: "ready", hasAdministrator: false }, "Administrator"],
+    [2, { phase: "ready", hasAdministrator: true }, "Open"],
+  ] as const) {
+    transport.read.mockResolvedValue(Response.json({ ...status, apps: [], recoveryRequired: false }));
+    await act(async () => root.render(<EnvironmentInitialization item={item} origin="https://core.test" pollVersion={pollVersion} request={request} />));
+    expect(container.querySelector('[aria-current="step"]')?.textContent).toContain(expected);
+  }
+  expect(container.textContent).toContain("Core is ready for CLI/API use");
+  expect(container.querySelector('a[href]')).toBeNull();
+  expect(request).not.toHaveBeenCalled();
+});

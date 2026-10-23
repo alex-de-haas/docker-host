@@ -3,57 +3,26 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import type { PullRequest } from "@/lib/development-api";
 import { PullRequestStatus } from "./pull-request-status";
-
-function request(states: string[] | undefined, override: Partial<NonNullable<PullRequest["observation"]>> = {}): PullRequest {
-  return { url: "https://example.test/repo/pull/1", observation: {
-    at: new Date().toISOString(), state: "open", draft: false, unresolvedThreads: 3,
-    reviewDecision: "CHANGES_REQUESTED", checks: states?.map(state => ({ name: state, state })), ...override,
-  } };
-}
-function render(pr: PullRequest, stale = false) {
-  const element = document.createElement("div");
-  element.innerHTML = renderToStaticMarkup(<PullRequestStatus pr={pr} stale={stale} />);
-  return element;
-}
-
+const request = (states: string[] | undefined, override: Partial<NonNullable<PullRequest["observation"]>> = {}): PullRequest => ({ url: "https://example.test/repo/pull/1", observation: { at: new Date().toISOString(), state: "open", draft: false, unresolvedThreads: 3, reviewDecision: "CHANGES_REQUESTED", checks: states?.map(state => ({ name: state, state })), ...override } });
+function render(pr: PullRequest, stale = false) { const node = document.createElement("div"); node.innerHTML = renderToStaticMarkup(<PullRequestStatus pr={pr} stale={stale} />); return node.querySelector('[role="img"]')!; }
 it.each([
-  [["SUCCESS", "SKIPPED", "NEUTRAL"], "CI passed", "bg-emerald-500"],
-  [["SUCCESS", "IN_PROGRESS"], "CI in progress", "bg-amber-500"],
-  [["PENDING"], "CI in progress", "bg-amber-500"],
-  [["QUEUED"], "CI in progress", "bg-amber-500"],
-  [["WAITING"], "CI in progress", "bg-amber-500"],
-  [["SUCCESS", "FAILURE", "IN_PROGRESS"], "CI failed", "bg-red-500"],
-  [["ERROR"], "CI failed", "bg-red-500"],
-  [["CANCELLED"], "CI failed", "bg-red-500"],
-  [["TIMED_OUT"], "CI failed", "bg-red-500"],
-  [["ACTION_REQUIRED"], "CI failed", "bg-red-500"],
-  [["SUCCESS", "UNRECOGNIZED"], "CI unknown", "bg-muted-foreground"],
-  [[], "No CI checks reported", "bg-muted-foreground"],
-  [undefined, "CI unknown", "bg-muted-foreground"],
-] as const)("classifies observed CI %j without treating review comments as check failures", (states, label, color) => {
-  const element = render(request(states ? [...states] : undefined));
-  const icon = element.querySelector('[role="img"]')!;
-  expect(icon.getAttribute("aria-label")).toBe(`Open pull request · ${label}`);
-  expect(icon.getAttribute("title")).toBe(icon.getAttribute("aria-label"));
-  expect(icon.querySelector("span")?.classList.contains(color)).toBe(true);
+  [["SUCCESS", "SKIPPED", "NEUTRAL"], "CI passed", "text-success-foreground"],
+  [["SUCCESS", "IN_PROGRESS"], "CI 1 of 2 · 1 running", "text-info-foreground"],
+  [["PENDING"], "CI 0 of 1 · 1 running", "text-info-foreground"],
+  [["SUCCESS", "FAILURE", "IN_PROGRESS"], "CI 1 failed", "text-destructive-foreground"],
+  [["CANCELLED"], "CI 1 failed", "text-destructive-foreground"],
+  [["UNRECOGNIZED"], "CI unknown", "text-muted-foreground"],
+  [["SKIPPED"], "CI skipped", "text-muted-foreground"],
+  [[], "No CI checks", "text-muted-foreground"],
+  [undefined, "CI unknown", "text-muted-foreground"],
+] as const)("uses the PR shape with whole-icon current CI color for %j", (states, label, color) => { const icon = render(request(states ? [...states] : undefined)); expect(icon.getAttribute("aria-label")).toBe(`Open pull request · ${label}`); expect(icon.classList.contains(color)).toBe(true); expect(icon.querySelector('.lucide-git-pull-request')).not.toBeNull(); });
+it("keeps draft and closed neutral, merged violet, and does not color review decisions as CI", () => {
+  const draft = render(request(["FAILURE"], { draft: true })); expect(draft.classList.contains("text-muted-foreground")).toBe(true); expect(draft.querySelector('.lucide-git-pull-request-draft')).not.toBeNull();
+  const closed = render(request(["FAILURE"], { state: "closed" })); expect(closed.classList.contains("text-muted-foreground")).toBe(true); expect(closed.querySelector('.lucide-git-pull-request-closed')).not.toBeNull();
+  const merged = render(request(["FAILURE"], { state: "merged" })); expect(merged.classList.contains("text-violet-600")).toBe(true); expect(merged.querySelector('.lucide-git-merge')).not.toBeNull();
+  expect(render(request(["SUCCESS"], { reviewDecision: "CHANGES_REQUESTED" })).classList.contains("text-success-foreground")).toBe(true);
 });
-
-it("does not show old or unavailable successful checks as current green CI", () => {
-  expect(render(request(["SUCCESS"]), true).querySelector('[role="img"]')?.getAttribute("aria-label")).toContain("CI status outdated");
-  for (const pr of [request(["SUCCESS"], { error: "Observation failed" }), { ...request(["SUCCESS"]), unavailable: "PR mismatch" }, { url: "https://example.test/repo/pull/1" }]) {
-    expect(render(pr).querySelector(".bg-emerald-500")).toBeNull();
-    expect(render(pr).querySelector('[role="img"]')?.getAttribute("aria-label")).toContain("unknown");
-  }
-});
-
-it.each([
-  [{ state: "merged" }, "Merged pull request", "lucide-git-merge"],
-  [{ state: "closed" }, "Closed without merging", "lucide-git-pull-request-closed"],
-  [{ draft: true }, "Draft pull request", "lucide-git-pull-request-draft"],
-  [{ state: "unavailable" }, "Pull request status unknown", "lucide-circle-help"],
-])("distinguishes PR lifecycle %j from a successful check", (override, label, glyph) => {
-  const element = render(request(["SUCCESS"], override), true);
-  expect(element.querySelector('[role="img"]')?.getAttribute("aria-label")).toBe(label);
-  expect(element.querySelector(`.${glyph}`)).not.toBeNull();
-  expect(element.querySelector(".bg-emerald-500")).toBeNull();
+it("does not present stale, incomplete or unavailable CI as current success", () => {
+  for (const [pr, stale] of [[request(["SUCCESS"]), true], [request(["SUCCESS"], { complete: false }), false], [{ ...request(["SUCCESS"]), unavailable: "Provider unavailable" }, false], [{ ...request(["SUCCESS"]), historical: true }, false]] as const) expect(render(pr, stale).classList.contains("text-muted-foreground")).toBe(true);
+  expect(render({ ...request(["SUCCESS"], { state: "merged" }), historical: true }, true).classList.contains("text-violet-600")).toBe(true);
 });

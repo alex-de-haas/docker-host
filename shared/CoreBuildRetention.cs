@@ -79,7 +79,9 @@ internal static class CoreBuildRetention
             {
                 if (activation.Generation is { } generation) keep.Add(generation);
                 if (activation.PreviousCore.GenerationPath is { } previous) keep.Add(previous);
+                if (activation.CoreReturnTarget?.Launch.GenerationPath is { } baseline) keep.Add(baseline);
             }
+            foreach (var generation in WorkspaceCoreLaunchContinuation.PendingGenerations(root)) keep.Add(generation);
             var apps = Path.Combine(root, "apps");
             if (Directory.Exists(apps))
                 foreach (var app in Directory.EnumerateDirectories(apps))

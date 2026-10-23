@@ -25,7 +25,7 @@ export function ChatAttachment({ name, size, file, state = "done", description, 
       </AttachmentMedia>
       <AttachmentContent>
         <AttachmentTitle title={name}>{name}</AttachmentTitle>
-        <AttachmentDescription title={description}>
+        <AttachmentDescription title={description} className="tabular-nums">
           {[size === null ? null : formatAttachmentSize(size), description].filter(Boolean).join(" · ")}
         </AttachmentDescription>
       </AttachmentContent>

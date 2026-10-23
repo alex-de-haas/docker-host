@@ -11,7 +11,12 @@ vi.mock("../src/app/shell/shell-context", () => ({
 
 afterEach(() => vi.unstubAllGlobals());
 
-it.each(["autostart", "app setting", "public origins tab"])(
+function activateTab(dialog: Element, label: string) {
+  const tab = [...dialog.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(button => button.textContent === label)!;
+  tab.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+}
+
+it.each(["autostart", "app setting", "round trip through Network", "autostart with parameter draft"])(
   "saves %s without resubmitting browser addresses or untouched secrets",
   async change => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -33,35 +38,47 @@ it.each(["autostart", "app setting", "public origins tab"])(
     document.body.append(node);
     const root = createRoot(node);
     try {
-      await act(async () => root.render(<AppDetailsDialog
-        app={app} view="settings" coreOrigin="https://core.test" globalMounts={[]}
+      const render = (current = app) => act(async () => root.render(<AppDetailsDialog
+        app={current} view="settings" coreOrigin="https://core.test" globalMounts={[]}
         canManageApps isShell={false} busyAction={null}
         detail={{ loading: false, error: null, backups: null, backupCleanupPlan: null, updatePlan: null }}
         onClose={vi.fn()} onRefreshBackups={vi.fn()} onCreateBackup={vi.fn()} onRestoreBackup={vi.fn()}
         onDeleteBackup={vi.fn()} onPreviewBackupCleanup={vi.fn()} onApplyBackupCleanup={vi.fn()}
         onConfigure={configure} onConfigureMounts={vi.fn()} onConfigureSource={vi.fn()}
-        onClearSource={vi.fn()} onSetFeed={vi.fn()} onRemove={vi.fn()}
+        onClearSource={vi.fn()} onSetFeed={vi.fn()}
       />));
+      await render();
       const dialog = document.querySelector('[role="dialog"]')!;
       if (change === "autostart") {
         await act(async () => dialog.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
       } else {
+        await act(async () => activateTab(dialog, "Parameters"));
         const input = dialog.querySelector<HTMLInputElement>("#setting-HOSTY_APP_MODE")!;
         await act(async () => {
           Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "quiet");
           input.dispatchEvent(new Event("input", { bubbles: true }));
         });
-        if (change === "public origins tab") {
-          const tab = [...dialog.querySelectorAll<HTMLButtonElement>("button")]
-            .find(button => button.textContent === "Network")!;
-          await act(async () => tab.click());
+        if (change === "round trip through Network") {
+          await act(async () => activateTab(dialog, "Network"));
+          expect([...dialog.querySelectorAll("button")].some(button => button.textContent === "Save settings")).toBe(false);
+          await act(async () => activateTab(dialog, "Parameters"));
+          expect(dialog.querySelector<HTMLInputElement>("#setting-HOSTY_APP_MODE")!.value).toBe("quiet");
         }
+      }
+      if (change === "autostart with parameter draft") {
+        await act(async () => activateTab(dialog, "Launch"));
+        await act(async () => dialog.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
       }
       const save = [...dialog.querySelectorAll<HTMLButtonElement>("button")]
         .find(button => button.textContent === "Save settings")!;
       await act(async () => save.click());
       expect(configure).toHaveBeenCalledExactlyOnceWith(app,
-        { HOSTY_APP_MODE: change === "autostart" ? "normal" : "quiet" }, change !== "autostart");
+        change.startsWith("autostart") ? {} : { HOSTY_APP_MODE: "quiet" }, change.startsWith("autostart") ? false : undefined);
+      if (change === "autostart with parameter draft") {
+        await render({ ...app, autostart: false });
+        await act(async () => activateTab(dialog, "Parameters"));
+        expect(dialog.querySelector<HTMLInputElement>("#setting-HOSTY_APP_MODE")!.value).toBe("quiet");
+      }
     } finally {
       await act(async () => root.unmount());
       node.remove();

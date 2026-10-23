@@ -14,12 +14,12 @@ const app: BuildingApp = { appId: "notes", name: "Notes", acceptedHead: "b".repe
   work: [{ workspaceId: "w", worktreeId: "t", sessionId: "old", assistantId: "hosty.harness", owned: true,
     state: "deferred", head: "c".repeat(40), accepted: false, unavailable: null }] };
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); localStorage.clear(); pick.mockClear();
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} }); localStorage.clear(); pick.mockClear();
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   vi.mocked(developmentRequest).mockResolvedValue([app]);
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
-const click = (text: string) => act(async () => [...document.querySelectorAll("button")].find(b => b.textContent === text)!.click());
+const click = (text: string) => act(async () => [...document.querySelectorAll("button")].find(b => b.getAttribute("aria-label") === text || b.textContent === text)!.click());
 const open = async () => { await act(async () => root.render(<ContinueBuilding sessions={[session]} onPick={pick} />)); await click("Continue building"); };
 it("shows outstanding work and opens its original session without mutating it", async () => {
   await open(); expect(document.body.textContent).toContain("deferred · Outstanding work");

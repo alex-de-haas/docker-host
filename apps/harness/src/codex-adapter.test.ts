@@ -276,6 +276,7 @@ describe("codex harness adapter", () => {
 
     expect(active.resolveApproval(approval.approvalId, "allow")).toBe(true);
     await waitFor(() => events.find((candidate) => candidate.type === "result"), "result after allow");
+    expect(events.find(event => event.type === "tool_use" && event.toolName === "FileChange")).toMatchObject({ cwd: process.cwd() });
     expect(events.some((event) => event.type === "tool_use")).toBe(true);
     expect(events.some((event) => event.type === "assistant_text" && event.text === "written")).toBe(true);
   });

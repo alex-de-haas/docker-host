@@ -1,5 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import { MAX_ATTACHMENT_BYTES } from "./resources.js";
+import { sanitizeWorkerCommandFrame, sanitizeWorkerCommandReceipt, validWorkerCommandEnvelope } from "./command-events.js";
 import { randomUUID, createHmac } from "node:crypto";
 import type { HarnessAdapter, HarnessCapabilities, HarnessEvent, HarnessRun, HarnessStartOptions } from "../harness/adapter.js";
 import type { ConnectionBinding } from "../connections/registry.js";
@@ -84,12 +85,19 @@ export class WorkerClient {
             if (!data) continue;
             if (type === "run") {
               const frame = JSON.parse(data) as WorkerEvent;
+              if ((frame.event?.type === "command_result" || frame.event?.type === "tool_result") && !validWorkerCommandEnvelope(frame))
+                throw new WorkerApiError(409, frame.event.type === "command_result" ? "invalid_command_frame" : "invalid_tool_frame", "Worker tool event identity or sequence is malformed.");
               if (frame.runId !== id || generation && frame.generation !== generation)
                 throw new WorkerApiError(409, "generation_mismatch", "Worker run generation changed.");
               generation = frame.generation;
-              if (frame.sequence > cursor) { await deliverEvent(() => onEvent(frame), signal); cursor = frame.sequence; }
+              if (frame.sequence > cursor) {
+                const normalized = sanitizeWorkerCommandFrame(frame);
+                if (normalized) await deliverEvent(() => onEvent(normalized), signal);
+                // Invalid command metadata or tool output still consumes its remote cursor, preventing replay loops.
+                cursor = frame.sequence;
+              }
             } else if (type === "state" || type === "resync") {
-              const receipt = JSON.parse(data) as WorkerReceipt;
+              const receipt = sanitizeWorkerCommandReceipt(JSON.parse(data) as WorkerReceipt);
               if (receipt.runId !== id || generation && receipt.generation !== generation)
                 throw new WorkerApiError(409, "generation_mismatch", "Worker run generation changed.");
               if (type === "state") return receipt;
@@ -152,8 +160,8 @@ class RemoteRun implements HarnessRun {
     this.finished = (async () => {
       let final: HarnessEvent | undefined, accepted = false;
       try {
-        const current = request ? await this.client.request<WorkerReceipt>(`/v1/runs/${id}`, "PUT", request, true)
-          : await this.client.request<WorkerReceipt>(`/v1/runs/${id}`);
+        const current = sanitizeWorkerCommandReceipt(request ? await this.client.request<WorkerReceipt>(`/v1/runs/${id}`, "PUT", request, true)
+          : await this.client.request<WorkerReceipt>(`/v1/runs/${id}`));
         accepted = true;
         for (const frame of current.pending ?? []) {
           const event = frame.event;

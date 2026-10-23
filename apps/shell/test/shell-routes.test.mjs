@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   getAuthorizedShellView,
+  getManageAppHref,
   getShellAuthorizationRedirect,
   getSettingsHref,
   getShellViewHref,
@@ -180,5 +181,72 @@ test("grouped settings URLs keep personal credentials accessible without opening
   for (const section of ["users", "connections", "policies", "unknown"]) {
     const route = readShellRoute("/settings", params(`tab=security&section=${section}`));
     assert.equal(getShellAuthorizationRedirect(route, true, false), "/apps");
+  }
+});
+
+
+test("app details have a dedicated canonical route with every supported section", () => {
+  for (const section of ["app", "parameters", "permissions", "publicOrigins", "mounts", "source", "backups", "logs"]) {
+    const url = new URL(getManageAppHref("com.haas.demo-app", section), "http://x");
+    assert.equal(url.pathname, "/apps/com.haas.demo-app");
+    assert.equal(url.searchParams.get("section"), section);
+    const route = readShellRoute(url.pathname, url.searchParams);
+    assert.equal(route.view, "dashboard");
+    assert.equal(route.workspace, null);
+    assert.deepEqual(route.appDetails, { appId: "com.haas.demo-app", section });
+    assert.equal(readCanonicalRedirect(url.pathname, url.searchParams), null);
+  }
+  assert.equal(getManageAppHref("com.haas.demo-app"), "/apps/com.haas.demo-app?section=app");
+});
+
+test("old management bookmarks render app details immediately and preserve their section", () => {
+  for (const section of ["app", "parameters", "permissions", "publicOrigins", "mounts", "source", "backups", "logs"]) {
+    const search = params(`tab=manage%3Acom.haas.demo-app&section=${section}`);
+    const legacy = readShellRoute("/settings", search);
+    assert.equal(legacy.view, "dashboard");
+    assert.equal(legacy.workspace, null);
+    assert.deepEqual(legacy.appDetails, { appId: "com.haas.demo-app", section });
+    const canonical = new URL(readCanonicalRedirect("/settings", search), "http://x");
+    assert.deepEqual(readShellRoute(canonical.pathname, canonical.searchParams).appDetails, legacy.appDetails);
+    assert.equal(readCanonicalRedirect(canonical.pathname, canonical.searchParams), null);
+  }
+});
+
+test("the retired Settings installed-app catalog resolves and canonicalizes to Dashboard", () => {
+  assert.equal(readShellRoute("/settings", params("tab=apps")).view, "dashboard");
+  assert.equal(readShellRoute("/settings", params("tab=apps")).appDetails, undefined);
+  assert.equal(readCanonicalRedirect("/settings", params("tab=apps")), "/dashboard");
+  assert.equal(readCanonicalRedirect("/settings", params("tab=hosty.harness")), null);
+});
+
+test("app details preserve encoded identifiers and tolerate malformed percent encoding", () => {
+  const url = new URL(getManageAppHref("com.example.app%name", "logs"), "http://x");
+  assert.equal(url.pathname, "/apps/com.example.app%25name");
+  assert.deepEqual(readShellRoute(url.pathname, url.searchParams).appDetails, { appId: "com.example.app%name", section: "logs" });
+  assert.deepEqual(readShellRoute("/apps/com.haas.demo%2Dapp/", params()).appDetails, { appId: "com.haas.demo-app", section: "app" });
+  assert.deepEqual(readShellRoute("/apps/%not-encoded", params("section=logs")).appDetails, { appId: "%not-encoded", section: "logs" });
+  const legacy = params("tab=manage%3Acom.example.app%25name&section=logs");
+  assert.equal(readCanonicalRedirect("/settings", legacy), getManageAppHref("com.example.app%name", "logs"));
+  assert.equal(readShellRoute("/settings", params("tab=manage%3A")).appDetails, undefined);
+});
+
+test("missing or unsupported app-detail sections fall back to Launch", () => {
+  for (const section of [null, "", "unknown", "host", "../../settings"]) {
+    const search = new URLSearchParams();
+    if (section !== null) search.set("section", section);
+    assert.deepEqual(readShellRoute("/apps/com.haas.demo-app", search).appDetails, { appId: "com.haas.demo-app", section: "app" });
+    search.set("tab", "manage:com.haas.demo-app");
+    assert.equal(readShellRoute("/settings", search).appDetails.section, "app");
+    assert.equal(readCanonicalRedirect("/settings", search), "/apps/com.haas.demo-app?section=app");
+  }
+  assert.equal(getManageAppHref("com.haas.demo-app", "unknown"), "/apps/com.haas.demo-app?section=app");
+});
+
+test("app-detail routes retain administrator authorization outside the client logs exception", () => {
+  for (const [path, search] of [["/apps/com.haas.demo-app", "section=logs"], ["/settings", "tab=manage%3Acom.haas.demo-app&section=permissions"]]) {
+    const route = readShellRoute(path, params(search));
+    assert.equal(getShellAuthorizationRedirect(route, true, false), "/apps");
+    assert.equal(getShellAuthorizationRedirect(route, true, true), null);
+    assert.equal(getShellAuthorizationRedirect(route, false, false), null);
   }
 });

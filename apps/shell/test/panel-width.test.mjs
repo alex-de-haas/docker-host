@@ -23,3 +23,13 @@ test("narrow and unmeasured groups never have conflicting constraints", () => {
     assert.ok(bounds.workspaceMin + bounds.panelMax <= Math.max(0, width - 12));
   }
 });
+
+test("page-specific dock constraints reserve the page and the 320px tool without a rail", () => {
+  assert.deepEqual(panelWidthBounds(840, 440, 0), { workspaceMin: 440, panelMin: 320, panelMax: 388 });
+  assert.deepEqual(panelWidthBounds(1040, 560, 0), { workspaceMin: 560, panelMin: 320, panelMax: 468 });
+  for (const width of [0, 300, 600]) {
+    const bounds = panelWidthBounds(width, 560, 0);
+    assert.ok(bounds.panelMax >= bounds.panelMin);
+    assert.ok(bounds.workspaceMin + bounds.panelMax <= Math.max(0, width - 12));
+  }
+});

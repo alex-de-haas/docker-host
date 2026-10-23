@@ -1,6 +1,6 @@
 ---
 created: 2026-07-12
-updated: 2026-10-21
+updated: 2026-10-22
 summary: First-party apps are ordinary runtime apps selected from a distribution catalog during initialization and removable like any other.
 components: [apps/core, apps/cli, apps/shell]
 ---
@@ -12,6 +12,12 @@ installed and uninstalled through the same lifecycle as any other app, from any 
 Installed Apps list, `hosty setup`, or `hosty apps remove`. The release's list of first-party apps is
 a **catalog**, not a policy. [Hosty initialization](../hosty-initialization/feature.md) installs the first
 explicit selection; completed initialization does not reconcile removed apps back into existence.
+
+The implementation retains app-specific legacy bootstrap configuration and preference migrations;
+these are recorded separately from runtime prerequisites in the
+[Core boundary audit](../../reviews/2026-10-22-core-application-boundaries.md). The
+[compatibility plan](plan.md) owns their remaining removal. Browser routing and UI-specific review
+warnings are owned by [replaceable UI clients](../replaceable-ui-clients/plan.md).
 
 ## What "system" means
 
@@ -102,13 +108,17 @@ first-party role is described exactly like the app it replaced.
 
 ## Surfaces
 
-**Shell.** Installed Apps shows Remove for every app the admin can manage, system apps included; the
-list marks them with a `System` badge. The remove panel renders the computed impact above its
-delete-data/backups/source options, and adds a dedicated warning when the app being removed is the
-Shell serving the current page, with the `hosty setup --with hosty.shell` recovery hint. The install
-review dialog shows the system escalation when a plan produces a system app. The platform dialog
-carries Core settings and ingress only — the former Extensions section is gone, because there is no
-enable/disable state left to toggle.
+**Shell.** Dashboard and Manage retain removal for every app the administrator can manage, system
+apps included. The Apps overview adds administrator-only Uninstall beside Open and Standalone.
+Every removal entry opens Core's isolated review directly, without a preliminary Shell dialog.
+Core shows computed impact, one Removal options checkbox section, a short runtime-state explanation
+and the stop/removal warning. It does not repeat the choices in a static list. Removing the
+active Shell carries its availability warning and the `hosty setup --with hosty.shell` recovery hint.
+Shell retains blocked-popup fallback, original-request recovery and visible cancellation/failure;
+only confirmed Core execution reports removal. Cleanup defaults, reviewed option changes and
+source protection follow [trusted confirmation](../app-installation-sdk/feature.md#trusted-confirmation).
+The install review shows the system escalation when a plan produces a system app. Core settings
+and ingress remain separate; there is no Extensions enable/disable state.
 
 **CLI.** `hosty setup` presents the catalog with the host's actual installed state; ticking an entry
 installs it, unticking an installed entry uninstalls it. Both are real lifecycle operations against a
@@ -129,8 +139,10 @@ uninstall is the ordinary app remove. Uninstalls keep app data unless `--delete-
 | `GET /api/apps/{appId}/remove-impact` | admin session | Advisory removal impact |
 | `GET /control/v1/apps/{appId}/remove-impact` | control plane | The same, for the CLI |
 
-Removal itself has no dedicated route here: it is `POST /api/apps/{appId}/remove` (or its
-control-plane twin), identical for every app.
+Trusted operator and control-plane removal uses `POST /api/apps/{appId}/remove` (or its
+control-plane twin), identical for every app. App callers such as Shell prepare a removal through
+the [installation approval flow](../app-installation-sdk/feature.md#trusted-confirmation); app tokens
+cannot invoke direct removal.
 
 ## Testing Expectations
 
@@ -142,7 +154,9 @@ control-plane twin), identical for every app.
   those, clears the ones that land, and drops any that have left the catalog.
 - Boot leaves an installed app's version, runtime, autostart, settings, and update pointer untouched,
   and performs no remote fetches.
-- Removing a system app succeeds on the ordinary path, with no surface distinction.
+- Removing a system app succeeds on the ordinary path, with no surface distinction. Shell's
+  administrator-only Apps Uninstall and existing removal entries open Core review directly and
+  retain cleanup choices, impact/runtime/Shell warnings, source protection and popup recovery.
 - The impact preflight lists declared dependents (with `required` and aliases) and capability
   consumers, and returns empty lists for an app nothing declares against.
 - `hosty setup` reflects live installed state, installs and uninstalls only where the selection

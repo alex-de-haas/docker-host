@@ -1,20 +1,19 @@
 import type { AppUpdateAvailability, CoreApp } from "./types";
 
 const stages: Record<string, string> = {
-  queued: "Update queued", preparing: "Preparing update", stopping: "Stopping",
+  queued: "Update queued", preparing: "Preparing update",
   "backing-up": "Creating backup", installing: "Installing", downloading: "Downloading",
-  starting: "Starting", checking: "Checking readiness", completed: "Updated",
-  "needs-attention": "Updated · needs attention", failed: "Update failed", interrupted: "Update interrupted",
+  checking: "Checking readiness",
 };
 
-export const UPDATE_SUCCESS_DURATION = 30_000;
-
-export function updateFeedback(app: Pick<CoreApp, "operationStatus" | "lastOperation" | "updateProgress" | "health">, now: number) {
+export function updateFeedback(app: Pick<CoreApp, "operationStatus" | "lastOperation" | "updateProgress">) {
+  if (app.operationStatus !== "updating") return null;
   const progress = app.updateProgress;
-  if (!progress) return app.operationStatus === "updating" ? "Updating" : null;
-  if (app.lastOperation !== "update") return null;
-  if (progress.stage === "needs-attention" && app.health?.status === "healthy") return null;
-  if (progress.stage === "completed" && now - Date.parse(progress.changedAt) >= UPDATE_SUCCESS_DURATION) return null;
+  if (!progress) return "Updating";
+  if (app.lastOperation !== "update" || ["completed", "needs-attention", "failed", "interrupted"].includes(progress.stage)) return null;
+  // Runtime lifecycle transitions belong in the primary status. The update remains active
+  // through stop/start, but this secondary line describes only the update operation.
+  if (progress.stage === "stopping" || progress.stage === "starting") return "Updating";
   const label = stages[progress.stage] ?? "Updating";
   return progress.service ? `${label} · ${progress.service}` : label;
 }

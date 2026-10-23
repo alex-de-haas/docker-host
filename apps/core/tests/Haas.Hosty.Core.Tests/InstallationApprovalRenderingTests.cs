@@ -84,6 +84,37 @@ public sealed class InstallationApprovalRenderingTests
         Assert.Contains($"<dt>Runtime</dt><dd>{expected}</dd>", html);
     }
 
+    [Fact]
+    public void RemovalReview_RetainsCleanupDependencyPublicationAndShellConsequences()
+    {
+        var removal = new AppRemovalPlan("hosty.shell", "<Shell>", "1.0.0", new(),
+            new("hosty.shell", "<Shell>", true,
+                [new("dependent", "<Dependent>", "running", true, ["<api>"])],
+                [new("telemetry", [new("consumer", "<Consumer>", "running")])],
+                [new("old", "adopted.example", "adopted"), new("new", "owned.example", "created")]))
+        {
+            SourceReview = new(["Uncommitted changes in workspace <work>", "Worktree files are kept."], "fingerprint", false),
+        };
+        var html = InstallationApprovalEndpoints.Render(new InstallationApproval {
+            UserId = "admin", CallerName = "Shell", CallerAppId = "hosty.shell", ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            Status = "pending", RemovalPlan = removal,
+        }, "nonce");
+        Assert.Contains("Runtime state is deleted.", html);
+        foreach (var name in new[] { "deleteData", "deleteBackups", "deleteSource", "ignoreRuntimeErrors" })
+            Assert.Contains($"type=checkbox name={name} value=true>", html);
+        Assert.Contains("&lt;Dependent&gt;", html);
+        Assert.Contains("&lt;api&gt;", html);
+        Assert.Contains("running now", html);
+        Assert.Contains("&lt;Consumer&gt;", html);
+        Assert.Contains("what it sends goes nowhere", html);
+        Assert.Contains("adopted.example: tunnel route removed; existing DNS record kept", html);
+        Assert.Contains("owned.example: tunnel route removed; Hosty-created DNS record removed", html);
+        Assert.Contains("Uncommitted changes in workspace &lt;work&gt;", html);
+        Assert.Contains("hosty setup --with hosty.shell", html);
+        Assert.Contains("Core and other apps keep running", html);
+        Assert.DoesNotContain("<Dependent>", html);
+    }
+
     private static AppUpdatePlan Plan(IReadOnlyList<string> changes) => new("app", "0.3.0", "0.4.1", "docker", "docker",
         "https://example.test/manifest.json", "manifest-digest", "plan-digest", false, changes)
     {

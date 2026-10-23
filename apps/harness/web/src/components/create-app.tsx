@@ -3,11 +3,12 @@
 import { useRef, useState } from "react";
 import { Plus, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Field, FieldGroup, FieldLabel, FieldDescription, FieldSet, FieldLegend } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { InlineError } from "@/components/status";
 import { dispatchAppCreation, getSession, workspaceAction, type AssistantSession } from "@/lib/assistant-api";
 
@@ -47,7 +48,9 @@ export function CreateApp({ session, busy, onChange }: {
   const generation = useRef(0);
   const saved = session.appCreations?.find(o => o.input.requestId === draft.requestId);
   const locked = working || !!draft.requestId;
-  const pending = session.appCreations?.filter(o => o.state === "pending") ?? [];
+  const operations = session.appCreations?.filter(o => o.state !== "rejected") ?? [];
+  const pending = operations.filter(o => o.state === "pending");
+  const recoverable = operations.filter(o => o.state === "pending" || !o.prompt || (session.handoffDispatch?.id === o.input.requestId && session.handoffDispatch?.state === "queued"));
 
   function persist(next: Draft) {
     memory.current = next;
@@ -141,19 +144,30 @@ export function CreateApp({ session, busy, onChange }: {
     } finally { setWorking(false); setStep(""); }
   }
 
-  return <>
-    <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs">
-      <Button size="sm" variant="outline" disabled={busy || working} onClick={() => void show()}><Plus data-icon="inline-start" />Create app</Button>
-      {session.appCreations?.filter(o => o.state !== "rejected").map(operation => <span key={String(operation.input.requestId)} className="flex items-center gap-1 text-muted-foreground">
-        {String(operation.input.name || operation.input.appId)} · {operation.state === "observed" ? "Created locally" : "Creation pending"}
-        {(operation.state === "pending" || !operation.prompt || (session.handoffDispatch?.id === operation.input.requestId && session.handoffDispatch?.state === "queued")) && <Button size="sm" variant="ghost" disabled={busy || working} onClick={() => void show(operation)}>Recover</Button>}
-      </span>)}
-    </div>
-    <Dialog open={open} onOpenChange={value => { if (!working && !readingIcon) { if (value) setOpen(true); else close(); } }}>
+  return <Dialog open={open} onOpenChange={value => { if (!working && !readingIcon) { if (value) setOpen(true); else close(); } }}>
+    <TooltipProvider delayDuration={250}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DialogTrigger asChild>
+            <Button size="icon-sm" variant="ghost" className="relative" aria-label="Create app" disabled={busy || working} onClick={() => void show()}>
+              <Plus aria-hidden="true" />
+              {recoverable.length > 0 && <span aria-hidden="true" className="absolute top-1 right-1 size-1.5 rounded-full bg-warning-foreground" />}
+            </Button>
+          </DialogTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="right">Create app{recoverable.length > 0 ? " · recovery available" : ""}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
         <DialogHeader><DialogTitle>Create a local app</DialogTitle>
           <DialogDescription>Your source stays on this host. The assistant works in a separate worktree and prepares a Docker preview with its own data.</DialogDescription>
         </DialogHeader>
+        {operations.length > 0 && <div className="space-y-2 text-sm" aria-label="App creation history">
+          {operations.map(operation => <div key={String(operation.input.requestId)} className="flex items-center justify-between gap-2">
+            <span className="min-w-0 text-muted-foreground">{String(operation.input.name || operation.input.appId)} · {operation.state === "observed" ? "Created locally" : "Creation pending"}</span>
+            {recoverable.includes(operation) && <Button size="sm" variant="ghost" disabled={busy || working || readingIcon} onClick={() => void show(operation)}>Recover</Button>}
+          </div>)}
+        </div>}
         <form className="flex flex-col gap-5" onSubmit={event => { event.preventDefault(); void submit(); }}>
           <FieldGroup className="gap-4">
             <Field><FieldLabel htmlFor="create-app-name">Name</FieldLabel><Input id="create-app-name" required maxLength={120} disabled={locked} value={draft.name} onChange={e => update({ name: e.target.value, ...(!draft.appId || draft.appId === suggestId(draft.name) ? { appId: suggestId(e.target.value) } : {}) })} /></Field>
@@ -192,6 +206,5 @@ export function CreateApp({ session, busy, onChange }: {
           </DialogFooter>
         </form>
       </DialogContent>
-    </Dialog>
-  </>;
+  </Dialog>;
 }

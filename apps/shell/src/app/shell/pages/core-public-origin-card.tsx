@@ -1,5 +1,7 @@
 "use client";
 
+import { HostyLoader } from "../../../../../../shared/web/hosty-states";
+
 import { useCallback, useEffect, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { toast } from "@/components/reui/operation-toast";
@@ -131,7 +133,7 @@ export function CorePublicOriginCard() {
 
       {loading ? (
         <p className="flex items-center gap-2 text-xs text-muted-foreground">
-          <LoaderCircle className="size-3.5 animate-spin" aria-hidden /> Loading…
+          <HostyLoader className="size-3.5" label={null} /> Loading…
         </p>
       ) : !connected ? (
         <p className="text-xs text-muted-foreground">
@@ -191,7 +193,7 @@ export function CorePublicOriginCard() {
           <div className="flex items-center gap-2">
             {conflict && (
               <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void publish(true)}>
-                {busy && <LoaderCircle className="mr-1 size-3.5 animate-spin" aria-hidden />}
+                {busy && <LoaderCircle className="mr-1 size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />}
                 Adopt and publish
               </Button>
             )}
@@ -201,12 +203,12 @@ export function CorePublicOriginCard() {
               disabled={busy || !label.trim() || (publication !== null && !renaming && !repairable)}
               onClick={() => void publish()}
             >
-              {busy && <LoaderCircle className="mr-1 size-3.5 animate-spin" aria-hidden />}
+              {busy && <LoaderCircle className="mr-1 size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />}
               {publication === null ? "Publish" : renaming ? "Rename" : "Reapply"}
             </Button>
             {publication !== null && (
               <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void unpublish()}>
-                {busy && <LoaderCircle className="mr-1 size-3.5 animate-spin" aria-hidden />}
+                {busy && <LoaderCircle className="mr-1 size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />}
                 Unpublish
               </Button>
             )}

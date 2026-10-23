@@ -60,3 +60,23 @@ it("distinguishes empty and unknown checks and labels outdated evidence", async 
   await render(request(["SUCCESS"]), true);
   expect(dialog()?.textContent).toContain("outdated");
 });
+
+it("expands checks in place on a phone and updates their evidence", async () => {
+  vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener() {}, removeEventListener() {} }));
+  await render(request(["IN_PROGRESS", "SUCCESS"]));
+  await act(async () => trigger().click());
+  expect(dialog()).toBeNull();
+  const region = () => container.querySelector('[role="region"][aria-label="repo #42: CI checks"]');
+  expect(region()?.textContent).toContain("In progress");
+  await render(request(["FAILURE", "SUCCESS"]));
+  expect(region()?.textContent).toContain("Failure");
+  await act(async () => trigger().click()); expect(region()).toBeNull();
+});
+
+it("opens the segmented control only by click, beside the cards, and closes by its own button", async () => {
+  await act(async () => root.render(<PullRequestChecks pr={request(["SUCCESS", "SKIPPED", "IN_PROGRESS", "FAILURE"])} stale={false} label="repo #42" segmented />));
+  expect(trigger().textContent).toContain("1 passed · 1 in progress · 1 skipped · 1 failed");
+  await act(async () => trigger().dispatchEvent(new MouseEvent("mouseover", { bubbles: true }))); expect(dialog()).toBeNull();
+  await act(async () => trigger().click()); expect(dialog()?.getAttribute("data-side")).toBe("left");
+  await act(async () => dialog()!.querySelector<HTMLButtonElement>('[aria-label="Close CI checks"]')!.click()); expect(dialog()).toBeNull();
+});

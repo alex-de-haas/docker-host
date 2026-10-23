@@ -72,3 +72,26 @@ it.each(["environments", "sandboxes"] as const)("retains the accepted %s deletio
   await act(async () => button("Retry sandbox action").click());
   expect(vi.mocked(developmentRequest).mock.calls[1]).toEqual(first);
 });
+
+
+it("keeps compact sandbox deletion behind its menu and confirmation, then recovers the exact request", async () => {
+  Element.prototype.hasPointerCapture = vi.fn(() => false);
+  Element.prototype.scrollIntoView = vi.fn();
+  const mount = () => act(async () => root.render(<WorkspaceResourceActions compact workspaceId="work" kind="environments" resource={{ id: "child", state: "running", revision: 4 }} label="QA" canStart disabled={false} refresh={() => {}} />));
+  await mount();
+  expect(developmentRequest).not.toHaveBeenCalled();
+  await act(async () => container.querySelector('[aria-label="QA sandbox actions"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  const entries = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+  expect(entries.map(item => item.textContent)).toEqual(["Stop sandbox", "Delete sandbox…"]);
+  await act(async () => entries.find(item => item.textContent === "Delete sandbox…")!.click());
+  expect(developmentRequest).not.toHaveBeenCalled();
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("ordinary application data are preserved");
+  vi.mocked(developmentRequest).mockRejectedValue(new Error("Response lost"));
+  await act(async () => button("Delete sandbox").click());
+  const original = vi.mocked(developmentRequest).mock.calls[0];
+  expect(original).toEqual(["/work/environments/child/finish", { requestId: expect.any(String), expectedRevision: 4 }]);
+  await act(async () => root.unmount()); root = createRoot(container); await mount();
+  expect(container.querySelector('[aria-label="QA sandbox actions"]')).toBeNull();
+  await act(async () => button("Retry sandbox action").click());
+  expect(vi.mocked(developmentRequest).mock.calls[1]).toEqual(original);
+});

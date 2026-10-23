@@ -5,6 +5,35 @@ namespace Haas.Hosty.Core.Tests;
 public sealed class InstallationApprovalStoreTests
 {
     [Fact]
+    public void RemovalChoices_AreSessionBoundAndFreezeTheNewPlanBeforeFinalDecision()
+    {
+        var clock = new TestClock();
+        var store = new InstallationApprovalStore(clock);
+        var plan = new AppRemovalPlan("target", "Target", "1.0.0", new(), new("target", "Target", false, [], [], []))
+            { Identity = "installation" };
+        var entry = store.Add(new InstallationApproval {
+            UserId = "admin", CallerName = "Shell", ExpiresAt = clock.UtcNow.AddMinutes(15), RemovalPlan = plan,
+        });
+        store.Submit(entry, new());
+        var nonce = store.IssueNonce(entry, "session");
+        var changed = plan with { Options = plan.Options with { DeleteData = true } };
+        Assert.Throws<AppLifecycleException>(() => store.ChangeRemovalOptions(entry, nonce, "other-session", plan.DecisionDigest, changed));
+        Assert.Throws<AppLifecycleException>(() => store.ChangeRemovalOptions(entry, nonce, "session", "stale", changed));
+        Assert.Throws<AppLifecycleException>(() => store.ChangeRemovalOptions(entry, nonce, "session", plan.DecisionDigest,
+            changed with { Identity = "replacement" }));
+        Assert.Same(plan, entry.RemovalPlan);
+        store.ChangeRemovalOptions(entry, nonce, "session", plan.DecisionDigest, changed);
+        Assert.Equal("pending", entry.Status);
+        Assert.Same(changed, entry.RemovalPlan);
+        Assert.Throws<AppLifecycleException>(() => store.Decide(entry, nonce, "session", true));
+        var fresh = store.IssueNonce(entry, "session");
+        Assert.Throws<AppLifecycleException>(() => store.Decide(entry, fresh, "session", true, removalDigest: plan.DecisionDigest));
+        Assert.Equal("pending", entry.Status);
+        store.Decide(entry, fresh, "session", true, removalDigest: changed.DecisionDigest);
+        Assert.Equal("executing", entry.Status);
+    }
+
+    [Fact]
     public void ApprovalRequiresPageNonceAndSameBrowserSession_AndIsSingleUse()
     {
         var clock = new TestClock();

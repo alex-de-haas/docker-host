@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import { HostyEmptySlots, HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -47,6 +48,6 @@ export function SettingsTokensSection({ coreOrigin, sendCsrfJson, userId }: { co
       <TableBody>{credentials.map(credential => <TableRow key={credential.id}><TableCell>{editing === credential.id ? <div className="flex gap-2"><Input aria-label="Credential name" value={label} onChange={event => setLabel(event.target.value)} /><Button size="sm" disabled={Boolean(pending) || !label.trim()} onClick={() => void rename(credential.id)}>Save name</Button><Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button></div> : <p>{credential.label || credential.oauthClientName || (credential.kind === "browser" ? "Browser session" : credential.kind)}</p>}<p className="text-xs text-muted-foreground">{credential.id}</p>{credential.oauthClientId && <p className="text-xs text-muted-foreground">{credential.oauthClientName} · {credential.oauthClientId}</p>}</TableCell>
         <TableCell><p>{credential.audience || "Your host role"}</p><p className="text-xs text-muted-foreground">{credential.scopes.join(", ")}</p></TableCell>
         <TableCell>{credential.lastRequestAt ? new Date(credential.lastRequestAt).toLocaleString() : "No recorded request"}{credential.lastRefreshAt && <p className="text-xs text-muted-foreground">Refreshed {new Date(credential.lastRefreshAt).toLocaleString()}</p>}{credential.expiresAt && <p className="text-xs text-muted-foreground">Expires {new Date(credential.expiresAt).toLocaleString()}</p>}</TableCell><TableCell className="text-right"><Button className="mr-2" variant="ghost" size="sm" disabled={Boolean(pending)} onClick={() => { setEditing(credential.id); setLabel(credential.label || credential.oauthClientName || ""); }}>Rename</Button><Button variant="outline" size="sm" disabled={Boolean(pending)} onClick={() => void revoke(credential.id)}>{pending === credential.id ? "Revoking…" : "Revoke"}</Button></TableCell></TableRow>)}
-      {!credentials.length && <TableRow><TableCell colSpan={4}>{loading ? "Loading…" : "No active tokens or devices."}</TableCell></TableRow>}</TableBody></Table>
+      {!credentials.length && <TableRow><TableCell colSpan={4}>{loading ? <span role="status" className="flex items-center justify-center gap-2 py-4 text-muted-foreground"><HostyLoader className="size-5" label={null} />Loading…</span> : <span className="flex flex-col items-center gap-3 py-4 text-muted-foreground">{!error && <HostyEmptySlots className="size-12" />}No active tokens or devices.</span>}</TableCell></TableRow>}</TableBody></Table>
   </section>;
 }

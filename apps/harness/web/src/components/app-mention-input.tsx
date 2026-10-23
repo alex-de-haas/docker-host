@@ -161,7 +161,7 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
   return <Popover open={open} onOpenChange={nextOpen => { if (!nextOpen) setDismissed(key); }}>
     <PopoverPrimitive.Anchor asChild>
       <div ref={wrapper} className="relative w-full min-w-0">
-        <div ref={mirror} aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3 py-3 text-base text-transparent md:text-sm">
+        <div ref={mirror} data-slot="app-mention-mirror" aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3 py-3 text-base text-transparent md:text-sm">
           {highlights}{value.slice(current.mentions.at(-1)?.end ?? 0)}{"\n"}
         </div>
         <InputGroupTextarea {...props} ref={inputRef} value={value} disabled={disabled} readOnly={saving || props.readOnly} aria-busy={saving}
@@ -222,7 +222,7 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
           aria-selected={index === active} aria-disabled={saving || contextBusy || blocked(app)}
           className={cn("flex w-full items-center gap-2 rounded-md p-2 text-left aria-disabled:opacity-50", index === active && "bg-accent")}
           onMouseDown={event => event.preventDefault()} onMouseEnter={() => setActive(index)} onClick={() => void choose(app)}>
-          <ContextAppIcon app={app} /><span className="min-w-0"><span className="block truncate text-sm">{app.displayName}</span><span className="block break-all text-xs text-muted-foreground">{app.id}{blocked(app) ? " · 16-app limit reached" : ""}</span></span>
+          <ContextAppIcon app={app} /><span className="min-w-0"><span className="block truncate text-sm">{app.displayName}</span><span className="block break-all font-mono text-xs text-muted-foreground">{app.id}{blocked(app) ? " · 16-app limit reached" : ""}</span></span>
         </button>)}
       </div>
       {(waiting || saving) && <p role="status" className="p-2 text-xs text-muted-foreground">{saving ? "Adding app to context…" : "Loading apps…"}</p>}

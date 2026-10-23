@@ -46,7 +46,7 @@ export function SessionSandboxes({ sessionId }: { sessionId: string }) {
       <p className="text-xs text-muted-foreground">Ask the agent to prepare an app from its worktree or a pinned artifact. Each sandbox has separate test users and data.</p>
       {environmentError && <p role="alert" className="text-destructive">{environmentError}</p>}
       {environments.map(item => <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded border p-2">
-        <div><p className="font-medium">{item.label} · {item.state}</p><p className="text-xs text-muted-foreground">Separate Core · {item.mode} · Port {item.port}</p>{item.error && <p role="status" className="text-xs text-destructive">{item.error}</p>}</div>
+        <div><p className="font-semibold">{item.label} · {item.state}</p><p className="text-xs tabular-nums text-muted-foreground">Separate Core · {item.mode} · Port {item.port}</p>{item.error && <p role="status" className="text-xs text-destructive">{item.error}</p>}</div>
         {item.state === "running" && <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" asChild><a href={`${item.previewUrl}/login`} target="_blank" rel="noreferrer">Open test Core</a></Button>
           {(appPreviews[item.id] ?? []).map(app => <Button key={app.url} variant="outline" size="sm" asChild><a href={app.url} target="_blank" rel="noreferrer">Open {app.name}</a></Button>)}
@@ -54,7 +54,7 @@ export function SessionSandboxes({ sessionId }: { sessionId: string }) {
       </div>)}
       {error && <p role="alert" className="text-destructive">{error}</p>}
       {!items.length && !environments.length && !error && !environmentError && <p className="text-muted-foreground">No sandbox instances in this session.</p>}
-      {items.map(item => <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded border p-2"><div><p className="font-medium">{item.appId} · {item.state}</p><p className="text-xs text-muted-foreground">{item.source.kind === "worktree" ? "Session worktree" : "Independent artifact"} · {item.users.length} test users</p>{item.errorCode && <p role="status" className="text-xs text-destructive">{item.errorCode}</p>}</div>
+      {items.map(item => <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded border p-2"><div><p className="font-mono text-xs">{item.appId} · {item.state}</p><p className="text-xs tabular-nums text-muted-foreground">{item.source.kind === "worktree" ? "Session worktree" : "Independent artifact"} · {item.users.length} test users</p>{item.errorCode && <p role="status" className="text-xs text-destructive">{item.errorCode}</p>}</div>
         {item.previewUrl && item.state === "ready" && <Button variant="outline" size="sm" asChild><a href={`${item.previewUrl}?hosty_sandbox_persona=core`} target="_blank" rel="noreferrer">Open preview</a></Button>}</div>)}
     </div>
   </details>;

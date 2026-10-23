@@ -3,6 +3,7 @@ import type {
   ShellRouteState,
   ShellSearchParams,
   ShellView,
+  SettingsTab,
   WorkspaceRoute,
 } from "./types";
 
@@ -156,6 +157,31 @@ export function readLegacySystemAppId(pathname: string): string | null {
   }
 }
 
+const APP_DETAILS_SECTIONS = new Set<SettingsTab>([
+  "app", "parameters", "permissions", "publicOrigins", "mounts", "source", "backups", "logs",
+]);
+
+function readAppDetailsSection(value: string | null | undefined): SettingsTab {
+  return value && APP_DETAILS_SECTIONS.has(value as SettingsTab) ? value as SettingsTab : "app";
+}
+
+function readAppDetailsRoute(path: string, searchParams: ShellSearchParams): ShellRouteState["appDetails"] {
+  const match = /^\/apps\/([^/]+)$/.exec(path);
+  let appId: string | null = null;
+  if (match) {
+    try {
+      appId = decodeURIComponent(match[1]);
+    } catch {
+      // Keep a malformed segment addressable so the ordinary unavailable-app view handles it.
+      appId = match[1];
+    }
+  } else if (path === "/settings") {
+    const tab = searchParams.get("tab")?.trim();
+    if (tab?.startsWith("manage:")) appId = tab.slice(7).trim();
+  }
+  return appId ? { appId, section: readAppDetailsSection(searchParams.get("section")) } : undefined;
+}
+
 export function readShellRoute(pathname: string, searchParams: ShellSearchParams): ShellRouteState {
   const path = normalizeShellPath(pathname);
   // The raw value, not readHostSettingsTab: an app-settings tab carries the app id here, and
@@ -163,6 +189,11 @@ export function readShellRoute(pathname: string, searchParams: ShellSearchParams
   // rendered and unreachable.
   const settingsTab = readSettingsTabParam(searchParams.get("tab"), searchParams.get("section"));
   const appPath = normalizeAppPath(searchParams.get("path"));
+  const appDetails = readAppDetailsRoute(path, searchParams);
+  if (appDetails) return { view: "dashboard", workspace: null, settingsTab, appDetails };
+  if (path === "/settings" && settingsTab === "apps") {
+    return { view: "dashboard", workspace: null, settingsTab };
+  }
 
   if (path === "/workspace") {
     const appId = searchParams.get("app")?.trim();
@@ -209,6 +240,12 @@ export function readCanonicalRedirect(
   searchParams: ShellSearchParams,
 ): string | null {
   const path = normalizeShellPath(pathname);
+
+  if (path === "/settings") {
+    const appDetails = readAppDetailsRoute(path, searchParams);
+    if (appDetails) return getManageAppHref(appDetails.appId, appDetails.section);
+    if (searchParams.get("tab")?.trim() === "apps") return getShellViewHref("dashboard");
+  }
 
   const legacySystemAppId = readLegacySystemAppId(path);
   if (legacySystemAppId) {
@@ -295,5 +332,5 @@ export function getWorkspaceRouteKey(route: WorkspaceRoute | null) {
 }
 
 export function getManageAppHref(appId: string, section = "app") {
-  return `/settings?tab=${encodeURIComponent(`manage:${appId}`)}&section=${encodeURIComponent(section)}`;
+  return `/apps/${encodeURIComponent(appId)}?section=${encodeURIComponent(readAppDetailsSection(section))}`;
 }

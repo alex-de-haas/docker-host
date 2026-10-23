@@ -16,6 +16,8 @@ const nextConfig: NextConfig = {
     optimizePackageImports: ["lucide-react"],
   },
   output: "standalone",
+  // Keep verification builds separate from the active Core-managed development server.
+  ...(process.env.NEXT_DIST_DIR ? { distDir: process.env.NEXT_DIST_DIR } : {}),
   webpack(config) {
     config.resolve.extensionAlias = { ...config.resolve.extensionAlias, ".js": [".ts", ".tsx", ".js"] };
     return config;

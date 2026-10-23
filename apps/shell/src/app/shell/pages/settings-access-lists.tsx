@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import { HostyEmptySlots, HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -23,7 +24,7 @@ export function SettingsAccessList({ coreOrigin, sendCsrfJson, kind }: Props) {
     <Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Access</TableHead><TableHead><span className="sr-only">Actions</span></TableHead></TableRow></TableHeader><TableBody>
       {items.map(item => "clientId" in item ? <TableRow key={item.clientId}><TableCell>{item.name}<p className="text-xs text-muted-foreground">{item.clientId}</p></TableCell><TableCell>{item.liveGrants} active authorizations<p className="break-all text-xs text-muted-foreground">{item.redirectUris.join(", ")}</p></TableCell><TableCell><Button variant="outline" size="sm" disabled={busy} onClick={() => void revoke(item.clientId)}>Remove</Button></TableCell></TableRow>
         : <TableRow key={item.id}><TableCell>{item.label}<p className="text-xs text-muted-foreground">{item.appId}</p></TableCell><TableCell>{item.scopes.map(scope => <p key={`${scope.kind}:${scope.targetAppId}`}>{scope.targetAppId}: {scope.actions.join(", ") || scope.kind}</p>)}<p className="text-xs text-muted-foreground">{item.revokedAt ? "Revoked" : item.expiresAt ? `Expires ${new Date(item.expiresAt).toLocaleString()}` : "Until revoked"}</p></TableCell><TableCell><Button variant="outline" size="sm" disabled={busy || !!item.revokedAt} onClick={() => void revoke(item.id)}>Revoke</Button></TableCell></TableRow>)}
-      {!items.length && <TableRow><TableCell colSpan={3}>{busy ? "Loading…" : "No authorizations."}</TableCell></TableRow>}
+      {!items.length && <TableRow><TableCell colSpan={3}>{busy ? <span role="status" className="flex items-center justify-center gap-2 py-4 text-muted-foreground"><HostyLoader className="size-5" label={null} />Loading…</span> : <span className="flex flex-col items-center gap-3 py-4 text-muted-foreground">{!error && <HostyEmptySlots className="size-12" />}No authorizations.</span>}</TableCell></TableRow>}
     </TableBody></Table>
     {kind === "background" && <Button variant="outline" className="self-start" disabled={busy} onClick={async () => { setBusy(true); try { await sendCsrfJson(`${coreOrigin}${path}/revoke-all-authorizations`, {}); window.location.assign(`${coreOrigin}/login`); } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); setBusy(false); } }}>Revoke all my authorizations</Button>}
   </section>;

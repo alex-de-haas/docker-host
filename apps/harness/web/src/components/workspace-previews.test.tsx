@@ -48,3 +48,16 @@ it("clears restart notice after restart and preserves the same preview URL", asy
   expect(container.textContent).toContain("Environment build: Reused"); expect(container.textContent).not.toContain("Restart required");
   expect(container.querySelector('a[href="http://core.test/open"]')!.getAttribute("href")).toBe(preview);
 });
+
+
+it("shows only supplied process start and test-user facts, and preserves sandbox preview query parameters", async () => {
+  vi.mocked(developmentRequest).mockResolvedValue({ ...reply({ restartRequired: true }), environments: [{ id: "child", label: "Retained preview", state: "running", previewUrl: "http://core.test", process: { pid: 123, startedAt: "2026-10-21T12:00:00Z" } }], instances: [{ id: "app", appId: "demo", state: "ready", revision: 1, users: [{ id: "one" }], previewUrl: "http://app.test/view?mode=preview#section" }] });
+  await act(async () => root.render(<WorkspacePreviews workspaceId="work" />));
+  expect(container.querySelector('time[datetime="2026-10-21T12:00:00Z"]')).not.toBeNull();
+  expect(container.textContent).toContain("1 test user · Separate sandbox data");
+  expect(container.textContent).not.toContain("time to ready");
+  expect(container.querySelector('a[href="http://core.test/login"]')?.textContent).toContain("Open test Core");
+  expect(container.querySelector('a[href="http://app.test/view?mode=preview&hosty_sandbox_persona=core#section"]')).not.toBeNull();
+  const warning = [...container.querySelectorAll('[role="status"]')].find(node => node.textContent?.startsWith("Restart required"))!;
+  expect(warning.closest("details")).toBeNull();
+});

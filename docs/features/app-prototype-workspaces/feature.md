@@ -257,8 +257,10 @@ acceptance or merged-work completion and does not authorize source cleanup.
 
 ## Continue Building
 
-The full Harness page offers **Continue building** beside session navigation. It reads installed
-local Git apps directly from Core, including apps whose previous conversations have been deleted.
+The full Harness page offers an icon-only **Continue building** button on the right of the Sessions
+heading and count, immediately left of New session, with an accessible name and tooltip. Its chooser
+reads installed local Git apps directly from Core, including apps whose previous conversations have
+been deleted.
 The chooser shows canonical main, the current user's retained worktrees, workflow state and whether
 their clean committed work is already included in main. Unverified source remains visibly unknown.
 It opens an existing Harness session without transferring its leases, resuming a closed workflow or

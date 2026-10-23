@@ -1,6 +1,6 @@
 ---
 created: 2026-10-07
-updated: 2026-10-20
+updated: 2026-10-23
 summary: Local external agents use authorized Core-owned worktrees, separate plan progress, and read-only pull request tracking through Harness and Core.
 components: [apps/core, apps/plans]
 ---
@@ -226,6 +226,14 @@ Read-only credentials and delegated facade connections cannot acquire this autho
 Revocation stops future Core calls; it does not remove the external program's existing operating
 system access to a directory it already received. These instructions coordinate trusted local work
 and do not create a Hosty filesystem sandbox.
+
+An administrator can dispose of unwanted external work without reconnecting the old client.
+Harness's separate [confirmed physical discard](../workspace-lifecycle-controls/feature.md#confirmed-physical-discard)
+reviews and removes registered worktrees/private branches, unfinished files, owned temporary test
+data and workspace metadata. Pause and explicit stopped-process/lease recovery resolve abandoned
+activity first; live or unknown consumers remain blockers. Discard is an operator inspection action,
+not additional authority granted to an external credential. Normal `cleanup_workspace`, Complete,
+Delete and retention still refuse unfinished work.
 
 | Core tool | Purpose |
 | --- | --- |

@@ -92,7 +92,7 @@ export function IngressDiagnostics() {
           </p>
         </div>
         <Button type="button" variant="outline" size="sm" disabled={loading} onClick={() => { setLoading(true); void load(); }}>
-          {loading ? <LoaderCircle className="mr-1 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1 h-3.5 w-3.5" />}
+          {loading ? <LoaderCircle className="mr-1 h-3.5 w-3.5 animate-spin motion-reduce:animate-none" /> : <RefreshCw className="mr-1 h-3.5 w-3.5" />}
           Check again
         </Button>
       </div>
@@ -100,7 +100,7 @@ export function IngressDiagnostics() {
       {error && <InlineError message={error} />}
 
       {retained.length > 0 && (
-        <div className="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+        <div className="space-y-1 rounded-md border border-warning/30 bg-warning-soft p-3 text-xs text-warning-foreground">
           <p className="font-medium">
             {retained.length} address{retained.length === 1 ? " is" : "es are"} still published on Cloudflare
           </p>
@@ -121,7 +121,7 @@ export function IngressDiagnostics() {
       {diagnostics && (
         <div className="space-y-2 text-xs">
           {retained.length > 0 ? null : drifted.length > 0 ? (
-            <div className="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-amber-700 dark:text-amber-400">
+            <div className="space-y-1 rounded-md border border-warning/30 bg-warning-soft p-3 text-warning-foreground">
               <p className="font-medium">Published addresses that no longer match Cloudflare</p>
               <ul className="space-y-0.5">
                 {drifted.map((publication) => (

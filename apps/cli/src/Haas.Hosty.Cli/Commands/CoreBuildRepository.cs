@@ -33,6 +33,9 @@ internal static class CoreBuildRepository
         catch (Exception ex) when (ex is IOException or JsonException or ArgumentException or UnauthorizedAccessException or InvalidOperationException) { return null; }
     }
 
+    internal static async Task<string?> ReadOriginAsync(string directory, CancellationToken ct = default)
+        => CoreBuildProvenance.SafeRepository(await Git(directory, ["config", "--get", "remote.origin.url"], ct));
+
     private static async Task<string?> Git(string directory, string[] args, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);

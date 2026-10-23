@@ -59,6 +59,15 @@ internal static class WorkspaceInspectionEndpoints
             WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
             await Handle(async () => await cleanup.SandboxCommandAsync(workspaceId,
                 await auth.RequireAsync(request, appId, ct), appId, id, action, input, ct)));
+        routes.MapGet("/{workspaceId}/discard/plan", async (string appId, string workspaceId, HttpRequest request,
+            WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
+            await Handle(async () => await cleanup.PrepareDiscardAsync(workspaceId, await auth.RequireAsync(request, appId, ct, manage: true), appId, ct)));
+        routes.MapPost("/{workspaceId}/discard/apply", async (string appId, string workspaceId, WorkspaceDiscardApply input, HttpRequest request,
+            WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
+            await Handle(async () => await cleanup.ApplyDiscardAsync(workspaceId, await auth.RequireAsync(request, appId, ct, manage: true), appId, input, ct)));
+        routes.MapGet("/{workspaceId}/discard/status", async (string appId, string workspaceId, string requestId, HttpRequest request,
+            WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
+            await Handle(async () => await cleanup.DiscardStatusAsync(workspaceId, await auth.RequireAsync(request, appId, ct, manage: true), appId, requestId, ct)));
         routes.MapGet("/{workspaceId}/workflow", async (string appId, string workspaceId, HttpRequest request,
             WorkspaceInspectionAuthorization auth, WorkspaceInspectionService service, CancellationToken ct) =>
             await Handle(async () => await service.WorkflowAsync(workspaceId, await auth.RequireAsync(request, appId, ct), null, null, ct)));
@@ -87,6 +96,25 @@ internal static class WorkspaceInspectionEndpoints
                         ["assistant"] = appId }), ct);
                 return result;
             }));
+        routes.MapGet("/{workspaceId}/worktrees/{id}/review", async (string appId, string workspaceId, string id, HttpRequest request,
+            WorkspaceInspectionAuthorization auth, WorkspaceInspectionService service, CancellationToken ct) =>
+            await Handle(async () => await service.ReviewAsync(workspaceId, id, await auth.RequireAsync(request, appId, ct),
+                request.Query["scope"].ToString() is { Length: > 0 } scope ? scope : "session",
+                request.Query["pullRequestUrl"].ToString(), ct)));
+        routes.MapGet("/{workspaceId}/worktrees/{id}/review/diff", async (string appId, string workspaceId, string id, HttpRequest request,
+            WorkspaceInspectionAuthorization auth, WorkspaceInspectionService service, CancellationToken ct) =>
+            await Handle(async () => await service.ReviewDiffAsync(workspaceId, id, await auth.RequireAsync(request, appId, ct),
+                request.Query["scope"].ToString() is { Length: > 0 } scope ? scope : "session",
+                request.Query["pullRequestUrl"].ToString(), request.Query["path"].ToString(), request.Query["revision"].ToString(), ct)));
+        routes.MapPost("/{workspaceId}/worktrees/{id}/reviews/{kind}", async (string appId, string workspaceId, string id,
+            string kind, PublicationReviewCommand input, HttpRequest request, WorkspaceInspectionAuthorization auth,
+            WorkspaceInspectionService service, PublicationService publications, CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                var userId = await auth.RequireAsync(request, appId, ct, manage: true);
+                var tree = await service.RequireAsync(workspaceId, id, userId, ct);
+                return await publications.CommandReviewAsync(tree, userId, kind, input, ct);
+            }));
         routes.MapGet("/{workspaceId}/worktrees/{id}/diff", async (string appId, string workspaceId, string id, HttpRequest request,
             WorkspaceInspectionAuthorization auth, WorkspaceInspectionService service, CancellationToken ct) =>
             await Handle(async () => await service.DiffAsync(workspaceId, id, await auth.RequireAsync(request, appId, ct),
@@ -95,6 +123,16 @@ internal static class WorkspaceInspectionEndpoints
     private static async Task<IResult> Handle<T>(Func<Task<T>> action)
     {
         try { return CoreJson.Json(await action()); }
+        catch (PublicationException ex)
+        {
+            var status = ex.Code.EndsWith("not_found", StringComparison.Ordinal) ? 404
+                : ex.Code.EndsWith("forbidden", StringComparison.Ordinal) ? 403
+                : ex.Code.EndsWith("invalid", StringComparison.Ordinal) ? 400 : 409;
+            return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), status);
+        }
+        catch (UserConnectionException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Status); }
+        catch (System.Text.Json.JsonException) { return CoreJson.Json(new ErrorResponse("publication_provider_unavailable", "The source provider returned an incomplete review. Refresh to retry."), 409); }
+        catch (HttpRequestException) { return CoreJson.Json(new ErrorResponse("publication_provider_unavailable", "The source provider is unavailable. Refresh the review to retry."), 409); }
         catch (SandboxException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Status); }
         catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), AuthEndpoints.MapIdentityErrorStatus(ex.Code)); }
         catch (AppLifecycleException ex)

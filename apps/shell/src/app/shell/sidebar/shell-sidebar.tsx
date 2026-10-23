@@ -166,7 +166,7 @@ function NavigationSection({
             onClick={onTitleClick}
             className={cn(
               headingClass,
-              "w-full rounded-md py-0.5 text-left transition-colors hover:text-foreground focus-visible:ring-ring/50 focus-visible:ring-[3px]",
+              "w-full rounded-md py-0.5 text-left transition-colors hover:text-foreground outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0",
               titleActive && "text-foreground",
             )}
           >
@@ -361,7 +361,7 @@ function AppNavigationItem({
             onClick={() => onStartApp(app.id)}
           >
             {starting || transitioning ? (
-              <LoaderCircle className="h-4 w-4 animate-spin" />
+              <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" />
             ) : (
               <Play className="h-4 w-4" />
             )}
@@ -398,7 +398,7 @@ function AppNavigationItem({
               onClick={() => void onLaunch(app, page, "workspace")}
             >
               {busyAction === `${app.id}:open` ? (
-                <LoaderCircle className="h-4 w-4 animate-spin" />
+                <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" />
               ) : (
                 <AppIcon src={resolveAssetSrc(coreOrigin, page.iconUrl)} fallback={Home} className="h-4 w-4 rounded-sm" alt="" />
               )}
@@ -473,7 +473,7 @@ function CompactAppMenu({
               onSelect={() => void onLaunch(app, page, "workspace")}
             >
               {busy ? (
-                <LoaderCircle className="h-4 w-4 animate-spin" />
+                <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" />
               ) : (
                 <AppIcon src={resolveAssetSrc(coreOrigin, page.iconUrl)} fallback={Home} className="h-4 w-4 rounded-sm" alt="" />
               )}

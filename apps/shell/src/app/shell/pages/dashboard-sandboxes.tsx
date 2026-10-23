@@ -249,7 +249,7 @@ function SandboxInventory({ coreOrigin, apps, workspaces }: { coreOrigin: string
   const appById = new Map(apps.map(app => [app.id, app]));
   const coreDisabled = coreBusy || corePending !== null, appDisabled = appBusy || appPending !== null;
   return <Frame role="region" aria-label="Sandboxes">
-    <FrameHeader className="flex-row items-center justify-between gap-3 p-3">
+    <FrameHeader className="flex-row flex-wrap items-center justify-between gap-3 p-3">
       <h2 className="font-medium">Sandboxes</h2>
       <div className="flex flex-wrap items-center gap-2">
         <CreateEnvironmentDialog origin={coreOrigin} disabled={coreDisabled} onCreate={async body => { if (!await runCore({ path: "", body, kind: "create" })) throw new Error("Creation could not be confirmed. Check the sandbox message and retry its saved request before creating another."); }} />
@@ -312,7 +312,7 @@ function SandboxRow({ rowKey, label, state, workspace, kind, error, children }: 
         <span className="flex min-w-0 flex-1 flex-col items-start gap-1 text-left"><span className="truncate">{label}</span><span className="max-w-full truncate text-xs text-muted-foreground">{workspace}</span></span>
         <Badge variant="outline" className="shrink-0">{state}</Badge>
       </Button></CollapsibleTrigger>
-      {error && <p role="alert" className="break-words px-3 pb-3 text-sm text-destructive">{error}</p>}
+      {error && <p role="alert" className="break-words px-3 pb-3 text-sm text-destructive-foreground">{error}</p>}
       <CollapsibleContent><div className="flex flex-col gap-4 border-t p-3">{children}</div></CollapsibleContent>
     </article>
   </Collapsible>;
@@ -436,7 +436,7 @@ function AppSandboxDetails({ item, label, origin, disabled, onCommand, onFinish 
     </div></details>}
     {error && <ErrorNotice>{error}</ErrorNotice>}
     {diagnostics && <details open className="text-sm"><summary className="cursor-pointer">Service logs · {diagnostics.state}</summary>
-      {diagnostics.errorCode && <p className="text-destructive">{diagnostics.errorCode}</p>}
+      {diagnostics.errorCode && <p className="text-destructive-foreground">{diagnostics.errorCode}</p>}
       {diagnostics.services.map(log => <div key={log.service} className="mt-3 flex flex-col gap-1"><p>{log.service} · {log.state}</p><pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs">{log.text || "No retained output."}</pre></div>)}
     </details>}
     <details className="text-sm"><summary className="cursor-pointer">Resources</summary><div className="mt-3 flex flex-col gap-2 text-xs text-muted-foreground">

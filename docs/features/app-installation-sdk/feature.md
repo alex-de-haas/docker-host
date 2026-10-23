@@ -1,6 +1,6 @@
 ---
 created: 2026-09-18
-updated: 2026-10-19
+updated: 2026-10-22
 summary: A shared install dialog for Marketplace and Shell, with final authorization on a separate Core-origin confirmation page.
 components: [packages/app-sdk, apps/marketplace, apps/shell, apps/core]
 ---
@@ -112,18 +112,36 @@ then uses the ordinary nonce-protected confirmation page; visiting the URL grant
 ## Trusted Confirmation
 
 Removal uses the same request/submit/status flow with `removeAppId` and optional `removalOptions`.
-Preparation freezes the installation identity and all five cleanup flags: `deleteRuntimeState`
-(default true), `deleteData`, `deleteBackups`, `deleteSource` and `ignoreRuntimeErrors` (default false).
-The isolated Core page shows the requester, target ID/name/version, each cleanup choice, permanent
-deletion warning and advisory dependency/publication impact. Submit and decision payloads cannot
-replace the target or flags. Approval revalidates the requesting app/user grants and checks the
-installation identity under the target lifecycle lock immediately before removal. Missing,
-reinstalled or changed targets require a new review. Audit events include the frozen cleanup choices.
+Preparation binds the installation identity and initial cleanup options. `deleteRuntimeState`
+defaults to true; `deleteData`, `deleteBackups`, `deleteSource` and `ignoreRuntimeErrors` default to
+false. Shell prepares only `removeAppId`, leaving these defaults to Core. Explicit API/CLI options
+remain supported, including a false `deleteRuntimeState`; a short runtime-state explanation
+reflects and preserves that flag rather than offering another checkbox.
+
+The isolated Core page shows the requester, target ID/name/version, a short runtime-state
+explanation, stop/removal warning, permanent deletion warning and advisory dependency/publication
+impact. It also shows the active-Shell availability warning and recovery hint when applicable.
+One Removal options section contains four checkboxes for data, backups, source and runtime-error
+choices, without a duplicate static options list. Changed choices, or the
+explicit Review cleanup choices action, rebuild impact and source facts for the same installation,
+rotate the decision nonce and require a final confirmation. The rendered plan digest binds the form
+to that review; a stale nonce/digest cannot approve or change options. Existing unmarked decision
+forms retain their frozen prepared choices, and app submit payloads cannot change cleanup flags.
+
+Source deletion retains its bounded source review, repository admission and execution-time checks.
+Combining source deletion with ignored runtime errors, or unknown destructive source facts, shows a
+warning and disables Remove; server-side checks still refuse unsafe execution. Approval revalidates
+the requesting app/user grants and checks the installation identity under the target lifecycle lock
+immediately before removal. Missing, reinstalled or changed targets require a new review. Audit
+events include the reviewed cleanup choices. See [source protection](../app-prototype-workspaces/feature.md#source-protection-during-removal-and-selection).
 
 App credentials cannot invoke `POST /api/apps/{appId}/remove` directly, even with `apps.install`.
-Shell's removal panel opens Core confirmation and waits for successful execution before reporting
-removal; denial leaves the target intact. Trusted operator sessions and the local CLI control-secret
-route retain direct removal, including cleanup of retained data for an already absent application.
+Shell's Dashboard, Manage and administrator-only Apps Uninstall open Core confirmation directly,
+without a preliminary Shell cleanup dialog, and wait for successful execution before reporting
+removal. Denial leaves the target and selection intact; popup fallback, visible errors and
+original-request recovery remain available. Trusted operator sessions and the local CLI
+control-secret route retain direct removal, including cleanup of retained data for an already absent
+application.
 
 A request starts as `draft`. Submit freezes caller-supplied settings and an optional autostart
 preference, then changes it to `pending`. Omitting both uses defaults and retained configuration.
@@ -258,10 +276,13 @@ Verification at the same baseline passes:
 - Test real HTTP decisions, separate app/user credentials, rejected cross-origin decisions,
   framing headers, nonce secrecy, ownership, expiration and single-use behavior.
 - Test frozen manifest execution and persisted grants, including source changes during approval.
-- Test direct app-removal denial with destructive flags; frozen cleanup options, Core-only decisions,
-  denial/replay, missing or reinstalled targets, revoked grants, and trusted operator cleanup.
-- Test Shell removal waits for completion, handles denial/errors and recovers a lost submit without
-  repeating the mutation.
+- Test direct app-removal denial with destructive flags; Core-only reviewed cleanup changes,
+  fresh impact/source facts, nonce/digest rotation, legacy frozen decisions and explicit runtime-state
+  compatibility. Cover unsafe source choices, denial/replay, missing or reinstalled targets, revoked
+  grants and trusted operator cleanup.
+- Test administrator-only Apps Uninstall and direct Core review from every Shell removal entry.
+  Preserve Open/Standalone, popup fallback, completion/denial/errors and lost-submit/status recovery
+  without repeating the mutation or reporting success for an unknown outcome.
 - Test cache recovery after abandoned reviews and decision audit failures without stuck execution.
 - Test that only persisted installation grants enable unsandboxed popups across Shell surfaces.
 - Test permission additions on updates and that source adoption cannot silently grant rights.

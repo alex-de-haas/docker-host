@@ -206,7 +206,7 @@ function RightPanelBody({
       return (
         <PanelMessage title={`${activeTab.label} is ${activeTab.runtimeState}`}>
           <p className="flex items-center justify-center gap-2">
-            <LoaderCircle className="h-4 w-4 animate-spin" /> This panel opens when the app answers.
+            <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> This panel opens when the app answers.
           </p>
         </PanelMessage>
       );
@@ -247,7 +247,7 @@ function RightPanelBody({
     return (
       <PanelMessage title={`${activeTab.label} is starting`}>
         <p className="flex items-center justify-center gap-2">
-          <LoaderCircle className="h-4 w-4 animate-spin" /> This panel opens when the app answers.
+          <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> This panel opens when the app answers.
         </p>
       </PanelMessage>
     );

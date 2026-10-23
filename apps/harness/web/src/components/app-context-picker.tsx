@@ -114,7 +114,7 @@ export function AppContextPicker({ session, busy, running, onChange, onBusyChang
             {selected.map(id => <Badge key={id} variant="outline" className="max-w-full gap-1.5 py-1">
               <ContextAppIcon app={labels[id] ?? apps.find(app => app.id === id)} className="size-4" />
               <span className="truncate">{labels[id]?.displayName ?? apps.find(app => app.id === id)?.displayName ?? id}{labels[id]?.available === false ? " · Unavailable" : ""}</span>
-              <button type="button" className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50"
+              <button type="button" className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand disabled:opacity-50"
                 disabled={saving} aria-label={`Remove ${labels[id]?.displayName ?? apps.find(app => app.id === id)?.displayName ?? id} from context`}
                 onClick={() => setSelected(current => current.filter(value => value !== id))}><X className="size-3" /></button>
             </Badge>)}

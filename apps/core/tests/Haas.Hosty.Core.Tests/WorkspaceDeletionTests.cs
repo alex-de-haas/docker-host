@@ -24,8 +24,13 @@ public sealed partial class CoreLifecycleServiceTests
         var root = Path.Combine(f.Paths.CoreRoot, "development");
         var publication = Path.Combine(root, "publications", tree.Id + ".json");
         var external = Path.Combine(root, "publications", "external", tree.Id + ".json");
+        var review = Path.Combine(root, "publications", "review-operations", tree.Id + ".json");
+        var activeReview = Path.Combine(root, "publications", "review-operations", active.Id + ".json");
         Directory.CreateDirectory(Path.GetDirectoryName(external)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(review)!);
         await File.WriteAllTextAsync(publication, "{}"); await File.WriteAllTextAsync(external, "{}");
+        await File.WriteAllTextAsync(review, "private review request metadata");
+        await File.WriteAllTextAsync(activeReview, "active owner's review request metadata");
         var job = new WorkspaceCleanupJob(tree.WorkspaceId, owner.UserId, new(Guid.NewGuid().ToString(), 1), []);
         var jobPath = Path.Combine(root, "cleanup", job.Input.RequestId + ".json");
         await JsonStorage.WriteAsync(jobPath, job);
@@ -34,7 +39,8 @@ public sealed partial class CoreLifecycleServiceTests
         await service.FinalizeDeletionAsync(owner, default);
         Assert.Empty((await service.ListAsync(owner, true, default)).Workspaces);
         Assert.Empty(await service.DeletedOwnersAsync(default));
-        Assert.False(File.Exists(publication)); Assert.False(File.Exists(external)); Assert.False(File.Exists(jobPath));
+        Assert.False(File.Exists(publication)); Assert.False(File.Exists(external)); Assert.False(File.Exists(review)); Assert.False(File.Exists(jobPath));
+        Assert.Equal("active owner's review request metadata", await File.ReadAllTextAsync(activeReview));
         Assert.Empty(Directory.EnumerateFiles(Path.Combine(root, "workflows"), "*.json"));
         Assert.Empty(Directory.EnumerateFiles(Path.Combine(root, "deletions"), "*.json"));
         Assert.True(Directory.Exists(Path.Combine(root, "repositories", tree.RepositoryId + ".git")));
@@ -102,13 +108,15 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal("deleted", (await service.WorkflowAsync(owner, default)).State);
     }
 
-    [Fact]
-    public async Task WorkspaceDeletion_LatePublicationWriteCannotRecreateRemovedRecords()
+    [Theory]
+    [InlineData("")]
+    [InlineData("review-operations")]
+    public async Task WorkspaceDeletion_LatePublicationWriteCannotRecreateRemovedRecords(string folder)
     {
         var (f, _) = await SourceFixtureAsync(); var owner = WorkspaceTestOwner(f);
         var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
         var tree = await service.PrepareAsync(owner, WorkspaceRequest(), default);
-        var cache = Path.Combine(f.Paths.CoreRoot, "development", "publications", tree.Id + ".json");
+        var cache = Path.Combine(f.Paths.CoreRoot, "development", "publications", folder, tree.Id + ".json");
         var entered = new TaskCompletionSource(); var release = new TaskCompletionSource();
         var writing = service.WritePublicationAsync(tree.Id, async () => {
             entered.SetResult(); await release.Task;

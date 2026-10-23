@@ -90,7 +90,7 @@ export function WorkspaceLeaseRecovery({ workspaceId, trees, closure, closeReque
   return <section aria-label="Pause external work" className="flex flex-col gap-3">
     <Alert><AlertTitle>External work has not confirmed completion</AlertTitle><AlertDescription>
       <p>If the external agent and its commands have stopped, you can pause this workspace without reconnecting that agent. Source files are retained.</p>
-      {applicationsInUse && <p>First release the application source bindings shown below.</p>}
+      {applicationsInUse && <p>First stop or return active runtimes and release source selections. See Activity diagnostics.</p>}
       {sandboxInUse && <p>Delete the sandboxes using these sources before confirming external work has stopped. Stop preserves their source bindings and test data.</p>}
     </AlertDescription></Alert>
     {pending

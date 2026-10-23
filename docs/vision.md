@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-20
+updated: 2026-10-22
 ---
 
 # Hosty Platform Vision
@@ -751,6 +751,32 @@ Decisions 1–5: 2026-08-19.
     scope; stricter isolation stays in [containment](features/assistant-runtime-containment/plan.md).
     This records a planning decision, not a request to perform resets, remove current workspaces
     or interrupt parallel external agents in this session.
+
+52. **Core is an app-neutral platform (2026-10-22).** Core must remain usable with no standard
+    applications installed. Startup, authentication, configuration, CLI/API management, recovery and
+    source/resource safety cannot depend on Shell, Harness, Marketplace, Telemetry, Plans or any
+    vendor's application. App identity, display name, vendor and repository/path spelling confer
+    no special runtime behavior, privilege, ownership or platform role. Consume explicit registered
+    facts, confirmed roles, versioned interfaces and current grants instead.
+
+    Core must not construct or interpret a first-party app's internal navigation routes as platform
+    knowledge. A different origin does not make a Shell-specific path a generic UI contract. App
+    destinations belong to a separately reviewed navigation/object-link/declared-adapter contract;
+    its representation is not selected by this decision. Missing or unsupported optional providers
+    produce explicit unavailable/recovery states while Core remains operational. The reserved
+    `hosty:core` identity denotes the platform resource and its authority, not a built-in runtime app.
+
+    Distribution catalogs and manifests carry application identities as data, not platform policy.
+    Any historical exact identity needed for a bounded, one-time migration remains migration data;
+    it is never a runtime fallback lookup or an authority grant. This direction does not select a
+    new UI schema, approve the existing Draft proposals wholesale or claim legacy coupling is fixed.
+    The [Core application-boundary audit](reviews/2026-10-22-core-application-boundaries.md) records
+    the remaining violations. [Replaceable UI Clients D3](features/replaceable-ui-clients/plan.md#deliverables)
+    owns app-neutral navigation and owner links; D4 owns selected/last-UI removal warnings and D8
+    owns inventory and role-derived lifecycle consequences. Bootstrap migration/configuration and
+    collector coupling stay with their existing feature owners. The
+    [Core Extension Model](features/core-extension-model/feature.md) records the current boundary;
+    its retired umbrella implementation plan stays retired.
 
 ## Expectations And Later Directions
 

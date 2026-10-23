@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-10-14
+updated: 2026-10-22
 summary: Core derives local browser addresses under hosty.localhost without stored public origins or DNS.
 components: [apps/core, apps/shell, packages/app-sdk]
 ---
@@ -83,9 +83,10 @@ approve a decision on the new origin; the confirmation route sends the user thro
 The shared-host denial, nonce, request-origin, expiry and replay protections remain in place.
 
 App-requested removal also uses this isolated Core confirmation. `apps.install` permits preparing
-the request, while direct app-token removal is forbidden. The page shows frozen cleanup choices,
-including data/backups deletion; execution rejects a missing or replaced installation. Shell uses
-this same flow. See [installation SDK and confirmation](../app-installation-sdk/feature.md).
+the request, while direct app-token removal is forbidden. The Core page owns cleanup selection
+and final confirmation. A reviewed option change renews impact/source facts and the decision
+nonce/digest without replacing the bound installation; execution rejects a missing or replaced target.
+Shell opens this flow directly. See [installation SDK and confirmation](../app-installation-sdk/feature.md).
 
 Running apps store `appliedBrowserOrigin` after start/restart. A legacy running app without it, or
 one started against a different Core browser origin, reports `restartRequired`. Its next explicit

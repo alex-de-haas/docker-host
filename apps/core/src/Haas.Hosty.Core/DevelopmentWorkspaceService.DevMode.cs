@@ -66,7 +66,11 @@ internal sealed partial class DevelopmentWorkspaceService
     internal Haas.Hosty.Launch.WorkspaceRuntimeActivation[] CoreActivationConsumers(DevelopmentWorkspace tree) =>
         Haas.Hosty.Launch.WorkspaceRuntimeFiles.List(paths.DataRoot).Where(a => a.CoreProject is not null && !a.CoreReturned &&
             a.Phase is not ("returned" or "cancelled") && (a.Phase != "preparing" || a.CoreReserved) &&
-            (a.CoreWorktreeId == tree.Id || a.PreviousCore.ProjectPath is { } prior && IsUnder(tree.Path, prior))).ToArray();
+            (a.CoreWorktreeId == tree.Id ||
+                // The immediate previous source is recovery-only while switching. Once active,
+                // only the inherited Return baseline remains a retained source dependency.
+                (a.Phase == "active" ? (a.CoreReturnTarget?.Launch ?? a.PreviousCore).ProjectPath : a.PreviousCore.ProjectPath)
+                    is { } prior && IsUnder(tree.Path, prior))).ToArray();
 
     private bool RunningCoreUses(DevelopmentWorkspace tree) => coreDevelopment?.Launch.ProjectPath is { } project && IsUnder(tree.Path, project);
 

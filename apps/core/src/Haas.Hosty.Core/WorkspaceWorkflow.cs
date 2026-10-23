@@ -20,7 +20,7 @@ internal sealed partial class DevelopmentWorkspaceService
             if (trees.Any(w => w.Leases.Length > 0 || w.Operations.Any(o => o.State is "pending" or "unknown")))
                 throw Error("busy", "Stop active source work and recover pending or unknown Git operations before checking or restarting this preview.");
             var workflow = await WorkflowAsync(owner, ct);
-            if (workflow.Closure is not null || workflow.State is "deferred" or "deleting" or "deleted")
+            if (workflow.Closure is not null || workflow.State is "deferred" or "deleting" or "deleted" || await HasPendingDiscardAsync(owner, ct))
                 throw Error("workflow_closed", "Recover workspace closure before running preview actions.");
             return await action();
         }, ct);
@@ -44,7 +44,8 @@ internal sealed partial class DevelopmentWorkspaceService
                 await Read(tree.Id, tree.Owner, ct);
             }
             var workflow = tree is null ? new WorkspaceWorkflow() : await WorkflowAsync(tree.Owner, ct);
-            if (!cleanup && (workflow.Closure is not null || workflow.State is "deferred" or "deleting" or "deleted"))
+            if (!cleanup && (workflow.Closure is not null || workflow.State is "deferred" or "deleting" or "deleted"
+                || tree is not null && await HasPendingDiscardAsync(tree.Owner, ct)))
                 throw Error("workflow_closed", "This workspace is closing, closed or being deleted. Resume retained source before creating new previews.");
             return await action();
         }, ct);
@@ -62,7 +63,8 @@ internal sealed partial class DevelopmentWorkspaceService
     private async Task RequireOpenWorkflow(WorkspaceOwner owner, CancellationToken ct)
     {
         var workflow = await WorkflowAsync(owner, ct);
-        if (await ReadDeletionAsync(WorkspaceIdFor(owner), ct) is not null || workflow.State != "in-progress" || workflow.Closure is not null)
+        if (await ReadDeletionAsync(WorkspaceIdFor(owner), ct) is not null || workflow.State != "in-progress" || workflow.Closure is not null
+            || await HasPendingDiscardAsync(owner, ct))
             throw Error("workflow_closed", "Resume the workspace before starting source work.");
     }
     internal static bool IsPauseAction(string kind) => kind is "pause" or "close" or "defer";
@@ -102,6 +104,8 @@ internal sealed partial class DevelopmentWorkspaceService
             else if (state.Operations?.Any(o => o.State == "pending") == true)
                 throw Error("operation_pending", "Recover the pending workspace action with its original requestId and revision.");
             else if (state.Revision != input.ExpectedRevision) throw Error("revision_conflict", "Workspace changed. Refresh before choosing an action.");
+            if (await HasPendingDiscardAsync(owner, ct))
+                throw Error("operation_pending", "Recover the accepted discard with its original removal request before changing workspace state.");
             if (state.State == "deleted" || state.State == "deleting" && kind != "delete")
                 throw Error("workflow_closed", "Source cleanup has started. Recover deletion or start a new workspace.");
             var all = new List<DevelopmentWorkspace>();

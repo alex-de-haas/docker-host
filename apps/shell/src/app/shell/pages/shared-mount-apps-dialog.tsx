@@ -57,8 +57,8 @@ export function SharedMountAppsDialog({ mount, apps, onSave, onRefresh, onReload
           <Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" />
           <Input aria-label="Search apps" placeholder="Search apps" className="pl-9" value={query} onChange={event => setQuery(event.target.value)} disabled={busy} />
         </div>
-        {refreshError && <p role="alert" className="text-sm text-destructive">{refreshError}</p>}
-        {results.some(result => result.error) && <p role="alert" className="text-sm text-amber-600">Some bindings could not be saved. Successful changes are kept; retry saves only the remaining changes. Reload assignments to review conflicting edits; this resets unsaved selections.</p>}
+        {refreshError && <p role="alert" className="text-sm text-destructive-foreground">{refreshError}</p>}
+        {results.some(result => result.error) && <p role="alert" className="text-sm text-warning-foreground">Some bindings could not be saved. Successful changes are kept; retry saves only the remaining changes. Reload assignments to review conflicting edits; this resets unsaved selections.</p>}
         {errors.size > 0 && <Button variant="outline" size="sm" disabled={busy} onClick={async () => {
           setBusy(true);
           try { await onReload(); } catch { setRefreshError("Assignments could not be reloaded. Try again."); setBusy(false); }
@@ -68,7 +68,7 @@ export function SharedMountAppsDialog({ mount, apps, onSave, onRefresh, onReload
         {visible.map(app => <section key={app.id} className="rounded-lg border p-3" aria-label={app.displayName}>
           <div className="mb-2 flex items-center justify-between gap-3">
             <div><p className="text-sm font-medium">{app.displayName}</p><p className="text-xs text-muted-foreground">{app.id}</p></div>
-            {results.some(result => result.change.appId === app.id && !result.error) && <span className="flex items-center gap-1 text-xs text-emerald-600"><Check className="size-3" />Saved</span>}
+            {results.some(result => result.change.appId === app.id && !result.error) && <span className="flex items-center gap-1 text-xs text-success-foreground"><Check className="size-3" />Saved</span>}
           </div>
           {(app.mounts ?? []).map(slot => {
             const checked = selected[app.id]?.includes(slot.key) ?? false;
@@ -84,17 +84,17 @@ export function SharedMountAppsDialog({ mount, apps, onSave, onRefresh, onReload
               <span className="min-w-0 flex-1">
                 <span className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1"><span>{slot.key}{slot.required && <span className="ml-2 text-xs text-muted-foreground">Required</span>}</span><span className="text-xs text-muted-foreground">{sharedMountMode(slot, mount) === "ro" ? "Read only" : "Read & write"}{slot.service ? ` · ${slot.service}` : ""}</span></span>
                 <span className="mt-0.5 block break-all font-mono text-xs text-muted-foreground">{sharedMountPath(app, slot, mount)}</span>
-                {conflict && <span className="mt-1 block text-xs text-amber-600">{conflict}</span>}
-                {removingRequired && <span className="mt-1 block text-xs text-amber-600">This app cannot start until its required slot has a folder.</span>}
+                {conflict && <span className="mt-1 block text-xs text-warning-foreground">{conflict}</span>}
+                {removingRequired && <span className="mt-1 block text-xs text-warning-foreground">This app cannot start until its required slot has a folder.</span>}
               </span>
             </label>;
           })}
-          {errors.has(app.id) && <p role="alert" className="mt-2 text-sm text-destructive">{errors.get(app.id)}</p>}
+          {errors.has(app.id) && <p role="alert" className="mt-2 text-sm text-destructive-foreground">{errors.get(app.id)}</p>}
         </section>)}
       </DialogBody>
       <DialogFooter className="items-center sm:justify-between">
         <p className="text-xs text-muted-foreground">{changes.length} app{changes.length === 1 ? "" : "s"} to change</p>
-        <div className="flex gap-2"><Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button><Button onClick={() => void save()} disabled={busy || changes.length === 0}>{busy && <LoaderCircle className="size-4 animate-spin" />}Save changes</Button></div>
+        <div className="flex gap-2"><Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button><Button onClick={() => void save()} disabled={busy || changes.length === 0}>{busy && <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />}Save changes</Button></div>
       </DialogFooter>
     </DialogContent>
   </Dialog>;

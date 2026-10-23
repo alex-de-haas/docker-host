@@ -5,7 +5,7 @@ using Haas.Hosty.Core;
 
 namespace Haas.Hosty.Core.Tests;
 
-public sealed class GitHubPublicationTests
+public sealed partial class GitHubPublicationTests
 {
     private sealed class Clock : IClock { public DateTimeOffset UtcNow => DateTimeOffset.Parse("2026-09-29T12:00:00Z"); }
     private sealed class Http : HttpMessageHandler

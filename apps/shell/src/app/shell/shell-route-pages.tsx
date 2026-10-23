@@ -21,6 +21,8 @@ export function ShellAvailableAppsRoute() {
       apps={shell.uiApps}
       loading={shell.state.loading}
       busyAction={shell.busyAction}
+      canManageApps={shell.canManageApps}
+      onUninstall={app => shellActions.openAppPanel(app, "remove")}
       onLaunchApp={shellActions.launchAppPage}
       getStandaloneHref={shellActions.getStandaloneAppHref}
     />
@@ -46,7 +48,6 @@ export function ShellDashboardRoute() {
         busyAction={shell.busyAction}
         pendingAppActions={shell.pendingAppActions}
         updateCheck={shell.state.updateCheck ?? null}
-        updateStatusInvalidations={shell.updateStatusInvalidations}
         onRefresh={() => void shellActions.refresh()}
         onInstall={shellActions.openInstallDialog}
         onAction={shellActions.runAppAction}
@@ -86,6 +87,7 @@ export function ShellSettingsRoute() {
         sendCsrfJson={shellActions.sendCsrfJson}
         coreSettings={shell.coreSettings}
         coreSettingsError={shell.coreSettingsError}
+        coreStatus={shell.state.status}
         onSaveCoreSettings={shellActions.saveCoreSettings}
         globalMounts={shell.globalMounts}
         apps={shell.state.apps}
@@ -100,5 +102,10 @@ export function ShellSettingsRoute() {
 export function ShellWorkspaceRoute() {
   // Active workspace URLs are rendered by the persistent Shell layout from query state.
   // A bare /workspace route falls back here while the client-side route normalization runs.
+  return <ShellAvailableAppsRoute />;
+}
+
+export function ShellAppDetailsRoute() {
+  // The persistent Shell layout renders authorized app details or their unavailable state.
   return <ShellAvailableAppsRoute />;
 }
