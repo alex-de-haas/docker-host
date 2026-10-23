@@ -232,3 +232,41 @@ test("a feature folder needs a document", () => {
     r.done();
   }
 });
+
+
+test("ideas are validated without entering the feature index or plan counts", () => {
+  const r = repo({
+    "docs/features/alpha/plan.md": plan(),
+    "docs/ideas.md": "---\ncreated: 2026-01-01\nupdated: 2026-01-02\n---\n\n# Ideas\n\nSee [proposal](features/alpha/plan.md).\n",
+  });
+  try {
+    assert.equal(r.run("--fix").code, 0);
+    assert.equal(r.run("--check").code, 0);
+    const root = r.read("docs/root.md");
+    assert.match(root, /Plans: 1 Draft\./);
+    assert.doesNotMatch(root, /Ideas|ideas\.md/);
+    assert.equal(r.run("--fix").code, 0);
+    assert.equal(r.read("docs/root.md"), root);
+  } finally {
+    r.done();
+  }
+});
+
+test("ideas require dated metadata and valid links without becoming a plan", async (t) => {
+  const ideas = "---\ncreated: 2026-01-01\nupdated: 2026-01-02\n---\n\n# Ideas\n\nUnformed possibilities.\n";
+  await t.test("missing frontmatter", () =>
+    assertError({ "docs/ideas.md": "# Ideas\n" }, /ideas\.md: missing frontmatter/));
+  await t.test("invalid date", () =>
+    assertError({ "docs/ideas.md": ideas.replace("2026-01-02", "2026-02-30") }, /ideas\.md: updated: .* is not a YYYY-MM-DD date/));
+  await t.test("status is rejected", () =>
+    assertError({ "docs/ideas.md": ideas.replace("created:", "status: Draft\ncreated:") }, /ideas\.md: unknown frontmatter key "status"/));
+  await t.test("broken relative link", () =>
+    assertError({ "docs/ideas.md": ideas + "\n[missing](missing.md)\n" }, /ideas\.md:\d+: broken link/));
+  await t.test("deliverables section", () =>
+    assertError({ "docs/ideas.md": ideas + "\n## Deliverables\n" }, /ideas\.md must not carry deliverables or task checkboxes/));
+  await t.test("task checkboxes", () =>
+    assertError({ "docs/ideas.md": ideas + "\n- [ ] Build this.\n" }, /ideas\.md must not carry deliverables or task checkboxes/));
+  await t.test("code examples remain examples", () => {
+    assert.equal(check({ "docs/ideas.md": ideas + "\n```markdown\n## Deliverables\n- [ ] Example only.\n```\n" }).code, 0);
+  });
+});

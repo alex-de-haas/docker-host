@@ -1,6 +1,6 @@
 ---
 created: 2026-10-05
-updated: 2026-10-05
+updated: 2026-10-23
 summary: Workflow documents carry YAML frontmatter and stable deliverable IDs, checked by one validator shared by every Hosty repository.
 components: [scripts, docs]
 ---
@@ -24,17 +24,22 @@ first and is then copied. CI runs `node scripts/docs-index.mjs --check` in every
 ## Document Format
 
 - `docs/features/<name>/feature.md` describes current behavior and `plan.md` the remaining work;
-  `docs/vision.md` (optional) and the `docs/reviews/` archive sit outside the status workflow.
-- `feature.md`, `plan.md` and `vision.md` start with a frontmatter block: `status` (plans only:
+  optional `docs/vision.md` and `docs/ideas.md`, and the `docs/reviews/` archive sit outside the
+  status workflow. The vision describes intended direction; ideas collect raw possibilities too
+  unformed for a Draft plan. Ideas remain editable and authorize no implementation.
+- `feature.md`, `plan.md`, `vision.md` and `ideas.md` start with a frontmatter block: `status` (plans only:
   Draft, On Hold, Ready, In Progress, Blocked), `created`, `updated`, a one-sentence plain-text
   `summary` of at most 200 characters (features and plans), and optional `components` — the
-  repository-relative directories a document concerns.
+  repository-relative directories a document concerns. Vision and ideas carry only `created` and
+  `updated`; neither requires a summary or enters the generated feature index.
 - The block is a strict subset of YAML: one `key: value` per line, plain scalars, double-quoted
   strings with only `\"` and `\\` escapes, and `[a, b]` lists. A standard YAML parser reads every
   block exactly as the validator does.
 - Every plan has exactly one `## Deliverables` section with at least one deliverable. Its
   deliverables are the only checkboxes in the plan, all top-level items, each starting with a stable
   ID such as `- [ ] D3. Text`.
+- `ideas.md` carries no status, deliverables or task checkboxes. Concrete work moves into the owning
+  feature plan, with a link retained from the ideas document.
 - Every `feature.md` ends with a `## Testing Expectations` section.
 
 ## Validator
@@ -52,6 +57,7 @@ block) and `--check` (exit 1 on any error or a stale index). It reports:
 - a feature folder name that is not kebab-case, and a review not named `YYYY-MM-DD-<name>.md`;
 - a plan without a `## Deliverables` section, with a second one or with no deliverable in it,
   checkboxes outside it, nested checkboxes, and deliverables without an ID or with a duplicate ID;
+- an ideas document with a `## Deliverables` section or task checkboxes;
 - relative links inside workflow documents and `docs/root.md` that do not resolve, and absolute
   links;
 - Markdown in any other location under `docs/` — a flat `docs/features/*.md`, any Markdown in a
@@ -73,7 +79,8 @@ rest of `root.md` stays hand-written prose.
 ## Testing Expectations
 
 - `node --test scripts/docs-index.test.mjs` covers every rejection, the header upgrade, the index
-  content and the allowed tooling files; docker-host CI runs it before the index check.
+  content, ideas validation and exclusion from the index, and the allowed tooling files; docker-host
+  CI runs it before the index check.
 - `node scripts/docs-index.mjs --check` passes in every repository that follows the workflow, and
   each repository's copy of the script is byte-identical to docker-host's.
 - A change to the format updates `AGENTS.md`, the validator, its tests and this document together.
