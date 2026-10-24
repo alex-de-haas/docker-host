@@ -192,9 +192,16 @@ uncertain response from verified process exit and explains that local Hosty CLI 
 management access. Console logs remain in More.
 State labels accompany their colors and shapes. CPU and RAM
 each have a compact sparkline using the existing five-minute history, with a detailed popover and missing-data behavior. The Apps heading
-contains text filters and Install; the table toolbar contains search, count, aggregate resources,
-Update all when applicable, and the fleet actions menu. The responsive row composition uses the
-Dashboard container width. The complete behavior is described in
+contains state filters and Install. At Dashboard container widths below 820 px, a compact radio
+menu replaces the text toggles and shows the selected state and its count. Wider containers retain
+All, Running, In progress, Attention and Updates text toggles. Both controls share selection and
+combine with the table search; their counts always describe the full host. Selecting the active
+state again resets to All. In progress is hidden at zero unless selected, so a live state change
+never removes the active filter. The menu supports keyboard and pointer input, restores trigger
+focus on close, and closes with focus on the selected wide toggle when its container expands.
+The table toolbar contains search, count, aggregate resources, Update all when applicable, and the
+fleet actions menu. The responsive row composition uses the Dashboard container width. The
+complete behavior is described in
 [Shell navigation](../shell-navigation/feature.md) and [Core App Shell](../core-app-shell/feature.md).
 
 Core's Runtime / workspace submenu offers Release and eligible existing named workspaces, without
@@ -460,6 +467,12 @@ Catalog settings loads with explicit retry, saves against its observed source an
 unsaved source on rejection. These presentation changes add no install or permission authority.
 
 ## Testing Expectations
+
+- Cover compact Dashboard state filters together with search, full-host counts, zero/empty results
+  and live state changes. Verify retained selection across the 819/820 px container boundary and
+  sidebar changes at a fixed viewport, keyboard/touch input, Escape/selection focus return and
+  closure of the portalled menu when wide filters replace its trigger. Check narrow light/dark
+  layouts without horizontal overflow and preserve the existing Install/resource/action layout.
 
 - Verify runtime first-read failure, manual retry and retained worker observations, plus credential
   Retry focus/draft preservation and unchanged diff-file navigation. Check long resource controls
