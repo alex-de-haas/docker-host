@@ -1,6 +1,6 @@
 ---
 created: 2026-06-03
-updated: 2026-10-15
+updated: 2026-10-24
 summary: The repository-local reference app used to validate lifecycle, identity, directory access and app roles.
 components: [apps/demo-app]
 ---
@@ -21,6 +21,43 @@ flowchart LR
 ```
 
 The overview explains that app data stays separate from Core identity and that child sandboxes have their own test users and data.
+
+## Web Presentation
+
+The app imports the shared Hosty light/dark tokens and locally bundled IBM Plex Sans and
+JetBrains Mono. It keeps lime interaction, selection and focus separate from Demo's magenta
+identity. The first chart token uses Demo's strong magenta on light and its base accent on dark;
+Hosty Blue occupies the displaced third series. The manifest navigation SVGs use a neutral stroke
+that remains legible when rendered as external images in either theme.
+
+Overview, People, Roles and Settings use compact cards, technical-value typography and labelled
+semantic status shapes. Persistent online status has a static dot; an in-progress transition has
+an Info-blue ring. Loading states use the shared cell loader, empty data uses Demo's own cell
+mark, and resource-loading errors keep their message with a visible Retry action. Reduced-motion styles
+retain a static loading mark and suppress transitions. The surrounding host's navigation policy
+hides the app's duplicate identity and page navigation while preserving contextual titles and actions.
+
+Role controls, the Session draft and the composition fixture use the app's themed primitives,
+including a keyboard-operable Radix Select rather than a styled browser select. Server-side role
+authority and SDK identity transport are unchanged. Mutations display a pending loader, retain
+unrelated users' unsaved role selections after a successful save, and keep the attempted selection
+after a refusal. Read-only access disables mutation controls. Protected JSON inspection displays
+loading, failure and an in-place retry without navigating away from the owning app grant.
+
+## Verified Web Adoption
+
+The 0.18.0 web adoption passes ten component/identity tests, lint, TypeScript, native Turbopack
+and webpack builds, and a Docker build. A parent-owned child Core runs both Demo services from
+the verified final image, with normal password setup/login and separate test accounts/data.
+Core Open/PKCE, SDK identity, administrator/viewer permissions, invalid role refusal, assignment
+revocation and fresh sign-in recovery pass API checks. Browser checks cover embedded light/dark
+rendering, standalone role keyboard selection and Save/Reset, protected JSON inspection, page
+navigation and 480 px light/dark layouts without horizontal overflow. Physical mobile browsers
+and optional two-view tool composition are not established by these checks; the isolated child
+retains the explicit unavailable state when optional panel access is absent. The final clean-row
+reconciliation correction is covered by a failing-before/passing-after regression, lint, types
+and native build; Docker/browser checks precede that final logic-only correction. Owner Finish
+removes the disposable child data and runtime resources after acceptance.
 
 ## Files
 
@@ -112,6 +149,8 @@ preparation accepts both the offline sandbox generation and ordinary Core servic
 
 - Run `npm test --workspace @haas/hosty-demo-app`, `npm run lint --workspace @haas/hosty-demo-app`
   and `npm run build --workspace @haas/hosty-demo-app -- --webpack`.
+- Cover actual keyboard role selection, pending mutations, unrelated retained role drafts, refused
+  updates, read-only controls and protected JSON loading/retry including inspection of non-2xx JSON.
 - Cover authenticated client loading, refused/unavailable sessions and retry, bearer precedence,
   invalid-bearer refusal and recovery coordinates on 401 responses.
 - Verify a Core-managed installation both inside Shell and standalone with normal password login.

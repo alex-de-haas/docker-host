@@ -63,6 +63,44 @@ describe("gateway", () => {
   let origin: string;
   let restoreEnv: () => void;
 
+  it("recovers an admitted message through an actor-bound uncached receipt without resending", async () => {
+    const session = await manager.createSession({ createdBy: "legacy-owner" });
+    const clientRequestId = randomUUID();
+    const payload = { text: "receipt fixture", attachments: [], appContextRevision: 0, selectionRevision: 0, withoutAppDetails: false, clientRequestId };
+    const send = () => call(`/api/sessions/${session.id}/messages`, { method: "POST", body: JSON.stringify(payload) });
+    const first = await send();
+    expect(first.status).toBe(202); expect(first.headers.get("cache-control")).toBe("no-store");
+    const receipt = await first.json() as { accepted: true; clientRequestId: string; state: "accepted"; eventSeq: number };
+    expect(receipt).toEqual({ accepted: true, clientRequestId, state: "accepted", eventSeq: expect.any(Number) });
+    await waitFor(async () => (await manager.getSession(session.id))?.status === "idle", "completed receipt fixture");
+    const recovered = await call(`/api/sessions/${session.id}/messages/${clientRequestId}`);
+    expect(recovered.status).toBe(200); expect(recovered.headers.get("cache-control")).toBe("no-store");
+    expect(await recovered.json()).toEqual({ clientRequestId, state: "accepted", eventSeq: receipt.eventSeq });
+    expect((await send()).status).toBe(202);
+    expect((await store.readEvents(session.id)).filter(event => event.type === "user_message")).toHaveLength(1);
+    const mismatch = await call(`/api/sessions/${session.id}/messages`, { method: "POST", body: JSON.stringify({ ...payload, text: "different" }) });
+    expect(mismatch.status).toBe(409); expect(await mismatch.json()).toMatchObject({ code: "message_request_conflict" });
+    const other = { authorization: `Bearer ${mintToken("host.admin", "hosty.harness", "other")}`, "content-type": "application/json" };
+    for (const [route, init] of [
+      [`/api/sessions/${session.id}/messages/${clientRequestId}`, {}],
+      [`/api/sessions/${session.id}/messages`, { method: "POST", body: JSON.stringify(payload) }],
+    ] as const) {
+      const response = await fetch(origin + route, { ...init, headers: other });
+      expect(response.status).toBe(403); expect(await response.json()).toMatchObject({ code: "message_request_forbidden" });
+    }
+    expect((await call(`/api/sessions/${session.id}/messages/${clientRequestId}`, {}, null)).status).toBe(401);
+  });
+
+  it("distinguishes absent message receipts from invalid IDs and preserves legacy message calls", async () => {
+    const session = await manager.createSession({ createdBy: "user_admin" });
+    const absent = await call(`/api/sessions/${session.id}/messages/${randomUUID()}`);
+    expect(absent.status).toBe(404); expect(await absent.json()).toMatchObject({ code: "message_request_not_found" });
+    const invalid = await call(`/api/sessions/${session.id}/messages`, { method: "POST", body: JSON.stringify({ text: "invalid", clientRequestId: "not-a-uuid" }) });
+    expect(invalid.status).toBe(400); expect(await invalid.json()).toMatchObject({ code: "message_request_id_invalid" });
+    const legacy = await call(`/api/sessions/${session.id}/messages`, { method: "POST", body: JSON.stringify({ text: "legacy" }) });
+    expect(legacy.status).toBe(202); expect(await legacy.json()).toEqual({ accepted: true });
+  });
+
   it("allows only the chat owner to change autonomy and refuses provider credentials", async () => {
     const record = await manager.createSession({ createdBy: "user_admin" });
     const set = (token: string) => fetch(`${origin}/api/sessions/${record.id}/autonomy`, {
@@ -420,6 +458,56 @@ describe("gateway", () => {
     // Both, deliberately: the transcript is unrecoverable afterwards, and "who removed it" is a
     // different question from "whose session was it".
     expect(deletion?.details).toMatchObject({ sessionId: record.id, deletedBy: "user_deleter", createdBy: "user_author" });
+  });
+
+  it("releases a subscription that finishes after its browser connection closes", async () => {
+    const record = await manager.createSession({ createdBy: "user_admin" });
+    let release!: () => void, subscribed!: () => void, disconnected!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const starting = new Promise<void>(resolve => { subscribed = resolve; });
+    const closed = new Promise<void>(resolve => { disconnected = resolve; });
+    const unsubscribe = vi.fn();
+    const subscription = vi.spyOn(manager, "subscribe").mockImplementation(async () => {
+      subscribed(); await held;
+      return { replay: [], unsubscribe };
+    });
+    server.once("request", (_request, response) => response.once("close", disconnected));
+    const controller = new AbortController();
+    const opening = fetch(`${origin}/api/sessions/${record.id}/events`, {
+      signal: controller.signal, headers: { authorization: `Bearer ${mintToken("host.admin")}` },
+    }).catch(() => null);
+    try {
+      await starting;
+      controller.abort(); await opening; await closed;
+      release();
+      await waitFor(async () => unsubscribe.mock.calls.length >= 1, "late subscription cleanup");
+      expect(unsubscribe).toHaveBeenCalledTimes(1);
+    } finally {
+      release(); controller.abort(); await opening; subscription.mockRestore();
+    }
+  });
+
+  it.each(["browser disconnect", "session deletion"])("releases an established event subscription once after %s", async reason => {
+    const record = await manager.createSession({ createdBy: "user_admin" });
+    const unsubscribe = vi.fn();
+    let send!: Parameters<SessionManager["subscribe"]>[2];
+    const subscription = vi.spyOn(manager, "subscribe").mockImplementation(async (_id, _cursor, listener) => {
+      send = listener;
+      return { replay: [{ seq: 1, ts: new Date().toISOString(), type: "session_status", status: "idle" }], unsubscribe };
+    });
+    let stream: Response | undefined;
+    try {
+      stream = await fetch(`${origin}/api/sessions/${record.id}/events`, {
+        headers: { authorization: `Bearer ${mintToken("host.admin")}` },
+      });
+      expect(stream.status).toBe(200);
+      if (reason === "browser disconnect") await stream.body!.cancel();
+      else { send({ seq: 2, ts: new Date().toISOString(), type: "session_deleted" }); await stream.text(); }
+      await waitFor(async () => unsubscribe.mock.calls.length >= 1, "established subscription cleanup");
+      expect(unsubscribe).toHaveBeenCalledTimes(1);
+    } finally {
+      await stream?.body?.cancel().catch(() => undefined); subscription.mockRestore();
+    }
   });
 
   it("ends the event stream of a session that is deleted under it", async () => {
@@ -1005,6 +1093,68 @@ describe("gateway", () => {
       expect(JSON.stringify(messages)).not.toContain("mcp_authorization_required");
       expect(JSON.stringify(messages)).not.toContain("hostyg_browser");
     } finally { await new Promise(resolve => core.close(resolve)); }
+  });
+
+  it("returns validated SDK identity without waiting for unrelated conversation credential refresh", async () => {
+    const core = createServer((request, response) => {
+      request.resume();
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify(request.url?.endsWith("/protocol") ? { version: 2 }
+        : request.url?.endsWith("/permissions") ? { required: [], optional: [], granted: [] }
+          : { active: true, userId: "user_admin", hostRole: "host.admin" }));
+    });
+    await new Promise<void>(resolve => core.listen(0, resolve));
+    process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+    process.env.HOSTY_APP_SERVICE_TOKEN = "chat-service";
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const refresh = vi.spyOn(manager, "refreshActorCredentials").mockReturnValue(blocked);
+    let response: Promise<Response> | undefined;
+    try {
+      response = fetch(origin + "/api/hosty/session", { headers: { authorization: "Bearer hostyg_browser" } });
+      await vi.waitFor(() => expect(refresh).toHaveBeenCalledWith("user_admin", "hostyg_browser"));
+      const result = await Promise.race([response, new Promise<null>(resolve => setTimeout(() => resolve(null), 300))]);
+      expect(result, "a conversation queue must not block validated SDK identity").not.toBeNull();
+      expect(result!.status).toBe(200);
+      expect(await result!.json()).toMatchObject({ status: "active", userId: "user_admin", hosty: { setup: "ready" } });
+    } finally {
+      release(); await response;
+      refresh.mockRestore(); await new Promise(resolve => core.close(resolve));
+    }
+  });
+
+  it("waits for the selected conversation credential update but not other conversations", async () => {
+    const core = createServer((request, response) => {
+      request.resume(); response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" }));
+    });
+    await new Promise<void>(resolve => core.listen(0, resolve));
+    process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+    process.env.HOSTY_APP_SERVICE_TOKEN = "chat-service";
+    let releaseSelected!: () => void, releaseOthers!: () => void;
+    const selected = new Promise<void>(resolve => { releaseSelected = resolve; });
+    const others = new Promise<void>(resolve => { releaseOthers = resolve; });
+    const update = vi.spyOn(manager, "refreshSessionCredentials").mockReturnValue(selected);
+    const refresh = vi.spyOn(manager, "refreshActorCredentials").mockReturnValue(others);
+    let response: Promise<Response> | undefined;
+    try {
+      const session = await manager.createSession({ createdBy: "user_admin" });
+      response = fetch(origin + `/api/sessions/${session.id}/credentials`, { method: "POST",
+        headers: { authorization: "Bearer hostyg_browser", origin, "content-type": "application/json" }, body: "{}" });
+      await vi.waitFor(() => expect(update).toHaveBeenCalledWith(session.id, "user_admin", "hostyg_browser"));
+      expect(refresh).not.toHaveBeenCalled();
+      let responded = false; void response.then(() => { responded = true; });
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(responded).toBe(false);
+      releaseSelected();
+      await vi.waitFor(() => expect(refresh).toHaveBeenCalledWith("user_admin", "hostyg_browser"));
+      const result = await Promise.race([response, new Promise<null>(resolve => setTimeout(() => resolve(null), 300))]);
+      expect(result).not.toBeNull();
+      expect(await result!.json()).toEqual({ updated: true });
+    } finally {
+      releaseSelected(); releaseOthers(); await response;
+      update.mockRestore(); refresh.mockRestore(); await new Promise(resolve => core.close(resolve));
+    }
   });
 
   it("refreshes owned chat credentials through ordinary app authentication and rejects other callers", async () => {

@@ -57,14 +57,14 @@ export function LocalAppHandoff({ sessionId, appId, workspaceId, observation, di
     {pending && <div className="flex flex-col gap-2"><p>Pending {pending.action === "app-local-accept" ? "acceptance" : "local start"}. Retry keeps the reviewed commits and request ID.</p>
       <div className="flex gap-2"><Button size="sm" variant="outline" disabled={disabled || busy} onClick={() => void run(pending.action, true)}>Retry local action</Button>
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => { localStorage.removeItem(key); setPending(null); setConfirm(null); refresh(); }}>Dismiss request</Button></div></div>}
-    {error && <p role="alert" className="text-destructive">{error}</p>}
+    {error && <p role="alert" className="text-destructive-foreground">{error}</p>}
     <Dialog open={!!confirm} onOpenChange={open => { if (!open) setConfirm(null); }}><DialogContent>
       <DialogTitle>{confirm === "app-local-accept" ? "Accept committed work locally?" : "Use this app locally?"}</DialogTitle>
       <DialogDescription>{confirm === "app-local-accept"
         ? "Fast-forward local main to the reviewed workspace commit. No commit, remote, push or publication is created. This is not a remote backup."
         : "Start the accepted local source with this installation’s ordinary data and caches. Sandbox users, data and secrets stay separate. Autostart stays unchanged."}</DialogDescription>
       <p className="break-all text-sm">{appId}<br />Main: {status?.targetHead}<br />Workspace: {status?.sourceHead}</p>
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
       <DialogFooter><Button variant="outline" onClick={() => setConfirm(null)}>Cancel</Button><Button disabled={disabled || busy || !!pending} onClick={() => confirm && void run(confirm)}>{busy ? "Working…" : confirm === "app-local-accept" ? "Accept locally" : "Start with ordinary data"}</Button></DialogFooter>
     </DialogContent></Dialog>
   </div>;

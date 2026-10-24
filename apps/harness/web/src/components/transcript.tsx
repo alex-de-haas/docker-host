@@ -391,12 +391,12 @@ function ApprovalCard({
   };
 
   return (
-    <Card className={cn("min-w-0 gap-3 overflow-hidden py-0", !decision && "border-amber-500/40")} data-slot="approval-card" aria-busy={busy}>
-      <CardHeader className={cn("gap-2 border-b px-3 py-3", !decision ? "border-amber-500/25 bg-amber-500/10" : "bg-muted/35")}>
+    <Card className={cn("min-w-0 gap-3 overflow-hidden py-0", !decision && "border-warning-foreground/40")} data-slot="approval-card" aria-busy={busy}>
+      <CardHeader className={cn("gap-2 border-b px-3 py-3", !decision ? "border-warning-foreground/25 bg-warning-soft" : "bg-muted/35")}>
         <div className="flex flex-wrap items-center gap-2">
           <ShieldCheck className={cn("size-4", !decision ? "text-warning-foreground" : "text-muted-foreground")} aria-hidden />
           <span className="text-xs text-muted-foreground">{category}</span>
-          <Badge variant={decision ? "outline" : "secondary"} className={cn("ml-auto", !decision && "border-amber-500/30 bg-amber-500/15 text-amber-900 dark:text-amber-200")}>
+          <Badge variant={decision ? "outline" : "secondary"} className={cn("ml-auto", !decision && "border-warning-foreground/30 bg-warning-soft text-warning-foreground")}>
             {decision ? (decision.decision === "allow" ? "Allowed" : decision.decision === "cancelled" ? "Cancelled" : "Denied") : submitted ? "Decision sent" : "Needs approval"}
           </Badge>
         </div>
@@ -573,7 +573,7 @@ function QuestionCard({ questionId, questions, answers, cancelled, onAnswer }: {
           if (!question.multiSelect) setOther(current => ({ ...current, [question.question]: "" }));
         };
         const options = question.options.map((option, index) => <Field key={option.label} orientation="horizontal"
-          className="items-start rounded-md border p-2.5 has-data-[state=checked]:border-primary has-data-[state=checked]:bg-muted" data-disabled={disabled}>
+          className="items-start rounded-md border p-2.5 has-data-[state=checked]:border-brand-strong has-data-[state=checked]:bg-brand-soft" data-disabled={disabled}>
           {question.multiSelect ? <Checkbox id={`${baseId}-${index}`} checked={picks.includes(option.label)} disabled={disabled}
             onCheckedChange={checked => choose(option.label, checked === true)} />
             : <RadioGroupItem id={`${baseId}-${index}`} value={String(index)} disabled={disabled} />}

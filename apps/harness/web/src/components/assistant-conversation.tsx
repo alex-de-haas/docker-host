@@ -45,7 +45,8 @@ import { hasMessageContent, indexAttachments, takeChosenFiles, takePastedImages 
 import { approvalDecisions, cancelledQuestions, ToolActivity, TranscriptEvent } from "@/components/transcript";
 import { retryHandoff } from "@/lib/assistant-api";
 import { composeAskDraft } from "@/lib/ask-draft";
-import { clearDraft, pruneDrafts, readDraft, writeDraft, readDraftAttachments, writeDraftAttachments } from "@/lib/draft-store";
+import { clearDraft, draftStorageText, pruneDrafts, readDraft, writeDraft, readDraftAttachments, writeDraftAttachments } from "@/lib/draft-store";
+import { dispatchPendingSend, forgetPendingSend, readPendingSend, claimPendingSend, PENDING_SEND_PREFIX, PENDING_SEND_CHANGED, withPendingSendLock, isMessageAdmissionRejection, retryPendingSend, type PendingSend } from "@/lib/pending-send";
 import { useSessionListRefresh } from "@/lib/use-session-list-refresh";
 import { activityTime, orderSessions, publishAttention, waitingCount } from "@/lib/attention";
 import {
@@ -57,7 +58,6 @@ import {
   getSession,
   listAppNames,
   listSessions,
-  postMessage,
   uploadAttachment,
   type StoredAttachment,
   renameSession,
@@ -114,6 +114,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const [sending, setSending] = useState(false);
   const [stoppingSession, setStoppingSession] = useState<string | null>(null);
   const sendingRef = useRef(false);
+  const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
+  const [sendRecoveryBlocked, setSendRecoveryBlocked] = useState(false);
   const [providerSaving, setProviderSaving] = useState(false);
   const providerSavingRef = useRef(false);
   const onProviderSaving = useCallback((saving: boolean) => {
@@ -237,6 +239,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setHealth(null);
     void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
     setError(null);
+    let retainedSend: PendingSend | null = null;
+    try { retainedSend = readPendingSend(record.id); setPendingSend(retainedSend); setSendRecoveryBlocked(false); }
+    catch (error) { setPendingSend(null); setSendRecoveryBlocked(true); setError(error instanceof Error ? error.message : String(error)); }
     setContextUnavailable(false);
     setWithoutAppDetails(false);
     setStatus(record.status);
@@ -246,11 +251,14 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setStreamed("");
     // Whatever was left unsent in this session, put back in the box. Per session, so switching away
     // and back returns your own half-written sentence rather than someone else's.
-    setInput(readDraft(record.id, record.handoffDraft?.text ?? ""));
+    setInput(readDraft(record.id, retainedSend?.draftText ?? record.handoffDraft?.text ?? ""));
     // Files are not a draft: a selection made for one session must not follow the operator into
     // the next and be uploaded there.
     setPending([]);
-    setUploaded(readDraftAttachments(record.id) ?? record.handoffDraft?.attachments ?? []);
+    const savedFiles = readDraftAttachments(record.id) ?? record.handoffDraft?.attachments ?? [];
+    const recoveredFiles = [...new Map([...savedFiles, ...(retainedSend?.attachments ?? [])].map(file => [file.name, file])).values()];
+    setUploaded(recoveredFiles);
+    if (retainedSend) writeDraftAttachments(record.id, recoveredFiles);
     setUploadingFile(null);
     setFailedUpload(null);
     try {
@@ -579,12 +587,19 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   }, [input, session]);
 
   useEffect(() => {
+    const refreshPending = () => {
+      if (!session) return;
+      try { setPendingSend(readPendingSend(session.id)); setSendRecoveryBlocked(false); }
+      catch (error) { setSendRecoveryBlocked(true); setError(error instanceof Error ? error.message : String(error)); }
+    };
     const changed = (event: StorageEvent) => {
+      if (session && event.key === PENDING_SEND_PREFIX + session.id) refreshPending();
       if (session && event.key === `hosty.assistant.draft.${session.id}`) setInput(event.newValue ?? "");
       if (session && event.key === `hosty.assistant.attachments.${session.id}`) setUploaded(readDraftAttachments(session.id) ?? []);
     };
     window.addEventListener("storage", changed);
-    return () => window.removeEventListener("storage", changed);
+    window.addEventListener(PENDING_SEND_CHANGED, refreshPending);
+    return () => { window.removeEventListener("storage", changed); window.removeEventListener(PENDING_SEND_CHANGED, refreshPending); };
   }, [session]);
 
   // Overlay live status while retaining stream updates for previously selected sessions.
@@ -618,9 +633,53 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     };
   }, []);
 
+  const acceptSend = useCallback(async (request: PendingSend) => {
+    const sentNames = new Set(request.attachments.map(file => file.name));
+    const settled = await withPendingSendLock(request.sessionId, () => {
+      if (readPendingSend(request.sessionId)?.clientRequestId !== request.clientRequestId) return false;
+      // Retire the original draft before releasing its journal; another view cannot claim it
+      // between confirmation and cleanup. Storage failure keeps the original receipt recoverable.
+      if (readDraft(request.sessionId) === draftStorageText(request.draftText)) {
+        writeDraft(request.sessionId, "");
+        if (readDraft(request.sessionId)) throw new Error("The message was accepted, but its saved draft could not be cleared. Retry checks the same receipt.");
+      }
+      const remaining = readDraftAttachments(request.sessionId)?.filter(file => !sentNames.has(file.name)) ?? [];
+      if (!writeDraftAttachments(request.sessionId, remaining)) throw new Error("The message was accepted, but its saved attachments could not be cleared. Retry checks the same receipt.");
+      forgetPendingSend(request);
+      return true;
+    });
+    if (!settled) return;
+    setSessions(current => current.map(item => item.id === request.sessionId ? { ...item, handoffDraft: undefined } : item));
+    setSession(current => current?.id === request.sessionId ? { ...current, handoffDraft: undefined } : current);
+    if (activeSessionId.current !== request.sessionId) return;
+    setPendingSend(current => current?.clientRequestId === request.clientRequestId ? null : current);
+    setContextUnavailable(false); setWithoutAppDetails(false);
+    setUploaded(current => current.filter(file => !sentNames.has(file.name)));
+    setInput(current => current === request.draftText ? "" : current);
+    const named = await getSession(request.sessionId).catch(() => null);
+    if (named && activeSessionId.current === request.sessionId) onSessionChange(named);
+  }, [onSessionChange]);
+
+  const recoverSend = useCallback(async () => {
+    if (!pendingSend || sendingRef.current || sendRecoveryBlocked) return;
+    const request = pendingSend;
+    sendingRef.current = true; setSending(true); setError(null);
+    try {
+      const receipt = await retryPendingSend(request);
+      if (receipt?.state === "accepted") await acceptSend(request);
+      else if (receipt?.state === "rejected") {
+        forgetPendingSend(request);
+        if (activeSessionId.current === request.sessionId) setPendingSend(current => current?.clientRequestId === request.clientRequestId ? null : current);
+        throw new Error(receipt.error?.message ?? "The message was not sent. Review the draft before sending again.");
+      } else throw new Error("This message may already have been sent. Inspect the conversation; this check did not resend it.");
+    } catch (error) {
+      if (activeSessionId.current === request.sessionId) setError(error instanceof Error ? error.message : String(error));
+    } finally { sendingRef.current = false; setSending(false); }
+  }, [pendingSend, sendRecoveryBlocked, acceptSend]);
+
   const send = useCallback(async () => {
     const trimmed = (mentionInputRef.current?.serialize() ?? input).trim();
-    if (!hasMessageContent(trimmed, pending.length, uploaded.length) || !session || composerBlockedRef.current || sendingRef.current || providerSavingRef.current || stoppingRef.current === session.id || running || contextSaving || mentionSavingRef.current || !health?.available) {
+    if (!hasMessageContent(trimmed, pending.length, uploaded.length) || !session || pendingSend || sendRecoveryBlocked || composerBlockedRef.current || sendingRef.current || providerSavingRef.current || stoppingRef.current === session.id || running || contextSaving || mentionSavingRef.current || !health?.available) {
       return;
     }
     sendingRef.current = true;
@@ -628,6 +687,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setError(null);
     setFailedUpload(null);
     let activeFile: File | null = null;
+    let request: PendingSend | undefined;
     try {
       // Files first, then the message that names them by their stored names — which may differ from
       // what the operator called them. A failed upload stops here with the text kept, so nothing is
@@ -645,33 +705,26 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           setUploaded((current) => [...current, attachment]);
           setPending((current) => current.filter((candidate) => candidate !== file));
         }
+        if (!writeDraftAttachments(session.id, stored)) throw new Error("Browser storage is unavailable. Your uploaded attachment remains in this panel; allow storage before sending.");
       }
       if (activeSessionId.current === session.id) setUploadingFile(null);
       // Lock the composer before the HTTP response: SSE may confirm (or finish) the turn first.
       if (activeSessionId.current === session.id) setStatus("running");
-      await postMessage(session.id, trimmed, stored.map((attachment) => attachment.name), session.appContextRevision ?? 0, withoutAppDetails, session.selectionRevision ?? 0);
-      // Clear only after acceptance, and never overwrite another session opened during the request.
-      clearDraft(session.id);
-      setSessions(current => current.map(item => item.id === session.id ? { ...item, handoffDraft: undefined } : item));
-      setSession(current => current?.id === session.id ? { ...current, handoffDraft: undefined } : current);
-      if (activeSessionId.current !== session.id) return;
-      setContextUnavailable(false);
-      setWithoutAppDetails(false);
-      setUploaded([]);
-      setPending([]);
-      setInput("");
-      // The gateway names an unnamed session from its first message, so the record the list holds is
-      // stale the moment that message lands. Re-read rather than deriving the same title here: two
-      // implementations of one rule drift, and the server's is the one that is stored.
-      if (!session.title) {
-        const named = await getSession(session.id).catch(() => null);
-        if (named?.title) {
-          onSessionChange(named);
-        }
-      }
+      request = { version: 1, clientRequestId: crypto.randomUUID(), sessionId: session.id, text: trimmed, draftText: input,
+        attachments: stored, appContextRevision: session.appContextRevision ?? 0, withoutAppDetails, selectionRevision: session.selectionRevision ?? 0 };
+      await claimPendingSend(request);
+      if (activeSessionId.current === session.id) setPendingSend(request);
+      const receipt = await dispatchPendingSend(request);
+      if (receipt?.state !== "accepted") throw new Error("The send outcome could not be verified. Retry checks the original request before sending again.");
+      await acceptSend(request);
     } catch (cause) {
       if (activeSessionId.current !== session.id) return;
       setFailedUpload(activeFile);
+      // These explicit pre-admission refusals settle the first attempt. Preserve the editable
+      // draft so context/provider corrections can start a distinct intentional request.
+      if (request && isMessageAdmissionRejection(cause)) {
+        forgetPendingSend(request); setPendingSend(current => current?.clientRequestId === request?.clientRequestId ? null : current);
+      }
       if (cause instanceof AssistantApiError && cause.code === "app_context_unavailable") setContextUnavailable(true);
       if (cause instanceof AssistantApiError && cause.code === "app_context_conflict") {
         const current = await getSession(session.id).catch(() => null);
@@ -685,7 +738,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       sendingRef.current = false;
       setSending(false);
     }
-  }, [input, pending, running, status, contextSaving, session, uploaded, withoutAppDetails, health?.available, onSessionChange]);
+  }, [input, pending, pendingSend, sendRecoveryBlocked, running, status, contextSaving, session, uploaded, withoutAppDetails, health?.available, onSessionChange, acceptSend]);
 
   const stop = useCallback(async () => {
     if (!session || !running || sendingRef.current || providerSavingRef.current || stoppingRef.current) return;
@@ -910,6 +963,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       {!fullPage && !showSessions && session && <SessionSandboxes key={`sandbox-${session.id}`} sessionId={session.id} />}
       {!fullPage && !showSessions && session && <SessionWorkspaces key={`workspaces-${session.id}`} session={session} running={running} />}
       {error && <div className="shrink-0 p-3" role="alert"><InlineError message={error} /></div>}
+      {pendingSend && <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-warning-soft px-3 py-2 text-sm" role="status">
+        <span className="min-w-0 flex-1">Send not confirmed. Your draft is retained; Retry checks the original request.</span>
+        <Button type="button" variant="outline" size="sm" disabled={sending} onClick={() => void recoverSend()}>{sending ? "Checking send…" : "Retry send"}</Button>
+      </div>}
 
       {showSessions ? (
         <SessionList
@@ -1027,7 +1084,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                 rows={2}
                 aria-label="Message"
                 placeholder={session ? "Ask the operator assistant…" : "Waiting for the gateway…"}
-                disabled={!session || sending}
+                disabled={!session || sending || !!pendingSend || sendRecoveryBlocked}
                 className="max-h-48 min-h-20 w-full px-3"
               />
               <input
@@ -1049,7 +1106,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                   <div className="flex max-h-48 shrink-0 flex-col gap-2 overflow-y-auto pb-2" aria-label="Attachments to send">
                     {uploaded.map((attachment) => (
                       <ChatAttachment key={`stored-${attachment.name}`} name={attachment.name} size={attachment.size}
-                        description="Uploaded · ready to send" disabled={sending} onRemove={() => {
+                        description="Uploaded · ready to send" disabled={sending || !!pendingSend} onRemove={() => {
                           const remaining = uploaded.filter(item => item.name !== attachment.name);
                           setUploaded(remaining);
                           if (session) writeDraftAttachments(session.id, remaining);
@@ -1059,7 +1116,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                       <ChatAttachment key={`${file.name}-${index}`} name={file.name} size={file.size} file={file}
                         state={uploadingFile === file ? "uploading" : failedUpload === file ? "error" : "idle"}
                         description={uploadingFile === file ? "Uploading…" : failedUpload === file ? "Upload failed · send to retry" : "Ready to upload"}
-                        disabled={sending}
+                        disabled={sending || !!pendingSend}
                         onRemove={() => setPending(current => current.filter((_, i) => i !== index))} />
                     ))}
                   </div>
@@ -1068,7 +1125,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                   <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button ref={addButtonRef} type="button" size="icon" variant="ghost" disabled={!session || sending || mentionSaving || providerSaving} aria-label="Add to message"><Plus /></Button>
+                        <Button ref={addButtonRef} type="button" size="icon" variant="ghost" disabled={!session || sending || !!pendingSend || sendRecoveryBlocked || mentionSaving || providerSaving} aria-label="Add to message"><Plus /></Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent side="top" align="start" onCloseAutoFocus={event => {
                         if (openContextAfterMenu.current) {
@@ -1092,14 +1149,14 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                     }} />}
                     {session && <ContextUsageIndicator usage={contextUsage.sessionId === session.id ? contextUsage.usage : null} connected={connection === "connected"} />}
                   </div>
-                  {session && <SpeechInput key={session.id} disabled={sending} onText={text => setInput(current => current ? `${current}${/\s$/.test(current) ? "" : " "}${text}` : text)} />}
+                  {session && <SpeechInput key={session.id} disabled={sending || !!pendingSend || sendRecoveryBlocked} onText={text => setInput(current => current ? `${current}${/\s$/.test(current) ? "" : " "}${text}` : text)} />}
                   {running || stopping ? (
                     <Button type="button" size="icon" className="shrink-0" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
-                      {sending || stopping ? <Loader2 className="animate-spin" /> : <Square className="fill-current" />}
+                      {sending || stopping ? <Loader2 className="motion-safe:animate-spin" /> : <Square className="fill-current" />}
                     </Button>
                   ) : (
-                    <Button type="submit" size="icon" className="shrink-0" disabled={!session || sending || providerSaving || contextSaving || mentionSaving || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
-                      {sending ? <Loader2 className="animate-spin" /> : <Send />}
+                    <Button type="submit" size="icon" className="shrink-0" disabled={!session || sending || !!pendingSend || sendRecoveryBlocked || providerSaving || contextSaving || mentionSaving || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
+                      {sending ? <Loader2 className="motion-safe:animate-spin" /> : <Send />}
                     </Button>
                   )}
                 </div>

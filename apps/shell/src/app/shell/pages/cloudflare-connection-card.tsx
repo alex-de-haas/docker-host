@@ -4,6 +4,7 @@ import { HostyLoader } from "../../../../../../shared/web/hosty-states";
 
 import { useCallback, useEffect, useState } from "react";
 import { ExternalLink, LoaderCircle } from "lucide-react";
+import { Frame, FrameHeader, FramePanel } from "@/components/reui/frame";
 import { toast } from "@/components/reui/operation-toast";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -131,27 +132,28 @@ export function CloudflareConnectionCard() {
   const connected = status?.status === "connected";
 
   return (
-    <div className="space-y-2">
-      <div>
-        <h3 className="text-sm font-medium">Cloudflare connection</h3>
+    <section className="min-w-0" aria-labelledby="cloudflare-connection-heading">
+      <Frame className="min-w-0">
+      <FrameHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 flex-1">
+        <h3 id="cloudflare-connection-heading" className="text-sm font-medium">Cloudflare connection</h3>
         <p className="text-xs text-muted-foreground">
           A scoped API token lets Hosty add routes to your tunnel and create one DNS record per published
           hostname. Hosty never creates the tunnel and never runs the connector.
         </p>
-      </div>
-
+        </div>
+        {!loading && connected && <Button type="button" variant="outline" size="sm" className="shrink-0 self-start" disabled={busy} onClick={() => setConfirmingDisconnect(true)}>
+          Disconnect
+        </Button>}
+      </FrameHeader>
+      <FramePanel className="flex min-w-0 flex-col gap-3 [overflow-wrap:anywhere]">
       {loading ? (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <HostyLoader className="h-4 w-4" label={null} /> Loading…
         </div>
       ) : connected ? (
-        <div className="space-y-1.5 rounded-md border p-3 text-xs">
-          <div className="flex items-center justify-between">
-            <span className="font-medium text-success-foreground">Connected</span>
-            <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => setConfirmingDisconnect(true)}>
-              Disconnect
-            </Button>
-          </div>
+        <div className="flex flex-col gap-3 text-xs">
+          <span className="font-medium text-success-foreground">Connected</span>
           <AlertDialog open={confirmingDisconnect} onOpenChange={open => { if (!busy) setConfirmingDisconnect(open); }}>
             <AlertDialogContent>
               <AlertDialogHeader><AlertDialogTitle>Disconnect Cloudflare?</AlertDialogTitle>
@@ -169,13 +171,13 @@ export function CloudflareConnectionCard() {
               read as one undifferentiated run of text to a screen reader. */}
           <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-muted-foreground sm:grid-cols-[auto_1fr_auto_1fr] sm:gap-x-4">
             <dt>Account:</dt>
-            <dd className="text-foreground">{status?.accountName}</dd>
+            <dd className="min-w-0 break-words text-foreground">{status?.accountName}</dd>
             <dt>Domain:</dt>
-            <dd className="text-foreground">{status?.baseDomain}</dd>
+            <dd className="min-w-0 break-words text-foreground">{status?.baseDomain}</dd>
             <dt>Tunnel:</dt>
-            <dd className="text-foreground">{status?.tunnelName}</dd>
+            <dd className="min-w-0 break-words text-foreground">{status?.tunnelName}</dd>
             <dt>Connector:</dt>
-            <dd className="text-foreground">{status?.connectorStatus}</dd>
+            <dd className="min-w-0 break-words text-foreground">{status?.connectorStatus}</dd>
           </dl>
           {status?.locality === "not_local" && (
             <p className="text-warning-foreground">
@@ -200,7 +202,7 @@ export function CloudflareConnectionCard() {
               </ul>
             </div>
           )}
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row">
             <Input
               type="password"
               autoComplete="off"
@@ -239,6 +241,8 @@ export function CloudflareConnectionCard() {
       )}
 
       {error && <InlineError message={error} />}
-    </div>
+      </FramePanel>
+      </Frame>
+    </section>
   );
 }

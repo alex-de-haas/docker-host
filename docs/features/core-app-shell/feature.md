@@ -20,10 +20,10 @@ The implemented Shell provides:
 
 - an administrator-only Dashboard: Core's status and version beside every installed app, with install,
   lifecycle, configuration, updates, logs, backups, restore, prune, and removal;
-- administrator-only Settings: users and invitations, Core's own settings and ingress connection, and
-  host-wide shared mounts;
-- Apps navigation for app manifests that declare shell UI metadata, with Open/Standalone and
-  administrator-only Uninstall on the Apps overview;
+- administrator host management in Settings: users and invitations, Core's own settings and ingress
+  connection, and host-wide shared mounts, alongside each user's personal settings;
+- direct Apps sidebar navigation for authorized apps that declare shell UI metadata, with
+  embedded and standalone opening;
 - embedded app workspaces whose apps establish their own Core-authorized sessions.
 
 The route table and sidebar structure live in [Shell Navigation](../shell-navigation/feature.md).
@@ -53,8 +53,8 @@ Feature UI lives under `apps/shell/src/app/shell/`:
 - `shell-context.tsx` exposes separate persistent Shell state and action contexts to route pages;
 - `shell-route-pages.tsx` adapts individual App Router pages to Shell feature components;
 - `sidebar/` contains Shell navigation and account/theme controls;
-- `pages/` contains the Dashboard, Apps, and Settings view components, including the Settings
-  sections for Core and shared mounts;
+- `pages/` contains the Dashboard and Settings view components, including the Settings sections
+  for Core and shared mounts;
 - `dialogs/` contains install review and installed-app detail dialogs;
 - `workspace/` contains embedded app workspace loading and iframe surfaces;
 - `ui.tsx`, `settings.tsx`, `app-helpers.ts`, and `clipboard.ts` contain shared presentational and formatting helpers;
@@ -63,8 +63,11 @@ Feature UI lives under `apps/shell/src/app/shell/`:
 
 Each top-level route file renders only its route surface; the route table, the legacy paths that
 still resolve, and the sidebar's two groups are described in
-[Shell Navigation](../shell-navigation/feature.md). An administrator-only surface falls back to the
-Apps route while the persistent orchestrator redirects a non-admin session to `/apps`.
+[Shell Navigation](../shell-navigation/feature.md). Administrators land on Dashboard. Ordinary users
+land at `/`, with an empty main surface and their authorized app sidebar; there is no duplicate
+Apps overview. The legacy `/apps` path redirects to `/`, which resolves to Dashboard for
+administrators. An inaccessible administrator-only surface redirects an ordinary user to `/`;
+personal settings remain available under their existing tab-aware authorization.
 
 The sidebar is a persistent desktop-style rail with an expanded and a compact mode; the selected
 mode — like the right panel's docked state — is stored in a cookie the server layout reads, so the
@@ -74,6 +77,10 @@ chrome's column animation stays disabled until the first Core load settles, so t
 column appearing with the apps response snaps into place rather than looking like it opens itself.
 Because the sidebar and Core/session state are owned by the root layout, moving between routes does
 not remount it or briefly render the unauthenticated navigation state.
+
+The sidebar's Apps heading is noninteractive. Compact mode retains direct app rows without an
+All apps catalog icon. On phones, Apps opens the app sidebar and first collapses an expanded tool
+sheet; it does not navigate, reset the app document, or release retained tools.
 
 Hosty Shell is installed as a system runtime app and does not appear as an entry in the Apps
 sidebar.
@@ -154,7 +161,7 @@ toasts remain; problem icons and Manage retain diagnostics. Separate configurati
 required information remains visible. Dashboard rows do not display a Manual start marker. Autostart
 remains configurable in More and Manage > Launch.
 
-The Apps heading contains filters and Install app. Search and aggregate resources occupy the table
+Dashboard's Apps heading contains filters and Install app. Search and aggregate resources occupy the table
 header. Fleet Check updates is in App actions at every width; Update all is also a visible contextual
 action when routine updates are available. Checking updates keeps the menu open with progress.
 Routine updates use Core's queued update endpoint without a confirmation popup. Update all
@@ -184,9 +191,8 @@ icons use the shared shadcn Tooltip on hover and keyboard focus rather than brow
 Diagnostic text preserves line breaks and wraps within the viewport; permission buttons retain
 their direct transition to Permissions.
 
-Removal entries in Dashboard, Manage and the administrator's Apps overview open Core's isolated
-approval directly. Shell does not show a preliminary cleanup dialog. Core presents removal impact,
-cleanup choices, runtime-state and Shell-availability warnings, source-safety facts and the final
+Removal entries in Dashboard and Manage open Core's isolated approval directly. Shell does not show
+a preliminary cleanup dialog. Core presents removal impact, cleanup choices, runtime-state and Shell-availability warnings, source-safety facts and the final
 destructive action. Shell reserves the popup in the initiating gesture and retains a blocked-popup
 link, original-request recovery, cancellation/denial and visible failure. The app/selection remains
 until Core confirms successful removal. See [trusted confirmation](../app-installation-sdk/feature.md#trusted-confirmation)
@@ -415,6 +421,11 @@ Required coverage:
 - `runtime-states.ts` — the busy/idle/up predicates and their mutual exclusivity;
 - `shell-routes.ts` — route parsing and building agreeing in both directions, legacy paths
   canonicalizing without looping, and administrator-only surfaces;
+- Home and legacy `/apps` navigation keep the ordinary user's main surface empty and retain the
+  authorized app sidebar; administrators land on Dashboard. The Apps heading is noninteractive,
+  compact mode has no catalog icon, and direct app launch/start guards remain intact. Phone Apps
+  collapses the default tool sheet before opening the sidebar without route navigation, document
+  reset or released tool presentations;
 - `workspace/install-intent.ts` and `workspace/insecure-embed.ts` — the versioned install-feed intent's
   accept/reject rules and the insecure-embed guard;
 - `ingress.ts` — public-origin and ingress-provider resolution.
@@ -424,9 +435,9 @@ verified against a Core-managed Shell rather than a standalone app without Hosty
 
 - Dev bundler changes cover stable Dashboard loading after managed Shell restarts, with no repeated
   entry-level HMR restart or full-page navigation, as well as normal password login on an isolated Core, client and server SDK
-  imports, navigation between Dashboard, Settings and Apps, and Fast Refresh of workspace SDK
-  components without losing the document or session. Compare first visits and repeated transitions
-  separately; retain the webpack production build check.
+  imports, navigation between Dashboard, Settings and embedded app workspaces, and Fast Refresh
+  of workspace SDK components without losing the document or session. Compare first visits and
+  repeated transitions separately; retain the webpack production build check.
 
 - Icon coverage includes manifest-declared names without catalog metadata for both live and compiled
   runtimes, unknown names, image priority, and recovery after a failed URL changes.
@@ -458,12 +469,11 @@ verified against a Core-managed Shell rather than a standalone app without Hosty
 - Runtime-app log entries and direct links select Manage Logs without a popup; Core logs retain
   their dialog. Cover tail/Refresh, service selection, empty/errors, no hidden reads, scope/exit
   aborts and retained drafts. A visible assigned app with logs may retain the ordinary-user logs-only
-  page with its accessible Apps breadcrumb, but other Manage sections and controls stay
+  page with its accessible Home breadcrumb linking to `/`, but other Manage sections and controls stay
   administrator-only. Core's existing log API
   authorization and any refusal remain unchanged; navigation adds no grant.
-- Apps Uninstall is administrator-only and retains Open/Standalone. All removal entries open Core
-  directly, preserving cleanup choices, impact/runtime warnings, source safety, popup fallback,
-  denial/errors and original-request recovery. No opening or unknown status reports success.
+- Removal remains administrator-only. Dashboard and Manage removal entries open Core directly,
+  preserving cleanup choices, impact/runtime warnings, source safety, popup fallback, denial/errors and original-request recovery. No opening or unknown status reports success.
   App-version hover retains revision/build details; the after-name problem icon retains the full
   update-check error in the shared Tooltip on hover and focus, without native error titles.
   Permission-problem tooltips preserve the direct Permissions action; tooltip interaction does not

@@ -6,9 +6,13 @@ namespace Haas.Hosty.Core.Tests;
 public sealed partial class CoreLifecycleServiceTests
 {
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task NewReviewComment_PrivateSourceAdmissionReusesHeldConnectionWithoutReenteringUserGate(bool coreSource)
+    [InlineData(false, "comment")]
+    [InlineData(true, "comment")]
+    [InlineData(false, "reply")]
+    [InlineData(true, "reply")]
+    [InlineData(false, "resolve")]
+    [InlineData(true, "resolve")]
+    public async Task ReviewMutation_PrivateSourceAdmissionReusesHeldConnectionWithoutReenteringUserGate(bool coreSource, string kind)
     {
         var f = await ExternalPublicationFixture();
         var connections = new UserConnectionService(f.Users,
@@ -35,10 +39,9 @@ public sealed partial class CoreLifecycleServiceTests
         var service = new PublicationService(f.F.Paths, workspaces, connections, f.F.Apps, f.Users, f.F.Clock,
             new AuditStore(f.F.Paths));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var result = await service.CommandReviewAsync(tree, "admin", "comment",
-            NewReviewComment(tree.PullRequests[0], f.Provider.Head), timeout.Token);
+        var result = await service.CommandReviewAsync(tree, "admin", kind,
+            ReviewAdmissionCommand(tree, f.Provider.Head, kind), timeout.Token);
         Assert.Equal("succeeded", result.State);
-        Assert.Equal("new-thread", result.ThreadId);
-        Assert.Equal(1, f.Provider.ReviewComments);
+        Assert.Equal(1, ReviewMutationCount(f.Provider, kind));
     }
 }

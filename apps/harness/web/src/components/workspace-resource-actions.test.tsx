@@ -95,3 +95,45 @@ it("keeps compact sandbox deletion behind its menu and confirmation, then recove
   await act(async () => button("Retry sandbox action").click());
   expect(vi.mocked(developmentRequest).mock.calls[1]).toEqual(original);
 });
+
+it("shows stop progress without duplicating an admitted request or treating a lost reply as running", async () => {
+  let rejectStop!: (cause: Error) => void;
+  vi.mocked(developmentRequest).mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectStop = reject; }));
+  await render();
+  const stop = button("Stop sandbox");
+  await act(async () => { stop.click(); stop.click(); });
+  expect(developmentRequest).toHaveBeenCalledTimes(1);
+  const original = vi.mocked(developmentRequest).mock.calls[0];
+  expect(original).toEqual(["/work/environments/child/stop", { requestId: expect.any(String), expectedRevision: 4 }]);
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Sandbox operation in progress…");
+  expect(button("Retry sandbox action").disabled).toBe(true);
+  await act(async () => rejectStop(new Error("Response lost")));
+  expect(container.querySelector('[role="status"]')).toBeNull();
+  expect(container.textContent).toContain("An action is unfinished or its response was lost.");
+  expect(button("Retry sandbox action").disabled).toBe(false);
+  vi.mocked(developmentRequest).mockImplementationOnce(async (_path, body) => ({ operations: [{ id: body?.requestId, state: "succeeded" }] }) as never);
+  await act(async () => button("Retry sandbox action").click());
+  expect(vi.mocked(developmentRequest).mock.calls[1]).toEqual(original);
+});
+
+it("keeps deletion progress inside its locked confirmation while preserving the original request", async () => {
+  let completeDelete!: (value: unknown) => void;
+  vi.mocked(developmentRequest).mockImplementationOnce(() => new Promise(resolve => { completeDelete = resolve; }));
+  await render(); await act(async () => button("Delete sandbox…").click());
+  const remove = button("Delete sandbox");
+  await act(async () => { remove.click(); remove.click(); });
+  expect(developmentRequest).toHaveBeenCalledTimes(1);
+  const original = vi.mocked(developmentRequest).mock.calls[0];
+  expect(original).toEqual(["/work/environments/child/finish", { requestId: expect.any(String), expectedRevision: 4 }]);
+  const dialog = document.querySelector('[role="dialog"]')!;
+  expect(dialog.querySelector('[role="status"]')?.textContent).toBe("Sandbox operation in progress…");
+  expect(document.querySelectorAll('[role="status"]')).toHaveLength(1);
+  expect(button("Cancel").disabled).toBe(true);
+  expect(button("Deleting…").disabled).toBe(true);
+  await act(async () => dialog.querySelector<HTMLButtonElement>('[data-slot="dialog-close"]')!.click());
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  await act(async () => completeDelete({ operations: [{ id: original[1]?.requestId, state: "succeeded" }] }));
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(container.querySelector('[role="status"]')).toBeNull();
+  expect(localStorage.getItem("hosty.workspace.resource.work.environments.child")).toBeNull();
+});

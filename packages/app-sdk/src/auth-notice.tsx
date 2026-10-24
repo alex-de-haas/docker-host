@@ -1,53 +1,23 @@
 "use client";
 
-import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
+import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { SdkBrand, SdkChromeStyles, SdkSpinner } from "./sdk-chrome";
 
 /** Shared SDK chrome for sign-in and renewal, independent of the app's CSS framework. */
-export function AuthNotice({ children }: { children: ReactNode }) {
-  return <div data-hosty-activity-control role="status" style={barStyle}>{children}</div>;
+export function AuthNotice({ children, busy = false }: { children: ReactNode; busy?: boolean }) {
+  return <div data-hosty-sdk data-hosty-activity-control className="hosty-auth-notice" role="status" aria-busy={busy}>
+    <SdkChromeStyles /><style>{styles}</style><SdkBrand />
+    {busy && <SdkSpinner />}<div className="hosty-auth-notice-content">{children}</div>
+  </div>;
 }
 
-export function AuthNoticeButton({ secondary = false, disabled, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { secondary?: boolean }) {
-  return <button {...props} type="button" disabled={disabled} style={{
-    ...authNoticeActionStyle,
-    ...(secondary ? { background: "transparent", color: "#422006", boxShadow: "inset 0 0 0 1px #a16207" } : {}),
-    ...(disabled ? { opacity: 0.65, cursor: "wait" } : {}),
-  }} />;
+export function AuthNoticeButton({ secondary = false, className = "", ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { secondary?: boolean }) {
+  return <button {...props} type="button" className={`hosty-sdk-button ${secondary ? "" : "hosty-sdk-primary"} ${className}`} />;
 }
 
-const barStyle: CSSProperties = {
-  position: "fixed",
-  insetInline: 0,
-  bottom: 0,
-  zIndex: 2147483647,
-  display: "flex",
-  flexWrap: "wrap",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: "12px",
-  padding: "12px 16px",
-  margin: 0,
-  border: 0,
-  borderTop: "1px solid #d97706",
-  boxSizing: "border-box",
-  background: "#fef3c7",
-  color: "#422006",
-  font: "500 14px/1.4 system-ui, sans-serif",
-  textAlign: "center",
-  boxShadow: "0 -2px 8px rgba(66,32,6,0.12)",
-};
-
-export const authNoticeActionStyle: CSSProperties = {
-  display: "inline-block",
-  padding: "6px 14px",
-  margin: 0,
-  borderRadius: "8px",
-  background: "#422006",
-  color: "#fffbeb",
-  border: "none",
-  cursor: "pointer",
-  font: "650 14px/1.4 system-ui, sans-serif",
-  textDecoration: "none",
-  textTransform: "none",
-  letterSpacing: "normal",
-};
+const styles = `
+.hosty-auth-notice{position:fixed;inset-inline:12px;bottom:max(12px,env(safe-area-inset-bottom));z-index:2147483647;display:flex;align-items:center;flex-wrap:wrap;gap:12px;box-sizing:border-box;margin:0;padding:12px 16px;border:1px solid var(--hs-warning-border);border-radius:10px;background:var(--hs-card);color:var(--hs-fg);box-shadow:0 4px 14px -4px #0F1B2D29;text-align:left}
+.hosty-auth-notice-content{flex:1;display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;min-width:0}
+.hosty-auth-notice-content>span{flex:1;min-width:min(100%,200px)}
+@media(max-width:480px){.hosty-auth-notice{inset-inline:8px;padding:12px}.hosty-auth-notice-content{flex-basis:100%}}
+`;

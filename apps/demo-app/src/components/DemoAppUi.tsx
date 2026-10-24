@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import type { LucideIcon } from "lucide-react";
+import { CircleAlert, Diamond, LayoutGrid, Settings, ShieldCheck, Users, type LucideIcon } from "lucide-react";
+import { DemoMark } from "./DemoMark";
+import { DemoAlert, DemoEmpty } from "./DemoFeedback";
 import { HostyNavigationBoundary } from "@hosty-sdk/app/react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,17 +30,18 @@ const demoNavigationItems: Array<{
   id: DemoRoute;
   label: string;
   href: string;
+  icon: LucideIcon;
 }> = [
-  { id: "overview", label: "Overview", href: "/" },
-  { id: "people", label: "People", href: "/people" },
-  { id: "roles", label: "Roles", href: "/roles" },
-  { id: "settings", label: "Settings", href: "/settings" },
+  { id: "overview", label: "Overview", href: "/", icon: LayoutGrid },
+  { id: "people", label: "People", href: "/people", icon: Users },
+  { id: "roles", label: "Roles", href: "/roles", icon: ShieldCheck },
+  { id: "settings", label: "Settings", href: "/settings", icon: Settings },
 ];
 
 export function DemoShell({ children }: { children: ReactNode }) {
   return (
-    <main className="min-h-dvh bg-muted/30">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
+    <main className="min-h-dvh bg-background">
+      <div className="mx-auto flex w-full max-w-7xl min-w-0 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
         {children}
       </div>
     </main>
@@ -58,13 +61,14 @@ export function DemoPageHeader({
 }) {
   return (
     <section className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-      <div className="min-w-0 space-y-1">
-        <p className="truncate text-xs font-medium uppercase tracking-normal text-muted-foreground">
-          {eyebrow}
-        </p>
-        <h1 className="truncate text-xl font-semibold leading-7">{title}</h1>
+      <div className="flex min-w-0 flex-col gap-1">
+        <HostyNavigationBoundary><div className="mb-2 flex items-center gap-2 text-sm font-medium">
+          <DemoMark tile className="size-7" /><span>Demo App</span>
+          <span className="truncate font-mono text-xs font-normal text-muted-foreground">{eyebrow}</span>
+        </div></HostyNavigationBoundary>
+        <h1 className="wrap-anywhere text-2xl font-semibold">{title}</h1>
         {description && (
-          <p className="text-sm text-muted-foreground">{description}</p>
+          <p className="max-w-[72ch] text-sm text-muted-foreground">{description}</p>
         )}
       </div>
       {actions && (
@@ -82,22 +86,22 @@ export function DemoNavigation({ active }: { active: DemoRoute }) {
   return (
     <HostyNavigationBoundary><nav
       aria-label="Demo app navigation"
-      className="rounded-lg border bg-card p-1 shadow-sm"
+      className="demo-navigation -mt-2 border-b"
     >
-      <div className="flex flex-col gap-1 sm:flex-row">
+      <div className="flex gap-1 overflow-x-auto pb-2">
         {demoNavigationItems.map(item => {
           const isActive = item.id === active;
 
           return (
             <Button
               asChild
-              className="w-full justify-start sm:w-auto"
+              className="justify-start"
               key={item.id}
               size="sm"
-              variant={isActive ? "secondary" : "ghost"}
+              variant="ghost"
             >
               <Link href={item.href} aria-current={isActive ? "page" : undefined}>
-                {item.label}
+                <item.icon data-icon="inline-start" aria-hidden="true" />{item.label}
               </Link>
             </Button>
           );
@@ -129,7 +133,7 @@ export function MetricCard({
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-1">
-        <div className="break-all text-2xl font-semibold tracking-normal">
+        <div className="wrap-anywhere font-mono text-xl font-semibold tabular-nums">
           {value}
         </div>
         {description && (
@@ -173,10 +177,10 @@ export function DetailList({ items }: { items: DetailItem[] }) {
           className="border-b pb-4 last:border-b-0 last:pb-0"
           key={item.label}
         >
-          <dt className="text-xs font-medium uppercase tracking-normal text-muted-foreground">
+          <dt className="text-xs font-medium text-muted-foreground">
             {item.label}
           </dt>
-          <dd className="mt-1 break-all text-sm font-medium leading-6">
+          <dd className="mt-1 wrap-anywhere font-mono text-xs leading-5">
             {item.value}
           </dd>
         </div>
@@ -196,9 +200,10 @@ export function StateBadge({
 }) {
   return (
     <Badge
-      className={cn("capitalize", className)}
-      variant={tone === "danger" ? "destructive" : tone === "success" ? "secondary" : "outline"}
+      className={cn("max-w-full whitespace-normal text-left", className)}
+      variant={tone === "danger" ? "destructive" : tone === "success" ? "success" : tone === "warning" ? "warning" : "secondary"}
     >
+      {tone === "danger" ? <CircleAlert aria-hidden="true" /> : tone === "warning" ? <Diamond aria-hidden="true" /> : null}
       {children}
     </Badge>
   );
@@ -209,7 +214,7 @@ export function PeopleList({ users }: { users: AppDirectoryUser[] }) {
     <div className="grid gap-1">
       {users.map(user => (
         <div
-          className="flex min-h-14 items-center justify-between gap-3 border-b py-3 last:border-b-0"
+          className="flex min-h-14 flex-wrap items-center justify-between gap-3 border-b py-3 last:border-b-0"
           key={user.id}
         >
           <div className="min-w-0">
@@ -236,7 +241,7 @@ export function StorageGrid({ storage }: { storage: StorageInspection[] }) {
         <Card className="gap-4" key={item.key}>
           <CardHeader>
             <CardTitle>{item.label}</CardTitle>
-            <CardDescription className="break-all">{item.path}</CardDescription>
+            <CardDescription className="wrap-anywhere font-mono text-xs">{item.path}</CardDescription>
             <CardAction>
               <StateBadge tone={item.exists ? "success" : "danger"}>
                 {item.exists ? "mounted" : "missing"}
@@ -247,15 +252,13 @@ export function StorageGrid({ storage }: { storage: StorageInspection[] }) {
             {item.entries.length > 0 ? (
               <ul className="grid gap-2 text-sm">
                 {item.entries.map(entry => (
-                  <li className="break-all rounded-md bg-muted px-2 py-1" key={entry}>
+                  <li className="wrap-anywhere rounded-md bg-muted px-2 py-1 font-mono text-xs" key={entry}>
                     {entry}
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="text-sm leading-6 text-muted-foreground">
-                {item.error || "No visible entries."}
-              </p>
+              item.error ? <DemoAlert>{item.error}</DemoAlert> : <DemoEmpty title="No visible entries" />
             )}
           </CardContent>
         </Card>

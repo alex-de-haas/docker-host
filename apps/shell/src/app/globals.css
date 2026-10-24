@@ -110,12 +110,11 @@
   .dashboard-install > span { display: none; }
   .dashboard-app-icon { width: 28px; height: 28px; }
   .dashboard-identity > div { gap: 4px; }
-  .dashboard-resources:has([aria-label="Resources unavailable"]) { display: none; }
+  .dashboard-resources, .dashboard-toolbar-resources { display: none; }
   .dashboard-apps-toolbar, .dashboard-table .dashboard-row { grid-template-columns: minmax(0, 1fr) 40px; }
   .dashboard-context-action { display: none; }
-  .dashboard-toolbar-actions { grid-column: 1 / -1; grid-row: 3; }
+  .dashboard-toolbar-actions { grid-column: 1 / -1; grid-row: 2; }
   .dashboard-status { grid-column: 1; padding-left: 52px !important; }
-  .dashboard-resources { grid-column: 1 / -1; grid-row: 3; padding-left: 52px !important; max-width: 220px; }
 }
 
 @source "../../../../packages/app-sdk/src/sandbox-react.tsx";

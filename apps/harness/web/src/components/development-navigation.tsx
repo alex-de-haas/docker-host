@@ -1,6 +1,6 @@
 "use client";
 import { useRef, useState, type ReactNode } from "react";
-import { Folder, Hammer, Loader2, MessageSquarePlus, Trash2, Search, Diamond, CircleAlert, ArrowUpRight } from "lucide-react";
+import { Folder, Hammer, Loader2, MessageSquarePlus, Trash2, Search, ListFilter, Diamond, CircleAlert, ArrowUpRight } from "lucide-react";
 import type { AssistantSession } from "@/lib/assistant-api";
 import type { DevelopmentWorkspace } from "@/lib/development-api";
 import { orderSessions, isWaiting } from "@/lib/attention";
@@ -10,6 +10,14 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ContinueBuilding } from "@/components/continue-building";
+import { cn } from "@/lib/utils";
+
+const statusFilters = [
+  { key: "all", label: "All", Icon: ListFilter, tone: "text-muted-foreground" },
+  { key: "waiting", label: "Needs you", Icon: Diamond, tone: "text-warning-foreground" },
+  { key: "working", label: "Working", Icon: Loader2, tone: "text-info-foreground" },
+  { key: "failed", label: "Failed", Icon: CircleAlert, tone: "text-destructive-foreground" },
+] as const;
 
 export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, onNew, onDelete, externalCount = 0, onExternal, createAppAction }: {
   externalCount?: number; onExternal?: () => void; createAppAction?: ReactNode;
@@ -72,7 +80,13 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
         </div>
       </div>
       <div className="relative"><Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" /><Input aria-label="Search sessions" placeholder="Search sessions…" className="pl-8" value={query} onChange={event => setQuery(event.target.value)} /></div>
-      <div className="flex flex-wrap gap-1" aria-label="Session status filters">{[["all", "All"], ["waiting", "Needs you"], ["working", "Working"], ["failed", "Failed"]].map(([key, label]) => <Button key={key} size="sm" variant={stateFilter === key ? "secondary" : "ghost"} aria-pressed={stateFilter === key} className="h-7 gap-1 rounded-full px-2 text-xs" onClick={() => setStateFilter(key)}>{label}<span className="font-mono text-xs font-normal tabular-nums text-muted-foreground">{sessions.filter(session => matchesState(session, key)).length}</span></Button>)}</div>
+      <div className="flex flex-wrap gap-1" aria-label="Session status filters">{statusFilters.map(({ key, label, Icon, tone }) => {
+        const count = sessions.filter(session => matchesState(session, key)).length;
+        return <Button key={key} size="sm" variant={stateFilter === key ? "secondary" : "ghost"} aria-pressed={stateFilter === key} className="h-7 gap-1 rounded-full px-2 text-xs" onClick={() => setStateFilter(key)}>
+          <span aria-hidden="true" className={cn("inline-flex shrink-0", tone, key === "working" && count > 0 && "motion-safe:animate-spin")}><Icon className="size-3.5" /></span>
+          {label}<span className="font-mono text-xs font-normal tabular-nums text-muted-foreground">{count}</span>
+        </Button>;
+      })}</div>
     </div>
     <div className="min-h-0 flex-1 overflow-y-auto py-2">
       {orderSessions(visibleSessions).map(renderSession)}
@@ -97,7 +111,7 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
             try { await onDelete(deleting.id); setDeleting(null); }
             catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
             finally { deletionPending.current = false; setPending(false); }
-          }}>{pending ? <><Loader2 className="animate-spin" />Deleting…</> : "Delete session"}</Button>
+          }}>{pending ? <><Loader2 className="motion-safe:animate-spin" aria-hidden />Deleting…</> : "Delete session"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

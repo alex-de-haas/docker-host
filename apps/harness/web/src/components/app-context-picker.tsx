@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref, type RefObject } from "react";
-import { Blocks, Plus, Loader2, X, CircleAlert } from "lucide-react";
+import { Blocks, Plus, X, CircleAlert } from "lucide-react";
 import { Tooltip, Popover as PopoverPrimitive } from "radix-ui";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger, PopoverHeader, PopoverTitle, PopoverDescription } from "@/components/ui/popover";
 import { AppContextIcons } from "@/components/app-context-icons";
 import { ContextAppIcon } from "@/components/context-app-icon";
+import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { Button } from "@/components/ui/button";
 import { AssistantApiError, getSession, listContextApps, selectedContextApps, setSessionApps, type AssistantSession, type ContextApp } from "@/lib/assistant-api";
 
@@ -90,7 +91,7 @@ export function AppContextPicker({ session, busy, running, onChange, onBusyChang
                 <Button type="button" ref={trigger} variant="ghost" size="sm" className={compact && !ids.length ? "hidden" : "gap-1 rounded-full px-1"}
                   disabled={busy || saving} aria-label="Select app context">
                   {ids.length ? <AppContextIcons ids={ids} apps={Object.values(labels)} /> : <span className="inline-flex size-8 items-center justify-center" aria-hidden="true"><Blocks /></span>}
-                  {(error || rosterError || labelsUnavailable) && <CircleAlert className="size-3 text-destructive" aria-label="App context needs attention" />}
+                  {(error || rosterError || labelsUnavailable) && <CircleAlert className="size-3 text-destructive-foreground" aria-label="App context needs attention" />}
                   {!compact && <span className="inline-flex size-7 items-center justify-center rounded-full border border-border" aria-hidden="true"><Plus /></span>}
                   <span className="sr-only">{ids.length ? `${ids.length} ${ids.length === 1 ? "app" : "apps"} selected` : "General context"}</span>
                 </Button>
@@ -122,7 +123,7 @@ export function AppContextPicker({ session, busy, running, onChange, onBusyChang
           <Input aria-label="Search apps" placeholder="Search installed apps…" value={search} onChange={event => { setSearch(event.target.value); setLoading(true); }} />
           <fieldset className="flex min-h-0 flex-col gap-1 overflow-y-auto" style={{ maxHeight: "18rem" }}>
             <legend className="sr-only">Installed apps</legend>
-            {loading ? <div role="status" className="flex items-center gap-2 p-2 text-muted-foreground"><Loader2 className="size-4 animate-spin" />Loading apps…</div> : apps.map(app => <label key={app.id} className="flex cursor-pointer items-center gap-3 rounded-md p-2 hover:bg-muted">
+            {loading ? <div role="status" className="flex items-center gap-2 p-2 text-muted-foreground"><HostyLoader label={null} className="size-4 shrink-0" />Loading apps…</div> : apps.map(app => <label key={app.id} className="flex cursor-pointer items-center gap-3 rounded-md p-2 hover:bg-muted">
               <Checkbox checked={selected.includes(app.id)} disabled={saving || (!selected.includes(app.id) && selected.length >= 16)} onCheckedChange={checked => setSelected(current => checked === true ? [...current, app.id] : current.filter(id => id !== app.id))} />
               <ContextAppIcon app={app} className="size-7" />
               <span className="min-w-0 text-sm"><span className="block truncate font-medium">{app.displayName}</span><span className="block break-all text-xs text-muted-foreground">{app.id} · {app.runtimeState ?? "Unknown"}</span></span>
@@ -134,14 +135,14 @@ export function AppContextPicker({ session, busy, running, onChange, onBusyChang
             void listContextApps(search, next).then(page => { if (generation.current === current) { setApps(previous => [...previous, ...page.apps]); setNext(page.nextOffset); } })
               .catch(cause => { if (generation.current === current) setRosterError(String(cause.message ?? cause)); }).finally(() => { if (generation.current === current) setLoading(false); });
           }}>Load more</Button>}
-          {(error || rosterError || labelsUnavailable) && <div className="flex items-center gap-2"><p role="alert" className="text-xs text-destructive">{error ?? rosterError ?? "App context is unavailable."}</p><Button type="button" variant="ghost" size="sm" onClick={() => { setError(null); setLoading(true); setRetry(value => value + 1); }}>Retry</Button></div>}
+          {(error || rosterError || labelsUnavailable) && <div className="flex items-center gap-2"><p role="alert" className="text-xs text-destructive-foreground">{error ?? rosterError ?? "App context is unavailable."}</p><Button type="button" variant="ghost" size="sm" onClick={() => { setError(null); setLoading(true); setRetry(value => value + 1); }}>Retry</Button></div>}
           <div className="flex shrink-0 justify-end gap-2">
             <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={close}>Cancel</Button>
-            <Button type="button" size="sm" disabled={saving || busy} onClick={() => void save(selected, revision)}>{saving ? "Applying…" : "Apply"}</Button>
+            <Button type="button" size="sm" disabled={saving || busy} onClick={() => void save(selected, revision)}>{saving ? <><HostyLoader label={null} className="size-4 shrink-0" />Applying…</> : "Apply"}</Button>
           </div>
         </PopoverContent>
       </Popover>
     </div>
-    {!compact && !open && (error || rosterError || labelsUnavailable) && <div className="mt-2 flex items-center gap-2"><p role="alert" className="text-destructive">{error ?? rosterError ?? "App context is unavailable."}</p><Button type="button" variant="ghost" size="sm" onClick={() => { setError(null); setRetry(value => value + 1); }}>Retry</Button></div>}
+    {!compact && !open && (error || rosterError || labelsUnavailable) && <div className="mt-2 flex items-center gap-2"><p role="alert" className="text-destructive-foreground">{error ?? rosterError ?? "App context is unavailable."}</p><Button type="button" variant="ghost" size="sm" onClick={() => { setError(null); setRetry(value => value + 1); }}>Retry</Button></div>}
   </div>;
 }

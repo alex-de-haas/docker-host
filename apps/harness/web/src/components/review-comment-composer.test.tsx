@@ -26,7 +26,7 @@ it("adds an Ask reference only after a confirmed post, with the PR, published he
   await act(async () => confirm!({ threadId: "posted-thread", commentId: "posted-comment" }));
   expect(props.onAsk).toHaveBeenCalledOnce(); const reference = JSON.parse(props.onAsk.mock.calls[0][0].split("\n").slice(1).join("\n"));
   expect(reference).toMatchObject({ pullRequest: props.pullRequestUrl, threadId: "posted-thread", commentId: "posted-comment", file: originalLocation.path, startLine: 8, line: 10, side: "RIGHT", headRevision: props.head, comment: "Please adjust the range" });
-  expect(props.onPosted).toHaveBeenCalledOnce(); expect(props.onClose).toHaveBeenCalledOnce(); expect(container.querySelector("textarea")?.value).toBe("");
+  expect(props.onPosted).toHaveBeenCalledOnce(); expect(props.onClose).toHaveBeenCalledExactlyOnceWith("posted"); expect(container.querySelector("textarea")?.value).toBe("");
 });
 it("recovers the same UUID, original head, body, range and Ask intent across remount after the head moves and PR closes", async () => {
   const props = base(); props.onSubmit.mockRejectedValueOnce(new Error("Response lost")).mockResolvedValueOnce({ threadId: "thread", commentId: "comment" });
@@ -57,7 +57,7 @@ it("isolates unsent drafts, Ask intent and pending recovery by operator and PR s
 });
 it("disables fresh posting without complete PR authority or a selected range and preserves a closed unsent draft", async () => {
   const props = base(); await render(props); await type("Draft without sending"); await click(button("Close comment"));
-  expect(props.onClose).toHaveBeenCalledOnce(); expect(props.onSubmit).not.toHaveBeenCalled();
+  expect(props.onClose).toHaveBeenCalledExactlyOnceWith("dismiss"); expect(props.onSubmit).not.toHaveBeenCalled();
   await act(async () => root.render(null)); await render({ ...props, canStart: false });
   expect(container.querySelector("textarea")?.value).toBe("Draft without sending"); expect(button("Post comment").disabled).toBe(true);
   await render({ ...props, location: null }); expect(button("Post comment").disabled).toBe(true); expect(props.onSubmit).not.toHaveBeenCalled();

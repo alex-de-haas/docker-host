@@ -192,6 +192,11 @@ class CodexRun implements HarnessRun {
   private readonly commandCalls = new Map<string, { id: string; turnId: string }>();
   private readonly completedCommandCalls = new Set<string>();
   private readonly completedToolCalls = new Set<string>();
+  // File-change approval requests contain IDs, while item/started carries the proposed patch.
+  // Keep only bounded proposals for this exact active turn, then consume them before persistence.
+  private readonly fileChangeProposals = new Map<string, { threadId: string; turnId: string; changes: unknown[]; bytes: number }>();
+  private fileChangeProposalBytes = 0;
+  private readonly closedFileChangeItems = new Set<string>();
   private readonly activity = new ActivityTracker(activity => this.emit({ type: "activity", activity }));
   private stopped = false;
   private failed = false;
@@ -228,6 +233,7 @@ class CodexRun implements HarnessRun {
     this.child.stdin.on("error", () => {});
     this.child.on("error", () => {
       this.failed = true;
+      this.clearFileChangeProposals();
       for (const pending of this.pendingRequests.values()) pending.reject(new Error("Codex process could not start."));
       this.pendingRequests.clear();
       if (!this.stopped) this.emit({ type: "error", message: "Codex process could not start." });
@@ -243,6 +249,7 @@ class CodexRun implements HarnessRun {
     });
     this.child.on("exit", (code) => {
       this.failed = true;
+      this.clearFileChangeProposals();
       if (!this.stopped) {
         this.emit({ type: "error", message: `The Codex app-server exited unexpectedly (code ${code ?? "unknown"}).` });
       }
@@ -343,6 +350,7 @@ class CodexRun implements HarnessRun {
       });
     }
     this.approvals.clear();
+    this.clearFileChangeProposals();
     this.child.kill("SIGTERM");
   }
 
@@ -430,6 +438,7 @@ class CodexRun implements HarnessRun {
     this.turnActive = true;
     this.commandTurn++;
     this.commandCalls.clear(); this.completedCommandCalls.clear(); this.completedToolCalls.clear();
+    this.clearFileChangeProposals();
     this.activityTurnId = null;
     this.activity.reset();
     try {
@@ -453,6 +462,7 @@ class CodexRun implements HarnessRun {
       if (this.turnActive && !this.activityTurnId) this.activityTurnId = started.turn?.id ?? null;
     } catch (error) {
       this.turnActive = false;
+      this.clearFileChangeProposals();
       if (!this.stopped) {
         this.emit({ type: "error", message: error instanceof Error ? error.message : String(error) });
       }
@@ -505,7 +515,9 @@ class CodexRun implements HarnessRun {
           itemId: typeof params.itemId === "string" ? params.itemId : null,
           method: message.method,
         });
-        const { toolName, input } = describeApproval(message.method, params);
+        const proposal = message.method === "item/fileChange/requestApproval" ? this.takeFileChangeProposal(params) : undefined;
+        const { toolName, input } = describeApproval(message.method, proposal && !Array.isArray(params.changes)
+          ? { ...params, changes: proposal } : params);
         this.emit({
           type: "approval_request",
           approvalId,
@@ -549,6 +561,7 @@ class CodexRun implements HarnessRun {
     if (message.method === "item/started") {
       const item = (params.item ?? {}) as Record<string, unknown>;
       if (!this.turnActive || typeof item.id !== "string" || this.deniedItems.has(item.id)) return;
+      if (item.type === "fileChange") this.rememberFileChangeProposal(params, item);
       if (item.type === "commandExecution" && item.status === "inProgress" && params.threadId === this.threadId &&
           typeof params.turnId === "string" && params.turnId === this.activityTurnId && this.commandCalls.size < 2048 &&
           !this.commandCalls.has(item.id) && !this.completedCommandCalls.has(item.id)) {
@@ -603,6 +616,8 @@ class CodexRun implements HarnessRun {
       this.activity.finish(String(item.id ?? "response"));
       this.activity.finish("response");
       const type = String(item.type ?? "");
+      if (type === "fileChange" && params.threadId === this.threadId && params.turnId === this.activityTurnId && typeof item.id === "string")
+        this.closeFileChangeProposal(item.id);
       const scopedTool = (type === "mcpToolCall" || type === "dynamicToolCall")
         && params.threadId === this.threadId && typeof params.turnId === "string"
         && params.turnId === this.activityTurnId && typeof item.id === "string";
@@ -706,6 +721,7 @@ class CodexRun implements HarnessRun {
       if (this.activityTurnId && completedTurn?.id && completedTurn.id !== this.activityTurnId) return;
       this.turnActive = false;
       this.commandCalls.clear();
+      this.clearFileChangeProposals();
       this.activity.reset();
       const turn = params.turn as Record<string, unknown> | undefined;
       const usage = turn?.usage as Record<string, unknown> | undefined;
@@ -758,6 +774,44 @@ class CodexRun implements HarnessRun {
         this.emit({ type: "notice", message: `Codex reported an error (${reason}).` });
       }
     }
+  }
+
+  private rememberFileChangeProposal(params: Record<string, unknown>, item: Record<string, unknown>): void {
+    if (item.status !== "inProgress" || typeof item.id !== "string" || item.id.length > 256 || !Array.isArray(item.changes)
+      || typeof params.threadId !== "string" || params.threadId !== this.threadId
+      || typeof params.turnId !== "string" || params.turnId !== this.activityTurnId
+      || this.closedFileChangeItems.has(item.id) || this.closedFileChangeItems.size >= 2048
+      || this.fileChangeProposals.has(item.id) || this.fileChangeProposals.size >= 128) return;
+    const bytes = Buffer.byteLength(JSON.stringify(item.changes));
+    // Refuse excess proposals rather than truncating a patch or evicting an earlier pending item.
+    if (bytes > 512 * 1024 - this.fileChangeProposalBytes) return;
+    this.fileChangeProposals.set(item.id, { threadId: params.threadId, turnId: params.turnId, changes: item.changes, bytes });
+    this.fileChangeProposalBytes += bytes;
+  }
+
+  private takeFileChangeProposal(params: Record<string, unknown>): unknown[] | undefined {
+    if (!this.turnActive || typeof params.itemId !== "string"
+      || typeof params.threadId !== "string" || params.threadId !== this.threadId
+      || typeof params.turnId !== "string" || params.turnId !== this.activityTurnId) return undefined;
+    const proposal = this.fileChangeProposals.get(params.itemId);
+    if (!proposal || proposal.threadId !== params.threadId || proposal.turnId !== params.turnId) return undefined;
+    this.closeFileChangeProposal(params.itemId);
+    return proposal.changes;
+  }
+
+  private closeFileChangeProposal(itemId: string): void {
+    // A duplicate item/started must not revive a completed or already-consumed proposal.
+    if (itemId.length <= 256 && this.closedFileChangeItems.size < 2048) this.closedFileChangeItems.add(itemId);
+    const proposal = this.fileChangeProposals.get(itemId);
+    if (!proposal) return;
+    this.fileChangeProposalBytes -= proposal.bytes;
+    this.fileChangeProposals.delete(itemId);
+  }
+
+  private clearFileChangeProposals(): void {
+    this.fileChangeProposals.clear();
+    this.fileChangeProposalBytes = 0;
+    this.closedFileChangeItems.clear();
   }
 
   private request(method: string, params: Record<string, unknown>): Promise<unknown> {

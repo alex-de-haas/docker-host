@@ -96,13 +96,13 @@ export function WorkspaceLeaseRecovery({ workspaceId, trees, closure, closeReque
     {pending
       ? <Button size="sm" variant="outline" disabled={disabled || busy || blocked} onClick={() => void recover(pending)}>Retry pausing</Button>
       : <Button size="sm" variant="outline" disabled={disabled || busy || blocked || !observed} onClick={prepareReview}>Confirm work has stopped…</Button>}
-    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+    {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
     <Dialog open={!!review} onOpenChange={open => { if (!open && !busy) setReview(null); }}><DialogContent>
       <DialogHeader><DialogTitle>Pause external work?</DialogTitle><DialogDescription>
         Confirm that the external agent and all commands using these repositories have stopped. Core removes their reviewed activity protections and finishes pausing the workspace. It checks known consumers again. This does not stop unknown processes, complete the work or delete any source files.
       </DialogDescription></DialogHeader>
       <ul className="list-disc pl-5 text-sm">{trees.map(t => <li key={t.id}>{repositoryName(t.repository)}</li>)}</ul>
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
       <DialogFooter><Button variant="outline" disabled={busy} onClick={() => setReview(null)}>Cancel</Button>
         <Button disabled={disabled || busy || blocked} onClick={() => { if (review) void recover(review); }}>{busy ? "Pausing…" : "Work has stopped — pause workspace"}</Button>
       </DialogFooter>

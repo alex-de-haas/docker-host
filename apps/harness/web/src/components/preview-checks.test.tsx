@@ -65,3 +65,27 @@ it("opens compact preview controls without running a command and keeps recipe re
   await openMenu(); await choose("Restart app");
   expect(developmentRequest).toHaveBeenCalledWith("/work/previews/child/demo/restart", {}, undefined);
 });
+
+it("shows pending recipe reads without running them and distinguishes restart progress from recipe loading", async () => {
+  const reads: { resolve: (value: unknown) => void; signal?: AbortSignal }[] = [];
+  let completeRestart!: (value: unknown) => void;
+  vi.mocked(developmentRequest).mockImplementation(async (path = "", _input, signal) => {
+    if (path.endsWith("/checks")) return new Promise(resolve => { reads.push({ resolve, signal }); });
+    return new Promise(resolve => { completeRestart = resolve; });
+  });
+  await show(); await click("Check preview");
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Reading check recipes…");
+  expect(vi.mocked(developmentRequest).mock.calls.every(([path]) => path?.endsWith("/checks"))).toBe(true);
+  await click("Restart app");
+  expect(reads[0].signal?.aborted).toBe(true);
+  expect(container.textContent).not.toContain("Reading check recipes…");
+  expect(container.querySelector('[role="status"]')?.textContent).toContain("Working… Source and sandbox data are retained.");
+  await act(async () => reads[0].resolve(reply({ ...recipe, state: "passed" })));
+  expect(container.textContent).not.toContain("web/unit · passed");
+  await act(async () => completeRestart({ status: 200, body: {} }));
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Reading check recipes…");
+  await act(async () => reads[1].resolve(reply()));
+  expect(container.textContent).toContain("web/unit · not checked");
+  expect(container.textContent).not.toContain("Reading check recipes…");
+  expect(vi.mocked(developmentRequest).mock.calls.some(([path]) => path?.endsWith("/run"))).toBe(false);
+});

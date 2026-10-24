@@ -32,7 +32,7 @@ function replies(w: DevelopmentWorkspace) {
   });
 }
 async function expandCards() { for (const button of container.querySelectorAll<HTMLButtonElement>('[data-slot="pull-request-card"] > button')) if (button.getAttribute("aria-expanded") !== "true") await act(async () => button.click()); }
-it("shows each repository and honestly missing CI; opens a repository-specific diff without a sandbox section", async () => {
+it("shows each repository and honestly missing CI; opens a repository-specific diff with a confirmed empty preview inventory", async () => {
   const w = workspace(); replies(w);
   await act(async () => root.render(<WorkspaceDetails workspace={w} title="Multi-repo change" refresh={() => {}} />));
   expect(container.querySelector('[aria-label^="Expand one #1"]')).not.toBeNull(); expect(container.querySelector('[aria-label^="Expand two #1"]')).not.toBeNull(); expect(container.textContent).toContain("CI unknown");

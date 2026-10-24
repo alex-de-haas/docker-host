@@ -5,6 +5,7 @@ import { Check, CircleAlert, Copy, LoaderCircle, TriangleAlert } from "lucide-re
 import { HostyEmptySlots, HostyLoader } from "../../../../../shared/web/hosty-states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -34,7 +35,7 @@ export function IconButton({ title, children, onClick, disabled, destructive }: 
 export function CheckboxRow({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void }) {
   return (
     <label className="flex items-center gap-2 text-sm">
-      <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
+      <Checkbox checked={checked} disabled={disabled} onCheckedChange={value => onChange(value === true)} />
       {label}
     </label>
   );

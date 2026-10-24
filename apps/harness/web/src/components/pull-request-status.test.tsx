@@ -22,7 +22,7 @@ it("keeps draft and closed neutral, merged violet, and does not color review dec
   const merged = render(request(["FAILURE"], { state: "merged" })); expect(merged.classList.contains("text-violet-600")).toBe(true); expect(merged.querySelector('.lucide-git-merge')).not.toBeNull();
   expect(render(request(["SUCCESS"], { reviewDecision: "CHANGES_REQUESTED" })).classList.contains("text-success-foreground")).toBe(true);
 });
-it("does not present stale, incomplete or unavailable CI as current success", () => {
-  for (const [pr, stale] of [[request(["SUCCESS"]), true], [request(["SUCCESS"], { complete: false }), false], [{ ...request(["SUCCESS"]), unavailable: "Provider unavailable" }, false], [{ ...request(["SUCCESS"]), historical: true }, false]] as const) expect(render(pr, stale).classList.contains("text-muted-foreground")).toBe(true);
+it("does not present stale or unavailable CI as current success", () => {
+  for (const [pr, stale] of [[request(["SUCCESS"]), true], [request(["SUCCESS"], { error: "Provider observation unavailable" }), false], [{ ...request(["SUCCESS"]), unavailable: "Provider unavailable" }, false], [{ ...request(["SUCCESS"]), historical: true }, false]] as const) expect(render(pr, stale).classList.contains("text-muted-foreground")).toBe(true);
   expect(render({ ...request(["SUCCESS"], { state: "merged" }), historical: true }, true).classList.contains("text-violet-600")).toBe(true);
 });

@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { Frame, FrameHeader, FramePanel } from "@/components/reui/frame";
+import { FieldGroup } from "@/components/ui/field";
 import type { CoreSettingItem } from "../types";
 import { INGRESS_SETTINGS_GROUP } from "../ingress";
 
@@ -41,14 +43,16 @@ export function CoreSettingsLayout({ items, renderField }: {
   const byKey = new Map(items.map((item) => [item.key, item]));
   const ingress = items.filter(item => item.group === INGRESS_SETTINGS_GROUP);
   const extra = items.filter((item) => !knownKeys.has(item.key) && item.group !== INGRESS_SETTINGS_GROUP);
-  const group = (title: string, fields: ReactNode) => <section key={title} className="overflow-hidden rounded-xl border bg-card" aria-label={title}>
-    <header className="border-b bg-muted/25 px-4 py-3"><h3 className="text-sm font-medium">{title}</h3></header>
-    <div className="divide-y [&>div]:px-4 [&>div]:py-4">{fields}</div>
+  const group = (title: string, fields: ReactNode) => <section key={title} className="min-w-0" aria-label={title}>
+    <Frame>
+      <FrameHeader><h3 className="text-sm font-medium">{title}</h3></FrameHeader>
+      <FramePanel><FieldGroup className="gap-5">{fields}</FieldGroup></FramePanel>
+    </Frame>
   </section>;
-  return <div className="space-y-5">
-    {sessions.some(session => session.keys.some(key => byKey.has(key))) && group("Sessions", sessions.map(session => session.keys.some(key => byKey.has(key)) ? <div key={session.title} className="space-y-4">
+  return <div className="flex min-w-0 flex-col gap-4">
+    {sessions.some(session => session.keys.some(key => byKey.has(key))) && group("Sessions", sessions.map(session => session.keys.some(key => byKey.has(key)) ? <div key={session.title} className="flex flex-col gap-4">
       <h4 className="text-sm font-medium text-muted-foreground">{session.title}</h4>
-      <div className="space-y-4">{session.keys.map(key => { const item = byKey.get(key); return item ? renderField(item) : null; })}</div>
+      <FieldGroup className="gap-4">{session.keys.map(key => { const item = byKey.get(key); return item ? renderField(item) : null; })}</FieldGroup>
     </div> : null))}
     {sections.map(section => section.fields.some(field => byKey.has(field.key)) ? group(section.title, section.fields.map(field => {
       const item = byKey.get(field.key); return item ? renderField(item, "label" in field ? field.label : undefined) : null;

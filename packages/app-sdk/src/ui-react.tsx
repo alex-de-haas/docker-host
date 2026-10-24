@@ -1,4 +1,5 @@
 "use client";
+import { SdkChromeStyles, SdkIcon } from "./sdk-chrome";
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import { bindUiClient, ui, type UiClient } from "./ui";
 import { createUiHost, type UiHost, type UiHostSnapshot } from "./ui-host";
@@ -58,7 +59,7 @@ export function HostyUiRoot({ children, uiPath, panelLayout = "auto", active = t
     <div hidden={!allowed} inert={!allowed} style={{ display: allowed ? "contents" : "none" }}>
       {mounted.current && (panelLayout === "auto" && host ? <HostyPanelWorkspace>{content}</HostyPanelWorkspace> : content)}
     </div>
-    {!allowed && <div role="status" className="hosty-panel-notice" style={{ padding: 24, font: "14px system-ui" }}>
+    {!allowed && <div data-hosty-sdk role="status" className="hosty-panel-notice"><SdkChromeStyles />
       {environment?.connection === "blocked" ? <>
         <strong>{environment.code === "actor_mismatch" ? "Use the same Hosty account in this app and its host" : "Cannot verify this app’s host"}</strong>
         <p>Check your account and access in Hosty Core, then reconnect. Your existing discussion is unchanged.</p>
@@ -222,21 +223,21 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
   };
   return <div ref={root} className={`hosty-panel-workspace ${className}`} data-hosty-panel-layout={drawer ? "drawer" : "dock"}
     style={{ "--hosty-panel-width": `${width}px`, ...(unsupported ? { display: "contents" } : {}) } as CSSProperties}>
-    <style>{styles}</style>
+    <SdkChromeStyles /><style>{styles}</style>
     <div ref={content} className="hosty-panel-document" style={unsupported ? { display: "contents" } : undefined} inert={expanded && drawer}>{children}</div>
-    <nav className="hosty-panel-rail" aria-label="Tools" style={unsupported || !chrome.tools.enabled || chrome.tools.launcher === "hide" ? { display: "none" } : undefined} inert={unsupported || expanded && drawer}>
+    <nav data-hosty-sdk className="hosty-panel-rail" aria-label="Tools" style={unsupported || !chrome.tools.enabled || chrome.tools.launcher === "hide" ? { display: "none" } : undefined} inert={unsupported || expanded && drawer}>
       {tabs.map((panel, index) => <button key={panelKey(panel.panel)} type="button" title={`${panel.appName}: ${panel.label}`} aria-label={panel.label}
         aria-controls={bodyId} aria-expanded={expanded && selectedKey === panelKey(panel.panel)} onClick={() => void select(panel)}
         onKeyDown={event => { const delta = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
           const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : delta ? (index + delta + tabs.length) % tabs.length : null;
           if (next !== null) { event.preventDefault(); (event.currentTarget.parentElement?.children[next] as HTMLElement)?.focus(); }
         }}>{renderIcon?.(panel) ?? panel.label.slice(0, 2)}
-        {workspaceTools.some(t => t.key === panelKey(panel.panel) && t.attention > 0) ? <span className="hosty-panel-attention" aria-label="Needs attention">•</span> : null}
+        {workspaceTools.some(t => t.key === panelKey(panel.panel) && t.attention > 0) ? <span className="hosty-panel-attention" aria-label="Needs attention"><SdkIcon name="warning" /></span> : null}
       </button>)}
-      <button type="button" aria-label="Add tool" title="Add tool" onClick={() => { setError(null); setChooser(true); void host?.refresh(); }}>+</button>
+      <button type="button" aria-label="Add tool" title="Add tool" onClick={() => { setError(null); setChooser(true); void host?.refresh(); }}><SdkIcon name="plus" /></button>
     </nav>
     {expanded && drawer && <button type="button" className="hosty-panel-backdrop" aria-label="Return to document" onClick={() => host?.setExpanded(false, workspaceId)} />}
-    <aside ref={body} id={bodyId} className="hosty-panel-body" hidden={!expanded} inert={!expanded}
+    <aside data-hosty-sdk ref={body} id={bodyId} className="hosty-panel-body" hidden={!expanded} inert={!expanded}
       role={drawer ? "dialog" : "complementary"} aria-modal={drawer && expanded ? true : undefined} aria-label={selected?.label ?? "Tool"}
       onKeyDown={event => {
         if (!drawer) return;
@@ -259,9 +260,9 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
           if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); host?.setWidth(width + (event.key === "ArrowLeft" ? 16 : -16), workspaceId); }
         }} />
       <header><strong>{selected?.label ?? "Tool"}</strong>
-        {tool?.resolved.standaloneHref && <a href={tool.resolved.standaloneHref} target="_blank" rel="noopener noreferrer" title="Open separately" aria-label="Open separately">↗</a>}
+        {tool?.resolved.standaloneHref && <a href={tool.resolved.standaloneHref} target="_blank" rel="noopener noreferrer" title="Open separately" aria-label="Open separately"><SdkIcon name="external" /></a>}
         {(drawer || minimizeControl === "always") && <button ref={minimize} type="button" onClick={() => host?.setExpanded(false, workspaceId)} aria-label="Minimize panel" title="Minimize panel (keep tool open)">
-          <span aria-hidden="true">−</span>
+          <SdkIcon name="minus" />
         </button>}
       </header>
       {tool?.resolved.state === "degraded" && <div className="hosty-panel-state" role="status">This app’s health check is failing. Its page may still work.</div>}
@@ -275,8 +276,8 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
       <div ref={viewport} className="hosty-panel-viewport" aria-owns={tool ? `hosty-presentation-${tool.presentationId}` : undefined} />
       {drawer && expanded && <span tabIndex={0} aria-hidden="true" className="hosty-panel-focus-guard" onFocus={() => minimize.current?.focus()} />}
     </aside>
-    <dialog ref={chooserRef} className="hosty-tool-chooser" onCancel={() => setChooser(false)} aria-label="Add tool">
-      <header><strong>Add tool</strong><button type="button" onClick={() => setChooser(false)} aria-label="Close tool chooser">×</button></header>
+    <dialog data-hosty-sdk ref={chooserRef} className="hosty-tool-chooser" onCancel={() => setChooser(false)} aria-label="Add tool">
+      <header><strong>Add tool</strong><button type="button" onClick={() => setChooser(false)} aria-label="Close tool chooser"><SdkIcon name="close" /></button></header>
       <p>Open a tool beside your document.</p>
       {error && <p role="status">{error}</p>}
       {state.error && <p role="status">{state.error.message}</p>}
@@ -288,44 +289,29 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
       </li>)}</ul>
       <button type="button" onClick={() => void host?.refresh()}>Refresh tools</button>
     </dialog>
-    {error && !chooser && <div className="hosty-panel-error" role="status">{error} <button type="button" onClick={() => { setChooser(true); setError(null); }}>Choose tool</button></div>}
+    {error && !chooser && <div data-hosty-sdk className="hosty-panel-error" role="status">{error} <button type="button" onClick={() => { setChooser(true); setError(null); }}>Choose tool</button></div>}
   </div>;
 }
 
 const styles = `
 .hosty-panel-viewport{flex:1;min-height:0;min-width:0}
 .hosty-app-layout{display:flex;width:100%;height:100%;min-width:0;min-height:0}.hosty-app-content{flex:1;min-width:0;min-height:0;overflow:auto}
-
 .hosty-panel-workspace{display:flex;position:relative;min-width:0;min-height:0;width:100%;height:100dvh;overflow:hidden}
-:is(.hosty-panel-rail,.hosty-panel-body,.hosty-panel-notice,.hosty-panel-review,.hosty-tool-chooser,.hosty-panel-error){--hp-bg:var(--hosty-panel-background,#f8f9fb);--hp-fg:var(--hosty-panel-foreground,#20242c);--hp-muted:var(--hosty-panel-muted,#606875);--hp-border:var(--hosty-panel-border,#e0e4eb);background:var(--hp-bg);color:var(--hp-fg)}
-html.dark :is(.hosty-panel-rail,.hosty-panel-body,.hosty-panel-notice,.hosty-panel-review,.hosty-tool-chooser,.hosty-panel-error),html[data-hosty-theme=dark] :is(.hosty-panel-rail,.hosty-panel-body,.hosty-panel-notice,.hosty-panel-review,.hosty-tool-chooser,.hosty-panel-error){--hp-bg:var(--hosty-panel-background,#14171c);--hp-fg:var(--hosty-panel-foreground,#f0f2f5);--hp-muted:var(--hosty-panel-muted,#a2aab7);--hp-border:var(--hosty-panel-border,#323843)}
-.hosty-panel-document{flex:1;min-width:0;min-height:0;overflow:auto}.hosty-panel-rail{order:3;flex:0 0 48px;display:flex;flex-direction:column;align-items:center;gap:8px;padding:10px 0;border-left:1px solid var(--hp-border);overflow:auto}
-.hosty-panel-review button,.hosty-tool-chooser li>button{font:inherit}.hosty-panel-rail button,.hosty-panel-body header button,.hosty-panel-body header a,.hosty-tool-chooser header button{position:relative;display:grid;place-items:center;flex-shrink:0;border:1px solid transparent;border-radius:8px;width:32px;height:32px;padding:0;background:transparent;color:inherit;font:500 13px system-ui;cursor:pointer;text-decoration:none}
-.hosty-panel-rail button:hover,.hosty-panel-rail button[aria-expanded=true]{border-color:var(--hp-border);background:color-mix(in srgb,var(--hp-fg) 8%,transparent)}
-.hosty-panel-rail>button:focus-visible,
-.hosty-panel-body>header>button:focus-visible,
-.hosty-panel-body>header>a:focus-visible,
-.hosty-panel-resize:focus-visible,
-.hosty-panel-backdrop:focus-visible,
-.hosty-panel-review:focus-visible,
-.hosty-panel-state>a:focus-visible,
-.hosty-panel-state>select:focus-visible,
-.hosty-panel-notice button:focus-visible,
-.hosty-panel-notice a:focus-visible,
-.hosty-tool-chooser button:focus-visible,
-.hosty-tool-chooser a:focus-visible,
-.hosty-panel-error>button:focus-visible,
-.hosty-navigation button:focus-visible,
-.hosty-navigation a:focus-visible,
-.hosty-navigation-dialog button:focus-visible,
-.hosty-navigation-dialog a:focus-visible,
-.hosty-child-tools>button:focus-visible{outline:2px solid #5286ee;outline-offset:2px}.hosty-panel-attention{position:absolute;top:0;right:1px;color:#e9a52b;font-size:20px}
-.hosty-panel-body{order:2;display:flex;flex:0 0 var(--hosty-panel-width);flex-direction:column;position:relative;min-width:0;min-height:0;margin-left:12px;border-left:1px solid var(--hp-border);background:var(--hp-bg)}
-.hosty-panel-body[hidden],.hosty-panel-frame[hidden]{display:none}.hosty-panel-body header,.hosty-tool-chooser header{display:flex;align-items:center;gap:6px;min-height:44px;padding:0 10px;border-bottom:1px solid var(--hp-border);font:500 13px system-ui}.hosty-panel-body header strong,.hosty-tool-chooser header strong{flex:1}
+:is(.hosty-panel-rail,.hosty-panel-body,.hosty-tool-chooser,.hosty-panel-error){--hp-bg:var(--hosty-panel-background,var(--hs-bg));--hp-fg:var(--hosty-panel-foreground,var(--hs-fg));--hp-muted:var(--hosty-panel-muted,var(--hs-muted));--hp-border:var(--hosty-panel-border,var(--hs-border));background:var(--hp-bg);color:var(--hp-fg)}
+.hosty-panel-document{flex:1;min-width:0;min-height:0;overflow:auto}
+.hosty-panel-rail{order:3;flex:0 0 48px;display:flex;flex-direction:column;align-items:center;gap:8px;padding:10px 0;border-left:1px solid var(--hp-border);overflow:auto}
+.hosty-panel-rail button,.hosty-panel-body header button,.hosty-panel-body header a,.hosty-tool-chooser header button{position:relative;display:grid;place-items:center;flex-shrink:0;border:1px solid transparent;border-radius:8px;width:32px;height:32px;padding:0;background:transparent;color:inherit;font:500 13px var(--hs-font);cursor:pointer;text-decoration:none;transition:background-color 120ms ease-out,color 120ms ease-out}
+.hosty-panel-rail button:hover,.hosty-panel-body header :is(button,a):hover,.hosty-tool-chooser header button:hover{background:var(--hs-brand-soft);color:var(--hs-fg)}
+.hosty-panel-rail button[aria-expanded=true]{background:var(--hs-brand);color:var(--hs-brand-fg)}
+.hosty-panel-attention{position:absolute;top:-2px;right:-2px;display:block;background:var(--hp-bg);border-radius:50%;color:var(--hs-warning)}.hosty-panel-attention>.hosty-sdk-icon{width:12px;height:12px}
+.hosty-panel-body{order:2;display:flex;flex:0 0 var(--hosty-panel-width);flex-direction:column;position:relative;min-width:0;min-height:0;margin-left:12px;border-left:1px solid var(--hp-border)}
+.hosty-panel-body[hidden],.hosty-panel-frame[hidden]{display:none}
+.hosty-panel-body header,.hosty-tool-chooser header{display:flex;align-items:center;gap:6px;min-height:44px;padding:0 10px;border-bottom:1px solid var(--hp-border);font:500 14px/20px var(--hs-font)}.hosty-panel-body header strong,.hosty-tool-chooser header strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hosty-panel-focus-guard{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
-.hosty-panel-frame{position:relative;flex:1;min-height:0;overflow:hidden}.hosty-panel-frame iframe{display:block}.hosty-panel-resize{position:absolute;left:-12px;top:0;bottom:0;width:12px;cursor:col-resize;touch-action:none}.hosty-panel-resize:hover{background:color-mix(in srgb,var(--hp-fg) 8%,transparent)}
-.hosty-panel-state{padding:8px 12px;font:12px/1.4 system-ui;border-bottom:1px solid var(--hp-border);color:var(--hp-muted)}.hosty-panel-state a{text-decoration:underline}
-.hosty-panel-workspace[data-hosty-panel-layout=drawer] .hosty-panel-body{position:absolute;inset:0 0 0 auto;width:min(440px,100%);z-index:102;margin:0;box-shadow:-8px 0 30px #0002}.hosty-panel-workspace[data-hosty-panel-layout=drawer] .hosty-panel-resize{display:none}
-.hosty-panel-backdrop{position:absolute;inset:0;border:0;background:#0005;z-index:101;cursor:pointer}.hosty-panel-notice{padding:24px;font:14px/1.5 system-ui}.hosty-panel-review{position:absolute;top:8px;right:8px;z-index:2;padding:10px;background:var(--hp-bg);border:1px solid var(--hp-border);border-radius:8px}
-.hosty-tool-chooser{width:min(440px,calc(100vw - 32px));max-height:80dvh;border:1px solid var(--hp-border);border-radius:12px;padding:16px;background:var(--hp-bg);color:var(--hp-fg);font:14px/1.5 system-ui}.hosty-tool-chooser::backdrop{background:#0005}.hosty-tool-chooser ul{list-style:none;padding:0;display:grid;gap:8px}.hosty-tool-chooser li{display:flex;gap:8px}.hosty-tool-chooser li>button{flex:1;border:1px solid var(--hp-border);background:transparent;color:inherit;border-radius:8px;padding:12px;text-align:left;cursor:pointer}.hosty-tool-chooser li span{display:block;color:var(--hp-muted);font-size:12px}.hosty-panel-error{position:absolute;bottom:16px;right:60px;z-index:4;background:var(--hp-bg);border:1px solid var(--hp-border);border-radius:8px;padding:12px;font:13px system-ui}
+.hosty-panel-frame{position:relative;flex:1;min-height:0;overflow:hidden}.hosty-panel-frame iframe{display:block}
+.hosty-panel-resize{position:absolute;left:-12px;top:0;bottom:0;width:12px;cursor:col-resize;touch-action:none}.hosty-panel-resize:hover{background:var(--hs-brand-soft)}
+.hosty-panel-state{padding:8px 12px;font:400 13px/20px var(--hs-font);border-bottom:1px solid var(--hp-border);color:var(--hp-muted)}.hosty-panel-state a{color:var(--hs-info);text-decoration:underline;text-underline-offset:3px}.hosty-panel-state select{display:block;max-width:100%;margin-top:6px;padding:6px 10px;border:1px solid var(--hp-border);border-radius:8px;background:var(--hp-bg);color:var(--hp-fg)}
+.hosty-panel-workspace[data-hosty-panel-layout=drawer] .hosty-panel-body{position:absolute;inset:0 0 0 auto;width:min(440px,100%);z-index:102;margin:0;box-shadow:-8px 0 30px #0F1B2D29}.hosty-panel-workspace[data-hosty-panel-layout=drawer] .hosty-panel-resize{display:none}
+.hosty-panel-backdrop{position:absolute;inset:0;border:0;background:#0F1B2D57;z-index:101;cursor:pointer}.hosty-panel-backdrop:focus-visible{outline:2px solid #A3E635;outline-offset:-2px}
+.hosty-tool-chooser{width:min(440px,calc(100vw - 32px));max-height:calc(100dvh - 32px);margin:auto;border:1px solid var(--hp-border);border-radius:14px;padding:20px;background:var(--hp-bg);color:var(--hp-fg);overflow:auto;box-shadow:0 14px 34px -8px #0F1B2D3D}.hosty-tool-chooser::backdrop{background:#0F1B2D57}.hosty-tool-chooser header{border:0;padding:0;min-height:32px}.hosty-tool-chooser>p{margin:12px 0;color:var(--hp-muted);font-size:13px}.hosty-tool-chooser ul{list-style:none;padding:0;margin:16px 0;display:grid;gap:8px}.hosty-tool-chooser li{display:flex;gap:8px}.hosty-tool-chooser li>button,.hosty-tool-chooser>button,.hosty-panel-error>button{font:500 14px/20px var(--hs-font);border:1px solid var(--hp-border);background:var(--hs-card);color:inherit;border-radius:8px;padding:8px 12px;cursor:pointer}.hosty-tool-chooser li>button{flex:1;text-align:left;padding:12px}.hosty-tool-chooser li>button:hover,.hosty-tool-chooser>button:hover,.hosty-panel-error>button:hover{background:var(--hs-brand-soft)}.hosty-tool-chooser li span{display:block;color:var(--hp-muted);font:400 13px/20px var(--hs-font)}.hosty-panel-error{position:absolute;bottom:16px;right:60px;max-width:calc(100% - 76px);z-index:4;border:1px solid var(--hp-border);border-radius:10px;padding:12px;font:400 13px/20px var(--hs-font);box-shadow:0 4px 14px -4px #0F1B2D29}.hosty-panel-error>button{margin:8px 0 0 8px}
 `;

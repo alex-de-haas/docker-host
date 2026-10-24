@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { SdkBrand, SdkChromeStyles, SdkIcon, SdkSpinner } from "./sdk-chrome";
 import { appFetch } from "./browser-auth";
 import { permissionNotice, requestPermissionReview, type PermissionNoticeState } from "./permissions";
 
@@ -33,13 +34,20 @@ export function MissingPermissionsNotice({ endpoint = "/api/hosty/permissions" }
   }, [endpoint, pending]);
   const kind = state && permissionNotice(state);
   if (dismissed || !kind || !state) return null;
-  return <section data-hosty-activity-control role="alert" aria-label="Required permissions" style={{ border: "1px solid currentColor", padding: 12, margin: 8, borderRadius: 8, color: "#c2410c" }}>
+  return <section data-hosty-sdk data-hosty-activity-control role="alert" aria-label="Required permissions" className="hosty-permissions-notice">
+    <SdkChromeStyles /><style>{styles}</style><header><SdkBrand /><SdkIcon name="warning" /><strong>Permissions needed</strong></header>
     {kind === "unsupported"
       ? <p>Core does not support required permissions: {state.permissions!.unsupportedRequired!.join(", ")}. Update the app or Core.</p>
       : <p>This app needs required permissions. Operations using them are unavailable until approval.</p>}
     {kind === "missing" && state.permissions?.reviewAvailable !== false && state.corePublicOrigin &&
-      <button type="button" onClick={() => { requestPermissionReview(state); setPending(true); }}>Request permissions</button>}
-    {pending && <p>Review permissions in Core, then return here. You can leave this app installed without approving.</p>}
-    <button type="button" onClick={() => { setDismissed(true); setPending(false); }} style={{ marginLeft: 12 }}>Dismiss</button>
+      <button type="button" className="hosty-sdk-button" onClick={() => { requestPermissionReview(state); setPending(true); }}>Request permissions</button>}
+    {pending && <p className="hosty-sdk-status"><SdkSpinner />Review permissions in Core, then return here. You can leave this app installed without approving.</p>}
+    <button type="button" onClick={() => { setDismissed(true); setPending(false); }} className="hosty-sdk-button hosty-sdk-ghost">Dismiss</button>
   </section>;
 }
+
+const styles = `
+.hosty-permissions-notice{margin:8px;padding:12px 16px;border:1px solid var(--hs-warning-border);border-radius:10px;background:var(--hs-warning-soft);color:var(--hs-fg)}
+.hosty-permissions-notice header{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.hosty-permissions-notice header>.hosty-sdk-icon{color:var(--hs-warning)}
+.hosty-permissions-notice p{margin:8px 0 12px;font-size:13px;line-height:20px}.hosty-permissions-notice>button{margin:0 8px 0 0}
+`;

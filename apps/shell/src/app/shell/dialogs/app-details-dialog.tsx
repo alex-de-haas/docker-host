@@ -16,6 +16,8 @@ import { AppIcon } from "../app-icon";
 import { resolveAssetSrc } from "../app-helpers";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -107,7 +109,7 @@ export function AppDetailsDialog({
   onDeleteBackup: (app: CoreApp, backup: CoreBackup) => void;
   onPreviewBackupCleanup: (app: CoreApp) => void;
   onApplyBackupCleanup: (app: CoreApp, plan: CoreBackupCleanupPlan) => void;
-  onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void;
+  onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void | boolean | Promise<boolean | void>;
   onConfigureMounts: (app: CoreApp, mounts: MountBindingInput[]) => void;
   onConfigureSource: (app: CoreApp, path: string) => void;
   onClearSource: (app: CoreApp) => void;
@@ -121,7 +123,7 @@ export function AppDetailsDialog({
   const canConfigureApp = canManageApps;
 
   if (page) return <section className="flex min-h-[32rem] flex-col gap-5">
-    <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1 text-sm text-muted-foreground"><Button asChild variant="ghost" size="sm"><Link href={canManageApps ? "/dashboard" : "/apps"}>{canManageApps ? "Dashboard" : "Apps"}</Link></Button><ChevronRight className="size-3.5 shrink-0" aria-hidden /><span className="truncate" aria-current="page">{app.displayName}</span></nav>
+    <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1 text-sm text-muted-foreground"><Button asChild variant="ghost" size="sm"><Link href={canManageApps ? "/dashboard" : "/"}>{canManageApps ? "Dashboard" : "Home"}</Link></Button><ChevronRight className="size-3.5 shrink-0" aria-hidden /><span className="truncate" aria-current="page">{app.displayName}</span></nav>
     <header className="flex flex-wrap items-center justify-between gap-4">
       <div className="flex min-w-0 items-center gap-3"><AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} name={app.icon} fallback={Boxes} className="size-12 rounded-xl" />
         <div className="min-w-0 space-y-1.5"><h1 className="break-words text-2xl font-semibold tracking-tight">{app.displayName}</h1><div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span className="font-mono">{app.version}</span><Badge variant="outline">{app.selectedRuntime || "Runtime unavailable"}</Badge><StatusBadge value={app.runtimeState || app.operationStatus} health={isAppUp(app.runtimeState) ? app.health?.status : null} /></div><p className="break-all font-mono text-xs text-muted-foreground">{app.id}</p></div></div>
@@ -356,7 +358,7 @@ function SettingsDialog({
   backups?: React.ReactNode;
   coreOrigin: string;
   onSetFeed: (app: CoreApp, feedId: string) => void;
-  onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void;
+  onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void | boolean | Promise<boolean | void>;
   onConfigureMounts: (app: CoreApp, mounts: MountBindingInput[]) => void;
   onConfigureSource: (app: CoreApp, path: string) => void;
   onClearSource: (app: CoreApp) => void;
@@ -430,6 +432,7 @@ function SettingsDialog({
       {/* All forms stay mounted (toggled with hidden) so drafts survive tab switches. */}
       <div className={cn("flex min-h-0 flex-1 flex-col", active !== "app" && active !== "parameters" && active !== "publicOrigins" && "hidden")}>
         <SettingsForm
+          key={app.id}
           app={app}
           section={active === "publicOrigins" ? "publicOrigins" : active === "parameters" ? "parameters" : "app"}
           busyAction={busyAction}
@@ -444,6 +447,7 @@ function SettingsDialog({
       {hasMounts && (
         <div className={cn("flex min-h-0 flex-1 flex-col", active !== "mounts" && "hidden")}>
           <MountsForm
+            key={app.id}
             app={app}
             busyAction={busyAction}
             canManageApps={canManageApps}
@@ -457,6 +461,7 @@ function SettingsDialog({
           <AppUpdatesPanel key={`${app.id}|${app.version}|${app.selectedRuntime}|${app.followedFeedId}`} app={app} coreOrigin={coreOrigin} active={active === "source"} isShell={isShell} busyAction={busyAction} onCheckUpdate={onCheckUpdate} onUpdate={onUpdate} />
           <FeedSection key={`feed:${app.id}`} app={app} active={active === "source"} coreOrigin={coreOrigin} busyAction={busyAction} canManageApps={canManageApps} onSetFeed={onSetFeed} />
           {app.supportsSource && <SourceForm
+            key={app.id}
             app={app}
             busyAction={busyAction}
             canManageApps={canManageApps}
@@ -479,6 +484,16 @@ const MANAGED_ORIGIN_HINTS: Record<ManagedPublicOriginReason, string> = {
 // Shown for an origin the operator owns. It is theirs to set, just not from here.
 const OPERATOR_ORIGIN_HINT = "Yours to set, from the public-origin control on the endpoint.";
 
+const sameDraft = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
+function reconcileSavedDraft<T>(draft: Record<string, T>, previous: Record<string, T>, next: Record<string, T>): Record<string, T> {
+  return Object.fromEntries(Object.entries(next).map(([key, value]) => [key,
+    key in previous && key in draft && !sameDraft(draft[key], previous[key]) ? draft[key] : value]));
+}
+function hasDraftConflict<T>(draft: Record<string, T>, previous: Record<string, T>, next: Record<string, T>) {
+  return Object.keys(next).some(key => key in previous && key in draft && !sameDraft(draft[key], previous[key])
+    && !sameDraft(next[key], previous[key]) && !sameDraft(draft[key], next[key]));
+}
+
 function SettingsForm({
   app,
   section,
@@ -497,7 +512,7 @@ function SettingsForm({
   section: "app" | "parameters" | "publicOrigins";
   busyAction: string | null;
   canManageApps: boolean;
-  onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void;
+  onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void | boolean | Promise<boolean | void>;
   onRevealSetting?: (app: CoreApp, key: string) => Promise<string | null>;
 }) {
   const settings = app.settings || [];
@@ -507,35 +522,54 @@ function SettingsForm({
   // either way, and the field says why rather than failing on save.
   const managedPublicOrigins = useManagedPublicOrigins(app, publicOriginSettings.length > 0);
   const publicOriginGroups = buildPublicOriginGroups(app, publicOriginSettings);
-  // A secret's `value` is always masked to null, so hasValue is the only part of its summary that
-  // moves when one is set or cleared -- without it the form would stay dirty across a saved delete.
-  const settingsSignature = settings
-    .map((setting) => [setting.key, setting.type, setting.secret ? "1" : "0", setting.required ? "1" : "0", setting.hasValue ? "1" : "0", setting.value ?? ""].join("\u0000"))
-    .join("\u0001");
-  const [draft, setDraft] = useState<AppSettingsDraft>({});
-  const [autostartDraft, setAutostartDraft] = useState(isAppAutostartEnabled(app));
-
-  // Reset the draft while rendering when the app identity or its settings change, not in an effect.
-  // https://react.dev/learn/you-might-not-need-an-effect
-  const resetSignature = `${app.id}\u0001${settingsSignature}`;
-  const [prevResetSignature, setPrevResetSignature] = useState<string | null>(null);
-  if (prevResetSignature !== resetSignature) {
-    setPrevResetSignature(resetSignature);
-    setDraft(buildAppSettingsDraft(settings));
+  const saved = buildAppSettingsDraft(appSettings);
+  const settingsSignature = JSON.stringify(appSettings.map(setting => [setting.key, setting.type, setting.secret, setting.required, setting.hasValue, setting.value]));
+  const [draft, setDraft] = useState<AppSettingsDraft>(saved);
+  const [baseline, setBaseline] = useState({ signature: settingsSignature, values: saved });
+  const [savedChanged, setSavedChanged] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const edits = useRef<Record<string, number>>({});
+  const submission = useRef({ revision: 0 });
+  const mounted = useRef(true);
+  useEffect(() => {
+    const request = submission.current;
+    mounted.current = true;
+    return () => { mounted.current = false; ++request.revision; };
+  }, []);
+  if (baseline.signature !== settingsSignature) {
+    const next = reconcileSavedDraft(draft, baseline.values, saved);
+    setBaseline({ signature: settingsSignature, values: saved });
+    setDraft(next);
+    if (hasDraftConflict(draft, baseline.values, saved)) setSavedChanged(true);
+    else if (sameDraft(next, saved)) setSavedChanged(false);
   }
-  // Launch and Parameters save independently; refreshing one must not clear the other's draft.
-  const autostartSignature = `${app.id}:${app.autostart}`;
-  const [previousAutostart, setPreviousAutostart] = useState(autostartSignature);
-  if (previousAutostart !== autostartSignature) {
-    setPreviousAutostart(autostartSignature);
-    setAutostartDraft(isAppAutostartEnabled(app));
+  const autostart = isAppAutostartEnabled(app);
+  const [autostartDraft, setAutostartDraft] = useState(autostart);
+  const [previousAutostart, setPreviousAutostart] = useState(autostart);
+  if (previousAutostart !== autostart) {
+    setPreviousAutostart(autostart);
+    if (autostartDraft === previousAutostart) setAutostartDraft(autostart);
   }
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    // Browser addresses are edited by the endpoint control with its own stale-address check.
-    // Resending hidden/read-only values here turns an ordinary save into an unreviewed rename.
-    onConfigure(app, section === "parameters" ? buildAppSettingsPayload(appSettings, draft) : {}, section === "app" ? autostartDraft : undefined);
+    const request = ++submission.current.revision;
+    const sent = { ...draft }, revisions = { ...edits.current };
+    const secrets = section === "parameters" ? appSettings.filter(setting => setting.secret && sent[setting.key] !== null && sent[setting.key] !== undefined) : [];
+    setSaveError(null);
+    // Browser addresses keep their own reviewed control. Only an explicit accepted receipt can
+    // retire a submitted secret: masked summaries cannot confirm its replacement value.
+    try {
+      const result = onConfigure(app, section === "parameters" ? buildAppSettingsPayload(appSettings, sent) : {}, section === "app" ? autostartDraft : undefined);
+      void Promise.resolve(result).then(accepted => {
+        if (!mounted.current || request !== submission.current.revision || accepted !== true) return;
+        setDraft(current => {
+          const next = { ...current };
+          for (const setting of secrets) if ((edits.current[setting.key] ?? 0) === (revisions[setting.key] ?? 0) && current[setting.key] === sent[setting.key]) next[setting.key] = null;
+          return next;
+        });
+      }, cause => { if (mounted.current && request === submission.current.revision) setSaveError(cause instanceof Error ? cause.message : "Could not save settings."); });
+    } catch (cause) { setSaveError(cause instanceof Error ? cause.message : "Could not save settings."); }
   };
 
   return (
@@ -554,12 +588,12 @@ function SettingsForm({
               <div className="divide-y overflow-hidden rounded-xl border bg-card [&>div]:px-4 [&>div]:py-4">
                 {appSettings.map((setting) => (
                   <SettingInput
-                    key={setting.key}
+                    key={`${setting.key}:${setting.secret}:${setting.hasValue}`}
                     descriptionMode="inline"
                     setting={setting}
                     value={draft[setting.key] ?? null}
                     disabled={!canManageApps}
-                    onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))}
+                    onChange={(value) => { edits.current[setting.key] = (edits.current[setting.key] ?? 0) + 1; setDraft((current) => ({ ...current, [setting.key]: value })); }}
                     onReveal={onRevealSetting && setting.secret ? () => onRevealSetting(app, setting.key) : undefined}
                   />
                 ))}
@@ -589,7 +623,7 @@ function SettingsForm({
                         <PublicOriginInput
                           setting={setting}
                           endpoint={endpoint}
-                          value={endpoint?.browserOrigin ?? draft[setting.key] ?? ""}
+                          value={endpoint?.browserOrigin ?? setting.value ?? ""}
                           disabled
                           onChange={() => {}}
                         />
@@ -605,9 +639,11 @@ function SettingsForm({
           </div>
         )}
       </DialogBody>
+      {saveError && <InlineError message={saveError} />}
+      {section === "parameters" && savedChanged && <p role="status" className="text-xs text-warning-foreground">Saved parameters changed. Your unsaved edits are retained; review them before saving.</p>}
       {section !== "publicOrigins" && <><p className="text-xs text-muted-foreground">Save applies configuration. Start or restart the app explicitly to apply it to running services.</p>
       <DialogFooter>
-        <Button type="button" variant="outline" disabled={busyAction === `${app.id}:configure`} onClick={() => { if (section === "parameters") setDraft(buildAppSettingsDraft(settings)); else setAutostartDraft(isAppAutostartEnabled(app)); }}>Discard</Button>
+        <Button type="button" variant="outline" disabled={busyAction === `${app.id}:configure`} onClick={() => { if (section === "parameters") { ++submission.current.revision; setDraft(buildAppSettingsDraft(appSettings)); setSavedChanged(false); setSaveError(null); } else setAutostartDraft(isAppAutostartEnabled(app)); }}>Discard</Button>
         <Button type="submit" disabled={!canManageApps || busyAction === `${app.id}:configure`}>
           {busyAction === `${app.id}:configure` ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Settings className="h-4 w-4" />}
           Save settings
@@ -649,13 +685,16 @@ function MountsForm({
   const slotsSignature = JSON.stringify(
     slots.map((slot) => [slot.key, slot.bindings.map((binding) => [binding.source ?? "local", binding.globalMountName ?? "", binding.label, binding.hostPath])]),
   );
-  // Rows reset when the app or its saved mounts change (not on every render, so edits survive).
-  const rowsKey = `${app.id}\n${slotsSignature}`;
-  const [rows, setRows] = useState<Record<string, MountRow[]>>(() => mountRowsFromSlots(slots));
-  const [loadedRowsKey, setLoadedRowsKey] = useState(rowsKey);
-  if (loadedRowsKey !== rowsKey) {
-    setLoadedRowsKey(rowsKey);
-    setRows(mountRowsFromSlots(slots));
+  const savedRows = mountRowsFromSlots(slots);
+  const [rows, setRows] = useState<Record<string, MountRow[]>>(savedRows);
+  const [baseline, setBaseline] = useState({ signature: slotsSignature, rows: savedRows });
+  const [savedChanged, setSavedChanged] = useState(false);
+  if (baseline.signature !== slotsSignature) {
+    const next = reconcileSavedDraft(rows, baseline.rows, savedRows);
+    setBaseline({ signature: slotsSignature, rows: savedRows });
+    setRows(next);
+    if (hasDraftConflict(rows, baseline.rows, savedRows)) setSavedChanged(true);
+    else if (sameDraft(next, savedRows)) setSavedChanged(false);
   }
 
   const globalByName = useMemo(() => new Map(globalMounts.map((mount) => [mount.name, mount])), [globalMounts]);
@@ -787,6 +826,7 @@ function MountsForm({
           );
         })}
       </DialogBody>
+      {savedChanged && <p role="status" className="text-xs text-warning-foreground">Saved folders changed. Your unsaved paths are retained; review them before saving.</p>}
       {slots.length > 0 && <DialogFooter>
         <Button type="submit" disabled={busy || !canManageApps}>
           {busy ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <HardDrive className="h-4 w-4" />}
@@ -818,14 +858,16 @@ function SourceForm({
   const [mode, setMode] = useState<"standard" | "custom">(overridePath ? "custom" : "standard");
   const [pathDraft, setPathDraft] = useState(overridePath);
 
-  // Reset while rendering when the app identity or its stored override changes, not in an effect.
-  // https://react.dev/learn/you-might-not-need-an-effect
-  const resetSignature = `${app.id}\u0001${overridePath}`;
-  const [prevReset, setPrevReset] = useState<string | null>(null);
-  if (prevReset !== resetSignature) {
-    setPrevReset(resetSignature);
-    setMode(overridePath ? "custom" : "standard");
-    setPathDraft(overridePath);
+  const [previousOverride, setPreviousOverride] = useState(overridePath);
+  const [savedChanged, setSavedChanged] = useState(false);
+  if (previousOverride !== overridePath) {
+    setPreviousOverride(overridePath);
+    const selected = mode === "custom" ? pathDraft.trim() : "";
+    if (selected === previousOverride || selected === overridePath) {
+      setMode(overridePath ? "custom" : "standard");
+      setPathDraft(overridePath);
+      setSavedChanged(false);
+    } else setSavedChanged(true);
   }
 
   const busy = busyAction === `${app.id}:source`;
@@ -867,51 +909,37 @@ function SourceForm({
             Development profiles run from the selected source folder and adopt manifest edits on restart. Hot reload depends on the profile commands. A local folder without a Git baseline is not an immutable release.
           </p>
         </div>
-        <div className="space-y-2">
-          <label className={cn("flex cursor-pointer items-start gap-3 rounded-md border p-3", mode === "standard" && "border-foreground")}>
-            <input
-              type="radio"
-              name={modeName}
-              className="mt-1"
-              checked={mode === "standard"}
-              disabled={!canManageApps}
-              onChange={() => setMode("standard")}
-            />
-            <div className="min-w-0 space-y-0.5">
-              <div className="text-sm font-medium">Standard Hosty source</div>
-              <div className="text-xs text-muted-foreground">
+        <RadioGroup name={modeName} aria-label="Source folder" value={mode} disabled={!canManageApps} onValueChange={value => setMode(value as "standard" | "custom")}>
+          <label htmlFor={`${modeName}-standard`} className={cn("flex cursor-pointer items-start gap-3 rounded-md border p-3", mode === "standard" && "border-foreground")}>
+            <RadioGroupItem id={`${modeName}-standard`} value="standard" className="mt-1" aria-labelledby={`${modeName}-standard-label`} aria-describedby={`${modeName}-standard-description`} />
+            <div className="flex min-w-0 flex-col gap-1">
+              <span id={`${modeName}-standard-label`} className="text-sm font-medium">Standard Hosty source</span>
+              <span id={`${modeName}-standard-description`} className="text-xs text-muted-foreground">
                 Use the source Core recorded when the app was installed
-                {app.sourceManagedPath ? (
-                  <> · <code className="font-mono">{app.sourceManagedPath}</code></>
-                ) : null}
-                .
+                {app.sourceManagedPath ? <> · <code className="font-mono">{app.sourceManagedPath}</code></> : null}.
+              </span>
+            </div>
+          </label>
+          <div className={cn("flex min-w-0 flex-col gap-3 rounded-md border p-3", mode === "custom" && "border-foreground")}>
+            <label htmlFor={`${modeName}-custom`} className="flex cursor-pointer items-start gap-3">
+              <RadioGroupItem id={`${modeName}-custom`} value="custom" className="mt-1" aria-labelledby={`${modeName}-custom-label`} aria-describedby={`${modeName}-custom-description`} />
+              <div className="flex min-w-0 flex-col gap-1">
+                <span id={`${modeName}-custom-label`} className="text-sm font-medium">Custom source folder</span>
+                <span id={`${modeName}-custom-description`} className="text-xs text-muted-foreground">Point this app at a repository folder on the host.</span>
               </div>
-            </div>
-          </label>
-          <label className={cn("flex cursor-pointer items-start gap-3 rounded-md border p-3", mode === "custom" && "border-foreground")}>
-            <input
-              type="radio"
-              name={modeName}
-              className="mt-1"
-              checked={mode === "custom"}
-              disabled={!canManageApps}
-              onChange={() => setMode("custom")}
-            />
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <div className="text-sm font-medium">Custom source folder</div>
-              <div className="text-xs text-muted-foreground">Point this app at a repository folder on the host.</div>
-              <Input
-                id={inputId}
-                placeholder="/srv/apps/my-app"
-                className="font-mono text-xs"
-                value={pathDraft}
-                disabled={!canManageApps || mode !== "custom"}
-                onChange={(event) => setPathDraft(event.target.value)}
-              />
-            </div>
-          </label>
-        </div>
+            </label>
+            <Field><FieldLabel htmlFor={inputId} className="sr-only">Repository folder on this host</FieldLabel><Input
+              id={inputId}
+              placeholder="/srv/apps/my-app"
+              className="font-mono text-xs"
+              value={pathDraft}
+              disabled={!canManageApps || mode !== "custom"}
+              onChange={(event) => setPathDraft(event.target.value)}
+            /></Field>
+          </div>
+        </RadioGroup>
       </div>
+      {savedChanged && <p role="status" className="text-xs text-warning-foreground">Saved source changed. Your unsaved folder is retained; review it before saving.</p>}
       <DialogFooter>
         <Button type="submit" disabled={!canManageApps || busy || customInvalid || !dirty}>
           {busy ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <FolderGit2 className="h-4 w-4" />}

@@ -61,6 +61,60 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(1, f.Provider.ReviewReplies);
     }
 
+    [Theory]
+    [InlineData("reply")]
+    [InlineData("resolve")]
+    public async Task ExternalReview_DefinitiveStaleHeadReturnsFailedReceiptAndAllowsFreshIntent(string kind)
+    {
+        var f = await ExternalPublicationFixture();
+        Func<Task> staleHead = () => throw new PublicationException("review_changed", "Refresh the current open PR head.");
+        if (kind == "reply") f.Provider.BeforeReplyAdmission = staleHead;
+        else f.Provider.BeforeReviewResolution = staleHead;
+        var command = new PublicationReviewCommand(Guid.NewGuid().ToString(), f.W.PullRequests[0], f.Provider.Head,
+            "thread", Body: kind == "reply" ? "My retained reply" : null, AuthorIntent: true);
+
+        var rejected = await f.Service.CommandReviewAsync(f.W, "admin", kind, command, default);
+
+        Assert.Equal("failed", rejected.State);
+        Assert.Equal(command.RequestId, rejected.RequestId);
+        Assert.Equal("Refresh the current open PR head.", rejected.Error);
+        Assert.Equal(0, f.Provider.ReviewReplies);
+        Assert.Equal(0, f.Provider.ReviewResolutions);
+        var journal = await JsonStorage.ReadAsync<PublicationReviewJournal>(Path.Combine(f.F.Paths.CoreRoot,
+            "development/publications/review-operations", f.W.Id + ".json"));
+        Assert.Equal("failed", Assert.Single(journal!.Operations).State);
+        Assert.False(Assert.Single(journal.Operations).MutationStarted);
+        Assert.Equal("publication_request_conflict", (await Assert.ThrowsAsync<PublicationException>(() =>
+            f.Service.CommandReviewAsync(f.W, "admin", kind, command with { ExpectedHead = "different-head" }, default))).Code);
+
+        f.Provider.BeforeReplyAdmission = null;
+        f.Provider.BeforeReviewResolution = null;
+        var recovered = await f.Service.CommandReviewAsync(f.W, "admin", kind,
+            command with { RequestId = Guid.NewGuid().ToString() }, default);
+        Assert.Equal("succeeded", recovered.State);
+        Assert.Equal(kind == "reply" ? 1 : 0, f.Provider.ReviewReplies);
+        Assert.Equal(kind == "resolve" ? 1 : 0, f.Provider.ReviewResolutions);
+    }
+
+    [Fact]
+    public async Task ExternalReviewResolution_UncertainProviderResponseKeepsOriginalRequestPending()
+    {
+        var f = await ExternalPublicationFixture();
+        f.Provider.LoseReviewResolution = true;
+        var command = new PublicationReviewCommand(Guid.NewGuid().ToString(), f.W.PullRequests[0], f.Provider.Head,
+            "thread", AuthorIntent: true);
+
+        var uncertain = await f.Service.CommandReviewAsync(f.W, "admin", "resolve", command, default);
+
+        Assert.Equal("pending", uncertain.State);
+        Assert.Equal("publication_operation_pending", (await Assert.ThrowsAsync<PublicationException>(() =>
+            f.Service.CommandReviewAsync(f.W, "admin", "resolve", command with { RequestId = Guid.NewGuid().ToString() }, default))).Code);
+        f.Provider.Head = "later-head"; f.Provider.State = "closed";
+        Assert.Equal("succeeded", (await f.Service.CommandReviewAsync(f.W, "admin", "resolve", command, default)).State);
+        Assert.Equal("succeeded", (await f.Service.CommandReviewAsync(f.W, "admin", "resolve", command, default)).State);
+        Assert.Equal(1, f.Provider.ReviewResolutions);
+    }
+
     [Fact]
     public async Task ExternalReviewReply_WorkspaceDeletionBeforeAdmissionPreventsPosting()
     {

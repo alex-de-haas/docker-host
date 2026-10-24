@@ -2,6 +2,8 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
+import { DemoAlert, DemoLoading } from "./DemoFeedback";
+import { Button } from "./ui/button";
 import type { DemoAuthSnapshot } from "@/lib/host-auth";
 
 const AuthContext = createContext<DemoAuthSnapshot | null>(null);
@@ -20,9 +22,9 @@ export function DemoResource<T>({ path, children }: { path: string; children: (v
     });
     return () => controller.abort();
   }, [path, attempt]);
-  if (state.error) return <div role="alert" className="p-4">{state.error} <button type="button"
-    onClick={() => { setState({}); setAttempt(value => value + 1); }}>Retry</button></div>;
-  if (!state.value) return <p role="status" className="p-4">Loading app data…</p>;
+  if (state.error) return <div className="mx-auto w-full max-w-3xl p-4"><DemoAlert action={<Button variant="outline" size="sm" type="button"
+    onClick={() => { setState({}); setAttempt(value => value + 1); }}>Retry</Button>}>{state.error}</DemoAlert></div>;
+  if (!state.value) return <DemoLoading />;
   return children(state.value);
 }
 

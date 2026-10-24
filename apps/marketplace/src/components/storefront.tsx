@@ -37,7 +37,10 @@ const initialCatalog: CatalogAppsResponse = {
 
 export function Storefront() {
   const [installation, setInstallation] = useState<{ source: InstallationSource; popup: Window | null } | null>(null);
+  const activeInstallation = useRef<typeof installation>(null);
   const installationBusy = useRef(false);
+  const accessInvalidated = useRef(false);
+  const installLookup = useRef<AbortController | null>(null);
   const lookupPopup = useRef<Window | null>(null);
   const mounted = useRef(true);
   const [catalog, setCatalog] = useState(initialCatalog);
@@ -68,6 +71,13 @@ export function Storefront() {
 
   const invalidateAccess = useCallback((failure: MarketplaceApiError) => {
     requestRef.current?.abort(); installedRequest.current?.abort(); detailRequest.current?.abort();
+    accessInvalidated.current = true;
+    installLookup.current?.abort(); installLookup.current = null;
+    lookupPopup.current?.close(); lookupPopup.current = null;
+    // The SDK owns any confirmation already handed off to Core. Unmount its local view without
+    // cancelling an operation that may already have been confirmed there.
+    activeInstallation.current = null; installationBusy.current = false;
+    setInstallation(null); setInstallLoading(null);
     setCatalog(initialCatalog); setHasCatalog(false); setInstalledRoster([]); setHasInstalledRoster(false);
     setSelected(null); setDetailId(null); setDetailError(null); setDetailLoading(null);
     setLoading(false); setInstalledLoading(false); setSessionExpired(failure.status === 401);
@@ -79,6 +89,7 @@ export function Storefront() {
   const loadCatalog = useCallback((refresh: boolean, signal?: AbortSignal) =>
     fetchCatalogApps(refresh, signal).then(response => {
       if (signal?.aborted) return;
+      accessInvalidated.current = false;
       setCatalog(previous => response.diagnostic.status === "unavailable" && previous.apps.length > 0 && previous.source.url === response.source.url
         ? { ...response, apps: previous.apps } : response);
       setHasCatalog(true);
@@ -122,7 +133,7 @@ export function Storefront() {
     requestRef.current = controller;
     void loadCatalog(false, controller.signal);
     loadInstalledAppIds(controller.signal);
-    return () => { controller.abort(); installedRequest.current?.abort(); detailRequest.current?.abort(); mounted.current = false; lookupPopup.current?.close(); };
+    return () => { controller.abort(); installedRequest.current?.abort(); detailRequest.current?.abort(); installLookup.current?.abort(); mounted.current = false; lookupPopup.current?.close(); };
   }, [loadCatalog, loadInstalledAppIds]);
 
   const refresh = () => {
@@ -200,21 +211,23 @@ export function Storefront() {
   // Card install always uses the default feed. Summaries carry no feeds, so resolve them on click;
   // feed selection lives in the detail pane, where the feed list is loaded.
   const installDefault = async (appId: string) => {
-    if (installationBusy.current) return;
+    if (installationBusy.current || accessInvalidated.current) return;
     installationBusy.current = true;
+    const controller = new AbortController(); installLookup.current = controller;
     // Reserve the popup during this click, before the catalog request loses browser activation.
     const popup = openInstallationConfirmation();
     lookupPopup.current = popup;
     setInstallLoading(appId);
     setNotice(null);
     try {
-      const detail = await fetchCatalogApp(appId, false);
-      if (!mounted.current) return;
+      const detail = await fetchCatalogApp(appId, false, controller.signal);
+      if (!mounted.current || controller.signal.aborted || installLookup.current !== controller) return;
       if (detail.id !== appId) throw new Error("The catalog returned another app. Refresh the catalog before continuing.");
       lookupPopup.current = null;
       const feed = getDefaultFeed(detail.feeds);
       if (feed && detail.feedsUrl) {
-        setInstallation({ source: { feedsUrl: detail.feedsUrl, feedId: feed.id }, popup });
+        const next = { source: { feedsUrl: detail.feedsUrl, feedId: feed.id }, popup };
+        activeInstallation.current = next; setInstallation(next);
       } else {
         // Nothing installable — open details so the user sees the feed diagnostic.
         popup?.close();
@@ -225,34 +238,40 @@ export function Storefront() {
         }
       }
     } catch (installError) {
-      if (!mounted.current) return;
+      if (!mounted.current || controller.signal.aborted || installLookup.current !== controller) return;
       lookupPopup.current = null;
       popup?.close();
       installationBusy.current = false;
       if (installError instanceof MarketplaceApiError && [401, 403].includes(installError.status)) invalidateAccess(installError);
       else setNotice(installError instanceof Error ? installError.message : "App details could not be loaded.");
     } finally {
-      if (mounted.current) setInstallLoading(null);
+      if (installLookup.current === controller) {
+        installLookup.current = null;
+        if (mounted.current) setInstallLoading(null);
+      }
     }
   };
 
   const requestInstall = (feedsUrl: string, feed: CatalogAppFeed) => {
-    if (installationBusy.current) return;
+    if (installationBusy.current || accessInvalidated.current) return;
     installationBusy.current = true;
     const popup = openInstallationConfirmation();
     setNotice(null);
-    setInstallation({ source: { feedsUrl, feedId: feed.id }, popup });
+    const next = { source: { feedsUrl, feedId: feed.id }, popup };
+    activeInstallation.current = next; setInstallation(next);
   };
-  const closeInstallation = () => {
-    installationBusy.current = false;
+  const closeInstallation = (expected: NonNullable<typeof installation>) => {
+    if (!mounted.current || activeInstallation.current !== expected) return false;
+    activeInstallation.current = null; installationBusy.current = false;
     setInstallation(null);
+    return true;
   };
 
   return (
     <main aria-label="Marketplace" className="mx-auto w-full max-w-[1440px] space-y-5 px-4 py-5 sm:px-6">
       {installation && <InstallDialog client={installationClient} source={installation.source} confirmationWindow={installation.popup}
-        onClose={closeInstallation}
-        onInstalled={() => { closeInstallation(); loadInstalledAppIds(); }} />}
+        onClose={() => { closeInstallation(installation); }}
+        onInstalled={() => { if (closeInstallation(installation)) loadInstalledAppIds(); }} />}
       <section className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm" aria-label="Catalog source">
         <div className="flex size-8 shrink-0 items-center justify-center text-muted-foreground" aria-hidden="true">
           <Store className="size-5" />

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogHeader, DialogFooter } from "@/components/ui/dialog";
 import { DevelopmentRequestError, developmentRequest } from "@/lib/development-api";
 type Request = { action: string; requestId: string; expectedRevision: number };
@@ -59,6 +60,7 @@ export function WorkspaceResourceActions({ workspaceId, kind, resource, label, c
   const locked = disabled || busy || !Number.isSafeInteger(resource.revision);
   const stopped = ["stopped", "prepared", "created"].includes(resource.state);
   const removing = ["finishing", "cleanup-failed", "disposing", "disposed", "finished"].includes(resource.state);
+  const progress = (busy || inFlight) && <p role="status" className="flex items-center gap-2 text-xs"><HostyLoader label={null} className="size-3.5 shrink-0" />Sandbox operation in progress…</p>;
   return <div aria-label={`${label} controls`} className="flex flex-col gap-2">
     {compact && !pending ? <DropdownMenu><DropdownMenuTrigger asChild><Button size="icon-sm" variant="ghost" aria-label={`${label} sandbox actions`}><MoreHorizontal className="size-4" /></Button></DropdownMenuTrigger>
       <DropdownMenuContent align="end">
@@ -74,14 +76,15 @@ export function WorkspaceResourceActions({ workspaceId, kind, resource, label, c
       </>}
     </div>}
     {stopped && <p className="text-xs text-muted-foreground">Test data is retained. This sandbox still protects its workspace source until deleted.{!canStart && " Resume the workspace before starting it."}</p>}
-    {(busy || inFlight) && <p role="status" className="text-xs">Sandbox operation in progress…</p>}
+    {!confirm && progress}
     {pending && !busy && <p className="text-xs text-muted-foreground">An action is unfinished or its response was lost. Retry continues the same request.</p>}
-    {(error || failed) && <p role="alert" className="text-xs text-destructive">{error || observed?.message || "The action failed. Inspect the sandbox state before choosing a new action."}</p>}
+    {(error || failed) && <p role="alert" className="text-xs text-destructive-foreground">{error || observed?.message || "The action failed. Inspect the sandbox state before choosing a new action."}</p>}
     <Dialog open={confirm} onOpenChange={open => { if (!busy) setConfirm(open); }}><DialogContent>
       <DialogHeader><DialogTitle>Delete sandbox “{label}”?</DialogTitle><DialogDescription>
         Stop this sandbox and permanently remove its test data and owned runtime resources. Workspace source files, commits and ordinary application data are preserved.
       </DialogDescription></DialogHeader>
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {progress}
+      {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
       <DialogFooter><Button variant="outline" disabled={busy} onClick={() => setConfirm(false)}>Cancel</Button>
         <Button variant="destructive" disabled={locked} onClick={() => void run(pending ?? request(kind === "environments" ? "finish" : "dispose"))}>{busy ? "Deleting…" : "Delete sandbox"}</Button>
       </DialogFooter>

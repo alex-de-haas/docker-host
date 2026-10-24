@@ -124,3 +124,31 @@ it("uses the owned workspace name while retaining original-title and application
   await render([{ ...workspace, owner: { ...workspace.owner, appId: "another-owner" } }]); expect(row().textContent).toBe("Original conversation");
   await render([{ ...workspace, workflow: { ...workspace.workflow, state: "deleted" } }]); expect(row().textContent).toBe("Original conversation");
 });
+
+it("keeps decorative status shapes, factual chip counts and each filter's existing session projection", async () => {
+  const statuses = ["idle", "completed", "running", "awaiting_approval", "awaiting_question", "failed"];
+  const sessions = statuses.map((status, index) => ({ ...disposable, id: `session-${index}`, title: `Session ${index}`, status }));
+  const pick = vi.fn();
+  const render = (records = sessions) => act(async () => root.render(<DevelopmentNavigation sessions={records} workspaces={[]} onPick={pick} onNew={vi.fn()} onDelete={vi.fn()} />));
+  await render();
+  const filters = () => [...container.querySelectorAll<HTMLButtonElement>('[aria-pressed]')];
+  expect(filters().map(node => node.textContent)).toEqual(["All6", "Needs you2", "Working1", "Failed1"]);
+  for (const filter of filters()) {
+    const glyph = filter.querySelector("svg")!;
+    expect(glyph).not.toBeNull();
+    expect(glyph.closest('[aria-hidden="true"]')).not.toBeNull();
+  }
+  const expected = [["Session 0", "Session 1", "Session 2", "Session 3", "Session 4", "Session 5"], ["Session 3", "Session 4"], ["Session 2"], ["Session 5"]];
+  for (const [index, filter] of filters().entries()) {
+    await act(async () => filter.click());
+    expect(filter.getAttribute("aria-pressed")).toBe("true");
+    expect(pick).not.toHaveBeenCalled();
+    const visible = [...container.querySelectorAll<HTMLButtonElement>("button")].filter(node => /^Session \d$/.test(node.textContent ?? ""));
+    expect(visible.map(node => node.textContent).sort()).toEqual(expected[index]);
+  }
+  await render(sessions.slice(0, -1));
+  expect(filters().map(node => node.textContent)).toEqual(["All5", "Needs you2", "Working1", "Failed0"]);
+  expect(filters()[3].getAttribute("aria-pressed")).toBe("true");
+  expect(container.textContent).toContain("No sessions match this search and filter.");
+  expect(pick).not.toHaveBeenCalled();
+});

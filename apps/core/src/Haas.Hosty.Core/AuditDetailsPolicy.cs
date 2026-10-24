@@ -23,7 +23,7 @@ internal static class AuditDetailsPolicy
         var fields = record.Action switch
         {
             var action when action.StartsWith("auth.", StringComparison.Ordinal) => AuthFields,
-            var action when action.StartsWith("app.lifecycle.", StringComparison.Ordinal) || action == "core.lifecycle.restart" => LifecycleFields,
+            var action when action.StartsWith("app.lifecycle.", StringComparison.Ordinal) || action is "core.lifecycle.restart" or "core.lifecycle.stop" => LifecycleFields,
             "app.installation.approval" or "app.permissions.approval" or "app.mcp.approval" or "core.environment.approval" => ApprovalFields,
             var action when action.StartsWith("notification.", StringComparison.Ordinal) => NotificationFields,
             var action when action.StartsWith("backup.", StringComparison.Ordinal) => BackupFields,

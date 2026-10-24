@@ -82,9 +82,15 @@ internal interface IPublicationProvider
     Task<PublicationReference?> FindAsync(UserProviderConnection connection, PublicationRecord record, CancellationToken ct);
     Task<PublicationReference> PublishAsync(UserProviderConnection connection, PublicationRecord record, PublicationCommand input, CancellationToken ct);
     Task<PublicationObservation> ObserveAsync(UserProviderConnection connection, PublicationRecord record, CancellationToken ct);
+    // Linked-reference display is not exact-workspace publication or cleanup evidence.
+    Task<PublicationObservation> ObserveReferenceAsync(UserProviderConnection connection, PublicationRecord record, CancellationToken ct)
+        => throw new PublicationException("provider_unsupported", "This source provider does not support linked PR observations.");
     Task MergeAsync(UserProviderConnection connection, PublicationRecord record, string head, string method, CancellationToken ct);
     Task ReadyAsync(UserProviderConnection connection, PublicationRecord record, CancellationToken ct);
     Task ResolveReviewAsync(UserProviderConnection connection, PublicationRecord record, string threadId, string head, CancellationToken ct);
+    Task ResolveReviewAsync(UserProviderConnection connection, PublicationRecord record, string threadId, string head,
+        Func<Task> admitMutation, CancellationToken ct)
+        => throw new PublicationException("provider_unsupported", "This source provider does not support review resolution admission.");
     Task<PublicationReviewSnapshot> ReadReviewSnapshotAsync(UserProviderConnection connection, PublicationRecord record, CancellationToken ct)
         => throw new PublicationException("provider_unsupported", "This source provider does not support PR review snapshots.");
     Task<string> ReplyReviewAsync(UserProviderConnection connection, PublicationRecord record, string threadId,

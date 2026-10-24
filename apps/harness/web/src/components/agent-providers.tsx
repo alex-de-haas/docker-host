@@ -55,6 +55,7 @@ import {
 } from "./provider-login-dialog";
 import { Button } from "@/components/ui/button";
 import { call } from "@/lib/api";
+import { HostyLoader } from "../../../../../shared/web/hosty-states";
 
 export type AgentConnection = {
   id: string;
@@ -199,7 +200,7 @@ export function AgentProviders() {
         </p>
       )}
       {!directory && !error && (
-        <p className="text-sm text-muted-foreground">Loading providers…</p>
+        <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader label={null} className="size-4 shrink-0" />Loading providers…</p>
       )}
       {directory?.connections.length === 0 && !editing && (
         <Empty>
@@ -614,7 +615,7 @@ export function AgentProviders() {
               <DialogFooter>
                 <Button type="submit" size="sm" disabled={busy}>
                   {busy
-                    ? "Saving…"
+                    ? <><HostyLoader label={null} className="size-4 shrink-0" />Saving…</>
                     : auth === "chatgpt" && editing === "new"
                       ? "Add and sign in"
                       : "Save provider"}

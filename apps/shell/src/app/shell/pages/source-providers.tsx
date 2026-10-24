@@ -6,6 +6,7 @@ import { HostyEmptySlots, HostyLoader } from "../../../../../../shared/web/hosty
 import { createSourceConnectionsApi, type SourceProfile, type SourceConnection, type SourceSend } from "../source/source-connections";
 import { SourcePermissionHelp, isSourcePermissionError } from "../source/source-permission-help";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -153,7 +154,7 @@ export function SourceProviders({ coreOrigin, sendCsrfJson }: { coreOrigin: stri
             <p className="text-sm text-muted-foreground">Provider sign-in is not configured on this host. You can connect with a personal access token.</p>
             <Button type="button" variant="outline" disabled={busy} onClick={() => { setMethod("pat"); setAdvanced(true); }}>Use a personal access token</Button>
           </div>}
-          {method === "device" && provider === "github" && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={privateRepositories} onChange={e => setPrivateRepositories(e.target.checked)} />Request access to private repositories too</label>}
+          {method === "device" && provider === "github" && <label className="flex items-center gap-2 text-sm"><Checkbox checked={privateRepositories} onCheckedChange={value => setPrivateRepositories(value === true)} />Request access to private repositories too</label>}
           <Collapsible open={advanced} onOpenChange={setAdvanced} className="flex flex-col gap-3">
             <CollapsibleTrigger asChild><Button type="button" variant="ghost" className="self-start" disabled={busy}>Additional options</Button></CollapsibleTrigger>
             <CollapsibleContent>

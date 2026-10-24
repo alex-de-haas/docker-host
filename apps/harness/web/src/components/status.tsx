@@ -1,4 +1,4 @@
-import { CircleAlert, TriangleAlert } from "lucide-react";
+import { Circle, CircleAlert, Diamond, Loader2, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 
@@ -43,7 +43,7 @@ export function StatusBadge({ value }: { value: string }) {
   const running = !working && (normalized.includes("ok") || normalized.includes("ready") || normalized === "healthy");
   const failed = normalized.includes("error") || normalized.includes("failed") || normalized.includes("unhealthy");
   const attention = waiting || normalized.includes("unknown") || normalized.includes("offline") || normalized.includes("degraded");
-  // A transitional state is neither good news nor bad news, so it gets its own tone and a pulsing dot.
+  // A working ring remains distinct from a ready/idle dot when motion is reduced.
   const transitional = working;
   return (
     <Badge
@@ -57,12 +57,12 @@ export function StatusBadge({ value }: { value: string }) {
         transitional && "bg-info-soft text-info-foreground",
       )}
     >
-      <span
-        className={cn(
-          "h-2 w-2 rounded-full",
-          failed ? "bg-destructive-foreground" : running ? "bg-success-foreground" : attention ? "bg-warning-foreground" : transitional ? "motion-safe:animate-pulse bg-info-foreground" : "bg-muted-foreground",
-        )}
-      />
+      {failed ? <CircleAlert className="size-3 shrink-0" aria-hidden="true" />
+        : running ? <span className="size-2 shrink-0 rounded-full bg-success-foreground" aria-hidden="true" />
+        : normalized.includes("offline") ? <Circle className="size-3 shrink-0" aria-hidden="true" />
+        : attention ? <Diamond className="size-3 shrink-0" aria-hidden="true" />
+        : transitional ? <span className="inline-flex shrink-0 motion-safe:animate-spin" aria-hidden="true"><Loader2 className="size-3" /></span>
+        : <span className="size-2 shrink-0 rounded-full bg-muted-foreground" aria-hidden="true" />}
       {value}
     </Badge>
   );

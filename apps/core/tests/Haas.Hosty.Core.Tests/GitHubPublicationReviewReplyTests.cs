@@ -104,12 +104,36 @@ public sealed partial class GitHubPublicationTests
     }
 
     [Fact]
+    public async Task ReviewResolutionAdmitsAfterProviderReadImmediatelyBeforeRemoteMutation()
+    {
+        var http = new Http(); http.Replies.Enqueue(ThreadGraph()); http.Replies.Enqueue("{}");
+        var admitted = false;
+        await new GitHubPublicationProvider(new HttpClient(http), new Clock()).ResolveReviewAsync(Connection, Record,
+            "thread", "head", () => { Assert.Single(http.Calls); admitted = true; return Task.CompletedTask; }, default);
+        Assert.True(admitted);
+        Assert.Equal(2, http.Calls.Count);
+        Assert.Contains("resolveReviewThread", http.Calls.Last().Body);
+    }
+
+    [Fact]
+    public async Task ReviewResolutionRefusedAdmissionDoesNotSendProviderMutation()
+    {
+        var http = new Http(); http.Replies.Enqueue(ThreadGraph());
+        await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            new GitHubPublicationProvider(new HttpClient(http), new Clock()).ResolveReviewAsync(Connection, Record,
+                "thread", "head", () => throw PrivateSourceService.Denied(), default));
+        Assert.Single(http.Calls);
+        Assert.DoesNotContain(http.Calls, call => call.Body.Contains("resolveReviewThread"));
+    }
+
+    [Fact]
     public async Task ReviewResolutionRecoversAlreadyResolvedThreadAfterHeadMoved()
     {
         var graph = JsonNode.Parse(ThreadGraph("later-head"))!;
         graph["data"]!["repository"]!["pullRequest"]!["reviewThreads"]!["nodes"]![0]!["isResolved"] = true;
         var http = new Http(); http.Replies.Enqueue(graph.ToJsonString());
-        await new GitHubPublicationProvider(new HttpClient(http), new Clock()).ResolveReviewAsync(Connection, Record, "thread", "head", default);
+        await new GitHubPublicationProvider(new HttpClient(http), new Clock()).ResolveReviewAsync(Connection, Record, "thread", "head",
+            () => throw new InvalidOperationException("Reconciliation does not admit a new mutation."), default);
         Assert.Single(http.Calls);
         Assert.DoesNotContain(http.Calls, c => c.Body.Contains("resolveReviewThread"));
     }

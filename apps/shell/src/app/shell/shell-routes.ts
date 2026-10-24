@@ -19,7 +19,7 @@ export const RIGHT_PANEL_OPEN_PREF_KEY = "hosty.shell.panel.open";
 
 const SHELL_VIEW_HREFS: Record<ShellView, string> = {
   dashboard: "/dashboard",
-  "available-apps": "/apps",
+  home: "/",
   settings: "/settings",
 };
 
@@ -40,7 +40,7 @@ export function readAssistantSessionParam(value: string | null): string | null {
 /** What the top strip calls each Shell page, when no app's page fills the content area. */
 export const SHELL_VIEW_LABELS: Record<ShellView, string> = {
   dashboard: "Dashboard",
-  "available-apps": "Apps",
+  home: "Hosty",
   settings: "Settings",
 };
 
@@ -76,10 +76,8 @@ const LEGACY_VIEW_PATHS: Record<string, ShellView> = {
   "/users": "settings",
 };
 
-// Settings tabs an ordinary user may reach. Everything else on that page administers the host, but
-// access tokens are per-user by construction — Core lets a host.user create, list and revoke their own
-// — so sending them to Available Apps would leave a supported role with no way to manage its own
-// credentials.
+// Personal profile and access tokens belong to every user. The other settings tabs administer the
+// host or installed apps, so ordinary users cannot reach them.
 const NON_ADMIN_HOST_SETTINGS_TABS = new Set<HostSettingsTab>(["profile", "tokens"]);
 
 export function isNonAdminHostSettingsTab(tab: HostSettingsTab) {
@@ -97,6 +95,7 @@ export function getAuthorizedShellView(
   // rest of the page, so only the known non-admin host tabs pass the check below.
   settingsTab?: string,
 ): ShellView {
+  if (view === "home") return canManageApps ? "dashboard" : "home";
   if (canManageApps || !shellViewRequiresAdmin(view)) {
     return view;
   }
@@ -104,7 +103,7 @@ export function getAuthorizedShellView(
   // Settings is admin-only as a page, not as a whole: personal profile and tokens belong to every user.
   return view === "settings" && settingsTab && isHostSettingsTab(settingsTab) && isNonAdminHostSettingsTab(settingsTab)
     ? view
-    : "available-apps";
+    : "home";
 }
 
 /** Keep the URL aligned with the same tab-aware authorization used for rendering. */
@@ -112,10 +111,23 @@ export function getShellAuthorizationRedirect(
   route: ShellRouteState,
   authenticated: boolean,
   canManageApps: boolean,
+  searchParams?: ShellSearchParams,
 ): string | null {
   if (!authenticated || route.workspace) return null;
   const view = getAuthorizedShellView(route.view, canManageApps, route.settingsTab);
-  return view === route.view ? null : getShellViewHref(view);
+  return view === route.view ? null : withAssistantContinuation(getShellViewHref(view), searchParams);
+}
+
+// The assistant rail can be requested from any Shell page. Moving to an authorized page must not
+// discard that request before the persistent layout has completed the handoff.
+function withAssistantContinuation(href: string, searchParams?: ShellSearchParams) {
+  const query = new URLSearchParams();
+  for (const key of ["assistantSession", "assistantApp", "assistantPanel"]) {
+    const value = searchParams?.get(key);
+    if (value !== undefined && value !== null) query.set(key, value);
+  }
+  const search = query.toString();
+  return search ? `${href}?${search}` : href;
 }
 
 export function readHostSettingsTab(value: string | null | undefined): HostSettingsTab {
@@ -198,7 +210,7 @@ export function readShellRoute(pathname: string, searchParams: ShellSearchParams
   if (path === "/workspace") {
     const appId = searchParams.get("app")?.trim();
     return {
-      view: "available-apps",
+      view: "home",
       workspace: appId ? { appId, path: appPath } : null,
       settingsTab,
     };
@@ -210,14 +222,14 @@ export function readShellRoute(pathname: string, searchParams: ShellSearchParams
   const legacySystemAppId = readLegacySystemAppId(path);
   if (legacySystemAppId) {
     return {
-      view: "available-apps",
+      view: "home",
       workspace: { appId: legacySystemAppId, path: appPath },
       settingsTab,
     };
   }
 
-  if (path === "/apps") {
-    return { view: "available-apps", workspace: null, settingsTab };
+  if (path === "/" || path === "/apps") {
+    return { view: "home", workspace: null, settingsTab };
   }
 
   if (path === "/settings") {
@@ -240,6 +252,8 @@ export function readCanonicalRedirect(
   searchParams: ShellSearchParams,
 ): string | null {
   const path = normalizeShellPath(pathname);
+
+  if (path === "/apps") return withAssistantContinuation(getShellViewHref("home"), searchParams);
 
   if (path === "/settings") {
     const appDetails = readAppDetailsRoute(path, searchParams);
@@ -276,7 +290,8 @@ export function getShellViewHref(view: ShellView) {
 // re-checks the shape before acting on it (`AuthEndpoints.IsAllowedShellReturnTo`) and falls back to the
 // bare origin for anything it rejects, so this is a request, not a promise.
 export function loginContinuation(pathname: string, search: string) {
-  if (!pathname.startsWith("/") || pathname.startsWith("//") || pathname === "/") {
+  if (!pathname.startsWith("/") || pathname.startsWith("//") ||
+    (pathname === "/" && (!search.startsWith("?") || search.length < 2))) {
     return "";
   }
 

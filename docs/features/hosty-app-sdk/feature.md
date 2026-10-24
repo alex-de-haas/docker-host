@@ -1,6 +1,6 @@
 ---
 created: 2026-07-15
-updated: 2026-10-11
+updated: 2026-10-24
 summary: The shared app-side Host integration published as an npm package and a NuGet package.
 components: [packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -39,6 +39,18 @@ short request credentials for an explicitly reviewed grant/scope. Both coalesce 
 before expiry and never replay ambiguous writes. See
 [Continuous App Access](../continuous-app-access/feature.md) for scope, maintenance, migration,
 revocation and upgrade-order contracts.
+
+After an established protected tree becomes unavailable, explicit Retry emits one restoration
+signal only after verified same-actor readiness. Routine focus probes and first mount do not emit
+that recovery signal; actor changes still require reload and denial remains terminal. Mounted
+children retain their drafts while the access overlay is visible. Consumers can resume authenticated
+reads on restoration without automatically replaying failed mutations. The existing appFetch
+behavior still permits one retry after a definitive 401 and validated renewal; transport failures
+are not automatically replayed.
+
+Initial and renewal PKCE app-code exchanges have a four-second deadline covering both response and
+body. The one-use proof is dispatched once to its checked same-origin absolute URL. Cancellation
+aborts the exchange, and late results cannot overwrite a newer credential or recovery attempt.
 
 ## Packages And Slices
 
@@ -408,6 +420,11 @@ the target from the mounted frame. Payload app ids and URLs never choose the tar
 See [permission management](../app-permission-management/feature.md) for first-party adoption.
 
 ## Testing Expectations
+
+- Verify one same-actor restoration notification per blocked interval, retained mounted drafts,
+  no notification on initial/routine readiness and no cross-actor restoration. Exercise initial,
+  renewal, response-body timeout, cancellation and late-result races for one-use code exchange.
+
 
 - Identity-probe handoff: only a successful active response reaches `onSession`, before protected
   children mount; failed HTTP responses, terminal states, unmounted effects and superseded grants

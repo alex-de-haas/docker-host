@@ -195,14 +195,14 @@ export function CreateApp({ session, busy, onChange }: {
             <Field orientation="horizontal"><Checkbox id="create-app-consent" checked={draft.consent} disabled={locked} onCheckedChange={value => update({ consent: value === true })} />
               <FieldLabel htmlFor="create-app-consent">Create one initial commit with these author details. Keep the repository local; later commits and publication are separate actions.</FieldLabel></Field>
           </FieldGroup>
-          {storageError ? <p role="alert" className="text-sm text-destructive">{storageError}</p> : <p className="text-sm text-muted-foreground">Draft is saved in this browser as you edit. Close and reopen to continue.</p>}
+          {storageError ? <p role="alert" className="text-sm text-destructive-foreground">{storageError}</p> : <p className="text-sm text-muted-foreground">Draft is saved in this browser as you edit. Close and reopen to continue.</p>}
           {draft.requestId && <p className="text-sm text-muted-foreground">{saved?.state === "observed" ? "App and workspace created locally. Continue to send the saved request to the assistant." : "Creation was submitted. Continue with the same details to check its result."}</p>}
           {error && <div role="alert"><InlineError message={error} /></div>}
           {step && <p role="status" className="text-sm text-muted-foreground">{step}</p>}
           {pending.length > 0 && !draft.requestId && <p className="text-sm text-muted-foreground">This session has pending creation work. Use Recover to continue it without creating another app.</p>}
           <DialogFooter>
             <Button type="button" variant="outline" disabled={working || readingIcon} onClick={close}>Close</Button>
-            <Button type="submit" disabled={working || readingIcon || busy || !draft.consent}>{working && <Loader2 className="animate-spin" data-icon="inline-start" />}{draft.requestId ? "Continue creation" : "Create and build"}</Button>
+            <Button type="submit" disabled={working || readingIcon || busy || !draft.consent}>{working && <Loader2 className="motion-safe:animate-spin" data-icon="inline-start" />}{draft.requestId ? "Continue creation" : "Create and build"}</Button>
           </DialogFooter>
         </form>
       </DialogContent>

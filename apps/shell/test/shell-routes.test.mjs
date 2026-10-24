@@ -12,6 +12,8 @@ import {
   readHostSettingsTab,
   readShellRoute,
   shellViewRequiresAdmin,
+  SHELL_VIEW_LABELS,
+  loginContinuation,
 } from "../src/app/shell/shell-routes.ts";
 
 const params = (search = "") => new URLSearchParams(search);
@@ -19,8 +21,8 @@ const params = (search = "") => new URLSearchParams(search);
 test("the three destinations resolve from their own paths", () => {
   assert.equal(readShellRoute("/dashboard", params()).view, "dashboard");
   assert.equal(readShellRoute("/settings", params()).view, "settings");
-  assert.equal(readShellRoute("/apps", params()).view, "available-apps");
-  assert.equal(readShellRoute("/", params()).view, "dashboard");
+  assert.equal(readShellRoute("/apps", params()).view, "home");
+  assert.equal(readShellRoute("/", params()).view, "home");
 });
 
 test("the parser is total — every path yields a route state", () => {
@@ -28,9 +30,9 @@ test("the parser is total — every path yields a route state", () => {
   // answers its own 404 for an unrouted path and ShellClient never renders. What this pins is that
   // the parser cannot throw or return undefined for input it does not recognize — it is called on
   // every render with whatever `usePathname()` reports.
-  for (const path of ["/nothing-here", "/settings/extra", "//", "/%"]) {
+  for (const [path, view] of [["/nothing-here", "dashboard"], ["/settings/extra", "dashboard"], ["//", "home"], ["/%", "dashboard"]]) {
     const route = readShellRoute(path, params());
-    assert.equal(route.view, "dashboard", `readShellRoute(${path})`);
+    assert.equal(route.view, view, `readShellRoute(${path})`);
     assert.equal(route.workspace, null);
     assert.equal(route.settingsTab, "profile");
   }
@@ -39,7 +41,7 @@ test("the parser is total — every path yields a route state", () => {
 test("only Dashboard and Settings are administrator-only", () => {
   assert.equal(shellViewRequiresAdmin("dashboard"), true);
   assert.equal(shellViewRequiresAdmin("settings"), true);
-  assert.equal(shellViewRequiresAdmin("available-apps"), false);
+  assert.equal(shellViewRequiresAdmin("home"), false);
 });
 
 test("readHostSettingsTab still collapses anything unknown to Users", () => {
@@ -67,9 +69,9 @@ test("the route keeps a settings tab raw, because it may be an app id", () => {
 test("a workspace route carries the app id and path", () => {
   const route = readShellRoute("/workspace", params("app=com.haas.demo-app&path=/reports"));
   assert.deepEqual(route.workspace, { appId: "com.haas.demo-app", path: "/reports" });
-  assert.equal(route.view, "available-apps");
+  assert.equal(route.view, "home");
 
-  // No app id is not a workspace; the client sends it back to the apps overview.
+  // No app id is not a workspace; the client sends it back to neutral home.
   assert.equal(readShellRoute("/workspace", params()).workspace, null);
 });
 
@@ -102,7 +104,7 @@ test("legacy paths canonicalize, and a deep link keeps its path", () => {
 });
 
 test("a canonical path is not redirected, so nothing can loop", () => {
-  for (const path of ["/", "/dashboard", "/settings", "/apps", "/workspace"]) {
+  for (const path of ["/", "/dashboard", "/settings", "/workspace"]) {
     assert.equal(readCanonicalRedirect(path, params()), null, `readCanonicalRedirect(${path})`);
   }
 
@@ -132,18 +134,18 @@ test("builders and the parser agree", () => {
 });
 
 // Settings also exposes personal profile and access tokens to ordinary users. Access tokens are per-user in Core — a
-// host.user creates, lists and revokes their own — so bouncing them to Available Apps would leave a
+// host.user creates, lists and revokes their own — so bouncing them to host administration would leave a
 // supported role with no way to manage its own credentials.
 test("an ordinary user reaches personal profile and access tokens", () => {
   assert.equal(getAuthorizedShellView("settings", false, "tokens"), "settings");
   assert.equal(getAuthorizedShellView("settings", false, "profile"), "settings");
-  assert.equal(getAuthorizedShellView("settings", false, "users"), "available-apps");
-  assert.equal(getAuthorizedShellView("settings", false, "core"), "available-apps");
-  assert.equal(getAuthorizedShellView("settings", false, undefined), "available-apps");
+  assert.equal(getAuthorizedShellView("settings", false, "users"), "home");
+  assert.equal(getAuthorizedShellView("settings", false, "core"), "home");
+  assert.equal(getAuthorizedShellView("settings", false, undefined), "home");
 
   // An administrator is unaffected, and a non-admin view never depended on the tab at all.
   assert.equal(getAuthorizedShellView("settings", true, "core"), "settings");
-  assert.equal(getAuthorizedShellView("available-apps", false, undefined), "available-apps");
+  assert.equal(getAuthorizedShellView("home", false, undefined), "home");
 });
 
 
@@ -153,11 +155,11 @@ test("authorization redirects preserve personal tokens and react to settings tab
   assert.equal(getShellAuthorizationRedirect(tokens, true, false), null);
   for (const tab of ["users", "core", "hosty.harness", "unknown"]) {
     const route = readShellRoute("/settings", params(`tab=${tab}`));
-    assert.equal(getShellAuthorizationRedirect(route, true, false), "/apps");
+    assert.equal(getShellAuthorizationRedirect(route, true, false), "/");
     assert.equal(getShellAuthorizationRedirect(route, true, true), null);
     assert.equal(getShellAuthorizationRedirect(route, false, false), null);
   }
-  assert.equal(getShellAuthorizationRedirect(readShellRoute("/dashboard", params()), true, false), "/apps");
+  assert.equal(getShellAuthorizationRedirect(readShellRoute("/dashboard", params()), true, false), "/");
   assert.equal(getShellAuthorizationRedirect(readShellRoute("/apps", params()), true, false), null);
   assert.equal(getShellAuthorizationRedirect(readShellRoute("/workspace", params("app=demo")), true, false), null);
 });
@@ -180,7 +182,7 @@ test("grouped settings URLs keep personal credentials accessible without opening
   assert.equal(getShellAuthorizationRedirect(tokens, true, false), null);
   for (const section of ["users", "connections", "policies", "unknown"]) {
     const route = readShellRoute("/settings", params(`tab=security&section=${section}`));
-    assert.equal(getShellAuthorizationRedirect(route, true, false), "/apps");
+    assert.equal(getShellAuthorizationRedirect(route, true, false), "/");
   }
 });
 
@@ -245,8 +247,74 @@ test("missing or unsupported app-detail sections fall back to Launch", () => {
 test("app-detail routes retain administrator authorization outside the client logs exception", () => {
   for (const [path, search] of [["/apps/com.haas.demo-app", "section=logs"], ["/settings", "tab=manage%3Acom.haas.demo-app&section=permissions"]]) {
     const route = readShellRoute(path, params(search));
-    assert.equal(getShellAuthorizationRedirect(route, true, false), "/apps");
+    assert.equal(getShellAuthorizationRedirect(route, true, false), "/");
     assert.equal(getShellAuthorizationRedirect(route, true, true), null);
     assert.equal(getShellAuthorizationRedirect(route, false, false), null);
   }
+});
+
+
+test("neutral home resolves by role without exposing an app catalog", () => {
+  assert.equal(getShellViewHref("home"), "/");
+  assert.equal(SHELL_VIEW_LABELS.home, "Hosty");
+  assert.equal(getAuthorizedShellView("home", true), "dashboard");
+  assert.equal(getAuthorizedShellView("home", false), "home");
+  const home = readShellRoute("/", params());
+  assert.equal(getShellAuthorizationRedirect(home, true, true), "/dashboard");
+  assert.equal(getShellAuthorizationRedirect(home, true, false), null);
+  assert.equal(getShellAuthorizationRedirect(home, false, false), null);
+});
+
+test("the retired Apps URL reaches a stable role-specific destination without loops", () => {
+  for (const path of ["/apps", "/apps/"]) {
+    const canonical = readCanonicalRedirect(path, params());
+    assert.equal(canonical, "/");
+    assert.equal(readShellRoute(path, params()).view, "home");
+    assert.equal(readCanonicalRedirect(canonical, params()), null);
+    for (const canManageApps of [false, true]) {
+      const home = readShellRoute(canonical, params());
+      const authorized = getShellAuthorizationRedirect(home, true, canManageApps);
+      assert.equal(authorized, canManageApps ? "/dashboard" : null);
+      const finalPath = authorized ?? canonical;
+      assert.equal(readCanonicalRedirect(finalPath, params()), null);
+      assert.equal(getShellAuthorizationRedirect(readShellRoute(finalPath, params()), true, canManageApps), null);
+    }
+  }
+});
+
+
+test("home and authorization redirects preserve an assistant handoff without forwarding unrelated settings", () => {
+  const search = params("assistantSession=session_123&assistantApp=third.party&assistantPanel=discussions&tab=users&unrelated=ignore");
+  const continuation = "assistantSession=session_123&assistantApp=third.party&assistantPanel=discussions";
+  assert.equal(readCanonicalRedirect("/apps", search), `/?${continuation}`);
+  assert.equal(getShellAuthorizationRedirect(readShellRoute("/", search), true, true, search), `/dashboard?${continuation}`);
+  assert.equal(getShellAuthorizationRedirect(readShellRoute("/settings", search), true, false, search), `/?${continuation}`);
+  assert.equal(getShellAuthorizationRedirect(readShellRoute("/", search), true, false, search), null);
+  const target = new URL(getShellAuthorizationRedirect(readShellRoute("/", search), true, true, search), "https://shell.test");
+  assert.equal(readCanonicalRedirect(target.pathname, target.searchParams), null);
+  assert.equal(getShellAuthorizationRedirect(readShellRoute(target.pathname, target.searchParams), true, true, target.searchParams), null);
+});
+
+test("assistant handoff values are encoded inside a same-origin redirect", () => {
+  const search = params();
+  search.set("assistantSession", "session_123");
+  search.set("assistantApp", "third.party&tab=users");
+  search.set("assistantPanel", "https://external.test/?query=#fragment");
+  const target = new URL(getShellAuthorizationRedirect(readShellRoute("/", search), true, true, search), "https://shell.test");
+  assert.equal(target.origin, "https://shell.test");
+  assert.equal(target.pathname, "/dashboard");
+  assert.equal(target.hash, "");
+  assert.equal(target.searchParams.get("tab"), null);
+  for (const key of ["assistantSession", "assistantApp", "assistantPanel"]) assert.equal(target.searchParams.get(key), search.get(key));
+});
+
+test("an assistant handoff at neutral home survives sign-in while clean home keeps its empty continuation", () => {
+  const search = "?assistantSession=session_123&assistantApp=third.party&assistantPanel=discussions";
+  const continuation = loginContinuation("/", search);
+  assert.equal(new URLSearchParams(continuation.slice(1)).get("returnTo"), `/${search}`);
+  assert.equal(loginContinuation("/", ""), "");
+  assert.equal(loginContinuation("/", "?"), "");
+  assert.equal(loginContinuation("/", "//external.test"), "");
+  assert.equal(loginContinuation("//external.test", search), "");
+  assert.equal(loginContinuation("https://external.test/", search), "");
 });

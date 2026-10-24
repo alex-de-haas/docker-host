@@ -1,6 +1,6 @@
 ---
 created: 2026-09-18
-updated: 2026-10-22
+updated: 2026-10-23
 summary: A shared install dialog for Marketplace and Shell, with final authorization on a separate Core-origin confirmation page.
 components: [packages/app-sdk, apps/marketplace, apps/shell, apps/core]
 ---
@@ -38,6 +38,15 @@ The app transport requires a currently enabled administrator and the installed a
 of its own permission declarations and optional grants with `permissionsAppId` without that grant.
 Shell uses app service and user identity credentials through its server, with the same permission
 checks as other apps. Custom app clients use the SDK server adapter.
+
+## SDK Dialog Presentation
+
+The SDK-owned native dialog uses the shared platform cell mark, scoped local fonts, theme-aware
+cards/fields and ink actions with lime interaction/focus. Preparation and execution display labelled
+animated progress with a static reduced-motion form. The Core-window step retains its explicit
+confirmation link when a popup cannot open. Installed is the installation result; it does not imply
+that configuration is complete or that the app is running. Source freezing, cancellation, uncertain
+submission and original-request retry retain the same installation state machine.
 
 ## Manifest Permissions
 

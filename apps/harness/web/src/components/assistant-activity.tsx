@@ -1,7 +1,8 @@
-import { CirclePause, Loader2, WifiOff } from "lucide-react";
+import { Diamond, Loader2, WifiOff } from "lucide-react";
 import type { HarnessActivity } from "../../../src/harness/activity";
 import type { StreamConnection } from "@/lib/assistant-api";
 import { summarizeToolUse } from "@/lib/tool-display";
+import { cn } from "@/lib/utils";
 
 export function AssistantActivity({ status, activity, connection, stopping, appNames }: {
   status: string;
@@ -35,8 +36,8 @@ export function AssistantActivity({ status, activity, connection, stopping, appN
   else if (activity?.phase === "responding") label = "Writing response…";
 
   return <div role="status" aria-live="polite" aria-atomic="true" data-slot="assistant-activity"
-    className="flex min-w-0 items-start gap-2 px-3 py-2 text-xs text-info-foreground">
-    {waiting ? <CirclePause className="size-3.5 shrink-0" aria-hidden /> : connection === "reconnecting"
+    className={cn("flex min-w-0 items-start gap-2 px-3 py-2 text-xs", waiting ? "text-warning-foreground" : "text-info-foreground")}>
+    {waiting ? <Diamond className="size-3.5 shrink-0" aria-hidden /> : connection === "reconnecting"
       ? <WifiOff className="size-3.5 shrink-0" aria-hidden />
       : <span className="motion-safe:animate-spin shrink-0" aria-hidden><Loader2 className="size-3.5" /></span>}
     <span className="min-w-0 tabular-nums wrap-anywhere">{label}{detail && <span className="mt-1 block font-mono">{detail}</span>}</span>

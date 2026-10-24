@@ -9,8 +9,11 @@ components: [apps/core, apps/cli, apps/shell]
 
 Core remains a CLI-launched platform process. The Dashboard Core row exposes Release and named
 existing workspace selection through More > Runtime / workspace, plus Restart, console logs and
-separate Source settings. The selector has no generic Source/main target. Its current state comes
-from the running Core; there is no browser-owned launch mode and no persisted default mode.
+separate Source settings. The row has one contextual action: pending progress, Restart for a
+reported pending change, Logs for a factual degraded/unhealthy/failed Core status, then Stop.
+Source/Git, configuration and update-check warnings do not count as runtime-health failures.
+The selector has no generic Source/main target. Its current state comes from the running Core;
+there is no browser-owned launch mode and no persisted default mode.
 
 ## Launch And Restart
 
@@ -79,8 +82,10 @@ The Source dialog separately shows the selected
 checkout and running project. Missing Git or unavailable source is a visible diagnostic.
 
 Source saves use a revision check. A dev Source change creates a pending change bound to the
-current Core instance. The row shows `Restart required` and an inline Restart with the same action
-as the normal Restart button. Preparation failure preserves the pending change and live instance.
+current Core instance. The title row shows a yellow warning `Restart required` badge, and the single
+contextual button becomes Restart with the same handler as More > Restart Core. There is no
+separate inline warning or additional restart icon. Preparation failure preserves the pending
+change and live instance.
 A successful replacement clears that instance's pending indication. Release Source edits need no
 restart. A stale instance or Source revision is refused. The running project path is normalized
 before comparison so Windows separator differences do not leave a spurious pending restart.
@@ -115,6 +120,33 @@ Audit entries record requests/refusals, and durable operation records hold helpe
 Shell retains only the pending operation ID in session storage so a reload can resume status
 checks. It reconnects and reads the result without automatically replaying the mutation. If Core
 cannot start, the local CLI and log files remain the recovery interface.
+
+## Stopping Core Without Stopping Apps
+
+The administrator HTTP endpoint `POST /api/core/stop` takes `{ instance }` and requires browser
+CSRF protection. Its management route maps to `core.lifecycle`. An empty instance is invalid;
+a stale instance or concurrent restart, Source edit or workspace handover is refused before
+shutdown. Admission uses the same per-data-root cross-process launch lease as the CLI and other
+Core lifecycle operations, and retains it until the admitted Core has stopped.
+
+Acceptance returns HTTP 202 with `{ status: "accepted", instance, keepApps: true }`. Shutdown is
+signalled only after response completion. Core preserves the existing runtime applications and their
+runners; it does not stop apps, delete source or remove workspace data. The receipt acknowledges the
+request rather than proving process exit. The bounded `core.lifecycle.stop` audit record contains
+reviewed lifecycle metadata and outcome, without request bodies, secrets or runtime configuration.
+
+Shell rereads factual development state before asking for destructive confirmation and submits the
+reviewed instance. The confirmation explains that Core APIs and management go offline, applications
+remain running, and the local Hosty CLI is needed to start Core again. It prevents duplicate
+submissions and cancels obsolete queued work when the Core origin/instance changes or management
+is disabled. Accepted or uncertain requests keep the control busy; a lost connection, server failure
+or unrecognized receipt does not
+produce false exit confirmation or automatic retry. The operator checks Core through the local CLI
+before trying another request.
+
+A new `hosty --data-root <root> core start` restores management access. Starting the intended
+source build still requires its explicit `--project <absolute-csproj>`; omitting it selects the
+installed release.
 
 ## Surviving Local Services
 
@@ -279,8 +311,17 @@ remains available when a returned older Core cannot serve these APIs.
   root, and a port that remains held: Stop must fail within its deadline and leave unrelated listeners alive.
   Include pidfile-only recovery, stopping siblings after a port timeout, and start rollback preserving
   the original failure while stopping all previously started services.
-- Shell: live mode and Git/version cells, Source dialog, one Restart action for pending and normal
-  use, compiler diagnostics, operation reconciliation after connection loss, and hidden dev updates.
+- Core Stop: administrator/CSRF and `core.lifecycle` route mapping, empty and stale instance
+  refusals, conflict with restart/Source/workspace/CLI launch admission, response-completion ordering,
+  lease retention through shutdown, preserved runtime apps, bounded audit metadata and AOT JSON
+  contracts. Acceptance is not exit proof; no shutdown starts after an admission or response failure.
+- Shell: live mode and Git/version cells, Source dialog, title-row Restart required badge and one
+  contextual pending/Restart/factual-problem Logs/Stop action, with no extra restart icon or inline
+  warning. Verify fresh-instance Stop confirmation, cancellation, duplicate protection, Core scope
+  and management-permission changes, exact accepted receipt and retained uncertain state after
+  lost/malformed responses. Stop Core remains in More when narrow layouts hide the contextual button.
+  Stop explains local CLI recovery and never automatically replays or claims exit from acceptance.
+  Retain compiler diagnostics, operation reconciliation after connection loss and hidden dev updates.
   Runtime / workspace lists Release and eligible existing named workspaces, with no generic
   Source/main option. Verify direct Core-only handover, exact workspace/worktree/project and factual
   generation/PID/start checks, explicit baseline Return compatibility and factual Release readiness. Retain original IDs/bodies
@@ -288,7 +329,9 @@ remains available when a returned older Core cannot serve these APIs.
   work after an unknown status. External launches explain unavailable selection on hover/focus,
   while Source settings and factual source/IDE state remain available.
   Git inspection errors retain the amber dev warning and accessible diagnostic even with cached Git
-  data; Source save failures expose an alert without requiring focus to move.
+  data, without selecting the contextual Logs action; Source save failures expose an alert without
+  requiring focus to move. Runtime health uses only factual Core status, never Source/Git,
+  configuration or update-check errors.
 - Gateway: token outage versus revocation and recovery through the same proxy route without
   forwarding or replaying the failed mutation.
 - Exercise a Core-managed instance on each supported OS; verify the actual Gateway/harness turn

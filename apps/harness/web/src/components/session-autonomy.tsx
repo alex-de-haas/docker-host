@@ -31,7 +31,7 @@ export function SessionAutonomy({ session, busy, onChange, onSavingChange }: {
         <Button type="button" variant="ghost" className="h-9 gap-1.5 px-2" disabled={busy || saving || active}
           aria-label={`Autonomy: ${autonomous ? "Autonomous" : "Normal"}`}
           title={active ? "Stop the current run before changing autonomy." : "Approval mode for this chat"}>
-          {saving ? <Loader2 className="size-4 animate-spin" /> : <Icon className="size-4" />}
+          {saving ? <Loader2 className="size-4 motion-safe:animate-spin" /> : <Icon className="size-4" />}
           {autonomous ? "Autonomous" : "Normal"}<ChevronDown className="size-3" />
         </Button>
       </DropdownMenuTrigger>

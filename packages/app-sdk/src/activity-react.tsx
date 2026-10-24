@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { AuthNotice, AuthNoticeButton } from "./auth-notice";
+import { exchangeAppCode } from "./app-code-exchange";
 import { APP_SESSION_ENDED, APP_ACTIVITY_RENEWED, appActivityNeedsRenewal, configureAppActivity, updateAppActivity, renewAppActivity, cancelActivityRenewal } from "./browser-auth";
 import { resolveLaunchMode, detectLaunchMode, normalizeLaunchMode, LAUNCH_MODE_ATTRIBUTE, LAUNCH_MODE_PARAM, LAUNCH_MODE_STORAGE_KEY } from "./index";
 import { acceptAppAuthProtocol, refreshAppAuthProtocol } from "./browser-auth";
@@ -36,12 +37,11 @@ export function useAppActivity(options: AppActivityOptions | null) {
       const mode = normalizeLaunchMode(document.documentElement.getAttribute(LAUNCH_MODE_ATTRIBUTE)) ?? resolveLaunchMode({
         param: new URL(window.location.href).searchParams.get(LAUNCH_MODE_PARAM), stored, heuristic: detectLaunchMode(window),
       }).mode;
-      cleanup = configureAppActivity({ openUrl, appAuthProtocol: protocol, probePath, native: native ?? mode === "native", activeUntil, activityRequired, validateSession, exchangeCode: async proof => {
-      const response = await fetch(appCodePath, { method: "POST", credentials: "same-origin", redirect: "error",
-        headers: { "Content-Type": "application/json" }, body: JSON.stringify(proof) });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.message ?? "Could not renew app activity.");
-      return body;
+      cleanup = configureAppActivity({ openUrl, appAuthProtocol: protocol, probePath, native: native ?? mode === "native", activeUntil, activityRequired, validateSession, exchangeCode: async (proof, signal) => {
+        const { ok, body } = await exchangeAppCode(appCodePath, proof, signal);
+        if (!ok) throw new Error(typeof body?.message === "string" ? body.message : "Could not renew app activity.");
+        return { ...(typeof body?.accessToken === "string" ? { accessToken: body.accessToken } : {}),
+          ...(typeof body?.activeUntil === "string" || body?.activeUntil === null ? { activeUntil: body.activeUntil } : {}) };
       } });
     };
     if (appAuthProtocol !== undefined && !(appAuthProtocol === 1 && acceptAppAuthProtocol(new URL(openUrl).origin, 1) === null))
@@ -69,7 +69,7 @@ export function useAppActivity(options: AppActivityOptions | null) {
 export function AppActivityBridge(options: AppActivityOptions) {
   const { needed, pending, error, renew, cancel } = useAppActivity(options);
   if (!needed) return null;
-  return <AuthNotice>
+  return <AuthNotice busy={pending}>
     <span>{error || "Renew access through Core to continue. Your work stays on this page."}</span>
     <AuthNoticeButton disabled={pending} onClick={renew}>{pending ? "Waiting for Core…" : "Renew access"}</AuthNoticeButton>
     <AuthNoticeButton secondary onClick={cancel}>Later</AuthNoticeButton>

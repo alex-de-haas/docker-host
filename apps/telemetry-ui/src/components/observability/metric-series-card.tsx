@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { formatBytes } from "@/lib/format";
 import type { MetricSeries } from "@/lib/types";
@@ -13,6 +14,7 @@ export const METRIC_RANGES: { label: string; seconds: number }[] = [
 ];
 
 export function MetricSeriesCard({ series }: { series: MetricSeries }) {
+  const gradientId = useId();
   const unit = metricUnit(series.name);
   const color = metricColor(series.name);
   const data = series.points.map((point) => ({ t: point.timestampUnixMs, v: point.value }));
@@ -25,21 +27,21 @@ export function MetricSeriesCard({ series }: { series: MetricSeries }) {
     .join(" · ");
 
   return (
-    <div className="rounded-md border p-3">
+    <div className="rounded-xl border bg-card p-4">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="truncate text-sm font-medium">{metricTitle(series.name)}</div>
           {subtitle && <div className="truncate text-xs text-muted-foreground">{subtitle}</div>}
         </div>
-        <div className="shrink-0 text-sm font-semibold tabular-nums">
+        <div className="shrink-0 font-mono text-sm font-medium tabular-nums">
           {last === undefined ? "—" : formatMetricValue(unit, last)}
         </div>
       </div>
       <div className="mt-2 h-28 w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: -8 }}>
+          <AreaChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
             <defs>
-              <linearGradient id={`grad-${color.id}`} x1="0" y1="0" x2="0" y2="1">
+              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={color.stroke} stopOpacity={0.35} />
                 <stop offset="100%" stopColor={color.stroke} stopOpacity={0.02} />
               </linearGradient>
@@ -50,13 +52,14 @@ export function MetricSeriesCard({ series }: { series: MetricSeries }) {
               domain={["dataMin", "dataMax"]}
               scale="time"
               tickFormatter={formatTimeTick}
-              tick={{ fontSize: 10 }}
-              minTickGap={32}
+              tick={{ fontSize: 13, fontFamily: "JetBrains Mono, monospace" }}
+              minTickGap={48}
               stroke="var(--muted-foreground)"
             />
             <YAxis
-              width={40}
-              tick={{ fontSize: 10 }}
+              // Measure the full formatted value instead of wrapping its unit to fit a fixed gutter.
+              width="auto"
+              tick={{ fontSize: 13, fontFamily: "JetBrains Mono, monospace" }}
               tickFormatter={(value: number) => formatMetricValue(unit, value)}
               stroke="var(--muted-foreground)"
             />
@@ -64,14 +67,16 @@ export function MetricSeriesCard({ series }: { series: MetricSeries }) {
               isAnimationActive={false}
               labelFormatter={(value) => new Date(Number(value)).toLocaleTimeString()}
               formatter={(value) => [formatMetricValue(unit, Number(value)), metricTitle(series.name)]}
-              contentStyle={{ fontSize: 12, borderRadius: 6 }}
+              contentStyle={{ fontSize: 13, borderRadius: 8, background: "var(--popover)", color: "var(--popover-foreground)", borderColor: "var(--border)" }}
+              labelStyle={{ color: "var(--muted-foreground)" }}
+              itemStyle={{ color: "var(--popover-foreground)" }}
             />
             <Area
               type="monotone"
               dataKey="v"
               stroke={color.stroke}
               strokeWidth={1.5}
-              fill={`url(#grad-${color.id})`}
+              fill={`url(#${gradientId})`}
               isAnimationActive={false}
               dot={false}
             />
@@ -119,15 +124,15 @@ function metricTitle(name: string): string {
   }
 }
 
-// Stable per-metric colors that read on light and dark themes (CPU = blue, memory = emerald).
-function metricColor(name: string): { id: string; stroke: string } {
+// Stable data roles use the app theme; Telemetry leads with purple, then blue.
+function metricColor(name: string): { stroke: string } {
   if (name.includes("cpu")) {
-    return { id: "cpu", stroke: "#3b82f6" };
+    return { stroke: "var(--chart-1)" };
   }
   if (name.includes("memory")) {
-    return { id: "mem", stroke: "#10b981" };
+    return { stroke: "var(--chart-2)" };
   }
-  return { id: "other", stroke: "#8b5cf6" };
+  return { stroke: "var(--chart-3)" };
 }
 
 function formatTimeTick(value: number): string {

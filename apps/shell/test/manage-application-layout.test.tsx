@@ -90,7 +90,7 @@ it("keeps backup coverage and running-app interruption explicit", async () => {
 
 it("continues to refuse Manage settings for ordinary users", async () => {
   props.canManageApps = false; await render();
-  expect(container.querySelector('nav[aria-label="Breadcrumb"] a')?.getAttribute("href")).toBe("/apps");
+  expect(container.querySelector('nav[aria-label="Breadcrumb"] a')?.getAttribute("href")).toBe("/");
   expect(container.textContent).toContain("You do not have permission to manage this application");
   expect(container.querySelector('[role="tablist"]')).toBeNull();
   expect(container.querySelector("form")).toBeNull();
@@ -108,7 +108,7 @@ it("keeps selected feed and custom source drafts across tabs without applying ei
   expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/feeds"))).toBe(false);
   await tab("Updates"); await chooseFeed("edge");
   await act(async () => {
-    container.querySelectorAll<HTMLInputElement>('input[type="radio"]')[1].click();
+    container.querySelectorAll<HTMLButtonElement>('[role="radio"]')[1].click();
     const input = container.querySelector<HTMLInputElement>('[id="example.media-source-path"]')!;
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "/work/unsaved");
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -166,7 +166,7 @@ it("freezes a retained feed choice during revalidation and after a revoked read 
 
 it("reveals the selected Manage tab on selection and width changes without scrolling the page or remounting drafts", async () => {
   let resized!: () => void;
-  vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { resized = callback; } observe() {} disconnect() {} });
+  vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { resized = callback; } observe() {} unobserve() {} disconnect() {} });
   const pageScroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
   await render();
   const strip = container.querySelector<HTMLElement>('[data-slot="manage-tab-strip"]')!;

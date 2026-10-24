@@ -66,4 +66,64 @@ describe("active harness during Core reconnect", () => {
     } finally { await manager.shutdown(); rmSync(directory, { recursive: true, force: true }); }
   });
 
+  it("coalesces pending actor refreshes to the latest credential without blocking another actor", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "hosty-actor-coalescing-"));
+    const manager = new SessionManager(new SessionStore(directory), new FakeHarnessAdapter(), new AuditReporter(null, null, "hosty.harness"), directory);
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const refresh = vi.spyOn(manager, "refreshActorCredentials").mockReturnValueOnce(blocked).mockResolvedValue(undefined);
+    try {
+      manager.scheduleActorCredentialRefresh("admin", "hostyg_first");
+      manager.scheduleActorCredentialRefresh("admin", "hostyg_first");
+      manager.scheduleActorCredentialRefresh("admin", "hostyg_middle");
+      manager.scheduleActorCredentialRefresh("admin", "hostyg_latest");
+      manager.scheduleActorCredentialRefresh("other", "hostyg_other");
+      expect(refresh.mock.calls).toEqual([["admin", "hostyg_first"], ["other", "hostyg_other"]]);
+      release();
+      await vi.waitFor(() => expect(refresh.mock.calls).toEqual([["admin", "hostyg_first"], ["other", "hostyg_other"], ["admin", "hostyg_latest"]]));
+    } finally { release(); await manager.shutdown(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it("reports a failed background refresh without credentials and retries the same actor credential", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "hosty-actor-retry-"));
+    const store = new SessionStore(directory);
+    const adapter = new FakeHarnessAdapter();
+    const start = vi.spyOn(adapter, "start");
+    const manager = new SessionManager(store, adapter, new AuditReporter(null, null, "hosty.harness"), directory);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const session = await manager.createSession({ createdBy: "admin" });
+      await manager.postMessage(session.id, "Keep this conversation running", "hostyg_previous");
+      const run = start.mock.results[0]!.value;
+      const stop = vi.spyOn(run, "stop");
+      const refresh = vi.spyOn(manager as unknown as { refreshMcpServers: () => Promise<boolean> }, "refreshMcpServers")
+        .mockRejectedValueOnce(new Error("Provider failed with hostyg_private_credential"))
+        .mockResolvedValue(true);
+      manager.scheduleActorCredentialRefresh("admin", "hostyg_fresh");
+      await vi.waitFor(() => expect(warn).toHaveBeenCalledWith("[sessions] Background credential refresh failed; the next identity check will retry."));
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("hostyg_private_credential");
+      manager.scheduleActorCredentialRefresh("admin", "hostyg_fresh");
+      await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
+      expect(start).toHaveBeenCalledTimes(1); expect(stop).not.toHaveBeenCalled();
+      expect(JSON.stringify(await store.readEvents(session.id))).not.toContain("hostyg_fresh");
+    } finally { await manager.shutdown(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it("does not continue queued actor credential refreshes after shutdown", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "hosty-actor-shutdown-"));
+    const manager = new SessionManager(new SessionStore(directory), new FakeHarnessAdapter(), new AuditReporter(null, null, "hosty.harness"), directory);
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const refresh = vi.spyOn(manager, "refreshActorCredentials").mockReturnValue(blocked);
+    try {
+      manager.scheduleActorCredentialRefresh("admin", "hostyg_first");
+      manager.scheduleActorCredentialRefresh("admin", "hostyg_queued");
+      await manager.shutdown();
+      manager.scheduleActorCredentialRefresh("admin", "hostyg_late");
+      release(); await new Promise(resolve => setTimeout(resolve, 0));
+      expect(refresh.mock.calls).toEqual([["admin", "hostyg_first"]]);
+    } finally { release(); await manager.shutdown(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+
 });

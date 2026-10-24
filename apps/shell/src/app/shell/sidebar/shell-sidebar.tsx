@@ -4,7 +4,6 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { useCompactMenu } from "./use-compact-menu";
 import {
-  Boxes,
   ChevronDown,
   ChevronRight,
   ExternalLink,
@@ -49,7 +48,6 @@ export function ShellSidebar({
   managementApps = [],
   selectedSettings,
   onOpenSettings,
-  onOpenApps,
   onLaunchApp,
   onStartApp,
   getStandaloneHref,
@@ -71,7 +69,6 @@ export function ShellSidebar({
   managementApps?: CoreApp[];
   selectedSettings: string;
   onOpenSettings(key: string): void;
-  onOpenApps: () => void;
   onLaunchApp: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<boolean>;
   /**
    * Starts a stopped app from its own row. Undefined for a user who cannot start apps — Core refuses
@@ -92,27 +89,7 @@ export function ShellSidebar({
             <SettingsNavigation compact={compact} active={activeView === "settings" && !workspace} selected={selectedSettings} pages={settingsPages} apps={managementApps} canManageApps={canManageApps} onSelect={onOpenSettings} />
           </NavigationSection>
 
-          {/* The heading is the overview and the rows are the shortcuts — the same pair the native
-              client's Apps tab makes. Collapsed, headings are not rendered at all, so the rail gets
-              its own control rather than losing the route. */}
-          <NavigationSection
-            title="Apps"
-            compact={compact}
-            onTitleClick={onOpenApps}
-            titleActive={activeView === "available-apps" && !workspace}
-          >
-            {/* Boxes, not the LayoutGrid the app rows fall back to: collapsed, the overview control
-                sits directly above those rows, and an icon-less app would be indistinguishable from
-                the heading that leads to the page listing it. */}
-            {compact && (
-              <SidebarButton
-                compact
-                active={activeView === "available-apps" && !workspace}
-                icon={Boxes}
-                label="All apps"
-                onClick={onOpenApps}
-              />
-            )}
+          <NavigationSection title="Apps" compact={compact}>
             {uiApps.length === 0 ? (
               <NavigationPlaceholder compact={compact} icon={LayoutGrid} label="No apps registered" />
             ) : (
@@ -142,44 +119,15 @@ export function ShellSidebar({
 }
 
 
-function NavigationSection({
-  title,
-  compact,
-  onTitleClick,
-  titleActive,
-  children,
-}: {
-  title: string;
-  compact: boolean;
-  onTitleClick?: () => void;
-  titleActive?: boolean;
-  children: ReactNode;
-}) {
-  const headingClass = cn("px-2 text-xs font-medium uppercase text-muted-foreground", compact && "sr-only");
-
+function NavigationSection({ title, compact, children }: { title: string; compact: boolean; children: ReactNode }) {
   return (
     <div className="space-y-2">
-      {onTitleClick ? (
-        <h2 className={compact ? "sr-only" : undefined}>
-          <button
-            type="button"
-            onClick={onTitleClick}
-            className={cn(
-              headingClass,
-              "w-full rounded-md py-0.5 text-left transition-colors hover:text-foreground outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0",
-              titleActive && "text-foreground",
-            )}
-          >
-            {title}
-          </button>
-        </h2>
-      ) : (
-        <h2 className={headingClass}>{title}</h2>
-      )}
+      <h2 className={cn("px-2 text-xs font-medium uppercase text-muted-foreground", compact && "sr-only")}>{title}</h2>
       <div className="space-y-1">{children}</div>
     </div>
   );
 }
+
 
 function SidebarButton({
   compact,

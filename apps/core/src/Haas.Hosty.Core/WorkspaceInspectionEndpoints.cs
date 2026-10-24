@@ -65,9 +65,9 @@ internal static class WorkspaceInspectionEndpoints
         routes.MapPost("/{workspaceId}/discard/apply", async (string appId, string workspaceId, WorkspaceDiscardApply input, HttpRequest request,
             WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
             await Handle(async () => await cleanup.ApplyDiscardAsync(workspaceId, await auth.RequireAsync(request, appId, ct, manage: true), appId, input, ct)));
-        routes.MapGet("/{workspaceId}/discard/status", async (string appId, string workspaceId, string requestId, HttpRequest request,
+        routes.MapGet("/{workspaceId}/discard/status", async (string appId, string workspaceId, HttpRequest request,
             WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
-            await Handle(async () => await cleanup.DiscardStatusAsync(workspaceId, await auth.RequireAsync(request, appId, ct, manage: true), appId, requestId, ct)));
+            await Handle(async () => await cleanup.DiscardStatusAsync(workspaceId, await auth.RequireAsync(request, appId, ct, manage: true), appId, request.Query["requestId"].ToString(), ct)));
         routes.MapGet("/{workspaceId}/workflow", async (string appId, string workspaceId, HttpRequest request,
             WorkspaceInspectionAuthorization auth, WorkspaceInspectionService service, CancellationToken ct) =>
             await Handle(async () => await service.WorkflowAsync(workspaceId, await auth.RequireAsync(request, appId, ct), null, null, ct)));

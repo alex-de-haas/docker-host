@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Check, Loader2, Pencil, Trash2, X } from "lucide-react";
+import { Check, Diamond, Loader2, Pencil, Trash2, X } from "lucide-react";
 import { AppContextIcons } from "@/components/app-context-icons";
 import { isWaiting } from "@/lib/attention";
 import { cn } from "@/lib/utils";
@@ -71,9 +71,9 @@ export function SessionList({
                     setDeletingId(null);
                   }
                 }}
-                className="shrink-0 rounded-md p-1.5 text-destructive hover:bg-destructive/10 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0"
+                className="shrink-0 rounded-md p-1.5 text-destructive-foreground hover:bg-destructive/10 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0"
               >
-                {deletingId === record.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-label="Deleting session" /> : <Check className="h-3.5 w-3.5" aria-hidden />}
+                {deletingId === record.id ? <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-label="Deleting session" /> : <Check className="h-3.5 w-3.5" aria-hidden />}
               </button>
               <button
                 type="button"
@@ -107,11 +107,11 @@ export function SessionList({
                     {isWaiting(record.status) && (
                       // Marked as well as ordered: ordering alone is invisible to someone who has not seen the
                       // list before, and the row has to say *why* it is first.
-                      <span className="inline-flex size-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                      <Diamond className="size-3 shrink-0 text-warning-foreground" aria-hidden="true" />
                     )}
                     <span className="tabular-nums">{new Date(record.createdAt).toLocaleString()}</span>
                     <span aria-hidden>·</span>
-                    <span className={cn(isWaiting(record.status) && "font-medium text-amber-600 dark:text-amber-500")}>
+                    <span className={cn(isWaiting(record.status) && "font-medium text-warning-foreground")}>
                       {isWaiting(record.status) ? "waiting for you" : record.status}
                     </span>
                   </div>
@@ -133,7 +133,7 @@ export function SessionList({
                 type="button"
                 aria-label={`Delete ${record.title || "session"}`}
                 onClick={() => setConfirmingId(record.id)}
-                className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0"
+                className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive-foreground focus-visible:opacity-100 group-hover:opacity-100 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0"
               >
                 <Trash2 className="h-3.5 w-3.5" aria-hidden />
               </button>

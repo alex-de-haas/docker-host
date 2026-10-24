@@ -15,6 +15,7 @@ import { fetchCore } from "../core-transport.js";
 import { ResourceUsageProvider, ResourceUsage } from "../resources/resource-usage";
 import { Frame, FrameHeader, FramePanel } from "@/components/reui/frame";
 import { CoreGitCell, useCoreDevelopment } from "../core-development";
+import { useCoreStop } from "../core-stop";
 import { useCoreWorkspaceControl } from "../core-workspace-control";
 import { SourceVersionCell } from "../source/source-changes";
 import { AppSessionMenuItem } from "../assistant/app-session-action";
@@ -47,6 +48,7 @@ import {
 import { toast } from "@/components/reui/operation-toast";
 import { CoreLogsDialog } from "../dialogs/core-logs-dialog";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -402,6 +404,11 @@ function CoreSection({
       return requestId;
     },
   });
+  const stopping = useCoreStop(coreOrigin, development.state, !canManageApps || development.busy || runtime.busy || coreUpdating);
+  const coreBusy = development.busy || runtime.busy || coreUpdating || stopping.busy;
+  const coreActionLabel = stopping.busy ? "Stopping…" : development.busy ? "Restarting…" : runtime.busy ? "Switching…" : "Updating…";
+  const showRestartRequired = Boolean(development.state?.restartRequired && !development.busy && !stopping.busy);
+  const needsDiagnostics = ["degraded", "unhealthy", "failed"].includes(status?.status ?? "");
   const showUpdate = !dev && canManageApps && (coreUpdate?.updateAvailable === true || coreUpdating);
 
   return (
@@ -410,13 +417,14 @@ function CoreSection({
         <Table role="table" className="dashboard-table" aria-label="Hosty Core">
           <DashboardTableHeader />
           <TableBody role="rowgroup">
-            <TableRow role="row" className="dashboard-row">
+            <TableRow role="row" className="dashboard-row" data-testid="core-row">
               <TableCell role="cell" className="dashboard-identity">
                 <div className="flex min-w-0 items-center gap-2">
                   <HostyMark tile className="dashboard-app-icon size-10 shrink-0" />
                   <div className="min-w-0">
                     <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                       <span className="truncate font-medium">Hosty Core</span>
+                      {showRestartRequired && <Badge variant="secondary" className="border-warning/30 bg-warning-soft text-warning-foreground" title="Core source or configuration changed. Restart to apply it.">Restart required</Badge>}
                     </div>
                 <div className="mt-1 flex min-w-0 items-center gap-1.5">
                   {dev ? <CoreGitCell state={development.state} workspace={workspace} /> : <CoreVersionBlock status={status} coreUpdate={coreUpdate} />}
@@ -428,7 +436,7 @@ function CoreSection({
                       className="shrink-0 text-info-foreground hover:bg-sky-500/10 hover:text-info-foreground dark:text-sky-400 dark:hover:text-sky-400"
                       title={coreUpdating ? "Updating Core…" : "Update Core"}
                       aria-label={coreUpdating ? "Updating Core…" : "Update Core"}
-                      disabled={coreUpdating || development.busy || runtime.busy}
+                      disabled={coreBusy}
                       onClick={onUpdateCore}
                     >
                       {coreUpdating ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <ArrowUpCircle className="h-4 w-4" />}
@@ -436,13 +444,12 @@ function CoreSection({
                   )}
                 </div>
 
-                    {development.state?.restartRequired && <div className="flex items-center gap-2 text-xs text-warning-foreground"><span>Restart required</span><Button variant="link" size="sm" className="h-auto p-0 text-xs text-inherit" disabled={development.busy || runtime.busy || coreUpdating} onClick={() => void development.restart()}>Restart</Button></div>}
                   </div>
                 </div>
               </TableCell>
               <TableCell role="cell" className="dashboard-status"><div className="space-y-1">
                 <StatusBadge value={status ? status.status : "offline"} />
-                {development.phase && <div role="status" className="text-xs text-muted-foreground">{development.phase}</div>}
+                {(stopping.phase || development.phase) && <div role="status" className="text-xs text-muted-foreground">{stopping.phase || development.phase}</div>}
                 {!dev && (coreUpdating || coreUpdate?.clientPhase) && <div role="status" className="flex items-center gap-1 text-xs text-muted-foreground">
                   {coreUpdating && <LoaderCircle className="size-3 animate-spin motion-reduce:animate-none" />}
                   {coreUpdate?.clientPhase === "completed" ? "Updated" : coreUpdate?.clientPhase === "reconnecting" ? "Reconnecting" : coreUpdate?.clientPhase === "verifying" ? "Verifying update" : coreUpdate?.clientPhase === "unconfirmed" ? "Update not confirmed" : "Installing update"}
@@ -454,17 +461,23 @@ function CoreSection({
                 <div className="flex justify-end gap-1">
                   {canManageApps && (
                     <>
-                      <Button className="dashboard-context-action" variant="outline" size="sm" onClick={() => setLogsOpen(true)}>Logs</Button>
+                      <div className="dashboard-context-action">
+                        {coreBusy ? <Button variant="outline" size="sm" disabled><LoaderCircle data-icon="inline-start" className="animate-spin motion-reduce:animate-none" />{coreActionLabel}</Button>
+                          : showRestartRequired ? <Button variant="outline" size="sm" disabled={!development.state?.manageable} onClick={() => void development.restart()}>Restart</Button>
+                          : needsDiagnostics ? <Button variant="outline" size="sm" onClick={() => setLogsOpen(true)}>Logs</Button>
+                          : <Button variant="outline" size="sm" disabled={!status || !development.state?.manageable} onClick={() => void stopping.stop()}>Stop</Button>}
+                      </div>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon-sm" aria-label="More actions for Hosty Core" title="More actions for Hosty Core"><MoreHorizontal /></Button>
+                          <Button variant="ghost" size="icon-sm" disabled={stopping.busy} aria-label="More actions for Hosty Core" title="More actions for Hosty Core"><MoreHorizontal /></Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-56">
                           <DropdownMenuLabel>Hosty Core</DropdownMenuLabel>
                           {runtime.control}
                           <DropdownMenuGroup>
-                            <DropdownMenuItem disabled={development.busy || runtime.busy || coreUpdating || !development.state?.manageable} onClick={() => void development.restart()}><RotateCcw />Restart Core</DropdownMenuItem>
-                            {showUpdate && <DropdownMenuItem disabled={coreUpdating || development.busy || runtime.busy} onClick={onUpdateCore}><ArrowUpCircle />Update Core</DropdownMenuItem>}
+                            <DropdownMenuItem disabled={coreBusy || !development.state?.manageable} onClick={() => void development.restart()}><RotateCcw />Restart Core</DropdownMenuItem>
+                            <DropdownMenuItem disabled={coreBusy || !status || !development.state?.manageable} onClick={() => void stopping.stop()}><Square />Stop Core</DropdownMenuItem>
+                            {showUpdate && <DropdownMenuItem disabled={coreBusy} onClick={onUpdateCore}><ArrowUpCircle />Update Core</DropdownMenuItem>}
                             <DropdownMenuItem onClick={() => setLogsOpen(true)}><Terminal />Console logs</DropdownMenuItem>
                             <DropdownMenuItem onClick={() => router.push("/settings?tab=host&section=source")}><Settings />Source settings</DropdownMenuItem>
                           </DropdownMenuGroup>
@@ -479,6 +492,7 @@ function CoreSection({
         </Table>
 
         {runtime.dialog}
+        {stopping.dialog}
         <CoreLogsDialog open={logsOpen} coreOrigin={coreOrigin} onOpenChange={setLogsOpen} />
       </FramePanel>
     </Frame>
@@ -623,6 +637,7 @@ function InstalledAppRow({
   // Only its review-required verdict opens Core confirmation; routine updates queue directly.
   const needsReview = verdict?.requiresReview === true;
   const configurationRequired = app.configurationReadiness?.required === true;
+  const showRestartRequired = Boolean(app.restartRequired && !lifecycleLabel);
   // Removal, like start/stop/restart/update, is an inherent Core operation: the endpoint authorizes on
   // the admin session, never on the manifest `capabilities` list, so an app cannot decline to be
   // uninstalled by omitting a token. System apps are removable too; Core confirmation explains
@@ -660,6 +675,7 @@ function InstalledAppRow({
               {app.system && !isShell && <AppRoleIcon kind="system" />}
               {isShell && <AppRoleIcon kind="shell" />}
               <AppProblemIcons problems={problems} updateCheck={app.updateCheck} onPermissions={() => onOpenPanel(app, "settings", { settingsTab: "permissions" })} />
+              {showRestartRequired && <Badge variant="secondary" className="border-warning/30 bg-warning-soft text-warning-foreground" title="Settings or mounts changed since this app started.">Restart required</Badge>}
             </div>
             <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 font-mono text-xs text-muted-foreground">
               <div className="dashboard-version contents">
@@ -672,16 +688,6 @@ function InstalledAppRow({
                 <span>Configuration required</span>
                 {canConfigure && <Button variant="link" size="sm" className="h-auto p-0 text-xs text-inherit"
                   onClick={() => onOpenPanel(app, "settings", { settingsTab: app.configurationReadiness?.mounts.length && !app.configurationReadiness?.missingSettings.length ? "mounts" : "app" })}>Configure</Button>}
-              </div>
-            )}
-            {!lifecycleLabel && app.restartRequired && !configurationRequired && (
-              <div className="flex flex-wrap items-center gap-2 text-xs text-warning-foreground">
-                <span title="Settings or mounts changed since this app started.">Restart required</span>
-                {canControl && (
-                  <Button variant="link" size="sm" className="h-auto p-0 text-xs text-inherit" disabled={transitioning || busyAction?.startsWith(`${app.id}:`) || app.operationStatus === "updating"} onClick={() => onAction(app, "restart")}>
-                    Restart
-                  </Button>
-                )}
               </div>
             )}
           </div>
@@ -702,10 +708,12 @@ function InstalledAppRow({
         <div className="flex items-center justify-end gap-1">
           <div className="dashboard-context-action">
             {canControl && lifecycleLabel ? <Button variant="outline" size="sm" disabled><LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />{lifecycleLabel}</Button>
+              : showRestartRequired && canControl ? <Button variant="outline" size="sm" disabled={lifecycleDisabled || Boolean(busyAction?.startsWith(`${app.id}:`))} onClick={() => onAction(app, "restart")}>Restart</Button>
+              : running && canViewLogs && needsDiagnostics ? <Button variant="outline" size="sm" onClick={() => onOpenPanel(app, "logs")}>Logs</Button>
               : configurationRequired && canConfigure ? <Button variant="outline" size="sm" onClick={() => onOpenPanel(app, "settings", { settingsTab: app.configurationReadiness?.mounts.length && !app.configurationReadiness?.missingSettings.length ? "mounts" : "app" })}>Configure</Button>
               : updateVisible ? <Button variant="outline" size="sm" disabled={isBusy("update")} onClick={() => needsReview ? onOpenPanel(app, "update") : onUpdateApp(app)}>Update</Button>
               : !running && canControl ? <Button variant="outline" size="sm" disabled={lifecycleDisabled || isBusy("start")} onClick={() => onAction(app, "start")}>Start</Button>
-              : canViewLogs && (needsDiagnostics || !canControl) ? <Button variant="outline" size="sm" onClick={() => onOpenPanel(app, "logs")}>Logs</Button>
+              : canViewLogs && !canControl ? <Button variant="outline" size="sm" onClick={() => onOpenPanel(app, "logs")}>Logs</Button>
               : running && canControl ? <Button variant="outline" size="sm" disabled={lifecycleDisabled || isBusy("stop")} onClick={() => onAction(app, "stop")}>Stop</Button> : null}
           </div>
           <InstalledAppActionsMenu

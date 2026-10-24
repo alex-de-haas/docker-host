@@ -140,7 +140,7 @@ export function LocalRepositoryActions({ sessionId, appId, tree, disabled, refre
     {pending && <div><p>Unconfirmed: {labels[pending.action]}. Retry retains the original arguments and request ID.</p>
       <Button size="sm" variant="outline" disabled={disabled || busy} onClick={() => void run(pending)}>Retry repository action</Button>
       <Button size="sm" variant="ghost" disabled={busy} onClick={() => void inspectPending()}>Check last action</Button></div>}
-    {error && <p role="alert" className="text-destructive">{error}</p>}
+    {error && <p role="alert" className="text-destructive-foreground">{error}</p>}
     <Dialog open={!!action} onOpenChange={open => { if (!open) setAction(null); }}><DialogContent className="max-h-[85vh] overflow-y-auto">
       <DialogTitle>{action ? labels[action] : "Repository"}</DialogTitle>
       <DialogDescription>{action === "remote-connect" ? "Connect an existing repository. This preserves local source and worktree identity and sends no source."
@@ -168,7 +168,7 @@ export function LocalRepositoryActions({ sessionId, appId, tree, disabled, refre
         <label>Author email<Input className={field} value={authorEmail} onChange={e => setAuthorEmail(e.target.value)} /></label>
       </>}
       {action === "pr-publish" && <><label>PR title<Input className={field} value={title} onChange={e => setTitle(e.target.value)} /></label><label>PR description<Textarea className={field} value={body} onChange={e => setBody(e.target.value)} /></label></>}
-      {error && <p role="alert" className="text-destructive">{error}</p>}
+      {error && <p role="alert" className="text-destructive-foreground">{error}</p>}
       <DialogFooter><Button variant="outline" onClick={() => setAction(null)}>Cancel</Button><Button disabled={locked || (action === "remote-connect" && (!repository.trim() || !targetBranch.trim() || !connectionId)) || (action === "commit" && (!paths.length || !message.trim() || !authorName.trim() || !authorEmail.trim())) || (action === "merge-upstream" && (!message.trim() || !authorName.trim() || !authorEmail.trim() || (!observed?.related && !allowUnrelatedHistories))) || (action === "pr-publish" && !title.trim())} onClick={() => void run()}>{busy ? "Working…" : "Confirm " + (action ? labels[action].toLowerCase() : "action")}</Button></DialogFooter>
     </DialogContent></Dialog>
   </section>;

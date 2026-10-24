@@ -85,6 +85,7 @@ import type {
   CoreBackupCleanupPlan,
   CoreSettingsState,
   CoreGlobalMount,
+  SharedMountsLoadStatus,
   AppExecutionSelection,
   AppExecutionResult,
   CoreStatus,
@@ -225,7 +226,11 @@ export function ShellClient({
   const updateActivations = useRef(new Set<string>());
   const installActivation = useRef(false);
   const [installNonce, setInstallNonce] = useState(0);
-  const [globalMounts, setGlobalMounts] = useState<CoreGlobalMount[]>([]);
+  const [mountLibrary, setMountLibrary] = useState<{ scope: string | null; mounts: CoreGlobalMount[] | null; loading: boolean; error: string | null }>({
+    scope: null, mounts: null, loading: true, error: null,
+  });
+  const mountScope = useRef<string | null>(null);
+  const mountReadSequence = useRef(0);
   const [coreSettings, setCoreSettings] = useState<CoreSettingsState | null>(null);
   const [coreSettingsError, setCoreSettingsError] = useState<string | null>(null);
   const [coreUpdate, setCoreUpdate] = useState<CoreUpdateStatus | null>(null);
@@ -303,6 +308,8 @@ export function ShellClient({
   const refreshRequestRef = useRef(0);
   const appsReadSequence = useRef(0);
   const detailRequestRef = useRef(0);
+  const detailAppRef = useRef(activePanel?.appId);
+  detailAppRef.current = activePanel?.appId;
   // An ask is cheap for the app and expensive for the operator: it reveals the rail, switches the
   // tab and moves focus. A mounted app looping on it would make Shell unusable while looking like a
   // supported use of the contract, so it is rate-limited per app exactly as reissues are. One a
@@ -314,6 +321,14 @@ export function ShellClient({
   const shellResolvedTheme = resolveShellTheme(resolvedTheme);
   const activeUser = state.session?.authenticated ? state.session.user : null;
   const canManageApps = activeUser?.role === "host.admin";
+  const activeMountScope = canManageApps && activeUser ? `${coreOrigin}\0${activeUser.id}` : null;
+  const globalMounts = useMemo(() => activeMountScope && mountLibrary.scope === activeMountScope ? mountLibrary.mounts ?? [] : [], [activeMountScope, mountLibrary]);
+  const globalMountsStatus = useMemo<SharedMountsLoadStatus>(() => {
+    if (!activeMountScope) return { loading: false, loaded: false, error: null, scope: mountLibrary.scope };
+    if (mountLibrary.scope !== activeMountScope) return { loading: mountLibrary.loading, loaded: false, scope: mountLibrary.scope,
+      error: mountLibrary.loading ? null : mountLibrary.error ?? "Shared mounts are unavailable for the current session. Retry to refresh the library." };
+    return { loading: mountLibrary.loading, loaded: mountLibrary.mounts !== null, error: mountLibrary.error, scope: mountLibrary.scope };
+  }, [activeMountScope, mountLibrary]);
   // Shell entry points use the client preference; confirmed roles gate discovery and token handshakes.
   const { assistants, selected: assistantGateway, selectedId: assistantSelection, select: selectAssistant, choose: chooseAssistant, picker: assistantPicker } =
     useAssistantSelection(state.apps, activeUser ? `${coreOrigin}:${activeUser.id}` : null);
@@ -341,15 +356,46 @@ export function ShellClient({
     return () => window.cancelAnimationFrame(frame);
   }, [chromeTransitions, state.loading]);
 
+  const readGlobalMounts = useCallback(async (scope: string, requestToken: number) => {
+    if (mountScope.current !== scope || requestToken !== refreshRequestRef.current) return;
+    const readId = ++mountReadSequence.current;
+    const current = () => mountScope.current === scope && requestToken === refreshRequestRef.current && readId === mountReadSequence.current;
+    if (!current()) return;
+    setMountLibrary(previous => ({ scope, mounts: previous.scope === scope ? previous.mounts : null, loading: true, error: null }));
+    let denied = false;
+    try {
+      const response = await fetchCore(`${coreOrigin}/api/global-mounts`, { credentials: "include", cache: "no-store" });
+      if (!current()) return;
+      denied = response.status === 401 || response.status === 403;
+      redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+      if (!response.ok) throw new Error(await readCoreError(response));
+      const payload = await response.json() as { mounts?: CoreGlobalMount[] };
+      if (!Array.isArray(payload.mounts)) throw new Error("Core did not return the shared mount library. Retry to refresh it.");
+      if (current()) setMountLibrary({ scope, mounts: payload.mounts, loading: false, error: null });
+    } catch (error) {
+      if (!current()) return;
+      if (denied) mountScope.current = null;
+      setMountLibrary(previous => ({ scope: denied ? null : scope, mounts: !denied && previous.scope === scope ? previous.mounts : null, loading: false,
+        error: isAuthRequiredRedirectError(error) ? "Sign in to load shared mounts." : error instanceof Error ? error.message : "Could not load shared mounts." }));
+      throw error;
+    }
+  }, [coreOrigin]);
+
   const refresh = useCallback(async () => {
     const requestToken = ++refreshRequestRef.current;
     setState((current) => ({ ...current, loading: true, error: null }));
+    setMountLibrary(current => ({ ...current, loading: true, error: null }));
     try {
       const [statusResponse, sessionResponse] = await Promise.all([
         fetchCore(`${coreOrigin}/api/core/status`, { credentials: "include" }),
         fetchCore(`${coreOrigin}/api/auth/session`, { credentials: "include" }),
       ]);
 
+      if (requestToken === refreshRequestRef.current && (statusResponse.status === 401 || sessionResponse.status === 401)) {
+        mountScope.current = null;
+        ++mountReadSequence.current;
+        setMountLibrary({ scope: null, mounts: null, loading: false, error: "Sign in to load shared mounts." });
+      }
       redirectToCoreLoginIfAuthRequired(statusResponse, coreOrigin);
       if (!statusResponse.ok) {
         throw new Error(`Core status returned ${statusResponse.status}.`);
@@ -366,6 +412,10 @@ export function ShellClient({
         return;
       }
 
+      const scope = session.authenticated && session.user?.role === "host.admin" ? `${coreOrigin}\0${session.user.id}` : null;
+      mountScope.current = scope;
+      setMountLibrary(previous => scope && previous.scope === scope ? previous : { scope, mounts: null, loading: scope !== null, error: null });
+
       if (!session.authenticated) {
         setState({
           loading: false,
@@ -380,7 +430,6 @@ export function ShellClient({
 
       let apps: AppsResponse = { apps: [] };
       let appsReadId = 0;
-      let nextGlobalMounts: CoreGlobalMount[] = [];
       if (session?.authenticated) {
         appsReadId = ++appsReadSequence.current;
         const appsResponse = await fetchCore(`${coreOrigin}/api/apps`, { credentials: "include", cache: "no-store" });
@@ -391,13 +440,11 @@ export function ShellClient({
 
         apps = (await appsResponse.json()) as AppsResponse;
 
-        // The shared-mounts library is admin-only; non-admins simply get an empty list (the picker
-        // and Shared mounts button are gated to admins anyway).
-        if (session.user?.role === "host.admin") {
-          const mountsResponse = await fetchCore(`${coreOrigin}/api/global-mounts`, { credentials: "include" });
-          if (mountsResponse.ok) {
-            nextGlobalMounts = ((await mountsResponse.json()) as { mounts?: CoreGlobalMount[] }).mounts ?? [];
-          }
+        // A library read failure is local to Shared mounts. Keep confirmed same-actor data,
+        // but never turn an unavailable or unauthorized response into an empty library.
+        if (scope) {
+          try { await readGlobalMounts(scope, requestToken); }
+          catch (error) { if (isAuthRequiredRedirectError(error)) throw error; }
         }
       }
 
@@ -405,7 +452,6 @@ export function ShellClient({
         return;
       }
 
-      setGlobalMounts(nextGlobalMounts);
       setState((current) => ({
         loading: false,
         error: null,
@@ -427,13 +473,15 @@ export function ShellClient({
         return;
       }
 
+      setMountLibrary(current => ({ ...current, loading: false,
+        error: "Shared mounts could not be refreshed because Core state is unavailable. Retry to refresh the library." }));
       setState((current) => ({
         ...current,
         loading: false,
         error: error instanceof Error ? error.message : "Core is unavailable.",
       }));
     }
-  }, [coreOrigin]);
+  }, [coreOrigin, readGlobalMounts]);
 
   // Light re-read of just the apps list, for Core's event stream. Everything a domain event can
   // change lives on this one response; re-running the full refresh would turn every hint into four
@@ -645,7 +693,7 @@ export function ShellClient({
       if (app.id === shellAppId) {
         setWorkspace(null);
         setOptimisticWorkspaceRoute(null);
-        router.push(getShellViewHref(canManageApps ? "dashboard" : "available-apps"));
+        router.push(getShellViewHref(canManageApps ? "dashboard" : "home"));
         return true;
       }
 
@@ -1508,22 +1556,29 @@ export function ShellClient({
   const configureApp = useCallback(
     async (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => {
       const actionKey = `${app.id}:configure`;
+      const requestToken = detailRequestRef.current;
       setBusyAction(actionKey);
+      setDetailPanel(current => ({ ...current, error: null }));
       try {
         await sendCsrfJson(appEndpoint(app, "/configure"), { settings, autostart });
         await refresh();
-        setActivePanel(null);
+        if (requestToken === detailRequestRef.current && detailAppRef.current === app.id) {
+          setDetailPanel(current => ({ ...current, error: null }));
+          setActivePanel(null);
+        }
         toast.success("Settings saved", { description: app.displayName });
+        return true;
       } catch (error) {
         if (isAuthRequiredRedirectError(error)) {
-          return;
+          return false;
         }
 
-        setDetailPanel((current) => ({
+        if (requestToken === detailRequestRef.current && detailAppRef.current === app.id) setDetailPanel((current) => ({
           ...current,
           loading: false,
           error: error instanceof Error ? error.message : "Configure failed.",
         }));
+        return false;
       } finally {
         setBusyAction((current) => (current === actionKey ? null : current));
       }
@@ -1559,18 +1614,23 @@ export function ShellClient({
   const configureMounts = useCallback(
     async (app: CoreApp, mounts: MountBindingInput[]) => {
       const actionKey = `${app.id}:mounts`;
+      const requestToken = detailRequestRef.current;
       setBusyAction(actionKey);
+      setDetailPanel(current => ({ ...current, error: null }));
       try {
         if (!await changeHostPath(appEndpoint(app, "/mounts"), { mounts }, { kind: "app-mounts", appId: app.id, mounts: { mounts } })) return;
         await refresh();
-        setActivePanel(null);
+        if (requestToken === detailRequestRef.current && detailAppRef.current === app.id) {
+          setDetailPanel(current => ({ ...current, error: null }));
+          setActivePanel(null);
+        }
         toast.success("Mounts saved", { description: app.displayName });
       } catch (error) {
         if (isAuthRequiredRedirectError(error)) {
           return;
         }
 
-        setDetailPanel((current) => ({
+        if (requestToken === detailRequestRef.current && detailAppRef.current === app.id) setDetailPanel((current) => ({
           ...current,
           loading: false,
           error: error instanceof Error ? error.message : "Saving mounts failed.",
@@ -1639,25 +1699,33 @@ export function ShellClient({
     [appEndpoint, refresh, sendCsrfJson],
   );
 
-  // Shared-mounts library (host-level). The endpoints return the full updated list, so each call
-  // refreshes globalMounts directly; the SharedMountsDialog surfaces any thrown error inline.
+  // Mount reads and mutation receipts share the confirmed actor scope. A newer full refresh or
+  // library read owns the projection; late replies never restore another actor's library.
   const saveGlobalMount = useCallback(
     async (input: { name: string; hostPath: string; mode?: string; description?: string | null }) => {
+      const scope = activeMountScope;
+      if (!scope || mountScope.current !== scope) throw new Error("The shared mount session changed. Refresh before saving.");
       if (!await changeHostPath(`${coreOrigin}/api/global-mounts`, input, { kind: "global-mount", globalMount: input })) throw new Error("Change cancelled.");
-      const response = await fetchCore(`${coreOrigin}/api/global-mounts`, { credentials: "include", cache: "no-store" });
-      if (!response.ok) throw new Error(await readCoreError(response));
-      setGlobalMounts(((await response.json()) as { mounts?: CoreGlobalMount[] }).mounts ?? []);
+      if (mountScope.current !== scope) return;
+      await readGlobalMounts(scope, refreshRequestRef.current);
     },
-    [coreOrigin, changeHostPath],
+    [activeMountScope, coreOrigin, changeHostPath, readGlobalMounts],
   );
 
   const deleteGlobalMount = useCallback(
     async (name: string, force = false) => {
+      const scope = activeMountScope;
+      if (!scope || mountScope.current !== scope) throw new Error("The shared mount session changed. Refresh before deleting.");
       const url = `${coreOrigin}/api/global-mounts/${encodeURIComponent(name)}${force ? "?force=true" : ""}`;
       const response = await sendCsrfJson(url, undefined, "DELETE");
-      setGlobalMounts(((await response.json()) as { mounts?: CoreGlobalMount[] }).mounts ?? []);
+      if (mountScope.current !== scope) return;
+      const payload = await response.json() as { mounts?: CoreGlobalMount[] };
+      if (mountScope.current !== scope) return;
+      if (!Array.isArray(payload.mounts)) throw new Error("Core did not return the updated shared mount library. Refresh to check the result.");
+      ++mountReadSequence.current;
+      setMountLibrary({ scope, mounts: payload.mounts, loading: false, error: null });
     },
-    [coreOrigin, sendCsrfJson],
+    [activeMountScope, coreOrigin, sendCsrfJson],
   );
 
   // Core's own settings, loaded when the Settings page shows the Core tab. This used to be an
@@ -1735,7 +1803,7 @@ export function ShellClient({
     () => state.apps.filter((app) => app.id !== shellAppId && getAppPageLinks(app).length > 0),
     [shellAppId, state.apps],
   );
-  const effectiveView = logsPageAccessible && !canManageApps ? "available-apps" : getAuthorizedShellView(shellRoute.view, Boolean(canManageApps), shellRoute.settingsTab);
+  const effectiveView = logsPageAccessible && !canManageApps ? "home" : getAuthorizedShellView(shellRoute.view, Boolean(canManageApps), shellRoute.settingsTab);
   const workspaceSurfaceActive = Boolean(workspace || activeWorkspaceRoute);
   const selectedApp = activePanel ? state.apps.find((app) => app.id === activePanel.appId) ?? null : null;
   const resetWorkspaceLaunch = useCallback(
@@ -1754,7 +1822,7 @@ export function ShellClient({
   );
 
   const authorizationRedirect = logsPageAccessible ? null : getShellAuthorizationRedirect(
-    shellRoute, Boolean(state.session?.authenticated), Boolean(canManageApps),
+    shellRoute, Boolean(state.session?.authenticated), Boolean(canManageApps), searchParams ?? undefined,
   );
   useEffect(() => {
     if (authorizationRedirect) router.replace(authorizationRedirect);
@@ -1762,7 +1830,7 @@ export function ShellClient({
 
   useEffect(() => {
     if (normalizedRoutePath === "/workspace" && !shellRoute.workspace) {
-      router.replace(getShellViewHref("available-apps"));
+      router.replace(getShellViewHref("home"));
     }
   }, [normalizedRoutePath, router, shellRoute.workspace]);
 
@@ -1812,7 +1880,7 @@ export function ShellClient({
 
     if (app.id === shellAppId) {
       resetWorkspaceLaunch();
-      router.replace(getShellViewHref(canManageApps ? "dashboard" : "available-apps"));
+      router.replace(getShellViewHref(canManageApps ? "dashboard" : "home"));
       return;
     }
 
@@ -2152,6 +2220,7 @@ export function ShellClient({
       coreSettings,
       coreSettingsError,
       globalMounts,
+      globalMountsStatus,
       coreUpdate: state.status?.launch?.mode === "dev" ? null : reconcileCoreUpdate(coreUpdate, state.status?.version),
       coreUpdating,
     }),
@@ -2169,6 +2238,7 @@ export function ShellClient({
       coreUpdate,
       coreUpdating,
       globalMounts,
+      globalMountsStatus,
       shellRoute.settingsTab,
       state,
       uiApps,
@@ -2257,7 +2327,7 @@ export function ShellClient({
             isShell={selectedApp.id === shellAppId}
             busyAction={busyAction}
             detail={detailPanel}
-            onClose={managementAppId && !dialogPanel ? () => router.push(canManageApps ? "/dashboard" : "/apps") : closeAppPanel}
+            onClose={managementAppId && !dialogPanel ? () => router.push(canManageApps ? "/dashboard" : "/") : closeAppPanel}
             onRefreshBackups={(app) => loadAppBackups(app, false)}
             onCreateBackup={createManualBackup}
             onRestoreBackup={restoreBackup}
@@ -2298,7 +2368,7 @@ export function ShellClient({
             setMobileSidebarOpen(false);
             setWorkspace(null);
             setOptimisticWorkspaceRoute(null);
-            router.push(getShellViewHref(canManageApps ? "dashboard" : "available-apps"));
+            router.push(getShellViewHref(canManageApps ? "dashboard" : "home"));
           }}
         />
 
@@ -2349,12 +2419,6 @@ export function ShellClient({
               setWorkspace(null);
               setOptimisticWorkspaceRoute(null);
               router.push(getShellViewHref(view));
-            }}
-            onOpenApps={() => {
-              setMobileSidebarOpen(false);
-              setWorkspace(null);
-              setOptimisticWorkspaceRoute(null);
-              router.push(getShellViewHref("available-apps"));
             }}
             onLaunchApp={(app, page, target) => {
               setMobileSidebarOpen(false);
@@ -2425,7 +2489,7 @@ export function ShellClient({
         {(!managementAppId || dialogPanel) && appDetails}
 
 
-      <ShellMobileTabs active={workspace ? "workspace" : effectiveView} canManage={Boolean(canManageApps)} onNavigate={view => {
+      <ShellMobileTabs active={workspace ? "workspace" : effectiveView} canManage={Boolean(canManageApps)} onOpenApps={() => setMobileSidebarOpen(true)} onNavigate={view => {
         setMobileSidebarOpen(false); setWorkspace(null); setOptimisticWorkspaceRoute(null); panelHost?.collapseWorkspace("default");
         router.push(view === "settings" ? getSettingsHref("profile") : getShellViewHref(view));
       }} />

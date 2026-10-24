@@ -3,7 +3,7 @@
 import { appFetch } from "@hosty-sdk/app/browser-auth";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, LoaderCircle, RefreshCw, ScrollText, Search } from "lucide-react";
+import { ChevronDown, RefreshCw, ScrollText, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -20,7 +20,7 @@ import { isAuthRequiredError, readApiError, throwIfAuthRequired } from "@/lib/ap
 import { OtlpLogTable, SEVERITY_FILTERS } from "@/components/observability/otlp-log-table";
 import type { FleetOtlpLogsResponse, TelemetryApp } from "@/lib/types";
 import { withCoreSource } from "@/lib/core-source";
-import { EmptyState, PageHeader } from "@/components/page-shell";
+import { EmptyState, PageHeader, RequestError, RetainedResults } from "@/components/page-shell";
 
 const ALL = "__all__";
 
@@ -30,7 +30,8 @@ const RANGES: { label: string; seconds: number }[] = [
   { label: "1h", seconds: 3600 },
 ];
 
-type LogsState = { loading: boolean; error: string | null; response: FleetOtlpLogsResponse | null };
+type LoadedLogsQuery = { appId: string; severity: number; range: number; text: string };
+type LogsState = { loading: boolean; error: string | null; response: FleetOtlpLogsResponse | null; loadedQuery: LoadedLogsQuery | null };
 
 // Cross-resource Structured logs view, modelled on the .NET Aspire "Structured logs" page: OTLP log
 // records merged across every resource into one searchable, severity-filterable stream. Backed by the
@@ -44,7 +45,7 @@ export function ObservabilityStructuredLogsPage({ apps: roster }: { apps: Teleme
   const [severityFloor, setSeverityFloor] = useState(0);
   const [rangeSeconds, setRangeSeconds] = useState(900);
   const [query, setQuery] = useState("");
-  const [state, setState] = useState<LogsState>({ loading: false, error: null, response: null });
+  const [state, setState] = useState<LogsState>({ loading: true, error: null, response: null, loadedQuery: null });
 
   // Keep the selection valid as the app set changes (adjust during render, not in an effect).
   const appsSignature = apps.map((app) => app.id).join(",");
@@ -84,13 +85,14 @@ export function ObservabilityStructuredLogsPage({ apps: roster }: { apps: Teleme
         if (token !== requestRef.current) {
           return;
         }
-        setState({ loading: false, error: null, response: payload });
+        setState({ loading: false, error: null, response: payload, loadedQuery: { appId, severity, range, text: trimmed } });
       } catch (error) {
         if (isAuthRequiredError(error) || token !== requestRef.current) {
           return;
         }
         // Keep the previously loaded logs on a transient failure rather than blanking the table (S-M2).
         setState((current) => ({
+          ...current,
           loading: false,
           error: error instanceof Error ? error.message : "Structured logs are unavailable.",
           response: current.response,
@@ -107,7 +109,17 @@ export function ObservabilityStructuredLogsPage({ apps: roster }: { apps: Teleme
   }, [loadLogs, selectedAppId, severityFloor, rangeSeconds, query]);
 
   const records = state.response?.records ?? [];
-  const showSource = selectedAppId === ALL;
+  const loadedQuery = state.loadedQuery;
+  const showingPrevious = loadedQuery !== null && (state.loading || state.error !== null
+    || loadedQuery.appId !== selectedAppId || loadedQuery.severity !== severityFloor
+    || loadedQuery.range !== rangeSeconds || loadedQuery.text !== query.trim());
+  const showSource = selectedAppId === ALL || loadedQuery?.appId === ALL
+    || (showingPrevious && loadedQuery?.appId !== selectedAppId);
+  const loadedResource = loadedQuery?.appId === ALL ? "All resources"
+    : apps.find(app => app.id === loadedQuery?.appId)?.displayName ?? loadedQuery?.appId;
+  const loadedRange = RANGES.find(range => range.seconds === loadedQuery?.range)?.label;
+  const loadedSeverity = SEVERITY_FILTERS.find(severity => severity.floor === loadedQuery?.severity)?.label;
+  const displayedSearch = loadedQuery?.text ?? query.trim();
   const selectedLabel =
     selectedAppId === ALL ? "All resources" : apps.find((app) => app.id === selectedAppId)?.displayName ?? "All resources";
 
@@ -123,7 +135,7 @@ export function ObservabilityStructuredLogsPage({ apps: roster }: { apps: Teleme
             onClick={() => void loadLogs(selectedAppId, severityFloor, rangeSeconds, query)}
             disabled={state.loading}
           >
-            <RefreshCw className={cn("h-4 w-4", state.loading && "animate-spin")} />
+            <RefreshCw className={cn("h-4 w-4", state.loading && "animate-spin text-info")} />
             Refresh
           </Button>
         }
@@ -132,30 +144,32 @@ export function ObservabilityStructuredLogsPage({ apps: roster }: { apps: Teleme
       <div className="flex flex-wrap items-center gap-2">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm">
-              {selectedLabel}
-              <ChevronDown className="h-4 w-4" />
+            <Button variant="outline" size="sm" className="h-auto min-h-8 min-w-0 max-w-full whitespace-normal text-left">
+              <span className="min-w-0 wrap-anywhere">{selectedLabel}</span>
+              <ChevronDown data-icon="inline-end" aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-56">
+          <DropdownMenuContent align="start" className="w-56 max-w-[calc(100vw-2rem)]">
             <DropdownMenuLabel>Resource</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuRadioGroup value={selectedAppId} onValueChange={setSelectedAppId}>
               <DropdownMenuRadioItem value={ALL}>All resources</DropdownMenuRadioItem>
               {apps.map((app) => (
                 <DropdownMenuRadioItem key={app.id} value={app.id}>
-                  {app.displayName}
+                  <span className="min-w-0 wrap-anywhere">{app.displayName}</span>
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <div className="flex gap-1">
+        <div role="group" aria-label="Severity" className="flex gap-1">
           {SEVERITY_FILTERS.map((option) => (
             <Button
               key={option.floor}
-              variant={option.floor === severityFloor ? "secondary" : "ghost"}
+              variant="ghost"
+              aria-pressed={option.floor === severityFloor}
+              className="telemetry-filter-button"
               size="sm"
               onClick={() => setSeverityFloor(option.floor)}
             >
@@ -164,11 +178,13 @@ export function ObservabilityStructuredLogsPage({ apps: roster }: { apps: Teleme
           ))}
         </div>
 
-        <div className="flex gap-1">
+        <div role="group" aria-label="Time range" className="flex gap-1">
           {RANGES.map((range) => (
             <Button
               key={range.seconds}
-              variant={range.seconds === rangeSeconds ? "secondary" : "ghost"}
+              variant="ghost"
+              aria-pressed={range.seconds === rangeSeconds}
+              className="telemetry-filter-button"
               size="sm"
               onClick={() => setRangeSeconds(range.seconds)}
             >
@@ -183,24 +199,35 @@ export function ObservabilityStructuredLogsPage({ apps: roster }: { apps: Teleme
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search log body…"
+            aria-label="Search log body"
             className="pl-8"
           />
         </div>
       </div>
 
       {state.error && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
-          {state.error}
-        </div>
+        <RequestError>{state.error}</RequestError>
+      )}
+
+      {showingPrevious && loadedQuery && (
+        <RetainedResults>logs: {loadedResource} · {loadedSeverity} levels · {loadedRange} · {loadedQuery.text ? `search “${loadedQuery.text}”` : "no search"}</RetainedResults>
       )}
 
       {state.loading && records.length === 0 ? (
-        <EmptyState icon={LoaderCircle} title="Loading logs" iconClassName="animate-spin" />
+        <EmptyState icon={ScrollText} title="Loading logs" loading />
+      ) : state.error && records.length === 0 ? (
+        <EmptyState
+          icon={ScrollText}
+          title="Structured logs unavailable"
+          description="Could not load records for the selected filters. Refresh to try again."
+        />
       ) : records.length === 0 ? (
         <EmptyState
           icon={ScrollText}
-          title="No structured logs"
-          description="Records appear for apps that opt into telemetry and export the OpenTelemetry logs signal, with the Telemetry app enabled on the host (Shell platform panel or hosty setup --with hosty.telemetry)."
+          title={displayedSearch ? "No matching logs" : "No structured logs"}
+          description={displayedSearch
+            ? "Try a different search or adjust the filters."
+            : "Records appear for apps that opt into telemetry and export the OpenTelemetry logs signal, with the Telemetry app enabled on the host (Shell platform panel or hosty setup --with hosty.telemetry)."}
         />
       ) : (
         <OtlpLogTable records={records} showSource={showSource} />

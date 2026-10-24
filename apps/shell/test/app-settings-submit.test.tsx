@@ -50,7 +50,7 @@ it.each(["autostart", "app setting", "round trip through Network", "autostart wi
       await render();
       const dialog = document.querySelector('[role="dialog"]')!;
       if (change === "autostart") {
-        await act(async () => dialog.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+        await act(async () => dialog.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click());
       } else {
         await act(async () => activateTab(dialog, "Parameters"));
         const input = dialog.querySelector<HTMLInputElement>("#setting-HOSTY_APP_MODE")!;
@@ -67,7 +67,7 @@ it.each(["autostart", "app setting", "round trip through Network", "autostart wi
       }
       if (change === "autostart with parameter draft") {
         await act(async () => activateTab(dialog, "Launch"));
-        await act(async () => dialog.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+        await act(async () => dialog.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click());
       }
       const save = [...dialog.querySelectorAll<HTMLButtonElement>("button")]
         .find(button => button.textContent === "Save settings")!;

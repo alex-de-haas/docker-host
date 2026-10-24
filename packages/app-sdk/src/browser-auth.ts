@@ -427,7 +427,7 @@ export type AppActivityConfig = {
   probePath?: string;
   activeUntil?: string | null;
   activityRequired?: boolean;
-  exchangeCode: (result: AppSignInResult) => Promise<{ accessToken?: string; activeUntil?: string | null }>;
+  exchangeCode: (result: AppSignInResult, signal?: AbortSignal) => Promise<{ accessToken?: string; activeUntil?: string | null }>;
   /** The root coordinator verifies actor and setup before any waiting request can retry. */
   validateSession?: () => Promise<boolean>;
 };
@@ -463,7 +463,7 @@ export function renewAppActivity(): Promise<void> {
   const popup = openAppSignIn(config.openUrl, controller.signal, config.appAuthProtocol, config.native, config.probePath);
   renewal = popup.then(async proof => {
     if (config.appAuthProtocol === 1 && acceptAppAuthProtocol(new URL(config.openUrl).origin, 1) === null) config.appAuthProtocol = 2;
-    const result = await config.exchangeCode(proof);
+    const result = await config.exchangeCode(proof, controller.signal);
     if (controller.signal.aborted || activityConfig !== config || revision !== grantRevision)
       throw new Error("Sign-in was cancelled.");
     if (result.accessToken) rememberAppGrant(result.accessToken);

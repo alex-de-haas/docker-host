@@ -1,22 +1,28 @@
 #!/usr/bin/env node
 // Hosty brand asset generator.
 //
-// Single source of truth for the Hosty "H-graph" logomark. Writes the SVG
+// Generates the seven-cell Hosty mark from the shared SDK geometry. Writes the SVG
 // masters (assets/hosty-brand/svg/), the browser Shell assets, and the native
 // Swift app icons. It rasterizes every PNG + the multi-size favicon.ico from
-// those SVGs so the whole library stays in sync with one flat color geometry.
+// those SVGs so the whole library stays in sync with the canonical grid.
 //
-//   node assets/hosty-brand/build-assets.mjs
+//   node assets/hosty-brand/build-assets.mjs --web-only
 //
 // Requires `sharp` (already a repo dependency).
 
 import sharp from "sharp";
-import { mkdirSync, writeFileSync, rmSync, readdirSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
+import { CORE_MARK } from "../../packages/app-sdk/src/core-mark-geometry.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BRAND = __dirname; // assets/hosty-brand
+const webOnly = process.argv.includes("--web-only");
+if (process.argv.slice(2).some((argument) => argument !== "--web-only")) {
+  throw new Error("Usage: node assets/hosty-brand/build-assets.mjs [--web-only]");
+}
 const REPO = join(BRAND, "..", "..");
 const SHELL_PUBLIC = join(REPO, "apps", "shell", "public");
 const SWIFT_APP_ICONS = join(
@@ -35,29 +41,19 @@ const C = {
   ink: "#0F1B2D", // dark mark / dark surface
   offWhite: "#F8FAFC", // mark on dark
   white: "#FFFFFF",
-  blue: "#1C68FF", // brand tile
-  cyan: "#28D5E5",
+  lime: CORE_MARK.accent,
+  darkTile: "#22324B",
   darkSurface: "#0F1B2D",
 };
 
 // ---------------------------------------------------------------------------
-// The mark. viewBox 0 0 100 100. Five rounded-square outlined nodes
-// (4 corners + center) wired into the letter "H".
+// The mark. Seven sharp square cells in the shared 100-unit grid.
 // ---------------------------------------------------------------------------
-function markBody(color, sw = 6, cls) {
-  // `color` is kept as a presentation attribute so renderers that ignore
-  // <style> (e.g. the PNG/ICO rasterizer) still get a stroke; an optional
-  // class lets a stylesheet override it (theme-aware favicon).
+function markBody(color, tiled = false, cls) {
+  const { size, gap, inset } = tiled ? CORE_MARK.tile : CORE_MARK.plain;
   const clsAttr = cls ? ` class="${cls}"` : "";
-  return `
-    <g fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"${clsAttr}>
-      <path d="M25 36 V64 M75 36 V64 M25 50 H39 M61 50 H75"/>
-      <rect x="17" y="17" width="16" height="16" rx="4.5"/>
-      <rect x="67" y="17" width="16" height="16" rx="4.5"/>
-      <rect x="17" y="67" width="16" height="16" rx="4.5"/>
-      <rect x="67" y="67" width="16" height="16" rx="4.5"/>
-      <rect x="42" y="42" width="16" height="16" rx="4.5"/>
-    </g>`;
+  return CORE_MARK.cells.flatMap((row, y) => [...row].map((cell, x) => cell === "." ? "" :
+    `<rect x="${inset + x * (size + gap)}" y="${inset + y * (size + gap)}" width="${size}" height="${size}" fill="${cell === "*" ? C.lime : color}"${cell === "*" ? "" : clsAttr}/>`)).join("");
 }
 
 const svg = (vb, inner) =>
@@ -71,7 +67,7 @@ const tile = (bg, color, scale = 1) =>
   svg(
     "0 0 100 100",
     `<rect width="100" height="100" rx="22" fill="${bg}"/>` +
-      `<g transform="translate(50 50) scale(${scale}) translate(-50 -50)">${markBody(color)}</g>`,
+      `<g transform="translate(50 50) scale(${scale}) translate(-50 -50)">${markBody(color, true)}</g>`,
   );
 
 // iOS applies the platform mask itself, so its source artwork is square and
@@ -81,60 +77,48 @@ const platformTile = (bg, color, scale = 1) =>
   svg(
     "0 0 100 100",
     `<rect width="100" height="100" fill="${bg}"/>` +
-      `<g transform="translate(50 50) scale(${scale}) translate(-50 -50)">${markBody(color)}</g>`,
+      `<g transform="translate(50 50) scale(${scale}) translate(-50 -50)">${markBody(color, true)}</g>`,
   );
 
 // Favicon: transparent background, theme-aware via prefers-color-scheme. The
 // mark is ink under a light browser theme (reads on light tab bars) and flips
-// to off-white under a dark theme. The ink presentation attribute mirrors the
+// to white under a dark theme. The ink presentation attribute mirrors the
 // light-theme look, so the rasterized .ico/PNG fallbacks (which can't honor the
-// media query) render a dark mark on transparent.
-const favicon = (scale = 1.16) =>
+// media query) render a dark mark on transparent. Fixed light/dark SVGs let
+// Shell follow a saved app theme without depending on browser media preferences.
+const favicon = (theme = "system", scale = 1.16) =>
   svg(
     "0 0 100 100",
-    `<style>` +
-      `.hosty-mark{stroke:${C.ink}}` +
-      `@media(prefers-color-scheme:dark){.hosty-mark{stroke:${C.offWhite}}}` +
-      `</style>` +
+    (theme === "system" ? `<style>` +
+      `.hosty-mark{fill:${C.ink}}` +
+      `@media(prefers-color-scheme:dark){.hosty-mark{fill:${C.white}}}` +
+      `</style>` : "") +
       `<g transform="translate(50 50) scale(${scale}) translate(-50 -50)">` +
-      markBody(C.ink, 6, "hosty-mark") +
+      markBody(theme === "dark" ? C.white : C.ink, false, theme === "system" ? "hosty-mark" : undefined) +
       `</g>`,
   );
 
-// Horizontal lockup: mark + "Hosty" wordmark, tightly framed.
-//
-// The wordmark is a live <text> element, so glyph widths depend on whichever
-// font in the stack the renderer has installed (Inter is not bundled with this
-// generator). To keep the lockup framing and the committed SVG viewBoxes
-// deterministic across machines/CI, the viewBox is sized from a fixed wordmark
-// width rather than from a per-run measurement. `width` is the measured render
-// of "Hosty" at these type settings (~131px); `pad` carries enough right margin
-// to absorb small per-font differences without clipping.
-const WORDMARK = {
-  fontFamily: "Inter, 'Helvetica Neue', Arial, sans-serif",
-  fontSize: 52,
-  fontWeight: 600,
-  letterSpacing: -1.5,
-  text: "Hosty",
-  width: 132,
-};
+// Outlined IBM Plex Sans 600 paths come from the bundled, licensed font.
+// Rerun outline-wordmark.py after a font change; no installed system font is used.
+const WORDMARK = JSON.parse(readFileSync(join(BRAND, "wordmark.json"), "utf8"));
+const fontBytes = readFileSync(join(REPO, WORDMARK.font));
+if (createHash("sha256").update(fontBytes).digest("hex") !== WORDMARK.sha256) {
+  throw new Error("Wordmark font changed. Regenerate outlines with outline-wordmark.py.");
+}
 const LOCKUP = { markScale: 0.76, markX: 6, gap: 16, pad: 10, height: 100 };
 
 function horizontal(color, bg) {
   const { markScale, markX, gap, pad, height } = LOCKUP;
   const markY = (height - 100 * markScale) / 2;
   const textX = markX + 100 * markScale + gap;
-  const vbWidth = Math.round(textX + WORDMARK.width + pad);
-  const { fontFamily, fontSize, fontWeight, letterSpacing, text } = WORDMARK;
-  const bgEl = bg ? `<rect width="${vbWidth}" height="${height}" fill="${bg}"/>` : "";
-  return svg(
-    `0 0 ${vbWidth} ${height}`,
-    `${bgEl}` +
-      `<g transform="translate(${markX} ${markY}) scale(${markScale})">${markBody(color)}</g>` +
-      `<text x="${textX}" y="${height / 2}" dominant-baseline="central" ` +
-      `font-family="${fontFamily}" font-size="${fontSize}" font-weight="${fontWeight}" ` +
-      `letter-spacing="${letterSpacing}" fill="${color}">${text}</text>`,
-  );
+  const scale = 52 / WORDMARK.unitsPerEm;
+  const width = Math.ceil(textX + WORDMARK.advance * scale + pad);
+  const baseline = height / 2 + (WORDMARK.bounds.yMin + WORDMARK.bounds.yMax) * scale / 2;
+  const bgEl = bg ? `<rect width="${width}" height="${height}" fill="${bg}"/>` : "";
+  return svg(`0 0 ${width} ${height}`, `${bgEl}` +
+    `<g transform="translate(${markX} ${markY}) scale(${markScale})">${markBody(color)}</g>` +
+    `<g fill="${color}" transform="translate(${textX} ${baseline}) scale(${scale} ${-scale})">` +
+    WORDMARK.glyphs.map(({ x, path }) => `<path transform="translate(${x} 0)" d="${path}"/>`).join("") + `</g>`);
 }
 
 // ---------------------------------------------------------------------------
@@ -145,13 +129,15 @@ const SVG_DIR = join(BRAND, "svg");
 function buildMasters() {
   return {
     "hosty-mark-light.svg": markOnly(C.ink), // dark mark for light backgrounds
-    "hosty-mark-dark.svg": markOnly(C.offWhite), // light mark for dark backgrounds
-    "hosty-icon-brand.svg": tile(C.blue, C.offWhite),
-    "hosty-icon-light.svg": tile(C.white, C.ink),
-    "hosty-icon-dark.svg": tile(C.ink, C.offWhite),
+    "hosty-mark-dark.svg": markOnly(C.white), // light mark for dark backgrounds
+    "hosty-icon-brand.svg": tile(C.ink, C.white),
+    "hosty-icon-light.svg": tile(C.ink, C.white),
+    "hosty-icon-dark.svg": tile(C.ink, C.white),
     "hosty-favicon.svg": favicon(),
+    "hosty-favicon-light.svg": favicon("light"),
+    "hosty-favicon-dark.svg": favicon("dark"),
     "hosty-logo-horizontal-light.svg": horizontal(C.ink),
-    "hosty-logo-horizontal-dark.svg": horizontal(C.offWhite),
+    "hosty-logo-horizontal-dark.svg": horizontal(C.white),
     "hosty-logo-horizontal-on-white.svg": horizontal(C.ink, C.white),
   };
 }
@@ -267,37 +253,42 @@ async function run() {
   // App-facing assets in the shell.
   mkdirSync(SHELL_PUBLIC, { recursive: true });
   writeFileSync(join(SHELL_PUBLIC, "favicon.svg"), favSvg);
+  writeFileSync(join(SHELL_PUBLIC, "favicon-light.svg"), masters["hosty-favicon-light.svg"]);
+  writeFileSync(join(SHELL_PUBLIC, "favicon-dark.svg"), masters["hosty-favicon-dark.svg"]);
   writeFileSync(join(SHELL_PUBLIC, "favicon.ico"), ico);
   writeFileSync(join(SHELL_PUBLIC, "apple-touch-icon.png"), await png(masters["hosty-icon-brand.svg"], 180));
 
-  // Native app icons. iOS gets explicit light, dark, and tinted variants; macOS gets the existing
-  // rounded brand tile at every catalog size because macOS does not apply the iOS icon mask.
-  mkdirSync(SWIFT_APP_ICONS, { recursive: true });
-  for (const file of readdirSync(SWIFT_APP_ICONS)) {
-    if (file.startsWith("HostyAppIcon-") && file.endsWith(".png")) {
-      rmSync(join(SWIFT_APP_ICONS, file));
+  if (!webOnly) {
+    // Native app icons. iOS gets explicit light, dark, and tinted variants; macOS gets the existing
+    // rounded brand tile at every catalog size because macOS does not apply the iOS icon mask.
+    mkdirSync(SWIFT_APP_ICONS, { recursive: true });
+    for (const file of readdirSync(SWIFT_APP_ICONS)) {
+      if (file.startsWith("HostyAppIcon-") && file.endsWith(".png")) {
+        rmSync(join(SWIFT_APP_ICONS, file));
+      }
     }
-  }
 
-  writeFileSync(
-    join(SWIFT_APP_ICONS, "HostyAppIcon-iOS.png"),
-    await opaquePng(platformTile(C.blue, C.offWhite), 1024),
-  );
-  writeFileSync(
-    join(SWIFT_APP_ICONS, "HostyAppIcon-iOS-dark.png"),
-    await opaquePng(platformTile(C.ink, C.offWhite), 1024),
-  );
-  writeFileSync(
-    join(SWIFT_APP_ICONS, "HostyAppIcon-iOS-tinted.png"),
-    await opaquePng(platformTile(C.white, C.ink), 1024),
-  );
-
-  for (const [points, scale] of MAC_APP_ICON_SLOTS) {
-    const pixels = points * scale;
     writeFileSync(
-      join(SWIFT_APP_ICONS, `HostyAppIcon-mac-${points}@${scale}x.png`),
-      await png(masters["hosty-icon-brand.svg"], pixels),
+      join(SWIFT_APP_ICONS, "HostyAppIcon-iOS.png"),
+      await opaquePng(platformTile(C.ink, C.white), 1024),
     );
+    writeFileSync(
+      join(SWIFT_APP_ICONS, "HostyAppIcon-iOS-dark.png"),
+      await opaquePng(platformTile(C.ink, C.offWhite), 1024),
+    );
+    writeFileSync(
+      join(SWIFT_APP_ICONS, "HostyAppIcon-iOS-tinted.png"),
+      await opaquePng(platformTile(C.white, C.ink), 1024),
+    );
+
+    for (const [points, scale] of MAC_APP_ICON_SLOTS) {
+      const pixels = points * scale;
+      writeFileSync(
+        join(SWIFT_APP_ICONS, `HostyAppIcon-mac-${points}@${scale}x.png`),
+        await png(masters["hosty-icon-brand.svg"], pixels),
+      );
+    }
+
   }
 
   // Preview contact sheet.
@@ -320,7 +311,7 @@ async function run() {
     .png()
     .toFile(join(BRAND, "preview.png"));
 
-  console.log("Brand assets generated.");
+  console.log(`Brand assets generated${webOnly ? " (web only; native icons preserved)" : ""}.`);
 }
 
 run().catch((e) => {

@@ -77,14 +77,14 @@ export function PreviewChecks({ workspaceId, environmentId, appId, refresh, comp
       {opened && <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => setOpened(false)}>Hide checks</Button>}
     </div>}
     {busy && <p role="status" className="flex items-center gap-2"><HostyLoader label={null} className="size-3.5" />Working… Source and sandbox data are retained.</p>}
-    {error && <p role="alert" className="text-destructive">{error}</p>}
+    {error && <p role="alert" className="text-destructive-foreground">{error}</p>}
     {logs !== null && <details open><summary>Service logs snapshot · last 80 lines per service</summary><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all">{logs}</pre></details>}
     {opened && <div className="space-y-2 rounded border p-2">
       <p>Optional checks. Readiness and browser verification are separate.</p>
       {checks && <p>Readiness: {checks.readiness?.status ?? "unknown"}{checks.observedAt ? ` · ${new Date(checks.observedAt).toLocaleTimeString()}` : ""}</p>}
       {checks?.readinessError && <p role="status">{checks.readinessError}</p>}
       {checks?.message && <p>{checks.message}</p>}
-      {!checks && !error && <p>Reading check recipes…</p>}
+      {!checks && !error && !busy && <p role="status" className="flex items-center gap-2"><HostyLoader label={null} className="size-3.5 shrink-0" />Reading check recipes…</p>}
       {checks?.checks.map(check => <div key={check.id} className="space-y-1 border-t pt-2">
         <p className="font-medium">{check.id} · {check.state.replaceAll("_", " ")}</p>
         <p>Service: {check.service} · Folder: {check.recipe.cwd} · Timeout: {check.recipe.timeoutSeconds}s</p>

@@ -16,6 +16,7 @@ const PREFIX = "hosty.assistant.draft.";
 
 /** Long enough for any real message; short enough that local storage cannot be filled from the box. */
 const MAX_DRAFT_CHARS = 32_000;
+export function draftStorageText(text: string): string { return text.trim() ? text.slice(0, MAX_DRAFT_CHARS) : ""; }
 
 /**
  * Reads, writes and clears are each guarded.
@@ -35,7 +36,7 @@ export function readDraft(sessionId: string, initial = ""): string {
 export function writeDraft(sessionId: string, text: string): void {
   try {
     if (text.trim()) {
-      window.localStorage.setItem(PREFIX + sessionId, text.slice(0, MAX_DRAFT_CHARS));
+      window.localStorage.setItem(PREFIX + sessionId, draftStorageText(text));
     } else {
       // An emptied box is a decision too: leaving the old text behind would resurrect something the
       // operator deliberately cleared.
@@ -52,6 +53,7 @@ export function clearDraft(sessionId: string): void {
     window.localStorage.removeItem(PREFIX + sessionId);
     window.localStorage.removeItem(MENTION_DRAFT_PREFIX + sessionId);
     window.localStorage.removeItem("hosty.assistant.attachments." + sessionId);
+    window.localStorage.removeItem("hosty.assistant.pending-send." + sessionId);
   } catch {
     // Ignored for the same reason.
   }
@@ -68,7 +70,7 @@ export function pruneDrafts(liveSessionIds: readonly string[]): void {
     const live = new Set(liveSessionIds);
     for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
       const key = window.localStorage.key(index);
-      const prefix = key?.startsWith(PREFIX) ? PREFIX : key?.startsWith(MENTION_DRAFT_PREFIX) ? MENTION_DRAFT_PREFIX : key?.startsWith("hosty.assistant.attachments.") ? "hosty.assistant.attachments." : null;
+      const prefix = key?.startsWith(PREFIX) ? PREFIX : key?.startsWith(MENTION_DRAFT_PREFIX) ? MENTION_DRAFT_PREFIX : key?.startsWith("hosty.assistant.attachments.") ? "hosty.assistant.attachments." : key?.startsWith("hosty.assistant.pending-send.") ? "hosty.assistant.pending-send." : null;
       if (key && prefix && !live.has(key.slice(prefix.length))) {
         window.localStorage.removeItem(key);
       }

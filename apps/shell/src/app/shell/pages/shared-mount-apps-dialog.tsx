@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { Check, LoaderCircle, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Frame, FrameHeader, FramePanel } from "@/components/reui/frame";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import type { CoreApp, CoreGlobalMount } from "../types";
@@ -47,16 +49,12 @@ export function SharedMountAppsDialog({ mount, apps, onSave, onRefresh, onReload
 
   return <Dialog open onOpenChange={open => !open && !busy && onClose()}>
     <DialogContent className="sm:max-w-3xl" showCloseButton={!busy}>
-      <DialogHeader>
-        <DialogTitle>Apps using {mount.name}</DialogTitle>
+      <DialogHeader className="text-left">
+        <DialogTitle className="break-words pr-6 text-base leading-6">Apps using {mount.name}</DialogTitle>
         <DialogDescription>Choose where this folder is attached. Running apps need a restart to apply changes.</DialogDescription>
         <p className="break-all font-mono text-xs text-muted-foreground">{mount.hostPath}</p>
       </DialogHeader>
-      <DialogBody className="space-y-3">
-        <div className="relative">
-          <Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" />
-          <Input aria-label="Search apps" placeholder="Search apps" className="pl-9" value={query} onChange={event => setQuery(event.target.value)} disabled={busy} />
-        </div>
+      <DialogBody className="flex flex-col gap-4">
         {refreshError && <p role="alert" className="text-sm text-destructive-foreground">{refreshError}</p>}
         {results.some(result => result.error) && <p role="alert" className="text-sm text-warning-foreground">Some bindings could not be saved. Successful changes are kept; retry saves only the remaining changes. Reload assignments to review conflicting edits; this resets unsaved selections.</p>}
         {errors.size > 0 && <Button variant="outline" size="sm" disabled={busy} onClick={async () => {
@@ -64,33 +62,43 @@ export function SharedMountAppsDialog({ mount, apps, onSave, onRefresh, onReload
           try { await onReload(); } catch { setRefreshError("Assignments could not be reloaded. Try again."); setBusy(false); }
         }}>Reload assignments</Button>}
         {errors.size > 0 && query && <p className="text-xs text-muted-foreground">Clear the search to see all save errors.</p>}
-        {visible.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">{reviewedApps.length ? "No matching apps." : "No installed apps declare shared folder slots."}</p>}
-        {visible.map(app => <section key={app.id} className="rounded-lg border p-3" aria-label={app.displayName}>
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <div><p className="text-sm font-medium">{app.displayName}</p><p className="text-xs text-muted-foreground">{app.id}</p></div>
-            {results.some(result => result.change.appId === app.id && !result.error) && <span className="flex items-center gap-1 text-xs text-success-foreground"><Check className="size-3" />Saved</span>}
-          </div>
-          {(app.mounts ?? []).map(slot => {
-            const checked = selected[app.id]?.includes(slot.key) ?? false;
-            const conflict = mountSlotConflict(slot, mount.name);
-            const removingRequired = slot.required && !checked && baseline[app.id]?.includes(slot.key) && !slot.bindings.some(binding => binding.globalMountName !== mount.name);
-            return <label key={slot.key} className="flex items-start gap-3 rounded-md px-1 py-2 text-sm">
-              <input type="checkbox" className="mt-1 size-4 shrink-0 accent-foreground" checked={checked} disabled={busy || Boolean(conflict && !checked)}
-                aria-label={`${app.displayName}: ${slot.key}`} onChange={event => {
-                  const checked = event.target.checked;
-                  setSelected(current => ({ ...current, [app.id]: checked ? [...(current[app.id] ?? []), slot.key] : (current[app.id] ?? []).filter(key => key !== slot.key) }));
-                  setResults(current => current.filter(result => result.change.appId !== app.id));
-                }} />
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1"><span>{slot.key}{slot.required && <span className="ml-2 text-xs text-muted-foreground">Required</span>}</span><span className="text-xs text-muted-foreground">{sharedMountMode(slot, mount) === "ro" ? "Read only" : "Read & write"}{slot.service ? ` · ${slot.service}` : ""}</span></span>
-                <span className="mt-0.5 block break-all font-mono text-xs text-muted-foreground">{sharedMountPath(app, slot, mount)}</span>
-                {conflict && <span className="mt-1 block text-xs text-warning-foreground">{conflict}</span>}
-                {removingRequired && <span className="mt-1 block text-xs text-warning-foreground">This app cannot start until its required slot has a folder.</span>}
-              </span>
-            </label>;
-          })}
-          {errors.has(app.id) && <p role="alert" className="mt-2 text-sm text-destructive-foreground">{errors.get(app.id)}</p>}
-        </section>)}
+        <Frame>
+          <FrameHeader>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input aria-label="Search apps" placeholder="Search apps" className="pl-9" value={query} onChange={event => setQuery(event.target.value)} disabled={busy} />
+            </div>
+          </FrameHeader>
+          <FramePanel className="divide-y py-0">
+            {visible.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">{reviewedApps.length ? "No matching apps." : "No installed apps declare shared folder slots."}</p>}
+            {visible.map(app => <section key={app.id} className="py-4" aria-label={app.displayName}>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0"><h3 className="break-words text-sm font-medium">{app.displayName}</h3><p className="break-all text-xs text-muted-foreground">{app.id}</p></div>
+                {results.some(result => result.change.appId === app.id && !result.error) && <span className="flex items-center gap-1 text-xs text-success-foreground"><Check className="size-3" />Saved</span>}
+              </div>
+              {(app.mounts ?? []).map(slot => {
+                const checked = selected[app.id]?.includes(slot.key) ?? false;
+                const conflict = mountSlotConflict(slot, mount.name);
+                const removingRequired = slot.required && !checked && baseline[app.id]?.includes(slot.key) && !slot.bindings.some(binding => binding.globalMountName !== mount.name);
+                return <label key={slot.key} className="flex items-start gap-3 rounded-md px-2 py-3 text-sm hover:bg-accent">
+                  <Checkbox className="mt-1" checked={checked} disabled={busy || Boolean(conflict && !checked)}
+                    aria-label={`${app.displayName}: ${slot.key}`} onCheckedChange={value => {
+                      const checked = value === true;
+                      setSelected(current => ({ ...current, [app.id]: checked ? [...(current[app.id] ?? []), slot.key] : (current[app.id] ?? []).filter(key => key !== slot.key) }));
+                      setResults(current => current.filter(result => result.change.appId !== app.id));
+                    }} />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1"><span>{slot.key}{slot.required && <span className="ml-2 text-xs text-muted-foreground">Required</span>}</span><span className="text-xs text-muted-foreground">{sharedMountMode(slot, mount) === "ro" ? "Read only" : "Read & write"}{slot.service ? ` · ${slot.service}` : ""}</span></span>
+                    <span className="mt-0.5 block break-all font-mono text-xs text-muted-foreground">{sharedMountPath(app, slot, mount)}</span>
+                    {conflict && <span className="mt-1 block text-xs text-warning-foreground">{conflict}</span>}
+                    {removingRequired && <span className="mt-1 block text-xs text-warning-foreground">This app cannot start until its required slot has a folder.</span>}
+                  </span>
+                </label>;
+              })}
+              {errors.has(app.id) && <p role="alert" className="mt-2 text-sm text-destructive-foreground">{errors.get(app.id)}</p>}
+            </section>)}
+          </FramePanel>
+        </Frame>
       </DialogBody>
       <DialogFooter className="items-center sm:justify-between">
         <p className="text-xs text-muted-foreground">{changes.length} app{changes.length === 1 ? "" : "s"} to change</p>

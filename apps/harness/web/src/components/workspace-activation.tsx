@@ -177,7 +177,7 @@ export function WorkspaceActivation({ workspaceId, apps, disabled, canUse = true
     {busy && <p role="status" className="flex items-center gap-2 text-xs"><HostyLoader label={null} className="size-3.5" />{pending?.appId ? `Switching ${apps.find(app => app.appId === pending.appId)?.name || pending.appId}…` : "Switching applications…"}</p>}
     {result?.state === "completed" && <p role="status" className="text-xs text-muted-foreground">{result.apps.length === 1 ? "Application switched." : "Applications switched."}</p>}
     {approvalLink && <a className="block text-xs underline" href={approvalLink} target="_blank" rel="noreferrer">Open Core access confirmation</a>}
-    {(error || result?.error) && <p role="alert" className="text-xs text-destructive">{error || result?.error}</p>}
+    {(error || result?.error) && <p role="alert" className="text-xs text-destructive-foreground">{error || result?.error}</p>}
     {problems.length > 0 && <ul className="space-y-1 text-xs">{problems.map(app => <li key={app.appId}>
       {apps.find(item => item.appId === app.appId)?.name || app.appId}: {app.error || (app.state === "review-required" ? "Additional access requires approval in Core." : app.state)}
       {app.state === "review-required" && app.review && <Button size="sm" variant="link" disabled={reviewing || busy || pending?.kind === "workspace" && !canUse} onClick={() => void reviewAccess(app.review!)}>Review access</Button>}

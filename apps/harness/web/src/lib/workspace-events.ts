@@ -1,5 +1,5 @@
 "use client";
-import { appFetch } from "@hosty-sdk/app/browser-auth";
+import { openEventStream } from "./event-stream";
 
 type Listener = { sync: () => Promise<void | boolean>; unavailable: () => void; running: boolean; queued: boolean; disposed: boolean; retry?: ReturnType<typeof setTimeout>; retryDelay: number };
 const connections = new Map<string, ReturnType<typeof connection>>();
@@ -59,7 +59,7 @@ function connection(url: string) {
     let fallback = false;
     touch();
     try {
-      const response = await appFetch(url, { signal: active.signal, cache: "no-store", headers: { Accept: "text/event-stream" } });
+      const response = await openEventStream(url, { signal: active.signal });
       if (response.status === 404 || response.status === 405) {
         // Independently upgraded clients still read older Core versions. Periodic capability
         // probes do not reload snapshots; entry, manual refresh and visibility restore do.
@@ -69,7 +69,7 @@ function connection(url: string) {
         await response.body?.cancel().catch(() => {});
         return;
       }
-      legacy = false; ready = false;
+      ready = false;
       if (!response.ok || !response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
         await response.body?.cancel().catch(() => {});
         throw new Error("Workspace stream unavailable");
@@ -85,7 +85,14 @@ function connection(url: string) {
             const frame = buffer.slice(0, boundary); buffer = buffer.slice(boundary + 2);
             const event = frame.split("\n").find(line => line.startsWith("event:"))?.slice(6).trim();
             if (event === "stream.revoked") throw new Error("Workspace access ended");
-            if (event === "stream.ready") { ready = true; delay = 1000; changed(); }
+            if (event === "stream.unsupported") {
+              // The socket bridge preserves an older Core's explicit 404/405 capability result.
+              fallback = true; ready = true; delay = 1000;
+              if (!legacy) changed();
+              legacy = true;
+              return;
+            }
+            if (event === "stream.ready") { legacy = false; ready = true; delay = 1000; changed(); }
             else if (event === "workspace.changed" && ready) changed();
           }
         }

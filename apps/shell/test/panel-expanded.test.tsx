@@ -32,7 +32,7 @@ function Shell({ initialOpen, link }: { initialOpen: boolean | null; link: boole
   return <>
     <ShellTopStrip title="Plans" navigationWidth={60} leftRailExpanded={false} onToggleLeftRail={() => {}}
       rightRailExpanded={expanded} onToggleRightRail={() => panelHost?.setExpanded(!expanded)} showNotifications={false} onBrandClick={() => {}} />
-    <ShellMobileTabs active="dashboard" canManage onNavigate={() => {}} />
+    <ShellMobileTabs active="dashboard" canManage onNavigate={() => {}} onOpenApps={() => {}} />
     <ShellPanelWorkspace onExpandedChange={persisted}><div>Document<input aria-label="Document draft" defaultValue="" /></div></ShellPanelWorkspace>
   </>;
 }
@@ -296,5 +296,56 @@ it("retains page drafts and the same selected tool through the 599/600 phone bou
     }
     await act(async () => host!.collapseWorkspace("default"));
     expect(container.querySelector('iframe[title="assistant"]')).toBe(frame); expect(draft.value).toBe("Unsaved document text");
+  } finally { Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth }); }
+});
+
+it("changes only the selected tool presentation through Open views while retaining both frames", async () => {
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+  await render(false);
+  await act(async () => { await host!.selectPanel(panels[1].panel); });
+  const firstId = host!.getSnapshot().tools[0].presentationId;
+  await act(async () => { await host!.openSurface({ panel: panels[1].panel }, { placement: "side", reuse: "new", requestId: createPresentationRequestId() }); });
+  const frames = [...container.querySelectorAll<HTMLIFrameElement>('iframe[title="assistant"]')];
+  expect(frames).toHaveLength(2);
+  const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Tool instance"]')!;
+  expect(trigger.getAttribute("role")).toBe("combobox");
+  expect(trigger.textContent).toBe("assistant 2");
+  const requests = vi.mocked(fetch).mock.calls.length;
+  await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+  const first = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(node => node.textContent === "assistant 1")!;
+  await act(async () => first.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  expect(host!.getSnapshot().workspaces?.find(item => item.workspaceId === "default")?.selectedId).toBe(firstId);
+  expect(trigger.textContent).toBe("assistant 1");
+  expect([...container.querySelectorAll('iframe[title="assistant"]')]).toEqual(frames);
+  expect(frames[0].closest('[data-shell-panel-frame]')?.hasAttribute("hidden")).toBe(false);
+  expect(frames[1].closest('[data-shell-panel-frame]')?.hasAttribute("hidden")).toBe(true);
+  expect(vi.mocked(fetch).mock.calls).toHaveLength(requests);
+});
+
+it("closes the portaled Open views menu before Escape dismisses the narrow tool sheet", async () => {
+  const originalWidth = window.innerWidth;
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+  try {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 600 });
+    await render(false);
+    await act(async () => { await host!.selectPanel(panels[1].panel); });
+    await act(async () => { await host!.openSurface({ panel: panels[1].panel }, { placement: "side", reuse: "new", requestId: createPresentationRequestId() }); });
+    const selectedId = host!.getSnapshot().workspaces?.find(item => item.workspaceId === "default")?.selectedId;
+    const frames = [...container.querySelectorAll('iframe[title="assistant"]')];
+    const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Tool instance"]')!;
+    expect(container.querySelector('aside[role="dialog"]')?.hasAttribute("hidden")).toBe(false);
+    await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+    const option = document.querySelector<HTMLElement>('[role="option"]')!;
+    expect(option).not.toBeNull();
+    expect(container.querySelector("aside")?.contains(option)).toBe(false);
+    await act(async () => option.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+    expect(document.querySelector('[role="listbox"]')).toBeNull();
+    expect(container.querySelector('aside[role="dialog"]')?.hasAttribute("hidden")).toBe(false);
+    expect(host!.getSnapshot().workspaces?.find(item => item.workspaceId === "default")).toMatchObject({ expanded: true, selectedId });
+    expect([...container.querySelectorAll('iframe[title="assistant"]')]).toEqual(frames);
+    await act(async () => { await vi.waitFor(() => expect(document.activeElement).toBe(trigger)); });
+    await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+    expect(host!.getSnapshot().expanded).toBe(false);
+    expect([...container.querySelectorAll('iframe[title="assistant"]')]).toEqual(frames);
   } finally { Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth }); }
 });

@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-10-12
-updated: 2026-10-23
+updated: 2026-10-24
 summary: Remaining Hosty design implementation, acceptance gates and separately reviewed Core/SDK contracts, with stable deliverable IDs.
 components: [apps/shell, apps/shell-swift, packages/app-sdk, apps/core, apps/harness, assets/hosty-brand, apps/plans, apps/telemetry, apps/telemetry-ui, apps/demo-app, apps/marketplace, apps/whisper]
 ---
@@ -18,8 +18,8 @@ beside an agent and to a phone.
 ## Implementation Approval And Review Workspace (2026-10-21)
 
 The owner approved incremental implementation against the supplied design, with Shell, Harness and
-Marketplace using the registered redesign workspace on the current Core for live review. Keep all
-changes uncommitted while the owner reviews and clarifies the result. Match the artboards closely,
+Marketplace using the registered redesign workspace on the current Core for live review. The initial review kept changes uncommitted while the owner clarified the result. The owner
+authorized a checkpoint commit on 2026-10-23; later implementation remains separately reviewable. Match the artboards closely,
 but preserve every supported capability and action: relocation into a menu, dialog or another
 appropriate surface is allowed; removal is not. A rare exception requires an explicit owner decision,
 not an inference from missing mockup content. Unsettled interactions stay open and retain their
@@ -57,11 +57,11 @@ app-management contracts without a new Core/SDK/manifest or permission change.
 
 | Work class | Deliverables | Boundary |
 | --- | --- | --- |
-| Remaining implementation using established contracts | D1, D3–D6, D8–D10, D14, D18, D19, D31, D33, D38, D41 | Completed foundations, seven runtime icons and existing screen layouts are not repeated. D4/D14 depend on D39; D18 depends on its role-data owner; D38 retains the scope decision below. |
+| Remaining implementation using established contracts | D3–D6, D8, D10, D14, D18, D19, D38 | Completed foundations, seven runtime icons and existing screen layouts are not repeated. D4/D14 depend on D39; D18 depends on its role-data owner; D38 retains the scope decision below. |
 | Contracts and dependent work | D15, D34–D37, D39 | Record timing, data, identity and authority semantics before dependent implementation; preserve explicit unavailable/refused states meanwhile. |
 | Acceptance of implemented behavior | D7, D12, D13, D16, D17, D20–D30 | Verify the existing surfaces and their recovery/permission/device matrix. D17's cross-device part depends on D15; D23/D25 retain the limits owned by D36/D37. |
 | Remaining design references | D32 | Prepare and review the missing variants; new page implementation requires concrete scope. |
-| Implemented and verified baseline | D2, D11, D40 | Keep the recorded foundations and compact bound-app refinement; broader functional, provider and device acceptance remains in D20/D21/D26. |
+| Implemented and verified baseline | D1, D2, D5, D9, D11, D31, D33, D40–D48 | Keep the recorded foundations, scoped SDK chrome, credential grid and compact bound-app refinement; broader functional, provider and device acceptance remains in its own deliverables. |
 
 The remaining acceptance baseline includes Core-managed Shell embedding, normal password identity,
 light/dark and narrow layouts, protected-flow recovery, real mobile keyboards and the required
@@ -90,11 +90,742 @@ not new implementation tasks or evidence that whole-screen acceptance has passed
   original-baseline Return, factual success and understandable confirmation/progress. One metadata
   GET supplies the menu; reopening refreshes it, with recovery entries only when needed.
 
-D41 records the still-unfixed linked-PR summary problem reported for #631. It is separate from
+D41 resolves the linked-PR summary problem reported for #631, with display-only branch handling. It is separate from
 D36's historical original-source review extension and does not authorize weaker mutation evidence.
 Existing unchecked screen items still require their stated acceptance; the completed local/macOS
 checks are not evidence for the full provider/mobile/platform matrix. Full SDK isolation and generic
 Core/UI/provider contracts stay in their separately owned plans, with their existing approval status.
+
+## Real GitHub Acceptance And Demo Adoption (Owner Direction, 2026-10-24)
+
+The owner authorizes real-provider Harness acceptance on a separate disposable GitHub PR and
+fixes for demonstrated problems. The test may create its own fixture branches and commits,
+open a draft PR and exercise new review comments, replies and resolution. These test-only
+operations do not authorize publishing or committing the aggregate redesign, merging the test PR,
+copying provider credentials into another Core or changing unrelated live applications.
+
+Demo App adoption is reopened under D4/D5/D6/D19: apply the approved shared web theme, local
+fonts, app chart accents, navigation artwork and controls while preserving all existing SDK
+identity, role, settings, panel/overlay and composition examples. Verify in a Core-managed child
+with separate normal setup/login and data. Swift/native, Plans, Shell structure and Dashboard
+remain frozen. Earlier Demo deferrals below describe the preceding batches only.
+
+## Resumed Real GitHub Acceptance (Owner Direction, 2026-10-24)
+
+The owner requests completion of the remaining Harness checks against a disposable real GitHub PR,
+with Swift/native, Plans, Shell structure and Dashboard frozen. The owner separately approves
+reopening draft PR #649 and closing it again without merge after the tests. Preserve all previous
+acceptance evidence, existing selected GitHub credentials and exact workspace/source ownership.
+Do not transfer an external workspace into an arbitrary conversation to enable Ask. A genuinely
+Harness-owned fixture is required for enabled Ask acceptance. The owner also approves using Chrome
+for embedded interaction checks and creating one additional Harness-owned disposable workspace/draft
+PR, with one bounded test model request for synthetic README edits. Close that PR after acceptance,
+without merge or publishing the aggregate redesign. Use ordinary Chrome sign-in; do not transfer
+browser credentials from the in-app browser.
+
+
+Source review identifies a fresh-authority gap in reply/resolution: local role/source binding can
+change while provider reads are pending, but those commands do not repeat new-comment's admission
+check immediately before mutation. Correct this race under D49 with isolated saved-state revocation
+regressions and preserved durable command recovery. Ordinary GitHub connections, app grants and
+operator roles are not revoked for live QA. D37's mixed-account source validation remains separately
+tracked; this correction does not weaken its current explicit refusal. Apply any Core fix to the
+ordinary instance only after exact-project builds/tests and separately authorized lifecycle action.
+
+The resumed #649 browser checks confirm unsent comment text survives Close, Back, scope changes and a full reload,
+and external-workspace Ask remains disabled. Explicit Close loses keyboard focus to the page body;
+the scoped correction restores the New comment trigger only for dismissal, verified through the live UI, preserving confirmed-post
+Ask focus and late-confirmation guards. A red regression reproduces the loss; 53 affected Harness
+UI tests, targeted ESLint and web TypeScript pass. Harness advances 0.67.2 → 0.67.3; Core's separate
+D49 correction advances 0.152.0 → 0.152.1. The tested Harness 0.67.3 static export is applied with its served HTML hash verified. Core 0.152.1 is applied after the owner's explicit restart consent, from the same registered project/data root with --keep-apps. The first detached replacement disappeared after its launch command ended; recovery keeps its launch session alive. Instance 3734:639284359092728250 is ready and five previously running apps remain running. The CLI's fresh isolated builds report four existing warnings; the earlier affected-test build reported none.
+
+The new Harness-owned fixture exposes a Codex adapter defect: file-change approval parameters omit the proposal, which arrives in the preceding item event. Harness currently persists null changes and cannot show the exact patch. D50 retains scoped proposals before approval persistence; no wider authority or approval bypass is allowed. The particular pending fixture patch was independently verified as README-only from its own native rollout before any approval.
+
+### Resumed Provider Evidence (2026-10-24)
+
+The authorized bounded model turn creates draft PR #650 from its own registered Harness session
+68fdc829-6815-45ea-8df0-6cfe2b008502 and tree a8eccefa9158befa69ff17223f3c9e957d069a67ce59112ebea1b5e0d96214da.
+The public head 00b4ee4942bf9788819b7ed4cd1e669a8af3d6ec changes only README.md: two replacement hunks,
+six additions/four deletions with 83 unchanged lines between locations. The fixture run stops idle
+and releases its lease; no aggregate redesign is committed or published.
+
+Normal Chrome Core sign-in and the Shell preview support actual embedded Harness controls after
+Core replacement and reopening the app. A full Shell reload reproduces a blank embedded Harness frame; normal navigation to another app
+and back restores the same authenticated session without another Core restart. Marketplace also
+reaches silent sign-in staging or the explicit sign-in card, so this is not proven to be the Harness
+review transport. Keep interrupted silent sign-in/frame reload recovery open under D21; no SDK
+staging fix, browser-tool cause or permission bypass is claimed.
+
+- PR #650: CI 22/22 (five passed, seventeen skipped); PR #649: CI 42/42 (ten passed, thirty-two skipped).
+- Same-side LEFT 29–30 posts in Unified; RIGHT 29–31 posts in Split. Cross-side and cross-hunk
+  posting is disabled with a clear reason. Both root comments and the single reply retain exact
+  author/time/link metadata and appear once on GitHub.
+- Back restores the review entry's focus. Viewed survives reopening. Unsent comment text survives
+  Close, Back, scope changes and reload; reply text survives Close/reopening.
+- Ask appends a structured mixed-side reference to existing conversation text, returns and focuses
+  the composer without sending. Optional Ask after confirmed comment appends its thread reference
+  to that same retained draft and does not start another model turn.
+- Reply and both Resolve actions succeed through Core 0.152.1. Independent GitHub reads confirm
+  two resolved threads, three comments and exact LEFT/RIGHT start/end coordinates.
+- A reversible local-only README marker in the separately owned #649 tree is striped against its
+  exact published head in Unified and Split; working coordinates cannot be posted. Its original
+  bytes and clean tree are restored, HEAD is unchanged and the temporary lease is released.
+- PRs #649 and #650 are closed without merge. Test source branches remain preserved.
+- Closed PR refresh disables comment/reply actions while retaining readable resolved threads.
+  GitHub's retained draft flag exposed two misleading labels: review scope and compact Publication.
+  Both now prefer confirmed closed/merged state; open draft and outcome/release wording are preserved.
+  Red regressions reproduce the cases; 74 related review tests and seven compact-workspace tests pass.
+- The fixture owner's normal compact UI confirms an empty Uncommitted changes view and No active
+  leases at the unchanged #650 head. External MCP ownership was not bypassed to inspect that tree.
+
+D50 reproduces both the real missing-proposal protocol shape and late duplicate revival as red
+tests. The final correction passes 66 affected tests, then all 1,483 final Harness tests across 144 files,
+full Harness lint/TypeScript, the Next.js production export and version/diff checks. The final served
+HTML SHA-256 matches the verified export; both corrected Closed labels are confirmed through Chrome. API listener and fixture idle state are
+unchanged by source edits. The owner separately authorizes a Harness-only restart and one additional proposal-only model turn.
+The new Harness API listener is 16146 (previously 78193), health is ready and the Core instance
+3734:639284359092728250 remains unchanged. The real approval now shows the exact fixture README
+path and unified A3 replacement hunk. Its durable receipt retains that same proposal before any
+decision. The operator explicitly denies it; the model stops without tool execution, retries or
+fallback writes. Worker exit is confirmed, the session returns idle and actual workspace leases
+are empty. The owner's fresh Uncommitted changes view is empty; Git HEAD and the original README
+A3 line remain unchanged. PR #650 remains closed/unmerged at its original head. This completes D50. D21–D25 retain their broader
+historical-source, mixed-account, device and permission coverage; this scoped pass does not
+silently close those umbrella gates.
+
+## Marketplace And App Details Acceptance (Owner Direction, 2026-10-24)
+
+The owner approves final acceptance of the implemented Marketplace and App Details under D28/D30,
+including fixes for reproduced defects. Preserve Shell navigation/structure and Dashboard, native
+apps/Swift and Plans. Keep current page layouts and supported capabilities; no new role, activity,
+source, lifecycle or observation contract is authorized by this pass. Verify normal Core-managed
+embedding and standalone entry, light/dark/narrow layouts, keyboard/focus, independent unsaved
+forms, stale/error/expiry/revocation recovery and reviewed installation/configuration operations
+with disposable users, catalog data, app data and folders. Do not copy ordinary provider credentials.
+
+Investigate deferred Install discovery after authority loss, catalog-source conflict recovery,
+App Details draft reconciliation, app-scoped secret reveal and late cancellation of protected
+reviews. Reproduce each accepted finding before fixing it and retain separate save/read errors.
+A stale response must neither reveal another app's value nor settle a newer review or clear a
+newer draft. Existing server authority and Core confirmation remain required.
+
+The ordinary Core was stopped at entry. The owner separately approves starting the same dev Core
+from this registered worktree with `/Users/haas/.hosty`; its retained launch session is independent
+of the disposable acceptance parent. This does not approve restarting ordinary Shell/Marketplace,
+changing their source or applying the eventual candidate to ordinary data without review.
+
+The accepted candidate is Shell 0.112.1 and Marketplace 0.12.2 with unchanged SDK 0.34.1.
+Both production Docker builds run in the same source child Core after normal reviewed updates,
+with normal administrator and invited ordinary-user password login. Native Chrome checks cover
+Core-managed embedding and standalone Marketplace, real public Solitaire 0.3.1 installation left
+stopped, authoritative Installed metadata and legacy Manage migration. Slow, unavailable, invalid
+and private-feed fixtures retain source-adjacent Settings and factual installed-app information.
+The real source-conflict flow preserves the draft through explicit reload and subsequent Save.
+Light/dark 400-to-1200-to-400 responsive checks retain the selected app and public main feed.
+Public feeds in this pass expose only main; the nondefault-feed handoff is component-tested.
+
+The baseline reproduces an unsaved parameter being overwritten by an unrelated SSE update. The
+candidate retains that draft while refreshing the pristine field, saves only explicitly, clears the
+accepted artificial-secret draft, and requires manual restart. Native Folders Cancel/Retry/Approve,
+Network endpoint facts, permission review and source/account refusal, Updates failure, Logs deep
+link/Refresh and keyboard section navigation pass. Ordinary-user Logs has a Home breadcrumb,
+Core's administrator-only read refusal and no management controls; Marketplace denies access.
+Backup creation includes only primary data, excludes the attached fixture folder and resumes the
+app. Stop/Restore creates a pre-restore backup, restores the original marker digest and leaves the
+external marker unchanged; explicit Start recovers readiness. Cleanup preview and Delete/Cancel
+remain reachable, with keyboard focus returning to the opener.
+
+Revoking only the disposable browser credential cascades to its Shell/Marketplace grants. A later
+settings Save displays the normal sign-in boundary; password reauthentication returns to the same
+unsaved URL. An independent read confirms the saved catalog did not change, so recovery does not
+replay the mutation. Deferred/closed-response races, stale secret reads, approved-versus-succeeded
+cancellation and prior-app callbacks have focused regression tests rather than timing-dependent
+native claims. Full suites pass: Shell 206 Node tests plus 716 component tests; Marketplace 157
+tests. TypeScript and production builds pass; Shell lint retains three existing warnings and no
+errors, Marketplace lint is clean. Independent review's readonly Network fallback regression is
+fixed and included in the final build. Version and documentation checks pass.
+
+Owner Finish confirms removal of the child, its Docker containers/networks/volumes, private test
+data and credentials, parent process and reserved ports. Ordinary Core remains on the approved
+dev project and data root; ordinary Shell/Marketplace are not restarted by this acceptance. The
+registered source workspace and its active consumers are retained. D28/D30 are complete; physical
+mobile and measured accessibility remain with D26/D16, and no provider credentials, release update,
+new resource/backup contract, native/Plans work or frozen Shell/Dashboard structure is included.
+
+## Working Application And Visual Polish (Owner Direction, 2026-10-24)
+
+The owner authorizes applying the verified Shell 0.112.1 and Marketplace 0.12.2 source candidates
+on their existing ordinary-data Hosty redesign selections. Keep their data, settings, automatic
+startup, installed-package baseline and Return path; neither a release publication nor a Core
+restart is part of this application. The earlier isolated acceptance remains the prerequisite.
+
+Continue D6/D10/D19 only in app-owned Harness and Telemetry controls: distinguish preview working
+and failure shapes, show initial tool-catalog discovery, use failure severity for unavailable
+queries, and keep retained results' source/query provenance visible while filters change. Reproduce
+concrete defects and preserve caches, drafts, authorization and existing refresh behavior. Shared
+Core/SDK contracts, new polling, native/Swift and Plans, Shell structure and Dashboard are excluded.
+This scoped pass does not close the broader remaining implementation or device/contrast gates.
+
+## Harness Connection And Identity Recovery (Owner Direction, 2026-10-24)
+
+The owner approves completing the focused connection-loss, expired-login and explicit Retry matrix,
+including fixes for reproduced bugs. Preserve composer text, pending/uploaded attachments, selected
+conversation and review drafts. Recovery refreshes authenticated reads and resumes the durable event
+cursor; it never replays a message, approval or GitHub write automatically. An uncertain message send
+retains one explicit request identity and its immutable content until server evidence settles it.
+Reusing that identity with different content is refused; a fresh intentional message is distinct.
+
+Verify transient transport failure separately from recoverable 401, terminal 403 and confirmed
+session deletion. Exercise ordinary password authentication in a new Core-managed test child with
+separate data, no copied provider credentials and no ordinary-instance auth revocation. Keep the
+browser debugger detached for native reload checks. Swift, Plans, Shell navigation/structure and
+Dashboard remain frozen. This batch owns D51; D21's broader provider/device gates remain separate.
+
+## Embedded Harness Reload Verification (2026-10-24)
+
+The owner requested a focused investigation of an empty Harness iframe after a full Shell reload,
+without changes to Swift, Plans, Shell navigation/structure or Dashboard. With browser automation
+attached, the live trial reproduced an initial `about:blank` child and a pending document navigation.
+Native Chrome controls exposed the same empty state. Disconnecting the browser debugging attachment
+immediately released the pending navigation with source, authentication and session unchanged.
+Three subsequent native toolbar reloads and one hard reload loaded Harness, its three sessions,
+the selected conversation and the retained unsent draft. No app or Core restart was needed.
+
+This establishes an automation-dependent navigation stall in this observed case; the exact debugger
+mechanism is unverified. Initial-source timing, eager loading, source reassignment and bounded frame
+recreation experiments did not recover the attached-debugger case and were removed byte-for-byte.
+No application-code workaround ships. Future browser acceptance compares a stalled automation frame
+with a native-only reload before treating it as a product defect. D21 remains open for the broader
+provider, recovery, authority and device matrix; this result does not complete isolated acceptance.
+
+## Empty Workspace Preview Section (Owner Refinement, 2026-10-24)
+
+The owner requests no empty Previews section in workspace details. A successful inventory with
+no retained child environments or non-disposed app sandboxes renders no section or heading.
+The component remains subscribed to its existing observations, so a later preview reappears.
+Initial loading and read errors retain their visible status and retry. The existing focused
+workspace preview/detail suites pass 55 tests, Harness lint/types and the static production build
+pass, and the export is applied to the authorized live Harness trial. No Core change is needed
+for this presentation refinement. Broader D10/D21/D27 acceptance remains separate.
+
+## Harness Review Recovery Regression (2026-10-24)
+
+The separate real-GitHub fixture is draft PR #649 on its own registered workspace/branch and
+contains only a synthetic README marker. It is not the redesign publication. Core unit regressions
+reproduce definitive stale-head reply and resolution failures against the old implementation.
+The fix returns each already-persisted failed receipt instead of turning that known rejection into
+an uncertain browser outcome. Source/account/owner and fingerprint admission checks remain;
+unknown remote results retain the original request and block competing commands.
+
+The focused Core review/comment suite passes 36 tests, the provider subset passes 15 and the HTTP
+authority case passes. Harness review-action/thread coverage passes 22 tests. The exact Core project
+builds in an isolated artifacts directory with zero warnings/errors, and independent source review
+finds no blocker. The owner authorizes applying the fix to the existing dev Core with `--keep-apps`.
+The final managed generation builds with zero errors and four existing compiler/platform warnings.
+Recovery starts the expected redesign project under a new process identity, with the five live local
+service trees retained. The replacement reports the expected dev project and no pending restart.
+
+Real GitHub acceptance on draft [PR #649](https://github.com/alex-de-haas/docker-host/pull/649)
+confirms a published RIGHT-line comment, author/time/link metadata, a reply and explicit resolution.
+Advancing only the disposable fixture branch rejects a reply and resolution from the old head;
+the reply body stays editable, no remote mutation occurs, and refreshing the comparison permits
+a new explicit command. Independent GitHub reads confirm exactly one comment, one reply and a
+resolved thread. Published head/base, thread totals and Unified/Split rendering agree with GitHub.
+This scoped pass does not complete the broader embedding, revocation and recovery matrix in D21-D25.
+
+A separate fixture proves that identity readiness waits on an unrelated conversation credential
+queue. Harness now coalesces background refresh per actor, retries failed sessions on later probes,
+and retains synchronous admission for the explicitly selected conversation. The old regression fails;
+63 focused gateway/recovery tests and the final 1,392-test Harness suite pass, as does API TypeScript.
+This is an independently verified stall path, not an attribution of every earlier live valid-cookie
+hang. After Core recovery, a fresh standalone Harness tab loads the workspace and real provider
+review successfully. A separate Shell-embedded probe displays host-identity connection recovery;
+its cause is investigated independently instead of treating standalone success as embedding evidence.
+
+This provider pass also reproduces two presentation defects. CI availability incorrectly uses
+publication completion, so a draft's five successful and sixteen skipped checks report unknown.
+The header now follows check evidence independently; failed, pending, skipped-only, stale and
+unknown safeguards remain. Four affected suites pass 28 tests. Viewed marks disappear after Back;
+tab-local, authenticated-viewer/source-scoped progress fixes remount loss without marking changed
+revisions as reviewed. Its two affected suites pass 41 tests, including storage failure and isolation.
+Both fixes pass ESLint/TypeScript and the combined Next.js 16.4.1 production export is applied to
+the authorized live Harness trial. The final complete Harness suite passes 1,406 tests across 142
+files after both fixes. Final browser checks confirm CI passed with five successful/sixteen skipped
+checks, retained Viewed after Back/reopening the same published comparison, disabled mutations on
+the closed PR and no empty Previews section. The disposable PR is closed without merge, its test
+activity lease is released, and its clean worktree/branch remain available for inspection. The
+redesign workspace's lease remains with its active source consumers.
+
+The final browser pass catches an export-selection mistake in the live application step: Next.js
+16.4.1 writes this custom static export to the `outDirectory` in `.next/export-detail.json`, not
+necessarily `out`. The successful current candidate is applied from that recorded destination;
+served development HTML matches its exact digest and references the current chunk. Earlier live
+observations against the stale `out` export are not evidence for the final implementation.
+
+Read-only diagnostic identity probes confirm session readiness and embedded bootstrap with the
+exact Shell parent origin return 200 in 4-15 ms. They do not validate the existing browser grant.
+A single normally authenticated Shell iframe renders the current Harness conversation and workspace
+successfully. Frame-scoped locators find its controls, but both keyboard and click actions fail in
+the browser bridge; this limits interaction evidence rather than proving an app-control defect.
+The earlier concurrent standalone/embedded probe shows connection failures and pending navigation;
+closing the second view and using normal Retry restores the standalone view. The six observed browser
+sockets alone do not identify active requests or prove the failure cause. The later isolated D48
+regression reproduces a fourth-view navigation timeout and verifies the corrected browser event
+transport with eight concurrent conversations. D21/D24 retain their broader provider, interaction,
+revocation and recovery acceptance; no actor, origin, credential or authority checks are bypassed.
+
+## Harness Concurrent Views Recovery (Owner Direction, 2026-10-24)
+
+The owner explicitly authorizes diagnosis and correction of Harness hangs with multiple open tabs.
+Swift/native, Plans, Shell structure and Dashboard remain frozen. Preserve separate app/user
+credentials, current authority checks, session drafts and durable event replay. Do not share one
+view's credentials with another view or treat a connection-count observation as proof of a leak.
+
+Source review identifies a session SSE that remains open in hidden documents and lacks explicit
+reader cleanup. A deterministic held-subscription probe separately reproduces server subscription
+and heartbeat retention when the response closes before subscription admission completes. Pausing
+hidden-document streams and disposing late subscriptions fixes those defects, but isolated browser
+acceptance still reproduces a fourth-view navigation timeout with two standalone conversations and
+one embedded conversation. Those documents all report visible; backend probes with eight open
+streams still complete finite reads in 2–30 ms. The reproduced browser stall clears when the other
+views close, establishing that visibility cleanup alone does not complete this deliverable.
+
+The scoped correction carries browser event frames over same-origin WebSockets instead of retaining
+HTTP/1 event responses. A short-lived, single-use ticket is minted through each view's existing
+authenticated app transport and revalidated at upgrade. No app credential is placed in a URL or
+shared between documents. Preserve the durable cursor, workspace invalidations, expiry, revocation,
+origin checks, bounded buffering and disconnect cleanup. Keep legacy SSE for direct clients;
+unsupported WebSocket transport must remain explicitly unavailable rather than silently recreating
+HTTP connection starvation. D48 owns implementation and the concurrent-view regression; D21/D24
+retain their wider acceptance matrix.
+
+The verified D48 candidate passes all 1,460 Harness tests, complete Harness ESLint/TypeScript and
+the Next.js production export. An isolated Core-managed child with normal password sign-in runs
+six standalone conversations and two Shell-embedded conversations concurrently. All eight receive
+an additional app-context event without reload; standalone/embedded reload, tab closure and a fresh
+replacement view remain responsive, with the draft retained. A separate authenticated probe keeps
+eight session and four workspace sockets open while identity/list/runtime/workspace reads complete
+in 3–4 ms, and verifies missed-event replay and authority refusals. No provider credentials are copied
+and no model turn is sent. Frozen Swift/native, Plans, Shell structure and Dashboard files remain
+unchanged. This completes the scoped concurrency regression, not the wider D21/D24 acceptance. The
+verified static export is applied to the already authorized dev Harness; its served HTML and event
+transport chunk match the candidate, and the existing operator conversation renders normally.
+The child is finished through its owner and its containers, networks, volumes, root, test credentials,
+image tags and ports are removed; the private test parent is stopped. The primary Core process,
+registered source and live activity lease remain intact.
+
+
+
+## Verified Demo Web Adoption (2026-10-24)
+
+Demo App adopts the shared local fonts, light/dark theme, lime controls, magenta chart lead,
+neutral external navigation icons, semantic status shapes and labelled loading/error/empty states.
+All existing page routes and SDK identity/roles/settings/panel/composition examples remain.
+Role saves preserve unrelated users' drafts; a refused update retains its attempted selection.
+The independent Demo artifact changes from 0.17.3 to 0.18.0, including its runtime image declarations,
+Docker build argument, fallback config and root workspace lock metadata. Next.js declarations are
+unchanged by this adoption.
+
+Verification passes ten Demo tests, ESLint, TypeScript, native Turbopack and webpack production
+builds, and the final Docker image. Both actual service containers use the verified final image.
+A Core-managed source child uses separate normal setup/password login, accounts and data.
+Core Open/PKCE and SDK app identity, admin/viewer permissions, invalid role refusal, assignment
+revocation and fresh sign-in recovery pass ten API checks. Browser checks confirm Shell embedding
+and standalone pages, actual IBM Plex Sans, dark/light colors, People, Roles, Settings, keyboard
+Radix selection, Save/Reset and protected JSON inspection. A settled 480 px standalone view has
+480 px document/scroll width in both themes and no console errors. These are desktop viewport
+checks, not physical mobile-device acceptance. Embedded interaction automation is limited by the
+browser bridge; embedded rendering and standalone interactions are recorded separately.
+
+The composition fixture truthfully reports unavailable optional panel access in this child. No new
+optional access was granted, and retained two-view tool composition is not claimed by this pass.
+D4/D6/D19 remain open for their other consumers and acceptance obligations; D5's Demo/Telemetry
+external navigation artwork is verified. Swift/native, Plans and frozen Shell/Dashboard source stay
+unchanged. No aggregate redesign commit or publication is authorized by this verification.
+
+A final independent review finds and fixes clean-row reconciliation: a concurrently changed clean
+role row adopts the returned server assignment, while a genuinely edited unrelated draft remains.
+The old behavior fails its regression; the final ten-test suite, lint, TypeScript, webpack build
+and version checks pass. Docker/browser evidence above precedes this final role-logic fix; it is
+not attributed to a rebuilt final image. Owner Finish removes the child root, labelled Docker
+resources and private credentials; the owned parent stops and all five allocated ports close.
+
+## Current Batch Scope (Owner Direction, 2026-10-23)
+
+The owner accepted the current Dashboard and Shell navigation/structure and requested a checkpoint
+before more implementation. Commit `5b7349fe` preserves those refinements. Do not redesign Dashboard,
+change Shell navigation, or alter route/layout ownership in this batch. Internal content of existing
+settings tabs may be completed; Tokens & devices (D9) is the concrete settings scope.
+
+Start with all SDK-owned web chrome under D31, then complete Telemetry's theme, chart, control,
+navigation-icon and loading/empty-state adoption under D4/D5/D6/D19. Keep SDK styling scoped to its
+own controls; the SDK style-isolation Draft does not select a new composition architecture. Preserve
+app-owned styles, authentication, retained frames/drafts and existing installation/recovery behavior.
+
+All native applications, including Swift, are deferred. Plans and Demo App adoption is deferred
+because their products will be reconsidered separately. Their obligations in D3/D4/D5/D19 remain
+unchecked and are not part of this implementation batch. Other unresolved contracts, missing design
+references and broad device/provider acceptance remain with their existing deliverables; narrowing
+this batch does not complete or retire them. D8 is frozen with Dashboard pending another owner
+request. No publication, push or additional commit is implied by the checkpoint permission.
+
+The owner subsequently approved Host settings content refinement as D42: use Core information as
+the visual reference for Updates, Network, Shared folders and Core source while keeping the accepted
+navigation and all existing operations. This does not reopen Dashboard or expand Core lifecycle.
+
+The owner also approved D43: align Background app access with the Tokens & devices table and
+move the existing account-wide revocation action to the top of the personal tab. Its administrator
+restriction, own-account scope and protected Core confirmation remain unchanged.
+
+The owner approves D44 as a Shell-wide form-control consistency pass: replace remaining visible
+native selects and bespoke inputs with the existing shadcn/Radix primitives used alongside ReUI
+frames. Preserve values, labels, drafts, disabled states, submission and authority; Dashboard
+structure and navigation stay unchanged.
+
+The owner approves D45: remove the Apps overview and its sidebar catalog links. An ordinary user's
+unselected home renders no central page and retains accessible app rows; administrators keep Dashboard.
+Retired `/apps` links resolve to the role-appropriate home. The phone Apps control opens only the
+app sidebar. Personal profile/token access and existing embedded-app authorization stay unchanged.
+
+The owner approves D46: use one primary contextual action for application and Core rows. Pending
+operations remain guarded; Restart required takes precedence over diagnostics, configuration and
+update offers, followed by factual runtime-health Logs and normal controls. Core uses the same title
+badge and gains an administrator/CSRF-protected, instance-bound light-stop request that preserves
+running apps. Stopping explains that the host CLI is required to start Core again. No lifecycle
+operation on the operator's Core is part of this implementation or verification.
+
+### Harness And Web Polish Batch (Owner Direction, 2026-10-23)
+
+The owner approves D41 first, Harness filter/status/control and truthful loader/empty-state
+refinements under D33/D6/D19/D10, then the remaining web branding portion of D3. Keep the
+checkpoint and every accepted refinement. Swift/native assets, Plans and Demo App remain deferred;
+Shell and Dashboard structure stay frozen. Read-only external PR metadata may use the bound PR's
+actual branch, while review, merge, completion and source cleanup retain exact-workspace evidence.
+Contract-dependent activity, timing, missing observations and historical/mixed-account review work
+remain separately scoped under D15/D34–D39. This batch does not implicitly approve those contracts.
+
+### Framework Patch And Remaining Web Polish (Owner Direction, 2026-10-23)
+
+The owner approves Next.js 16.4.1 and matching ESLint tooling for Harness, Shell, Marketplace
+and Telemetry UI before further remaining visual work. Preserve the existing React/ReactDOM
+versions and declarations, frozen native/Swift/Plans/Demo sources, Shell navigation/structure
+and Dashboard structure. Shared compatible lock resolution is not a redesign of frozen apps.
+After the four builds pass, resume bounded D6/D10/D19 presentation fixes and their existing
+acceptance gates; contract-dependent work remains separately reviewed under D15/D34–D39.
+
+### Verified Bounded Visual Acceptance (2026-10-23)
+
+The owner-approved Harness/Telemetry pass fixes demonstrated residuals under D6/D10/D19. Harness
+uses destructive foregrounds for error text/icons and app-local reduced-motion transitions;
+Jump to latest follows the live motion preference with hydration-safe instant scrolling. Telemetry
+separates filtered no-match responses, strengthens row chevrons/light amber and waterfall labels,
+and transfers/restores trace keyboard focus without losing filters or stealing focus on refresh.
+
+- Harness: 1,387 tests in 142 files, full lint/TypeScript, isolated native export and final Docker build pass. Actual primitive scrolling tests cover live reduced motion, caller cancellation, retained draft, subscription cleanup and SSR hydration.
+- Telemetry: 32 tests in five files, lint/TypeScript, isolated native build and final Docker build pass. Tests cover search/error/whitespace priority, Enter/Space focus transfer and return, refresh without focus theft and missing-row fallback.
+- A retained Core-managed child uses normal password identity and separate test data. Shell embedding and Core Open authenticate. Final images are healthy; browser checks confirm real local validation, dialog/menu Escape and retained input, filtered no-match responses and trace Enter/Back with the original query. A synthetic near-end 1 ms span retains its bar and readable duration. Harness's settled 480 px dialog fits without page overflow; Telemetry's final desktop light/dark states are verified. The viewport control did not resize the existing Telemetry tab, so no new narrow Telemetry result is inferred from that attempt.
+- Measured actual color pairs: Harness errors 6.53:1 light / 7.39:1 dark; Telemetry row chevrons 5.50:1 / 6.00:1, light amber mark 5.02:1, and inside duration labels 17.28:1 / 14.06:1. Shared tokens, all Shell/Dashboard and deferred native/Plans/Demo source hashes remain unchanged. Independent source review finds no blocker.
+- Owner Finish confirms child data-root and labelled container/network/volume removal; the task parent stops and all five preview ports close. Private test data/credentials are removed. The registered live workspace and activity lease are retained. The verified Harness export is applied to its existing authorized live app and its served providers HTML matches the exact build digest; the operator Telemetry remains stopped. No Core restart, commit or publication occurs.
+- Full OS-level reduced-motion switching, grayscale/assistive technology, real mobile keyboards and provider mutation acceptance remain open. The live media/scroll behavior is covered by component tests; the browser keeps its existing OS preference. D16 retains the explicit lime-focus contrast decision; these scoped results do not close broad conformance gates or approve D15/D34–D39 contracts.
+
+### Verified Harness And Telemetry Polish (2026-10-23)
+
+The owner's further bounded D6/D10/D19 pass preserves Swift/native, Plans, Demo and all
+Shell/Dashboard source. The checkpoint, prior refinements and independent artifact version outcomes
+are retained. No new backend contract, commit or publication is included.
+
+Harness runtime discovery distinguishes pending reads, failed first reads and last-confirmed worker
+observations. Credential recovery uses the shared destructive Alert and focused Retry without draft
+loss; embedded workspace file controls use shared wrapping Buttons. Telemetry resource controls and
+full technical attribute keys/values wrap, including multiline values and stacked phone attribute
+rows. Metric search reports no matches only for a nonempty filter and a populated selectable catalog;
+pinned infrastructure, selected charts and stored choices remain intact.
+
+- `npm run harness:test`: 1,385 tests in 141 files pass, including two new failure/recovery/draft regressions. `npm run harness:lint`, focused ESLint and web TypeScript checks pass. A first lint run scans the generated alternate export; moving that verification output outside source restores the full source gate without lint-rule changes.
+- `npm run telemetry-ui:test`: 28 tests in five files pass, including three search/selection/catalog cases. `npm run telemetry-ui:lint` and TypeScript checks pass. Search cases preserve pinned infrastructure and selected charts through a missing/whitespace query and avoid false no-match states for empty or pinned-only catalogs.
+- `HOSTY_HARNESS_WEB_OUTPUT=out-build-polish npm run harness:build-web` and `NEXT_DIST_DIR=.next/verify-polish npm run telemetry-ui:build` pass. Exact final production Docker builds pass for both apps; generated verification outputs/type paths are removed/restored. Existing version bumps remain with the aggregate uncommitted redesign batch.
+- Independent source review finds no blocker. Browser QA finds and fixes a genuine intermediate-width Metrics header defect: a long resource label reduces the heading to zero at 680 px. The final header wraps its actions and reserves a preferred title width; repeated 680/480 px measurements retain the heading and produce no page/header overflow. Both final native/Docker builds and Telemetry checks pass after that correction.
+- A Core-managed child with separate normal password setup runs Shell, Harness API/Worker and Telemetry collector/backend/UI. Ordinary Shell embedding and Core Open authenticate; Harness worker discovery/Refresh succeeds. Synthetic logs, traces and a selectable metric enter only that child's owned loopback collector. Full long keys/multiline values and metric search/selection are verified at 480 px; the existing log table retains horizontal scrolling for wide source labels. Light/dark and desktop/680/480 layouts pass. Test-only long app naming changes no product manifest.
+- Cleanup: owner Finish confirms child data-root and labelled container/network/volume removal. The task parent stops, all five preview ports close, and private test credentials/data plus six test image tags are removed. The live workspace and its lease are retained.
+- The final Harness export is applied to the already authorized live workspace and its served providers-page HTML matches the exact build digest. No Core restart, ordinary app configuration or Shell/Dashboard source change occurs. Telemetry's final image is verified in the child; the operator's stopped Telemetry is not switched to a live-data trial by this batch.
+
+These scoped results do not complete the umbrella deliverables. Real provider credential-loss/review
+workflows, real mobile keyboards, full contrast/reduced-motion/device acceptance and D15/D34–D39
+contracts remain with their existing unchecked deliverables. Browser iframe controls are not reliable
+in this automation, so interactive checks use normal Core Open after confirming embedding; no wider
+embedded-control acceptance is inferred.
+
+### Verified Framework Patch And Web States (2026-10-23)
+
+D47 is verified for Harness web, Shell, Marketplace and Telemetry UI: exact Next.js and
+`eslint-config-next` 16.4.1, unchanged React/ReactDOM declarations and resolutions. Initial npm
+resolution attempts fail on the existing React/ReactDOM range mismatch; no force/legacy-peer
+flags or React changes are used. The narrowly migrated lockfile passes a clean isolated
+`npm ci --ignore-scripts --no-audit --no-fund`, a complete `npm ls` dependency check and all four
+Docker installs/builds. Plans/Demo workspace declarations and their exact lint tooling are retained.
+Marketplace advances 0.12.0 to 0.12.1, including its first-party image tag; the other previously
+updated artifact versions remain intact. No additional commit, push or publication is made.
+
+The bounded D6/D10/D19 continuation adds honest workspace-inventory, preview-recipe,
+diff-highlighter and sandbox-action progress in Harness. Telemetry distinguishes initial/debounced
+loading, failed first reads, confirmed empty and transient refresh failures. Shared folders keeps
+its accepted Frame/table/actions while making first/transient/authority failures and Retry factual.
+Actor/Core changes clear protected data/editor drafts. Three new regression cases reproduce and
+fix stale full-refresh invalidation and save/delete receipts arriving after another refresh; the
+independent review confirms both findings resolved. These scoped refinements do not complete the
+umbrella deliverables or approve their outstanding data contracts.
+
+- Production builds: `NEXT_DIST_DIR=.next/verify-next1641 npm run shell:build`, `HOSTY_HARNESS_WEB_OUTPUT=out-build-next1641 npm run harness:build-web`, `NEXT_DIST_DIR=.next/verify-next1641 npm run marketplace:build`, and `NEXT_DIST_DIR=.next/verify-next1641 npm run telemetry-ui:build` all pass on 16.4.1. After subsequent UI edits, the final native Shell/Harness exports and exact final Shell/Harness/Telemetry production Docker builds also pass. Separate verification outputs are removed; generated TypeScript path changes are restored. The earlier 16.4.0 security-notice result below is historical, not the current build outcome.
+- Tests: `npm run harness:test` passes 1,383 tests in 141 files; `npm run shell:test` passes 688 component tests in 63 files and the existing Node suites; `npm run marketplace:test` passes 152 tests in 18 files; `npm run telemetry-ui:test` passes 25 tests in five files; `npm run sdk:test` passes 686 tests in 35 files. Affected lint and TypeScript checks pass with zero errors; Shell retains three existing navigation warnings. No frozen navigation changes are made to silence them.
+- Managed integration: one owned source child with isolated normal password setup runs all seven services of Shell, Harness, Marketplace and Telemetry from the verified Docker images. Normal Core/Shell identity, app embedding, anonymous API denial, actual child telemetry metrics, light/dark presentation and a 480 px breakpoint pass. Core Open verifies standalone selectors, installed-app roster and empty log/trace results without copying provider credentials or installing frozen apps.
+- Recovery/resources: the first default child refuses the third app at its declared application capacity. Its owner Finish removes its root and labelled resources; the replacement declares 8 GiB/4 CPU for the four-app test within the existing pool. Final owner Finish removes the replacement root, containers, networks and volumes; its parent stops, all six preview ports close, and task credentials, temporary dependency copies and eight image tags are removed. Operator data and its live workspace lease are retained.
+- Authorized live review: the exact final Harness static export is served with a matching HTML digest. Shell and Marketplace restart through the existing local app lifecycle from the same registered workspace, log 16.4.1 and become healthy. The operator Core retains PID 25546 and its source generation; unrelated apps and source selection are unchanged. Telemetry is verified in the child and remains stopped on the operator Core.
+- Scope/limits: source hashes preserve Swift/native, Plans, Demo, Dashboard, navigation and layout. The sole frozen-route-file difference is settings-only mount-status prop plumbing, with no route/structure change. Iframe control automation cannot reliably target embedded controls, so interactive checks use normal Core Open after confirming embedding. Real mobile keyboards, full reduced-motion/contrast/provider matrices and the absent live #631 card remain open in their existing acceptance deliverables. No CI/PR run or cross-platform acceptance is claimed.
+
+### Verified Harness And Web Polish (2026-10-23)
+
+D41 uses a dedicated display-only provider observation for linked PRs from another branch.
+Selected-account, owner, repository, canonical URL, head-repository and target checks remain;
+fresh and legacy metadata strip completion/review-body evidence. Strict review, merge, completion
+and cleanup checks still refuse another source branch. GitHub's read-only metadata confirms #631
+is accessible and merged; provider fixtures cover that exact title/number and branch mismatch.
+
+D33 passes mixed-state count/search/order coverage. Harness's share of D6/D10/D19 also includes
+semantic approval/answer selection, labelled inventory/provider/roster/request loading, honest
+empty/unavailable states, shared form controls and reduced-motion-safe indicators. Those combined
+deliverables remain open for their other consumers and broader acceptance. D3's web source/assets
+and outlined wordmark are generated and visually inspected; native outputs remain deferred.
+
+- Core: `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --artifacts-path /tmp/hosty-d41-pr-metadata-artifacts --filter 'FullyQualifiedName~Publication|FullyQualifiedName~WorkspaceInspection' --nologo --verbosity minimal` passes 189 tests, with no skips. The exact final Core project build passes with zero errors/warnings.
+- Harness: `npm run harness:test` passes 1,377 tests in 141 files; `npm run harness:lint` and the production Docker build pass. Existing control suites cover exact source/provider IDs, empty/unknown selections, stale diff replies, confirmation identity, retention drafts/payloads and handoff refusal/retry.
+- Native Harness export: `HOSTY_HARNESS_WEB_OUTPUT=.next npx --no-install next build` from `apps/harness/web` compiles, type-checks and exports all nine routes. The initial attempt exits 1 after export with a Next.js security notice; the exact retry completes with exit 0, with the original notice retained in the build log. Next.js remains 16.4.0; no dependency or security-check changes are included. This records successful build/export separately from the production Docker build.
+- SDK: `npm run build --workspace @hosty-sdk/app` and `npm run sdk:test` pass, including 686 tests after canonical geometry extraction.
+- Shell: four existing affected settings/control suites pass 26 tests; `npm run shell:lint` passes with three existing navigation warnings and zero errors; the production Docker build passes. The only new Shell source change is its shared selected-field token; structure/navigation/Dashboard are unchanged.
+- `node assets/hosty-brand/build-assets.mjs --web-only` produces valid SVG/PNG/ICO assets; lockups contain outlined glyphs and no live text. The SDK build includes the geometry module. Native/Plans/Demo paths have no changes from this batch.
+
+Core-managed browser verification uses a disposable parent/source child Core, normal setup/password
+login and independently built Docker Harness/Shell. It preserves the child account/session across
+the reviewed final image update. Core/Shell embedding and standalone Core Open are checked in
+light/dark and a 480 px desktop viewport. The browser's iframe input bridge cannot dispatch clicks;
+standalone Core Open and existing flow tests verify interactions instead. This is not actual
+iOS/Android, a full reduced-motion/contrast audit or real provider-mutation acceptance. No parent
+provider credentials or ordinary app data are copied. D12–D30 keep their broader acceptance gates.
+
+The parent confirms Finish for this managed QA child. Its data root and owned Docker resources
+and preview listeners are removed; the dedicated parent process and its ports are stopped.
+Disposable fixture credentials and private test secrets are removed. The registered redesign
+workspace and its retained activity lease remain because the operator Core/apps still consume them.
+
+The owner-authorized operator application runs Core 0.152.0 from the same registered redesign
+project and data root, with a new process/start identity. The background CLI replacement does not
+remain alive after its tool session; the supported foreground CLI restores the same source target.
+Its prepared-generation build has zero errors and four existing warnings. Five local service
+process trees are adopted and the existing Workspaces Docker service remains running; the same
+five applications are ready afterward. The operator Harness serves the successfully built static
+export, verified against its HTML digest. The original workspace containing #631 is absent from
+the current external-workspace list, so its actual live card is not reproduced; D22 keeps that
+provider-card acceptance separate from D41's passing display/authorization regressions.
+
+Versions remain Platform 0.151.0 → 0.152.0, Shell 0.111.0 → 0.112.0 and SDK 0.33.1 → 0.34.0
+with their existing uncommitted batch. Harness advances 0.67.0 → 0.67.1, including both service
+images and worker/package lock sources. No additional commit, push or publication is implied.
+
+### Verified Web Batch (2026-10-23)
+
+D9 and D31 pass their scoped implementation checks. The independent artifact versions are
+SDK `0.33.1 → 0.34.0`, Shell `0.111.0 → 0.112.0` and Telemetry `0.15.2 → 0.16.0`.
+During this earlier SDK/Telemetry/credential sub-batch, Dashboard and Shell navigation remained
+unchanged after the checkpoint; later D45/D46 refinements are recorded separately. Native/Plans/Demo
+sources remain deferred. Telemetry adoption completes this sub-batch's share of D4/D5/D6/D19; those combined deliverables
+remain unchecked because their other consumers and acceptance obligations remain open.
+
+- `npm test --workspace @hosty-sdk/app`: 686 tests in 35 files pass. The SDK build and
+  `node packages/app-sdk/scripts/check-overlay-upgrade.mjs` pass, including an unchanged
+  published consumer and a separately bundled browser hydration fixture. SSR contains no
+  machine-local font paths; hydration retains app input, reports no hydration error and owns
+  one replay-safe font sheet with six browser font URLs.
+- `npm test --workspace @haas/hosty-shell`: 201 Node tests and 570 component tests pass.
+  Scoped lint, TypeScript and the final production Docker build pass. The grid covers actor
+  changes, failed reads, rename drafts, pagination/selection and protected sequential bulk
+  recovery, including distinct OAuth client IDs with the same display name.
+- Telemetry's 15 tests, lint, TypeScript and production builds pass. Final chart layout and
+  navigation assets retain readable labels and icons in both adopted themes. Marketplace's
+  existing 152 component tests and its production image build pass against the new SDK.
+- A disposable parent-managed source Core with normal password setup/login runs Docker Shell,
+  Telemetry and Marketplace against isolated data. Actual Shell and Marketplace SDK chrome use
+  emitted font URLs. Shell installation of a local fixture with automatic startup disabled
+  completes as Installed/Stopped; Marketplace's supplied-source request supports Core Cancel,
+  the SDK cancelled result and return to the catalog. A missing manifest exposes a bounded error
+  and Change source retains the supplied path. A real connection interruption recovers with Retry.
+- Tokens & devices is checked at desktop and 390 px: search, sort, page changes, selection,
+  column controls and Core revocation review retain their existing destination and authority.
+  Cancelling bulk review confirms zero revocations and keeps the remaining selection. The
+  640 px table scrolls inside its container without page overflow at 390 px. No browser
+  credential revocation is claimed; protected mutation outcomes are covered by component tests.
+- Embedded Telemetry renders actual Core/container metrics and a disposable OTLP log and trace
+  roster in light/dark and 390 px views. These checks do not claim every provider workflow,
+  mobile software keyboard, screen-reader, device rotation or full grayscale/contrast matrix;
+  those remain in D12/D13/D16/D20 and the relevant acceptance deliverables.
+
+The owning parent Core confirms Finish. The child data root, owned Docker containers/networks/volumes,
+preview listeners and parent process are gone; disposable credentials are removed. The operator Core
+remains running from the registered Hosty redesign worktree, with existing app runtime states preserved.
+
+No named `test:integration` suite targets SDK or settings presentation: the repository runner
+covers activation, transport, worker, Windows and Whisper. The managed browser exercise above
+is this batch's integration check; unrelated lifecycle suites are not represented as executed.
+
+### Contextual Lifecycle Verification (2026-10-23)
+
+D46 passes its implementation and isolated verification. Platform version changes from
+`0.151.0` to `0.152.0`, including the main channel copy; Shell remains in the existing
+`0.111.0 → 0.112.0` batch. No operator Core lifecycle, commit or publication is performed.
+
+- `npm test --workspace @haas/hosty-shell`: 206 Node and 674 component tests pass (880 total).
+  Final TypeScript, scoped ESLint and the final production Docker build pass. Coverage includes
+  one primary action, Restart before setup/update/runtime diagnostics, factual health-only Logs,
+  ordinary-user guards, pending/queued/duplicate/retry behavior, Core title badge and narrow More
+  access. Core's metadata Update action is also disabled while Stop is accepted or unconfirmed.
+- `dotnet build apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj --artifacts-path
+  /tmp/hosty-d46-core-stop-artifacts --nologo --verbosity minimal`: succeeds with zero errors and
+  four pre-existing warnings. The isolated output keeps the active Core generation unchanged.
+- `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --artifacts-path
+  /tmp/hosty-d46-core-stop-artifacts --filter
+  'FullyQualifiedName~CoreStopHttpTests|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~RuntimeAppSupervisorServiceTests|FullyQualifiedName~AppManagementHttpTests|FullyQualifiedName~AuditStoreTests'
+  --nologo --verbosity minimal`: 175 pass, zero fail or skip. These include 13 new HTTP stop cases
+  for administrator/CSRF/delegation admission, stale instances, launch/workspace/restart conflicts,
+  bounded audit, forced keep-apps behavior, response-write failure and admission through actual stop.
+- A parent-managed source child Core runs final Core `0.152.0` and the final Docker Shell image.
+  Normal setup/password login verifies the single Restart action, original Shell confirmation,
+  warning clearance and healthy Core Stop. Confirmed Core Stop returns acceptance, closes the
+  child listener and leaves its app container running. The owner subsequently Finishes the child.
+- Ordinary native Core stop/start is additionally exercised on the isolated test data root, without
+  a parent supervisor reclaiming exited child workloads. Process exit is verified separately from
+  HTTP acceptance. A fresh ready Core adopts the same Docker Shell container with unchanged start
+  time. The fixture enables autostart for this recovery check: an ordinary new Core start retains its
+  existing startup policy for autostart-disabled package Docker apps; Stop itself preserves them.
+  This native lifecycle check uses normal password-authenticated API access; browser identity and
+  Shell integration evidence comes from the managed child rather than the native diagnostic probe.
+- The test app is removed through Core, native test processes exit, child Finish is verified, and
+  private test roots, credentials, owned container resources and unused test image generations are
+  removed. The registered redesign lease remains because the operator's Core/apps still consume
+  the workspace. Read-only dev Shell inspection confirms both Core and Shell show one Restart
+  primary action with title badges; no operator restart/stop is used as test evidence.
+
+### Apps Overview Removal Verification (2026-10-23)
+
+D45 is complete in the existing Shell `0.112.0` uncommitted batch. The Apps overview component and
+view are removed. The expanded sidebar Apps heading is plain text; the compact catalog control is
+absent and authorized app rows remain. Phone Apps collapses an overlaid tool workspace before opening
+the app sidebar, preserving tool frames/selection and the current document. An ordinary user's
+unselected `/` home renders no central page; administrators resolve to Dashboard. Personal profile
+and tokens, authorized app workspaces and the existing ordinary-user logs-only boundary remain.
+
+- `npm test --workspace @haas/hosty-shell`: 206 Node and 627 component tests pass. New checks cover
+  empty ordinary Home despite launchable app rows, role guards, administrator Dashboard, retained
+  profile/tokens, noninteractive/compact navigation, phone callback ordering and no app-page navigation,
+  root/legacy redirects without loops, and assistant continuation preservation through authorization,
+  aliases and login. Existing removal tests now exercise Dashboard menus and retain exact Core
+  admission, duplicate-click, cancellation/retry, errors, success-only refresh and Logs destinations.
+- Final TypeScript and Docker production builds pass. Lint has zero errors and the same three
+  existing warnings. Version consistency, documentation and whitespace checks pass. The remaining
+  removal entry points keep Core's protected review and authority; no app is uninstalled by this QA.
+- A disposable parent-managed source Core with normal setup/password login runs Docker Shell.
+  An administrator opening `/apps` resolves to `/dashboard` without a catalog; expanded/compact
+  navigation has no catalog action. The final image is applied through a reviewed local update,
+  and its actual running container image matches the final build identity. Reloading the retired
+  URL still reaches Dashboard and reports no console error. Ordinary-user and phone role/overlay
+  behavior is verified by component/route fixtures, not a live ordinary-user login or device matrix.
+  Read-only inspection confirms the existing dev Shell also resolves `/apps` to Dashboard with
+  direct application rows retained.
+
+The parent confirms Finish. The child data root, owned Docker resources, preview listeners, parent
+process, disposable credentials and exact owned QA image generations are removed. No operator Core
+restart, app runtime switch, commit, publication or SDK/Core authorization change is performed.
+
+### Shell Form Controls Verification (2026-10-23)
+
+D44 is verified in the existing Shell `0.112.0` batch without another version increment or commit.
+The remaining native selects in generic settings, mounts, invitations, browser address controls and
+tool views use the existing shared Select. Native checkbox and source-radio rows use Checkbox and
+RadioGroup; text/number/URL/password fields already use shared Input. A source audit finds native
+input markup only in the shared Input implementation, and no page-owned select/option/textarea.
+
+- `npm test --workspace @haas/hosty-shell`: 201 Node and 610 component tests pass. The controls
+  retain exact empty/unknown/raw option values, numeric invitation expiry, source drafts/revisions,
+  protected submission payloads, busy/authority/conflict locks and per-app assignment behavior.
+  Existing interaction tests target visible accessible controls instead of hidden Radix form inputs;
+  the jsdom setup supplies the missing ResizeObserver API. The nested Open views Escape regression
+  fails before its fix and passes afterward, retaining frames, selection and trigger focus until a
+  subsequent panel Escape.
+- Scoped/final Shell lint has zero errors and the same three existing warnings. Final TypeScript,
+  production Docker builds, version consistency and documentation validation pass. No new dependency,
+  Core API, Dashboard structure or navigation change is included.
+- A disposable parent-managed source Core with normal setup/password login runs the production
+  Docker Shell. Browser checks cover Provider keyboard selection and conditional fields, mount mode
+  selection/cancel, invitation role/expiry drafts/cancel, source radio keyboard selection and retained
+  path text while toggling, and light/dark dropdown surfaces. No real invitation, mount binding,
+  provider connection or source/network setting is saved. Submission outcomes and the narrow panel
+  Escape sequence are covered by component tests; no broader device/browser matrix is claimed.
+  The final image is applied through its reviewed local update plan, reloads successfully and reports
+  no browser console error. A read-only check confirms the existing dev Shell renders SelectTrigger
+  for Provider.
+
+The parent confirms Finish; the child data root, owned Docker resources, preview listeners, parent
+process, disposable credentials and exact owned QA image generations are removed. The operator Core
+and its current app runtimes are not switched or restarted by this batch.
+
+### Background Access Refinement Verification (2026-10-23)
+
+D43 is verified within the existing Shell `0.112.0` batch. Background app access adopts the
+credential Frame/table surfaces, searchable scope metadata, row menus and explicit history/lifetime
+labels. Account-wide revocation is prominent above the personal credential grid with its full
+scope explained; it remains administrator-only, own-account-only and protected by Core review.
+
+- `npm test --workspace @haas/hosty-shell`: 201 Node and 585 component tests pass. Fifteen
+  additional component cases cover full history, scope search/reset, exact scoped DELETE versus
+  global POST, same-target scopes, OAuth removal, denied/cancelled/failed actions, duplicate-click
+  protection, success-only navigation and actor changes. Lint has no errors and the same three
+  existing warnings (the cross-origin login navigation warning moves with the global action).
+  Final TypeScript and production Docker builds, version consistency and documentation checks pass.
+- A disposable parent-managed source Core with normal setup/password login runs the final Docker
+  Shell. The global action opens the existing isolated Core review with its full account-wide
+  consequences; Cancel changes nothing, closes the Shell review and retains the signed-in rows.
+  Empty background state, light/dark layouts and 390 px local table scrolling pass; document width
+  remains 390 px. The final view reports no browser console errors.
+- Populated grants, revoked/expired history and mutation success/failure use component fixtures.
+  Automatic approval review declined creating real background grants as an unapproved access change;
+  no live grant was created/revoked and no live global revocation is claimed. Broader real-provider
+  and accessibility acceptance remains in its existing deliverables.
+
+The parent confirms Finish. The child data root, owned containers/networks/volumes, preview listeners,
+parent process, disposable credentials and exact QA image tag are removed. The operator Core remains
+in dev mode from Hosty redesign; read-only inspection confirms the current dev Shell has the update.
+No commit, publication, Dashboard or navigation change is included in this refinement.
+
+### Host Settings Refinement Verification (2026-10-23)
+
+D42 is verified with the existing Shell version `0.112.0` in the uncommitted redesign batch;
+no extra commit, release or Core change is created. `npm test --workspace @haas/hosty-shell`
+passes 201 Node and 570 component tests. `npm run lint --workspace @haas/hosty-shell` has zero
+errors and the same three existing warnings. Final TypeScript and production Docker builds pass.
+Existing grouped settings, source draft/revision and mount-binding checks retain their behavior;
+no implementation-mirroring cosmetic tests are added.
+
+A fresh parent-managed source Core with normal password login runs only the Docker Shell against
+isolated data. Browser checks cover Maintenance save, provider-draft conditional fields, the
+Cloudflare disconnected/diagnostic surfaces, Core-confirmed read-only creation of a disposable
+shared mount, usage expansion and edit/cancel with an immutable name. The Source draft survives
+a theme rerender without a save or Core restart. Desktop light/dark and 390 px layouts retain the
+accepted navigation: Source and Network have no page/panel overflow, and the mounts table scrolls
+inside its existing container. Connected Cloudflare publication/disconnect and actual source
+restart are not exercised: no provider credentials are copied and this batch changes presentation.
+Their existing contracts/tests and broader D20 acceptance remain separate.
+
+Read-only review of the live workspace at 1564 × 1314 confirms the new Source/Updates cards
+without changing operator settings or restarting Core. Parent Finish removes the test child data
+root, Docker containers/networks/volumes and listeners; the owned parent process and disposable
+credentials are removed. Live Core and existing application states remain intact.
 
 ## Incremental Adoption And Functional Parity (Owner Direction, 2026-10-13)
 
@@ -195,7 +926,7 @@ one thin, visible 2 px lime (`#A3E635`) outline or ring in both themes, without 
 halo or ink edge. Red invalid/error focus and invalid borders remain unchanged. App-owned controls
 inside the SDK host follow the same lime rule through the minimal shared theme bridge. Grouped
 inputs use only the parent lime outline, or red when invalid. SDK-owned rail and chooser controls
-remain separate D31 adoption work. Lime continues to identify hover, press, selection and progress
+follow the completed D31 adoption; broader control acceptance remains in D1/D16. Lime continues to identify hover, press, selection and progress
 under the existing rules.
 
 These refinements settle presentation; D1, D7, D19 and D20 retain their remaining conformance,
@@ -229,7 +960,7 @@ The owner explicitly replaces the duplicate installed-app settings catalog with 
 entry point for App Details. App Details/Manage uses the standalone canonical
 `/apps/<app-id>?section=<section>` route, outside the Settings hierarchy, with an administrator's
 `Dashboard / <app name>` breadcrumb whose Dashboard link returns to `/dashboard`. The retained
-ordinary-user logs-only entry links back to `/apps`, without exposing an administrator destination.
+ordinary-user logs-only entry links back to the empty `/` Home after D45, without exposing an administrator destination.
 Dashboard app rows and app-name links, contextual Logs, More > Console logs and
 readiness/update-notification links select the same details page and preserve the requested
 section, including Logs. Former `/settings?tab=manage:<app-id>&section=<section>` bookmarks migrate
@@ -250,8 +981,8 @@ its required verification passes.
 
 ## Apps Removal And Dashboard Diagnostics (Owner Direction, 2026-10-22)
 
-The Apps overview keeps Open and Standalone and adds Uninstall for administrators. Dashboard,
-Manage and Apps removal entries open Core's isolated approval directly, without an intermediate
+Following D45, the duplicate Apps overview is removed. Dashboard and
+Manage removal entries open Core's isolated approval directly, without an intermediate
 Shell options/confirmation dialog. Core owns cleanup choices, removal impact, runtime-state and
 active-Shell warnings, source-safety review and the final destructive decision. Preserve every
 supported option and existing authorization, installation/source binding, nonce and stale-review
@@ -330,8 +1061,7 @@ Remaining design work is tracked by D32:
 
 Harness already has desktop sessions/conversation/workspace, review and phone references; it does
 not need another overall design. Core authentication and install/update/permission confirmations
-also have references. SDK access cards/banners and installation have designs but need explicit
-adoption beyond the logo (D31). The retired Workspaces app remains excluded.
+also have references. SDK access cards/banners and installation use their supplied designs under completed D31. The retired Workspaces app remains excluded.
 
 D32 owns design preparation and review only. Existing token adoption uses D1/D19; any additional
 page-layout implementation needs concrete scope after review. D20 applies to all adopted mockups.
@@ -466,10 +1196,10 @@ Harness maps its local `text-xs`, `text-sm`, `text-base`, `text-lg`, `text-xl` a
 utilities to small, body, body-lg, h3, h2 and h1 respectively. Its UI uses 400 body, 600 headings
 and 500 buttons/badges, with 13/20 technical monospace. SDK font inheritance is scoped to SDK-owned
 chrome controls so app-owned size, weight and line-height utilities remain effective. This narrow
-ownership correction does not complete D19's remaining app/control adoption or D31's SDK surface
-redesign and acceptance. The separate [SDK Style Isolation draft](../sdk-style-isolation/plan.md)
+ownership correction does not complete D19's remaining app/control adoption. D31 now records
+the completed SDK surface adoption and its scoped checks. The separate [SDK Style Isolation draft](../sdk-style-isolation/plan.md)
 records the owner's request to review a complete style boundary, with no chosen architecture or
-implementation approval. Existing D31 visual adoption and acceptance stay in this plan.
+implementation approval. Broad device and functional acceptance remains in D12/D13/D16/D20.
 
 ### Voice
 
@@ -553,7 +1283,7 @@ rather than a shadow.
   disclosures, dialog controls and resize handles, including app controls inside the SDK host.
   Retain red invalid/error treatment and invalid borders. Grouped inputs suppress the child
   outline and keep only the parent lime outline, or red when invalid. SDK-owned rail and chooser
-  controls remain in D31. Retain keyboard visibility independently of hover, press and selected fills.
+  controls follow the completed D31 adoption. Retain keyboard visibility independently of hover, press and selected fills.
 - **Selection.** Checked checkboxes and switches are lime with an ink check or knob; text selection is
   lime with ink text. Menu items, ghost hover and active navigation highlight in lime soft with ink
   text; a selected table row takes a lime wash, and a selected tab a 3 px underline in lime strong on
@@ -1238,22 +1968,30 @@ Testing Expectations rather than repeating completed implementation as new work.
 
 ### Remaining Implementation
 
-- [ ] D1. Finish Shell control-token conformance: replace remaining neutral/ink selection consumers, including native mount choices and Field selected states. Preserve the implemented single 2 px lime (`#A3E635`) focus treatment without halo, red invalid states and parent-only grouped focus. Standard wrappers already adopted are not rebuilt; D16 owns measured accessibility acceptance.
-- [ ] D3. Complete canonical grid-mark branding: replace the old H-graph in `assets/hosty-brand`, its light/dark/icon/favicon cuts, generator, tokens and README; outline the wordmark in IBM Plex Sans 600 and regenerate lockups, Shell public icons and Swift AppIcon outputs. Replace the SDK's old inline mark through the same source. Shell's inline grid mark is already adopted. Preserve Shell, Swift `MARKETING_VERSION` and `@hosty-sdk/app` version requirements when those artifacts change; D31 consumes the shared mark rather than drawing another copy.
+- [x] D1. Finish Shell control-token conformance: the D44 mount/control adoption and shared Field selected state use lime selection tokens. Preserve one 2 px lime (`#A3E635`) focus treatment without halo, red invalid states and parent-only grouped focus. Focused control-flow checks, lint and the production build pass; D16 separately owns measured accessibility acceptance.
+- [ ] D3. Complete the deferred native AppIcon adoption and its independent Swift version outcome when the owner reopens native scope. The web portion is implemented: canonical SDK/shared mark geometry, generated light/dark/icon/favicon cuts, outlined IBM Plex Sans 600 lockups, tokens/README and Shell public assets. Web-only generation preserves native outputs. D31 consumes the shared source; Shell and SDK version outcomes remain with the current web batch.
 - [ ] D4. Complete remaining Plans/Telemetry/Demo App chart accents, required distinct-series swaps and own-app empty artwork. Telemetry swaps Hosty Blue with chart-2 and Demo App with chart-3; retain the implemented Harness/Marketplace chart-4 swaps and Shell Hosty Blue. Preserve baked ink tiles in both themes and appropriate dark-card separation. Seven manifest cell icons are already implemented. Frame strips and tool accent treatment depend on a reviewed and approved outcome of D39; D14 owns tool-icon composition and D10 owns placement of empty states.
-- [ ] D5. Convert Telemetry and Demo App navigation SVGs from hard-coded stroke colors to `currentColor`, preserving their existing manifest paths and navigation behavior.
+- [x] D5. Demo App and Telemetry use theme-legible external navigation SVGs while preserving their manifest paths and navigation behavior. Demo neutral strokes measure at least 3:1 on the adopted light/dark surfaces, and Core-managed Shell rendering confirms the external artwork. Telemetry retains its earlier verified neutral strokes; neither app relies on inherited `currentColor` through an external image.
 - [ ] D6. Finish status-semantic and motion adoption: keep Info-blue labelled working, amber needs-you, red failure and distinct state shapes; replace remaining neutral active-update/transition indicators. Working motion becomes a static ring under reduced motion, and lime remains an interaction/progress color rather than a data-chart series. D16 owns the full contrast/grayscale acceptance pass.
 - [ ] D8. Complete the remaining compact Dashboard state-filter menu, selected by container width. Responsive rows, resource reflow and compact Install already exist. Retain combined search/filter semantics, counts, keyboard/touch access and selected state; D7 accepts the rest of Dashboard.
-- [ ] D9. Build the ReUI Data Grid pattern for current-user Tokens & devices: the specified search/filtering, sorting, density/column controls, selection/bulk behavior and pagination. Preserve existing credential visibility, Create/Connect/Rename/Revoke authority and recovery. Current-user navigation stays under My profile; authorized support for another user stays in that user's detail.
+- [x] D9. Build the ReUI Data Grid pattern for current-user Tokens & devices: the specified search/filtering, sorting, density/column controls, selection/bulk behavior and pagination. Preserve existing credential visibility, Create/Connect/Rename/Revoke authority and recovery. Current-user navigation stays under My profile; authorized support for another user stays in that user's detail.
 - [ ] D10. Complete remaining labelled grid-loader and empty-state placement, including environment inventory, unavailable service observations and shared-mount empty results. Keep factual loading/error/empty/no-results distinctions, static reduced-motion behavior and theme contrast. D4 supplies app-specific empty artwork; working/status indicators remain separate data.
 - [ ] D14. Apply the tool's Lucide icon and owning-app accent badge consistently in menus, pickers and panel headers after D39 settles its metadata source and fallback. Do not replace supplied icons or introduce app-ID color overrides.
 - [ ] D18. Replace legacy System labels/presentation with confirmed provider-role icons and detail chips for `ui-client`, `assistant`, `speech-to-text` and `otlp-collector`, including the reserved icon set. Consume authoritative role facts owned by [Replaceable UI Clients D8](../replaceable-ui-clients/plan.md#deliverables); this design item does not duplicate that contract, infer roles from `system` or grant lifecycle authority.
 - [ ] D19. Adopt the shared light/dark theme, local IBM Plex Sans/JetBrains Mono, lime interaction/selection/focus/progress and app chart accents in Plans, Telemetry UI and Demo App. Shell/Harness/Marketplace theme foundations and Harness's local typography scale already exist; preserve app-owned typography inside SDK workspaces. Finish residual control conformance across all adopted first-party app controls, including Harness/Marketplace inside the SDK host: one 2 px lime focus indicator, red invalid states and parent-only grouped focus. Preserve D4's distinct chart series and independent artifact versions.
-- [ ] D31. Adopt the supplied access-card/banner and installation-flow designs in SDK-owned surfaces, preserving the implemented chrome-only font reset and app typography ownership: typography, palette, cards, buttons, progress, rail/chooser focus and responsive light/dark layout. Use D3's shared mark. Preserve identity/access, installation contracts, drafts, popup fallback, supplied-source shortcuts, cancellation/retry and truthful installed/configured/running outcomes. Coordinate concurrent SDK work, verify through Core-managed Shell/Marketplace and bump `@hosty-sdk/app` for package changes.
-- [ ] D33. Add the missing status shapes to Harness's All/Needs you/Working/Failed filter chips while preserving counts, selection and filtering. Individual session rows already have their status icons; do not reimplement their state projection or ordering.
+- [x] D31. Adopt the supplied access-card/banner and installation-flow designs in SDK-owned surfaces, preserving the implemented chrome-only font reset and app typography ownership: typography, palette, cards, buttons, progress, rail/chooser focus and responsive light/dark layout. Use D3's shared mark. Preserve identity/access, installation contracts, drafts, popup fallback, supplied-source shortcuts, cancellation/retry and truthful installed/configured/running outcomes. Coordinate concurrent SDK work, verify through Core-managed Shell/Marketplace and bump `@hosty-sdk/app` for package changes.
+- [x] D33. Add distinct list/decision/working/failure shapes to Harness's All/Needs you/Working/Failed filter chips while preserving counts, selection and filtering. Focused mixed-state/search/order tests and managed light/dark/narrow rendering pass; existing row projections and ordering remain unchanged.
 - [ ] D38. Resolve and complete the existing Phone design's All tools Edit/pin/reorder controls, separately from accepting the implemented picker in D13. Confirm the supported pin/order scope and persistence before implementation, preserve app grouping/search/access and document the decision. This does not approve a fifth phone tab or other optional navigation changes.
 
-- [ ] D41. Correct read-only metadata for a linked external PR whose source branch differs from the current workspace, including the reported #631 case. Preserve owner, selected account, repository and PR-URL authorization; title/state/CI display is not review, merge, completion or cleanup evidence. Keep existing exact-source/head guards for those operations. D36 separately owns historical original-source review binding, and D22 retains real-provider card acceptance.
+- [x] D41. Correct read-only metadata for a linked external PR whose source branch differs from the current workspace, including the reported #631 case. Preserve owner, selected account, repository and PR-URL authorization; title/state/CI display is not review, merge, completion or cleanup evidence. Keep existing exact-source/head guards for those operations. D36 separately owns historical original-source review binding, and D22 retains real-provider card acceptance.
+- [x] D42. Unify the existing Host settings Updates, Network, Shared folders and Core source content with the accepted Core information Frame and Dashboard surfaces. Preserve navigation, every field/action, drafts, protected changes, mount bindings and source/restart ownership; verify light/dark, narrow layout and existing functional coverage.
+- [x] D43. Align Background app access with the credential Frame/table, preserve scoped grant history and actions, and make account-wide revocation prominent in the personal Tokens & devices section with clear consequences and existing Core confirmation. Verify own-administrator visibility, cancellation/failure/actor-change behavior and light/dark/narrow layouts.
+- [x] D44. Normalize Shell dropdowns and input controls to the shared shadcn/Radix components, including generic Core settings, mounts, invitations, address controls, tool instances and source options. Preserve empty/unknown values, validation, keyboard/label behavior, form payloads and authority; audit remaining native controls and verify affected flows in a managed test Core.
+- [x] D45. Remove the duplicate Apps overview component/view and catalog navigation entries; keep a non-clickable Apps heading and directly accessible app rows. Resolve retired URLs and role-aware home/close fallbacks without loops, retain ordinary-user blank home and app/profile access, and verify sidebar/phone behavior and protected app removal through its remaining Dashboard/Manage entries.
+- [x] D46. Use one prioritized contextual action for application and Core rows, with Restart before runtime-health Logs and ordinary controls; give Core the shared title badge and an audited administrator/CSRF-protected instance-bound light stop. Preserve apps, prevent conflicting lifecycle operations, retain original restart/confirmation guards, and verify action matrices plus stop admission/recovery in an isolated managed Core.
+
+- [x] D47. Update the four authorized web consumers to Next.js 16.4.1 and matching ESLint tooling, preserving React and frozen app declarations. Verify clean dependency resolution, all four production builds, affected lint/tests and Core-managed runtime readiness; retain the current redesign changes and independent artifact versions.
+
 
 ### Contracts And Dependent Work
 
@@ -1270,16 +2008,23 @@ record the contract review before dependent code and preserve existing safe beha
 
 ### Acceptance Of Implemented Behavior
 
+- [x] D51. Complete focused Harness connection-loss, expired-login and explicit Retry acceptance with retained text/attachments/review drafts and no automatic mutation replay. Resume authenticated conversation reads from the durable cursor after verified same-actor recovery, bound stalled recovery operations, and preserve one durable identity for an uncertain message send. Verify regressions, affected builds and normal Core-managed embedded browser recovery.
+  - Verified 2026-10-24: 1,567 Harness and 695 SDK tests pass; affected lint/typechecks, SDK build, Next.js production builds, Docker builds, documentation and version checks pass. Native embedded Chrome acceptance retains the selected idle chat, text and native file across actual Offline/Retry and expired app authorization. Lost-acknowledgement admission and no duplicate dispatch are verified with HTTP/manager/UI fixtures, without additional provider turns. Owner Finish removes the child, private data and labelled resources. The separately approved ordinary Harness-only restart serves the final recovery controls with healthy API/worker; Core and Shell retain their process identities.
+
+
 These items are verification gates, not instructions to rebuild the existing pages. Preserve the
 current redesign version outcomes; this documentation-only cleanup changes no artifact version.
 
 - [ ] D7. Accept the implemented Dashboard against its target section and current feature: common columns, source/version metadata and inline file counts, concrete production runtime names, runtime/health versus update progress, contextual actions and More, five-minute resources, App Details/Logs navigation, Core information relocation and supported Runtime / workspace handover/Return. Verify long/missing/stale data, mouse/keyboard/touch, roles, protected-flow recovery and retained actions. Resources/actions use approved 192/184 px columns and the contextual action has a 144 px maximum. Remaining compact filters belong to D8, role visuals to D18 and token/status residuals to D1/D6.
 - [ ] D12. Accept the implemented fit rule through Core-managed embedding: Dashboard minimum 440 px, Settings/embedded-app minimum 560 px and tool minimum 320 px. Verify full-nav/rail/dock/sheet/phone transitions, resizing and rotation with retained frame, draft, scroll and selected conversation. Existing 599/600 px unit coverage does not replace actual embedded or mobile keyboard acceptance. A future manifest-defined minimum is an unapproved extension, not a blocker to verifying these defaults.
 - [ ] D13. Accept the implemented below-600 px phone tabs, retained last-tool sheet, All tools search/app grouping, visible viewport sizing, second-tap hide/reopen and long forms on iOS Safari/Android Chrome. Verify keyboard pan/safe areas, rotation, focus and retained drafts with 16 or more tools. D15 separately owns unimplemented activity-priority groups/severity badges, and D38 owns Edit/pin/reorder.
-- [ ] D16. Complete measured Shell light/dark contrast, grayscale, reduced-motion and disabled/unsupported-state acceptance across text, tinted surfaces, primary-colored text/borders/dots and focus. Shared semantic tokens and successful builds do not prove every consumer passes. D1 owns control conformance; D6 owns status semantics/motion.
+- [ ] D16. Complete measured Shell light/dark contrast, grayscale, reduced-motion and disabled/unsupported-state acceptance across text, tinted surfaces, primary-colored text/borders/dots and focus. Shared semantic tokens and successful builds do not prove every consumer passes. D1 owns control conformance; D6 owns status semantics/motion. The approved exact lime focus remains 1.51:1 against white; resolve its design constraint before claiming full focus-contrast acceptance.
 - [ ] D17. Accept Harness's implemented pinned approval/question Review navigation and bottom composer through embedded/phone layouts. Verify the first-provider integration once D15 supplies Core-backed activity; preserve visible pending decisions while another tool works and on a device that never opened Harness. Existing frame-local attention is not this integration.
 - [ ] D20. Complete functional-parity acceptance against the inventory above and the owning features: every supported action/state, role/permission, route, independent form/draft, selection, retained panel and failure/recovery flow remains reachable. Check existing ReUI primitive/wrapper reuse and document concrete unsupported-control exceptions. Moving actions into menus does not permit losing keyboard/touch access or changing authority.
-- [ ] D21. Accept the implemented Harness navigation, conversation, cards, menus, approvals and composer through real providers and Core-managed embedding in light/dark/narrow layouts.
+- [x] D50. Preserve the real Codex file-change proposal in Harness approvals by correlating exact active thread, turn and item identity before persistence. Bound and clear retained proposals, refuse stale cross-turn matches, and verify the real request shape that omits changes from the approval request. Keep approval authority and single-request semantics unchanged.
+- [x] D49. Repeat fresh local actor/source admission immediately before GitHub reply and resolution mutations, including after delayed provider reads. Verify actual saved-state role/source revocation, cancellation and durable request recovery in isolated Core tests; preserve selected-account bounds and D37's explicit refusal. Build the exact Core project and verify the scoped fix before any separately authorized live restart.
+- [x] D48. Correct Harness multi-view transport cleanup and request starvation: use authenticated, per-view WebSocket delivery for browser events, dispose subscriptions admitted after disconnect and pause hidden session streams. Preserve origin/actor checks, expiry, bounded buffering, drafts, durable replay and normal recovery; verify authorization/cleanup races and concurrent standalone/embedded requests in an isolated Core-managed sandbox.
+- [ ] D21. Accept the implemented Harness navigation, conversation, cards, menus, approvals and composer through real providers and Core-managed embedding in light/dark/narrow layouts. Preserve the verified D48 concurrent standalone/embedded transport regression; complete the broader normal Retry, interrupted silent sign-in/frame reload recovery, frame interaction and authority/revocation matrix without weakening actor, origin or grant checks. D48's synthetic idle conversations do not complete real-provider acceptance.
   - Verify mixed activity sections, flat call order, canonical nonzero failure counts, result identity/turn isolation, retained disclosure/focus and visible decisions. Exercise existing bounded tool output, input/copy/wrap, empty/error/conflict/truncation, legacy replay and worker/coordinator recovery; no new output event implementation is requested here.
   - Verify borderless command headers and far-right chevrons, factual status/exit/duration, expanded-only numeric/legacy details and no duplicate command outcome. Verify independent Changes/Tool calls disclosure, visible Changes headers with tools collapsed, per-activity source-bound file counts/confirmed totals, unknown/legacy states and retained Review bindings.
   - Verify icon-only session actions, retained workspace/title/app search, activity filtering, flat rows and deletion focus; context ring after provider, unavailable/missing-limit/replay states; factual Local/Docker header badges and autonomy details only in the mode menu. Preserve menu confirmations/logs/recipes and original-request recovery. D33/D34/D35 own the missing chip shapes, elapsed time and observations separately.
@@ -1289,9 +2034,9 @@ current redesign version outcomes; this documentation-only cleanup changes no ar
 - [ ] D25. Accept the implemented new-comment UI and Core publication operation on a disposable bound PR through the selected GitHub connection and operator's authority. Verify CSRF, published head/line bounds, stale or unpublished-coordinate refusal, optional Ask Harness handoff, cancellation, revocation and original-request recovery. D24 owns reply/resolve acceptance; D37 owns the remaining mixed-account source-grant implementation, whose refusal remains explicit until verified. Do not recreate the existing publication operation.
 - [ ] D26. Accept implemented Harness phone sessions/conversation, pinned decisions/composer, retained workspace sheet, file-list/file review and inline CI expansion. Verify actual embedded focus, keyboard, safe areas, long menu/thread/comment content and provider workflows on mobile devices, not only resized desktop fixtures.
 - [ ] D27. Accept the adopted parent environment dialog/inventory/progress and child registration/open journey: actual selected-app readiness/errors, Resume, durable requests, renewed setup links and clear child-versus-main identity, including Core-only completion. No skip/per-app retry/log operation is added. D32 owns reference variants; initialization distribution/platform acceptance stays in its owning plan.
-- [ ] D28. Accept implemented Marketplace catalog/detail/Installed and standalone/storefront/settings through Core-managed Shell: light/dark/narrow/permission states, selected feed across resize, source/detail failure and stale/closed reads, session expiry and SDK/Core install handoff. Verify authoritative installed metadata, aligned version/actions, Open/Manage, source-adjacent Settings in loading/failure, removed redundant rail/heading/global Refresh, explicit cached-content retry and retained detail Refresh. Unsupported footprint/permission facts stay omitted.
+- [x] D28. Accept implemented Marketplace catalog/detail/Installed and standalone/storefront/settings through Core-managed Shell: light/dark/narrow/permission states, selected feed across resize, source/detail failure and stale/closed reads, session expiry and SDK/Core install handoff. Verify authoritative installed metadata, aligned version/actions, Open/Manage, source-adjacent Settings in loading/failure, removed redundant rail/heading/global Refresh, explicit cached-content retry and retained detail Refresh. Unsupported footprint/permission facts stay omitted.
 - [ ] D29. Accept implemented Settings navigation, titles, tabs and fields in light/dark/narrow layouts across roles, keyboard, independent drafts and protected-review cancellation/conflicts. Verify the already removed installed-app catalog, individual declared `ui.settings` entries with embedded authentication/internal navigation/full-height forms, former app-setting bookmarks and `tab=apps` migration to Dashboard. Do not repeat the catalog removal as new implementation.
-- [ ] D30. Accept implemented standalone App Details at `/apps/<app-id>`, role-aware breadcrumbs, legacy Manage migration and section deep links. Verify Dashboard/notification Logs entries, capability gating, selected-only console reads/Refresh/service selection/empty/errors/aborts and Core's separate log dialog. Exercise Launch/services, Parameters, Folders, Network, Updates, Permissions and Backups through existing authorization, stale/error/revocation recovery and retained feed/source/account drafts. Preserve ordinary-user logs-only access, manual save/restart and Core-owned protected reviews; no automatic-update policy, resource/size contract, scheduled backup or download/retention editor is introduced.
+- [x] D30. Accept implemented standalone App Details at `/apps/<app-id>`, role-aware breadcrumbs, legacy Manage migration and section deep links. Verify Dashboard/notification Logs entries, capability gating, selected-only console reads/Refresh/service selection/empty/errors/aborts and Core's separate log dialog. Exercise Launch/services, Parameters, Folders, Network, Updates, Permissions and Backups through existing authorization, stale/error/revocation recovery and retained feed/source/account drafts. Preserve ordinary-user logs-only access, manual save/restart and Core-owned protected reviews; no automatic-update policy, resource/size contract, scheduled backup or download/retention editor is introduced.
 
 ### Remaining Design References
 
@@ -1316,9 +2061,6 @@ does not create implementation approval or hide additional work outside the chec
   source-grant gap without broadening provider authority.
 - D38 owns All tools pin/order scope and persistence. A fifth phone tab and an Assistant keyboard
   shortcut such as Cmd+J remain optional proposals, not approved redesign deliverables.
-- The owner questioned the duplicate `/apps` overview but has not approved removal. Keep its
-  Open/Standalone/administrator Uninstall actions and ordinary-user breadcrumb until a separate
-  product decision and concrete scope preserve those capabilities.
 - Allow for this session is not approved. Any standing approval grant needs a separate contract for
   scope, display, revocation, persistence/audit and consistent Claude/Codex behavior; existing
   one-time decisions and Autonomous mode remain the current design.
@@ -1370,7 +2112,7 @@ Compare changed screens against D20's functional inventory through Core/Shell, i
   and restart-needed information. Verify one visible 2 px lime (`#A3E635`) focus indicator on
   app-owned controls, including inside the SDK host, without a halo or ink edge; retain red
   invalid/error treatment and parent-only lime/red grouped-input focus. SDK-owned rail and chooser
-  controls remain separate D31 adoption work.
+  controls follow the completed D31 adoption; broader control acceptance remains in D1/D16.
 - Contrast checks for every text and status token pair in light and dark, and every state checked
   with `prefers-reduced-motion` and in grayscale to confirm it differs by more than color.
 - Activity, after D15 integration: a pending Harness approval reaches the Tools badge on a second device that never opened
@@ -1398,12 +2140,16 @@ Compare changed screens against D20's functional inventory through Core/Shell, i
 - Harness review: a Changed locally indicator leaves Unresolved visible and never asserts a fix.
 - Dashboard: history remains five minutes with honest gaps and partial startup history; a long state
   detail and a long contextual action never shift the columns, Core and app values line up, search filters together with the state filters, and the table never scrolls
-  sideways at any width, switching to the compact layout first. Verify administrator Stop for a
-  running app with healthy services even when update, manifest, permission or previous-operation
-  alerts are present. Logs is selected only for observed degraded/unhealthy service health when
-  supported; Stop remains the fallback without logs or with missing/unknown/startup health.
-  Ordinary-user Logs, existing pending/Configure/Update/Start
-  priority, More actions and Core's Logs shortcut remain unchanged.
+  sideways at any width, switching to the compact layout first. Verify one contextual action:
+  disabled pending progress, then Restart required ahead of configuration, update offers and
+  runtime-health/previous-operation errors; then Logs for a running app with observed
+  degraded/unhealthy service health and the logs capability; then Configure, Update and Start/Stop.
+  Unrelated manifest, permission, update-check and operation alerts do not select Logs.
+  Missing/unknown/startup health and no-logs apps retain their applicable ordinary action.
+  Ordinary users retain Logs without lifecycle authority. Core uses disabled pending progress,
+  Restart required, factual degraded/unhealthy/failed-status Logs, then Stop; source/Git and
+  configuration warnings are not runtime health. Verify the shared title badge, one contextual
+  button and guarded Stop Core access through More on narrow layouts.
 - Runtime-app Logs: both Dashboard entries, readiness/update-notification actions and direct
   `section=logs` links select the capability-gated tab after Launch without a popup. Verify the
   200-line tail, Refresh, per-service/aggregate output, empty/errors, no hidden reads, app/user/Core

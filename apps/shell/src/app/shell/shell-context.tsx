@@ -7,6 +7,7 @@ import type {
   AppPageLink,
   CoreApp,
   CoreGlobalMount,
+  SharedMountsLoadStatus,
   CoreSettingsState,
   CoreUpdateStatus,
   HostyResolvedTheme,
@@ -39,6 +40,7 @@ export type ShellContextValue = {
   coreSettings: CoreSettingsState | null;
   coreSettingsError: string | null;
   globalMounts: CoreGlobalMount[];
+  globalMountsStatus?: SharedMountsLoadStatus;
   // Core's own version verdict, rendered by Dashboard's Core section beside the update action.
   coreUpdate: CoreUpdateStatus | null;
   coreUpdating: boolean;

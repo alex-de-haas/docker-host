@@ -104,27 +104,32 @@ internal sealed partial class PublicationService
                 if (connection.Provider != binding.Record.Provider)
                     throw new PublicationException("provider_mismatch", "Use the workspace's selected source provider.");
                 var provider = Publication(connection.Provider);
+                async Task AdmitMutation()
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var latest = await workspaces.Read(tree.Id, null, ct);
+                    if (!latest.Owner.SameIdentity(tree.Owner))
+                        throw new PublicationException("forbidden", "The review workspace belongs to another owner.");
+                    var authorized = await RequireReviewBindingAsync(latest, userId, input.PullRequestUrl, ct,
+                        binding.Connection.Id, connection);
+                    if (authorized.Record.Provider != binding.Record.Provider ||
+                        authorized.Record.Repository != binding.Record.Repository ||
+                        authorized.Record.HeadRepository != binding.Record.HeadRepository ||
+                        authorized.Record.TargetBranch != binding.Record.TargetBranch ||
+                        authorized.Record.Branch != binding.Record.Branch)
+                        throw new PublicationException("review_changed", "The workspace source changed before review admission. Refresh the review.");
+                    ct.ThrowIfCancellationRequested();
+                    // Persist immediately before the provider side effect. Recovery preserves
+                    // uncertain outcomes and never blindly repeats a comment or reply POST.
+                    operation = operation with { MutationStarted = true };
+                    await SaveOperation();
+                }
                 if (kind == "comment")
                 {
                     var marker = "<!-- hosty-review-comment:" + DevelopmentWorkspaceService.Hash(
                         tree.Id + "\n" + userId + "\n" + operation.ConnectionId + "\n" + operation.RequestId) + " -->";
                     var created = await provider.CreateReviewCommentAsync(connection, binding.Record, input, marker,
-                        operation.MutationStarted, async () =>
-                        {
-                            var latest = await workspaces.Read(tree.Id, null, ct);
-                            if (!latest.Owner.SameIdentity(tree.Owner))
-                                throw new PublicationException("forbidden", "The review workspace belongs to another owner.");
-                            var authorized = await RequireReviewBindingAsync(latest, userId, input.PullRequestUrl, ct,
-                                binding.Connection.Id, connection);
-                            if (authorized.Record.Provider != binding.Record.Provider ||
-                                authorized.Record.Repository != binding.Record.Repository ||
-                                authorized.Record.HeadRepository != binding.Record.HeadRepository ||
-                                authorized.Record.TargetBranch != binding.Record.TargetBranch ||
-                                authorized.Record.Branch != binding.Record.Branch)
-                                throw new PublicationException("review_changed", "The workspace source changed before comment admission. Refresh the review.");
-                            operation = operation with { MutationStarted = true };
-                            await SaveOperation();
-                        }, ct);
+                        operation.MutationStarted, AdmitMutation, ct);
                     operation = operation with { ThreadId = created.ThreadId, CommentId = created.CommentId };
                 }
                 else if (kind == "reply")
@@ -132,20 +137,13 @@ internal sealed partial class PublicationService
                     var marker = "<!-- hosty-review-reply:" + DevelopmentWorkspaceService.Hash(
                         tree.Id + "\n" + userId + "\n" + operation.ConnectionId + "\n" + operation.RequestId) + " -->";
                     var commentId = await provider.ReplyReviewAsync(connection, binding.Record, input.ThreadId, input.ExpectedHead,
-                        input.Body!, marker, operation.MutationStarted, async () =>
-                        {
-                            // Persist before the remote side effect. Recovery can reconcile this
-                            // marker, but never blindly repeat a possibly successful POST.
-                            operation = operation with { MutationStarted = true };
-                            await SaveOperation();
-                        }, ct);
+                        input.Body!, marker, operation.MutationStarted, AdmitMutation, ct);
                     operation = operation with { CommentId = commentId };
                 }
                 else
                 {
-                    operation = operation with { MutationStarted = true };
-                    await SaveOperation();
-                    await provider.ResolveReviewAsync(connection, binding.Record, input.ThreadId, input.ExpectedHead, ct);
+                    await provider.ResolveReviewAsync(connection, binding.Record, input.ThreadId, input.ExpectedHead,
+                        AdmitMutation, ct);
                 }
                 return true;
             }, ct);
@@ -158,8 +156,10 @@ internal sealed partial class PublicationService
         }
         catch (Exception ex) when (ex is PublicationException or UserConnectionException or AppLifecycleException or HttpRequestException or IOException or OperationCanceledException)
         {
-            var uncertain = operation.MutationStarted && (kind is "reply" or "comment" || ex is not PublicationException pe ||
-                pe.Code is "publication_provider_unavailable");
+            // A later admission refusal cannot disprove a previous provider side effect.
+            var uncertain = previous is { State: "pending", MutationStarted: true } ||
+                operation.MutationStarted && (kind is "reply" or "comment" || ex is not PublicationException pe ||
+                    pe.Code is "publication_provider_unavailable");
             operation = operation with { State = uncertain ? "pending" : "failed",
                 Error = uncertain ? "Outcome is uncertain. Recover with the same request ID before submitting another review operation."
                     : ex switch
@@ -170,8 +170,9 @@ internal sealed partial class PublicationService
                         _ => "Review operation failed. Refresh before retrying."
                     } };
             await SaveOperation();
-            if (uncertain || kind == "comment") return new PublicationReviewResult(input.RequestId, kind, operation.State, operation.ThreadId, operation.CommentId, operation.Error);
-            throw;
+            // Return the durable outcome for every admitted review command. A definitive
+            // rejection must let the browser retain the draft without freezing its stale intent.
+            return new PublicationReviewResult(input.RequestId, kind, operation.State, operation.ThreadId, operation.CommentId, operation.Error);
         }
     }, ct);
 }

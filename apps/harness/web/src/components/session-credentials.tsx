@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { appFetch, APP_ACTIVITY_RENEWED } from "@hosty-sdk/app/browser-auth";
+import { CircleAlert } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 /** Keep an existing run on the current app credential without another message or chat consent. */
 export function SessionCredentials({ sessionId }: { sessionId: string }) {
@@ -38,7 +41,13 @@ export function SessionCredentials({ sessionId }: { sessionId: string }) {
     };
   }, [sessionId, retry]);
 
-  return error ? <aside role="alert" className="mx-4 my-2 rounded border p-3 text-sm">
-    {error} <button className="underline" onClick={() => setRetry(value => value + 1)}>Retry</button>
+  return error ? <aside className="mx-4 my-2">
+    <Alert variant="destructive">
+      <CircleAlert aria-hidden="true" />
+      <AlertDescription className="flex min-w-0 flex-wrap items-center gap-2">
+        <span className="wrap-anywhere">{error}</span>
+        <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => setRetry(value => value + 1)}>Retry</Button>
+      </AlertDescription>
+    </Alert>
   </aside> : null;
 }

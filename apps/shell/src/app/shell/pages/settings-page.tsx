@@ -22,6 +22,7 @@ import {
 import type {
   CoreApp,
   CoreGlobalMount,
+  SharedMountsLoadStatus,
   CoreSettingsState,
   CoreStatus,
   SessionResponse,
@@ -60,6 +61,7 @@ export function SettingsPage({
   coreStatus,
   onSaveCoreSettings,
   globalMounts,
+  globalMountsStatus,
   apps,
   onRefresh,
   canManageApps,
@@ -82,6 +84,7 @@ export function SettingsPage({
   coreStatus?: CoreStatus | null;
   onSaveCoreSettings: (values: Record<string, string>) => Promise<void>;
   globalMounts: CoreGlobalMount[];
+  globalMountsStatus?: SharedMountsLoadStatus;
   apps: CoreApp[];
   onRefresh: () => Promise<void>;
   canManageApps: boolean;
@@ -135,7 +138,7 @@ export function SettingsPage({
       </div>}
 
       {resolvedTab === "tokens" && (
-        <div className="flex flex-col gap-8"><SettingsTokensSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />{canManageApps && <SettingsAccessList kind="background" coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />}</div>
+        <div className="flex flex-col gap-8"><SettingsTokensSection coreOrigin={coreOrigin} actorId={activeUser?.id} canRevokeAll={canManageApps} sendCsrfJson={sendCsrfJson} />{canManageApps && <SettingsAccessList kind="background" coreOrigin={coreOrigin} actorId={activeUser?.id} sendCsrfJson={sendCsrfJson} />}</div>
       )}
 
       {/* Every remaining tab administers the host. Gating them here as well as in the sidebar keeps
@@ -156,7 +159,7 @@ export function SettingsPage({
         />
       )}
 
-      {canManageApps && resolvedTab === "policies" && <SettingsAccessList kind="oauth" coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />}
+      {canManageApps && resolvedTab === "policies" && <SettingsAccessList kind="oauth" coreOrigin={coreOrigin} actorId={activeUser?.id} sendCsrfJson={sendCsrfJson} />}
 
       {canManageApps && resolvedTab === "ingress" && (
         <SettingsIngressSection
@@ -168,7 +171,9 @@ export function SettingsPage({
 
       {canManageApps && resolvedTab === "mounts" && (
         <SettingsMountsSection
+          key={`${coreOrigin}:${globalMountsStatus?.scope ?? activeUser?.id ?? ""}`}
           globalMounts={globalMounts}
+          loadStatus={globalMountsStatus}
           apps={apps}
           onRefresh={onRefresh}
           onSaveBindings={async (name, change) => {

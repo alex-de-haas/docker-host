@@ -1,6 +1,6 @@
 ---
 created: 2026-07-12
-updated: 2026-10-22
+updated: 2026-10-23
 summary: First-party apps are ordinary runtime apps selected from a distribution catalog during initialization and removable like any other.
 components: [apps/core, apps/cli, apps/shell]
 ---
@@ -8,8 +8,8 @@ components: [apps/core, apps/cli, apps/shell]
 # Removable System Apps — Distribution Catalog and One Lifecycle
 
 Hosty ships first-party apps (Shell, Marketplace, Harness, Telemetry) as ordinary runtime apps. They are
-installed and uninstalled through the same lifecycle as any other app, from any surface: the Shell's
-Installed Apps list, `hosty setup`, or `hosty apps remove`. The release's list of first-party apps is
+installed and uninstalled through the same lifecycle as any other app: Shell's administrator
+Dashboard and app details (Manage), `hosty setup`, or `hosty apps remove`. The release's list of first-party apps is
 a **catalog**, not a policy. [Hosty initialization](../hosty-initialization/feature.md) installs the first
 explicit selection; completed initialization does not reconcile removed apps back into existence.
 
@@ -108,9 +108,10 @@ first-party role is described exactly like the app it replaced.
 
 ## Surfaces
 
-**Shell.** Dashboard and Manage retain removal for every app the administrator can manage, system
-apps included. The Apps overview adds administrator-only Uninstall beside Open and Standalone.
-Every removal entry opens Core's isolated review directly, without a preliminary Shell dialog.
+**Shell.** Dashboard's app menu and app details (Manage) retain removal for every app the
+administrator can manage, system apps included. There is no separate Apps overview or its
+Uninstall/Open/Standalone card controls. Every surviving removal entry opens Core's isolated,
+nonce- and digest-protected review directly, without a preliminary Shell dialog.
 Core shows computed impact, one Removal options checkbox section, a short runtime-state explanation
 and the stop/removal warning. It does not repeat the choices in a static list. Removing the
 active Shell carries its availability warning and the `hosty setup --with hosty.shell` recovery hint.
@@ -155,8 +156,13 @@ cannot invoke direct removal.
 - Boot leaves an installed app's version, runtime, autostart, settings, and update pointer untouched,
   and performs no remote fetches.
 - Removing a system app succeeds on the ordinary path, with no surface distinction. Shell's
-  administrator-only Apps Uninstall and existing removal entries open Core review directly and
-  retain cleanup choices, impact/runtime/Shell warnings, source protection and popup recovery.
+  administrator Dashboard menu and app details (Manage) removal entries open Core review directly
+  and retain cleanup choices, impact/runtime/Shell warnings, nonce/digest validation and source
+  protection. Ordinary users cannot reach removal through a guarded route or a direct action.
+- Surviving Shell entry flows retain CSRF protection and duplicate-request guards, blocked-popup
+  fallback, original-request recovery and visible preparation/execution failures. Cancellation
+  permits a new review; only confirmed Core execution refreshes the roster and reports success.
+  Removing one app does not replace another app's active Logs destination.
 - The impact preflight lists declared dependents (with `required` and aliases) and capability
   consumers, and returns empty lists for an app nothing declares against.
 - `hosty setup` reflects live installed state, installs and uninstalls only where the selection

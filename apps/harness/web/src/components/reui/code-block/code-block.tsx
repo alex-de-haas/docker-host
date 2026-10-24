@@ -270,7 +270,7 @@ const LINE_DIFF_CLASS = [
   "[[data-code-line-numbers]_&]:data-[diff]:after:w-(--code-block-gutter-gap)",
   "data-[diff]:after:select-none",
   "data-[diff=add]:after:text-success",
-  "data-[diff=remove]:after:text-destructive",
+  "data-[diff=remove]:after:text-destructive-foreground",
   "data-[diff=add]:after:content-['+']",
   "data-[diff=remove]:after:content-['-']",
 ].join(" ")

@@ -407,6 +407,8 @@ export type CoreGlobalMount = {
   hostPathExists?: boolean;
 };
 
+export type SharedMountsLoadStatus = { loading: boolean; loaded: boolean; error: string | null; scope?: string | null };
+
 export type AppsResponse = {
   apps: CoreApp[];
   // Fleet update-check status (plan-first updates): drives the header "Check updates" spinner from
@@ -695,11 +697,10 @@ export type DetailView = "backups" | "settings" | "update" | "remove" | "logs";
 
 // Tabs inside the consolidated Settings dialog. Hidden when the app has no matching data.
 export type SettingsTab = "app" | "parameters" | "permissions" | "publicOrigins" | "mounts" | "source" | "backups" | "logs";
-// Three top-level destinations: the host you manage, the host you configure, and the apps you use.
-// `installed-apps` and `users` were folded into `dashboard` and `settings`; their URLs still resolve
-// and are canonicalized by the client.
+// Home is a neutral entry: administrators resolve to Dashboard; ordinary users open apps from
+// navigation. Legacy catalog URLs no longer render a second app list.
 export type ShellView =
-  | "available-apps"
+  | "home"
   | "dashboard"
   | "settings";
 

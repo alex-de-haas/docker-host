@@ -60,7 +60,7 @@ describe("AppIdentityBridge launch exchange", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [path, init] = fetchMock.mock.calls[0];
-    expect(path).toBe("/api/auth/app-code");
+    expect(path).toBe(new URL("/api/auth/app-code", window.location.href).href);
     expect(init.body).toBe(JSON.stringify({ code: "one-time-code", codeVerifier }));
     expect(init.signal?.aborted ?? false).toBe(false);
     expect(window.location.href).not.toContain("code=");
@@ -86,6 +86,23 @@ describe("AppIdentityBridge launch exchange", () => {
     expect(fetchMock.mock.calls[1][0]).toBe("/api/auth/identity");
     expect(reload).not.toHaveBeenCalled();
     cleanupReplay();
+  });
+
+  it("bounds a stalled launch-code exchange before offering recovery", async () => {
+    vi.useFakeTimers(); Object.assign(window, { setTimeout, clearTimeout });
+    const exchange = deferredResponse();
+    const fetcher = vi.fn().mockImplementationOnce((_input, init?: RequestInit) => {
+      init?.signal?.addEventListener("abort", () => exchange.reject(new DOMException("Aborted", "AbortError")), { once: true });
+      return exchange.promise;
+    }).mockResolvedValue(Response.json({ status: "not-present", recovery: { appId: "sample" } }));
+    vi.stubGlobal("fetch", fetcher);
+    AppIdentityBridge(); const cleanup = hooks.effect!();
+    try {
+      await vi.advanceTimersByTimeAsync(4100);
+      expect(hooks.state.kind).toBe("unavailable");
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(fetcher.mock.calls[1][0]).toBe("/api/auth/identity");
+    } finally { cleanup(); exchange.resolve(Response.json({}, { status: 401 })); await Promise.resolve(); vi.useRealTimers(); }
   });
 
   it("does not reload after the bridge has actually unmounted", async () => {
@@ -288,11 +305,11 @@ describe("AppIdentityBridge embedded sign-in", () => {
     browser.location.href = `http://app.localhost/draft?code=app-code&state=${state}`;
     stored.set(`${APP_AUTH_ATTEMPT_PREFIX}${state}`, pendingAttempt(state, browser.location.href));
     stored.set(`hosty.auth.silent-attempted:${appId}`, "1");
-    const fetcher = vi.fn().mockImplementation(async path => path === "/api/auth/app-code"
+    const fetcher = vi.fn().mockImplementation(async path => String(path).endsWith("/api/auth/app-code")
       ? Response.json({ accessToken: "embedded-grant" }) : Response.json({ status: "active", recovery }));
     vi.stubGlobal("fetch", fetcher); mount();
     await vi.waitFor(() => expect(hooks.state.kind).toBe("active"));
-    expect(fetcher.mock.calls[0][0]).toBe("/api/auth/app-code");
+    expect(fetcher.mock.calls[0][0]).toBe(new URL("/api/auth/app-code", window.location.href).href);
     expect(fetcher.mock.calls[0][1].body).toBe(JSON.stringify({ code: "app-code", codeVerifier }));
     expect(stored.get(APP_GRANT_STORAGE_KEY)).toBe("embedded-grant");
     expect(stored.has(`${APP_AUTH_ATTEMPT_PREFIX}${state}`)).toBe(false);
@@ -328,7 +345,7 @@ describe("AppIdentityBridge embedded sign-in", () => {
     stored.set(`hosty.auth.silent-attempted:${appId}`, "1");
     const popup = { closed: false, close: vi.fn() };
     const open = vi.fn(() => popup); Object.assign(browser, { open });
-    const fetcher = vi.fn().mockImplementation(async path => path === "/api/auth/app-code"
+    const fetcher = vi.fn().mockImplementation(async path => String(path).endsWith("/api/auth/app-code")
       ? Response.json({ accessToken: "popup-grant" }) : Response.json({ status: "active", recovery }));
     vi.stubGlobal("fetch", fetcher); mount();
     await vi.waitFor(() => expect(hooks.state.kind).toBe("signin"));
@@ -503,7 +520,7 @@ describe("AppIdentityBridge embedded sign-in", () => {
       .mockResolvedValue(Response.json({ status: "not-present", recovery: { appId, corePublicOrigin: coreOrigin, appAuthProtocol: 2 } }));
     vi.stubGlobal("fetch", fetcher); mount();
     await vi.waitFor(() => expect(intents.submit).toHaveBeenCalledOnce());
-    expect(fetcher.mock.calls.filter(call => call[0] === "/api/auth/app-code")).toHaveLength(1);
+    expect(fetcher.mock.calls.filter(call => String(call[0]).endsWith("/api/auth/app-code"))).toHaveLength(1);
     expect(intents.submit.mock.calls[0][0].codeVerifier).not.toBe(codeVerifier);
     expect(intents.submit.mock.calls[0][0].state).not.toBe(state);
   });

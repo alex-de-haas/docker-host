@@ -26,7 +26,7 @@ export function ReviewCommentComposer(props: {
   storageScope: string; head: string; location: ReviewCommentLocation | null; prNumber: string; pullRequestUrl?: string;
   canStart: boolean; onSubmit: (pending: Pending, recovering: boolean) => Promise<NewReviewCommentResult>;
   focusRequest?: string | null; onFocusHandled?: () => void;
-  onAsk?: (reference: string) => void; onClose: () => void; onPosted: () => void;
+  onAsk?: (reference: string) => void; onClose: (reason: "dismiss" | "posted") => void; onPosted: () => void;
 }) { return <Composer key={props.storageScope} {...props} />; }
 function Composer({ storageScope, head, location, prNumber, pullRequestUrl, canStart, onSubmit, onAsk, onClose, onPosted, focusRequest, onFocusHandled }: Parameters<typeof ReviewCommentComposer>[0]) {
   const id = useId(), key = `hosty.review-comment.${storageScope}`;
@@ -56,7 +56,7 @@ function Composer({ storageScope, head, location, prNumber, pullRequestUrl, canS
       // callbacks must not close another PR composer or append to a different conversation.
       if (!mounted.current) return;
       if (pending.ask && onAsk) onAsk(`Address this posted PR review comment\n${JSON.stringify({ pullRequest: pullRequestUrl, threadId: result.threadId, commentId: result.commentId, file: pending.location.path, side: pending.location.diffSide, startLine: pending.location.startLine, line: pending.location.line, headRevision: pending.head, comment: pending.body }, null, 2)}`);
-      onPosted(); onClose();
+      onPosted(); onClose("posted");
     } catch (cause) {
       const definitive = cause instanceof ReviewThreadActionError && cause.definitive;
       if (definitive) { try { update({ ...current.current, pending: undefined }); } catch { /* Keep the original request when storage is unavailable. */ } }
@@ -72,7 +72,7 @@ function Composer({ storageScope, head, location, prNumber, pullRequestUrl, canS
     {onAsk && <p className="text-xs text-muted-foreground">After posting, this adds a reference to your conversation draft.</p>}
     {draft.pending && <p role="status" className="text-xs text-muted-foreground">A comment is awaiting confirmation. Recover its original file, lines, body and head before starting another.</p>}
     {!canStart && !draft.pending && <p className="text-xs text-muted-foreground">New comments require an open, current published PR and a complete selected range.</p>}
-    <div className="flex flex-wrap gap-2"><Button size="sm" type="submit" disabled={busy || (!draft.pending && (!canStart || !location || !draft.body.trim()))}>{busy ? "Posting…" : draft.pending ? "Recover comment" : "Post comment"}</Button><Button size="sm" type="button" variant="ghost" disabled={busy} onClick={onClose}>Close comment</Button></div>
+    <div className="flex flex-wrap gap-2"><Button size="sm" type="submit" disabled={busy || (!draft.pending && (!canStart || !location || !draft.body.trim()))}>{busy ? "Posting…" : draft.pending ? "Recover comment" : "Post comment"}</Button><Button size="sm" type="button" variant="ghost" disabled={busy} onClick={() => onClose("dismiss")}>Close comment</Button></div>
     {error && <p role="alert" className="text-xs text-destructive-foreground wrap-anywhere">{error}</p>}
   </form>;
 }

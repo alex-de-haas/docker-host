@@ -10,6 +10,7 @@ import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { HostyLoader } from "../../../../../shared/web/hosty-states";
 
 type Kind = "codex" | "claude";
 type Variant = { key: Kind; connectionId: string | null; model: string | null; suggestedModels: { id: string; label: string }[]; ready: boolean; reason?: string };
@@ -37,7 +38,7 @@ export function TranslationProviders() {
       Let authorized apps translate with Codex or Claude. Text is sent to the selected provider and uses the connected account’s allowance or API billing.
     </p>
     {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-    {!data && !error && <p role="status" className="text-sm text-muted-foreground">Loading translation settings…</p>}
+    {!data && !error && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader label={null} className="size-4 shrink-0" />Loading translation settings…</p>}
     {data && <div className="divide-y border-y">
       {data.configuration.variants.map(variant => <TranslationProviderRow key={variant.key} initial={variant}
         connections={data.connections.filter(connection => connection.kind === variant.key)} />)}

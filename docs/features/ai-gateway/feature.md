@@ -115,7 +115,10 @@ See [assistant MCP delegation](../delegated-token-exchange/feature.md).
 - Session API requires an administrator authenticated by a current app session or a valid legacy
   delegated token. It supports create/list/get, SSE with an `?after=<seq>` cursor, messages, approvals,
   question answers, settings and cancellation. App-owned requests use the same-origin transport;
-  cookie-authenticated mutations enforce origin checks. `/healthz` is public and reports harness
+  cookie-authenticated mutations enforce origin checks. Browser session/workspace events use the
+  [per-view authenticated WebSocket bridge](../harness-development-ui/feature.md#browser-event-delivery),
+  preserving replay while leaving ordinary HTTP requests available across multiple open views.
+  `/healthz` is public and reports harness
   availability with an operator-facing reason.
 - Transcripts are the persisted event log: `{data}/sessions/{id}/record.json` plus append-only
   `events.ndjson` with a monotonic seq; streaming deltas are live-only. A daily sweep deletes
@@ -399,7 +402,7 @@ uses `bypassPermissions` with explicit SDK opt-in; Normal uses the behavior belo
   code blocks, reader-controlled transcript scrolling, and attachment cards.
 - The operator's own message is *not* rendered as markdown: it is shown back exactly as typed, so
   there is never a question of which of two texts the harness received.
-- Closing the panel only drops the SSE connection — the harness run keeps working. Reopening
+- Closing the panel only drops the event connection — the harness run keeps working. Reopening
   reattaches by the kept session id and the stream replay rebuilds pending approval cards.
 - **Sessions are named**, so the list can be scanned rather than only used to reach the newest row:
   - The gateway names an unnamed session from the **first message that says anything** — its opening

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-23
+updated: 2026-10-24
 summary: Core coordinates workspace pause, verified completion, conservative deletion and separately confirmed physical removal of unwanted unfinished work.
 components: [apps/core, apps/harness]
 ---
@@ -288,7 +288,8 @@ The inspection surface adds GET `/{workspaceId}/discard/plan`, POST
 `/{workspaceId}/discard/apply` and GET `/{workspaceId}/discard/status?requestId={uuid}`. It requires
 the existing operator management and per-repository source authority, same-user ownership and the
 corresponding permissions for owned resource cleanup. This is not an external-agent MCP tool and
-requires no original agent credential or conversation. Discard never marks abandoned work completed.
+requires no original agent credential or conversation. Status reads authenticate before validating
+the request ID, including when that query parameter is missing. Discard never marks abandoned work completed.
 Ordinary Complete, Delete, cleanup and retention retain their clean/merged prerequisites.
 
 A removal review names each physical path, local branch, changed/untracked/ignored files, unmerged

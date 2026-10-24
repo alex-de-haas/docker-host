@@ -164,7 +164,7 @@ internal static class AppManagementAuthorization
         Add(CoreAppPermissions.ReadCore,
             "GET /api/core/status", "GET /api/core/development", "GET /api/core/operations/{id}",
             "GET /api/core/update-status", "GET /api/core/bootstrap", "GET /api/core/settings");
-        Add(CoreAppPermissions.CoreLifecycle, "POST /api/core/restart");
+        Add(CoreAppPermissions.CoreLifecycle, "POST /api/core/restart", "POST /api/core/stop");
         Add(CoreAppPermissions.UpdateCore, "POST /api/core/update");
         Add(CoreAppPermissions.CoreLogs, "GET /api/core/logs");
         Add(CoreAppPermissions.ConfigureCore,

@@ -10,7 +10,6 @@ import {
   ChevronRight,
   Clock3,
   Layers,
-  LoaderCircle,
   RefreshCw,
   Search,
   Timer,
@@ -33,7 +32,7 @@ import { isAuthRequiredError, readApiError, throwIfAuthRequired } from "@/lib/ap
 import { buildServiceAccents, SERVICE_ACCENTS } from "@/components/observability/service-accents";
 import type { FleetTraceSummary, FleetTracesResponse, TelemetryApp, TraceDetailResponse, TraceDetailSpan } from "@/lib/types";
 import { withCoreSource } from "@/lib/core-source";
-import { EmptyState, PageHeader } from "@/components/page-shell";
+import { EmptyState, PageHeader, RequestError, RetainedResults } from "@/components/page-shell";
 
 const ALL = "__all__";
 
@@ -49,7 +48,8 @@ const TRACE_TOGGLE_ICON_CENTER_PX = 7;
 const TRACE_DETAIL_ROOT_ICON_OFFSET_PX = 5;
 const TRACE_DETAIL_GUIDE_CONTENT_GAP_PX = 16;
 
-type ListState = { loading: boolean; error: string | null; response: FleetTracesResponse | null };
+type LoadedTracesQuery = { appId: string; range: number; text: string };
+type ListState = { loading: boolean; error: string | null; response: FleetTracesResponse | null; loadedQuery: LoadedTracesQuery | null };
 type DetailState = { loading: boolean; error: string | null; response: TraceDetailResponse | null };
 
 // Cross-resource Traces view, modelled on the .NET Aspire "Traces" page: recent traces merged across
@@ -62,9 +62,11 @@ export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[]
   const [selectedAppId, setSelectedAppId] = useState<string>(ALL);
   const [rangeSeconds, setRangeSeconds] = useState(900);
   const [query, setQuery] = useState("");
-  const [list, setList] = useState<ListState>({ loading: false, error: null, response: null });
+  const [list, setList] = useState<ListState>({ loading: true, error: null, response: null, loadedQuery: null });
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [detail, setDetail] = useState<DetailState>({ loading: false, error: null, response: null });
+  const listRootRef = useRef<HTMLDivElement>(null);
+  const returnFocusTraceRef = useRef<string | null>(null);
 
   // Keep the selection valid as the app set changes. Adjusted during render (not in an effect) per
   // React's derived-state guidance; the guard is self-limiting — once reset to ALL the condition is
@@ -98,7 +100,7 @@ export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[]
         if (token !== listRequestRef.current) {
           return;
         }
-        setList({ loading: false, error: null, response: payload });
+        setList({ loading: false, error: null, response: payload, loadedQuery: { appId, range, text: trimmed } });
       } catch (error) {
         if (isAuthRequiredError(error) || token !== listRequestRef.current) {
           return;
@@ -106,6 +108,7 @@ export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[]
         // Keep the previously loaded traces on a transient failure (e.g. a 502 mid-typing on the
         // debounced search) rather than blanking the table — show the error alongside stale data (S-M2).
         setList((current) => ({
+          ...current,
           loading: false,
           error: error instanceof Error ? error.message : "Traces are unavailable.",
           response: current.response,
@@ -151,7 +154,20 @@ export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[]
     return () => clearTimeout(handle);
   }, [loadTraces, selectedAppId, rangeSeconds, query]);
 
+  useEffect(() => {
+    if (selectedTraceId !== null || returnFocusTraceRef.current === null) {
+      return;
+    }
+    const traceId = returnFocusTraceRef.current;
+    returnFocusTraceRef.current = null;
+    const row = [...(listRootRef.current?.querySelectorAll<HTMLTableRowElement>("tr[data-trace-id]") ?? [])]
+      .find((candidate) => candidate.dataset.traceId === traceId);
+    const fallback = listRootRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)");
+    (row ?? fallback)?.focus();
+  }, [selectedTraceId]);
+
   const openTrace = (traceId: string) => {
+    returnFocusTraceRef.current = traceId;
     setSelectedTraceId(traceId);
     void loadTrace(traceId);
   };
@@ -168,11 +184,18 @@ export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[]
   }
 
   const traces = list.response?.traces ?? [];
+  const loadedQuery = list.loadedQuery;
+  const showingPrevious = loadedQuery !== null && (list.loading || list.error !== null
+    || loadedQuery.appId !== selectedAppId || loadedQuery.range !== rangeSeconds || loadedQuery.text !== query.trim());
+  const loadedResource = loadedQuery?.appId === ALL ? "All resources"
+    : apps.find(app => app.id === loadedQuery?.appId)?.displayName ?? loadedQuery?.appId;
+  const loadedRange = RANGES.find(range => range.seconds === loadedQuery?.range)?.label;
+  const displayedSearch = loadedQuery?.text ?? query.trim();
   const selectedLabel =
     selectedAppId === ALL ? "All resources" : apps.find((app) => app.id === selectedAppId)?.displayName ?? "All resources";
 
   return (
-    <div className="flex min-h-0 flex-col space-y-6">
+    <div ref={listRootRef} className="flex min-h-0 flex-col space-y-6">
       <PageHeader
         title="Traces"
         description="Distributed traces across every resource (live, last hour). Select a trace to inspect its span waterfall."
@@ -183,7 +206,7 @@ export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[]
             onClick={() => void loadTraces(selectedAppId, rangeSeconds, query)}
             disabled={list.loading}
           >
-            <RefreshCw className={cn("h-4 w-4", list.loading && "animate-spin")} />
+            <RefreshCw className={cn("h-4 w-4", list.loading && "animate-spin text-info")} />
             Refresh
           </Button>
         }
@@ -192,30 +215,32 @@ export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[]
       <div className="flex flex-wrap items-center gap-2">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm">
-              {selectedLabel}
-              <ChevronDown className="h-4 w-4" />
+            <Button variant="outline" size="sm" className="h-auto min-h-8 min-w-0 max-w-full whitespace-normal text-left">
+              <span className="min-w-0 wrap-anywhere">{selectedLabel}</span>
+              <ChevronDown data-icon="inline-end" aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-56">
+          <DropdownMenuContent align="start" className="w-56 max-w-[calc(100vw-2rem)]">
             <DropdownMenuLabel>Resource</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuRadioGroup value={selectedAppId} onValueChange={setSelectedAppId}>
               <DropdownMenuRadioItem value={ALL}>All resources</DropdownMenuRadioItem>
               {apps.map((app) => (
                 <DropdownMenuRadioItem key={app.id} value={app.id}>
-                  {app.displayName}
+                  <span className="min-w-0 wrap-anywhere">{app.displayName}</span>
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <div className="flex gap-1">
+        <div role="group" aria-label="Time range" className="flex gap-1">
           {RANGES.map((range) => (
             <Button
               key={range.seconds}
-              variant={range.seconds === rangeSeconds ? "secondary" : "ghost"}
+              variant="ghost"
+              aria-pressed={range.seconds === rangeSeconds}
+              className="telemetry-filter-button"
               size="sm"
               onClick={() => setRangeSeconds(range.seconds)}
             >
@@ -230,24 +255,35 @@ export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[]
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search name or trace id…"
+            aria-label="Search name or trace ID"
             className="pl-8"
           />
         </div>
       </div>
 
       {list.error && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
-          {list.error}
-        </div>
+        <RequestError>{list.error}</RequestError>
+      )}
+
+      {showingPrevious && loadedQuery && (
+        <RetainedResults>traces: {loadedResource} · {loadedRange} · {loadedQuery.text ? `search “${loadedQuery.text}”` : "no search"}</RetainedResults>
       )}
 
       {list.loading && traces.length === 0 ? (
-        <EmptyState icon={LoaderCircle} title="Loading traces" iconClassName="animate-spin" />
+        <EmptyState icon={Waypoints} title="Loading traces" loading />
+      ) : list.error && traces.length === 0 ? (
+        <EmptyState
+          icon={Waypoints}
+          title="Traces unavailable"
+          description="Could not load traces for the selected filters. Refresh to try again."
+        />
       ) : traces.length === 0 ? (
         <EmptyState
           icon={Waypoints}
-          title="No traces"
-          description="Traces appear for apps that opt into telemetry and export the OpenTelemetry traces signal, with the Telemetry app enabled on the host (Shell platform panel or hosty setup --with hosty.telemetry)."
+          title={displayedSearch ? "No matching traces" : "No traces"}
+          description={displayedSearch
+            ? "Try a different search or adjust the filters."
+            : "Traces appear for apps that opt into telemetry and export the OpenTelemetry traces signal, with the Telemetry app enabled on the host (Shell platform panel or hosty setup --with hosty.telemetry)."}
         />
       ) : (
         <TraceListTable traces={traces} onOpen={openTrace} />
@@ -262,7 +298,7 @@ function TraceListTable({ traces, onOpen }: { traces: FleetTraceSummary[]; onOpe
     [traces],
   );
   return (
-    <div className="overflow-hidden rounded-lg border">
+    <div className="telemetry-table overflow-x-auto rounded-xl border bg-card">
       <table className="w-full border-collapse text-left text-xs">
         <thead className="bg-muted/30">
           <tr className="border-b text-[11px] uppercase tracking-wide text-muted-foreground">
@@ -280,11 +316,12 @@ function TraceListTable({ traces, onOpen }: { traces: FleetTraceSummary[]; onOpe
             return (
               <tr
                 key={trace.traceId}
+                data-trace-id={trace.traceId}
                 tabIndex={0}
                 aria-label={`Open trace ${trace.rootName || trace.traceId}`}
                 className={cn(
-                  "group cursor-pointer border-b align-top transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none",
-                  hasError && "bg-red-500/[0.03]",
+                  "group cursor-pointer border-b align-top transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:bg-accent focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0",
+                  hasError && "bg-destructive-soft/40",
                 )}
                 onClick={() => onOpen(trace.traceId)}
                 onKeyDown={(event) => {
@@ -321,14 +358,14 @@ function TraceListTable({ traces, onOpen }: { traces: FleetTraceSummary[]; onOpe
                 <td className="whitespace-nowrap px-3 py-2 text-right font-mono">
                   {trace.spanCount}
                   {hasError && (
-                    <Badge variant="outline" className="ml-1.5 border-transparent bg-red-500/10 text-red-700 dark:text-red-300">
+                    <Badge variant="outline" className="ml-1.5 border-transparent bg-destructive-soft text-destructive-foreground">
                       {trace.errorCount} err
                     </Badge>
                   )}
                 </td>
                 <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{formatDuration(trace.durationMs)}</td>
                 <td className="px-3 py-2 align-middle">
-                  <ChevronRight className="h-4 w-4 text-muted-foreground/40 transition-transform group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
+                  <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                 </td>
               </tr>
             );
@@ -353,6 +390,10 @@ function TraceWaterfall({
   onRefresh: () => void;
 }) {
   const [expandedSpanId, setExpandedSpanId] = useState<string | null>(null);
+  const backButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    backButtonRef.current?.focus();
+  }, []);
   const response = state.response;
   const rows = useMemo(() => (response ? buildWaterfallRows(response.spans) : []), [response]);
   const appAccents = useMemo(() => buildServiceAccents(rows.map((row) => row.span.appId)), [rows]);
@@ -380,12 +421,12 @@ function TraceWaterfall({
         title="Trace"
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={onBack}>
+            <Button ref={backButtonRef} variant="outline" size="sm" onClick={onBack}>
               <ArrowLeft className="h-4 w-4" />
               All traces
             </Button>
             <Button variant="outline" size="sm" onClick={onRefresh} disabled={state.loading}>
-              <RefreshCw className={cn("h-4 w-4", state.loading && "animate-spin")} />
+              <RefreshCw className={cn("h-4 w-4", state.loading && "animate-spin text-info")} />
               Refresh
             </Button>
           </div>
@@ -393,13 +434,17 @@ function TraceWaterfall({
       />
 
       {state.error && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
-          {state.error}
-        </div>
+        <RequestError>{state.error}</RequestError>
       )}
 
       {state.loading ? (
-        <EmptyState icon={LoaderCircle} title="Loading trace" iconClassName="animate-spin" />
+        <EmptyState icon={Waypoints} title="Loading trace" loading />
+      ) : state.error ? (
+        <EmptyState
+          icon={Waypoints}
+          title="Trace unavailable"
+          description="Could not load this trace. Refresh to try again."
+        />
       ) : !response || response.spans.length === 0 ? (
         <EmptyState
           icon={Waypoints}
@@ -410,7 +455,7 @@ function TraceWaterfall({
         <div className="space-y-4">
           <TraceSummaryCard traceId={traceId} response={response} errorCount={errorCount} services={services} />
 
-          <div className="overflow-hidden rounded-lg border">
+          <div className="telemetry-table overflow-x-auto rounded-xl border bg-card">
             <table className="w-full border-collapse text-left text-xs">
               <thead className="bg-muted/30">
                 <tr className="border-b">
@@ -434,7 +479,7 @@ function TraceWaterfall({
                 {rows.map((row) => {
                   const isError = row.span.statusCode === "error";
                   const expanded = expandedSpanId === row.span.spanId;
-                  const accent = isError ? "bg-red-500/80" : appAccents.get(row.span.appId) ?? SERVICE_ACCENTS[0];
+                  const accent = isError ? "bg-destructive" : appAccents.get(row.span.appId) ?? SERVICE_ACCENTS[0];
                   const attributes = Object.entries(row.span.attributes ?? {});
                   const toggle = () => setExpandedSpanId(expanded ? null : row.span.spanId);
                   return (
@@ -444,9 +489,9 @@ function TraceWaterfall({
                         aria-expanded={expanded}
                         aria-label={`Toggle attributes of span ${row.span.name || row.span.spanId}`}
                         className={cn(
-                          "group cursor-pointer border-b align-middle transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none",
-                          expanded && "bg-muted/30",
-                          isError && !expanded && "bg-red-500/[0.03]",
+                          "group cursor-pointer border-b align-middle transition-colors hover:bg-muted/40 focus-visible:bg-accent focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0",
+                          expanded && "bg-accent",
+                          isError && !expanded && "bg-destructive-soft/40",
                         )}
                         onClick={toggle}
                         onKeyDown={(event) => {
@@ -474,7 +519,7 @@ function TraceWaterfall({
                             />
                             <span aria-hidden className={cn("h-2 w-2 shrink-0 rounded-full", accent)} />
                             <span
-                              className={cn("truncate font-mono", isError && "text-red-600 dark:text-red-300")}
+                              className={cn("truncate font-mono", isError && "text-destructive-foreground")}
                               title={row.span.name || undefined}
                             >
                               {row.span.name || "—"}
@@ -488,7 +533,7 @@ function TraceWaterfall({
                             {isError && (
                               <Badge
                                 variant="outline"
-                                className="shrink-0 gap-1 border-transparent bg-red-500/10 text-red-700 dark:text-red-300"
+                                className="shrink-0 gap-1 border-transparent bg-destructive-soft text-destructive-foreground"
                               >
                                 <AlertTriangle className="h-3 w-3" />
                                 error
@@ -539,7 +584,7 @@ function TraceSummaryCard({
   services: { appId: string; appName: string; accent: string }[];
 }) {
   return (
-    <div className="overflow-hidden rounded-lg border bg-card">
+    <div className="telemetry-table overflow-x-auto rounded-xl border bg-card">
       <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-2">
         <Waypoints className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="truncate font-mono text-xs text-muted-foreground" title={traceId}>
@@ -585,10 +630,10 @@ function SummaryTile({
 }) {
   return (
     <div className="flex items-center gap-2.5 bg-card px-3 py-2.5">
-      <Icon className={cn("h-4 w-4 shrink-0", tone === "error" ? "text-red-500" : "text-muted-foreground")} />
+      <Icon className={cn("h-4 w-4 shrink-0", tone === "error" ? "text-destructive" : "text-muted-foreground")} />
       <div className="min-w-0">
         <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
-        <div className={cn("truncate font-mono text-sm", tone === "error" && "text-red-600 dark:text-red-300")}>
+        <div className={cn("truncate font-mono text-sm", tone === "error" && "text-destructive-foreground")}>
           {value}
         </div>
       </div>
@@ -651,14 +696,14 @@ function SpanDetails({
                 <div
                   key={key}
                   className={cn(
-                    "grid grid-cols-1 gap-0.5 py-1.5 text-[11px] sm:grid-cols-[minmax(0,12rem)_1fr] sm:gap-3",
+                    "grid grid-cols-1 gap-0.5 py-1.5 text-[11px] sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)] sm:gap-3",
                     index === 0 && "pt-0",
                   )}
                 >
-                  <span className="truncate font-mono text-muted-foreground" title={key}>
+                  <span className="min-w-0 break-all font-mono text-muted-foreground">
                     {key}
                   </span>
-                  <span className="break-all font-mono">{value}</span>
+                  <span className="min-w-0 whitespace-pre-wrap break-all font-mono">{value}</span>
                 </div>
               ))}
             </div>
@@ -685,7 +730,7 @@ function DetailField({
   return (
     <div className="min-w-0 space-y-0.5">
       <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</dt>
-      <dd className={cn("break-all text-xs", mono && "font-mono", tone === "error" && "text-red-600 dark:text-red-300")}>
+      <dd className={cn("break-all text-xs", mono && "font-mono", tone === "error" && "text-destructive-foreground")}>
         {value}
       </dd>
     </div>
@@ -723,15 +768,15 @@ function WaterfallBar({
         <div key={position} aria-hidden className="absolute inset-y-0 w-px bg-border/50" style={{ left: `${position}%` }} />
       ))}
       <div
-        className={cn("absolute inset-y-1 rounded-[3px]", accent, isError && "ring-1 ring-red-500/40")}
+        className={cn("absolute inset-y-1 rounded-[3px]", accent, isError && "ring-1 ring-destructive/40")}
         style={{ left: `${left}%`, width: `${width}%` }}
       />
       {labelInside ? (
         <span
-          className="absolute inset-y-0 flex items-center pr-1.5 text-[10px] font-medium tabular-nums text-foreground/80"
+          className="absolute inset-y-0 flex items-center pr-1.5 text-[10px] font-medium tabular-nums"
           style={{ right: `${100 - end}%` }}
         >
-          {label}
+          <span className="bg-card px-1 text-card-foreground">{label}</span>
         </span>
       ) : (
         <span

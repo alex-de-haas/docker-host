@@ -50,3 +50,20 @@ it.each([{ binary: true }, { truncated: true }, { contentKind: undefined }, { co
   await act(async () => [...container.querySelectorAll("button")].find(button => button.textContent === "Ask Harness")!.click());
   expect(ask).toHaveBeenCalledWith(thread);
 });
+
+it("keeps retained review actions available during deferred highlighter loading", async () => {
+  let completePreload!: () => void;
+  preload.mockReturnValueOnce(new Promise<void>(resolve => { completePreload = resolve; }));
+  const ask = vi.fn();
+  const thread = { id: "file", path: "new.ts", subjectType: "FILE", resolved: false, comments: ["Retained file comment"] };
+  await act(async () => root.render(<WorkspaceDiffView diff={diff} layout="unified" wrap threads={[thread]} onThreadAsk={ask} />));
+  expect([...container.querySelectorAll('[role="status"]')].some(status => status.textContent === "Loading diff viewer…")).toBe(true);
+  expect(renderDiff).not.toHaveBeenCalled();
+  expect(container.querySelector('[aria-label="File comments"]')?.textContent).toContain("Retained file comment");
+  await act(async () => [...container.querySelectorAll("button")].find(button => button.textContent === "Ask Harness")!.click());
+  expect(ask).toHaveBeenCalledExactlyOnceWith(thread);
+  await act(async () => completePreload());
+  expect(container.textContent).not.toContain("Loading diff viewer…");
+  expect(container.textContent).toContain("Highlighted diff");
+  expect(container.querySelector('[aria-label="File comments"]')?.textContent).toContain("Retained file comment");
+});

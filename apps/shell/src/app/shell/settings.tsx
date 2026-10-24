@@ -1,11 +1,12 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Eye, EyeOff, Globe, Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -103,6 +104,8 @@ function SettingDescriptionHint({ description }: { description: string }) {
 // setting edited before typed controls existed (or by an app using looser parsing) may hold any of these,
 // so we recognise the common truthy spellings when deciding the toggle's displayed state.
 const truthyBooleanSettingValues = new Set(["true", "1", "yes", "on", "enabled"]);
+// Encode every option so an empty setting value is valid without reserving a possible raw value.
+const settingSelectValuePrefix = "setting:";
 
 function isBooleanSettingChecked(value: string) {
   return truthyBooleanSettingValues.has(value.trim().toLowerCase());
@@ -117,6 +120,20 @@ function SettingControl({ controlId, setting, value, disabled, onChange, onRevea
   // deliberately (see toggleReveal), so the plaintext lives only as long as it is on screen.
   const [stored, setStored] = useState<string | null>(null);
   const [revealError, setRevealError] = useState(false);
+  const revealRequest = useRef({ revision: 0 });
+  const mounted = useRef(true);
+  useEffect(() => {
+    const request = revealRequest.current;
+    mounted.current = true;
+    return () => { mounted.current = false; ++request.revision; };
+  }, []);
+  useLayoutEffect(() => { ++revealRequest.current.revision; }, [value]);
+  const [previousValue, setPreviousValue] = useState(value);
+  if (previousValue !== value) {
+    setPreviousValue(value);
+    setStored(null);
+    if (value === null) { setRevealed(false); setRevealError(false); }
+  }
   // For a secret, null is the draft's "untouched" marker (see AppSettingsDraft); elsewhere it is just
   // a nullable upstream setting value. Coalesce so .trim() never throws and the Input stays controlled.
   const safeValue = value ?? "";
@@ -126,6 +143,7 @@ function SettingControl({ controlId, setting, value, disabled, onChange, onRevea
     const hasStored = "hasValue" in setting && setting.hasValue === true;
     const { displayValue, placeholder, shouldFetchStored } = resolveSecretFieldState({ draftValue: value, hasStored, revealed, stored });
     const toggleReveal = () => {
+      const request = ++revealRequest.current.revision;
       setRevealError(false);
       if (revealed) {
         setRevealed(false);
@@ -137,10 +155,9 @@ function SettingControl({ controlId, setting, value, disabled, onChange, onRevea
       setRevealed(true);
       if (shouldFetchStored && onReveal) {
         onReveal().then(
-          (fetched) => setStored(fetched ?? ""),
+          (fetched) => { if (mounted.current && request === revealRequest.current.revision) setStored(fetched ?? ""); },
           () => {
-            setRevealError(true);
-            setRevealed(false);
+            if (mounted.current && request === revealRequest.current.revision) { setRevealError(true); setRevealed(false); }
           },
         );
       }
@@ -213,20 +230,21 @@ function SettingControl({ controlId, setting, value, disabled, onChange, onRevea
   }
 
   if (setting.type === "select" && setting.options && setting.options.length > 0) {
+    const selectedOption = setting.options.find(option => option.value === safeValue);
+    const unavailable = safeValue !== "" && !selectedOption;
+    const selectValue = selectedOption || unavailable ? settingSelectValuePrefix + safeValue : "";
     return (
-      <select
-        id={controlId}
-        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm outline-none focus-visible:border-brand focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
-        value={safeValue}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {setting.options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+      <Select value={selectValue} disabled={disabled} onValueChange={next => onChange(next.slice(settingSelectValuePrefix.length))}>
+        <SelectTrigger id={controlId} className="w-full"><SelectValue placeholder="Select an option" /></SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {unavailable && <SelectItem value={selectValue} disabled>{safeValue} (unavailable)</SelectItem>}
+            {setting.options.map(option => (
+              <SelectItem key={option.value} value={settingSelectValuePrefix + option.value}>{option.label}</SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
     );
   }
 

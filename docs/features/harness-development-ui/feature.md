@@ -1,15 +1,16 @@
 ---
 created: 2026-10-16
-updated: 2026-10-23
+updated: 2026-10-24
 summary: Harness combines conversation navigation, multi-repository workspace details, sandbox previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
 
 # Harness Development UI
 
-Workspace inventory and source details use [Core observation events and a shared SSE stream](../workspace-event-observation/feature.md).
-The Source workspaces panel shares that stream. Reconnect and visibility restoration resynchronize;
-idle views issue no periodic Git reads. Explicit refresh and lifecycle actions retain fresh checks.
+Workspace inventory and source details use [Core observation events](../workspace-event-observation/feature.md).
+The Source workspaces panel shares one authenticated event subscription per document. Harness
+relays Core SSE frames through its browser WebSocket transport. Reconnect and visibility restoration
+resynchronize; idle views issue no periodic Git reads. Explicit refresh and lifecycle actions retain fresh checks.
 
 The web UI uses the [shared Hosty visual foundations](../design-system/feature.md): local IBM Plex
 Sans/JetBrains Mono fonts, ink surfaces, lime interaction states and its app chart accent. Its local
@@ -17,6 +18,57 @@ utility scale follows the design's size/line-height pairs: small 13/20, body 14/
 then headings 17/24, 22/30 and 30/38 px. Body text uses weight 400, headings 600 and buttons/badges
 500; technical text uses JetBrains Mono at 13/20. Phone inputs retain 16 px text. These app-owned
 styles remain effective inside the SDK workspace because its font reset targets only SDK chrome.
+
+## Browser Event Delivery
+
+Conversation and workspace event readers use same-origin WebSockets, keeping long-lived HTTP/1
+responses out of the browser's shared connection pool. Each reader obtains a short-lived,
+single-use ticket through its own authenticated app request. The server binds the ticket to that
+request's credential and event path, checks the browser origin and revalidates authority before
+accepting the socket. Tickets and app grants do not appear in socket URLs; documents do not share
+credentials or transcripts. The existing SSE endpoints remain available to direct clients.
+
+The wire payload retains the existing event frames and durable session sequence. Reconnect resumes
+from the retained cursor and waits for the authoritative current session status. Hidden documents
+release their session and workspace transports; restoring visibility resynchronizes the mounted
+conversation without clearing drafts. Socket cancellation, failed replay and a client disappearing
+during asynchronous subscription admission release the associated subscription and upstream reader.
+Connections retain authority deadlines and bounded buffering. Transport failure uses the existing
+recovery state without falling back to persistent browser SSE responses. An older Core that explicitly lacks
+workspace events produces `stream.unsupported`; authorized snapshots remain available with the
+existing infrequent capability probe, without periodic full snapshot reloads.
+
+## Connection And Send Recovery
+
+A transient disconnect preserves the mounted conversation, composer, uploaded references and
+review drafts. Conversation reads resume from their durable cursor. An expired app authorization
+pauses those reads until the SDK verifies the same actor again; it does not terminate the reader
+or create another chat. Denied/deleted sessions remain terminal instead of retrying indefinitely.
+
+The browser saves one pending-send journal before dispatching a message, including a UUID, exact
+serialized text, attachment names and observed context/selection revisions. An unconfirmed send
+retains its draft and exposes **Retry send**; the normal Send action stays blocked. Retry first
+reads that original receipt. Accepted requests settle locally without another POST; unknown
+outcomes remain unresolved. Only the explicit not-admitted result permits a POST of the original
+UUID and frozen payload. Definitive pre-admission refusals retain an editable draft for a separate
+intentional send. Restoring access never invokes Retry or dispatches a mutation automatically.
+
+Harness atomically persists a receipt before provider admission and serializes receipt reads and
+sends per session. Reusing an admitted UUID cannot start another turn, including after coordinator
+restart; changed content and another actor are refused. A crash or lost dispatch acknowledgement
+retains an unknown outcome rather than guessing that nothing happened. Receipts belong to the
+session transcript lifetime. Browser storage refusal blocks a new send before dispatch; successful
+uploads retain their references across recovery/reload. Confirmed deletion removes local journals.
+
+Provider choices distinguish an unreadable catalog from a confirmed empty result. Focus, verified
+authorization restoration and **Retry providers** refresh choices without selecting an account or
+replaying a failed save. Successful reads clear stale read errors, retain separate save errors and
+ignore superseded responses. Initial default-provider adoption retains its existing contract.
+
+Mounted views synchronize pending journals. Web Locks serialize claims and accepted cleanup where
+available; other browsers retain guarded storage checks rather than an absolute simultaneous
+cross-document intent-creation guarantee. The server's one-dispatch guarantee applies to each
+retained UUID in either case. Late results cannot clear another request's draft or recovery action.
 
 ## Navigation And Conversation
 
@@ -36,7 +88,14 @@ buttons sit to the right of the Sessions heading and count, in that order, with 
 and tooltips. Search matches displayed workspace names, original session titles
 and application context, and All, Needs you, Working and Failed chips filter the same flat list. There is no separate application selector. The footer opens External workspaces with its count. Rename is also available in the conversation header and uses the existing session-title editor. Desktop sessions/workspace columns measure
 264/344 px; the transcript and composer are capped at 760 px. The workspace toggle hides its retained
-column. Pending approvals/questions have a pinned Review action that scrolls and focuses their card;
+column. Codex file-change approval input correlates the proposed patch from the exact active native thread,
+turn and item before persistence. Retention is bounded and proposals are consumed once; stale,
+completed, oversized or unavailable proposals cannot become another approval's patch. No patch is
+truncated and approval decisions and authority are unchanged. A real Codex proposal-only check shows the
+exact path and patch before denial; denying it stops the request without executing a file change,
+leaves the worktree clean and releases the owned activity lease after confirmed Worker exit.
+
+Pending approvals/questions have a pinned Review action that scrolls and focuses their card;
 active work has a pinned activity line and Stop. Repository summaries use bordered cards. Search and activity chips change navigation without
 changing conversation identity. Sessions and external workspaces are ordered by most recent activity, with
 stable ID ordering for equal or unavailable dates. Waiting sessions keep their indicators without
@@ -239,8 +298,13 @@ Recovery uses that original command even after the head moves or the PR closes. 
 adds the confirmed thread reference to the same conversation's draft; it does not send a message or
 run an agent. New-comment forms use the existing UI primitives and focus their textarea only after
 an explicit open action. Async confirmations clear their own stored intent but cannot close another
-PR's form or move focus after navigation.
+PR's form or move focus after navigation. Explicit Close returns keyboard focus to the review
+header's New comment trigger; a confirmed post keeps the optional Ask handoff's own focus behavior.
 
+
+Scope and compact publication labels prefer a confirmed closed or merged observation over GitHub's
+retained draft flag. Explicit publication outcomes and merged release-evidence wording retain their
+existing precedence.
 
 PR review threads retain author login, user/bot kind, timestamps, GitHub links and resolved state.
 Current line threads attach only to matching path, side and rendered hunk; multiline threads attach
@@ -250,7 +314,15 @@ pages are explicit. Local overlap is a separate Changed locally indicator and ne
 Reply and Resolve require an explicit operator action through Core using the operator's own selected
 GitHub connection. Pending replies retain their body and full original request, including expected
 head, for recovery after an uncertain response or reload. New actions require an open, complete PR
-observation; pending actions retain recovery after the remote state changes.
+observation; pending actions retain recovery after the remote state changes. A definitive rejected
+reply or resolution returns its persisted failed receipt: the composer keeps the body and clears
+the rejected pending intent so a refreshed head can use a new explicit request. Unknown remote
+outcomes retain the original UUID and arguments and block competing commands.
+
+Core repeats local owner, saved role, source binding and exact selected-account admission immediately
+before comment, reply and resolution writes, after delayed provider reads. Cancellation before that
+boundary prevents mutation admission. A recovery refusal does not turn a previously uncertain remote
+outcome into a definitive failure; its original UUID remains pending.
 
 Harness uses the same `@pierre/diffs` renderer as Shell: syntax and inline change highlighting,
 line numbers, Unified/Split layout, optional wrapping and Hosty light/dark themes. Untracked local
@@ -266,6 +338,11 @@ focused tests also cover theme updates, failed highlighter loading, malformed an
 and staged additions/deletions. The test worktree passes Core cleanup after removing its synthetic
 changes; the test Core, Harness process and credentials are removed.
 
+Viewed progress survives Back and reopening the same review in the browser tab. Stored marks are
+isolated by authenticated viewer, workspace, worktree, scope/comparison and file, and match only
+the exact Core source revision. A changed revision is unviewed. Explicit unmarking persists;
+unavailable browser storage leaves the mounted control usable without cross-viewer persistence.
+
 Each PR has a collapsible card. Its two-line header shows the title and number, repository, state,
 CI summary and known unresolved-thread count. Expanded cards retain state/review chips, discussion
 count, observation time, unpushed-change warning, GitHub link and the existing scoped review action.
@@ -273,6 +350,9 @@ Open/draft cards say Review changes; closed/merged cards retain Inspect publishe
 or provider binding failures stay explicit. A historical reference displays its retained last
 observation and factual merge time when available, with cached CI clearly labelled; legacy missing
 observations remain unknown. These summaries do not authorize publication or certify a current head.
+CI availability follows the observed check list independently of publication completion. An open
+or draft PR with successful checks and skipped checks reports passed CI; skipped counts remain
+distinct. An all-skipped or unknown list does not become successful CI.
 
 The PR icon's shape describes lifecycle. Current open PR icons use green for passed checks, Info
 blue while checks run and red for failed, cancelled or blocked checks. Failure takes precedence
@@ -328,7 +408,7 @@ sandbox lifecycle, reviewed checks, restart and service logs, including original
 and confirmations. Current launch stage/time and service state come from Core. Missing full launch
 history, time-to-ready, Not pushed counts or child-Core test-user totals are not invented.
 
-The sandbox section is omitted when empty. Owned child Core environments show their label, runtime
+The entire sandbox section is omitted after a successful empty inventory read, including inventories containing only disposed app sandboxes. Loading and unavailable/error states stay visible with their existing retry; later observations reveal newly created previews. Owned child Core environments show their label, runtime
 state and authorized Core/application preview links; app sandboxes show their runtime state and
 preview link. Ordinary child login remains required. Missing resource permission or unavailable
 application status is reported. Merely completing a workspace does not finish a retained sandbox.
@@ -682,7 +762,37 @@ session, provider connection and connection revision; binding changes hide previ
 errors immediately. A disconnected session has no unusable Retry models action. Retrying the
 catalog does not save a new model selection.
 
+## Identity Readiness And Credential Recovery
+
+The SDK session identity response uses Core-validated authority without awaiting unrelated live
+conversation queues. Harness schedules one background credential-refresh job per actor, coalesces
+the latest verified credential and retries failed conversation refreshes on the next identity check.
+Failure warnings contain no credential-bearing provider details. An explicit conversation credential
+refresh still waits for that selected conversation before confirming success; Core validates each
+privileged command independently. Background scheduling stops during manager shutdown.
+
 ## Testing Expectations
+
+- Cover expired stream admission followed by verified same-actor restoration, durable cursor replay,
+  fast recovery races, terminal denial and listener/timer cleanup.
+- Cover response loss before/after provider admission, coordinator restart, concurrent duplicate
+  UUIDs, payload/actor mismatch, unknown/rejected receipts and corrupt receipt refusal. Verify
+  browser receipt parsing and exact not-admitted recovery without generic 401/403/404 replay.
+- Cover mounted and reloaded text/files, storage failure, concurrent views, identical newer drafts,
+  late accepted/rejected results, and explicit Retry. Never use provider completion as an admission
+  receipt or automatically repeat approval, question, GitHub or message mutations after restoration.
+
+
+- Verify concurrent standalone and Core/Shell-embedded conversations beyond the former HTTP/1
+  connection budget: fresh navigation, normal identity/bootstrap reads, live updates, drafts,
+  reload and tab closure remain responsive. Use isolated test data and ordinary password login.
+- Verify one-use ticket expiry, stream/path binding, exact browser origin, per-view bearer authority
+  despite a different ambient cookie, rejected/revoked grants, subscription-admission cancellation,
+  cursor replay, bounded buffering and cleanup of sockets, readers, timers and failed subscriptions.
+
+
+- Verify identity/bootstrap availability with concurrent standalone, embedded and retained tool views,
+  including hidden consumers, stream cleanup, missed-data recovery and unchanged actor/origin bounds.
 
 - Verify activity ordering, legacy/missing/invalid dates, multiple repositories, repeated observations,
   replays, file edits and workflow changes. Keep attention indicators independent of ordering and

@@ -115,7 +115,7 @@ export function ProviderLoginDialog({
             )}
             <div className="grid gap-2 text-xs text-muted-foreground">
               <p className="flex items-center gap-2">
-                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden />
                 Waiting for confirmation…
               </p>
               <p>

@@ -370,6 +370,8 @@ internal static class CoreJson
 [JsonSerializable(typeof(WorkspaceActivationSelection))]
 [JsonSerializable(typeof(WorkspaceActivationPlan))]
 [JsonSerializable(typeof(CoreRestartRequest))]
+[JsonSerializable(typeof(CoreStopRequest))]
+[JsonSerializable(typeof(CoreStopResponse))]
 [JsonSerializable(typeof(Haas.Hosty.Launch.CoreLaunchOperation))]
 [JsonSerializable(typeof(Haas.Hosty.Launch.CoreSourceSettings))]
 [JsonSerializable(typeof(ErrorResponse))]

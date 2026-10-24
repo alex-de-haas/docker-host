@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-10-22
+updated: 2026-10-23
 summary: Shell unifies personal, host and application settings; Core confirms protected changes while Harness owns invocation preferences and instruction acceptance.
 components: [apps/core, apps/shell, apps/harness, apps/marketplace]
 ---
@@ -54,7 +54,7 @@ not clear the other's draft. Discard restores only the visible form. Network ret
 endpoint address controls and does not submit hidden parameter drafts.
 The header provides Open app when a page exists, administrator Start/Restart/Stop, and More for
 logs, assistant and removal when supported. Ordinary users viewing the retained logs-only page
-keep an Apps breadcrumb to `/apps`, rather than an inaccessible administrator destination.
+keep a Home breadcrumb to the empty `/` start surface, without an administrator destination.
 
 Dashboard Logs, More > Console logs, the readiness action and update-notification Open logs all
 open `/apps/<app-id>?section=logs`, selecting the Logs tab rather than a Shell popup.
@@ -115,6 +115,75 @@ Permissions shows required, optional and previously declared access in read-only
 plain-word labels, technical identifiers, Core descriptions and allowed/unsupported/approval-needed
 states. Confirmed provider roles remain separate from unconfirmed roles that require an app update.
 Review permissions opens the existing Core page; Shell grants no access locally.
+
+## Host Settings Presentation
+
+Updates, Network, Shared folders and Core source use the existing Core information Frame pattern:
+a muted outer frame, aligned header and a card-colored content panel. Core setting labels sit above
+their controls with their existing inline descriptions and duration/reset details. Save settings
+stays one action for the current form; provider-dependent fields retain their draft-driven visibility.
+
+Network connection, Core publication and diagnostics retain separate framed sections with wrapping
+actions and long-address disclosure. Shared mounts uses the same frame around its toolbar and table,
+including usage expansion, read-only indicators, binding review, edit and delete confirmation. Its
+pending/error/empty states remain inside that surface. A failed first read offers Retry and never
+claims an empty library. A transient failure for the same actor and Core retains the last confirmed
+table with a stale-data note; actor, origin or authority changes clear cached rows and mount-editor
+drafts. Read generations and mutation scope guards reject old responses while successful same-actor
+mutations reconcile across concurrent refreshes. Source repository fields and source-folder choices
+use separate frames; running/selected project facts, source revisions and restart instructions stay
+visible. Layout changes neither source selection nor Core/app lifecycle.
+
+## Shared Form Controls
+
+Shell's visible selection and input controls use the shared shadcn/Radix primitives alongside ReUI
+Frame surfaces. Generic Core/app settings, shared mount modes, invitation roles/expiry, address
+providers and open tool views use Select; checkboxes and source-folder radio choices use Checkbox
+and RadioGroup. Text, numeric, URL and password fields keep the shared Input and boolean settings
+keep Switch. No page owns a styled native select or a separate native checkbox/radio input.
+
+Generic settings round-trip exact option values, including explicitly empty values, without
+selecting a default on entry. An unknown saved value is shown as unavailable and remains unchanged
+until the user chooses a supported option. Labels, disabled states, numeric invitation expiry,
+source revisions, scope conflicts and original protected submissions stay with their existing
+owners. Source path text remains separate from radio labels so it can be edited independently.
+Dismissing a portaled Open views menu with Escape keeps the narrow tool panel open; Escape from
+the panel itself still closes it.
+
+## Tokens And Devices
+
+The existing personal tab and authorized user-detail view use an in-place credential grid. Search
+covers names, fingerprints, client metadata, audiences and scopes; type/access filters, sorting,
+48/36 px row density, optional columns, page selection and 10/20/50-row pagination act on the
+returned metadata. The API lists active credentials only and supplies no current-session marker;
+the grid does not invent revoked/expired/current-device status. Token values are never shown.
+
+Rename drafts survive refresh and refused saves. Core/actor/selected-user changes reset local rows,
+selection and drafts and abort obsolete reads or mutations. Loading and failed reads remain
+separate from an empty account or filters with no matches. Create token and Connect device stay on
+Core's own pages for the current user; another user's detail offers neither creation action.
+
+Selected credentials are revoked sequentially through each existing protected Core DELETE. Core
+reviews every fingerprint; cancellation, an error, an uncertain reply or authority change stops the
+sequence. Confirmed removals and remaining selected rows are shown with factual partial counts,
+including when some selected rows are hidden by a filter. Bulk revocation is not atomic and can end
+the browser session performing it.
+
+The credential grid keeps OAuth client names and IDs available in its optional OAuth client column.
+Its fixed minimum table width scrolls within the existing page container at narrow widths.
+
+Background app access uses the same Frame and table surfaces, with search over names, app IDs and
+returned scope metadata. It retains expired and revoked grant history, shows factual revocation
+and expiry metadata, and offers a scoped row action. Its source remains the current administrator's
+background grants; normal sign-out preserves these explicitly delegated grants. Loading and failed
+reads are distinct from an empty or filtered list, and actor/Core changes abort obsolete work.
+
+The personal Tokens & devices section places Revoke all my authorizations above the credential
+grid for administrators. Its explanation includes browser sessions, tokens, OAuth authorizations
+and background access. It uses the existing protected global POST and redirects to Core login only
+after a confirmed success; cancellation, failure or a changed actor does not redirect. The action
+is absent from ordinary-user and selected-user support views. Individual background revocation and
+OAuth-client removal keep their separate protected DELETE endpoints.
 
 ## Protected Core Changes
 
@@ -249,9 +318,11 @@ fails. Retrying the same reviewed request replays that result without executing 
   factual Core authorization errors without management controls or expanded grants. Core logs
   remain a dialog.
 - Verify standalone `/apps/<app-id>` navigation, preserved section links and legacy Manage URL
-  migration. Administrator breadcrumbs return to Dashboard; ordinary-user logs retain Apps as their
+  migration. Administrator breadcrumbs return to Dashboard; ordinary-user logs retain Home at `/` as their
   accessible parent. Removed `tab=apps` does not render an installed-app catalog, and Settings Apps
   contains only declared `ui.settings` entries, including stopped-app readiness. Preserve role gates,
   app-owned identity/authorization, full-height embedding, internal tabs and existing app bookmarks.
+- Verify Host settings frame/header/table consistency, long path/address wrapping and retained form
+  drafts in light/dark and narrow views. Keep mount binding and source revision/confirmation tests.
 - Verify responsive forms, dashboard runtime/Publish continuity, deep management links, autostart,
   trusted Core summaries and embedded/standalone app settings. Stop isolated runtime consumers after QA.

@@ -25,7 +25,7 @@ function RolesContent({ config, snapshot }: { config: DemoConfig; snapshot: Demo
     <DemoShell>
       <DemoPageHeader
         eyebrow={config.appId}
-        title="App Roles"
+        title="App roles"
         description="App-owned role assignments persisted in the demo app data directory."
         actions={<JsonButton href="/api/roles" />}
       />
@@ -48,7 +48,7 @@ function RolesContent({ config, snapshot }: { config: DemoConfig; snapshot: Demo
         </div>
 
         <SectionCard
-          title="Role Assignments"
+          title="Role assignments"
           action={
             <StateBadge tone={snapshot.canManage ? "success" : "warning"}>
               {snapshot.canManage ? "Manage" : "Read only"}

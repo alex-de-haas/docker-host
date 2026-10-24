@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 const empty: UiHostSnapshot = { bootstrap: null, catalog: [], tools: [], selected: null, expanded: false, width: 360, error: null };
 const noop = () => () => {};
-export function ShellMobileTabs({ active, canManage, onNavigate }: { active: string; canManage: boolean; onNavigate: (view: "dashboard" | "available-apps" | "settings") => void }) {
+export function ShellMobileTabs({ active, canManage, onNavigate, onOpenApps }: { active: string; canManage: boolean; onNavigate: (view: "dashboard" | "settings") => void; onOpenApps: () => void }) {
   const host = useHostyUiHost(), chrome = useHostyChrome();
   const snapshot = useSyncExternalStore(host?.subscribeSnapshot ?? noop, host?.getSnapshot ?? (() => empty), () => empty);
   const slot = snapshot.workspaces?.find(w => w.workspaceId === "default");
@@ -18,7 +18,7 @@ export function ShellMobileTabs({ active, canManage, onNavigate }: { active: str
   return <nav aria-label="Phone navigation" className="shell-mobile-tabs">
     {error && <div role="alert" className="absolute bottom-full inset-x-0 border bg-background p-2 text-sm">{error}<Button size="sm" variant="ghost" onClick={() => setError(null)}>Dismiss</Button></div>}
     {canManage && <Button variant="ghost" aria-current={active === "dashboard" ? "page" : undefined} onClick={() => onNavigate("dashboard")}><LayoutDashboard /><span>Dashboard</span></Button>}
-    <Button variant="ghost" aria-current={active === "available-apps" || active === "workspace" ? "page" : undefined} onClick={() => onNavigate("available-apps")}><Grid2X2 /><span>Apps</span></Button>
+    <Button variant="ghost" aria-current={active === "workspace" ? "page" : undefined} onClick={() => { host?.collapseWorkspace("default"); onOpenApps(); }}><Grid2X2 /><span>Apps</span></Button>
     {tools && <Button variant="ghost" aria-label="Tools" aria-pressed={!!slot?.expanded} className={cn(slot?.expanded && "bg-brand-soft")} onClick={() => {
       setError(null);
       if (slot?.expanded) host?.collapseWorkspace("default");

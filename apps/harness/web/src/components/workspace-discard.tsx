@@ -146,7 +146,7 @@ export function WorkspaceDiscard({ workspaceId, pendingRequestId, disabled, canP
         <p className="text-xs text-muted-foreground">{removing ? "This may take a while. Keep this window open while Core confirms the result." : "Loading the current workspace and removal details."}</p>
       </div>
     </div>}
-    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+    {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
     {plan && !recovering && <>
       <h3 className="font-semibold">{plan.name}</h3>
       {!!plan.removedTrees?.length && <p className="text-sm">{plan.removedTrees.length} repositories were already removed by earlier confirmed cleanup. This review covers the remaining source.</p>}
@@ -162,7 +162,7 @@ export function WorkspaceDiscard({ workspaceId, pendingRequestId, disabled, canP
       {expired && <p role="status" className="text-sm">This review expired. Refresh the review before confirming.</p>}
       {deleteConversation && <label className="flex items-center gap-2 text-sm"><Checkbox checked={withConversation} disabled={busy} onCheckedChange={value => setWithConversation(value === true)} />Also delete this conversation after physical cleanup succeeds</label>}
     </>}
-    {progress && <div className="space-y-2 text-sm"><p role="status">{removed ? "Worktrees, branches, registrations and workspace records have been removed." : requiresReview ? "The remaining source changed after confirmation. It is preserved. Review the remaining removal scope and confirm again." : "Removal is pending. The original confirmed request is preserved for recovery."}</p>{progress.error && <p className="text-destructive">{progress.error}</p>}<ul className="space-y-1">{progress.trees.map(tree => <li key={tree.id}>Repository {tree.id.slice(0, 12)}: {tree.state}</li>)}{progress.resources.map(resource => <li key={`${resource.kind}:${resource.id}`}>{resource.kind} {resource.id.slice(0, 12)}: {resource.state}</li>)}</ul></div>}
+    {progress && <div className="space-y-2 text-sm"><p role="status">{removed ? "Worktrees, branches, registrations and workspace records have been removed." : requiresReview ? "The remaining source changed after confirmation. It is preserved. Review the remaining removal scope and confirm again." : "Removal is pending. The original confirmed request is preserved for recovery."}</p>{progress.error && <p className="text-destructive-foreground">{progress.error}</p>}<ul className="space-y-1">{progress.trees.map(tree => <li key={tree.id}>Repository {tree.id.slice(0, 12)}: {tree.state}</li>)}{progress.resources.map(resource => <li key={`${resource.kind}:${resource.id}`}>{resource.kind} {resource.id.slice(0, 12)}: {resource.state}</li>)}</ul></div>}
     {recovering && !progress && !busy && <p className="text-sm">The outcome of the original removal request is unconfirmed. Check its status or retry that same request.</p>}
     <DialogFooter className="flex-col gap-4 sm:justify-between">
       <div className="flex flex-wrap gap-2">

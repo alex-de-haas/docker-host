@@ -1,7 +1,8 @@
 "use client";
 
 import type { AgentConnection } from "@/components/agent-providers";
-import { appFetch } from "@hosty-sdk/app/browser-auth";
+import { appFetch, APP_SESSION_RESTORED } from "@hosty-sdk/app/browser-auth";
+import { openEventStream } from "./event-stream";
 
 // App-local requests carry this document's app grant or same-origin cookie.
 // MCP delegation requires separate authority on the server.
@@ -55,7 +56,7 @@ export type HarnessHealth = {
 
 export type ContextApp = { id: string; displayName: string; available: boolean; runtimeState?: string; icon?: string; iconUrl?: string };
 export class AssistantApiError extends Error {
-  constructor(public readonly code: string | undefined, message: string) { super(message); }
+  constructor(public readonly code: string | undefined, message: string, public readonly status?: number) { super(message); }
 }
 export async function listContextApps(search = "", offset = 0): Promise<{ apps: ContextApp[]; nextOffset: number | null }> {
   return (await call(`/session-apps?search=${encodeURIComponent(search)}&offset=${offset}`)).json();
@@ -79,7 +80,7 @@ async function call(path: string, init: RequestInit = {}): Promise<Response> {
   });
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { message?: string; code?: string } | null;
-    throw new AssistantApiError(body?.code, body?.message || `Request failed (${response.status}).`);
+    throw new AssistantApiError(body?.code, body?.message || `Request failed (${response.status}).`, response.status);
   }
   return response;
 }
@@ -128,11 +129,22 @@ export async function getSession(sessionId: string): Promise<AssistantSession> {
   return (await call(`/sessions/${encodeURIComponent(sessionId)}`)).json() as Promise<AssistantSession>;
 }
 
-export async function postMessage(sessionId: string, text: string, attachments: string[] = [], appContextRevision = 0, withoutAppDetails = false, selectionRevision = 0): Promise<void> {
-  await call(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
+export type MessageReceipt = { clientRequestId: string; state: "accepted" | "unknown" | "rejected"; eventSeq?: number; error?: { code: string; message: string } };
+function readMessageReceipt(value: unknown, requestId: string): MessageReceipt {
+  const receipt = value as MessageReceipt | null;
+  if (!receipt || receipt.clientRequestId !== requestId || !["accepted", "unknown", "rejected"].includes(receipt.state))
+    throw new AssistantApiError("message_outcome_unknown", "The send outcome could not be verified. Check its status before sending again.");
+  return receipt;
+}
+export async function getMessageReceipt(sessionId: string, requestId: string): Promise<MessageReceipt> {
+  return readMessageReceipt(await (await call(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(requestId)}`, { cache: "no-store" })).json(), requestId);
+}
+export async function postMessage(sessionId: string, text: string, attachments: string[] = [], appContextRevision = 0, withoutAppDetails = false, selectionRevision = 0, clientRequestId?: string): Promise<MessageReceipt | void> {
+  const response = await call(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: "POST",
-    body: JSON.stringify({ text, attachments, appContextRevision, withoutAppDetails, selectionRevision }),
+    body: JSON.stringify({ text, attachments, appContextRevision, withoutAppDetails, selectionRevision, ...(clientRequestId ? { clientRequestId } : {}) }),
   });
+  if (clientRequestId) return readMessageReceipt(await response.json(), clientRequestId);
 }
 
 export type StoredAttachment = { name: string; size: number };
@@ -203,93 +215,123 @@ export async function streamEvents(
   onConnection?: (state: StreamConnection) => void,
 ): Promise<void> {
   let lastSeq = 0;
-  onConnection?.("connecting");
-  // A long conversation outlives a short-TTL token, so a 401 here is far more likely to be an aged
-  // token than a revoked role. Refreshed once before the refusal is believed, exactly as `call`
-  // does — treating the first 401 as terminal would end a live stream on a routine expiry.
-  while (!signal.aborted) {
-    try {
-      const response = await appFetch(
-        `/api/sessions/${encodeURIComponent(sessionId)}/events?after=${lastSeq}`,
-        {
-          credentials: "include",
-          signal,
-        },
-      );
-      if (TERMINAL_STREAM_STATUSES.has(response.status)) {
-        onConnection?.("disconnected");
-        // Reported rather than retried, and with a negative seq so it can never collide with a
-        // stored event. A silent retry loop would leave the panel stuck with no explanation.
-        onEvent({
-          seq: -1,
-          ts: new Date().toISOString(),
-          type: "error",
-          message: `The event stream ended (${response.status}) — the session may be gone or access was revoked. Start a new session.`,
-        });
-        return;
-      }
-      if (!response.ok || !response.body) {
-        throw new Error(`stream failed (${response.status})`);
-      }
+  let identityRevision = 0;
+  let expiredRevision: number | undefined;
+  const identity = typeof window === "undefined" ? undefined : window;
+  const page = typeof document === "undefined" ? undefined : document;
+  let attempt: AbortController | undefined;
+  let wake: (() => void) | undefined;
+  const visible = () => page?.visibilityState !== "hidden";
+  const readable = () => visible() && (expiredRevision === undefined || identityRevision > expiredRevision);
+  const restored = () => { identityRevision++; wake?.(); };
+  const visibility = () => {
+    if (!visible()) attempt?.abort();
+    wake?.();
+  };
+  const aborted = () => { attempt?.abort(); wake?.(); };
+  // Both waits can be interrupted without retaining a timer or a document listener per retry.
+  const wait = (delay?: number) => new Promise<void>(resolve => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = () => {
+      clearTimeout(timer);
+      if (wake === finish) wake = undefined;
+      resolve();
+    };
+    wake = finish;
+    if (signal.aborted || (delay === undefined ? readable() : !readable())) finish();
+    else if (delay !== undefined) timer = setTimeout(finish, delay);
+  });
+  page?.addEventListener("visibilitychange", visibility);
+  identity?.addEventListener(APP_SESSION_RESTORED, restored);
+  signal.addEventListener("abort", aborted);
+  try {
+    onConnection?.("connecting");
+    // Keep the cursor and mounted conversation while a background tab releases its connection.
+    // Resuming replays only missed durable events, followed by the authoritative current status.
+    while (!signal.aborted) {
+      if (!readable()) { await wait(); continue; }
+      if (expiredRevision !== undefined) { expiredRevision = undefined; onConnection?.("reconnecting"); }
+      const startedIdentityRevision = identityRevision;
+      const current = new AbortController(); attempt = current;
+      let response: Response | undefined;
+      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+      let cancellation: Promise<void> | undefined;
+      const cancelReader = () => cancellation ??= reader?.cancel().catch(() => {}) ?? Promise.resolve();
+      const cancelRead = () => { void cancelReader(); };
+      try {
+        response = await openEventStream(
+          `/api/sessions/${encodeURIComponent(sessionId)}/events?after=${lastSeq}`,
+          { signal: current.signal },
+        );
+        if (current.signal.aborted || signal.aborted || !visible()) continue;
+        if (response.status === 401 && identity) {
+          // The coordinator owns sign-in. Resume this read only after it validates the same
+          // actor; never turn an expired credential into a new conversation or mutation replay.
+          expiredRevision = startedIdentityRevision;
+          onConnection?.("disconnected");
+          continue;
+        }
+        if (TERMINAL_STREAM_STATUSES.has(response.status)) {
+          onConnection?.("disconnected");
+          // A terminal authority refusal never retries or changes the selected conversation.
+          onEvent({
+            seq: -1,
+            ts: new Date().toISOString(),
+            type: "error",
+            message: `The event stream ended (${response.status}) — the session may be gone or access was revoked. Start a new session.`,
+          });
+          return;
+        }
+        if (!response.ok || !response.body) throw new Error(`stream failed (${response.status})`);
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-        buffer += decoder.decode(value, { stream: true });
-        // SSE frames are separated by a blank line; heartbeats are comment lines (":hb").
-        for (;;) {
-          const boundary = buffer.indexOf("\n\n");
-          if (boundary < 0) {
-            break;
-          }
-          const frame = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 2);
-          const data = frame
-            .split("\n")
-            .filter((line) => line.startsWith("data: "))
-            .map((line) => line.slice("data: ".length))
-            .join("\n");
-          if (!data) {
-            continue;
-          }
-          try {
-            const event = JSON.parse(data) as AssistantEvent;
-            if (typeof event.seq === "number" && event.seq > lastSeq) {
-              lastSeq = event.seq;
+        reader = response.body.getReader();
+        current.signal.addEventListener("abort", cancelRead, { once: true });
+        if (current.signal.aborted) cancelRead();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (!current.signal.aborted) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          // SSE frames are separated by a blank line; heartbeats are comment lines (":hb").
+          while (!current.signal.aborted) {
+            const boundary = buffer.indexOf("\n\n");
+            if (boundary < 0) break;
+            const frame = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            const data = frame.split("\n").filter(line => line.startsWith("data: "))
+              .map(line => line.slice("data: ".length)).join("\n");
+            if (!data) continue;
+            try {
+              const event = JSON.parse(data) as AssistantEvent;
+              if (typeof event.seq === "number" && event.seq > lastSeq) lastSeq = event.seq;
+              onEvent(event);
+              // Replay is historical until the server reports its authoritative current status.
+              if (event.type === "session_status" && event.historical !== true) onConnection?.("connected");
+              if (event.type === "session_deleted") { onConnection?.("disconnected"); return; }
+            } catch {
+              // A torn frame is dropped; the seq cursor makes the reconnect self-healing.
             }
-            onEvent(event);
-            // The server ends replay with its authoritative status. Until then, stale replay
-            // must not be presented as a live observation of the last tool.
-            if (event.type === "session_status" && event.historical !== true) onConnection?.("connected");
-            // Terminal, unlike every other end of this stream: the session is gone, so the EOF that
-            // follows is not a dropped connection to retry. Reconnecting would fetch a 404 and put
-            // an error in a transcript the operator has already deleted.
-            if (event.type === "session_deleted") {
-              onConnection?.("disconnected");
-              return;
-            }
-          } catch {
-            // A torn frame is dropped; the seq cursor makes the reconnect self-healing.
           }
         }
+      } catch {
+        if (signal.aborted) return;
+      } finally {
+        current.signal.removeEventListener("abort", cancelRead);
+        if (reader) { await cancelReader(); reader.releaseLock(); }
+        else await response?.body?.cancel().catch(() => {});
+        if (attempt === current) attempt = undefined;
       }
-    } catch {
-      if (signal.aborted) {
-        return;
-      }
+      if (signal.aborted) return;
+      onConnection?.("reconnecting");
+      // Visibility restoration resumes immediately; only an actual transport failure backs off.
+      if (!current.signal.aborted && visible()) await wait(2_000);
     }
-    if (signal.aborted) return;
-    onConnection?.("reconnecting");
-    await new Promise<void>((resolve) => {
-      const finish = () => { clearTimeout(timer); signal.removeEventListener("abort", finish); resolve(); };
-      const timer = setTimeout(finish, 2_000);
-      signal.addEventListener("abort", finish, { once: true });
-    });
+  } finally {
+    page?.removeEventListener("visibilitychange", visibility);
+    identity?.removeEventListener(APP_SESSION_RESTORED, restored);
+    signal.removeEventListener("abort", aborted);
+    attempt?.abort(); wake?.();
   }
 }
 

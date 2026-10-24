@@ -1,5 +1,6 @@
 "use client";
 import { useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { SdkChromeStyles, SdkIcon } from "./sdk-chrome";
 import { ui, createPresentationRequestId } from "./ui";
 import { INITIAL_CHROME, INITIAL_NAVIGATION } from "./ui-composition";
 import { UiCompositionContext } from "./ui-context";
@@ -16,7 +17,7 @@ export function HostyToolLauncher() {
   const chrome = useHostyChrome(), [error, setError] = useState<string | null>(null);
   if (chrome.tools.owner === "local" || !chrome.tools.enabled || chrome.tools.launcher === "hide"
     || !chrome.capabilities.includes(UI_COMPOSITION_CAPABILITY)) return null;
-  return <div className="hosty-child-tools"><button type="button" disabled={chrome.tools.owner !== "host"} onClick={async () => {
+  return <div data-hosty-sdk className="hosty-child-tools"><SdkChromeStyles /><style>{navigationStyles}</style><button type="button" disabled={chrome.tools.owner !== "host"} onClick={async () => {
     const result = await ui.openToolPicker({ requestId: createPresentationRequestId() });
     setError(result.status === "accepted" ? null : "Tools are unavailable. Reconnect to your host or open the app separately.");
   }}>Tools</button>{error && <span role="status">{error}</span>}</div>;
@@ -55,24 +56,23 @@ export function HostyNavigation({ className = "" }: { className?: string }) {
     {error && <p role="status">{error}</p>}
   </>;
   if (empty) return null;
-  return <HostyNavigationBoundary><style>{navigationStyles}</style><div className={`hosty-navigation ${className}`}>
-    {narrow ? <><button ref={opener} type="button" aria-label="Page navigation" aria-expanded={expanded} onClick={() => setExpanded(true)}>☰</button>
-      <dialog ref={dialog} className="hosty-navigation-dialog" aria-label="Page navigation" onCancel={() => setExpanded(false)}>
+  return <HostyNavigationBoundary><SdkChromeStyles /><style>{navigationStyles}</style><div data-hosty-sdk className={`hosty-navigation ${className}`}>
+    {narrow ? <><button ref={opener} type="button" aria-label="Page navigation" aria-expanded={expanded} onClick={() => setExpanded(true)}><SdkIcon name="menu" /></button>
+      <dialog data-hosty-sdk ref={dialog} className="hosty-navigation-dialog" aria-label="Page navigation" onCancel={() => setExpanded(false)}>
         <button type="button" onClick={() => setExpanded(false)}>Close navigation</button><nav aria-label="App pages">{links}</nav>
       </dialog></> : <nav aria-label="App pages">{links}</nav>}
   </div></HostyNavigationBoundary>;
 }
 const navigationStyles = `
 [data-hosty-navigation=hide] [data-hosty-navigation-boundary]{display:none!important}
-.hosty-app-layout{display:flex;width:100%;height:100%;min-height:0;min-width:0}
-.hosty-app-content{flex:1;min-width:0;min-height:0;overflow:auto;outline:none}
-.hosty-navigation{flex:0 0 190px;box-sizing:border-box;padding:12px;border-right:1px solid color-mix(in srgb,currentColor 14%,transparent);font:14px system-ui}
+.hosty-app-layout{display:flex;width:100%;height:100%;min-height:0;min-width:0}.hosty-app-content{flex:1;min-width:0;min-height:0;overflow:auto;outline:none}
+.hosty-navigation{flex:0 0 190px;box-sizing:border-box;padding:12px;border-right:1px solid var(--hs-border);background:var(--hs-bg)}
 .hosty-navigation nav,.hosty-navigation-dialog nav{display:flex;flex-direction:column;gap:4px}
-.hosty-navigation a,.hosty-navigation-dialog a{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:6px;text-decoration:none;color:inherit}
-.hosty-navigation a[aria-current=page],.hosty-navigation-dialog a[aria-current=page]{background:color-mix(in srgb,currentColor 10%,transparent);font-weight:600}
-.hosty-navigation a[aria-disabled=true]{opacity:.55;cursor:not-allowed}
-.hosty-navigation button,.hosty-child-tools button,.hosty-navigation-dialog button{font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 20%,transparent);border-radius:6px;padding:7px 10px;cursor:pointer}
-.hosty-navigation-dialog{position:fixed;inset:0 auto 0 0;margin:0;height:100dvh;width:min(300px,85vw);box-sizing:border-box;border:0;padding:16px;background:Canvas;color:CanvasText}
-.hosty-navigation-dialog::backdrop{background:#0007}.hosty-child-tools{padding:6px 10px}
+.hosty-navigation a,.hosty-navigation-dialog a{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;text-decoration:none;color:inherit;font:500 14px/20px var(--hs-font);min-width:0;transition:background-color 120ms ease-out}.hosty-navigation a>span,.hosty-navigation-dialog a>span{min-width:0;overflow-wrap:anywhere}.hosty-navigation a>img,.hosty-navigation-dialog a>img{flex:none}
+.hosty-navigation a:hover,.hosty-navigation-dialog a:hover{background:var(--hs-brand-soft)}.hosty-navigation a[aria-current=page],.hosty-navigation-dialog a[aria-current=page]{background:var(--hs-brand-soft);font-weight:500}
+.hosty-navigation a[aria-disabled=true],.hosty-navigation-dialog a[aria-disabled=true]{opacity:.5;cursor:not-allowed}
+.hosty-navigation button,.hosty-child-tools button,.hosty-navigation-dialog button{display:inline-flex;align-items:center;justify-content:center;gap:8px;font:500 14px/20px var(--hs-font);color:inherit;background:var(--hs-card);border:1px solid var(--hs-input);border-radius:8px;padding:7px 10px;cursor:pointer}.hosty-navigation button:hover,.hosty-child-tools button:hover,.hosty-navigation-dialog button:hover{background:var(--hs-brand-soft)}.hosty-child-tools button:disabled{opacity:.5;cursor:not-allowed}
+.hosty-navigation-dialog{position:fixed;inset:0 auto 0 0;margin:0;height:100dvh;max-height:none;width:min(300px,85vw);box-sizing:border-box;border:0;border-right:1px solid var(--hs-border);padding:16px;background:var(--hs-card);color:var(--hs-fg)}.hosty-navigation-dialog>button{margin-bottom:16px}
+.hosty-navigation-dialog::backdrop{background:#0F1B2D57}.hosty-child-tools{padding:6px 10px}.hosty-child-tools>[role=status]{display:inline-block;margin:0 8px;color:var(--hs-muted);font-size:13px}
 @media(max-width:899px){.hosty-app-layout{flex-direction:column}.hosty-navigation{flex:0 0 auto;border-right:0;padding:6px 10px}}
 `;

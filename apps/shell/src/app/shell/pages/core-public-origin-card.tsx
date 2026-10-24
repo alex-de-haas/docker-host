@@ -4,6 +4,7 @@ import { HostyLoader } from "../../../../../../shared/web/hosty-states";
 
 import { useCallback, useEffect, useState } from "react";
 import { LoaderCircle } from "lucide-react";
+import { Frame, FrameHeader, FramePanel } from "@/components/reui/frame";
 import { toast } from "@/components/reui/operation-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -119,16 +120,17 @@ export function CorePublicOriginCard() {
   const repairable = publication?.state === "origin_drifted" || publication?.state === "error";
 
   return (
-    <div className="space-y-2">
-      <div>
-        <h3 className="text-sm font-medium">Core&apos;s own address</h3>
+    <section className="min-w-0" aria-labelledby="core-public-origin-heading">
+      <Frame className="min-w-0">
+      <FrameHeader className="gap-1">
+        <h3 id="core-public-origin-heading" className="text-sm font-medium">Core&apos;s own address</h3>
         <p className="text-xs text-muted-foreground">
           The address Core tells the world it lives at — the one in invitation links, in the native client&apos;s
           sign-in, and in the metadata agent clients read. Publishing it adds a route and a DNS record the same
           way publishing an app endpoint does. Core keeps answering on its local address either way.
         </p>
-      </div>
-
+      </FrameHeader>
+      <FramePanel className="flex min-w-0 flex-col gap-3 [overflow-wrap:anywhere]">
       {error && <InlineError message={error} />}
 
       {loading ? (
@@ -141,10 +143,10 @@ export function CorePublicOriginCard() {
           Settings → Core.
         </p>
       ) : (
-        <div className="space-y-2 rounded-md border p-3">
+        <div className="flex flex-col gap-3">
           <div className="space-y-1 text-xs">
             <div className="text-muted-foreground">Currently advertising</div>
-            <div className="font-mono text-foreground">{state?.origin}</div>
+            <div className="break-all font-mono text-foreground">{state?.origin}</div>
             {publication === null && state?.configured && (
               <p className="text-muted-foreground">
                 Set by hand rather than published here. Publishing replaces it, and unpublishing later puts it back.
@@ -161,7 +163,7 @@ export function CorePublicOriginCard() {
             <label className="text-xs font-medium" htmlFor="core-public-origin-label">
               Subdomain label
             </label>
-            <div className="flex items-center gap-1">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <Input
                 id="core-public-origin-label"
                 value={label}
@@ -173,10 +175,10 @@ export function CorePublicOriginCard() {
                 className="h-8 text-xs"
                 disabled={busy}
               />
-              {suffix && <span className="whitespace-nowrap text-xs text-muted-foreground">{suffix}</span>}
+              {suffix && <span className="break-all text-xs text-muted-foreground">{suffix}</span>}
             </div>
             {label.trim() && suffix && (
-              <p className="text-[11px] text-muted-foreground">
+              <p className="break-all text-[11px] text-muted-foreground">
                 → https://{label.trim()}
                 {suffix}
               </p>
@@ -190,7 +192,7 @@ export function CorePublicOriginCard() {
             </p>
           )}
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {conflict && (
               <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void publish(true)}>
                 {busy && <LoaderCircle className="mr-1 size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />}
@@ -215,6 +217,8 @@ export function CorePublicOriginCard() {
           </div>
         </div>
       )}
-    </div>
+      </FramePanel>
+      </Frame>
+    </section>
   );
 }

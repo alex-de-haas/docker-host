@@ -71,3 +71,31 @@ it("keeps the saved revision for later edits instead of authorizing stale fields
   expect(repositoryInput().value).toBe("https://example.test/next-draft.git");
   expect(container.querySelector('[role="alert"]')?.textContent).toContain("Source changed");
 });
+
+
+it("keeps custom-folder selection local and saves its trimmed path with the captured source revision", async () => {
+  const save = vi.fn<SaveSource>(async path => ({ ...source, overridePath: path, revision: "r2" }));
+  await render(state, save);
+  const custom = container.querySelector<HTMLButtonElement>('[role="radio"][value="custom"]')!;
+  await act(async () => custom.click());
+  expect(custom.getAttribute("aria-checked")).toBe("true");
+  const path = container.querySelector<HTMLInputElement>('#core-source-path')!;
+  expect(path.disabled).toBe(false); expect(save).not.toHaveBeenCalled();
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(path, "  /work/core-draft  ");
+    path.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => saveButton().click());
+  expect(save).toHaveBeenCalledExactlyOnceWith("/work/core-draft", undefined, "r1");
+});
+
+it("keeps source selection and the custom-folder input disabled without source authority", async () => {
+  const save = vi.fn<SaveSource>(async () => source);
+  await act(async () => root.render(<CoreSourceDialog inline open state={{ ...state, source: { ...source, overridePath: "/work/core" } }} disabled onOpenChange={vi.fn()} onSave={save} />));
+  const radios = [...container.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
+  expect(radios).toHaveLength(2); expect(radios.every(radio => radio.disabled)).toBe(true);
+  expect(container.querySelector<HTMLInputElement>('#core-source-path')!.disabled).toBe(true);
+  await act(async () => radios[0].click());
+  expect(radios[1].getAttribute("aria-checked")).toBe("true");
+  expect(saveButton().disabled).toBe(true); expect(save).not.toHaveBeenCalled();
+});

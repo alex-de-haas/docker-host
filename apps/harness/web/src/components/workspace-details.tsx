@@ -17,6 +17,7 @@ import { WorkspacePullRequest } from "./workspace-pull-request";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { ContextAppIcon } from "@/components/context-app-icon";
 import type { ContextApp } from "@/lib/assistant-api";
 
@@ -133,9 +134,9 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
       {workspace.owner.kind === "external" && <p className="text-xs text-muted-foreground">External work: {workspace.owner.label}. Conversation and agent activity are not synchronized.</p>}
       {running && <p className="text-xs text-muted-foreground">The agent is running. Pause workspace stops its owned execution and preserves unfinished changes.</p>}
       {(state.closure || state.state === "deferred") && !["deleting", "deleted"].includes(state.state) && <p role="status" className="text-xs text-muted-foreground">{state.closure === "closing" ? "Pausing: new development work is blocked while execution stop is verified." : "Paused: source, previews and conversation are retained. Resume to continue development."}</p>}
-      {(!externalClose || loadError) && (error || loadError || operation?.error) && <p role="alert" className="text-sm text-destructive">{error || loadError || operation?.error}</p>}
+      {(!externalClose || loadError) && (error || loadError || operation?.error) && <p role="alert" className="text-sm text-destructive-foreground">{error || loadError || operation?.error}</p>}
       {discardOperation && <div className="space-y-2 text-xs"><p>Workspace removal is pending. Recover the original confirmed request.</p><Button variant="outline" size="sm" disabled={busy || recovering} onClick={() => setConfirmDiscard(true)}>Recover removal</Button></div>}
-      {busy && <p role="status" className="text-xs text-muted-foreground">{actionProgress[pending?.kind ?? ""] ?? "Updating workspace…"}</p>}
+      {busy && <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground"><HostyLoader label={null} className="size-4" />{actionProgress[pending?.kind ?? ""] ?? "Updating workspace…"}</p>}
       {leaseRefusal && !busy && !recovering && !pending && workspace.owner.kind === "external" && workflowIsActive(state) && trees.some(tree => tree.leases.length) && <div className="space-y-2 text-xs">
         <p>Pause this workspace, then confirm that the external agent and its commands have stopped. Source files are retained.</p>
         <Button variant="outline" size="sm" onClick={() => void run("pause")}>Pause workspace</Button>
@@ -174,7 +175,7 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
             <LocalRepositoryActions compact sessionId={sessionId} appId={app.appId} tree={tree}
               disabled={!!running || busy || tree.state !== "active"} refresh={refresh} />
           </div>)}
-          {(tree.detailError || tree.observation?.error) && <p role="status" className="text-xs text-destructive">{tree.detailError || tree.observation?.error}</p>}
+          {(tree.detailError || tree.observation?.error) && <p role="status" className="text-xs text-destructive-foreground">{tree.detailError || tree.observation?.error}</p>}
         </section>;
       })}
       {trees.some(t => t.pullRequests.length) && <section className="space-y-3 border-t pt-4"><h3 className="text-xs font-semibold text-muted-foreground">Pull requests</h3>
@@ -199,8 +200,8 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
     <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}><DialogContent><DialogTitle>Delete workspace?</DialogTitle><DialogDescription>Finish this workspace’s sandboxes and remove their temporary data, then remove its merged worktrees. Core verifies that no other process still uses the source. Published pull requests stay available.</DialogDescription>
       <ul className="list-disc pl-5 text-sm">{workspace.worktrees.map(t => <li key={t.id}>{repositoryName(t.repository)}</li>)}</ul>
       {deleteConversation && <label className="flex items-center gap-2 text-sm"><Checkbox checked={withConversation} onCheckedChange={value => setWithConversation(value === true)} />Also delete this conversation after cleanup succeeds</label>}
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      <Button disabled={busy || recovering || running || (!!pending && pending.kind !== "delete")} onClick={() => void run("delete", pending?.kind === "delete")}>{busy ? "Deleting…" : "Delete workspace"}</Button>
+      {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
+      <Button disabled={busy || recovering || running || (!!pending && pending.kind !== "delete")} onClick={() => void run("delete", pending?.kind === "delete")}>{busy ? <><HostyLoader label={null} className="size-4" />Deleting…</> : "Delete workspace"}</Button>
     </DialogContent></Dialog>
   </aside>;
 }
@@ -231,7 +232,7 @@ function WorkspaceName({ workspace, fallback, refresh }: { workspace: Developmen
       className="w-full rounded border bg-background px-2 py-1" onChange={event => setDraft(event.target.value)} />
     <div className="flex gap-2"><Button type="submit" size="sm" disabled={busy || !draft.trim()}>{busy ? "Saving…" : "Save name"}</Button>
       <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => setEditing(false)}>Cancel</Button></div>
-    {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+    {error && <p role="alert" className="text-xs text-destructive-foreground">{error}</p>}
   </form> : <div className="flex min-w-0 items-start gap-2"><h2 className="min-w-0 flex-1 break-words text-lg font-semibold tracking-[-0.01em]">{name}</h2>
     <Button variant="ghost" size="icon-sm" aria-label="Rename workspace" onClick={() => { setDraft(name); setError(""); setEditing(true); }}><Pencil className="size-3.5" /></Button>
   </div>;

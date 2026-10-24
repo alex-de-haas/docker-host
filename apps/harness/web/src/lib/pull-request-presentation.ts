@@ -14,7 +14,7 @@ export function ciPresentation(pr: PullRequest, stale: boolean) {
   const counts = checkCounts(pr);
   if (!pr.observation || pr.unavailable) return { label: "CI unknown", color: "text-muted-foreground", kind: "unknown" as const, counts };
   if (stale || pr.historical) return { label: pr.historical ? "CI last observed" : "CI outdated", color: "text-muted-foreground", kind: "unknown" as const, counts };
-  if (!counts.available || pr.observation?.error || pr.observation?.complete === false) return { label: "CI unknown", color: "text-muted-foreground", kind: "unknown" as const, counts };
+  if (!counts.available || pr.observation?.error) return { label: "CI unknown", color: "text-muted-foreground", kind: "unknown" as const, counts };
   if (!counts.total) return { label: "No CI checks", color: "text-muted-foreground", kind: "unknown" as const, counts };
   if (counts.failed) return { label: `CI ${counts.failed} failed`, color: "text-destructive-foreground", kind: "failed" as const, counts };
   if (counts.pending) return { label: `CI ${counts.completed} of ${counts.total} · ${counts.pending} running`, color: "text-info-foreground", kind: "pending" as const, counts };

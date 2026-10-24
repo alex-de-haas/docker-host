@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { HostyEmptySlots, HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { AppIcon } from "../app-icon";
 import { ShellWorkspaceSplit } from "./shell-workspace-split";
@@ -165,7 +166,8 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum 
       className={cn("min-h-0 min-w-0 flex-1 flex-col bg-background", !expanded ? "hidden" : "flex",
         narrow && "shell-tool-sheet fixed inset-y-3 right-3 z-40 w-[min(440px,calc(100vw-24px))] rounded-xl border shadow-lg")}
       onKeyDown={event => {
-        if (!narrow) return;
+        // Portaled menus own their keyboard events even though React bubbles them through the sheet.
+        if (!narrow || event.defaultPrevented || !event.currentTarget.contains(event.target as Node)) return;
         if (event.key === "Escape") { event.preventDefault(); host?.collapseWorkspace("default"); }
         if (event.key === "Tab") {
           const elements = Array.from(body.current?.querySelectorAll<HTMLElement>('button,a[href],select,iframe') ?? []).filter(e => !e.closest("[hidden]") && !(e as HTMLButtonElement).disabled);
@@ -186,9 +188,12 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum 
         {unavailable && <Button variant="outline" size="sm" aria-label="Choose another tool" onClick={() => { setPicker(true); void host?.refresh(); }}>Choose tool</Button>}
       </AlertDescription></Alert>}
       {siblings.length > 1 && <label className="flex items-center gap-2 border-b p-2 text-sm">Open views
-        <select aria-label="Tool instance" className="min-w-0 rounded-md border bg-background p-1" value={tool?.presentationId} onChange={event => host?.focusPresentation(event.target.value)}>
-          {siblings.map((item, index) => <option key={item.presentationId} value={item.presentationId}>{selected?.label} {index + 1}</option>)}
-        </select></label>}
+        <Select value={tool?.presentationId ?? ""} onValueChange={value => host?.focusPresentation(value)}>
+          <SelectTrigger aria-label="Tool instance" size="sm" className="min-w-0"><SelectValue /></SelectTrigger>
+          <SelectContent><SelectGroup>
+            {siblings.map((item, index) => <SelectItem key={item.presentationId} value={item.presentationId}>{selected?.label} {index + 1}</SelectItem>)}
+          </SelectGroup></SelectContent>
+        </Select></label>}
       {tools.map(item => <div data-shell-panel-frame key={item.presentationId} ref={element => {
         if (element) { frames.current.set(item.presentationId, element); }
         else frames.current.delete(item.presentationId);

@@ -11,7 +11,7 @@ vi.mock("@/lib/marketplace-api", () => ({
   fetchCatalogApps: catalog, fetchCatalogApp: detail, fetchInstalledApps: installed,
   fetchAppUpdateAvailable: vi.fn().mockResolvedValue(false), MarketplaceApiError: class extends Error { constructor(message: string, public status: number) { super(message); } },
 }));
-vi.mock("@hosty-sdk/app/install/react", () => ({ InstallDialog: (props: unknown) => { showInstall(props); return null; } }));
+vi.mock("@hosty-sdk/app/install/react", () => ({ InstallDialog: (props: unknown) => { showInstall(props); return createElement("div", { "data-installation": "active" }); } }));
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ children }: { children: ReactNode }) => children,
   DialogContent: ({ children }: { children: ReactNode }) => children,
@@ -61,7 +61,7 @@ it("reserves a popup before fetching the card's declared default channel", async
   });
   await act(async () => root.render(createElement(Storefront)));
   await act(async () => { button("Install").click(); button("Install").click(); });
-  expect(detail).toHaveBeenCalledExactlyOnceWith(app.id, false);
+  expect(detail).toHaveBeenCalledExactlyOnceWith(app.id, false, expect.any(AbortSignal));
   expect(showInstall).not.toHaveBeenCalled();
   await act(async () => resolve(app));
   expect(showInstall.mock.lastCall?.[0]).toMatchObject({
@@ -427,4 +427,45 @@ it("falls back after a catalog icon fails and attempts its replacement URL after
   catalog.mockResolvedValueOnce({ apps: [replacement], source: { name: "Test", url: "https://catalog.example" }, diagnostic: ready });
   await act(async () => button("Retry catalog").click());
   expect(container.querySelector('[aria-label="Catalog apps"] img')?.getAttribute("src")).toBe(replacement.icon);
+});
+
+
+it("aborts and closes reserved install discovery on access loss and ignores its late response", async () => {
+  catalog.mockResolvedValueOnce(retryableCatalog());
+  const confirmationWindow = popup(); vi.spyOn(window, "open").mockReturnValue(confirmationWindow);
+  let resolveLookup!: (value: CatalogAppDetailResponse) => void;
+  detail.mockImplementationOnce(() => new Promise(resolve => { resolveLookup = resolve; }));
+  await act(async () => root.render(createElement(Storefront)));
+  await act(async () => button("Install").click());
+  const lookupSignal = detail.mock.lastCall?.[2] as AbortSignal | undefined;
+  installed.mockRejectedValueOnce(new MarketplaceApiError("Administrator access required", 403));
+  await act(async () => button("Retry catalog").click());
+  expect(lookupSignal?.aborted).toBe(true);
+  expect(confirmationWindow.close).toHaveBeenCalledOnce();
+  await act(async () => resolveLookup(app));
+  expect(showInstall).not.toHaveBeenCalled();
+  expect(container.querySelector('aside')).toBeNull();
+  expect(container.querySelector('[aria-label="Catalog apps"]')).toBeNull();
+  expect(container.textContent).toContain("Administrator access required");
+});
+
+it("retires an open installation on access loss and ignores callbacks from that retired view", async () => {
+  catalog.mockResolvedValueOnce(retryableCatalog());
+  vi.spyOn(window, "open").mockReturnValue(popup());
+  await act(async () => root.render(createElement(Storefront)));
+  await act(async () => button("Install").click());
+  const retired = showInstall.mock.lastCall?.[0];
+  expect(container.querySelector('[data-installation="active"]')).not.toBeNull();
+  installed.mockRejectedValueOnce(new MarketplaceApiError("Administrator access required", 403));
+  await act(async () => button("Retry catalog").click());
+  expect(container.querySelector('[data-installation="active"]')).toBeNull();
+  const reads = installed.mock.calls.length;
+  await act(async () => retired.onInstalled());
+  expect(installed).toHaveBeenCalledTimes(reads);
+  await act(async () => button("Retry catalog").click());
+  await act(async () => button("Install").click());
+  expect(container.querySelector('[data-installation="active"]')).not.toBeNull();
+  const current = showInstall.mock.lastCall?.[0]; expect(current).not.toBe(retired);
+  await act(async () => retired.onClose());
+  expect(container.querySelector('[data-installation="active"]')).not.toBeNull();
 });

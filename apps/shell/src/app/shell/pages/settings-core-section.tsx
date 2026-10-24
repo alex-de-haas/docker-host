@@ -13,7 +13,7 @@ export function SettingsCoreSection({ section, settings, settingsError, coreStat
   onSaveSettings: (values: Record<string, string>) => Promise<void>;
 }) {
   return (
-    <div className="space-y-4">
+    <div className="flex min-w-0 flex-col gap-4">
     {section === "general" && <CoreHostInformation status={coreStatus} />}
     {section === "policies" && Boolean(settings?.authenticationDiagnostics?.length) && (
       <details className="rounded-md border p-3 text-sm text-muted-foreground">

@@ -257,7 +257,7 @@ async function restartDisabled(id = target.id) {
 }
 
 
-const contextAction = () => appRow().querySelector<HTMLButtonElement>(".dashboard-context-action button");
+const contextAction = (id = target.id) => appRow(id).querySelector<HTMLButtonElement>(".dashboard-context-action > button");
 const observedHealth = (status: string): NonNullable<CoreApp["health"]> => ({ status, services: [], observedAt: "2026-10-22T00:00:00Z" });
 
 it.each([
@@ -398,30 +398,83 @@ it.each(["unknown", "starting", "stopped"])("does not infer a runtime-health fai
   expect(contextAction()?.textContent).toBe("Stop");
 });
 
-it("keeps Stop available when a problematic running app does not provide logs", async () => {
-  apps = [{ ...target, updateCheck: null, health: observedHealth("unhealthy") }];
+it.each([
+  { runtime: "stopped", action: "start", label: "Start", pending: "Starting…" },
+  { runtime: "running", action: "stop", label: "Stop", pending: "Stopping…" },
+])("keeps $label working for an unhealthy $runtime app without logs", async ({ runtime, action, label, pending }) => {
+  apps = [{ ...target, updateCheck: null, runtimeState: runtime, health: observedHealth("unhealthy") }];
+  const lifecycle = deferred<Response>();
+  overrideRequests(path => path.endsWith("/" + action) ? lifecycle.promise : undefined);
   await mount(true);
-  expect(contextAction()?.textContent).toBe("Stop");
+  expect(contextAction()?.textContent).toBe(label);
+  expect(contextAction()?.disabled).toBe(false);
+  await act(async () => contextAction()!.click());
+  expect(callsTo("/api/apps/routine.app/" + action)).toHaveLength(1);
+  expect(contextAction()?.textContent).toBe(pending);
+  expect(contextAction()?.disabled).toBe(true);
+  expect(callsTo("/api/apps/routine.app/logs", "GET")).toHaveLength(0);
+  await act(async () => { lifecycle.resolve(Response.json({ status: action === "start" ? "started" : "stopped" })); });
 });
 
 it.each(["healthy", "degraded"])("does not offer Stop to a non-administrator for a %s running app", async status => {
-  apps = [{ ...target, updateCheck: null, capabilities: ["logs"], health: observedHealth(status) }];
+  apps = [{ ...target, updateCheck: null, capabilities: ["logs"], health: observedHealth(status), restartRequired: true }];
   overrideRequests(path => path === "/api/auth/session" ? Response.json({ authenticated: true, user: { id: "reader", role: "host.user" } }) : undefined);
   await mount(true);
   expect(contextAction()?.textContent).toBe("Logs");
   expect([...appRow().querySelectorAll("button")].some(button => button.textContent === "Stop")).toBe(false);
+  expect(appRow().querySelector('.dashboard-identity [data-slot="badge"]')?.textContent).toBe("Restart required");
+  expect(appRow().querySelectorAll(".dashboard-context-action > button")).toHaveLength(1);
+  expect(appRow().querySelector('.dashboard-actions button[aria-label^="Restart "]')).toBeNull();
 });
 
-it("keeps higher-priority setup, update and stopped-app actions ahead of the contextual Stop", async () => {
-  apps = [{ ...target, capabilities: ["logs"] }];
+it.each([
+  { name: "configuration", app: { updateCheck: null, configurationReadiness: { required: true, missingSettings: ["apiKey"], mounts: [] } } },
+  { name: "an offered update", app: {} },
+  { name: "unhealthy runtime logs", app: { updateCheck: null, capabilities: ["logs"], health: observedHealth("unhealthy") } },
+  { name: "degraded runtime logs, configuration and an update", app: { capabilities: ["logs"], health: observedHealth("degraded"),
+    configurationReadiness: { required: true, missingSettings: ["apiKey"], mounts: [] } } },
+  { name: "a previous operation error", app: { updateCheck: null, operationStatus: "failed", lastError: "Previous runtime operation failed" } },
+] satisfies { name: string; app: Partial<CoreApp> }[])("prioritizes the single Restart action over $name", async ({ app }) => {
+  apps = [{ ...target, ...app, restartRequired: true }];
   await mount(true);
-  expect(contextAction()?.textContent).toBe("Update");
-  apps = [{ ...apps[0], configurationReadiness: { required: true, missingSettings: ["apiKey"], mounts: [] } }];
-  await act(async () => actions.refresh());
-  expect(contextAction()?.textContent).toBe("Configure");
-  apps = [{ ...target, runtimeState: "stopped", capabilities: ["logs"], updateCheck: null }];
-  await act(async () => actions.refresh());
-  expect(contextAction()?.textContent).toBe("Start");
+  expect(contextAction()?.textContent).toBe("Restart");
+  expect(contextAction()?.disabled).toBe(false);
+  expect(appRow().querySelectorAll(".dashboard-context-action")).toHaveLength(1);
+  expect(appRow().querySelectorAll(".dashboard-context-action > button")).toHaveLength(1);
+  expect(appRow().querySelector('.dashboard-identity [data-slot="badge"]')?.textContent).toBe("Restart required");
+});
+
+it.each(["degraded", "unhealthy"])("prioritizes %s runtime Logs over configuration and an update", async status => {
+  apps = [{ ...target, capabilities: ["logs"], health: observedHealth(status),
+    configurationReadiness: { required: true, missingSettings: ["apiKey"], mounts: [] } }];
+  await mount(true);
+  expect(contextAction()?.textContent).toBe("Logs");
+  expect(contextAction()?.disabled).toBe(false);
+  fixture.router.push.mockClear();
+  await act(async () => contextAction()!.click());
+  expect(fixture.router.push).toHaveBeenCalledWith(getManageAppHref(target.id, "logs"), { scroll: false });
+  expect(callsTo("/api/apps/routine.app/stop")).toHaveLength(0);
+  expect(callsTo("/api/apps/routine.app/restart")).toHaveLength(0);
+});
+
+it.each([
+  { name: "configuration for a healthy app", expected: "Configure",
+    app: { capabilities: ["logs"], health: observedHealth("healthy"), configurationReadiness: { required: true, missingSettings: ["apiKey"], mounts: [] } } },
+  { name: "an update for a healthy app", expected: "Update", app: { capabilities: ["logs"], health: observedHealth("healthy") } },
+  { name: "an update despite an unrelated operation error", expected: "Update",
+    app: { capabilities: ["logs"], health: observedHealth("healthy"), lastError: "Previous operation failed" } },
+  { name: "configuration without runtime logs", expected: "Configure",
+    app: { health: observedHealth("unhealthy"), configurationReadiness: { required: true, missingSettings: ["apiKey"], mounts: [] } } },
+  { name: "an update without runtime logs", expected: "Update", app: { health: observedHealth("unhealthy") } },
+  { name: "stopped runtime with stale unhealthy logs", expected: "Start",
+    app: { runtimeState: "stopped", updateCheck: null, capabilities: ["logs"], health: observedHealth("unhealthy") } },
+] satisfies { name: string; expected: string; app: Partial<CoreApp> }[])("keeps the contextual fallback for $name", async ({ app, expected }) => {
+  apps = [{ ...target, ...app }];
+  await mount(true);
+  expect(contextAction()?.textContent).toBe(expected);
+  expect(contextAction()?.disabled).toBe(false);
+  expect(appRow().querySelectorAll(".dashboard-context-action > button")).toHaveLength(1);
+  expect(appRow().textContent).not.toContain("Restart required");
 });
 
 it("uses the existing Shell stop confirmation from the contextual shortcut", async () => {
@@ -435,6 +488,50 @@ it("uses the existing Shell stop confirmation from the contextual shortcut", asy
   expect(callsTo("/api/apps/hosty.shell/stop")).toHaveLength(0);
 });
 
+it("places the restart badge after title icons and uses Restart as the single contextual action", async () => {
+  apps = [{ ...target, system: true, restartRequired: true, lastError: "Previous runtime operation failed" }];
+  await mount(true);
+  const identity = appRow().querySelector('.dashboard-identity')!;
+  const title = identity.querySelector('a')!.parentElement!;
+  const badge = title.querySelector('[data-slot="badge"]')!;
+  expect(badge.textContent).toBe("Restart required");
+  expect(title.querySelector('[role="img"][aria-label="System app"]')).not.toBeNull();
+  expect(title.querySelector('[role="img"][aria-label*="problem"]')).not.toBeNull();
+  for (const icon of title.querySelectorAll('[role="img"]')) {
+    expect(icon.compareDocumentPosition(badge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  }
+  expect([...identity.querySelectorAll('button')].some(button => button.textContent === "Restart")).toBe(false);
+  expect(contextAction()?.textContent).toBe("Restart");
+  expect(contextAction()?.disabled).toBe(false);
+  expect(appRow().querySelectorAll(".dashboard-context-action")).toHaveLength(1);
+  expect(appRow().querySelectorAll(".dashboard-context-action > button")).toHaveLength(1);
+});
+
+it("keeps the contextual Restart disabled while Core reports an update in progress", async () => {
+  apps = [{ ...target, restartRequired: true, operationStatus: "updating" }];
+  await mount(true);
+  expect(appRow().querySelector('.dashboard-identity [data-slot="badge"]')?.textContent).toBe("Restart required");
+  expect(contextAction()?.disabled).toBe(true);
+  await act(async () => contextAction()!.click());
+  expect(callsTo("/api/apps/routine.app/restart")).toHaveLength(0);
+});
+
+it("keeps the contextual Restart disabled during another same-app action without hiding its badge", async () => {
+  apps = [{ ...target, restartRequired: true }];
+  const saving = deferred<Response>();
+  overrideRequests(path => path.endsWith("/autostart") ? saving.promise : undefined);
+  await mount(true);
+  let action!: Promise<void>;
+  await act(async () => { action = actions.runAppAction(target, "autostart"); });
+  expect(shell.busyAction).toBe("routine.app:autostart");
+  expect(appRow().querySelector('.dashboard-identity [data-slot="badge"]')?.textContent).toBe("Restart required");
+  expect(contextAction()?.disabled).toBe(true);
+  await act(async () => contextAction()!.click());
+  expect(callsTo("/api/apps/routine.app/restart")).toHaveLength(0);
+  await act(async () => { saving.resolve(Response.json({ status: "configured" })); await action; });
+  expect(contextAction()?.disabled).toBe(false);
+});
+
 it("shows immediate restart progress and keeps each queued app busy without submitting duplicates", async () => {
   const first = deferred<Response>(); const second = deferred<Response>();
   const other = { ...target, id: "other.app", displayName: "Other app", restartRequired: true };
@@ -442,8 +539,9 @@ it("shows immediate restart progress and keeps each queued app busy without subm
   overrideRequests(path => path === "/api/apps/routine.app/restart" ? first.promise
     : path === "/api/apps/other.app/restart" ? second.promise : undefined);
   await mount(true);
-  const restart = [...appRow().querySelectorAll("button")].find(button => button.textContent === "Restart")!;
+  const restart = contextAction()!;
   expect(restart.disabled).toBe(false);
+  fixture.router.push.mockClear();
   await act(async () => {
     restart.click(); restart.click();
     // The handler also protects toast/menu callers before React has committed the disabled UI.
@@ -452,6 +550,10 @@ it("shows immediate restart progress and keeps each queued app busy without subm
   });
   expect(callsTo("/api/apps/routine.app/restart")).toHaveLength(1);
   expect(callsTo("/api/apps/routine.app/stop")).toHaveLength(0);
+  expect(fixture.router.push).not.toHaveBeenCalled();
+  expect(contextAction()?.textContent).toBe("Restarting…");
+  expect(contextAction()?.disabled).toBe(true);
+  expect(appRow().querySelectorAll(".dashboard-context-action > button")).toHaveLength(1);
   expect(appRow().querySelector('.dashboard-status [role="status"]')?.textContent).toBe("Restarting…");
   expect(appRow().querySelector('.dashboard-identity [role="status"]')).toBeNull();
   expect(appRow().querySelector('.dashboard-identity')?.textContent).not.toContain("Restarting");
@@ -465,6 +567,8 @@ it("shows immediate restart progress and keeps each queued app busy without subm
   // The second app waits in the CSRF queue, but its progress is already visible.
   expect(callsTo("/api/apps/other.app/restart")).toHaveLength(0);
   expect(appRow(other.id).querySelector('[role="status"]')?.textContent).toBe("Restarting…");
+  expect(contextAction(other.id)?.textContent).toBe("Restarting…");
+  expect(contextAction(other.id)?.disabled).toBe(true);
   await act(async () => actions.runAppAction(target, "restart"));
   expect(callsTo("/api/apps/routine.app/restart")).toHaveLength(1);
 
@@ -484,12 +588,16 @@ it("uses server lifecycle stages in the row, including for operations started by
   apps = [{ ...target, runtimeState: "stopping", restartRequired: true }];
   await mount(true);
   expect(appRow().querySelector('.dashboard-status [role="status"]')?.textContent).toBe("Stopping…");
+  expect(contextAction()?.textContent).toBe("Stopping…");
+  expect(contextAction()?.disabled).toBe(true);
   expect(appRow().querySelector('.dashboard-identity')?.textContent).not.toContain("Stopping");
   await act(async () => actions.runAppAction(target, "restart"));
   expect(callsTo("/api/apps/routine.app/restart")).toHaveLength(0);
   apps = [{ ...target, runtimeState: "starting", restartRequired: false }];
   await act(async () => actions.refresh());
   expect(appRow().querySelector('.dashboard-status [role="status"]')?.textContent).toBe("Starting…");
+  expect(contextAction()?.textContent).toBe("Starting…");
+  expect(contextAction()?.disabled).toBe(true);
   expect(appRow().querySelector('.dashboard-identity')?.textContent).not.toContain("Starting");
   expect(await restartDisabled()).toBe(true);
   apps = [{ ...target, runtimeState: "running", restartRequired: false }];
@@ -508,9 +616,10 @@ it("clears failed restart progress, preserves the warning and allows an explicit
   await act(async () => actions.runAppAction(target, "restart"));
   expect(shell.pendingAppActions).toEqual({});
   expect(appRow().querySelector('[role="status"]')).toBeNull();
-  expect(appRow().textContent).toContain("Restart required");
+  expect(appRow().querySelector('.dashboard-identity [data-slot="badge"]')?.textContent).toBe("Restart required");
+  expect(contextAction()?.disabled).toBe(false);
   expect(fixture.toast.error).toHaveBeenCalledWith("App action failed", expect.objectContaining({ description: "Restart preflight failed" }));
-  await act(async () => actions.runAppAction(target, "restart"));
+  await act(async () => contextAction()!.click());
   expect(callsTo("/api/apps/routine.app/restart")).toHaveLength(2);
   expect(shell.pendingAppActions).toEqual({});
 });
@@ -994,7 +1103,7 @@ it.each([false, true])("opens an administrator Logs deep link as App Details wit
   expect(callsTo(`/api/apps/${target.id}/logs`, "GET")).toHaveLength(1);
   expect(callsTo(`/api/apps/${target.id}/health`, "GET")).toHaveLength(0);
   expect(callsTo(`/api/apps/${target.id}/update-status`, "GET")).toHaveLength(0);
-  expect(fixture.router.replace).not.toHaveBeenCalledWith("/apps");
+  expect(fixture.router.replace).not.toHaveBeenCalledWith("/");
 });
 
 it.each([false, true])("retains an assigned ordinary user's Logs page and factual Core refusal without exposing management, legacy=%s", async legacy => {
@@ -1006,10 +1115,10 @@ it.each([false, true])("retains an assigned ordinary user's Logs page and factua
   await mount();
   expect(container.querySelector("h1")?.textContent).toBe(target.displayName);
   expect(container.textContent).toContain("Host administrator access is required.");
-  expect(container.querySelector('nav[aria-label="Breadcrumb"] a')?.getAttribute("href")).toBe("/apps");
+  expect(container.querySelector('nav[aria-label="Breadcrumb"] a')?.getAttribute("href")).toBe("/");
   if (legacy) expect(fixture.router.replace).toHaveBeenCalledWith(getManageAppHref(target.id, "logs"));
   expect(document.querySelector('[role="dialog"]')).toBeNull();
-  expect(fixture.router.replace).not.toHaveBeenCalledWith("/apps");
+  expect(fixture.router.replace).not.toHaveBeenCalledWith("/");
   expect(callsTo(`/api/apps/${target.id}/logs`, "GET")).toHaveLength(1);
   expect(container.querySelector("form")).toBeNull();
   expect([...container.querySelectorAll('[role="tab"]')].every(tab => tab.textContent === "Logs")).toBe(true);
@@ -1029,7 +1138,7 @@ it.each([
   overrideRequests(path => path === "/api/auth/session"
     ? Response.json({ authenticated: true, user: { id: "reader", role: "host.user" } }) : undefined);
   await mount();
-  expect(fixture.router.replace).toHaveBeenCalledWith("/apps");
+  expect(fixture.router.replace).toHaveBeenCalledWith("/");
   expect(container.querySelector("form")).toBeNull();
   expect(container.querySelector("pre")).toBeNull();
   expect(callsTo(`/api/apps/${target.id}/logs`, "GET")).toHaveLength(0);
@@ -1132,4 +1241,40 @@ it("does not dispatch Core restart when its actor is cancelled during CSRF acqui
   await act(async () => { token.resolve(Response.json({ token: "expired-actor-token" })); });
   expect(await cancelled).toMatchObject({ name: "AbortError" });
   expect(callsTo("/api/core/restart")).toHaveLength(0);
+});
+
+it.each(["configure", "mounts"])("clears a failed Manage %s banner only after an explicit successful retry", async kind => {
+  const configured = { ...target, settings: [{ key: "MODE", type: "string", value: "normal", secret: false }],
+    mounts: [{ key: "library", mode: "ro", required: false, multiple: false, bindings: [{ source: "local", label: "Library", hostPath: "/library", containerPath: "/external/library" }] }] };
+  apps = [configured]; setRoute(`/apps/${target.id}?section=${kind === "configure" ? "parameters" : "mounts"}`);
+  let attempts = 0;
+  overrideRequests((path, init) => {
+    if (path !== `/api/apps/${target.id}/${kind}` || init?.method !== "POST") return;
+    if (++attempts === 1) return Response.json({ message: "First save failed", code: "invalid_fixture" }, { status: 400 });
+    const body = JSON.parse(String(init.body));
+    apps = [{ ...configured, ...(kind === "configure" ? { settings: [{ ...configured.settings[0], value: body.settings.MODE }] }
+      : { mounts: [{ ...configured.mounts[0], bindings: [{ ...configured.mounts[0].bindings[0], hostPath: body.mounts[0].hostPath }] }] }) }];
+    return Response.json({ status: "configured" });
+  });
+  await mount();
+  const input = container.querySelector<HTMLInputElement>(kind === "configure" ? "#setting-MODE" : '[aria-label="library host path"]')!;
+  const draft = kind === "configure" ? "quiet" : "/new-library";
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, draft); input.dispatchEvent(new Event("input", { bubbles: true })); });
+  const save = () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === (kind === "configure" ? "Save settings" : "Save mounts"))!;
+  await act(async () => save().click()); expect(container.textContent).toContain("First save failed"); expect(input.value).toBe(draft);
+  await act(async () => save().click()); expect(container.textContent).not.toContain("First save failed"); expect(input.value).toBe(draft);
+  expect(attempts).toBe(2); expect(fixture.toast.success).toHaveBeenCalledExactlyOnceWith(kind === "configure" ? "Settings saved" : "Mounts saved", { description: configured.displayName });
+});
+
+it("does not attach a late configure failure to another app's Manage page", async () => {
+  const configured = { ...target, settings: [{ key: "MODE", type: "string", value: "normal", secret: false }] };
+  const other = { ...configured, id: "other.app", displayName: "Other app" }; apps = [configured, other];
+  setRoute(`/apps/${target.id}?section=parameters`); const response = deferred<Response>();
+  overrideRequests((path, init) => path === `/api/apps/${target.id}/configure` && init?.method === "POST" ? response.promise : undefined);
+  await mount();
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Save settings")!.click());
+  await act(async () => actions.openAppPanel(other, "settings", { settingsTab: "parameters" }));
+  setRoute(`/apps/${other.id}?section=parameters`); await mount(); expect(container.querySelector("h1")?.textContent).toBe("Other app");
+  await act(async () => response.resolve(Response.json({ message: "Old app failed" }, { status: 400 })));
+  expect(container.textContent).not.toContain("Old app failed"); expect(container.querySelector("h1")?.textContent).toBe("Other app");
 });

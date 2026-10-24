@@ -50,9 +50,14 @@ function persistSettings(options: MarketplaceOptions) {
   writeFileSync(temporary, JSON.stringify(options, null, 2) + "\n", { mode: 0o600 });
   renameSync(temporary, path);
 }
+export class MarketplaceSettingsConflictError extends Error {
+  readonly code = "settings_conflict";
+  constructor() { super("Settings changed. Reload the current settings before saving again."); }
+}
+
 export function updateMarketplaceSettings(sourceUrl: string, expectedSourceUrl: string): MarketplaceOptions {
   const runtime = getRuntime();
-  if (runtime.options.sourceUrl !== expectedSourceUrl) throw new Error("Settings changed. Reload before saving again.");
+  if (runtime.options.sourceUrl !== expectedSourceUrl) throw new MarketplaceSettingsConflictError();
   const normalized = readHttpUrl(sourceUrl);
   if (!normalized) throw new Error("Enter an HTTP(S) catalog address without credentials.");
   const options = { sourceUrl: normalized };

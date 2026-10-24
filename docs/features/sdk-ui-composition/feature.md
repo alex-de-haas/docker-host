@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-updated: 2026-10-22
+updated: 2026-10-23
 summary: Explicit navigation and tool policy, manifest navigation, and retained tool instances shared by Shell, desktop hosts and standalone apps.
 components: [packages/app-sdk, apps/core, apps/shell, apps/plans, apps/demo-app, apps/harness, apps/marketplace, apps/telemetry-ui, apps/shell-swift]
 ---
@@ -33,6 +33,22 @@ instructed the implementation agent in chat to proceed. [Vision decision 33](../
 records that approval. The earlier committed Draft describes the documentation-first stage;
 it is not the latest owner instruction. Deliverables D1–D5 were implemented and verified before
 the completed plan was retired with the implementation, as required by the documentation workflow.
+
+## SDK-Owned Web Presentation
+
+Access cards, sign-in/activity/permission notices, the install dialog, standard navigation, tool
+rail/chooser, retained-frame notices and reusable sandbox controls use the Hosty ink/lime light and
+dark presentation. The SDK packages its own locally served IBM Plex Sans and JetBrains Mono faces
+and their licenses. Font family names and palette variables are SDK-scoped; its published package
+does not depend on a repository font path or a third-party font host. The Core cell geometry is
+shared with the web brand renderer without changing app-provided icons.
+
+SDK chrome uses explicit owned roots, one 2 px lime keyboard focus outline and labelled activity
+states. Indeterminate preparation/execution uses animated progress; reduced motion keeps a static
+visible state. Panel color overrides remain supported. App document ancestors remain layout-only,
+and app-owned typography, palette and focus are preserved. These changes keep the current light
+DOM, retained iframe placement and public composition/authentication contracts; they do not select
+the architecture left open by the style-isolation Draft.
 
 ## Policy And Defaults
 
@@ -292,6 +308,10 @@ Initial collapsed registration does not overwrite a saved open preference while 
 assistant link is pending; only expansion transitions persist the preference.
 
 ## Testing Expectations
+
+- Verify packaged SDK fonts and licenses through the published build and unchanged-consumer upgrade
+  check. Browser bundles emit local WOFF2 URLs without server filesystem URLs. Exercise access,
+  notices, install progress, panel/navigation and sandbox controls in both themes and reduced motion.
 
 - SDK chrome controls retain their own typography while app-owned workspace buttons/links preserve
   explicit font size, weight and line height, including when app styles use CSS layers.

@@ -220,7 +220,7 @@ it("does not continue to Release until Core Return is confirmed and the user exp
   props.state = { ...state, launch: { ...state.launch, mode: "dev", projectPath: current.coreProject } };
   await render(); await choose("Release");
   expect(button("Return Core").disabled).toBe(true);
-  await act(async () => document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+  await act(async () => document.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click());
   await click("Return Core");
   expect(calls("return")).toHaveLength(1);
   const returning = calls("return")[0][1];
@@ -314,7 +314,7 @@ it("finishes Return to a saved Release without asking for a second restart", asy
   await render(); await choose("Release");
   expect(document.body.textContent).toContain("activated (Release)");
   expect(document.body.textContent).not.toContain("saved version is another development Core");
-  await act(async () => document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click()); await click("Return Core");
+  await act(async () => document.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click()); await click("Return Core");
   current = { ...current!, phase: "active", coreReturned: true };
   props.state = { ...state, instance: "43:return" };
   await render(); await refreshStatus();

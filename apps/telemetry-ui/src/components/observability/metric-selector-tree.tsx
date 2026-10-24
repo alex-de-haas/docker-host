@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Check, ChevronDown, ChevronRight, Minus, Pin, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
 
 export type MetricGroup = { group: string; instruments: string[] };
 
@@ -53,15 +54,15 @@ export function MetricSelectorTree({
     });
 
   return (
-    <aside className="w-full shrink-0 space-y-3 rounded-lg border p-3 lg:w-60">
+    <aside className="flex w-full shrink-0 flex-col gap-3 rounded-xl border bg-card p-3 lg:w-60">
       <div className="relative">
-        <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-        <input
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Filter metrics"
           aria-label="Filter metrics"
-          className="h-8 w-full rounded-md border bg-transparent pl-8 pr-2 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          className="h-8 pl-8 pr-2"
         />
       </div>
 
@@ -83,6 +84,10 @@ export function MetricSelectorTree({
 
       {filtered.length > 0 && pinnedInstruments.length > 0 && <div className="h-px bg-border" />}
 
+      {needle && groups.length > 0 && filtered.length === 0 && (
+        <p role="status" className="text-sm text-muted-foreground">No matching metrics</p>
+      )}
+
       {filtered.map(({ group, instruments }) => {
         const selectedCount = instruments.filter((name) => selected.has(name)).length;
         const groupState: CheckState =
@@ -94,7 +99,8 @@ export function MetricSelectorTree({
               <button
                 type="button"
                 onClick={() => toggleCollapsed(group)}
-                className="text-muted-foreground hover:text-foreground"
+                className="telemetry-metric-collapse flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0"
+                aria-expanded={!isCollapsed}
                 aria-label={isCollapsed ? `Expand ${group}` : `Collapse ${group}`}
               >
                 {isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
@@ -104,7 +110,7 @@ export function MetricSelectorTree({
                 role="checkbox"
                 aria-checked={groupState === "indeterminate" ? "mixed" : groupState === "checked"}
                 onClick={() => onSetGroup(instruments, groupState !== "checked")}
-                className="flex min-w-0 items-center gap-2"
+                className="telemetry-metric-choice flex min-w-0 flex-1 items-center gap-2 rounded-sm text-left hover:bg-accent focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0"
               >
                 <CheckboxBox state={groupState} />
                 <span className="truncate" title={group}>
@@ -121,7 +127,7 @@ export function MetricSelectorTree({
                     role="checkbox"
                     aria-checked={selected.has(name)}
                     onClick={() => onToggleInstrument(name)}
-                    className="flex w-full items-center gap-2 py-0.5 text-left text-sm"
+                    className="telemetry-metric-choice flex w-full items-center gap-2 rounded-sm py-1 text-left text-sm hover:bg-accent focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0"
                   >
                     <CheckboxBox state={selected.has(name) ? "checked" : "unchecked"} />
                     <span className="truncate" title={name}>
@@ -145,8 +151,8 @@ function CheckboxBox({ state, disabled }: { state: CheckState; disabled?: boolea
   return (
     <span
       className={cn(
-        "flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border",
-        filled ? "border-primary bg-primary text-primary-foreground" : "border-input",
+        "flex size-4 shrink-0 items-center justify-center rounded-[4px] border",
+        filled ? "border-brand-strong bg-brand text-brand-foreground" : "border-input",
         disabled && "opacity-60",
       )}
     >

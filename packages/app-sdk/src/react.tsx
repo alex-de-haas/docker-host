@@ -1,4 +1,5 @@
 "use client";
+import { exchangeAppCode } from "./app-code-exchange";
 import { captureChromeHints } from "./ui-composition";
 import { replaceConsumedUrl } from "./consumed-url";
 
@@ -9,7 +10,7 @@ import { replaceConsumedUrl } from "./consumed-url";
 import { readAppContinuity, type AppContinuity } from "./continuity";
 import { configureAppContinuity } from "./continuity-browser";
 import { AppActivityBridge } from "./activity-react";
-import { AuthNotice, AuthNoticeButton, authNoticeActionStyle } from "./auth-notice";
+import { AuthNotice, AuthNoticeButton } from "./auth-notice";
 import { useEffect, useRef, useState } from "react";
 import { appFetch, appSessionActive, appGrantRevision, rememberAppGrant, restoreAppGrant, forgetRejectedAppGrant, openAppSignIn, APP_SESSION_ENDED } from "./browser-auth";
 import { acceptAppAuthProtocol, createAppAuthAttempt, persistAppAuthAttempt, takeAppAuthAttempt, submitAppAuthIntent, appAuthNavigationUrl, APP_AUTH_ATTEMPT_PREFIX } from "./browser-auth";
@@ -256,7 +257,7 @@ export function useAppIdentity({
   const returnedLegacyAttempt = useRef<{ appId: string; coreOrigin: string; protocolRequired: boolean } | null>(null);
   const upgradedAttempt = useRef(false);
   const [activity, setActivity] = useState<{ openUrl: string; appAuthProtocol: AppAuthProtocol; activeUntil?: string | null; activityRequired?: boolean; continuity?: AppContinuity } | null>(null);
-  const exchangeRef = useRef<{ path: string; revision: number; response: Promise<Response> } | null>(null);
+  const exchangeRef = useRef<{ path: string; revision: number; response: ReturnType<typeof exchangeAppCode> } | null>(null);
   const onSessionRef = useRef(onSession);
   useEffect(() => { onSessionRef.current = onSession; }, [onSession]);
 
@@ -402,16 +403,11 @@ export function useAppIdentity({
               const result = openAppSignIn(openUrl, controller.signal, protocol, mode === "native", probePath);
               setUi({ kind: "recovering" });
               void result.then(async proof => {
-                const response = await appFetch(appCodePath, {
-                  method: "POST", headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify(proof),
-                }, false);
-                const body = await response.json();
-                if (!response.ok)
-                  throw new Error("Hosty could not establish this app session.");
+                const { ok, body } = await exchangeAppCode(appCodePath, proof, controller.signal);
+                if (!ok) throw new Error("Hosty could not establish this app session.");
                 if (cancelled) return;
                 if (revision !== appGrantRevision()) { await probeAndRecover(); return; }
-                if (typeof body.accessToken === "string" && body.accessToken) rememberAppGrant(body.accessToken);
+                if (typeof body?.accessToken === "string" && body.accessToken) rememberAppGrant(body.accessToken);
                 silentError.current = null;
                 writeGuard(false);
                 await probeAndRecover();
@@ -443,24 +439,18 @@ export function useAppIdentity({
       exchangeRef.current = {
         path: appCodePath,
         revision: appGrantRevision(),
-        response: fetch(appCodePath, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code, codeVerifier: attempt.codeVerifier }),
-          credentials: "same-origin", redirect: "error",
-        }),
+        response: exchangeAppCode(appCodePath, { code, codeVerifier: attempt.codeVerifier }),
       };
     }
     const exchange = exchangeRef.current;
     if (exchange && exchange.path === appCodePath) {
       void exchange.response
-        .then(async (response) => {
+        .then(async ({ ok, body }) => {
           if (cancelled) {
             return;
           }
-          if (response.ok) {
+          if (ok) {
             writeGuard(false);
-            const body = await response.json().catch(() => null);
             if (cancelled) return;
             if (exchange.revision !== appGrantRevision()) { exchangeRef.current = null; await probeAndRecover(); return; }
             if (typeof body?.accessToken === "string") rememberAppGrant(body.accessToken);
@@ -504,7 +494,7 @@ export function AppIdentityBridge({ renderState, children, ...options }: AppIden
   if (renderState) return renderState(ui);
 
   if (ui.kind === "active") return children ?? null;
-  if (ui.kind === "recovering") return <AuthNotice>Connecting to Hosty…</AuthNotice>;
+  if (ui.kind === "recovering") return <AuthNotice busy>Connecting to Hosty…</AuthNotice>;
 
   return (
     <AuthNotice>
@@ -515,7 +505,7 @@ export function AppIdentityBridge({ renderState, children, ...options }: AppIden
             <a
               href={ui.openUrl}
               {...(ui.embedded ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-              style={authNoticeActionStyle}
+              className="hosty-sdk-button hosty-sdk-primary"
             >
               Sign in via Hosty
             </a>

@@ -9,7 +9,7 @@ vi.mock("@hosty-sdk/app/browser-auth", () => ({ appFetch: request }));
 let root: Root;
 let container: HTMLDivElement;
 const initial = "https://catalog.example/index.json";
-function response(value: unknown, ok = true) { return { ok, json: async () => value }; }
+function response(value: unknown, ok = true, status = ok ? 200 : 400) { return { ok, status, json: async () => value }; }
 function button(label: string) { return [...container.querySelectorAll("button")].find(item => item.textContent === label)!; }
 async function enterSource(value: string) {
   const input = container.querySelector<HTMLInputElement>("#catalog-source")!;
@@ -66,4 +66,45 @@ it("aborts an unfinished settings read on unmount", async () => {
   expect(signal.aborted).toBe(true);
   await act(async () => resolve(response({ sourceUrl: initial })));
   expect(container.textContent).toBe("");
+});
+
+
+it("explicitly reads a changed source while retaining the attempted draft before a new Save", async () => {
+  await act(async () => root.render(createElement(SettingsForm)));
+  const edited = "https://my-draft.example/catalog.json", current = "https://other-view.example/catalog.json", laterEdit = "https://later-draft.example/catalog.json";
+  await enterSource(edited);
+  request.mockResolvedValueOnce(response({ code: "settings_conflict", message: "Settings changed. Reload before saving again." }, false, 409));
+  await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  expect(container.querySelector<HTMLInputElement>("#catalog-source")?.value).toBe(edited);
+  expect(button("Save settings").disabled).toBe(true);
+  expect(button("Reload current settings")).toBeDefined();
+  let resolveRead!: (value: unknown) => void;
+  request.mockImplementationOnce(() => new Promise(resolve => { resolveRead = resolve; }));
+  await act(async () => button("Reload current settings").click());
+  expect(button("Save settings").disabled).toBe(true);
+  await enterSource(laterEdit);
+  await act(async () => resolveRead(response({ sourceUrl: current })));
+  expect(container.querySelector<HTMLInputElement>("#catalog-source")?.value).toBe(laterEdit);
+  expect(container.textContent).toContain(current);
+  expect(button("Save settings").disabled).toBe(false);
+  expect(request.mock.calls.filter(call => call[1]?.method === "PUT")).toHaveLength(1);
+  request.mockResolvedValueOnce(response({ sourceUrl: laterEdit }));
+  await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  expect(JSON.parse(request.mock.lastCall?.[1].body)).toEqual({ sourceUrl: laterEdit, expectedSourceUrl: current });
+  expect(container.textContent).toContain("Catalog settings are saved.");
+});
+
+it("keeps the conflicting draft locked against writes until an explicit reread succeeds", async () => {
+  await act(async () => root.render(createElement(SettingsForm)));
+  const edited = "https://my-draft.example/catalog.json"; await enterSource(edited);
+  request.mockResolvedValueOnce(response({ code: "settings_conflict", message: "Settings changed." }, false, 409));
+  await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  request.mockRejectedValueOnce(new Error("Current source is unavailable"));
+  await act(async () => button("Reload current settings").click());
+  expect(container.querySelector<HTMLInputElement>("#catalog-source")?.value).toBe(edited);
+  expect(container.textContent).toContain("Current source is unavailable");
+  expect(button("Save settings").disabled).toBe(true);
+  expect(button("Reload current settings").disabled).toBe(false);
+  await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  expect(request.mock.calls.filter(call => call[1]?.method === "PUT")).toHaveLength(1);
 });

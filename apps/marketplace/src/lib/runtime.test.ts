@@ -22,6 +22,8 @@ describe("application-owned catalog settings", () => {
   it("rejects stale edits and credential-bearing URLs without changing the file or catalog", () => {
     const original = getRuntime(); const bytes = readFileSync(join(directory, "settings.json"), "utf8");
     expect(() => updateMarketplaceSettings("https://new.example/", "https://stale.example/")).toThrow("Settings changed");
+    try { updateMarketplaceSettings("https://new.example/", "https://stale.example/"); }
+    catch (error) { expect(error).toMatchObject({ code: "settings_conflict" }); }
     expect(() => updateMarketplaceSettings("https://user:password@example.test/", original.options.sourceUrl!)).toThrow("without credentials");
     expect(readFileSync(join(directory, "settings.json"), "utf8")).toBe(bytes);
     expect(getRuntime()).toBe(original);

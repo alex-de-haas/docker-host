@@ -6,7 +6,7 @@ import { WorkspaceReview, type ReviewChoice } from "./workspace-review";
 import { developmentRequest, type Worktree } from "@/lib/development-api";
 import type { ReviewInventory, ReviewDiff } from "@/lib/workspace-review-api";
 vi.mock("@/lib/development-api", async original => ({ ...await original<object>(), developmentRequest: vi.fn() }));
-vi.mock("./workspace-diff-view", () => ({ default: ({ diff, onAsk, threads, onThreadAsk, onReply, onResolve }: { onReply?: unknown; onResolve?: unknown; diff: ReviewDiff["diff"]; threads: ReviewInventory["threads"]; onAsk?: (range: unknown) => void; onThreadAsk?: (thread: unknown) => void }) => <div data-preview={diff.path} data-can-reply={!!onReply} data-can-resolve={!!onResolve}>{diff.combined}<button onClick={() => onAsk?.({ start: 9, side: "deletions", end: 12, endSide: "additions" })}>Ask selected lines</button>{threads.map(thread => <button key={thread.id} onClick={() => onThreadAsk?.(thread)}>Ask thread {thread.id}</button>)}</div> }));
+vi.mock("./workspace-diff-view", () => ({ default: ({ diff, onAsk, threads, onThreadAsk, onReply, onResolve, onComment }: { onComment?: (location: { path: string; diffSide: "RIGHT"; startLine: number; line: number }) => void; onReply?: unknown; onResolve?: unknown; diff: ReviewDiff["diff"]; threads: ReviewInventory["threads"]; onAsk?: (range: unknown) => void; onThreadAsk?: (thread: unknown) => void }) => <div data-preview={diff.path} data-can-reply={!!onReply} data-can-resolve={!!onResolve}>{diff.combined}<button onClick={() => onComment?.({ path: diff.path, diffSide: "RIGHT", startLine: 9, line: 12 })}>Comment selected lines</button><button onClick={() => onAsk?.({ start: 9, side: "deletions", end: 12, endSide: "additions" })}>Ask selected lines</button>{threads.map(thread => <button key={thread.id} onClick={() => onThreadAsk?.(thread)}>Ask thread {thread.id}</button>)}</div> }));
 vi.mock("./markdown", () => ({ Markdown: ({ text }: { text: string }) => <p>{text}</p> }));
 let root: Root, container: HTMLDivElement;
 const prUrl = "https://github.com/example/repo/pull/5";
@@ -25,11 +25,25 @@ function replies(value: ReviewInventory) {
   vi.mocked(developmentRequest).mockImplementation(async path => path?.includes("/review/diff?") ? makeDiff(value, new URLSearchParams(path.split("?")[1]).get("path")!) as never : value as never);
 }
 beforeEach(() => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); ask.mockReset(); back.mockReset(); sessionStorage.clear();
   vi.mocked(developmentRequest).mockReset();
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
+it.each([
+  ["closed", true, "Closed PR"], ["merged", true, "Merged PR"],
+  ["open", true, "Draft PR"], ["open", false, "PR"],
+] as const)("labels the selected %s PR scope correctly when draft is %s", async (state, draft, label) => {
+  const workspace = tree();
+  workspace.pullRequests[0]!.observation = { ...workspace.pullRequests[0]!.observation!, state, draft };
+  const review = inventory(); review.observation = { ...review.observation!, state, draft };
+  replies(review);
+  await act(async () => root.render(<Harness value={workspace} />));
+  expect(container.querySelector('[aria-label="Diff scope"]')?.textContent).toBe(`${label}: Published fix`);
+  expect(vi.mocked(developmentRequest).mock.calls.every(([, body]) => body === undefined)).toBe(true);
+});
+
 it("uses the published source and exact cross-side coordinates in a structured Ask reference without sending a message", async () => {
   replies(inventory()); await act(async () => root.render(<Harness value={tree()} />));
   await vi.waitFor(() => expect(container.querySelector('[data-preview]')).not.toBeNull());
@@ -93,6 +107,53 @@ it("keeps a requested transcript path explicit when it is no longer changed inst
   expect(container.querySelector('[aria-label="Changed files"]')?.classList.contains("hidden")).toBe(true);
 });
 
+it("returns keyboard focus to New comment after an explicit close without losing the saved draft", async () => {
+  replies({ ...inventory(), viewerId: "admin-one" });
+  await act(async () => root.render(<Harness value={tree()} />));
+  const opener = button("New comment");
+  await act(async () => opener.click());
+  const field = container.querySelector<HTMLTextAreaElement>('[aria-label="New PR comment"] textarea')!;
+  expect(document.activeElement).toBe(field);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(field, "Retain this closed draft");
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const close = button("Close comment"); close.focus();
+  await act(async () => close.click());
+  expect(container.querySelector('[aria-label="New PR comment"]')).toBeNull();
+  expect(document.activeElement).toBe(opener);
+  await act(async () => opener.click());
+  expect(container.querySelector<HTMLTextAreaElement>('[aria-label="New PR comment"] textarea')?.value).toBe("Retain this closed draft");
+  expect(vi.mocked(developmentRequest).mock.calls.every(([, body]) => body === undefined)).toBe(true);
+});
+
+it("does not restore comment-trigger focus after the confirmed post hands Ask focus to the conversation", async () => {
+  const value = { ...inventory(), viewerId: "admin-one" };
+  vi.mocked(developmentRequest).mockImplementation(async path => path?.endsWith("/reviews/comment")
+    ? { state: "succeeded", threadId: "posted-thread", commentId: "posted-comment" } as never
+    : path?.includes("/review/diff?") ? makeDiff(value) as never : value as never);
+  const conversation = document.createElement("textarea"); conversation.setAttribute("aria-label", "Conversation draft"); document.body.append(conversation);
+  ask.mockImplementation(() => conversation.focus());
+  try {
+    await act(async () => root.render(<Harness value={tree()} />));
+    await vi.waitFor(() => expect(container.querySelector('[data-preview]')).not.toBeNull());
+    await act(async () => button("Comment selected lines").click());
+    const field = container.querySelector<HTMLTextAreaElement>('[aria-label="New PR comment"] textarea')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(field, "Post and ask");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      container.querySelector<HTMLButtonElement>('[aria-label="New PR comment"] [role="checkbox"]')!.click();
+    });
+    const opener = button("New comment"), focus = vi.spyOn(opener, "focus");
+    try {
+      await act(async () => button("Post comment").click());
+      expect(ask).toHaveBeenCalledOnce(); expect(document.activeElement).toBe(conversation);
+      expect(focus).not.toHaveBeenCalled();
+      expect(container.querySelector('[aria-label="New PR comment"]')).toBeNull();
+    } finally { focus.mockRestore(); }
+  } finally { conversation.remove(); }
+});
+
 it("dismisses a scope picker with Escape while retaining the review and comment draft", async () => {
   Element.prototype.scrollIntoView = vi.fn();
   Element.prototype.hasPointerCapture = vi.fn(() => false);
@@ -112,4 +173,79 @@ it("dismisses a scope picker with Escape while retaining the review and comment 
   expect(container.querySelector('[aria-label="New PR comment"] textarea')).toBe(field);
   expect(field.value).toBe("Keep this review draft");
   expect(vi.mocked(developmentRequest).mock.calls.every(([, body]) => body === undefined)).toBe(true);
+});
+
+it("retains Viewed through Back and reopening the same authenticated review, including explicit unmarking", async () => {
+  const value = { ...inventory(), viewerId: "admin-one" };
+  replies(value);
+  const render = () => act(async () => root.render(<Harness value={tree()} />));
+  const reopen = async () => {
+    await act(async () => root.render(null));
+    await render();
+    await vi.waitFor(() => expect(container.querySelector("[data-preview]")).not.toBeNull());
+  };
+  await render();
+  await vi.waitFor(() => expect(container.querySelector("[data-preview]")).not.toBeNull());
+  await act(async () => container.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click());
+  expect(container.textContent).toContain("1 of 2 viewed");
+  await act(async () => button("Back to session").click());
+  expect(back).toHaveBeenCalledOnce();
+  await reopen();
+  expect(container.textContent).toContain("1 of 2 viewed");
+  expect(container.querySelector('[role="checkbox"]')?.getAttribute("data-state")).toBe("checked");
+  await act(async () => container.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click());
+  await reopen();
+  expect(container.textContent).toContain("0 of 2 viewed");
+});
+
+it.each(["viewer", "workspace", "worktree", "scope", "pull-request", "revision"])(
+  "does not restore Viewed across a changed %s boundary",
+  async boundary => {
+    const original = { ...inventory(), viewerId: "admin-one" };
+    replies(original);
+    await act(async () => root.render(<Harness value={tree()} />));
+    await vi.waitFor(() => expect(container.querySelector("[data-preview]")).not.toBeNull());
+    await act(async () => container.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click());
+    expect(container.textContent).toContain("1 of 2 viewed");
+    await act(async () => root.render(null));
+    const next = { ...original, source: { ...original.source } };
+    const nextTree = tree();
+    let workspaceId = "workspace", view = "pr:" + prUrl;
+    if (boundary === "viewer") next.viewerId = "admin-two";
+    if (boundary === "workspace") { workspaceId = "other-workspace"; nextTree.workspaceId = workspaceId; }
+    if (boundary === "worktree") nextTree.id = "other-tree";
+    if (boundary === "scope") { view = "target"; next.source.scope = "target"; }
+    if (boundary === "pull-request") { view = "pr:" + prUrl + "0"; next.source.pullRequestUrl = prUrl + "0"; }
+    if (boundary === "revision") next.source.revision = "new-source-revision";
+    replies(next);
+    await act(async () => root.render(<WorkspaceReview workspaceId={workspaceId} tree={nextTree}
+      choice={{ view, path: "" }} onChoice={vi.fn()} onBack={back} />));
+    await vi.waitFor(() => expect(container.querySelector("[data-preview]")).not.toBeNull());
+    expect(container.textContent).toContain("0 of 2 viewed");
+  },
+);
+
+it("keeps Viewed usable when browser storage cannot persist it", async () => {
+  const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("Storage unavailable"); });
+  try {
+    replies({ ...inventory(), viewerId: "admin-one" });
+    await act(async () => root.render(<Harness value={tree()} />));
+    await vi.waitFor(() => expect(container.querySelector("[data-preview]")).not.toBeNull());
+    await act(async () => container.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click());
+    expect(container.textContent).toContain("1 of 2 viewed");
+    await act(async () => container.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click());
+    expect(container.textContent).toContain("0 of 2 viewed");
+  } finally { write.mockRestore(); }
+});
+
+it("does not persist Viewed without a verified viewer identity", async () => {
+  replies(inventory());
+  await act(async () => root.render(<Harness value={tree()} />));
+  await vi.waitFor(() => expect(container.querySelector("[data-preview]")).not.toBeNull());
+  await act(async () => container.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click());
+  expect(container.textContent).toContain("1 of 2 viewed");
+  await act(async () => root.render(null));
+  await act(async () => root.render(<Harness value={tree()} />));
+  await vi.waitFor(() => expect(container.querySelector("[data-preview]")).not.toBeNull());
+  expect(container.textContent).toContain("0 of 2 viewed");
 });

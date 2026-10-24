@@ -11,10 +11,12 @@ import { Check, CheckCircle2, LoaderCircle, MoreHorizontal, Trash2, UserCog, Use
 import { toast } from "@/components/reui/operation-toast";
 import { useConfirmation } from "@/components/reui/confirmation";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDateTime } from "../app-helpers";
@@ -227,7 +229,7 @@ export function UserManagementPanel({
       <h2 className="sr-only">User Management</h2>
 
       <Dialog open={Boolean(credentialUser)} onOpenChange={open => { if (!open) setCredentialUser(null); }}><DialogContent className="sm:max-w-4xl"><DialogHeader><DialogTitle>{credentialUser?.displayName || credentialUser?.email}</DialogTitle><DialogDescription>Account access</DialogDescription></DialogHeader><DialogBody>
-        {credentialUser && <SettingsTokensSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} userId={credentialUser.id} />}
+        {credentialUser && <SettingsTokensSection coreOrigin={coreOrigin} actorId={activeUser?.id} sendCsrfJson={sendCsrfJson} userId={credentialUser.id} />}
       </DialogBody></DialogContent></Dialog>
       {error && <InlineError message={error} />}
 
@@ -353,22 +355,28 @@ export function UserManagementPanel({
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="inviteRole">Role</Label>
-                  <select id="inviteRole" className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={inviteRole} onChange={(event) => {
-                    const role = event.target.value === "host.admin" ? "host.admin" : "host.user";
+                  <Select value={inviteRole} onValueChange={(value) => {
+                    const role = value === "host.admin" ? "host.admin" : "host.user";
                     setInviteRole(role);
                     if (role === "host.admin") {
                       setInviteAppIds([]);
                     }
                   }}>
-                    <option value="host.user">User</option>
-                    <option value="host.admin">Admin</option>
-                  </select>
+                    <SelectTrigger id="inviteRole" className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectGroup>
+                      <SelectItem value="host.user">User</SelectItem>
+                      <SelectItem value="host.admin">Admin</SelectItem>
+                    </SelectGroup></SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="inviteTtl">Expires</Label>
-                  <select id="inviteTtl" className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={inviteTtlMs} onChange={(event) => setInviteTtlMs(Number(event.target.value))}>
-                    {ttlOptions.map((option) => <option key={option.ttlMs} value={option.ttlMs}>{option.label}</option>)}
-                  </select>
+                  <Select value={String(inviteTtlMs)} onValueChange={(value) => setInviteTtlMs(Number(value))}>
+                    <SelectTrigger id="inviteTtl" className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectGroup>
+                      {ttlOptions.map((option) => <SelectItem key={option.ttlMs} value={String(option.ttlMs)}>{option.label}</SelectItem>)}
+                    </SelectGroup></SelectContent>
+                  </Select>
                 </div>
               </div>
               {inviteRole === "host.user" && (
@@ -504,11 +512,10 @@ function AppAccessPicker({ apps, selectedAppIds, onChange }: { apps: AssignableA
           <div className="p-3 text-sm text-muted-foreground">No runtime apps</div>
         ) : options.map((app) => (
           <label key={app.id} className="flex cursor-pointer items-center gap-3 border-b px-3 py-2 text-sm last:border-b-0">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={selected.has(app.id)}
-              onChange={(event) => {
-                if (event.target.checked) {
+              onCheckedChange={(checked) => {
+                if (checked === true) {
                   onChange(Array.from(new Set([...selectedAppIds, app.id])).sort());
                 } else {
                   onChange(selectedAppIds.filter((candidate) => candidate !== app.id));

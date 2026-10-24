@@ -43,7 +43,7 @@ beforeEach(() => {
   vi.mocked(api.streamEvents).mockImplementation(async (_id, listener, _signal, onConnection) => {
     emit = listener; connection = onConnection!; connection("connected");
   });
-  vi.mocked(api.postMessage).mockResolvedValue(undefined);
+  vi.mocked(api.postMessage).mockImplementation(async (...args) => ({ clientRequestId: args[6]!, state: "accepted" as const }));
   vi.mocked(api.stopSession).mockResolvedValue(undefined);
   container = document.createElement("div"); document.body.append(container);
   root = createRoot(container);
@@ -136,7 +136,7 @@ it.each(["running", "awaiting_approval", "awaiting_question"])("keeps a draft un
   // Completion never automatically sends the draft.
   expect(api.postMessage).not.toHaveBeenCalled();
   await act(async () => button("Send")!.click());
-  expect(api.postMessage).toHaveBeenCalledExactlyOnceWith(record.id, "Next message", [], 0, false, 0);
+  expect(api.postMessage).toHaveBeenCalledExactlyOnceWith(record.id, "Next message", [], 0, false, 0, expect.stringMatching(/^[0-9a-f-]{36}$/));
 });
 
 it("locks immediately after sending, including before SSE, and unlocks on completion", async () => {
@@ -166,18 +166,21 @@ it("preserves the draft after a failed stop and permits retry", async () => {
   expect(api.stopSession).toHaveBeenCalledTimes(2);
 });
 
-it("restores Send and the draft when posting fails", async () => {
+it("retains the draft and offers receipt Retry when posting has an uncertain outcome", async () => {
   vi.mocked(api.postMessage).mockRejectedValueOnce(new Error("Send failed"));
   await render(); await type("Try again");
   await act(async () => button("Send")!.click());
-  expect(button("Send")?.disabled).toBe(false);
+  expect(button("Send")?.disabled).toBe(true);
   expect(button("Stop")).toBeNull();
   expect(input().value).toBe("Try again");
+  expect([...container.querySelectorAll("button")].some(item => item.textContent === "Retry send")).toBe(true);
+  expect(api.postMessage).toHaveBeenCalledOnce();
 });
 
 it("accepts a fast completion before the send response without getting stuck on Stop", async () => {
-  vi.mocked(api.postMessage).mockImplementation(async () => {
+  vi.mocked(api.postMessage).mockImplementation(async (...args) => {
     emit({ type: "session_status", status: "idle", seq: 2, ts: "" });
+    return { clientRequestId: args[6]!, state: "accepted" as const };
   });
   await render(); await type("Quick request");
   await act(async () => button("Send")!.click());
@@ -277,7 +280,7 @@ it("sends mention text only after the app association commits, with the returned
   await act(async () => resolve({ ...record, appIds: ["media"], appContextRevision: 1 }));
   expect(input().value).toBe("Compare @Media Server ");
   await act(async () => button("Send")!.click());
-  expect(api.postMessage).toHaveBeenCalledExactlyOnceWith(record.id, "Compare @Media Server (media)", [], 1, false, 0);
+  expect(api.postMessage).toHaveBeenCalledExactlyOnceWith(record.id, "Compare @Media Server (media)", [], 1, false, 0, expect.stringMatching(/^[0-9a-f-]{36}$/));
 });
 
 

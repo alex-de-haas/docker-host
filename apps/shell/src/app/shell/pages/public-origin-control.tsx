@@ -8,6 +8,7 @@ import { toast } from "@/components/reui/operation-toast";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { coreErrorCode, isAuthRequiredRedirectError } from "../core-api";
 import { derivesPublicOrigins, publishesThroughCloudflareApi } from "../ingress";
 import { buildPublicOriginSettingKey, resolvePublishedLabelAction, sanitizeSubdomainLabel, localBrowserPreview, localBrowserSettings } from "../public-origin";
@@ -299,11 +300,14 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
               <div className="space-y-3">
                 {endpoint.localOrigin && <label className="flex flex-col gap-1 text-xs font-medium">
                   Address provider
-                  <select aria-label="Address provider" className="h-8 rounded-md border bg-background px-2" value={manual ? "manual" : "local"}
-                    onChange={event => { const next = event.target.value === "manual"; setManual(next); setValue(next ? currentOrigin : endpoint.localName ?? ""); }}>
-                    <option value="local">Local · this computer only</option>
-                    <option value="manual">Custom proxy address (advanced)</option>
-                  </select>
+                  <Select value={manual ? "manual" : "local"}
+                    onValueChange={value => { const next = value === "manual"; setManual(next); setValue(next ? currentOrigin : endpoint.localName ?? ""); }}>
+                    <SelectTrigger aria-label="Address provider" size="sm" className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectGroup>
+                      <SelectItem value="local">Local · this computer only</SelectItem>
+                      <SelectItem value="manual">Custom proxy address (advanced)</SelectItem>
+                    </SelectGroup></SelectContent>
+                  </Select>
                 </label>}
                 {!manual && endpoint.localOrigin ? <div className="space-y-2">
                   <label className="text-xs font-medium" htmlFor="local-browser-name">Local name</label>

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type C
 import { preloadHighlighter } from "@pierre/diffs";
 import { FileDiff, type DiffLineAnnotation, type FileDiffOptions, type SelectedLineRange } from "@pierre/diffs/react";
 import { Button } from "@/components/ui/button";
+import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { ReviewThreadCard, type ReviewThreadActions } from "@/components/review-thread";
 import type { Diff } from "@/lib/development-api";
 import { prepareWorkspaceDiff } from "@/lib/workspace-diff";
@@ -73,7 +74,7 @@ export default function WorkspaceDiffView({ diff, layout, wrap, onAsk, threads =
     {preview.kind === "text" ? <div className="space-y-2 p-3 text-xs">
       <p className="text-muted-foreground">{preview.message}</p>
       {preview.content && <pre className="overflow-x-auto font-mono text-xs">{preview.content}</pre>}
-    </div> : highlighter === "loading" ? <p role="status" className="p-3 text-sm text-muted-foreground">Loading diff viewer…</p> : highlighter === "failed" ? <div className="space-y-2 p-3 text-xs">
+    </div> : highlighter === "loading" ? <p role="status" className="flex items-center gap-2 p-3 text-sm text-muted-foreground"><HostyLoader label={null} className="size-4 shrink-0" />Loading diff viewer…</p> : highlighter === "failed" ? <div className="space-y-2 p-3 text-xs">
       <p className="text-muted-foreground">The diff viewer could not load. The original preview is shown below.</p>
       <pre className="overflow-x-auto font-mono text-xs">{diff.combined}</pre>
     </div> : <>

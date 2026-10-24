@@ -5,10 +5,13 @@ import { appFetch } from "@hosty-sdk/app/browser-auth";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, LineChart, LoaderCircle, ScrollText, Waypoints } from "lucide-react";
+import { CircleAlert, LineChart, ScrollText, Waypoints } from "lucide-react";
 import { HostyNavigationBoundary } from "@hosty-sdk/app/react";
 import { cn } from "@/lib/utils";
 import type { TelemetryApp } from "@/lib/types";
+import { Button } from "@/components/ui/button";
+import { TelemetryMark } from "@/components/telemetry-mark";
+import { HostyLoader } from "../../../../shared/web/hosty-states";
 
 type AppsState = { apps: TelemetryApp[]; loaded: boolean; error: string | null };
 
@@ -32,6 +35,7 @@ const TABS = [
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [state, setState] = useState<AppsState>({ apps: [], loaded: false, error: null });
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -55,7 +59,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => {
       controller.abort();
     };
-  }, []);
+  }, [retry]);
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 p-4 sm:p-6">
@@ -63,21 +67,22 @@ export function AppShell({ children }: { children: ReactNode }) {
           the whole header is marked as duplicated chrome and hidden there by globals.css. */}
       <HostyNavigationBoundary><header className="flex flex-col gap-3">
         <div className="flex items-center gap-2">
-          <Activity className="h-5 w-5 text-muted-foreground" />
-          <span className="text-sm font-semibold">Telemetry</span>
+          <TelemetryMark className="size-8" tile />
+          <span className="text-base font-semibold">Telemetry</span>
         </div>
-        <nav className="flex gap-1 border-b">
+        <nav aria-label="Telemetry" className="flex gap-1 overflow-x-auto border-b">
           {TABS.map((tab) => {
             const active = pathname === tab.href || (pathname === "/" && tab.href === "/metrics");
             return (
               <Link
                 key={tab.href}
                 href={tab.href}
+                aria-current={active ? "page" : undefined}
                 className={cn(
-                  "-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+                  "-mb-px flex shrink-0 items-center gap-1.5 border-b-[3px] px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0",
                   active
-                    ? "border-primary text-foreground"
-                    : "border-transparent text-muted-foreground hover:text-foreground",
+                    ? "border-brand-strong text-foreground"
+                    : "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground",
                 )}
               >
                 <tab.icon className="h-4 w-4" />
@@ -89,11 +94,27 @@ export function AppShell({ children }: { children: ReactNode }) {
       </header></HostyNavigationBoundary>
       <main className="min-w-0 flex-1">
         {!state.loaded ? (
-          <div className="flex min-h-64 items-center justify-center">
-            <LoaderCircle className="h-6 w-6 animate-spin text-muted-foreground" />
+          <div className="flex min-h-64 flex-col items-center justify-center gap-3" role="status">
+            <HostyLoader className="size-8" label={null} />
+            <span className="text-sm text-muted-foreground">Loading Telemetry…</span>
           </div>
         ) : (
-          <AppsContext.Provider value={state.apps}>{children}</AppsContext.Provider>
+          <AppsContext.Provider value={state.apps}>
+            {state.error && (
+              <div role="alert" className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-destructive/30 bg-destructive-soft p-4 text-destructive-foreground">
+                <CircleAlert className="size-5 shrink-0" aria-hidden="true" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium">Resources could not be loaded</p>
+                  <p className="break-words text-sm">{state.error}</p>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => {
+                  setState({ apps: [], loaded: false, error: null });
+                  setRetry((current) => current + 1);
+                }}>Try again</Button>
+              </div>
+            )}
+            {!state.error && children}
+          </AppsContext.Provider>
         )}
       </main>
     </div>
