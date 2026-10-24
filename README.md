@@ -4,6 +4,9 @@ Monorepo for Hosty: the local-first Core API, the Shell browser client, the opti
 
 See the [project documentation](docs/root.md) for the runtime app model, feature notes, and backlog.
 
+This disposable Harness acceptance branch verifies GitHub review against an exact published head.
+The fixture is intentionally documentation-only and must not be merged.
+
 ## Install
 
 The installer downloads the rolling `cli-dev` build, requires and verifies `SHA256SUMS`, installs `hosty` under the local bin directory, and adds it to PATH. `hosty init` downloads Core into `~/.hosty/core/bin` if it is missing, then configures this installation. Existing Core binaries are reused; `hosty update` upgrades them explicitly.
