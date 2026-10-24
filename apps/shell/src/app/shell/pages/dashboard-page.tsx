@@ -8,6 +8,7 @@ import { getManageAppHref } from "../shell-routes";
 import { useExecutionTargets } from "../execution-targets";
 import { coreWorkspaceSource, useWorkspaceSources, workspaceSource, type ActivationWorkspace, type WorkspaceSource } from "../workspace-sources";
 
+import { DashboardStateFilters } from "./dashboard-state-filters";
 import { DashboardSandboxes } from "./dashboard-sandboxes";
 import { fetchCore } from "../core-transport.js";
 
@@ -23,7 +24,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { isRoutineUpdate, updateFeedback, updateCheckDescription } from "../update-feedback";
 import {
-  Activity,
   ArrowUpCircle,
   Boxes,
   Check,
@@ -232,7 +232,7 @@ export function DashboardPage({
 
       <section className="dashboard-heading grid items-center gap-3">
         <h2 className="text-[22px] font-semibold tracking-tight">Apps</h2>
-        <div className="dashboard-header-filters min-w-0"><AppCounts apps={apps} filter={appFilter} onFilterChange={setAppFilter} /></div>
+        <div className="dashboard-header-filters min-w-0"><DashboardStateFilters apps={apps} filter={appFilter} onFilterChange={setAppFilter} /></div>
         {canManageApps && <Button className="dashboard-install" onClick={onInstall} aria-label="Install app" title="Install app"><Plus className="size-4" /><span>Install app</span></Button>}
       </section>
       <Frame role="region" aria-label="Installed apps">
@@ -305,47 +305,6 @@ export function DashboardPage({
       {canManageApps && <DashboardSandboxes coreOrigin={coreOrigin} apps={apps} workspaces={workspaces} />}
     </div>
     </ResourceUsageProvider>
-  );
-}
-
-// Counts always describe the full host, even when the table is filtered.
-function AppCounts({ apps, filter, onFilterChange }: {
-  apps: CoreApp[];
-  filter: AppStateFilter;
-  onFilterChange: (filter: AppStateFilter) => void;
-}) {
-  const counters = [
-    { key: "all", label: "total", title: "All", icon: Boxes, accent: "" },
-    { key: "running", label: "running", title: "Running", icon: Activity, accent: "text-success-foreground" },
-    { key: "transitioning", label: "in progress", title: "In progress", icon: LoaderCircle, accent: "animate-spin motion-reduce:animate-none" },
-    { key: "attention", label: "need attention", title: "Attention", icon: CircleAlert, accent: "text-warning-foreground" },
-    { key: "updates", label: "updates", title: "Updates", icon: ArrowUpCircle, accent: "text-info-foreground dark:text-sky-400" },
-  ] as const;
-
-  return (
-    <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Filter apps by state">
-      {counters.map(({ key, label, title }) => {
-        const count = apps.filter((app) => matchesAppStateFilter(app, key)).length;
-        const description = `${count} ${key === "updates" && count === 1 ? "update" : label}`;
-        // An active filter stays reachable if its last matching app changes state.
-        if (count === 0 && filter !== key && key === "transitioning") return null;
-        return (
-          <Button
-            key={key}
-            variant={filter === key ? "secondary" : "ghost"}
-            size="sm"
-            className={cn("gap-1.5 text-muted-foreground", filter === key && "bg-accent text-accent-foreground")}
-            aria-label={description}
-            title={description}
-            aria-pressed={filter === key}
-            onClick={() => onFilterChange(filter === key ? "all" : key)}
-          >
-            <span>{title}</span>
-            <span className="font-medium text-foreground">{count}</span>
-          </Button>
-        );
-      })}
-    </div>
   );
 }
 
